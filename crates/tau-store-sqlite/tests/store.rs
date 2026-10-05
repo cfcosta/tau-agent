@@ -1,4 +1,4 @@
-//! The store (`tau_store`), checked against a `Vec`-based model over
+//! The SQLite store (`tau_store_sqlite`), checked against a `Vec`-based model over
 //! random sequences of run creation, appends (context rewrites and plugin
 //! records included) and finishes.
 //!
@@ -21,6 +21,7 @@ use hegel::{
 use serde_json::json;
 use tau_store::{
     AgentCost,
+    Backend as _,
     Entry,
     NewRun,
     PluginCost,
@@ -30,8 +31,8 @@ use tau_store::{
     Store,
     StoreError,
     TurnUsage,
-    WriterStats,
 };
+use tau_store_sqlite::{SqliteStore, WriterStats};
 use tau_testing::block_on_io;
 
 #[derive(Debug, Clone)]
@@ -265,7 +266,7 @@ impl StoreMachine {
             .enable_all()
             .build()
             .unwrap();
-        let store = runtime.block_on(Store::memory()).unwrap();
+        let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
         Self {
             runtime,
             store,
@@ -675,7 +676,7 @@ fn file_store_survives_reopen() {
         let path = dir.join("runs.db");
         let _ = std::fs::remove_file(&path);
         {
-            let store = Store::open(&path).await.unwrap();
+            let store = tau_store_sqlite::open(&path).await.unwrap();
             store
                 .create_run(&NewRun {
                     id: "r",
@@ -699,7 +700,7 @@ fn file_store_survives_reopen() {
                 .await
                 .unwrap();
         }
-        let store = Store::open(&path).await.unwrap();
+        let store = tau_store_sqlite::open(&path).await.unwrap();
         assert_eq!(
             store.transcript("r").await.unwrap(),
             vec![Entry::Message {
@@ -715,7 +716,7 @@ fn file_store_survives_reopen() {
 #[test]
 fn unknown_runs_are_errors() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         assert!(matches!(
             store.finish_run("x", Status::Done, None, None).await,
             Err(StoreError::UnknownRun(_))
@@ -732,7 +733,7 @@ fn unknown_runs_are_errors() {
 #[test]
 fn large_token_counts_add_exactly() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         store
             .create_run(&NewRun {
                 id: "r",
@@ -776,7 +777,7 @@ fn new_run(id: &str) -> NewRun<'_> {
 #[test]
 fn writes_are_counted_across_clones() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = SqliteStore::memory().await.unwrap();
         assert_eq!(store.writer_stats(), WriterStats::default());
         let clone = store.clone();
         store.create_run(&new_run("r")).await.unwrap();
@@ -808,7 +809,7 @@ fn waiting_for_the_write_lock_is_measured() {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("runs.db");
         let _ = std::fs::remove_file(&path);
-        let store = Store::open(&path).await.unwrap();
+        let store = SqliteStore::open(&path).await.unwrap();
         store.create_run(&new_run("r")).await.unwrap();
 
         let mut other = sqlx::SqliteConnection::connect(&format!(
@@ -844,7 +845,7 @@ fn waiting_for_the_write_lock_is_measured() {
 #[test]
 fn subagents_are_found_by_their_parent() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         for (id, kind) in [
             ("a", RunKind::Root),
             (
@@ -905,7 +906,7 @@ fn subagents_are_found_by_their_parent() {
 #[test]
 fn recent_runs_skip_subagents() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         for (id, kind) in [
             ("a", RunKind::Root),
             (
@@ -955,7 +956,7 @@ fn recent_runs_skip_subagents() {
 #[test]
 fn plugin_entries_carry_their_seq() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         store
             .create_run(&NewRun {
                 id: "r",
@@ -1002,7 +1003,7 @@ fn plugin_entries_carry_their_seq() {
 #[test]
 fn typed_queries_only_read() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         for id in ["a", "b", "c"] {
             store.create_run(&new_run(id)).await.unwrap();
         }

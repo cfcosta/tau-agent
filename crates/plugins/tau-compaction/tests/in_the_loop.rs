@@ -1,5 +1,5 @@
 //! Compaction inside the agent loop (`docs/reference/compaction.md`),
-//! as a plugin of an `Agent` with `ScriptedModel`, `Store::memory()` and
+//! as a plugin of an `Agent` with `ScriptedModel`, `tau_store_sqlite::memory()` and
 //! paused time.
 //!
 //! The scripts steer a second user message in before the first turn
@@ -108,7 +108,7 @@ fn threshold_compaction_summarizes_older_messages() {
         .turn(|t| t.text("## Goal\nship it").cost(0.25))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = agent(&llm)
             .model("gpt-5.4-mini")
             .reasoning(ReasoningEffort::High);
@@ -198,7 +198,7 @@ fn a_second_compaction_updates_the_first_summary() {
         .turn(|t| t.text("second summary"))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = agent(&llm);
         let run = agent.start("go", &store);
         run.steer("then b");
@@ -247,7 +247,7 @@ fn a_split_turn_gets_a_prefix_summary() {
         .turn(|t| t.text("prefix summary"))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         // Keep the last tool call and its result: the cut lands on the
         // second assistant message, inside the first turn.
         let agent = Agent::new(llm.clone())
@@ -283,7 +283,7 @@ fn an_overflow_compacts_and_retries_once() {
         .turn(|t| t.text("summary"))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         // The threshold never fires: the window is huge.
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
@@ -323,7 +323,7 @@ fn a_second_overflow_fails_the_run() {
         .turn(|t| t.text("summary"))
         .turn(overflow);
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
             .plugin(settings().context_window(u64::MAX));
@@ -346,7 +346,7 @@ fn a_rejected_summary_on_overflow_fails_the_run() {
         .turn(|t| t.error("context_length_exceeded", "too long"))
         .turn(|t| t.text("cut off").stop(MessageStop::Length));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
             .plugin(settings().context_window(u64::MAX));
@@ -385,7 +385,7 @@ fn a_rejected_summary_past_the_threshold_leaves_the_run_going() {
         })
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (events, outcome) =
             run(&agent(&llm), &store, "go", "then this").await;
         assert_eq!(outcome.text, "done");
@@ -422,7 +422,7 @@ fn a_rejected_summary_is_tried_again_after_a_wait() {
         .turn(|t| t.text("## Original Request\nread b.rs"))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (events, outcome) =
             run(&agent(&llm), &store, "go", "then this").await;
         assert_eq!(outcome.text, "done");
@@ -449,7 +449,7 @@ fn a_fork_of_a_compacted_run_starts_from_the_summary() {
         .turn(|t| t.text("done"))
         .turn(|t| t.text("forked"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = agent(&llm);
         let (_, base) = run(&agent, &store, "go", "then this").await;
         let fork = agent
@@ -477,7 +477,7 @@ fn no_compaction_below_the_threshold() {
         .turn(|t| t.tool_call("read", json!({"path": "b.rs"})))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
             .plugin(settings().context_window(u64::MAX));
@@ -512,7 +512,7 @@ fn an_overflow_is_recognized_by_its_wording() {
         .turn(|t| t.text("summary"))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
             .plugin(settings().context_window(u64::MAX));
@@ -538,7 +538,7 @@ fn an_overflow_code_compacts_and_the_summary_is_retried() {
         .turn(|t| t.text("summary"))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone()).plugin(
             Compaction::default()
                 .context_window(u64::MAX)
@@ -569,7 +569,7 @@ fn a_failing_summary_is_tried_as_the_policy_allows() {
         .turn(|t| t.error("server_error", "try again"))
         .turn(|t| t.text("never"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let policy = tau_ai::retry::RetryPolicy {
             max_attempts: 2,
             ..tau_ai::retry::RetryPolicy::default()

@@ -21,7 +21,6 @@ use tau_reasoning::{
     Reasoning,
     replay::{Entry, replay},
 };
-use tau_store::Store;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
@@ -33,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let store = Store::open(&path).await?;
+        let store = tau_store_sqlite::open(&path).await?;
         let (mut requests, mut asked, mut changed, mut cost) = (0, 0, 0, 0.0);
         // Stored effort → replayed effort, per request.
         let mut moves: BTreeMap<(String, String), usize> = BTreeMap::new();

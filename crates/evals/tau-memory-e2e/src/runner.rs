@@ -227,7 +227,7 @@ async fn run_trial(
     } else {
         None
     };
-    let store = Store::memory().await?;
+    let store = tau_store_sqlite::memory().await?;
 
     // The first run.
     let transcript = Transcript::default();

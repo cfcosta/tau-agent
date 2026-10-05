@@ -122,7 +122,7 @@ fn a_plugin_takes_part_in_a_run() {
         .turn(|t| t.tool_call("bash", json!({ "command": "make deploy" })))
         .turn(|t| t.text("done"))
         .turn(|t| t.text("ran the tests"));
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let plugins = LuauPlugins::new(
         vec![active("no-deploys", EVERY_DAY)],
         json!({ "kind": "main", "repo": "r", "model": "m" }),
@@ -197,7 +197,7 @@ return tau.plugin {
         .turn(|t| t.tool_call("bash", json!({ "command": "c" })))
         .turn(|t| t.tool_call("bash", json!({ "command": "d" })))
         .turn(|t| t.text("done"));
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let plugins =
         LuauPlugins::new(vec![active("broken", broken)], json!({}), None);
     let agent = Agent::new(llm.clone()).tool(Bash).plugin(plugins);
@@ -254,7 +254,7 @@ t.case("says bye", function() t.equal(t.run{}:tool("hello"), "bye") end)
         .turn(|t| t.tool_call("plugin_test", json!({ "plugin": "../x" })))
         .turn(|t| t.tool_call("plugin_test", json!({ "plugin": "missing" })))
         .turn(|t| t.text("done"));
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let agent = Agent::new(llm.clone())
         .plugin(PluginTesting::new(dir.path().to_owned()));
     block_on_io(agent.run("test greet", &store)).unwrap();

@@ -18,7 +18,6 @@ use common::{coder, links};
 use hegel::{Generator as _, TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::agent::Checkpoint;
-use tau_store::Store;
 use tau_testing::{block_on, git::git, scripted::ScriptedModel};
 use tau_vcs::{
     DEFAULT_WORKSPACE,
@@ -518,7 +517,7 @@ fn a_first_turn_that_commits_still_changed_files() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
         let first = RunWorkspace::new(
             project.clone().into(),
@@ -571,7 +570,7 @@ fn a_turn_that_undoes_a_commit_keeps_its_paths() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
         let first = RunWorkspace::new(
             project.clone().into(),
@@ -632,7 +631,7 @@ fn a_forks_first_turn_is_told_from_its_start() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let first = RunWorkspace::new(
             project.clone().into(),
             "first",
@@ -713,7 +712,7 @@ fn turns_are_snapshots_and_forks_start_from_one() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
 
         // Two turns that each write a file, and a turn that only talks;
         // an observer hears what each turn changed.

@@ -58,7 +58,7 @@ jobs:
             --file crates/plugins/tau-jev/src/lib.rs \
             --file crates/plugins/tau-tools/src/edit.rs \
             --file crates/plugins/tau-tools/src/truncate.rs \
-            --file crates/tau-store/src/lib.rs
+            --file crates/tau-store-sqlite/src/lib.rs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

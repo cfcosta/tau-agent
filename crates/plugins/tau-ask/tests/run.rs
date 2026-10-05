@@ -147,7 +147,7 @@ fn the_call_waits_for_the_answer_and_the_model_reads_it_with_its_notes() {
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call(TOOL, questions()))
         .turn(|t| t.text("Holding the call open."));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on(tau_store_sqlite::memory()).unwrap();
     let waiting = Waiting::default();
     let agent = Agent::new(llm.clone()).plugin(AskPlugin::new(waiting.clone()));
     let (id, events, stop) = run(
@@ -214,7 +214,7 @@ fn declining_tells_the_model_to_go_on() {
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call(TOOL, questions()))
         .turn(|t| t.text("Going on."));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on(tau_store_sqlite::memory()).unwrap();
     let waiting = Waiting::default();
     let agent = Agent::new(llm.clone()).plugin(AskPlugin::new(waiting.clone()));
     let (_, events, _) = run(
@@ -234,7 +234,7 @@ fn declining_tells_the_model_to_go_on() {
 #[test]
 fn a_cancelled_run_stops_waiting_and_closes_the_call() {
     let llm = ScriptedModel::new().turn(|t| t.tool_call(TOOL, questions()));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on(tau_store_sqlite::memory()).unwrap();
     let waiting = Waiting::default();
     let agent = Agent::new(llm.clone()).plugin(AskPlugin::new(waiting.clone()));
     let (id, _, stop) =
@@ -256,7 +256,7 @@ fn questions_asked_wrongly_come_back_with_why() {
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call(TOOL, wrong))
         .turn(|t| t.text("ok"));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on(tau_store_sqlite::memory()).unwrap();
     let waiting = Waiting::default();
     let agent = Agent::new(llm.clone()).plugin(AskPlugin::new(waiting.clone()));
     let (id, events, _) = run(
@@ -277,7 +277,7 @@ fn a_run_that_goes_on_closes_what_its_history_left_waiting() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("first"))
         .turn(|t| t.text("second"));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on(tau_store_sqlite::memory()).unwrap();
     let waiting = Waiting::default();
     let agent = Agent::new(llm.clone()).plugin(AskPlugin::new(waiting.clone()));
     let (first, _, _) = run(&agent, &store, "go", |_, _, _, _| {}, &waiting);
@@ -383,7 +383,7 @@ fn a_call_dropped_while_it_waits_is_closed() {
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call(RACER, questions()))
         .turn(|t| t.text("ok"));
-    let store = block_on(Store::memory()).unwrap();
+    let store = block_on(tau_store_sqlite::memory()).unwrap();
     let waiting = Waiting::default();
     let agent = Agent::new(llm.clone()).plugin(Racer {
         waiting: waiting.clone(),

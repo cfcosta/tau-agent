@@ -53,7 +53,7 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolError, ToolOutput},
 };
 use tau_ai::message::{InputBlock, Message, UserContent};
-use tau_store::{Entry, Store};
+use tau_store::Entry;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
     DEFAULT_WORKSPACE,
@@ -452,7 +452,7 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
     }
 
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let trunk = project.trunk().unwrap();
         let caller = if main_chat {
             tc.event("the caller is the main chat");

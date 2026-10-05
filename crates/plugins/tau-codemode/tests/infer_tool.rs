@@ -188,7 +188,7 @@ return { a.ok, a.value, b.ok, b.value.n, c.ok, c.value == json.null }
             .turn(|turn| turn.text("null"))
             .turn(|turn| turn.text("done"));
         let events = Events::default();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .model("test-host")
             .reasoning(ReasoningEffort::High)
@@ -295,7 +295,7 @@ return { accepted, bad.ok, good.value, full.ok }
             .turn(|turn| turn.text("accepted"))
             .turn(|turn| turn.text("done"));
         let events = Events::default();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .plugin(Codemode::new(None).with_inference_limits(Limits {
                 max_calls: 1,
@@ -351,7 +351,7 @@ return { failures, good.ok, good.value }
             .turn(|turn| turn.text("recovered"))
             .turn(|turn| turn.text("done"));
         let events = Events::default();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .plugin(Codemode::new(None))
             .plugin(events.clone());
@@ -448,7 +448,7 @@ fn attempts_and_failed_usage_are_shared_across_scripts() {
             .turn(outer_call(second))
             .turn(|turn| turn.text("done"));
         let events = Events::default();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .plugin(Codemode::new(None).with_inference_limits(Limits {
                 max_calls: 2,
@@ -519,7 +519,7 @@ fn invalid_answer_keeps_its_reported_cost_on_failed_row() {
             .turn(outer_call(script))
             .turn(|turn| turn.text("not an integer").usage(5, 2).cost(0.37))
             .turn(|turn| turn.text("done"));
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let outcome = Agent::new(model.clone())
             .plugin(Codemode::new(None))
             .run("go", &store)
@@ -548,7 +548,7 @@ fn resume_keeps_calls_spent_while_fork_gets_fresh_allowance() {
             .turn(outer_call(script))
             .turn(|turn| turn.text("fork answer").usage(4, 2))
             .turn(|turn| turn.text("done"));
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let events = Events::default();
         let agent = Agent::new(model.clone())
             .plugin(Codemode::new(None).with_inference_limits(Limits {
@@ -596,7 +596,7 @@ return { a.ok, b.ok }
             .turn(|turn| turn.text("too late").delay(Duration::from_secs(10)))
             .turn(|turn| turn.text("done"));
         let events = Events::default();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .plugin(Codemode::new(None).with_inference_limits(Limits {
                 max_concurrency: 1,
@@ -641,7 +641,7 @@ fn script_timeout_keeps_incomplete_attempt_from_reopening_budget() {
             .turn(|turn| turn.text("too late").delay(Duration::from_secs(10)))
             .turn(outer_call(next))
             .turn(|turn| turn.text("done"));
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let events = Events::default();
         let agent = Agent::new(model.clone())
             .plugin(Codemode::new(None).with_inference_limits(Limits {
@@ -718,7 +718,7 @@ return { first.ok, second.ok }
             open_attempts: open_attempts.clone(),
         };
         let events = Events::default();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model)
             .plugin(Codemode::new(None))
             .plugin(events.clone());
@@ -804,7 +804,7 @@ fn override_model_and_unsupported_output_capability_are_recorded() {
             .turn(|turn| turn.text("ok"))
             .turn(|turn| turn.text("done"));
         let events = Events::default();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(NoOutputLimit(scripted.clone()))
             .model("host-model")
             .plugin(Codemode::new(None).with_inference_model("custom-model"))
@@ -835,7 +835,7 @@ fn ordinary_plugin_block_prevents_infer_admission() {
             block_infer: true,
             ..Events::default()
         };
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .plugin(Codemode::new(None))
             .plugin(events.clone());
@@ -880,7 +880,7 @@ impl AgentTool for ReservedInfer {
 fn reserved_infer_name_rejects_run_before_model_request() {
     block_on(async {
         let model = ScriptedModel::new();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .tool(ReservedInfer)
             .plugin(Codemode::new(None));

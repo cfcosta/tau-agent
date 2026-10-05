@@ -85,6 +85,7 @@ rmcp = { version = "3.5.0", default-features = false, features = [
 ] }
 tau-codemode.workspace = true
 tau-store.workspace = true
+tau-store-sqlite.workspace = true
 tau-testing.workspace = true
 tokio = { workspace = true, features = [
   "rt",

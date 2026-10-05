@@ -106,7 +106,7 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(tau_store::Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let config = HostConfig {
         account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),

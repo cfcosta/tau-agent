@@ -63,7 +63,7 @@ fn host_on(
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     host_over(runtime, store, llm, root)
 }
 
@@ -78,7 +78,7 @@ fn host_with_store(
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(Store::open(db)).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::open(db)).unwrap();
     host_over(runtime, store, llm, root)
 }
 
@@ -127,7 +127,7 @@ fn host_with_skills(
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let config = HostConfig {
         account: test_account(),
         credentials: Credentials::new(
@@ -441,7 +441,7 @@ fn written_titles_come_back_in_history() {
         .build()
         .unwrap()
         .block_on(async {
-            let store = Store::open(&db).await.unwrap();
+            let store = tau_store_sqlite::open(&db).await.unwrap();
             store.set_title(&view.id.0, "Greet everyone").await.unwrap();
         });
     let history = host.block_on(host.history()).unwrap();
@@ -1196,7 +1196,7 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     // On disk, so the test reads the queue's records back itself.
     let db = tempfile::tempdir().unwrap();
     let store = runtime
-        .block_on(Store::open(db.path().join("runs.db")))
+        .block_on(tau_store_sqlite::open(db.path().join("runs.db")))
         .unwrap();
     let agent = Agent::new(Routed {
         main: main_llm.clone(),
@@ -1231,7 +1231,9 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     assert!(report.queue.is_empty(), "{:?}", report.queue);
     // It joined the queue with the change it brings, not none.
     let queued = tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let store = Store::open(db.path().join("runs.db")).await.unwrap();
+        let store = tau_store_sqlite::open(db.path().join("runs.db"))
+            .await
+            .unwrap();
         store
             .plugin_entries(&main.0, tau_ui::host::QUEUE_PLUGIN)
             .await
@@ -2048,7 +2050,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let (host, mut events) = Host::with_agent(
         runtime,
         Agent::new(llm).name("coder"),
@@ -2970,7 +2972,7 @@ fn conversations_go_back_to_their_connections() {
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let client = {
         let _guard = runtime.enter();
         OpenAi::with_connector(LocalConnector(address), Limits::default())

@@ -31,7 +31,7 @@ We want stock sqlx macros on every query.
   `query_scalar!`.
 - Migrations run through `sqlx::migrate!`.
 - The offline query metadata in `.sqlx/` is committed, so crates that
-  depend on `tau-store` build without a database.
+  depend on `tau-store-sqlite` build without a database.
 - Use WAL mode.
 - All writes go through a pool with a single connection and
   `BEGIN IMMEDIATE`.

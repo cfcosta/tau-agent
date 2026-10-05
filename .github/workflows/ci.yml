@@ -43,19 +43,19 @@ jobs:
         run: nix develop -c cargo nextest run --workspace
 
       - name: sqlx offline metadata is current
-        working-directory: crates/tau-store
+        working-directory: crates/tau-store-sqlite
         run: |
           export DATABASE_URL="sqlite://$RUNNER_TEMP/tau-store-ci.db"
           nix develop -c sqlx database setup
-          nix develop -c cargo sqlx prepare --check -- -p tau-store
+          nix develop -c cargo sqlx prepare --check -- -p tau-store-sqlite
 
       # A plugin's own database: its queries are checked against tau's
-      # schema and its own, since its build compiles tau-store's too.
+      # schema and its own, since its tests compile tau-store-sqlite's too.
       - name: sqlx offline metadata is current (tau-constitution)
         working-directory: crates/plugins/tau-constitution
         run: |
           export DATABASE_URL="sqlite://$RUNNER_TEMP/tau-constitution-ci.db"
-          nix develop -c sqlx database setup --source ../../tau-store/migrations
+          nix develop -c sqlx database setup --source ../../tau-store-sqlite/migrations
           nix develop -c sqlx migrate run --ignore-missing --source migrations
           nix develop -c cargo sqlx prepare --check
 

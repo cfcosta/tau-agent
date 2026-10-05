@@ -23,7 +23,6 @@ use std::{
 use serde_json::json;
 use tau_agent::{agent::Agent, event::RunEvent, tool::RunId};
 use tau_direnv::{Act, NAME, Record};
-use tau_store::Store;
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
@@ -96,7 +95,7 @@ fn host(
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let config = HostConfig {
         account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(data.join("config")),

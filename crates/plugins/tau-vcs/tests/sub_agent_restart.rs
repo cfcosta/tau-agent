@@ -11,7 +11,6 @@ mod common;
 
 use common::{coder, project_with};
 use serde_json::json;
-use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
     Identity,
@@ -50,7 +49,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
         .unwrap();
     drop(stale);
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
                 t.tool_call(

@@ -408,7 +408,7 @@ impl Host {
         if let Some(parent) = config.store.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let store = runtime.block_on(Store::open(&config.store))?;
+        let store = runtime.block_on(tau_store_sqlite::open(&config.store))?;
         let (agent, client) = coder(
             &runtime,
             &config.account,

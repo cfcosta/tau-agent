@@ -24,7 +24,6 @@ use tau_direnv::{
     host::Host,
     launch::{Direnv, Status},
 };
-use tau_store::Store;
 use tau_ui_plugin::{HostCx, RepoCtx, SavedSettings, Services};
 
 const FAKE: &str = include_str!("fixtures/fake-direnv.sh");
@@ -87,7 +86,7 @@ impl Fixture {
     }
 
     fn host(&self, direnv: Option<Direnv>) -> Host {
-        let store = self.runtime.block_on(Store::memory()).unwrap();
+        let store = self.runtime.block_on(tau_store_sqlite::memory()).unwrap();
         let cx = HostCx::new(
             store,
             self.runtime.handle().clone(),

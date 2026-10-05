@@ -9,11 +9,9 @@ run is stored in SQLite, so you can query transcripts and costs later.
 ```rust
 use tau_agent::agent::Agent;
 use tau_ai::{chatgpt::{self, ChatGpt}, client::OpenAi};
-use tau_store::Store;
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let store = Store::open("runs.db").await?;
+    let store = tau_store_sqlite::open("runs.db").await?;
     // A saved Sign in with ChatGPT, with plan usage enabled.
     let chatgpt = ChatGpt::new(chatgpt::Store::open_default()?);
     let account = chatgpt.active()?.ok_or("sign in with ChatGPT first")?;
@@ -54,6 +52,7 @@ The crates are not on crates.io yet. Add them as git dependencies:
 tau-agent = { git = "https://github.com/cfcosta/tau-agent" }
 tau-ai    = { git = "https://github.com/cfcosta/tau-agent" }
 tau-store = { git = "https://github.com/cfcosta/tau-agent" }
+tau-store-sqlite = { git = "https://github.com/cfcosta/tau-agent" }
 tau-tools = { git = "https://github.com/cfcosta/tau-agent" } # optional
 
 # For tests:
@@ -67,14 +66,15 @@ output and tools) and `async-trait` (custom tools and plugins).
 The workspace uses Rust edition 2024 and pins a nightly toolchain. No
 database is needed at build time: the sqlx query metadata is committed.
 
-| Crate         | What it gives you                                                                 |
-| ------------- | --------------------------------------------------------------------------------- |
-| `tau-agent`   | `Agent`, `Run`, the loop, tools, plugins, limits, typed output, forks, sub-agents |
-| `tau-ai`      | The `OpenAi` client, messages, models and pricing, the `Llm` trait                |
-| `tau-store`   | `Store`: SQLite storage for runs, transcripts and costs                           |
-| `tau-tools`   | Optional coding tools, all rooted at one directory                                |
-| `tau-vcs`     | Optional version-control tools on one jj workspace, backed by jj-lib              |
-| `tau-testing` | `ScriptedModel` and `block_on` for deterministic tests                            |
+| Crate              | What it gives you                                                                 |
+| ------------------ | --------------------------------------------------------------------------------- |
+| `tau-agent`        | `Agent`, `Run`, the loop, tools, plugins, limits, typed output, forks, sub-agents |
+| `tau-ai`           | The `OpenAi` client, messages, models and pricing, the `Llm` trait                |
+| `tau-store`        | `Store`: storage for runs, transcripts and costs, behind a `Backend`              |
+| `tau-store-sqlite` | The SQLite `Backend`: `open` a database file, or `memory` for tests               |
+| `tau-tools`        | Optional coding tools, all rooted at one directory                                |
+| `tau-vcs`          | Optional version-control tools on one jj workspace, backed by jj-lib              |
+| `tau-testing`      | `ScriptedModel` and `block_on` for deterministic tests                            |
 
 ## Core concepts
 

@@ -10,7 +10,7 @@
 use serde_json::json;
 use tau_agent::agent::Agent;
 use tau_ai::message::{InputBlock, Message};
-use tau_store::{Entry, Store};
+use tau_store::Entry;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{Identity, VcsPlugin};
 
@@ -35,7 +35,7 @@ fn a_run_commits_through_the_tools() {
         .build()
         .unwrap()
         .block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome = Agent::new(llm.clone())
                 .plugin(VcsPlugin::new(vcs))
                 .run("commit the notes", &store)

@@ -19,7 +19,6 @@ use std::{
 
 use serde_json::Value;
 use tau_jev::{Jev, fake::FakeJev};
-use tau_store::Store;
 use tau_ui_plugin::{
     ConfigDir,
     ErasedPlugin,
@@ -76,8 +75,8 @@ impl DemoHost {
             .worker_threads(1)
             .enable_all()
             .build()?;
-        let store =
-            runtime.block_on(Store::open(dir.path().join("runs.db")))?;
+        let store = runtime
+            .block_on(tau_store_sqlite::open(dir.path().join("runs.db")))?;
         let repos = catalog
             .repos
             .iter()

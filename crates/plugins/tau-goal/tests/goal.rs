@@ -192,7 +192,7 @@ fn the_run_goes_on_until_jev_says_the_goal_holds() {
         })
         .turn(|t| t.text("14 passed."));
     let fake = jev(&[0.1, 0.2, 0.9]);
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let agent = agent(&llm, fake.clone());
     let (id, events, stop) =
         run(&agent, &store, "/goal --budget 5 the tests pass", None);
@@ -252,7 +252,7 @@ fn a_goal_stops_when_out_of_continuations_or_budget() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("tried"))
         .turn(|t| t.text("tried again"));
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let (id, events, _) = run(
         &agent(&llm, jev(&[0.1])),
         &store,
@@ -270,7 +270,7 @@ fn a_goal_stops_when_out_of_continuations_or_budget() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("tried").cost(0.25))
         .turn(|t| t.text("tried again").cost(0.25));
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let (id, _, _) = run(
         &agent(&llm, jev(&[0.1])),
         &store,
@@ -301,7 +301,7 @@ fn a_goal_outlives_the_run_and_takes_what_an_interface_stores() {
         .turn(|t| t.text("paused, so no check"))
         .turn(|t| t.text("done"));
     let fake = jev(&[0.1, 0.1, 0.9]);
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let agent = agent(&llm, fake.clone());
     let (id, _, _) =
         run(&agent, &store, "/goal --continuations 1 it works", None);
@@ -343,7 +343,7 @@ fn a_goal_outlives_the_run_and_takes_what_an_interface_stores() {
 fn no_goal_means_no_checks_and_a_failed_check_stops() {
     let llm = ScriptedModel::new().turn(|t| t.text("hello"));
     let fake = jev(&[0.1]);
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let (id, events, _) = run(&agent(&llm, fake.clone()), &store, "hi", None);
     assert!(fake.requests().is_empty());
     assert!(continued(&events).is_empty());
@@ -351,7 +351,7 @@ fn no_goal_means_no_checks_and_a_failed_check_stops() {
 
     let llm = ScriptedModel::new().turn(|t| t.text("hello"));
     let failing = FakeJev::new(|_| Err(JevError::Status(503)));
-    let store = block_on_io(Store::memory()).unwrap();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let (id, events, stop) =
         run(&agent(&llm, failing), &store, "/goal it works", None);
     assert_eq!(stop, StopReason::Stop);

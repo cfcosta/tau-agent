@@ -366,7 +366,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(tau_store::Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let agent =
         tau_agent::agent::Agent::new(ScriptedModel::new()).name("coder");
     // The test's own directory: a repository list another run left in

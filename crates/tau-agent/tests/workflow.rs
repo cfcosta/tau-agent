@@ -1,6 +1,6 @@
 //! Workflow primitives (`docs/reference/api.md`): workflow grouping,
 //! typed results, forks and sub-agents, driven through `Agent` with
-//! `ScriptedModel`, `Store::memory()` and paused time.
+//! `ScriptedModel`, `tau_store_sqlite::memory()` and paused time.
 
 use std::{collections::HashMap, time::Duration};
 
@@ -21,7 +21,7 @@ use tau_agent::{
     tool::{AgentTool, RunId, ToolCtx, ToolOutput, TypedTool, typed},
 };
 use tau_ai::message::{AssistantBlock, Message, UserContent};
-use tau_store::{RunKind, Status, Store};
+use tau_store::{RunKind, Status};
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 mod common;
@@ -38,7 +38,7 @@ fn runs_are_grouped_by_workflow() {
         .turn(|t| t.text("b").cost(0.25))
         .turn(|t| t.text("c").cost(0.125));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let scanner = Agent::new(llm.clone()).name("scanner");
         let writer = Agent::new(llm).name("writer");
 
@@ -122,7 +122,7 @@ fn typed_run_round_trips_the_final_message(tc: TestCase) {
     let message = serde_json::to_string(&value).unwrap();
     let llm = ScriptedModel::new().turn(|t| t.text(message.clone()));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let typed = Agent::new(llm.clone())
             .run_typed::<Changes>("scan", &store)
             .await
@@ -183,7 +183,7 @@ fn tools_stay_available_in_a_typed_run() {
             t.text(r#"{"features":["ws"],"fixes":[],"breaking":null,"approved":true}"#)
         });
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let typed = Agent::new(llm.clone())
             .tool(typed(Lookup))
             .run_typed::<Changes>("scan", &store)
@@ -206,7 +206,7 @@ fn tools_stay_available_in_a_typed_run() {
 fn an_invalid_final_message_keeps_the_outcome() {
     let llm = ScriptedModel::new().turn(|t| t.text("not json"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let error = Agent::new(llm)
             .run_typed::<Changes>("scan", &store)
             .await
@@ -229,7 +229,7 @@ fn an_invalid_final_message_keeps_the_outcome() {
 fn a_non_object_output_type_is_rejected_up_front() {
     let llm = ScriptedModel::new().turn(|t| t.text("[]"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let error = Agent::new(llm.clone())
             .run_typed::<Vec<String>>("scan", &store)
             .await
@@ -251,7 +251,7 @@ struct Page<T> {
 fn generic_output_types_get_a_valid_format_name() {
     let llm = ScriptedModel::new().turn(|t| t.text(r#"{"items":[true]}"#));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let typed = Agent::new(llm.clone())
             .run_typed::<Page<bool>>("list", &store)
             .await
@@ -346,7 +346,7 @@ fn forks_continue_from_their_checkpoint(tc: TestCase) {
         llm = llm.turn(|t| t.text(format!("answer {i}")));
     }
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone()).tool(typed(Echo));
         // Per run: its outcome and the model's transcript for it.
         let mut runs: Vec<(tau_agent::agent::Outcome, Vec<(String, String)>)> =
@@ -420,7 +420,7 @@ fn forks_join_their_parents_workflow() {
         .turn(|t| t.text("same"))
         .turn(|t| t.text(r#"{"items":[1]}"#));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm);
         let base = agent
             .run(Input::new("go").workflow("w1"), &store)
@@ -480,7 +480,7 @@ fn supervisor_with_sub_agents(tc: TestCase) {
         child_llm = child_llm.turn(|t| t.text("found").cost(0.25));
     }
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let researcher = Agent::new(child_llm.clone()).name("researcher");
         let lead = Agent::new(lead_llm.clone())
             .name("lead")
@@ -631,7 +631,7 @@ fn sub_agent_usage_counts_toward_limits() {
         .turn(|t| t.text("found").cost(0.6))
         .turn(|t| t.text("found").cost(0.6));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let outcome = Agent::new(lead_llm.clone())
             .tool(Agent::new(child_llm).as_tool("research", "Investigates."))
             .limits(Limits::default().max_usd(1.0))
@@ -657,7 +657,7 @@ fn cancelling_the_caller_cancels_the_sub_agent() {
     let child_llm = ScriptedModel::new()
         .turn(|t| t.text("late").delay(Duration::from_secs(3600)));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut run = Agent::new(lead_llm.clone())
             .tool(Agent::new(child_llm).as_tool("research", "Investigates."))
             .start("task", &store);
@@ -698,7 +698,7 @@ fn a_failed_sub_agent_is_an_error_result() {
     let child_llm =
         ScriptedModel::new().turn(|t| t.error("insufficient_quota", "boom"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let outcome = Agent::new(lead_llm.clone())
             .tool(Agent::new(child_llm).as_tool("research", "Investigates."))
             .run("task", &store)
@@ -801,7 +801,7 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
         child_llm = child_llm.turn(|t| t.text("helped").cost(cost));
     }
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let lead = Agent::new(lead_llm)
             .tool(typed(Echo))
             .tool(Agent::new(child_llm).as_tool("helper", "Helps."))
@@ -900,7 +900,7 @@ fn a_run_resumes_on_another_model() {
         .turn(|t| t.text("hi"))
         .turn(|t| t.text("still here"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let first = Agent::new(llm.clone())
             .model("gpt-5.5")
             .run("hello", &store)
@@ -936,7 +936,7 @@ fn a_finished_run_resumes_like_a_chat() {
         .turn(|t| t.tool_call("echo", json!({"text": "x"})))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(Echo))
             .limits(Limits::default().max_turns(3));
@@ -993,7 +993,7 @@ fn a_running_run_does_not_resume() {
     let llm = ScriptedModel::new()
         .turn(|t| t.delay(Duration::from_secs(30)).text("late"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm);
         let mut running = agent.start("wait", &store);
         // Its first event means it is stored and running.
@@ -1023,7 +1023,7 @@ fn a_fork_counts_turns_from_its_fork_point() {
         .turn(|t| t.text("fork"))
         .turn(|t| t.text("more"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm);
         let base = agent.run("start", &store).await.unwrap();
         let mut fork = agent
@@ -1087,7 +1087,7 @@ fn forking_sub_agents_start_from_their_callers_turn(tc: TestCase) {
         child_llm = child_llm.turn(|t| t.text("found"));
     }
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let researcher = Agent::new(child_llm.clone()).name("researcher");
         let lead = Agent::new(lead_llm.clone())
             .name("lead")
@@ -1213,7 +1213,7 @@ fn runs_name_their_path_and_what_they_fork() {
         .turn(|t| t.text("b done"))
         .turn(|t| t.text("lead done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone());
         let root = agent.run("start", &store).await.unwrap();
         let fork = agent

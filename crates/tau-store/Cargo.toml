@@ -1,18 +1,13 @@
 [package]
 name = "tau-store"
-description = "SQLite storage for runs, messages and fork transcripts, through sqlx."
+description = "Storage for runs, messages and fork transcripts: the shapes and the interface, without a database driver."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
-
-[dev-dependencies]
-hegeltest.workspace = true
-tau-testing.workspace = true

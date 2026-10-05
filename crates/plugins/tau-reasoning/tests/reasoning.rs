@@ -21,7 +21,6 @@ use tau_agent::{
 use tau_ai::responses::request::ReasoningEffort;
 use tau_jev::{Answer, JevError, Request, fake::FakeJev};
 use tau_reasoning::{Choice, NAME, Reasoning, Record, Verdict};
-use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 /// A Jev that scores every task with `probabilities` (one per level,
@@ -67,7 +66,7 @@ fn run_on(
 ) -> (Option<ReasoningEffort>, Vec<Value>, usize) {
     let llm = ScriptedModel::new().turn(|t| t.text("done"));
     let events: Vec<RunEvent> = block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut agent = Agent::new(llm.clone())
             .model(model)
             .instructions("You are a coding agent.")
@@ -198,7 +197,7 @@ fn the_real_jev_scores_tasks() {
     ] {
         let llm = ScriptedModel::new().turn(|t| t.text("done"));
         let reports: Vec<Value> = runtime.block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let agent =
                 Agent::new(llm.clone()).plugin(Reasoning::new(jev.clone()));
             let mut run = agent.start(task, &store);
@@ -264,7 +263,7 @@ fn an_unsure_message_goes_on_as_the_last_one() {
         .turn(|t| t.text("two"))
         .turn(|t| t.text("three"));
     let reports: Vec<Value> = block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .model("gpt-6-sol")
             .plugin(Reasoning::new(Arc::new(jev)));
@@ -389,7 +388,7 @@ fn tool_run(
     }
     let llm = llm.turn(|t| t.text("done"));
     let events: Vec<RunEvent> = block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .model("gpt-6-sol")
             .tool(Probe::new())
@@ -525,7 +524,7 @@ fn what_is_reported_is_recorded(tc: hegel::TestCase) {
     }
     let llm = llm.turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm)
             .model("gpt-6-sol")
             .tool(Probe::new())
@@ -578,7 +577,7 @@ fn a_short_ask_brings_the_task_it_answers() {
         .turn(|t| t.text("done"))
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .model("gpt-6-sol")
             .plugin(Reasoning::new(Arc::new(jev.clone())));
@@ -621,7 +620,7 @@ fn a_stored_run_replays_through_the_policy() {
     }
     let llm = llm.turn(|t| t.text("done"));
     let decisions = block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm)
             .model("gpt-6-sol")
             .tool(Probe::new())
@@ -763,7 +762,7 @@ fn conversation(
         Ok(tau_jev::fake::response(answers, request))
     });
     let reports = block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let plugin = Reasoning::new(Arc::new(jev)).sticky_after(sticky_after);
         let auto = Agent::new(llm.clone())
             .model("gpt-6-sol")

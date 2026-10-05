@@ -74,7 +74,6 @@ use tau_mcp::{
         page::{self, Ui},
     },
 };
-use tau_store::Store;
 use tau_ui_plugin::{
     CallData,
     CallResult,
@@ -521,7 +520,7 @@ impl Fixture {
             .enable_all()
             .build()
             .unwrap();
-        let store = runtime.block_on(Store::memory()).unwrap();
+        let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
         let repo = RepoCtx {
             name: "r".into(),
             checkout: repo_dir.path().to_owned(),

@@ -1,4 +1,4 @@
-//! Module tool integration through nested calls and Store::memory().
+//! Module tool integration through nested calls and tau_store_sqlite::memory().
 //! Inventory: immediate require, exact inspection, selection rollback,
 //! resume/fork prefixes, hook blocking, syntax and quota rejection, and
 //! reserved names. These are scenario tests; the independent generated
@@ -77,7 +77,7 @@ async fn records(store: &Store, run: &str) -> Vec<Value> {
 #[test]
 fn define_and_require_in_one_script() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[r#"
 local made = tools.module_define({ name = 'double', source = 'return function(n) return n * 2 end' })
 local listed = tools.module_list({})
@@ -110,7 +110,7 @@ return { made = made, listed = listed, inspected = inspected, answer = require('
 #[test]
 fn promotion_tool_only_records_pending_and_catalog_has_no_approval() {
     tau_testing::block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let path = std::env::temp_dir()
             .join(format!("module-request-{}", uuid::Uuid::now_v7()));
         let agent = Agent::new(model(&[r#"
@@ -153,7 +153,7 @@ return {requested=requested,approval=approval,loaded=require('candidate').n}
 #[test]
 fn replacements_inspection_rollback_and_forked_selection() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[
             "local d = tools.module_define({name='m',source='return {n=1}'})\nreturn d.version",
             "local old = tools.module_inspect({name='m'}); local loaded = require('m'); store('old',old.version); local new = tools.module_define({name='m',source='return {n=2}'})\nreturn {old=old.version,new=new.version,selected=require('m',new.version).n,pinned=require('m').n,loaded=loaded.n,old_source=tools.module_inspect({name='m',version=old.version}).source}",
@@ -238,7 +238,7 @@ impl PluginRun for BlockDefine {
 #[test]
 fn blocked_syntax_and_quota_failures_leave_no_records() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let blocked = Agent::new(model(&["local ok = pcall(tools.module_define,{name='m',source='return {}'}); return {ok=ok,count=#tools.module_list({})}"]))
             .plugin(Codemode::new(None)).plugin(BlockDefine);
         let run = blocked.run("blocked", &store).await.unwrap();
@@ -293,7 +293,7 @@ impl AgentTool for ConflictingTool {
 #[test]
 fn reserved_module_name_rejects_conflicting_tool() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&["return true"]))
             .tool(ConflictingTool)
             .plugin(Codemode::new(None));

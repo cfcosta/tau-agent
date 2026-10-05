@@ -56,7 +56,7 @@ impl Fixture {
             .enable_all()
             .build()
             .unwrap();
-        let store = runtime.block_on(Store::memory()).unwrap();
+        let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
         let run = RunId(format!("run-{}", uuid::Uuid::now_v7()).into());
         runtime
             .block_on(store.create_run(&NewRun {

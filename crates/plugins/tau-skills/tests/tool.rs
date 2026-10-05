@@ -9,7 +9,6 @@ use futures_util::StreamExt;
 use serde_json::json;
 use tau_agent::{agent::Agent, event::RunEvent};
 use tau_skills::{Loaded, SKILL_FILE, host::SkillsPlugin, scan};
-use tau_store::Store;
 use tau_testing::{block_on_io, scripted::ScriptedModel};
 
 fn skill(dir: &Path, name: &str, description: &str, body: &str) {
@@ -28,7 +27,7 @@ fn skill(dir: &Path, name: &str, description: &str, body: &str) {
 /// Runs `input` to the end, returning its events.
 fn run(agent: &Agent, input: &str) -> Vec<RunEvent> {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut run = agent.start(input, &store);
         let events: Vec<RunEvent> = run.events().collect().await;
         run.outcome().await.unwrap();

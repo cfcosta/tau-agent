@@ -625,7 +625,9 @@ async fn check_scope(
         ..StageCalls::default()
     };
     let mut denials = Vec::new();
-    let foreign = Store::memory().await.map_err(|error| error.to_string())?;
+    let foreign = tau_store_sqlite::memory()
+        .await
+        .map_err(|error| error.to_string())?;
     let root = tempfile::tempdir().map_err(|error| error.to_string())?;
     let model = scripted_codemode_model(positive);
     let run = Agent::new(model.clone())
@@ -707,7 +709,9 @@ async fn run_module(
     let bytes =
         Bytes::new(directory.path().join("artifacts"), Quotas::default())
             .map_err(|error| error.to_string())?;
-    let store = Store::memory().await.map_err(|error| error.to_string())?;
+    let store = tau_store_sqlite::memory()
+        .await
+        .map_err(|error| error.to_string())?;
     let development_model =
         scripted_codemode_model(compose_development_script(ModuleSpec {
             source,
@@ -1240,7 +1244,7 @@ mod properties {
                         Quotas::default(),
                     )
                     .unwrap();
-                    let store = Store::memory().await.unwrap();
+                    let store = tau_store_sqlite::memory().await.unwrap();
                     let code = format!(
                         "local display=tools.read({{path='input.txt'}})\n\
                          assert(display.artifact ~= nil)\n\

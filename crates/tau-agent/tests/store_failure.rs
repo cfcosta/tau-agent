@@ -21,7 +21,7 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::Message;
-use tau_store::{Entry, Status, Store};
+use tau_store::{Entry, Status};
 use tau_testing::{block_on_io, scripted::ScriptedModel};
 
 static CASE: AtomicUsize = AtomicUsize::new(0);
@@ -127,7 +127,7 @@ fn a_failed_turn_write_leaves_no_partial_turn(tc: TestCase) {
     });
     let (path, dir) = database();
     block_on_io(async {
-        let store = Store::open(&path).await.unwrap();
+        let store = tau_store_sqlite::open(&path).await.unwrap();
         let schema = json!({"type": "object"});
         let agent = Agent::new(llm).tool(Echo(schema.clone())).tool(Sabotage {
             path: path.clone(),

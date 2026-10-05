@@ -31,6 +31,7 @@ tau-luau-plugins.workspace = true
 tau-jev.workspace = true
 tau-mcp = { workspace = true, features = ["demo"] }
 tau-memory = { workspace = true, features = ["docbert", "demo"] }
+tau-store-sqlite.workspace = true
 tau-reasoning.workspace = true
 tau-remote.workspace = true
 tau-fast-compaction.workspace = true

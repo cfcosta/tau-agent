@@ -1,5 +1,5 @@
 //! The Codemode plugin in the loop: `Agent` with `ScriptedModel`,
-//! `Store::memory()` and paused time.
+//! `tau_store_sqlite::memory()` and paused time.
 
 use std::{
     sync::{Arc, Mutex},
@@ -222,7 +222,7 @@ async fn last_result(store: &Store, run: &str) -> ToolResultMessage {
 #[test]
 fn many_nested_calls_make_one_result() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let recorder = Recorder::default();
         let agent = Agent::new(model(&[r#"
 local out = {}
@@ -302,7 +302,7 @@ return table.concat(out, ",") .. a .. b
 #[test]
 fn before_tool_blocks_a_nested_call() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let echo = Echo::new("echo");
         let log = echo.log.clone();
         let agent = Agent::new(model(&[
@@ -340,7 +340,7 @@ fn before_tool_blocks_a_nested_call() {
 #[test]
 fn structured_output_returns_a_table() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let recorder = Recorder::default();
         let agent = Agent::new(model(&[r#"
 local t = tools.typed({ text = "hi" })
@@ -390,7 +390,7 @@ return { t.echo, failed.echo, plain, ok, err }
 #[test]
 fn jev_usage_reaches_the_run() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let jev = FakeJev::nouls(|_| 0.25);
         let agent = Agent::new(model(&[
             "return jev.noul({ state = 1, question = 'odd?' }).probability",
@@ -417,7 +417,7 @@ fn jev_usage_reaches_the_run() {
 #[test]
 fn jev_requests_reach_the_run_as_updates() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let recorder = Recorder::default();
         let agent = Agent::new(model(&[
             "tools.echo({ text = 'a' })\nreturn jev.noul({ state = 1, question = 'odd?' }).probability",
@@ -479,7 +479,7 @@ fn without_jev_the_global_is_nil() {
 #[test]
 fn the_store_follows_forks() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[
             "store('a', 1)",
             "store('b', load('a') + 1)\nreturn load('b')",
@@ -528,7 +528,7 @@ fn the_store_follows_forks() {
 #[test]
 fn codemode_cannot_call_itself() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[r#"
 local names = {}
 for _, tool in ALL_TOOLS do table.insert(names, tool.name) end
@@ -556,7 +556,7 @@ return { tools.codemode == nil, table.concat(names, ",") }
 #[test]
 fn start_lists_the_direct_tools_signatures() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new().turn(|t| t.text("done"));
         let mut nested = Echo::new("hidden");
         nested.exposure = Exposure::Nested;
@@ -585,7 +585,7 @@ fn start_lists_the_direct_tools_signatures() {
 #[test]
 fn a_sequential_tool_runs_alone_within_a_script() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut seq = Echo::new("seq");
         seq.mode = ExecutionMode::Sequential;
         let seq_log = seq.log.clone();
@@ -682,7 +682,7 @@ impl Plugin for Sourced {
 #[test]
 fn a_script_waits_for_the_servers_it_needs() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let lazy = Arc::new(Lazy::default());
         let agent = Agent::new(model(&[
             "return 1",

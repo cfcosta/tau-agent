@@ -29,6 +29,7 @@ tau-ui-plugin.workspace = true
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
+tau-store-sqlite.workspace = true
 futures-util.workspace = true
 hegeltest.workspace = true
 tau-store.workspace = true

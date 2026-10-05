@@ -40,7 +40,6 @@ use common::{coder, links, project};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::{agent::Checkpoint, limits::Limits};
-use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
     Identity,
@@ -481,7 +480,7 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
         let first = RunWorkspace::new(
             project.clone().into(),
@@ -703,7 +702,7 @@ fn a_fork_whose_parent_was_undone_stays_apart() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let first = RunWorkspace::new(
             project.clone().into(),
             "first",
@@ -768,7 +767,7 @@ fn a_fork_whose_parents_were_both_undone_stays_apart() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let first = RunWorkspace::new(
             project.clone().into(),
             "first",
@@ -837,7 +836,7 @@ fn a_fork_keeps_its_turns_files_when_later_edits_are_carried_back() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let first = RunWorkspace::new(
             project.clone().into(),
             "first",
@@ -897,7 +896,7 @@ fn a_turn_that_recommits_an_undone_commit_keeps_its_paths() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
         let first = RunWorkspace::new(
             project.clone().into(),

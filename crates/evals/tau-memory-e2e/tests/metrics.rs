@@ -28,7 +28,6 @@ use tau_memory_e2e::{
     },
     scenario::Variant,
 };
-use tau_store::Store;
 use tau_testing::{block_on_io, scripted::ScriptedModel};
 use tau_tools::{path::Root, plugin::CodingTools};
 
@@ -63,7 +62,7 @@ fn a_runs_figures_are_read_from_its_events(tc: TestCase) {
         .model("scripted")
         .plugin(CodingTools::new(Root::new(dir.path().to_owned())));
     let (metrics, events) = block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut meter = Meter::new();
         let mut run = agent.start("list files", &store);
         let events: Vec<RunEvent> = run.events().collect().await;

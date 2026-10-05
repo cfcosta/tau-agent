@@ -214,7 +214,7 @@ fn restarted_inspector_preview_reads_only_its_runs_grant() {
 
     use tau_agent::tool::RunId;
     use tau_artifacts::{Bytes, Quotas};
-    use tau_store::{Entry, NewRun, RunKind, Store, TurnUsage};
+    use tau_store::{Entry, NewRun, RunKind, TurnUsage};
     use tau_tools::ui::ToolsUi;
     use tau_ui_plugin::{
         HOST_RECORD,
@@ -233,7 +233,7 @@ fn restarted_inspector_preview_reads_only_its_runs_grant() {
         .build()
         .unwrap();
     let store = runtime
-        .block_on(Store::open(dir.path().join("runs.db")))
+        .block_on(tau_store_sqlite::open(dir.path().join("runs.db")))
         .unwrap();
     let bytes =
         Bytes::new(project.join("artifacts"), Quotas::default()).unwrap();

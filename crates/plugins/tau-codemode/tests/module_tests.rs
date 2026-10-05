@@ -67,7 +67,7 @@ async fn records(store: &Store, run: &str) -> Vec<Value> {
 #[test]
 fn pass_failure_and_fake_call_accounting_are_saved() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[r#"
 local d = tools.module_define({name='calc',source='return function(n) return n * 2 end'})
 local code = "assert(require('calc', '" .. d.version .. "')(21) == 42); assert(tools.fake({n=21}).answer == 42); text('checked')"
@@ -144,7 +144,7 @@ impl AgentTool for LiveTool {
 fn fake_infer_and_bash_stay_isolated_and_versions_do_not_transfer_tests() {
     block_on_io(async {
         let calls = Arc::new(AtomicUsize::new(0));
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let scripted = model(&[r#"
 local old = tools.module_define({name='m',source='return {value=1}'})
 local newer = tools.module_define({name='m',source='return {value=2}'})
@@ -180,7 +180,7 @@ return {report=report,old=tools.module_inspect({name='m',version=old.version}),n
 #[test]
 fn infinite_loop_times_out_with_a_persisted_failure() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[r#"
 local d = tools.module_define({name='m',source='return {}'})
 local report = tools.module_test({name='m',version=d.version,code='while true do end'})
@@ -204,7 +204,7 @@ return {report=report,tests=#tools.module_inspect({name='m',version=d.version}).
 #[test]
 fn target_initialization_fails_before_vacuous_assertions() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[r#"
 local broken = tools.module_define({name='broken',source="error('broken source')"})
 local missing = tools.module_define({name='missing',source='return true',dependencies={dep=string.rep('0',64)}})
@@ -239,7 +239,7 @@ return {a=a,b=b}
 #[test]
 fn explicit_null_fixture_remains_readable_even_with_empty_error() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[r#"
 local d = tools.module_define({name='m',source='return {}'})
 local r = tools.module_test({name='m',version=d.version,code="assert(tools.fake({}) == json.null)",tools={{name='fake',args={},value=json.null,error=''}}})
@@ -261,7 +261,7 @@ return {r.passed,r.calls[1].status,saved.tools[1].value == json.null}
 #[test]
 fn large_diagnostics_save_bounded_reports() {
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model(&[r#"
 local d = tools.module_define({name='m',source='return {}'})
 local thrown = tools.module_test({name='m',version=d.version,code="error(string.rep('x', 1048576))"})

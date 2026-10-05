@@ -1,6 +1,6 @@
 //! Nested calls (`docs/reference/plugins.md`, "Nested calls"): tools
 //! that call tools through the loop, exposure, tool sources and per-run
-//! tools, driven through `Agent` with `ScriptedModel`, `Store::memory()`
+//! tools, driven through `Agent` with `ScriptedModel`, `tau_store_sqlite::memory()`
 //! and paused time.
 
 use std::{
@@ -37,7 +37,6 @@ use tau_agent::{
     },
 };
 use tau_ai::message::{InputBlock, Message};
-use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
 use tokio::time::Instant;
 
@@ -396,7 +395,7 @@ fn nested_events(events: &[RunEvent]) -> Vec<(&'static str, String, String)> {
 #[test]
 fn a_tool_calls_another_through_the_loop() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let recorder = Recorder::default();
         let llm = script(json!({
             "calls": [{"name": "echo", "args": {"text": "hi"}}]
@@ -462,7 +461,7 @@ fn a_tool_calls_another_through_the_loop() {
 #[test]
 fn before_tool_blocks_a_nested_call() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let recorder = Recorder {
             block: Some("echo"),
             ..Recorder::default()
@@ -503,7 +502,7 @@ fn before_tool_blocks_a_nested_call() {
 #[test]
 fn exposure_decides_what_a_tool_and_the_model_can_call() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
                 t.tool_call(
@@ -611,7 +610,7 @@ fn a_tool_sources_tools_are_callable_but_not_declared() {
     }
 
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let echo = Echo::new("mcp__x__echo").exposure(Exposure::Nested);
         let log = echo.log.clone();
         let shadowed = Echo::new("echo");
@@ -695,7 +694,7 @@ fn add_tool_declares_a_tool_for_that_run_only() {
     }
 
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let adder = Adder {
             log: Arc::default(),
             runs: Arc::default(),
@@ -744,7 +743,7 @@ fn add_tool_declares_a_tool_for_that_run_only() {
 #[test]
 fn ending_the_caller_ends_its_nested_calls() {
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let recorder = Recorder::default();
         let echo = Echo::new("echo");
         let log = echo.log.clone();
@@ -784,7 +783,7 @@ fn ending_the_caller_ends_its_nested_calls() {
 fn a_sequential_tools_nested_calls_run_one_at_a_time() {
     for mode in [ExecutionMode::Sequential, ExecutionMode::Parallel] {
         block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let echo = Echo::new("echo").mode(mode);
             let log = echo.log.clone();
             let call =
@@ -821,7 +820,7 @@ fn nested_calls_are_numbered_in_order(tc: hegel::TestCase) {
     );
     let parallel: bool = tc.draw(gs::booleans());
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let recorder = Recorder::default();
         let calls: Vec<Value> = names
             .iter()

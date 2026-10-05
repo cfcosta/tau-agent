@@ -15,6 +15,7 @@ tau-agent = { path = "../../tau-agent" }
 tau-ai = { path = "../../tau-ai" }
 tau-artifacts.workspace = true
 tau-codemode = { path = "../../plugins/tau-codemode" }
+tau-store-sqlite.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true
 tau-tools = { path = "../../plugins/tau-tools" }

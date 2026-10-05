@@ -1,7 +1,7 @@
 //! The workflow examples of `docs/reference/api.md`, as integration
 //! tests: a typed pipeline, a supervisor with sub-agents, and a fork
 //! fan-out. Each is written the way the doc writes it, against
-//! `ScriptedModel` and `Store::memory()`.
+//! `ScriptedModel` and `tau_store_sqlite::memory()`.
 
 #![allow(
     clippy::disallowed_methods,
@@ -20,7 +20,7 @@ use tau_agent::{
     limits::Limits,
 };
 use tau_ai::message::{Message, UserContent};
-use tau_store::{RunKind, Store};
+use tau_store::RunKind;
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -56,7 +56,7 @@ fn typed_pipeline_with_parallel_steps() {
     let reviewer_agent = Agent::new(reviewer.clone()).name("reviewer");
 
     let chosen = block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let pipeline = async {
             let changes = scanner_agent
                 .run_typed::<Changes>(
@@ -156,7 +156,7 @@ fn supervisor_with_sub_agents() {
         .build()
         .unwrap()
         .block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let researcher = Agent::new(researcher_llm).name("researcher");
             let coder = Agent::new(coder_llm).name("coder");
             let lead = Agent::new(lead_llm)
@@ -226,7 +226,7 @@ fn fork_fan_out() {
         llm = llm.turn(|t| t.text("Implemented."));
     }
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let debugger = Agent::new(llm.clone()).name("debugger");
         let investigation = debugger
             .run("Find the root cause. Don't fix it yet.", &store)

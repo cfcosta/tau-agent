@@ -15,7 +15,6 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_artifacts::{Bytes, Quotas};
-use tau_store::Store;
 // Process and Store I/O require a real-time runtime with I/O enabled.
 use tau_testing::{block_on_io as block_on, scripted::ScriptedModel};
 use tau_tools::{
@@ -187,7 +186,7 @@ fn full_output_pages_cover_first_middle_and_last_markers_in_both_modes() {
         }
         assert!(expected.len() > 150 * 1024);
         std::fs::write(dir.path().join("log.txt"), &expected).unwrap();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         for terminal in [false, true] {
             let fixture = Fixture::new(
                 Root::new(dir.path()),
@@ -231,7 +230,7 @@ fn complete_single_binary_byte_is_read_back_unchanged() {
             Bytes::new(dir.path().join("artifacts"), Quotas::default())
                 .unwrap();
         let fixture = Fixture::new(Root::new(dir.path()), Some(storage), false);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         Agent::new(model(json!({"command":"printf '\\377'"})))
             .plugin(fixture.clone())
             .run("binary output", &store)
@@ -253,7 +252,7 @@ fn empty_command_has_no_artifact_or_artifact_error() {
             Bytes::new(dir.path().join("artifacts"), Quotas::default())
                 .unwrap();
         let fixture = Fixture::new(Root::new(dir.path()), Some(storage), false);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         Agent::new(model(json!({"command":""})))
             .plugin(fixture.clone())
             .run("empty output", &store)
@@ -277,7 +276,7 @@ fn nonzero_and_timeout_preserve_status_while_publishing_observed_output() {
             Bytes::new(dir.path().join("artifacts"), Quotas::default())
                 .unwrap();
         let fixture = Fixture::new(Root::new(dir.path()), Some(storage), false);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         Agent::new(model(
             json!({"command":"printf 'before failure\\n'; exit 7"}),
         ))
@@ -316,7 +315,7 @@ fn storage_failure_has_no_grant_and_grants_follow_run_scope() {
         .unwrap();
         let fixture =
             Fixture::new(Root::new(dir.path()), Some(storage.clone()), false);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         Agent::new(model(json!({"command":"printf 'too long'"})))
             .plugin(fixture.clone())
             .run("quota", &store)
@@ -389,7 +388,7 @@ fn terminal_artifact_contains_raw_pty_bytes_not_rendered_text() {
             Bytes::new(dir.path().join("artifacts"), Quotas::default())
                 .unwrap();
         let fixture = Fixture::new(Root::new(dir.path()), Some(storage), true);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         Agent::new(model(
             json!({"command":"printf '\\033[31mRED\\033[0m\\n'"}),
         ))

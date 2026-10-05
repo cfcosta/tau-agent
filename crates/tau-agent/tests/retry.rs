@@ -1,6 +1,6 @@
 //! Retries of failed responses inside the loop
 //! (`docs/reference/agent-loop.md`, "Retries"), driven through `Agent`
-//! with `ScriptedModel`, `Store::memory()` and paused time.
+//! with `ScriptedModel`, `tau_store_sqlite::memory()` and paused time.
 
 use std::time::Duration;
 
@@ -14,7 +14,6 @@ use tau_ai::{
     message::{Message, StopReason as MessageStop},
     retry::RetryPolicy,
 };
-use tau_store::Store;
 use tau_testing::{
     block_on,
     generators,
@@ -95,7 +94,7 @@ fn retryable_failures_are_retried_within_the_policy(tc: TestCase) {
     }
     llm = llm.turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let started = Instant::now();
         let mut run = Agent::new(llm.clone()).retry(policy).start("go", &store);
         let events: Vec<RunEvent> = run.events().collect().await;
@@ -165,7 +164,7 @@ fn fatal_failures_are_not_retried() {
     for case in cases {
         let llm = ScriptedModel::new().turn(case).turn(|t| t.text("never"));
         block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome =
                 Agent::new(llm.clone()).run("go", &store).await.unwrap();
             assert!(matches!(outcome.stop, StopReason::Error(_)));
@@ -182,7 +181,7 @@ fn a_cancel_during_backoff_ends_the_run() {
         .turn(|t| t.error("server_error", "try again"))
         .turn(|t| t.text("never"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let policy = RetryPolicy {
             max_attempts: 3,
             base: Duration::from_secs(3600),

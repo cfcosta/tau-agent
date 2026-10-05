@@ -125,7 +125,7 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(tau_store::Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let config = HostConfig {
         account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),

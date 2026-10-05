@@ -45,6 +45,7 @@ uuid.workspace = true
 [dev-dependencies]
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+tau-store-sqlite.workspace = true
 hegeltest.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true

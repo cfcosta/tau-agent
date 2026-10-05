@@ -190,7 +190,7 @@ async fn direct_tools_are_declared_and_called_by_the_model() {
     let plugin = plugin(&fixture, |config| {
         config.description = Some("A test server.".into());
     });
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("mcp__srv__echo", json!({"text": "hi"})))
         .turn(|t| t.tool_call("mcp__srv__fail", json!({})))
@@ -231,7 +231,7 @@ async fn codemode_tools_are_called_from_tools_only() {
     let fixture = Fixture::new(false);
     let plugin =
         plugin(&fixture, |config| config.exposure = Exposure::Codemode);
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("mcp__srv__echo", json!({"text": "direct"})))
         .turn(|t| {
@@ -306,7 +306,7 @@ async fn hidden_tools_are_nowhere() {
             ("h*".into(), Exposure::Codemode),
         ];
     });
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| {
             t.tool_call(
@@ -363,7 +363,7 @@ async fn a_server_that_connects_mid_run_shows_from_the_next_run() {
         .server(config)
         .startup_wait(Duration::from_millis(200))
         .build();
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let gate = fixture.clone();
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("caller", json!({"name": "mcp__srv__echo", "args": {"text": "late"}, "wait": ["srv"]})))
@@ -425,7 +425,7 @@ impl AgentTool for Withdraw {
 async fn a_withdrawn_tool_fails() {
     let fixture = Fixture::new(true);
     let plugin = plugin(&fixture, |_| {});
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("withdraw", json!({})))
         .turn(|t| t.tool_call("mcp__srv__echo", json!({"text": "gone"})))
@@ -535,7 +535,7 @@ fn the_server_list_fits_its_limits(tc: TestCase) {
 async fn the_model_reads_a_resource() {
     let fixture = Fixture::with_features(false);
     let plugin = plugin(&fixture, |_| {});
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("list_mcp_resources", json!({})))
         .turn(|t| {
@@ -592,7 +592,7 @@ async fn codemode_servers_make_the_resource_tools_nested() {
     let fixture = Fixture::with_features(false);
     let plugin =
         plugin(&fixture, |config| config.exposure = Exposure::Codemode);
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| {
             t.tool_call(
@@ -649,7 +649,7 @@ async fn no_resource_tools_without_servers_that_offer_them() {
         })
         .startup_wait(Duration::from_secs(5))
         .build();
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| {
             t.tool_call(

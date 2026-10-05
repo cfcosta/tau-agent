@@ -20,7 +20,7 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_artifacts::{Bytes, Quotas};
-use tau_store::{Entry, Store};
+use tau_store::Entry;
 use tau_testing::{block_on, scripted::ScriptedModel};
 use tau_tools::{
     artifact_grant::{
@@ -351,7 +351,7 @@ fn grants_follow_fork_cutoffs_but_not_other_conversations() {
         let bytes =
             Bytes::new(directory.path().join("artifacts"), Quotas::default())
                 .unwrap();
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let fixture =
             FixtureCodingTools::new(Root::new(directory.path()), bytes.clone());
         let parent = Agent::new(publish_model())
@@ -468,7 +468,7 @@ fn publication_requires_coding_tools_and_owned_storage_is_explicit() {
             name: "other",
             ..fixture.clone()
         };
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let wrong_run = Agent::new(publish_model())
             .plugin(wrong.clone())
             .run("wrong plugin", &store)
@@ -523,7 +523,7 @@ fn read_artifacts_recover_bytes_past_line_and_byte_display_limits() {
                 .unwrap();
         let fixture =
             FixtureCodingTools::new(Root::new(directory.path()), bytes);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let sources = [
             (
                 format!("{}\nLINE_AFTER_2000", vec!["row"; 2_005].join("\n")),
@@ -602,7 +602,7 @@ fn published_read_keeps_display_truncation_details() {
                 .unwrap();
         let fixture =
             FixtureCodingTools::new(Root::new(directory.path()), bytes);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         Agent::new(file_model(json!({"path":"long.txt"}), false))
             .plugin(fixture.clone())
             .run("long read", &store)
@@ -632,7 +632,7 @@ fn binary_read_artifact_preserves_original_bytes() {
                 .unwrap();
         let fixture =
             FixtureCodingTools::new(Root::new(directory.path()), bytes);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let parent =
             Agent::new(file_model(json!({"path":"binary.dat"}), false))
                 .plugin(fixture.clone())
@@ -671,7 +671,7 @@ fn image_read_keeps_direct_image_and_pages_original_file_bytes() {
                 .unwrap();
         let fixture =
             FixtureCodingTools::new(Root::new(directory.path()), bytes);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let parent = Agent::new(file_model(json!({"path":"image.bmp"}), false))
             .plugin(fixture.clone())
             .run("image", &store)
@@ -708,7 +708,7 @@ fn file_larger_than_default_artifact_quota_reports_failure_without_reference() {
                 .unwrap();
         let fixture =
             FixtureCodingTools::new(Root::new(directory.path()), bytes);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let run = Agent::new(file_model(json!({"path":"oversize.dat"}), false))
             .plugin(fixture.clone())
             .run("oversize", &store)
@@ -750,7 +750,7 @@ fn quota_failure_returns_artifact_error_without_a_grant_or_object() {
         .unwrap();
         let fixture =
             FixtureCodingTools::new(Root::new(directory.path()), bytes);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let run = Agent::new(file_model(json!({"path":"large.txt"}), false))
             .plugin(fixture.clone())
             .run("quota", &store)
@@ -786,7 +786,7 @@ fn dropped_publication_future_cancels_its_blocking_reader_without_a_grant() {
                 .unwrap();
         let fixture =
             FixtureCodingTools::new(Root::new(directory.path()), bytes);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let model = ScriptedModel::new()
             .turn(|t| t.tool_call("drop_publication_fixture", json!({})))
             .turn(|t| t.text("done"));
@@ -831,7 +831,7 @@ fn unicode_artifact_pages_match_original_file(tc: TestCase) {
             .unwrap();
     let fixture = FixtureCodingTools::new(Root::new(directory.path()), bytes);
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         Agent::new(file_model(json!({"path":"unicode.txt"}), true))
             .plugin(fixture.clone())
             .run("unicode", &store)

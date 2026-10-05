@@ -881,7 +881,7 @@ mod tests {
             let new = definition("m", "return { n = 2 }", BTreeMap::new());
             fixture.install(&old);
             fixture.repository.stage(&new).unwrap();
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let agent = Agent::new(scripted(&[
                 "return {loaded=require('m').n,list=tools.module_list({}),inspect=tools.module_inspect({name='m'})}",
                 "return {loaded=require('m').n,list=tools.module_list({}),inspect=tools.module_inspect({name='m'})}",
@@ -977,7 +977,7 @@ return {{report=report, repository_root_allowed=repository_root_allowed, inspect
 "#,
                 version = dependency.version()
             );
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let agent = Agent::new(scripted(&[&script])).plugin(
                 crate::Codemode::new(None).with_repository(&fixture.path),
             );
@@ -1016,7 +1016,7 @@ return {{report=report, repository_root_allowed=repository_root_allowed, inspect
                 "return { n = 3 }",
                 BTreeMap::new(),
             ));
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let agent = Agent::new(scripted(&[
                 "local ok = pcall(require, '../selected.json'); return ok",
             ]))

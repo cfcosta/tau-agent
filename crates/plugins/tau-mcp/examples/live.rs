@@ -54,7 +54,6 @@ use tau_codemode::{
     signature::{CALL_TOOL_RESULT_TYPES, render_tool},
 };
 use tau_mcp::{McpPlugin, connection::State};
-use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tokio::{io::AsyncWriteExt, net::TcpListener};
 use tokio_util::sync::CancellationToken;
@@ -921,7 +920,7 @@ async fn results(mcp: &McpPlugin, report: &mut Report) {
         llm = llm.turn(move |t| t.tool_call(name, args));
     }
     llm = llm.turn(|t| t.text("done"));
-    let store = Store::memory().await.expect("a store");
+    let store = tau_store_sqlite::memory().await.expect("a store");
     let agent = Agent::new(llm).plugin(mcp.clone());
     let mut run = agent.start("go", &store);
     let mut ends = Vec::new();
@@ -1241,7 +1240,7 @@ return { isError = bad.isError }
             llm.turn(move |t| t.tool_call("codemode", json!({ "code": code })));
     }
     llm = llm.turn(|t| t.text("done"));
-    let store = Store::memory().await.expect("a store");
+    let store = tau_store_sqlite::memory().await.expect("a store");
     let agent = Agent::new(llm.clone())
         .plugin(mcp.clone())
         .plugin(Codemode::new(None));
@@ -1394,7 +1393,7 @@ async fn agent(
         }
     };
     let llm = OpenAi::chatgpt(chatgpt, account);
-    let store = Store::memory().await.expect("a store");
+    let store = tau_store_sqlite::memory().await.expect("a store");
     let agent = Agent::new(llm)
         .model(model)
         .instructions(

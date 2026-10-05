@@ -16,7 +16,6 @@ use tau_direnv::{
     host::Host,
     launch::{Direnv, Status},
 };
-use tau_store::Store;
 use tau_ui_plugin::{HostCx, RepoCtx, SavedSettings, Services};
 
 fn run(launch: &Launch, dir: &Path, script: &str) -> String {
@@ -64,7 +63,7 @@ fn the_real_direnv_loads_through_taus_whitelist() {
         workspaces: root.clone(),
     };
     let cx = HostCx::new(
-        runtime.block_on(Store::memory()).unwrap(),
+        runtime.block_on(tau_store_sqlite::memory()).unwrap(),
         runtime.handle().clone(),
         Services::default().with(SavedSettings::in_memory()),
         dir.path().join("tau"),

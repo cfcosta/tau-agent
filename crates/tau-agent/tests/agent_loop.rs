@@ -1,5 +1,5 @@
 //! The agent loop (`docs/reference/agent-loop.md`), driven through
-//! `Agent` with `ScriptedModel`, `Store::memory()` and paused time.
+//! `Agent` with `ScriptedModel`, `tau_store_sqlite::memory()` and paused time.
 
 use std::{
     sync::{Arc, Mutex},
@@ -23,7 +23,6 @@ use tau_ai::message::{
     Message,
     StopReason as MessageStop,
 };
-use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 mod common;
@@ -253,7 +252,7 @@ fn loop_over_generated_scripts_body(tc: TestCase) {
     llm = llm.turn(|t| t.text("done").usage(last.0, last.1));
 
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let recorder = Recorder::default();
         let agent = Agent::new(llm.clone())
@@ -613,7 +612,7 @@ fn truncated_calls_never_run() {
         })
         .turn(|t| t.text("ok"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let agent = Agent::new(llm).tool(Probe::new(
             "probe",
@@ -641,7 +640,7 @@ fn steering_lands_after_the_batch() {
         .turn(|t| t.tool_call("probe", json!({"ms": 100})))
         .turn(|t| t.text("heard you"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let agent = Agent::new(llm.clone()).tool(Probe::new(
             "probe",
@@ -676,7 +675,7 @@ fn control_steers_and_cancels_while_events_are_read() {
         .turn(|t| t.tool_call("probe", json!({"ms": 5_000})))
         .turn(|t| t.text("never reached"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let agent = Agent::new(llm.clone()).tool(Probe::new(
             "probe",
@@ -768,7 +767,7 @@ fn before_tool_hooks() {
         })
         .turn(|t| t.text("ok"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::new(Mutex::new(Vec::new()));
         let agent = Agent::new(llm)
@@ -812,7 +811,7 @@ fn unknown_tool_is_an_error_result() {
         .turn(|t| t.tool_call("nope", json!({})))
         .turn(|t| t.text("ok"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let run = Agent::new(llm).start("go", &store);
         let id = run.id();
         assert_eq!(run.outcome().await.unwrap().stop, StopReason::Stop);
@@ -863,7 +862,7 @@ fn a_failure_with_output_keeps_its_details() {
         .turn(|t| t.tool_call("fails", json!({})))
         .turn(|t| t.text("ok"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let recorder = Recorder::default();
         let run = Agent::new(llm)
             .tool(FailsWithOutput(json!({"type": "object"})))
@@ -905,7 +904,7 @@ fn model_error_ends_the_run() {
     let llm =
         ScriptedModel::new().turn(|t| t.error("insufficient_quota", "boom"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let outcome = Agent::new(llm).run("go", &store).await.unwrap();
         assert!(
             matches!(&outcome.stop, StopReason::Error(m) if m.contains("boom")),
@@ -925,7 +924,7 @@ fn turn_limit_ends_the_run() {
         llm = llm.turn(|t| t.tool_call("probe", json!({"ms": 0})));
     }
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let outcome = Agent::new(llm)
             .tool(Probe::new("probe", ExecutionMode::Parallel, log))
@@ -968,7 +967,7 @@ fn slow_hook_holds_only_its_run() {
         }
     }
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let slow = Agent::new(ScriptedModel::new().turn(|t| t.text("slow")))
             .plugin(Gate(gate.clone()))
@@ -994,7 +993,7 @@ fn slow_hook_holds_only_its_run() {
 fn settings_reach_the_model() {
     let llm = ScriptedModel::new().turn(|t| t.text("ok"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         Agent::new(llm.clone())
             .model("gpt-5.4-mini")
@@ -1053,7 +1052,7 @@ fn cancel_mid_batch() {
         })
         .turn(|t| t.text("never"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let started = Arc::new(tokio::sync::Notify::new());
         let run = Agent::new(llm.clone())
@@ -1106,7 +1105,7 @@ fn failed_response_runs_no_tools() {
         message
     });
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let outcome = Agent::new(llm)
             .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
@@ -1147,7 +1146,7 @@ fn errors_and_debug_output() {
         "{shown}"
     );
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let run = Agent::new(ScriptedModel::new().turn(|t| t.text("x")))
             .start("go", &store);
         let shown = format!("{run:?}");
@@ -1165,7 +1164,7 @@ fn warm_up_runs_once_per_run_when_on() {
         .turn(|t| t.text("two"))
         .turn(|t| t.text("three"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone()).instructions("Be brief.");
         agent.run("cold", &store).await.unwrap();
         assert!(llm.warm_ups().is_empty());
@@ -1184,7 +1183,7 @@ fn warm_up_runs_once_per_run_when_on() {
 fn tools_adds_several_in_order() {
     let llm = ScriptedModel::new().turn(|t| t.text("ok"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let kit: Vec<Arc<dyn AgentTool>> = vec![
             Arc::new(Probe::new("a", ExecutionMode::Parallel, log.clone())),
@@ -1223,7 +1222,7 @@ fn a_sequential_tool_serializes_its_batch() {
         })
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let agent = Agent::new(llm.clone())
             .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
@@ -1264,7 +1263,7 @@ fn grouped_calls_run_together_and_apart(tc: TestCase) {
         })
         .turn(|t| t.text("done"));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let agent = Agent::new(llm.clone())
             .tool(Probe::new("a", ExecutionMode::Parallel, log.clone()))

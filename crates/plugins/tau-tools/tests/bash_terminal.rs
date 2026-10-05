@@ -394,7 +394,7 @@ async fn pipes_mode_has_no_terminal_details() {
 fn stored_results_keep_the_terminal() {
     use tau_agent::agent::Agent;
     use tau_ai::message::Message;
-    use tau_store::{Entry, Store};
+    use tau_store::Entry;
     use tau_testing::scripted::ScriptedModel;
     use tau_tools::plugin::CodingTools;
 
@@ -413,7 +413,7 @@ fn stored_results_keep_the_terminal() {
         .build()
         .unwrap()
         .block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome = Agent::new(llm)
                 .plugin(CodingTools::new(Root::new(dir.path())))
                 .run("go", &store)

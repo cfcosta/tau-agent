@@ -1,5 +1,5 @@
 //! Plugins (`docs/reference/plugins.md`), driven through `Agent` with
-//! `ScriptedModel` and `Store::memory()`.
+//! `ScriptedModel` and `tau_store_sqlite::memory()`.
 
 use std::sync::{Arc, Mutex};
 
@@ -289,7 +289,7 @@ fn start_shapes_the_run() {
             .instructions("Be thorough.")
             .plugin(first.clone())
             .plugin(second.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let outcome = agent
             .run(
                 tau_agent::agent::Input::new("what color?").workflow("w1"),
@@ -344,7 +344,7 @@ fn a_failed_start_fails_the_run() {
         let agent = Agent::new(model.clone())
             .plugin(broken)
             .plugin(later.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let run = agent.start("hi", &store);
         let id = run.id();
         let error = run.outcome().await.unwrap_err();
@@ -377,7 +377,7 @@ fn tools_and_tool_hooks_are_per_run() {
             tools: vec![Arc::new(Echo::new())],
             ..Probe::named("guard")
         };
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (a, b) = (script(), script());
         let run_a = Agent::new(a.clone())
             .plugin(probe.clone())
@@ -427,7 +427,7 @@ fn continuations_are_capped_at(wanted: u32, cap: u32) {
         let agent = Agent::new(model.clone())
             .limits(Limits::default().max_continuations(cap))
             .plugin(probe.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut run = agent.start("go", &store);
         let mut events = Vec::new();
         {
@@ -500,7 +500,7 @@ fn charged_usage_counts() {
         let agent = Agent::new(model.clone())
             .limits(Limits::default().max_usd(1.0))
             .plugin(probe);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let outcome = agent.run("go", &store).await.unwrap();
         assert_eq!(outcome.stop, StopReason::Limit(LimitKind::Usd));
         assert_eq!(outcome.usage.cost.total, 1.25);
@@ -556,7 +556,7 @@ fn charges_are_kept_per_plugin(tc: hegel::TestCase) {
         for probe in &probes {
             agent = agent.plugin(probe.clone());
         }
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut run = agent.start("go", &store);
         let mut events = Vec::new();
         {
@@ -646,7 +646,7 @@ fn published_bodies_are_reported_and_recorded(tc: hegel::TestCase) {
             publish: bodies.clone(),
             ..Probe::named("publisher")
         };
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut run = Agent::new(model).plugin(probe).start("go", &store);
         let mut events = Vec::new();
         {
@@ -692,7 +692,7 @@ fn records_reach_forks() {
             ..Probe::named("ledger")
         };
         let agent = Agent::new(model.clone()).plugin(probe.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let root = agent.run("first", &store).await.unwrap();
         let fork = agent
             .fork(&root.checkpoint())
@@ -766,7 +766,7 @@ fn a_failing_before_stop_is_reported_and_stops() {
         let agent = Agent::new(model.clone())
             .plugin(Failing)
             .plugin(later.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut run = agent.start("go", &store);
         let mut events = Vec::new();
         {
@@ -920,7 +920,7 @@ fn a_rewrite_replaces_the_transcript() {
         let agent = Agent::new(model.clone())
             .tool(Echo::new())
             .plugin(pruner.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (events, outcome) =
             run_to_end(&agent, &store, "go", Some("then this")).await;
         assert_grammar(&events);
@@ -1006,7 +1006,7 @@ fn a_bad_rewrite_is_rejected() {
         let agent = Agent::new(model.clone())
             .tool(Echo::new())
             .plugin(Pruner::new(Prune::DropLast));
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (events, outcome) = run_to_end(&agent, &store, "go", None).await;
         assert_eq!(outcome.text, "done");
         assert_eq!(model.requests()[1].transcript.len(), 3);
@@ -1062,7 +1062,7 @@ fn the_first_rewrite_takes_an_overflow() {
             .plugin(declines.clone())
             .plugin(prunes.clone())
             .plugin(later.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (events, outcome) =
             run_to_end(&agent, &store, "go", Some("then this")).await;
         assert_eq!(outcome.text, "done");
@@ -1114,7 +1114,7 @@ fn a_fork_is_offered_its_context_before_it_asks() {
             ..Pruner::new(Prune::KeepLastUser)
         };
         let agent = Agent::new(model.clone()).plugin(pruner.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (_, outcome) = run_to_end(&agent, &store, "go", None).await;
         assert_eq!(pruner.offered.lock().unwrap().clone(), []);
 
@@ -1152,7 +1152,7 @@ fn usage_charged_at_finish_is_stored() {
             ..Probe::named("distiller")
         };
         let agent = Agent::new(model).plugin(probe);
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let outcome = agent.run("go", &store).await.unwrap();
         assert_eq!(outcome.usage.cost.total, 0.75);
         let record = store.run(&outcome.run.0).await.unwrap().unwrap();
@@ -1211,7 +1211,7 @@ fn plugins_see_what_a_rewrite_replaced() {
             .tool(Echo::new())
             .plugin(Pruner::new(Prune::KeepLastUser))
             .plugin(watcher.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (events, _) =
             run_to_end(&agent, &store, "go", Some("then this")).await;
         assert_grammar(&events);
@@ -1308,7 +1308,7 @@ fn before_request_picks_each_turns_effort() {
             .reasoning(Medium)
             .plugin(broken)
             .plugin(picker.clone());
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let (events, outcome) = run_to_end(&agent, &store, "go", None).await;
         assert_eq!(outcome.stop, StopReason::Stop);
         assert_grammar(&events);
@@ -1369,7 +1369,7 @@ mod side_ask_tests {
     use tau_testing::{block_on, scripted::ScriptedModel};
     use tokio_util::sync::CancellationToken;
 
-    use super::{Agent, PluginError, Store};
+    use super::{Agent, PluginError};
 
     #[derive(Clone)]
     struct CountingModel {
@@ -1571,7 +1571,7 @@ mod side_ask_tests {
             };
             let observer = Arc::new(Observer::new(Admission::Allow));
             let plugin = SideAsk::observed(observer.clone());
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome = Agent::new(model.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1606,7 +1606,7 @@ mod side_ask_tests {
             };
             let mut plugin = SideAsk::legacy();
             plugin.max_output_tokens = Some(2048);
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             Agent::new(model.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1632,7 +1632,7 @@ mod side_ask_tests {
                 opens: Arc::default(),
             };
             let plugin = SideAsk::legacy();
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome = Agent::new(model.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1653,7 +1653,7 @@ mod side_ask_tests {
             let model = CountingModel::new(scripted.clone());
             let observer = Arc::new(Observer::new(Admission::RejectAt(1)));
             let plugin = SideAsk::observed(observer.clone());
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             Agent::new(model.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1686,7 +1686,7 @@ mod side_ask_tests {
                 .turn(|t| t.text("main").cost(0.5));
             let observer = Arc::new(Observer::new(Admission::Allow));
             let plugin = SideAsk::observed(observer.clone());
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome = Agent::new(scripted.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1722,7 +1722,7 @@ mod side_ask_tests {
                 .turn(|t| t.text("main").cost(0.5));
             let observer = Arc::new(Observer::new(Admission::RejectAt(2)));
             let plugin = SideAsk::observed(observer.clone());
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome = Agent::new(scripted.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1744,7 +1744,7 @@ mod side_ask_tests {
                 Arc::new(Observer::new(Admission::CancelWhileWaiting));
             let plugin = SideAsk::observed(waiting.clone());
             let scripted = ScriptedModel::new();
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let _ = Agent::new(scripted.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1764,7 +1764,7 @@ mod side_ask_tests {
                 scripted.clone(),
             )));
             let plugin = SideAsk::observed(in_flight.clone());
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let _ = Agent::new(scripted.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1787,7 +1787,7 @@ mod side_ask_tests {
                 .turn(|t| t.text("side").cost(0.3))
                 .turn(|t| t.text("main").cost(0.5));
             let plugin = SideAsk::legacy();
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome = Agent::new(scripted.clone())
                 .plugin(plugin.clone())
                 .run("go", &store)
@@ -1832,7 +1832,7 @@ fn plugins_see_what_a_run_inherits() {
         .turn(|t| t.text("forked"));
     let seen = Arc::new(Mutex::new(Vec::new()));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm).plugin(Inherits(seen.clone()));
         let first = agent.run("start", &store).await.unwrap();
         let checkpoint = first.checkpoint();

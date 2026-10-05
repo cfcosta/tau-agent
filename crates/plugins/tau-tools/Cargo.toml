@@ -71,6 +71,7 @@ tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 
 [dev-dependencies]
+tau-store-sqlite.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 base64.workspace = true
 serde_json.workspace = true

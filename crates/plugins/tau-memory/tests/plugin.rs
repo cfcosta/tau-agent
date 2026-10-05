@@ -28,7 +28,6 @@ use tau_memory::{
     memory::Draft,
     note::{By, Link, LinkType, NoteType, Source},
 };
-use tau_store::Store;
 use tau_testing::{block_on_io, scripted::ScriptedModel};
 
 fn scopes(dir: &std::path::Path, user: bool) -> Scopes {
@@ -191,7 +190,7 @@ fn a_run_starts_with_the_index_and_the_notes_for_its_task() {
     let model = ScriptedModel::new().turn(|t| t.text("done"));
     let agent = Agent::new(model.clone()).plugin(MemoryPlugin::new(scopes));
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         agent
             .run("fix the retry after parsing", &store)
             .await
@@ -283,7 +282,7 @@ fn compaction_gives_memory_one_request_over_what_it_drops() {
         .plugin(Compactor)
         .plugin(MemoryPlugin::new(scopes.clone()));
     let events: Vec<RunEvent> = block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let mut run = agent.start("why do lanes stall", &store);
         run.steer("keep going");
         let events = run.events().collect().await;
@@ -386,7 +385,7 @@ fn editing_a_file_marks_the_notes_about_it() {
         .tool(typed(Edit))
         .plugin(MemoryPlugin::new(scopes.clone()));
     block_on_io(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         agent.run("change retry", &store).await.unwrap();
     });
     let repo = scopes.repo.lock().unwrap();
@@ -421,7 +420,7 @@ fn consolidation_runs_only_when_turned_on() {
         let agent = Agent::new(model.clone())
             .plugin(MemoryPlugin::new(scopes.clone()).consolidate(on));
         block_on_io(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             agent.run("fix the flaky lane test", &store).await.unwrap();
         });
         assert_eq!(model.requests().len(), if on { 2 } else { 1 });

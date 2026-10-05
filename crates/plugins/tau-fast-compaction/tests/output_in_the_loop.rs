@@ -25,7 +25,6 @@ use tau_fast_compaction::{
     output::{HEADER, SPILL},
 };
 use tau_jev::{Answer, JevError, fake::FakeJev};
-use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 /// A fresh directory for one test's files.
@@ -171,7 +170,7 @@ async fn run(
     jev: FakeJev,
     settings: Settings,
 ) -> (Vec<RunEvent>, Outcome) {
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let agent = Agent::new(model.clone())
         .tool(bash)
         .plugin(FastCompaction::new(jev).settings(settings));
@@ -290,7 +289,7 @@ fn the_report_is_recorded() {
     let dir = scratch("recorded");
     let model = one_build();
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .tool(Bash::new(build_log(3000), Answering::Whole))
             .plugin(

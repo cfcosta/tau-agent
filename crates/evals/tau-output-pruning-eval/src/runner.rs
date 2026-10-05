@@ -30,7 +30,6 @@ use tau_fast_compaction::{
     state,
 };
 use tau_jev::{Jev, JevError, Request, Response};
-use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_tools::truncate::{MAX_BYTES, MAX_LINES, truncate_tail};
 
@@ -255,7 +254,7 @@ pub async fn run(
             .settings(settings),
     );
 
-    let store = Store::memory().await?;
+    let store = tau_store_sqlite::memory().await?;
     let started = Instant::now();
     let mut run = agent.start(workload.prompt.as_str(), &store);
     let events: Vec<RunEvent> = run.events().collect().await;

@@ -19,7 +19,6 @@ use common::{coder, links, project};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::agent::Checkpoint;
-use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
     Identity,
@@ -132,7 +131,7 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
         }
         let dirty = *trees.last().unwrap() != start;
 
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let first = RunWorkspace::new(
             project.clone().into(),
             "first",

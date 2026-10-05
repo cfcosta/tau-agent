@@ -19,7 +19,6 @@ use tau_agent::{
     plugin::{FinishedRun, Plugin, PluginCtx, PluginError, PluginRun, RunPlan},
 };
 use tau_ai::message::Message;
-use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
     Identity,
@@ -124,7 +123,7 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
             .build()
             .unwrap();
         runtime.block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let parent = RunWorkspace::new(
                 project.clone().into(),
                 "parent",
@@ -329,7 +328,7 @@ fn oversized_untracked_child_files_are_not_discarded() {
             .build()
             .unwrap();
         runtime.block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let parent = RunWorkspace::new(
                 project.clone().into(),
                 "parent",

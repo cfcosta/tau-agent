@@ -9,8 +9,8 @@ examples double as the acceptance tests for M4.
 let chatgpt = tau_ai::chatgpt::ChatGpt::new(tau_ai::chatgpt::Store::open_default()?);
 let account = chatgpt.active()?.expect("signed in"); // an AccountId from a finished sign-in
 let llm = tau_ai::client::OpenAi::chatgpt(chatgpt, account); // the plan; one WebSocket pool per client
-let store = tau_store::Store::open("runs.db").await?;
-let test_store = tau_store::Store::memory().await?;
+let store = tau_store_sqlite::open("runs.db").await?; // a tau_store::Store
+let test_store = tau_store_sqlite::memory().await?;
 ```
 
 `Agent::new` accepts anything implementing `tau_ai::llm::Llm`, by value.

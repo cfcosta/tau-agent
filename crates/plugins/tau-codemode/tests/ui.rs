@@ -44,7 +44,7 @@ use tau_codemode::{
     ui::{self, Action, CodemodeUi, InspectorUi, Row, State},
 };
 use tau_jev::{Jev, fake::FakeJev};
-use tau_store::{Entry, NewRun, RunKind, Store, TurnUsage};
+use tau_store::{Entry, NewRun, RunKind, TurnUsage};
 use tau_testing::block_on_io;
 use tau_ui_plugin::{
     CallData,
@@ -330,7 +330,7 @@ fn host_action_revalidates_persisted_records_and_publishes_selection() {
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let run = RunId("module-run".into());
     runtime
         .block_on(store.create_run(&NewRun {

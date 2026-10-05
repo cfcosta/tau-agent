@@ -28,6 +28,7 @@ tracing = "0.1"
 [dev-dependencies]
 async-trait.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+tau-store-sqlite.workspace = true
 futures-util.workspace = true
 hegeltest.workspace = true
 tau-ai.workspace = true

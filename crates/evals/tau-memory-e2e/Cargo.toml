@@ -13,6 +13,7 @@ default = []
 docbert = ["tau-memory/docbert"]
 
 [dependencies]
+tau-store-sqlite.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 regex.workspace = true

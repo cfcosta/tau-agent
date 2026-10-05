@@ -453,7 +453,7 @@ mod tests {
             .enable_all()
             .build()
             .unwrap();
-        let store = runtime.block_on(Store::memory()).unwrap();
+        let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
         let pushes: Arc<Mutex<Vec<Push>>> = Arc::default();
         let heard = pushes.clone();
         let cx = HostCx::new(

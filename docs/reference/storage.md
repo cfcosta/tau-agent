@@ -6,6 +6,12 @@ is bundled into the build. Every query uses `sqlx::query!`, `query_as!`
 or `query_scalar!`, and migrations run through `sqlx::migrate!`. See
 [decision 0003](../decisions/0003-sqlite-via-sqlx-macros.md).
 
+The database is `tau-store-sqlite`'s. `tau-store` holds the types and
+the `Backend` trait that a `Store` (`Arc<dyn Backend>`) answers, with
+no database driver, so the agent loop and the plugins build without
+waiting for SQLite to compile. `tau_store_sqlite::open` and
+`tau_store_sqlite::memory` return a `Store`.
+
 Credentials are not in the database. tau-ui keeps them in
 `$XDG_CONFIG_HOME/tau/`, each file readable only by the user: ChatGPT
 sign-ins in `chatgpt/` (see
@@ -118,17 +124,17 @@ off.
 
 ## Connections
 
-| Pool                      | Size                              | Settings                                                                                                                     |
-| ------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| writer                    | 1 connection                      | WAL, `synchronous = NORMAL`, `busy_timeout = 5s`, `foreign_keys = ON`; every write transaction starts with `BEGIN IMMEDIATE` |
-| reader                    | 8 connections                     | same settings, plus `read_only(true)`                                                                                        |
-| tests (`Store::memory()`) | 1 connection shared by both roles | `sqlite::memory:`                                                                                                            |
+| Pool                                 | Size                              | Settings                                                                                                                     |
+| ------------------------------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| writer                               | 1 connection                      | WAL, `synchronous = NORMAL`, `busy_timeout = 5s`, `foreign_keys = ON`; every write transaction starts with `BEGIN IMMEDIATE` |
+| reader                               | 8 connections                     | same settings, plus `read_only(true)`                                                                                        |
+| tests (`tau_store_sqlite::memory()`) | 1 connection shared by both roles | `sqlite::memory:`                                                                                                            |
 
 - **One writer at a time.** SQLite allows only one writer, so parallel
   runs queue on the writer connection. A run makes one write
   transaction per turn, taking milliseconds, and turns take seconds.
   Time spent waiting for the writer connection is a tracked metric:
-  `Store::writer_stats()` returns the number of writes, the total wait
+  `SqliteStore::writer_stats()` returns the number of writes, the total wait
   and the longest single wait, shared by every clone of the store. For
   an append the wait includes taking the write lock, which another
   process can hold.
@@ -215,25 +221,25 @@ sqlx::query_as!(
 ```sh
 export DATABASE_URL=sqlite://target/tau-store-dev.db
 cargo sqlx database setup                    # create the database and run migrations/
-cargo sqlx prepare -- -p tau-store           # after changing SQL or migrations; commit .sqlx/
-cargo sqlx prepare --check -- -p tau-store   # CI
+cargo sqlx prepare -- -p tau-store-sqlite    # after changing SQL or migrations; commit .sqlx/
+cargo sqlx prepare --check -- -p tau-store-sqlite # CI
 ```
 
 A plugin with its own database, such as tau-constitution, keeps its
 migrations and `.sqlx/` in its crate, with a dated migration version so
 it never clashes with tau-store's. Its metadata is prepared against a
-database with both schemas, since its build compiles tau-store's
-queries too:
+database with both schemas, since its tests compile
+tau-store-sqlite's queries too:
 
 ```sh
-sqlx database setup --source crates/tau-store/migrations
+sqlx database setup --source crates/tau-store-sqlite/migrations
 sqlx migrate run --ignore-missing --source crates/plugins/tau-constitution/migrations
 (cd crates/plugins/tau-constitution && cargo sqlx prepare)
 ```
 
-- **Commit `.sqlx/`.** Crates that depend on `tau-store` don't set
-  `DATABASE_URL`, so the macros read the committed metadata instead.
-  Building `tau-store` needs no database.
+- **Commit `.sqlx/`.** Crates that depend on `tau-store-sqlite` don't
+  set `DATABASE_URL`, so the macros read the committed metadata
+  instead. Building `tau-store-sqlite` needs no database.
 - **Override uncertain types.** Where SQLite's nullability inference is
   unsure, such as aggregates and CTE columns, write the type out with an
   override like `"next!: i64"`. Nullability is then decided in the SQL.

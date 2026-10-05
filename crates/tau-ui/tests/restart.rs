@@ -10,7 +10,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use tau_agent::{agent::Agent, event::RunEvent, tool::RunId};
-use tau_store::{Entry, Store, TurnUsage};
+use tau_store::{Entry, TurnUsage};
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
@@ -62,7 +62,8 @@ impl Disk {
             .enable_all()
             .build()
             .unwrap();
-        let store = runtime.block_on(Store::open(self.db())).unwrap();
+        let store =
+            runtime.block_on(tau_store_sqlite::open(self.db())).unwrap();
         let root = self.dir.path();
         // tau lists only repositories from GitHub, as this one stands
         // for: so the list keeps its main chat across starts.
@@ -94,7 +95,7 @@ impl Disk {
     fn store(&self, run: &RunId, entry: Entry) {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let store = Store::open(self.db()).await.unwrap();
+            let store = tau_store_sqlite::open(self.db()).await.unwrap();
             store
                 .append_turn(&run.0, &[entry], TurnUsage::default())
                 .await
@@ -226,7 +227,7 @@ impl Disk {
     fn record(&self, run: &RunId) -> tau_store::RunRecord {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let store = Store::open(self.db()).await.unwrap();
+            let store = tau_store_sqlite::open(self.db()).await.unwrap();
             store.run(&run.0).await.unwrap().unwrap()
         })
     }
@@ -236,7 +237,7 @@ impl Disk {
     fn leave_running(&self, run: &RunId) {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let store = Store::open(self.db()).await.unwrap();
+            let store = tau_store_sqlite::open(self.db()).await.unwrap();
             store.reopen_run(&run.0, "gpt-6-luna").await.unwrap();
         });
     }
@@ -326,7 +327,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
     let history = host.block_on(host.history()).unwrap();
     let main_view = history.iter().find(|view| view.id == main).unwrap();
     let records = tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let store = Store::open(disk.db()).await.unwrap();
+        let store = tau_store_sqlite::open(disk.db()).await.unwrap();
         store
             .plugin_entries(&main.0, tau_vcs::run_workspace::PLUGIN)
             .await

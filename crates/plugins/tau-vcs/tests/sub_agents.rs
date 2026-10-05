@@ -24,7 +24,6 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolError, ToolOutput},
 };
 use tau_ai::responses::request::ReasoningEffort;
-use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
     Identity,
@@ -97,7 +96,7 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             // The caller writes a file and commits it, then delegates.
             .turn(|t| t.tool_call("write", write("parent.txt")))
@@ -202,7 +201,7 @@ fn a_sub_agents_leftover_is_described_from_its_task() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| delegate(t, &[json!({ "task": "write child.txt" })]))
             .turn(|t| t.text("done"));
@@ -249,7 +248,7 @@ fn a_failed_sub_agent_is_dropped() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| delegate(t, &[json!({ "task": "anything" })]))
             .turn(|t| t.text("gave up"));
@@ -279,7 +278,7 @@ fn a_sub_agent_that_fails_leaves_no_changes() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| delegate(t, &[json!({ "task": "write" })]))
             .turn(|t| t.tool_call("write", write("child.txt")))
@@ -324,7 +323,7 @@ fn delegating_needs_a_clean_working_copy() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| t.tool_call("write", write("parent.txt")))
             .turn(|t| delegate(t, &[json!({ "task": "anything" })]))
@@ -386,7 +385,7 @@ fn sub_agents_in_one_batch_both_land() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
                 delegate(
@@ -430,7 +429,7 @@ fn a_clashing_sub_agent_lands_its_conflict() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
                 delegate(
@@ -484,7 +483,7 @@ fn a_landing_names_only_the_conflicts_it_brought() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
                 delegate(
@@ -591,7 +590,7 @@ fn at_most_four_sub_agents_run_at_once() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|mut t| {
                 let tasks: Vec<Value> =
@@ -639,7 +638,7 @@ fn a_call_can_pick_its_model_and_effort() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
                 delegate(t, &[json!({ "task": "a", "model": "gpt-5.5-mini", "effort": "low" })])
@@ -688,7 +687,7 @@ fn a_sub_agent_at_a_limit_lands_its_work() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| delegate(t, &[json!({ "task": "write" })]))
             .turn(|t| t.text("done"));
@@ -740,7 +739,7 @@ fn a_sub_agent_outlives_its_callers_turn() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let parent =
             RunWorkspace::new(project.clone().into(), "parent", Identity::default())
                 .unwrap();
@@ -803,7 +802,7 @@ fn a_stopped_sub_agent_is_dropped() {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let parent = RunWorkspace::new(
             project.clone().into(),
             "parent",

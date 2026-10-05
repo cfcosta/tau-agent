@@ -11,7 +11,7 @@
 use serde_json::json;
 use tau_agent::agent::Agent;
 use tau_ai::message::{InputBlock, Message};
-use tau_store::{Entry, Store};
+use tau_store::Entry;
 use tau_testing::scripted::ScriptedModel;
 use tau_tools::{
     coding_tools,
@@ -47,7 +47,7 @@ fn a_run_uses_every_tool() {
         .build()
         .unwrap()
         .block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             let outcome = Agent::new(llm.clone())
                 .plugin(CodingTools::new(Root::new(dir.path())))
                 .run("edit the notes", &store)

@@ -1,5 +1,5 @@
 //! Fast compaction as a plugin of an `Agent`, with `ScriptedModel`,
-//! `Store::memory()` and a `FakeJev` whose answers the tests choose.
+//! `tau_store_sqlite::memory()` and a `FakeJev` whose answers the tests choose.
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -124,7 +124,7 @@ fn a_stale_result_is_cut() {
     let jev =
         FakeJev::nouls(|id| if id.starts_with("call_") { 0.9 } else { 0.1 });
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .tool(Read::new())
             .plugin(FastCompaction::new(jev.clone()).settings(settings()));
@@ -222,7 +222,7 @@ fn a_stale_call_is_dropped() {
     let model = two_reads();
     let jev = FakeJev::nouls(|_| 0.0);
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .tool(Read::new())
             .plugin(FastCompaction::new(jev).settings(settings()));
@@ -257,7 +257,7 @@ fn a_small_saving_declines_and_cools_down() {
         .turn(|t| t.text("done"));
     let jev = FakeJev::nouls(|_| 0.0);
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
             FastCompaction::new(jev.clone()).settings(Settings {
                 min_reduction_ratio: 0.9,
@@ -296,7 +296,7 @@ fn the_cooldown_grows_with_the_window() {
         .turn(|t| t.text("done"));
     let jev = FakeJev::nouls(|_| 0.0);
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
             FastCompaction::new(jev.clone()).settings(Settings {
                 context_window: Some(100_000),
@@ -321,7 +321,7 @@ fn an_overflow_prunes_and_retries() {
         .turn(|t| t.text("done"));
     let jev = FakeJev::nouls(|_| 0.0);
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
             FastCompaction::new(jev).settings(Settings {
                 context_window: Some(u64::MAX),
@@ -342,7 +342,7 @@ fn a_jev_failure_is_reported() {
     let model = two_reads();
     let jev = FakeJev::new(|_| Err(JevError::Status(503)));
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .tool(Read::new())
             .plugin(FastCompaction::new(jev).settings(settings()));
@@ -376,7 +376,7 @@ fn compaction_follows_when_pruning_cannot_help() {
         .turn(|t| t.text("done"));
     let jev = FakeJev::nouls(|_| 1.0);
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .tool(Read::new())
             .plugin(FastCompaction::new(jev.clone()).settings(Settings {
@@ -408,7 +408,7 @@ fn a_fork_resumes_the_ledger() {
     let jev =
         FakeJev::nouls(|id| if id.starts_with("call_") { 0.9 } else { 0.1 });
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
             .tool(Read::new())
             .plugin(FastCompaction::new(jev).settings(settings()));
@@ -451,7 +451,7 @@ fn a_fork_prunes_at_start_only_when_it_must() {
         let model = read();
         let jev = FakeJev::nouls(|_| 0.1);
         block_on(async {
-            let store = Store::memory().await.unwrap();
+            let store = tau_store_sqlite::memory().await.unwrap();
             // The parent never prunes.
             let parent = Agent::new(model.clone()).tool(Read::new()).plugin(
                 FastCompaction::new(jev.clone()).settings(Settings {

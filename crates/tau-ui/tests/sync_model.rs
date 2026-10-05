@@ -897,7 +897,7 @@ fn host(
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(tau_store::Store::memory()).unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let dir = tempfile::tempdir().unwrap().keep();
     let config = HostConfig {
         account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),

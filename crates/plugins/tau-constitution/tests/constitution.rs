@@ -44,7 +44,6 @@ use tau_constitution::{
     db::{Db, StoredConstitution, StoredRule},
 };
 use tau_jev::{JevError, fake::FakeJev};
-use tau_store::Store;
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 fn rule(id: &str, text: &str, on: &str, review: f64, block: f64) -> StoredRule {
@@ -133,7 +132,7 @@ async fn run_with(
     jev: Arc<dyn tau_jev::Jev>,
     rules: Constitution,
 ) -> (Vec<RunEvent>, usize, Vec<Value>) {
-    let store = Store::memory().await.unwrap();
+    let store = tau_store_sqlite::memory().await.unwrap();
     let writes = Write::default();
     let agent = Agent::new(llm.clone())
         .tool(typed(writes.clone()))
@@ -499,7 +498,7 @@ fn an_edit_applies_from_the_next_tool_call() {
         .turn(|t| t.text("ok, ran cargo test"));
     let jev = FakeJev::nouls(|_| 0.9);
     let events: Vec<RunEvent> = block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(llm.clone())
             .tool(typed(tool.clone()))
             .plugin(ConstitutionPlugin::live(Arc::new(jev), live));

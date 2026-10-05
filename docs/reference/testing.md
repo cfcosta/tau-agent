@@ -391,7 +391,7 @@ also run in the nightly tier and under `cargo mutants`.
 | A summary that stops with `length` or `error`, or that calls a tool, fails compaction and writes nothing                                                               | Model        |
 | Repeated compactions: a second compaction runs only when the kept messages no longer fit, and summarizes messages the first one kept once they leave the recent window | Model        |
 
-### `tau-store`
+### `tau-store-sqlite`
 
 | Property                                                                                                                                                    | Oracle       |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
@@ -651,7 +651,7 @@ the workflow code around it.
 - `tau-compaction`: the compaction rules and the plugin;
 - `tau-fast-compaction`: the state, the decisions, the ledger and the
   plugin; `tau-jev`: answer checking;
-- `tau-store`: the append and transcript queries;
+- `tau-store-sqlite`: the append and transcript queries;
 - `tau-tools`: `edit`, which rewrites files, and truncation.
 
 A surviving mutant means a behaviour no test checks. Either add the

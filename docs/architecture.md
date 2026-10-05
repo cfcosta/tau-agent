@@ -8,7 +8,9 @@ tau-agent/
 │   ├── tau-ai/       # types, events, Responses conversion, WebSocket pool, retry, cost
 │   ├── tau-agent/    # Agent, Run, loop, AgentTool + Plugin, typed results,
 │   │                 # limits, sub-agents, forks, context estimate
-│   ├── tau-store/    # SQLite via sqlx: runs, messages, fork transcripts, migrations
+│   ├── tau-store/    # runs, messages, fork transcripts: the types and the
+│   │                 # Backend a Store is, with no database driver
+│   ├── tau-store-sqlite/ # the Backend on SQLite via sqlx, with migrations
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
 │   ├── tau-ui-kit/   # the design language: theme tokens, icons, fonts, components,
 │   │                 # text field, marked-up text (ADR 0017)
@@ -41,7 +43,10 @@ tau-agent/
 
 Dependency direction:
 
-- `tau-agent` depends on `tau-ai` and `tau-store`.
+- `tau-agent` depends on `tau-ai` and `tau-store`, which has no
+  database driver: the agent loop and the plugins build while
+  `tau-store-sqlite` compiles SQLite. Whoever opens a store depends
+  on `tau-store-sqlite`: `tau-ui`, the evaluations and tests.
 - `tau-testing` depends on `tau-ai`.
 - `tau-ui-kit` depends on GPUI and `tau-terminal` (the theme's terminal
   palette), and on no other tau crate.

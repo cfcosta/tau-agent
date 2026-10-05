@@ -363,7 +363,7 @@ mod tests {
      {
         let directory = tempfile::tempdir().unwrap();
         let db = directory.path().join("runs.db");
-        let store = Store::open(&db).await.unwrap();
+        let store = tau_store_sqlite::open(&db).await.unwrap();
         create_run(&store, "parent", RunKind::Root).await;
         let bytes =
             Bytes::new(directory.path().join("artifacts"), Quotas::default())
@@ -436,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_grant_aborts_root_inventory() {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         create_run(&store, "parent", RunKind::Root).await;
         store
             .append_turn(

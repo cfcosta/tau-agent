@@ -38,6 +38,7 @@ tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 
 [dev-dependencies]
+tau-store-sqlite.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 hegeltest.workspace = true
 tempfile.workspace = true
