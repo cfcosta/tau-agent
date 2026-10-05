@@ -275,6 +275,18 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("skill", |ws, _, cx| skill(ws, true, cx)),
     ("skill-missing", |ws, _, cx| skill(ws, false, cx)),
     ("codemode", |ws, _, cx| codemode(ws, cx)),
+    ("reasoning-wait", |ws, _, cx| reasoning(ws, None, cx)),
+    ("reasoning", |ws, _, cx| {
+        reasoning(
+            ws,
+            Some(
+                "The policy caps every delay at max_delay.\n\
+                 Checking how the retry policy computes its delay before \
+                 reading the header.",
+            ),
+            cx,
+        )
+    }),
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),
     ("ask-note", |ws, _, cx| ask(ws, "ask-note", cx)),
     ("ask-review", |ws, _, cx| ask(ws, "ask-review", cx)),
@@ -868,6 +880,33 @@ fn codemode(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         ui.update(cx, |ui, _| {
             ui.toggle(tau_codemode::outline::key(&call, 0));
         });
+    }
+}
+
+/// tau-agent's main chat with its model asked and no answer yet: what it
+/// reasoned so far, when it streams any.
+fn reasoning(
+    workspace: &mut Workspace,
+    thought: Option<&str>,
+    cx: &mut Context<Workspace>,
+) {
+    let run = run_id();
+    workspace.navigate(Route::Run(run.clone()), cx);
+    workspace.apply(
+        HostUpdate::Event(RunEvent::TurnStart {
+            run: run.clone(),
+            turn: 4,
+        }),
+        cx,
+    );
+    if let Some(thought) = thought {
+        workspace.apply(
+            HostUpdate::Event(RunEvent::ThinkingDelta {
+                run,
+                delta: thought.into(),
+            }),
+            cx,
+        );
     }
 }
 
