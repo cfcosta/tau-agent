@@ -13,6 +13,8 @@
 //!   its hooks.
 
 #[cfg(feature = "host")]
+pub mod agent;
+#[cfg(feature = "host")]
 pub mod runtime;
 
 use serde::{Deserialize, Serialize};
@@ -138,6 +140,34 @@ impl Declaration {
             .cloned()
             .unwrap_or_else(|| Value::Object(Default::default()))
     }
+}
+
+/// What the host publishes about a run's Luau plugins, as tau-luau-plugins'
+/// records: live and stored runs, on the computer and the phone, fold
+/// them the same way.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Record {
+    /// A plugin's state for the run, whole, after a hook changed it.
+    State { plugin: String, state: Value },
+    /// What its `view` drew from that state.
+    View { plugin: String, view: Value },
+    /// Lines it wrote with `ctx.log`.
+    Log { plugin: String, lines: Vec<String> },
+    /// A hook failed: it counted as allowing, or as stopping.
+    Error {
+        plugin: String,
+        hook: String,
+        error: String,
+    },
+    /// `before_tool` let a call through, flagged for review.
+    Flag {
+        plugin: String,
+        call_id: String,
+        reason: String,
+    },
+    /// The plugin is off for the rest of the run, and why.
+    Off { plugin: String, why: String },
 }
 
 #[cfg(test)]

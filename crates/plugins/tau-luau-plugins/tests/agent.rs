@@ -1,0 +1,224 @@
+//! Luau plugins in real runs (ADR 0027): a scripted model calls a
+//! plugin's tool, which draws its card; `before_tool` blocks a call;
+//! `before_stop` keeps the run going once; `turn_end` counts turns into
+//! the plugin's state, stored with the run with the view drawn from it;
+//! and a plugin whose hooks keep failing is turned off.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+use std::collections::BTreeMap;
+
+use async_trait::async_trait;
+use futures_util::StreamExt;
+use serde_json::{Value, json};
+use tau_agent::{
+    agent::Agent,
+    error::ToolError,
+    event::RunEvent,
+    tool::{AgentTool, RunId, ToolCtx, ToolOutput},
+};
+use tau_luau_plugins::{
+    NAME,
+    Record,
+    agent::{Active, LuauPlugins},
+    runtime::{Files, load},
+};
+use tau_store::Store;
+use tau_testing::{block_on_io, scripted::ScriptedModel};
+
+const EVERY_DAY: &str = r#"
+local tau = require("tau")
+local ui = tau.ui
+
+return tau.plugin {
+  name = "no-deploys",
+  uses = { tools = { "bash" } },
+  settings = { default = { days = { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" } } },
+  tools = {
+    deploy_window = {
+      description = "Whether now is a safe time to deploy.",
+      call = function(args, ctx)
+        return { ok = not tau.contains(ctx.settings.days, ctx.now.weekday) }
+      end,
+      card = function(call, result, ctx)
+        return ui.badge(result.ok and "safe" or "wait", result.ok and "good" or "warn")
+      end,
+    },
+  },
+  before_tool = function(call, ctx)
+    if call.name == "bash" and call.args.command:find("deploy") then
+      return tau.block("No deploys on " .. ctx.now.weekday .. ".")
+    end
+  end,
+  before_stop = function(stop, ctx)
+    if not stop.text:find("tests") then
+      return tau.continue("Say which tests you ran.")
+    end
+  end,
+  turn_end = function(turn, ctx)
+    ctx.state.turns = (ctx.state.turns or 0) + 1
+  end,
+  view = function(state, ctx)
+    return { status = ui.status("on", tostring(state.turns or 0) .. " turns") }
+  end,
+}
+"#;
+
+/// `bash`, answering with what it ran.
+struct Bash;
+
+#[async_trait]
+impl AgentTool for Bash {
+    fn name(&self) -> &str {
+        "bash"
+    }
+
+    fn description(&self) -> &str {
+        "Runs a command."
+    }
+
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::LazyLock<Value> =
+            std::sync::LazyLock::new(|| json!({ "type": "object" }));
+        &SCHEMA
+    }
+
+    async fn call(
+        &self,
+        args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        Ok(ToolOutput::text(format!("ran {}", args["command"])))
+    }
+}
+
+fn active(name: &str, source: &str) -> Active {
+    let files = Files {
+        plugin: source.into(),
+        libs: BTreeMap::new(),
+        ..Files::default()
+    };
+    let loaded = block_on_io(load(name, files)).unwrap();
+    let settings = loaded.declaration.default_settings();
+    Active { loaded, settings }
+}
+
+fn records(store: &Store, run: &RunId) -> Vec<Record> {
+    block_on_io(store.records(&run.0, NAME))
+        .unwrap()
+        .iter()
+        .filter_map(|body| serde_json::from_str(body).ok())
+        .collect()
+}
+
+#[test]
+fn a_plugin_takes_part_in_a_run() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("deploy_window", json!({})))
+        .turn(|t| t.tool_call("bash", json!({ "command": "make deploy" })))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("ran the tests"));
+    let store = block_on_io(Store::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("no-deploys", EVERY_DAY)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(Bash).plugin(plugins);
+    let (outcome, events) = block_on_io(async {
+        let mut run = agent.start("deploy it", &store);
+        let events: Vec<RunEvent> = run.events().collect().await;
+        (run.outcome().await.unwrap(), events)
+    });
+    assert_eq!(outcome.text, "ran the tests");
+
+    // The tool answered, with its card in the details.
+    let window = events
+        .iter()
+        .find_map(|event| match event {
+            RunEvent::ToolEnd { output, .. }
+                if output
+                    .details
+                    .as_ref()
+                    .is_some_and(|d| d["plugin"] == "no-deploys") =>
+            {
+                output.details.clone()
+            }
+            _ => None,
+        })
+        .expect("the tool's result");
+    assert_eq!(window["value"], json!({ "ok": false }));
+    assert_eq!(
+        window["card"],
+        json!({ "piece": "badge", "text": "wait", "tone": "warn" })
+    );
+
+    // The deploy was blocked, and the stop held once.
+    let asked = format!("{:?}", llm.requests().last().unwrap().transcript);
+    assert!(asked.contains("No deploys on"), "{asked}");
+    assert!(asked.contains("Say which tests you ran."), "{asked}");
+
+    // Four turns counted, and the view followed the count.
+    let stored = records(&store, &outcome.run);
+    let last_state = stored.iter().rev().find_map(|record| match record {
+        Record::State { state, .. } => Some(state.clone()),
+        _ => None,
+    });
+    assert_eq!(last_state, Some(json!({ "turns": 4 })));
+    let last_view = stored.iter().rev().find_map(|record| match record {
+        Record::View { view, .. } => Some(view.clone()),
+        _ => None,
+    });
+    assert_eq!(last_view.unwrap()["status"]["detail"], "4 turns");
+    assert!(
+        !stored
+            .iter()
+            .any(|record| matches!(record, Record::Error { .. })),
+        "{stored:?}"
+    );
+}
+
+#[test]
+fn a_plugin_whose_hooks_keep_failing_is_turned_off() {
+    let broken = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "broken",
+  before_tool = function(call, ctx) error("no luck") end,
+}
+"#;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("bash", json!({ "command": "a" })))
+        .turn(|t| t.tool_call("bash", json!({ "command": "b" })))
+        .turn(|t| t.tool_call("bash", json!({ "command": "c" })))
+        .turn(|t| t.tool_call("bash", json!({ "command": "d" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(Store::memory()).unwrap();
+    let plugins =
+        LuauPlugins::new(vec![active("broken", broken)], json!({}), None);
+    let agent = Agent::new(llm.clone()).tool(Bash).plugin(plugins);
+    let outcome = block_on_io(agent.run("go", &store)).unwrap();
+    assert_eq!(outcome.text, "done");
+    // Every call ran: a failing hook allows.
+    let asked = format!("{:?}", llm.requests().last().unwrap().transcript);
+    for command in ["a", "b", "c", "d"] {
+        assert!(
+            asked.contains(&format!("ran \\\"{command}\\\"")),
+            "{command}: {asked}"
+        );
+    }
+    let stored = records(&store, &outcome.run);
+    let errors = stored
+        .iter()
+        .filter(|record| matches!(record, Record::Error { .. }))
+        .count();
+    assert_eq!(errors, 3, "it stops being asked once off: {stored:?}");
+    assert!(
+        stored
+            .iter()
+            .any(|record| matches!(record, Record::Off { .. }))
+    );
+}

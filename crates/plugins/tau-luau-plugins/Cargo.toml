@@ -11,7 +11,14 @@ default = ["host"]
 # The agent half: loading plugins and running their hooks in Luau. The
 # declarations, the view pieces and their drawing build without it, as
 # on a phone.
-host = ["dep:async-trait", "dep:tau-codemode", "dep:tokio-util", "dep:sha2"]
+host = [
+  "dep:async-trait",
+  "dep:sha2",
+  "dep:tau-agent",
+  "dep:tau-codemode",
+  "dep:tokio",
+  "dep:tokio-util",
+]
 
 [dependencies]
 anyhow.workspace = true
@@ -19,13 +26,19 @@ async-trait = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = { workspace = true, optional = true }
+tau-agent = { workspace = true, optional = true }
 tau-ai.workspace = true
 tau-codemode = { workspace = true, optional = true }
 tau-jev.workspace = true
+tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-trait.workspace = true
+futures-util.workspace = true
+tau-agent.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true
 hegeltest.workspace = true
 tau-codemode.workspace = true
 tokio-util.workspace = true
