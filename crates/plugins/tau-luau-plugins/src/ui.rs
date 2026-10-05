@@ -360,9 +360,19 @@ impl UiPlugin for LuauPluginsUi {
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         #[cfg(feature = "host")]
         {
+            let mut plugins: Vec<Box<dyn Plugin>> = Vec::new();
+            // A run in the plugins repository tests the plugins it writes.
+            if run.repo.name == crate::registry::REPO
+                && let Some(dir) =
+                    run.services.get::<tau_ui_plugin::WorkspaceDir>()
+            {
+                plugins.push(Box::new(crate::testing::PluginTesting::new(
+                    dir.0.clone(),
+                )));
+            }
             let active = host.active().await;
             if active.is_empty() {
-                return Ok(Vec::new());
+                return Ok(plugins);
             }
             let kind = match run.kind {
                 tau_ui_plugin::RunKind::Main => "main",
@@ -378,9 +388,10 @@ impl UiPlugin for LuauPluginsUi {
                 .services
                 .get::<std::sync::Arc<dyn tau_jev::Jev>>()
                 .cloned();
-            Ok(vec![Box::new(crate::agent::LuauPlugins::new(
+            plugins.push(Box::new(crate::agent::LuauPlugins::new(
                 active, info, jev,
-            ))])
+            )));
+            Ok(plugins)
         }
         #[cfg(not(feature = "host"))]
         {

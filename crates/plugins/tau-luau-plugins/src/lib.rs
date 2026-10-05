@@ -18,6 +18,8 @@ pub mod agent;
 pub mod registry;
 #[cfg(feature = "host")]
 pub mod runtime;
+#[cfg(feature = "host")]
+pub mod testing;
 pub mod ui;
 
 use serde::{Deserialize, Serialize};

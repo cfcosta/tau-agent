@@ -25,6 +25,7 @@ use tau_luau_plugins::{
     Record,
     agent::{Active, LuauPlugins},
     runtime::{Files, load},
+    testing::PluginTesting,
 };
 use tau_store::Store;
 use tau_testing::{block_on_io, scripted::ScriptedModel};
@@ -221,4 +222,45 @@ return tau.plugin {
             .iter()
             .any(|record| matches!(record, Record::Off { .. }))
     );
+}
+
+#[test]
+fn a_run_tests_a_plugin_in_its_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("greet");
+    std::fs::create_dir_all(folder.join("tests")).unwrap();
+    std::fs::write(
+        folder.join("plugin.luau"),
+        r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "greet",
+  tools = { hello = { description = "Hello.", call = function() return "hi" end } },
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("tests/basic.luau"),
+        r#"
+local t = require("tau").test
+t.case("says hi", function() t.equal(t.run{}:tool("hello"), "hi") end)
+t.case("says bye", function() t.equal(t.run{}:tool("hello"), "bye") end)
+"#,
+    )
+    .unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("plugin_test", json!({ "plugin": "greet" })))
+        .turn(|t| t.tool_call("plugin_test", json!({ "plugin": "../x" })))
+        .turn(|t| t.tool_call("plugin_test", json!({ "plugin": "missing" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(Store::memory()).unwrap();
+    let agent = Agent::new(llm.clone())
+        .plugin(PluginTesting::new(dir.path().to_owned()));
+    block_on_io(agent.run("test greet", &store)).unwrap();
+    let asked = format!("{:?}", llm.requests().last().unwrap().transcript);
+    assert!(asked.contains("greet loads; 1 of 2 tests pass."), "{asked}");
+    assert!(asked.contains("says bye failed"), "{asked}");
+    assert!(asked.contains("is not a plugin's folder"), "{asked}");
+    assert!(asked.contains("missing"), "{asked}");
 }
