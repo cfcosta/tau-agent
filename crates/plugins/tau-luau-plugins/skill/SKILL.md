@@ -63,15 +63,15 @@ Every field but `name` is optional.
 
 ### Hooks
 
-| Hook          | Given                                       | Returns                                    | Time  |
-| ------------- | ------------------------------------------- | ------------------------------------------ | ----- |
-| tool `call`   | the arguments, as `parameters` describes    | a JSON value, or `error(message)`          | 60 s  |
-| tool `card`   | the call's arguments and the result         | a view piece, drawn on the call's card     | 200 ms |
-| `before_tool` | `{ id, name, args }`                        | `nil`, `tau.block(why)` or `tau.flag(why)` | 2 s   |
-| `before_stop` | `{ text, turn, reason }`                    | `nil`, or `tau.continue(message)`          | 10 s  |
-| `turn_end`    | `{ turn, text, calls = { { name, ok } } }`  | nothing                                    | 2 s   |
-| `run_end`     | `{ stop, turns, cost }`                     | nothing                                    | 10 s  |
-| `view`        | the run's state                             | `{ status = ui.status(...) }`, or `{}`     | 200 ms |
+| Hook          | Given                                      | Returns                                    | Time   |
+| ------------- | ------------------------------------------ | ------------------------------------------ | ------ |
+| tool `call`   | the arguments, as `parameters` describes   | a JSON value, or `error(message)`          | 60 s   |
+| tool `card`   | the call's arguments and the result        | a view piece, drawn on the call's card     | 200 ms |
+| `before_tool` | `{ id, name, args }`                       | `nil`, `tau.block(why)` or `tau.flag(why)` | 2 s    |
+| `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
+| `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
+| `run_end`     | `{ stop, turns, cost }`                    | nothing                                    | 10 s   |
+| `view`        | the run's state                            | `{ status = ui.status(...) }`, or `{}`     | 200 ms |
 
 - `tau.block(why)` keeps the call from running; the model reads why.
   `tau.flag(why)` lets it run and marks it for the person's review.
@@ -85,15 +85,15 @@ Every field but `name` is optional.
 
 ### `ctx`
 
-| Field          | What it is                                                         |
-| -------------- | ------------------------------------------------------------------ |
-| `ctx.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }` |
-| `ctx.now`      | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on        |
-| `ctx.settings` | the plugin's settings: `settings.default`, for now                 |
-| `ctx.state`    | the plugin's table for this run; what a hook leaves in it is kept  |
+| Field          | What it is                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------- |
+| `ctx.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`                               |
+| `ctx.now`      | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on                                       |
+| `ctx.settings` | the plugin's settings: `settings.default`, for now                                                |
+| `ctx.state`    | the plugin's table for this run; what a hook leaves in it is kept                                 |
 | `ctx.tools`    | in a tool's `call` only: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })` |
-| `ctx.jev`      | Jev, when `uses.jev`                                               |
-| `ctx.log`      | `ctx.log(text)`: a line on the plugin's page, never for the model |
+| `ctx.jev`      | Jev, when `uses.jev`                                                                              |
+| `ctx.log`      | `ctx.log(text)`: a line on the plugin's page, never for the model                                 |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
 JSON has no empty array: use `array({})` for one that must stay a list.

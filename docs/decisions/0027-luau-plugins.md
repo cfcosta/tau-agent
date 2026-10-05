@@ -42,18 +42,19 @@ Three things stand in the way:
 
 ### Plugins are files in tau's plugins repository
 
-- tau keeps a local jj repository of its own, `plugins`, under
-  `$XDG_DATA_HOME/tau/plugins`, listed in the sidebar like a repository
-  from GitHub, with a main chat and chats under it. Nothing new is
+- tau keeps a local jj repository of its own, listed as `tau-plugins`,
+  under `$XDG_DATA_HOME/tau/luau-plugins` (`plugins/` there holds Rust
+  plugins' own data), in the sidebar like a repository from GitHub, with a main chat and chats under it. Nothing new is
   needed to edit it: runs there use the usual tools, commit, land and
   show their diffs.
 - One plugin is one folder:
 
   ```text
-  plugins/
+  tau-plugins/
     no-friday-deploys/
       plugin.luau        -- the plugin: returns its table
-      lib/*.luau         -- modules it requires, by relative name
+      lib/*.luau         -- modules it requires, by name; each may
+                         -- require only `tau`
       tests/*.luau       -- its tests
       README.md          -- what it is for, for the person and the model
   ```
@@ -70,7 +71,7 @@ fresh VM to read what it declares; hooks then run in their own VMs.
 
 ```luau
 local tau = require("tau")      -- the host's API, below
-local ui = require("tau.ui")    -- the view pieces
+local ui = tau.ui               -- the view pieces
 
 return tau.plugin {
   name = "no-friday-deploys",
@@ -145,9 +146,9 @@ return tau.plugin {
 | `ctx.now`      | `{ unix, iso, weekday }`, the host's clock, so tests can fix it                       |
 | `ctx.settings` | the person's settings, defaults filled in                                             |
 | `ctx.state`    | the plugin's state for this run; what a hook changes is kept (below)                  |
-| `ctx.tools`    | the tools `uses` names, as codemode calls them, through the run's loop                |
+| `ctx.tools`    | in a tool's `call`: the tools `uses` names, as codemode calls them, through the loop  |
 | `ctx.jev`      | Jev, when `uses.jev` and the run has a key; charged to the run                        |
-| `ctx.infer`    | codemode's `infer`, when `uses.infer`; charged to the run                             |
+| `infer`        | codemode's global, when `uses.infer`; charged to the run                              |
 | `ctx.log`      | `ctx.log(text)`: a line in the plugin's log on its page, never in the model's context |
 
 **Hooks and what they return:**
@@ -179,7 +180,8 @@ return tau.plugin {
 
 ### The view: a JSON tree, drawn by Rust
 
-`tau.ui` builds plain tables: `text`, `rich` (with `code` and
+`tau.ui` (a field of `tau`: codemode's module names cannot hold a dot)
+builds plain tables: `text`, `rich` (with `code` and
 `**bold**`), `mono`, `badge(text, tone)`, `rows({ key = value })`,
 `list`, `progress(share)`, `code(lang, text)`, `stack`/`row` to lay
 them out, and `button(label, action, args)`. The host calls `view`
@@ -246,21 +248,25 @@ repository as a change of their own.
   interface above, the view pieces, three worked plugins (a rule, a
   tool with a card, a stop check), how to test, and how the person sees
   the result. A skill of the same name in `~/.agents/skills` replaces it.
-  tau-skills gains built-in skills, which a plugin crate contributes,
-  marked "built in" on the Skills screen. Every example in the skill is
-  a test of the host, so the skill cannot drift from the interface.
+  tau-skills gains built-in skills, which a plugin crate installs under
+  `$XDG_DATA_HOME/tau/skills` as its host starts, marked "built in" on
+  the Skills screen. The worked plugins are files of their own, inlined
+  into `SKILL.md` as it is installed and run as tests of the host, so
+  the skill cannot drift from the interface. The skill
+  (`crates/plugins/tau-luau-plugins/skill/`) is the interface's
+  reference.
 - **`/plugin <what it should do>`** in any chat starts a chat in the
-  plugins repository with the skill loaded and the person's words as
-  its task. "Edit with tau" on a plugin's page does the same for that
+  plugins repository whose first message is `/tau-plugins <what it
+should do>`, which loads the skill, with the person's words as its
+  task. "Edit with tau" on a plugin's page does the same for that
   plugin.
 - **Tests** are Luau files under `tests/`, run in fresh VMs with a fake
   run:
 
   ```luau
   local tau = require("tau")
-  local ui = require("tau.ui")
-  local t = require("tau.test")
-  t.load("no-friday-deploys")
+  local ui = tau.ui
+  local t = tau.test   -- the plugin in the folder is the one tested
 
   t.case("blocks deploys on Friday", function()
     local run = t.run { now = "2026-10-09T10:00:00Z" }   -- a Friday
@@ -284,9 +290,11 @@ repository as a change of their own.
 1. The plugins repository, the registry and its reloads, tools,
    `before_tool`, `before_stop`, `turn_end`, `run_end`, state, the
    status line and tool cards, tests and `plugin_test`, the built-in
-   skill and `/plugin`.
+   skill and `/plugin`. Done; in it, `ctx.tools` is reached from tools'
+   handlers only, and settings are the declared defaults.
 2. The rest of the view (notes, pages, buttons and actions), settings
-   forms, pinning and rollback, plugins from other repositories.
+   forms, `ctx.tools` in the other hooks, "Edit with tau", pinning and
+   rollback, plugins from other repositories.
 3. Perhaps more seams: lines in the first message, then results.
 
 ## Alternatives considered
