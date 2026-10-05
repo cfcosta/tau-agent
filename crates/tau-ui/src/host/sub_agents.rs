@@ -10,8 +10,10 @@ use super::{landing::Reading, lanes::DrainReport, queue::Lane, *};
 
 /// What tau's turn reporting sub-agents ends with.
 const REPORT_END: &str = "This message is from tau, not the person: \
-    your sub-agents came back. Go on with the work their results \
-    change, or tell the person where things stand.";
+    your sub-agents came back. First tell the person where things stand: \
+    what landed, what is left, and what failed. Start more work, new \
+    sub-agents included, only when what the person asked for still \
+    clearly needs it.";
 
 impl Host {
     /// The sub-agents of `repo`'s main chat, made the first time.
