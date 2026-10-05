@@ -119,10 +119,13 @@ fn list(skills: &Skills, t: &Theme) -> Div {
 }
 
 fn row(skill: &Skill, t: &Theme) -> Div {
-    let files = match skill.files {
+    let mut files = match skill.files {
         1 => "1 file".to_owned(),
         n => format!("{n} files"),
     };
+    if skill.builtin {
+        files.push_str(" · built in");
+    }
     let ignored = (!skill.ignored.is_empty()).then(|| {
         text(
             format!(

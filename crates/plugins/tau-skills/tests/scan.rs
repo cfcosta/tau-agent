@@ -265,3 +265,47 @@ fn unquoted_names_read_as_written() {
         .collect();
     assert_eq!(names, ["404", "c", "d", "true"], "{:?}", skills.problems);
 }
+
+/// The skills tau ships are offered beside the person's, marked built
+/// in, unless the person has one of the same name.
+#[test]
+fn a_persons_skill_replaces_a_built_in_one() {
+    let (home, shipped) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let skill = |dir: &std::path::Path, name: &str, description: &str| {
+        fs::create_dir_all(dir.join(name)).unwrap();
+        fs::write(
+            dir.join(name).join(SKILL_FILE),
+            format!("---\nname: {name}\ndescription: {description}\n---\n"),
+        )
+        .unwrap();
+    };
+    skill(shipped.path(), "tau-plugins", "tau's");
+    skill(shipped.path(), "built", "tau's");
+    skill(home.path(), "tau-plugins", "mine");
+    skill(home.path(), "own", "mine");
+    let skills = scan::scan_all(Some(home.path()), shipped.path());
+    let found: Vec<(&str, &str, bool)> = skills
+        .found
+        .iter()
+        .map(|skill| {
+            (
+                skill.name.as_str(),
+                skill.description.as_str(),
+                skill.builtin,
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("built", "tau's", true),
+            ("own", "mine", false),
+            ("tau-plugins", "mine", false),
+        ]
+    );
+    // With no folder of the person's, the shipped ones are all there is.
+    let skills = scan::scan_all(None, shipped.path());
+    assert_eq!(skills.found.len(), 2);
+    assert!(skills.found.iter().all(|skill| skill.builtin));
+}

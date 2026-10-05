@@ -31,7 +31,10 @@ pub struct SkillsUi;
 #[cfg(feature = "host")]
 #[derive(Debug, Clone)]
 pub struct Host {
+    /// The person's skills.
     pub dir: Option<std::path::PathBuf>,
+    /// The skills tau ships.
+    pub builtin: std::path::PathBuf,
 }
 
 #[cfg(feature = "host")]
@@ -42,6 +45,7 @@ impl tau_ui_plugin::PluginHost for Host {
                 .services
                 .get::<crate::SkillsDir>()
                 .map(|dir| dir.0.clone()),
+            builtin: cx.dir.join(crate::BUILTIN_DIR),
         })
     }
 }
@@ -52,10 +56,7 @@ pub type Host = ();
 impl SkillsUi {
     #[cfg(feature = "host")]
     fn skills(host: &Host) -> Skills {
-        host.dir
-            .as_deref()
-            .map(crate::scan::scan)
-            .unwrap_or_default()
+        crate::scan::scan_all(host.dir.as_deref(), &host.builtin)
     }
 }
 

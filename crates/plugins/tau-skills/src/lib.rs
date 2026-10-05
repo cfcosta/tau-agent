@@ -42,6 +42,11 @@ pub const SKILL_FILE: &str = "SKILL.md";
 /// other agents read them from too.
 pub const SKILLS_DIR: &str = ".agents/skills";
 
+/// Where plugin crates put the skills tau ships, under tau's data
+/// directory: one folder each, as in the person's folder. A skill of
+/// the person's with the same name is offered instead.
+pub const BUILTIN_DIR: &str = "skills";
+
 /// Where the host reads skills from: the person's skills folder, or a
 /// test's own. A host service ([`tau_ui_plugin::Services`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +65,9 @@ pub struct Skill {
     pub files: usize,
     /// Frontmatter keys tau does not act on, such as `allowed-tools`.
     pub ignored: Vec<String>,
+    /// Whether tau ships it ([`BUILTIN_DIR`]).
+    #[serde(default)]
+    pub builtin: bool,
 }
 
 /// A folder that looks like a skill but is not offered to the model,
@@ -70,7 +78,7 @@ pub struct Problem {
     pub reason: String,
 }
 
-/// What the skills folder holds: the skills, by name, and the folders
+/// What the skills folders hold: the skills, by name, and the folders
 /// that could not be read as one.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Skills {

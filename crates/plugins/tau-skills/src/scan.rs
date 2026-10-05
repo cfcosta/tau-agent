@@ -75,6 +75,25 @@ pub fn scan(dir: &Path) -> Skills {
     skills
 }
 
+/// The person's skills in `dir`, and those tau ships in `builtin`
+/// ([`crate::BUILTIN_DIR`]) that the person has none of the same name
+/// of.
+pub fn scan_all(dir: Option<&Path>, builtin: &Path) -> Skills {
+    let mut skills = dir.map(scan).unwrap_or_default();
+    let shipped = scan(builtin);
+    for skill in shipped.found {
+        if skills.get(&skill.name).is_none() {
+            skills.found.push(Skill {
+                builtin: true,
+                ..skill
+            });
+        }
+    }
+    skills.problems.extend(shipped.problems);
+    skills.found.sort_by(|a, b| a.name.cmp(&b.name));
+    skills
+}
+
 /// One skill's folder, or why it is not one.
 fn read(folder: &Path) -> Result<Skill, String> {
     let file = folder.join(SKILL_FILE);
@@ -104,6 +123,7 @@ fn read(folder: &Path) -> Result<Skill, String> {
         dir: folder.to_owned(),
         files: count_files(folder),
         ignored: front.other,
+        builtin: false,
     })
 }
 
