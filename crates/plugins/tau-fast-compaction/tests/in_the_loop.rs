@@ -386,6 +386,57 @@ fn a_fork_resumes_the_ledger() {
     });
 }
 
+/// A fork starts on its parent's transcript past 60% of the window
+/// without a pass, which would give up the parent's prompt cache; one
+/// within the start reserve of the window gets a pass first.
+#[test]
+fn a_fork_prunes_at_start_only_when_it_must() {
+    // About 6,000 tokens of output in a 10,000-token window.
+    let read = || {
+        ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("read", json!({"path": "a.rs", "size": 24_000}))
+                    .usage(100, 10)
+            })
+            // The scripted model adds the new output, about 6,000
+            // tokens, to what it reports.
+            .turn(|t| t.text("done").usage(100, 10))
+            .turn(|t| t.text("forked"))
+    };
+    let at = |start_reserve_tokens| Settings {
+        context_window: Some(10_000),
+        preserve_recent: 1,
+        start_reserve_tokens,
+        ..Settings::default()
+    };
+    for (reserve, asked) in [(1_000, 0), (5_000, 1)] {
+        let model = read();
+        let jev = FakeJev::nouls(|_| 0.1);
+        block_on(async {
+            let store = Store::memory().await.unwrap();
+            // The parent never prunes.
+            let parent = Agent::new(model.clone()).tool(Read::new()).plugin(
+                FastCompaction::new(jev.clone()).settings(Settings {
+                    compact_at_percent: 100.0,
+                    ..at(reserve)
+                }),
+            );
+            let (_, base) = run(&parent, &store).await;
+            assert!(jev.requests().is_empty());
+            let child = Agent::new(model.clone())
+                .tool(Read::new())
+                .plugin(FastCompaction::new(jev.clone()).settings(at(reserve)));
+            let fork = child
+                .fork(&base.checkpoint())
+                .run("and now", &store)
+                .await
+                .unwrap();
+            assert_eq!(fork.text, "forked");
+            assert_eq!(jev.requests().len(), asked, "reserve {reserve}");
+        });
+    }
+}
+
 /// Debug output shows the settings, not the Jev client.
 #[test]
 fn debug_shows_the_settings() {

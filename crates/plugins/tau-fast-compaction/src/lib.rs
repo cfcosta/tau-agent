@@ -133,6 +133,11 @@ pub struct Settings {
     /// Tokens the context must grow by after a pass before another runs
     /// between turns. 8,000.
     pub cooldown_tokens: u64,
+    /// As a run starts on a transcript it inherited, a pass runs only
+    /// once the context is within this many tokens of the window:
+    /// summarizing compaction's reserve, so pruning goes first wherever a
+    /// summary would. 16,384.
+    pub start_reserve_tokens: u64,
     /// Overrides the model's context window, for a model the registry
     /// does not know. Without either, only an overflow runs a pass.
     pub context_window: Option<u64>,
@@ -196,6 +201,7 @@ impl Default for Settings {
             compact_at_percent: 60.0,
             min_reduction_ratio: 0.25,
             cooldown_tokens: 8_000,
+            start_reserve_tokens: 16_384,
             context_window: None,
             archive_dir: std::env::temp_dir(),
             output: OutputPruning::default(),
@@ -331,7 +337,16 @@ impl PluginRun for FastCompactionRun {
         view: &ContextView<'_>,
         ctx: &PluginCtx,
     ) -> Result<Option<Rewrite>, PluginError> {
-        if view.trigger != Trigger::Overflow && !self.due(view.tokens) {
+        let due = match view.trigger {
+            Trigger::Overflow => true,
+            // A fork or a sub-agent starts on its parent's transcript,
+            // which its first request reads from the parent's prompt
+            // cache: a rewrite now gives that up, so only one that must
+            // fit the window runs.
+            Trigger::Start => self.overfull(view.tokens),
+            Trigger::TurnEnd => self.due(view.tokens),
+        };
+        if !due {
             return Ok(None);
         }
         tokio::select! {
@@ -477,6 +492,17 @@ impl FastCompactionRun {
             tokens.saturating_sub(last) >= self.settings.cooldown_tokens
         });
         percent >= self.settings.compact_at_percent && cooled
+    }
+
+    /// Whether the context is within `start_reserve_tokens` of the
+    /// window.
+    fn overfull(&self, tokens: u64) -> bool {
+        self.window
+            .filter(|window| *window > 0)
+            .is_some_and(|window| {
+                tokens
+                    > window.saturating_sub(self.settings.start_reserve_tokens)
+            })
     }
 
     async fn pass(

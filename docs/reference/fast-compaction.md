@@ -271,6 +271,13 @@ floor, then the question's shared guidance moved into the `context`
     model registry's;
   - the context has grown by `cooldown_tokens` (8,000) since the last
     pass that asked Jev.
+- **As a run starts on a transcript it inherited** (a fork, a
+  sub-agent, a resumed run), only when the estimate is within
+  `start_reserve_tokens` (16,384, summarizing compaction's reserve) of
+  the window. A fork's first request reads its parent's transcript from
+  the parent's prompt cache, and any rewrite gives that up, so it only
+  runs when the transcript would not fit anyway; then pruning goes
+  before a summary would.
 - **On a context overflow,** always.
 - A pass with no unpinned tool call to ask about ends without asking,
   and does not start the cooldown.
