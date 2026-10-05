@@ -183,10 +183,12 @@ pub enum WorkspaceEvent {
         plugin: String,
         action: serde_json::Value,
     },
-    /// Save a plugin's settings.
+    /// Save a plugin's settings: everywhere, or as `repo`'s own copy.
+    /// No settings drops the repository's copy (ADR 0029).
     PluginSettings {
         plugin: String,
-        settings: serde_json::Value,
+        repo: Option<String>,
+        settings: Option<serde_json::Value>,
     },
     /// Store `body` as `plugin`'s record with `run`; every interface
     /// folds it once stored.
@@ -565,6 +567,14 @@ pub struct Workspace {
     pub(crate) plugin_requests: crate::plugins::Requests,
     /// What a plugin asked to give the keys to, as the window draws.
     pub(crate) plugin_focus: Option<gpui::FocusHandle>,
+    /// The Plugins screen: what is selected, its tab, and the scope its
+    /// settings show (ADR 0029).
+    pub(crate) plugins_screen: crate::ui::screens::plugins::Selection,
+    /// The plugin whose settings the inspector shows in place, and
+    /// whether it shows them everywhere rather than in the run's
+    /// repository.
+    pub(crate) inspector_plugin: Option<String>,
+    pub(crate) inspector_everywhere: bool,
     /// Whether a plugin drew in the composer's place last frame, and
     /// whether the composer takes the keys back now that none does.
     composer_replaced: std::cell::Cell<bool>,
@@ -785,6 +795,9 @@ impl Workspace {
             },
             plugin_requests,
             plugin_focus: None,
+            plugins_screen: Default::default(),
+            inspector_plugin: None,
+            inspector_everywhere: false,
             composer_replaced: std::cell::Cell::new(false),
             composer_back: std::cell::Cell::new(false),
             adding_jev_key: false,

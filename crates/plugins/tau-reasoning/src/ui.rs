@@ -24,7 +24,7 @@ use tau_agent::{plugin::Plugin, tool::RunId};
 use tau_jev::Jev;
 use tau_ui_kit::{
     assets::Icon,
-    components::{self as ui, Material as _, NoteHead, heading, link, mono},
+    components::{self as ui, Material as _, NoteHead, link, mono},
     format::usd,
     theme::{Design as _, Theme, Tone, Type, radius, sp},
 };
@@ -331,6 +331,7 @@ impl UiPlugin for ReasoningPlugin {
     ) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
+            group: tau_ui_plugin::Group::Context,
             description: needs_jev(
                 jev,
                 "Picks each message's reasoning effort on auto",
@@ -371,7 +372,7 @@ impl UiPlugin for ReasoningPlugin {
                         .into_any_element(),
                 )
             })
-            .contribute(points::MODELS, |_: &AtApp, view| Some(settings_section(view)))
+            .settings(settings_pane)
             .contribute(points::PICKER_AUTO, |_: &AtApp, view| {
                 Some(if view.jev {
                     "Auto lets tau-reasoning pick the effort for each message, with Jev.".into()
@@ -736,9 +737,12 @@ fn distribution(
 
 /// The settings on the Models screen: deciding again between steps, and
 /// the confidence it takes to change the effort.
-fn settings_section(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
+/// Its settings pane (ADR 0029): whether to decide again between steps,
+/// and how sure Jev must be, saved in the scope the pane shows.
+fn settings_pane(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
     let t = view.theme().clone();
     let settings = *view.settings;
+    let scope = view.scope().map(str::to_owned);
     let row = || {
         div()
             .flex()
@@ -759,38 +763,41 @@ fn settings_section(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
             .child(name.to_owned())
             .child(ui::text(caption.to_owned(), Type::CAPTION, t.muted))
     };
-    let thresholds = THRESHOLDS.into_iter().map(|threshold| {
-        let on = (settings.threshold - threshold).abs() < 1e-9;
-        let handle = view.handle.clone();
-        div()
-            .id(SharedString::from(format!("threshold-{threshold}")))
-            .h(rems(1.75))
-            .px(sp(2.5))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(radius::CONTROL)
-            .typeset(Type::CAPTION)
-            .cursor_pointer()
-            .text_color(if on { t.text } else { t.muted })
-            .when(on, |segment| segment.key(&t))
-            .child(format!("{threshold:.1}"))
-            .on_click(move |_, _, cx| {
-                handle.save_settings(
-                    &Settings {
-                        threshold,
-                        ..settings
-                    },
-                    cx,
-                )
-            })
-    });
+    let thresholds: Vec<_> = THRESHOLDS
+        .into_iter()
+        .map(|threshold| {
+            let on = (settings.threshold - threshold).abs() < 1e-9;
+            let handle = view.handle.clone();
+            let scope = scope.clone();
+            div()
+                .id(SharedString::from(format!("threshold-{threshold}")))
+                .h(rems(1.75))
+                .px(sp(2.5))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(radius::CONTROL)
+                .typeset(Type::CAPTION)
+                .cursor_pointer()
+                .text_color(if on { t.text } else { t.muted })
+                .when(on, |segment| segment.key(&t))
+                .child(format!("{threshold:.1}"))
+                .on_click(move |_, _, cx| {
+                    handle.save_settings_in(
+                        scope.as_deref(),
+                        &Settings {
+                            threshold,
+                            ..settings
+                        },
+                        cx,
+                    )
+                })
+        })
+        .collect();
     let handle = view.handle.clone();
     div()
         .flex()
         .flex_col()
-        .gap(sp(2.))
-        .child(heading("Reasoning on auto", &t))
         .child(
             ui::card(&t)
                 .when(!view.jev, |card| {
@@ -814,7 +821,8 @@ fn settings_section(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
                                 .id("reasoning-redecide")
                                 .child(ui::switch(settings.redecide, &t))
                                 .on_click(move |_, _, cx| {
-                                    handle.save_settings(
+                                    handle.save_settings_in(
+                                        scope.as_deref(),
                                         &Settings {
                                             redecide: !settings.redecide,
                                             ..settings

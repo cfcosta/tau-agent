@@ -40,6 +40,34 @@ pub struct Catalog {
     /// Each plugin's settings, as JSON, by plugin.
     #[serde(default)]
     pub plugin_settings: std::collections::BTreeMap<String, PluginValue>,
+    /// The repositories' own copies of plugins' settings, by repository,
+    /// then plugin (ADR 0029).
+    #[serde(default)]
+    pub repo_plugin_settings: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, PluginValue>,
+    >,
+}
+
+impl Catalog {
+    /// `plugin`'s settings in `scope`: the repository's own copy when it
+    /// has one, else the value everywhere.
+    pub fn settings_in(
+        &self,
+        plugin: &str,
+        scope: Option<&str>,
+    ) -> Option<&PluginValue> {
+        scope
+            .and_then(|repo| self.repo_plugin_settings.get(repo)?.get(plugin))
+            .or_else(|| self.plugin_settings.get(plugin))
+    }
+
+    /// Whether `repo` keeps its own copy of `plugin`'s settings.
+    pub fn has_own_settings(&self, repo: &str, plugin: &str) -> bool {
+        self.repo_plugin_settings
+            .get(repo)
+            .is_some_and(|plugins| plugins.contains_key(plugin))
+    }
 }
 
 impl Catalog {
@@ -124,6 +152,17 @@ pub struct PluginInfo {
     /// 0017).
     #[serde(default)]
     pub page: Option<tau_ui_plugin::Link>,
+    /// Where the Plugins screen lists it (ADR 0029).
+    #[serde(default)]
+    pub group: tau_ui_plugin::Group,
+    #[serde(default)]
+    pub note: Option<tau_ui_plugin::Note>,
+    /// Entries of its own, listed beside it.
+    #[serde(default)]
+    pub entries: Vec<tau_ui_plugin::CatalogEntry>,
+    /// Whether it draws a settings pane.
+    #[serde(default)]
+    pub settings: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

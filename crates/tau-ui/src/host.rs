@@ -652,6 +652,10 @@ impl Host {
             seams: vec![Seam::Start],
             spend: 0.0,
             page: None,
+            group: tau_ui_plugin::Group::Environment,
+            note: None,
+            entries: Vec::new(),
+            settings: false,
         }];
         let source = self.access_label();
         let slots = self.repos.lock().expect("not poisoned").clone();
@@ -724,6 +728,7 @@ impl Host {
         Catalog {
             plugin_data,
             plugin_settings,
+            repo_plugin_settings: self.repo_plugin_settings(),
             agent: "coder".into(),
             agent_source: Some(source.to_owned()),
             plugins,

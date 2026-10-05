@@ -148,8 +148,12 @@ pub enum Request {
         title: String,
         message: String,
     },
-    /// Saves the plugin's settings.
-    Settings(Value),
+    /// Saves the plugin's settings: everywhere, or `repo`'s own copy.
+    /// No value drops a repository's copy (ADR 0029).
+    Settings {
+        repo: Option<String>,
+        value: Option<Value>,
+    },
     /// Folds `body` into the run's state now, and stores it as the
     /// plugin's record with the run: a change the interface makes
     /// (pause a goal).
@@ -243,9 +247,38 @@ impl Handle {
         );
     }
 
+    /// Saves the plugin's settings everywhere.
     pub fn save_settings(&self, settings: &impl Serialize, cx: &mut App) {
-        let settings = serde_json::to_value(settings).unwrap_or_default();
-        self.request(Request::Settings(settings), cx);
+        self.save_settings_in(None, settings, cx);
+    }
+
+    /// Saves the plugin's settings everywhere, or as `repo`'s own copy.
+    pub fn save_settings_in(
+        &self,
+        repo: Option<&str>,
+        settings: &impl Serialize,
+        cx: &mut App,
+    ) {
+        let value = serde_json::to_value(settings).unwrap_or_default();
+        self.request(
+            Request::Settings {
+                repo: repo.map(str::to_owned),
+                value: Some(value),
+            },
+            cx,
+        );
+    }
+
+    /// Drops `repo`'s own copy of the plugin's settings: its runs take
+    /// the value everywhere again.
+    pub fn drop_settings(&self, repo: &str, cx: &mut App) {
+        self.request(
+            Request::Settings {
+                repo: Some(repo.to_owned()),
+                value: None,
+            },
+            cx,
+        );
     }
 
     pub fn record(&self, run: &RunId, body: impl Serialize, cx: &mut App) {
@@ -329,6 +362,12 @@ impl Handle {
     }
 }
 
+/// A settings pane's parameter: the repository whose copy it shows.
+pub const SCOPE: &str = "scope";
+
+/// A settings pane's parameter: the plugin's own entry it is of.
+pub const ENTRY: &str = "entry";
+
 /// What a contribution, a page or a command reaches as it runs.
 pub struct ViewCx<'a, P: UiPlugin> {
     pub plugin: &'a P,
@@ -394,6 +433,25 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             cards,
             cx,
         }
+    }
+
+    /// The scope a settings pane shows: a repository's name, or none
+    /// for everywhere.
+    pub fn scope(&self) -> Option<&str> {
+        self.params.get(SCOPE).map(String::as_str)
+    }
+
+    /// The entry a settings pane is of, for a plugin that lists its own
+    /// (`PluginInfo::entries`).
+    pub fn entry(&self) -> Option<&str> {
+        self.params.get(ENTRY).map(String::as_str)
+    }
+
+    /// Saves `settings` in the scope the settings pane shows.
+    pub fn save_settings(&mut self, settings: &P::Settings) {
+        let scope = self.scope().map(str::to_owned);
+        self.handle
+            .save_settings_in(scope.as_deref(), settings, self.cx);
     }
 
     /// The tool calls of `run`, in order.

@@ -67,6 +67,10 @@ pub async fn catalog(
             seams: info.seams,
             spend: info.spend,
             page: info.page,
+            group: info.group,
+            note: info.note,
+            entries: info.entries,
+            settings: info.settings,
         });
         data.insert(name.clone(), hosted.plugin.data(&hosted.state, cx).await);
         saved.insert(name, settings);

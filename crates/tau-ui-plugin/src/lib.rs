@@ -73,6 +73,7 @@ pub use services::Services;
 use tau_agent::plugin::Plugin;
 pub use value::PluginValue;
 pub use view::{
+    ENTRY,
     Handle,
     Link,
     NavEntry,
@@ -81,6 +82,7 @@ pub use view::{
     Request,
     RowNote,
     RunInfo,
+    SCOPE,
     Sink,
     ViewCx,
 };
@@ -217,6 +219,81 @@ impl Seam {
     }
 }
 
+/// What a plugin is for: where the Plugins screen lists it (ADR 0029).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    Serialize,
+    Deserialize,
+)]
+pub enum Group {
+    /// What the model sees: its effort, its context, its notes.
+    Context,
+    /// What a run may do, and when it may stop.
+    Rules,
+    /// Tools the model gets.
+    #[default]
+    Tools,
+    /// Where commands run.
+    Environment,
+    /// The person's own plugins, written in Luau.
+    Yours,
+}
+
+impl Group {
+    pub const ALL: [Self; 5] = [
+        Self::Context,
+        Self::Rules,
+        Self::Tools,
+        Self::Environment,
+        Self::Yours,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Context => "Context",
+            Self::Rules => "Rules",
+            Self::Tools => "Tools",
+            Self::Environment => "Environment",
+            Self::Yours => "Yours",
+        }
+    }
+}
+
+/// A short word on a plugin's row: a count, or what needs the person.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Note {
+    pub text: String,
+    pub tone: tau_ui_kit::theme::Tone,
+}
+
+impl Note {
+    pub fn new(text: impl Into<String>, tone: tau_ui_kit::theme::Tone) -> Self {
+        Self {
+            text: text.into(),
+            tone,
+        }
+    }
+}
+
+/// One of a plugin's own entries on the Plugins screen: a Luau plugin
+/// of tau-luau-plugins. Its settings pane gets its name as the `entry`
+/// parameter.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    pub name: String,
+    pub description: String,
+    pub group: Group,
+    pub seams: Vec<Seam>,
+    pub note: Option<Note>,
+}
+
 /// A plugin's entry on the Plugins screen. The registry sets its name,
 /// and the host its spend.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -229,6 +306,12 @@ pub struct PluginInfo {
     pub spend: f64,
     /// The page that explains its work, if it has one.
     pub page: Option<Link>,
+    pub group: Group,
+    pub note: Option<Note>,
+    /// Entries of its own, listed beside it.
+    pub entries: Vec<CatalogEntry>,
+    /// Whether it draws a settings pane; the registry sets it.
+    pub settings: bool,
 }
 
 /// A plugin, with its UI.

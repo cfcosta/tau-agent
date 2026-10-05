@@ -465,6 +465,7 @@ impl UiPlugin for MemoryUi {
         _settings: &(),
     ) -> PluginInfo {
         PluginInfo {
+            group: tau_ui_plugin::Group::Context,
             description: "Linked notes each repository's runs keep, and yours \
                           across them; searched at the start of a run"
                 .into(),

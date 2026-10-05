@@ -58,6 +58,8 @@ pub struct DemoHost {
     cx: HostCx,
     hosted: Vec<Hosted>,
     settings: Arc<Mutex<BTreeMap<String, Value>>>,
+    /// The repositories' own copies, by repository, then plugin.
+    repo_settings: Mutex<BTreeMap<String, BTreeMap<String, Value>>>,
     pushed: Mutex<Option<mpsc::UnboundedReceiver<Push>>>,
     // Dropped last: the plugins' files, and the runtime their work runs
     // on.
@@ -137,6 +139,7 @@ impl DemoHost {
             cx,
             hosted,
             settings,
+            repo_settings: Mutex::default(),
             pushed: Mutex::new(Some(pushed)),
             runtime,
             _dir: dir,
@@ -160,6 +163,21 @@ impl DemoHost {
         catalog.plugins = plugins;
         catalog.plugin_data = data;
         catalog.plugin_settings = settings;
+        catalog.repo_plugin_settings = self
+            .repo_settings
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .map(|(repo, plugins)| {
+                let plugins = plugins
+                    .iter()
+                    .map(|(plugin, value)| {
+                        (plugin.clone(), PluginValue::from_json(value.clone()))
+                    })
+                    .collect();
+                (repo.clone(), plugins)
+            })
+            .collect();
         for repo in &mut catalog.repos {
             if let Some(ctx) = self.cx.repo(&repo.name) {
                 repo.plugins = self.runtime.block_on(hosted::repo_data(
@@ -203,12 +221,41 @@ impl DemoHost {
         ))
     }
 
-    /// Saves `plugin`'s settings.
-    pub fn save_settings(&self, plugin: &str, value: Value) {
-        self.settings
-            .lock()
-            .expect("not poisoned")
-            .insert(plugin.to_owned(), value);
+    /// Saves `plugin`'s settings everywhere, or as `repo`'s own copy;
+    /// no value drops the copy.
+    pub fn save_settings(
+        &self,
+        plugin: &str,
+        repo: Option<&str>,
+        value: Option<Value>,
+    ) {
+        match (repo, value) {
+            (None, Some(value)) => {
+                self.settings
+                    .lock()
+                    .expect("not poisoned")
+                    .insert(plugin.to_owned(), value);
+            }
+            (Some(repo), Some(value)) => {
+                self.repo_settings
+                    .lock()
+                    .expect("not poisoned")
+                    .entry(repo.to_owned())
+                    .or_default()
+                    .insert(plugin.to_owned(), value);
+            }
+            (Some(repo), None) => {
+                if let Some(plugins) = self
+                    .repo_settings
+                    .lock()
+                    .expect("not poisoned")
+                    .get_mut(repo)
+                {
+                    plugins.remove(plugin);
+                }
+            }
+            (None, None) => {}
+        }
     }
 
     /// What the plugins push as their work finishes, once.

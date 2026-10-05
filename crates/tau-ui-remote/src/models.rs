@@ -158,6 +158,12 @@ pub struct ModelSettings {
     pub hidden: Vec<String>,
     /// Each plugin's settings, as it saves them, by plugin (ADR 0017).
     pub plugins: std::collections::BTreeMap<String, serde_json::Value>,
+    /// The repositories' own copies, by repository, then plugin: they
+    /// win in that repository's runs (ADR 0029).
+    pub repo_plugins: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, serde_json::Value>,
+    >,
 }
 
 impl Default for ModelSettings {
@@ -166,6 +172,7 @@ impl Default for ModelSettings {
             defaults: vec![("coder".into(), ModelChoice::default())],
             hidden: Vec::new(),
             plugins: Default::default(),
+            repo_plugins: Default::default(),
         }
     }
 }

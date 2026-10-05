@@ -434,6 +434,7 @@ impl UiPlugin for LuauPluginsUi {
             "Plugins written in Luau".to_owned()
         };
         PluginInfo {
+            group: tau_ui_plugin::Group::Yours,
             description,
             seams: vec![
                 Seam::Tools,

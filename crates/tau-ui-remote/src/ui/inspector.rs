@@ -444,7 +444,9 @@ fn plugins_section(
         )
 }
 
-/// Each plugin's state in the run; a row opens the plugin's screen.
+/// Each plugin's state in the run. A row opens the plugin's settings in
+/// place, in the run's repository or everywhere (ADR 0029); a plugin
+/// with nothing to set opens its screen.
 fn plugin_states(
     ws: &Workspace,
     run: &RunView,
@@ -460,15 +462,30 @@ fn plugin_states(
         .rounded(radius::BOX)
         .overflow_hidden()
         .children(statuses.iter().map(|plugin| {
+            let settings = ws
+                .catalog
+                .plugins
+                .iter()
+                .any(|info| info.name == plugin.name && info.settings);
+            let open = settings
+                && ws.inspector_plugin.as_deref() == Some(plugin.name.as_str());
             let route = ws.plugin_route_named(&plugin.name, &run.id);
-            div()
+            let name = plugin.name.clone();
+            let row = div()
                 .id(SharedString::from(format!("status-{}", plugin.name)))
-                .when_some(route, |row, route| {
+                .when(settings || route.is_some(), |row| {
                     row.cursor_pointer()
                         .hover(|style| style.bg(gpui::white().opacity(0.03)))
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.navigate(route.clone(), cx)
-                        }))
+                })
+                .when(settings, |row| {
+                    row.on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.toggle_inspector_plugin(&name, cx)
+                    }))
+                })
+                .when_some(route.filter(|_| !settings), |row, route| {
+                    row.on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(route.clone(), cx)
+                    }))
                 })
                 .flex()
                 .items_center()
@@ -477,6 +494,7 @@ fn plugin_states(
                 .px(sp(3.))
                 .border_b_1()
                 .border_color(t.border)
+                .when(open, |row| row.bg(t.selected))
                 .child(
                     mono(plugin.name.clone(), Type::CAPTION, t.text).flex_1(),
                 )
@@ -485,8 +503,89 @@ fn plugin_states(
                         .typeset(Type::CAPTION)
                         .text_color(t.tone(plugin.tone))
                         .child(plugin.state.clone()),
-                )
+                );
+            div().flex().flex_col().child(row).when(open, |column| {
+                column.child(plugin_settings(ws, run, &plugin.name, t, cx))
+            })
         }))
+}
+
+/// A plugin's settings, opened from its row: in the run's repository,
+/// or everywhere, with the way to all of the plugin.
+fn plugin_settings(
+    ws: &Workspace,
+    run: &RunView,
+    plugin: &str,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let repo = (!run.repo.is_empty() && ws.catalog.repo(&run.repo).is_some())
+        .then(|| run.repo.clone());
+    let scope = repo.clone().filter(|_| !ws.inspector_everywhere);
+    let options = repo
+        .iter()
+        .map(|repo| (Some(repo.clone()), repo.clone()))
+        .chain(std::iter::once((None, "Everywhere".to_owned())));
+    let switch = div()
+        .flex()
+        .gap(sp(0.5))
+        .p(sp(0.75))
+        .rounded(radius::CONTROL)
+        .well(t)
+        .children(options.map(|(option, label)| {
+            let on = option == scope;
+            let everywhere = option.is_none();
+            div()
+                .id(SharedString::from(format!("inspector-scope-{label}")))
+                .px(sp(2.5))
+                .py(sp(1.))
+                .rounded(radius::SMALL)
+                .cursor_pointer()
+                .typeset(Type::CAPTION)
+                .text_color(if on { t.text } else { t.dim })
+                .when(on, |option| option.key(t))
+                .child(label)
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.inspector_everywhere = everywhere;
+                    cx.notify();
+                }))
+        }));
+    let all = {
+        let plugin = plugin.to_owned();
+        div()
+            .id("inspector-all-settings")
+            .cursor_pointer()
+            .typeset(Type::CAPTION)
+            .text_color(t.roles.link)
+            .child("All of it")
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                ws.pick_plugin(&plugin, None, cx);
+                ws.navigate(Route::Plugins, cx);
+            }))
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(3.))
+        .p(sp(3.))
+        .border_b_1()
+        .border_color(t.border)
+        .bg(t.bg)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .child(switch)
+                .child(div().ml_auto().child(all)),
+        )
+        .children(ws.plugin_settings_pane(plugin, scope.as_deref(), None, cx))
+        .child(
+            div()
+                .typeset(Type::CAPTION)
+                .text_color(t.dim)
+                .child("Applies from your next message."),
+        )
 }
 
 /// The bar pinned under the panel that opens the event log, and the

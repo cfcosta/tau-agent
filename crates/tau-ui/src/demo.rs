@@ -1127,8 +1127,12 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 })
                 .detach();
             }
-            WorkspaceEvent::PluginSettings { plugin, settings } => {
-                host.save_settings(plugin, settings.clone());
+            WorkspaceEvent::PluginSettings {
+                plugin,
+                repo,
+                settings,
+            } => {
+                host.save_settings(plugin, repo.as_deref(), settings.clone());
                 workspace.update(cx, |ws, cx| {
                     let catalog = host.catalog(ws.catalog().clone());
                     ws.apply(HostUpdate::catalog(catalog), cx);
@@ -1312,6 +1316,7 @@ pub fn catalog() -> Catalog {
     Catalog {
         plugin_data: Default::default(),
         plugin_settings: Default::default(),
+        repo_plugin_settings: Default::default(),
         plugins: Vec::new(),
         agent: "coder".into(),
         agent_source: Some("src/agents.rs:14".into()),

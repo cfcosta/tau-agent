@@ -594,6 +594,7 @@ impl UiPlugin for ConstitutionUi {
             }
         }
         PluginInfo {
+            group: tau_ui_plugin::Group::Rules,
             description: if jev {
                 format!(
                     "{rules} rules across your repositories, checked with Jev"

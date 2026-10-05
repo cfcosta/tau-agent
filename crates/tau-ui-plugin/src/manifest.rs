@@ -221,6 +221,7 @@ pub struct Manifest<P: UiPlugin> {
     pub(crate) contributions: Vec<Contribution<P>>,
     pub(crate) commands: Vec<SlashCommand<P>>,
     pub(crate) listed: Option<Listed<P>>,
+    pub(crate) settings: Option<Draw<P>>,
 }
 
 impl<P: UiPlugin> Default for Manifest<P> {
@@ -237,7 +238,24 @@ impl<P: UiPlugin> Manifest<P> {
             contributions: Vec::new(),
             commands: Vec::new(),
             listed: None,
+            settings: None,
         }
+    }
+
+    /// Draws the plugin's settings pane (ADR 0029): the host places it on
+    /// the Plugins screen and in the inspector. [`ViewCx::settings`] is
+    /// the value for the scope shown, [`ViewCx::scope`] that scope, and
+    /// [`ViewCx::save_settings`] saves a new one there; an entry's pane
+    /// (`PluginInfo::entries`) has its name as the `entry` parameter.
+    pub fn settings(
+        mut self,
+        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> AnyElement
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.settings = Some(Box::new(draw));
+        self
     }
 
     pub fn page(mut self, page: Page<P>) -> Self {

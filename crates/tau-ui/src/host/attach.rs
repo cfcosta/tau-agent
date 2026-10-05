@@ -750,14 +750,19 @@ impl Host {
                         cx,
                     );
                 }
-                WorkspaceEvent::PluginSettings { plugin, settings } => {
-                    let (job_plugin, settings) = (plugin.clone(), settings.clone());
+                WorkspaceEvent::PluginSettings {
+                    plugin,
+                    repo,
+                    settings,
+                } => {
+                    let (job_plugin, repo, settings) =
+                        (plugin.clone(), repo.clone(), settings.clone());
                     on_host(
                         &handler,
                         &workspace,
                         async move |host| {
                             let saved =
-                                host.save_plugin_settings(&job_plugin, settings).await;
+                                host.save_plugin_settings(&job_plugin, repo, settings).await;
                             host.catalog_changed();
                             saved
                         },

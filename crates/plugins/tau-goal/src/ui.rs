@@ -319,6 +319,7 @@ impl UiPlugin for GoalUi {
     ) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
+            group: tau_ui_plugin::Group::Rules,
             description: needs_jev(
                 jev,
                 "Keeps a conversation going until its /goal holds",

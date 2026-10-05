@@ -484,35 +484,69 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         // The next run follows coder's new default until one is picked.
         assert_eq!(ws.next_model().model, "gpt-6-luna");
         ws.toggle_model_hidden("gpt-6-astra", cx);
-        // tau-reasoning's settings, from its section of the Models
-        // screen, through its handle.
-        ws.navigate(Route::Models, cx);
-        ws.plugin_handle(tau_reasoning::NAME).save_settings(
+        // tau-reasoning's settings, from its pane on the Plugins screen,
+        // through its handle: everywhere, then tau-agent's own copy.
+        ws.navigate(Route::Plugins, cx);
+        ws.pick_plugin(tau_reasoning::NAME, None, cx);
+        let reasoning = ws.plugin_handle(tau_reasoning::NAME);
+        reasoning.save_settings(
             &tau_reasoning::ui::Settings {
                 redecide: true,
                 threshold: 0.9,
             },
             cx,
         );
+        ws.set_plugin_scope(Some("tau-agent".into()), cx);
+        reasoning.save_settings_in(
+            Some("tau-agent"),
+            &tau_reasoning::ui::Settings {
+                redecide: false,
+                threshold: 0.5,
+            },
+            cx,
+        );
     });
     // Drawn with them.
     cx.run_until_parked();
-    let plugin_saved: Vec<(String, serde_json::Value)> = events
-        .borrow()
-        .iter()
-        .filter_map(|event| match event {
-            WorkspaceEvent::PluginSettings { plugin, settings } => {
-                Some((plugin.clone(), settings.clone()))
-            }
-            _ => None,
-        })
-        .collect();
+    workspace.update(&mut cx, |ws, _| {
+        let catalog = ws.catalog();
+        assert_eq!(
+            catalog
+                .settings_in(tau_reasoning::NAME, Some("tau-agent"))
+                .map(|value| value.json().clone()),
+            Some(serde_json::json!({ "redecide": false, "threshold": 0.5 }))
+        );
+        assert!(catalog.has_own_settings("tau-agent", tau_reasoning::NAME));
+    });
+    let plugin_saved: Vec<(String, Option<String>, Option<serde_json::Value>)> =
+        events
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                WorkspaceEvent::PluginSettings {
+                    plugin,
+                    repo,
+                    settings,
+                } => Some((plugin.clone(), repo.clone(), settings.clone())),
+                _ => None,
+            })
+            .collect();
     assert_eq!(
         plugin_saved,
-        [(
-            tau_reasoning::NAME.to_owned(),
-            serde_json::json!({ "redecide": true, "threshold": 0.9 })
-        )]
+        [
+            (
+                tau_reasoning::NAME.to_owned(),
+                None,
+                Some(serde_json::json!({ "redecide": true, "threshold": 0.9 }))
+            ),
+            (
+                tau_reasoning::NAME.to_owned(),
+                Some("tau-agent".to_owned()),
+                Some(
+                    serde_json::json!({ "redecide": false, "threshold": 0.5 })
+                )
+            ),
+        ]
     );
     // Each change is sent as itself, not as the settings this window has.
     let events = events.borrow();

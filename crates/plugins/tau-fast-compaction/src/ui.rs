@@ -369,6 +369,7 @@ impl UiPlugin for FastCompactionUi {
     ) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
+            group: tau_ui_plugin::Group::Context,
             description: needs_jev(
                 jev,
                 "Prunes large bash outputs as they arrive, and stale tool \

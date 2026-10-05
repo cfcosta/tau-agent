@@ -168,6 +168,10 @@ impl Workspace {
             plugin_ui: _,
             plugin_requests: _,
             plugin_focus: _,
+            // Where each window is on the Plugins screen is its own.
+            plugins_screen: _,
+            inspector_plugin: _,
+            inspector_everywhere: _,
             composer_replaced: _,
             composer_back: _,
         } = self;

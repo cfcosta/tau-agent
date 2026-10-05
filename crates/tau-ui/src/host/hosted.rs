@@ -143,15 +143,38 @@ impl Host {
     pub(super) fn plugin_settings(
         &self,
         plugin: &dyn ErasedPlugin,
+        repo: Option<&str>,
     ) -> PluginValue {
+        let settings = self.settings.lock().expect("not poisoned");
+        repo.and_then(|repo| {
+            settings.repo_plugins.get(repo)?.get(plugin.name())
+        })
+        .or_else(|| settings.plugins.get(plugin.name()))
+        .cloned()
+        .map(PluginValue::from_json)
+        .unwrap_or_else(|| plugin.default_settings())
+    }
+
+    /// The repositories' own copies of plugins' settings, by repository,
+    /// then plugin.
+    pub(super) fn repo_plugin_settings(
+        &self,
+    ) -> BTreeMap<String, BTreeMap<String, PluginValue>> {
         self.settings
             .lock()
             .expect("not poisoned")
-            .plugins
-            .get(plugin.name())
-            .cloned()
-            .map(PluginValue::from_json)
-            .unwrap_or_else(|| plugin.default_settings())
+            .repo_plugins
+            .iter()
+            .map(|(repo, plugins)| {
+                let plugins = plugins
+                    .iter()
+                    .map(|(plugin, value)| {
+                        (plugin.clone(), PluginValue::from_json(value.clone()))
+                    })
+                    .collect();
+                (repo.clone(), plugins)
+            })
+            .collect()
     }
 
     /// What commands in `repo` start through: every plugin's launcher,
@@ -164,7 +187,8 @@ impl Host {
         let mut launchers: Vec<Arc<dyn tau_agent::launch::Launcher>> =
             Vec::new();
         for hosted in &self.hosted {
-            let settings = self.plugin_settings(hosted.plugin.as_ref());
+            let settings =
+                self.plugin_settings(hosted.plugin.as_ref(), Some(&ctx.name));
             launchers.extend(
                 hosted.plugin.launcher(&hosted.state, &ctx, &settings).await,
             );
@@ -199,7 +223,13 @@ impl Host {
             .hosted
             .iter()
             .map(|hosted| {
-                (hosted.clone(), self.plugin_settings(hosted.plugin.as_ref()))
+                (
+                    hosted.clone(),
+                    self.plugin_settings(
+                        hosted.plugin.as_ref(),
+                        Some(&repo.name),
+                    ),
+                )
             })
             .collect();
         let jev = self.jev();
@@ -255,7 +285,8 @@ impl Host {
     pub(super) async fn starting(&self, run: &RunCtx) -> Vec<(String, Value)> {
         let mut said = Vec::new();
         for hosted in &self.hosted {
-            let settings = self.plugin_settings(hosted.plugin.as_ref());
+            let settings = self
+                .plugin_settings(hosted.plugin.as_ref(), Some(&run.repo.name));
             said.extend(
                 hosted
                     .plugin
@@ -271,7 +302,7 @@ impl Host {
     /// Each plugin's catalog entry, its data, and its settings.
     pub(super) async fn registered_catalog(&self) -> hosted::Catalogued {
         hosted::catalog(&self.hosted, &self.host_cx(), |plugin| {
-            self.plugin_settings(plugin)
+            self.plugin_settings(plugin, None)
         })
         .await
     }
@@ -300,11 +331,30 @@ impl Host {
     pub async fn save_plugin_settings(
         &self,
         plugin: &str,
-        value: Value,
+        repo: Option<String>,
+        value: Option<Value>,
     ) -> anyhow::Result<()> {
         let plugin = plugin.to_owned();
-        self.change_settings(move |settings| {
-            settings.plugins.insert(plugin, value);
+        self.change_settings(move |settings| match (repo, value) {
+            (None, Some(value)) => {
+                settings.plugins.insert(plugin, value);
+            }
+            (Some(repo), Some(value)) => {
+                settings
+                    .repo_plugins
+                    .entry(repo)
+                    .or_default()
+                    .insert(plugin, value);
+            }
+            (Some(repo), None) => {
+                if let Some(plugins) = settings.repo_plugins.get_mut(&repo) {
+                    plugins.remove(&plugin);
+                    if plugins.is_empty() {
+                        settings.repo_plugins.remove(&repo);
+                    }
+                }
+            }
+            (None, None) => {}
         })
         .await
     }

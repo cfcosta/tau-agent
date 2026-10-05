@@ -143,14 +143,37 @@ impl Workspace {
             Request::Alert { title, message } => {
                 self.show_alert(title, message, cx);
             }
-            Request::Settings(settings) => {
-                self.catalog.plugin_settings.insert(
-                    plugin.to_owned(),
-                    PluginValue::from_json(settings.clone()),
-                );
+            Request::Settings { repo, value } => {
+                match (&repo, &value) {
+                    (None, Some(value)) => {
+                        self.catalog.plugin_settings.insert(
+                            plugin.to_owned(),
+                            PluginValue::from_json(value.clone()),
+                        );
+                    }
+                    (Some(repo), Some(value)) => {
+                        self.catalog
+                            .repo_plugin_settings
+                            .entry(repo.clone())
+                            .or_default()
+                            .insert(
+                                plugin.to_owned(),
+                                PluginValue::from_json(value.clone()),
+                            );
+                    }
+                    (Some(repo), None) => {
+                        if let Some(plugins) =
+                            self.catalog.repo_plugin_settings.get_mut(repo)
+                        {
+                            plugins.remove(plugin);
+                        }
+                    }
+                    (None, None) => return,
+                }
                 cx.emit(WorkspaceEvent::PluginSettings {
                     plugin: plugin.to_owned(),
-                    settings,
+                    repo,
+                    settings: value,
                 });
             }
             // It folds once the host stores it (`HostUpdate::PluginRecord`),
@@ -235,10 +258,12 @@ impl Workspace {
         ) = Default::default();
         let state = run.and_then(|run| run.plugin_states.get(name));
         let data = self.catalog.plugin_data.get(name).unwrap_or(&no_data);
+        // A settings pane shows its scope's value; everything else the
+        // value everywhere.
+        let scope = params.get(tau_ui_plugin::SCOPE).map(String::as_str);
         let settings = self
             .catalog
-            .plugin_settings
-            .get(name)
+            .settings_in(name, scope)
             .unwrap_or(&no_settings);
         let repos: BTreeMap<String, &PluginValue> = self
             .catalog
@@ -369,6 +394,29 @@ impl Workspace {
         });
         self.with_plugin(erased.as_ref(), run, params, cx, |plugin, env| {
             plugin.draw_page(page, env)
+        })
+        .flatten()
+    }
+
+    /// `plugin`'s settings pane, for `scope` (a repository, or none for
+    /// everywhere) and, for a plugin that lists its own, `entry`.
+    pub(crate) fn plugin_settings_pane(
+        &self,
+        plugin: &str,
+        scope: Option<&str>,
+        entry: Option<&str>,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let erased = registry().get(plugin)?;
+        let mut params = BTreeMap::new();
+        if let Some(scope) = scope {
+            params.insert(tau_ui_plugin::SCOPE.to_owned(), scope.to_owned());
+        }
+        if let Some(entry) = entry {
+            params.insert(tau_ui_plugin::ENTRY.to_owned(), entry.to_owned());
+        }
+        self.with_plugin(erased.as_ref(), None, &params, cx, |plugin, env| {
+            plugin.draw_settings(env)
         })
         .flatten()
     }

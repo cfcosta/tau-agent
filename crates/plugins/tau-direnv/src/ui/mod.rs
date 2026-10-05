@@ -123,6 +123,7 @@ impl UiPlugin for DirenvUi {
         _settings: &Settings,
     ) -> PluginInfo {
         PluginInfo {
+            group: tau_ui_plugin::Group::Environment,
             description: "Runs agent commands in the repository's direnv \
                           environment, once you allow it"
                 .into(),

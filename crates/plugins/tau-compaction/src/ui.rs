@@ -54,6 +54,7 @@ impl UiPlugin for CompactionUi {
         _settings: &(),
     ) -> PluginInfo {
         PluginInfo {
+            group: tau_ui_plugin::Group::Context,
             description: "Summarizes the context when it nears the window"
                 .into(),
             seams: vec![Seam::Start, Seam::Rewrite],

@@ -150,6 +150,11 @@ pub trait ErasedPlugin: Send + Sync {
         point_cx: &dyn Any,
         env: Env<'_>,
     ) -> Vec<(i32, Box<dyn Any>)>;
+    /// Whether it draws a settings pane (`Manifest::settings`).
+    fn has_settings(&self) -> bool;
+    /// Its settings pane, with `env.settings` the value for the scope in
+    /// `env.params`.
+    fn draw_settings(&self, env: Env<'_>) -> Option<AnyElement>;
     fn pages(&self) -> Vec<PageInfo>;
     fn page_title(&self, page: &str, env: Env<'_>) -> Option<String>;
     fn draw_page(&self, page: &str, env: Env<'_>) -> Option<AnyElement>;
@@ -274,6 +279,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         Box::pin(async move {
             PluginInfo {
                 name: self.plugin.name().to_owned(),
+                settings: self.manifest.settings.is_some(),
                 ..self
                     .plugin
                     .catalog(self.host_of(host), cx, settings.get())
@@ -399,6 +405,15 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
                 .collect()
         })
         .unwrap_or_default()
+    }
+
+    fn has_settings(&self) -> bool {
+        self.manifest.settings.is_some()
+    }
+
+    fn draw_settings(&self, env: Env<'_>) -> Option<AnyElement> {
+        let draw = self.manifest.settings.as_ref()?;
+        self.with_view(env, |view| draw(view))
     }
 
     fn pages(&self) -> Vec<PageInfo> {
