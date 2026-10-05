@@ -11,7 +11,7 @@ pub mod stats;
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
 };
 
 use gpui::{AppContext as _, Context, Entity};
@@ -67,12 +67,10 @@ pub struct ConstitutionUi;
 /// The plugin on the host: each repository's rules as runs check them,
 /// and where it keeps what a person looked at.
 pub struct Host {
-    /// The plugin's own database, opened when first needed, by one
-    /// thread at a time: two opening it at once would both migrate it.
-    db: OnceLock<Db>,
-    opening: Mutex<()>,
+    /// The plugin's own database, opened when first needed, once: two
+    /// opening it at once would both migrate it.
+    db: tokio::sync::OnceCell<Db>,
     path: PathBuf,
-    runtime: tokio::runtime::Handle,
     /// By [`rules_key`]: an edit replaces them here, and every run's
     /// next check reads the new ones.
     constitutions: Mutex<HashMap<String, Live>>,
@@ -421,32 +419,23 @@ fn rules_key(repo: &RepoCtx) -> String {
 
 impl Host {
     /// The plugin's database, opened the first time.
-    fn db(&self) -> anyhow::Result<&Db> {
-        if let Some(db) = self.db.get() {
-            return Ok(db);
-        }
-        let _opening = self.opening.lock().expect("not poisoned");
-        if let Some(db) = self.db.get() {
-            return Ok(db);
-        }
-        let db = self.runtime.block_on(Db::open(&self.path))?;
-        Ok(self.db.get_or_init(|| db))
+    async fn db(&self) -> anyhow::Result<&Db> {
+        Ok(self.db.get_or_try_init(|| Db::open(&self.path)).await?)
     }
 
     /// Repository `repo`'s rules as runs check them, read from the
     /// database the first time.
-    fn constitution(&self, repo: &RepoCtx) -> anyhow::Result<Live> {
+    async fn constitution(&self, repo: &RepoCtx) -> anyhow::Result<Live> {
         let key = rules_key(repo);
-        let mut open = self.constitutions.lock().expect("not poisoned");
-        if let Some(live) = open.get(&key) {
+        if let Some(live) =
+            self.constitutions.lock().expect("not poisoned").get(&key)
+        {
             return Ok(live.clone());
         }
-        let loaded = self
-            .runtime
-            .block_on(Constitution::load(self.db()?, &key))?;
-        let live = Live::new(loaded);
-        open.insert(key, live.clone());
-        Ok(live)
+        let loaded = Constitution::load(self.db().await?, &key).await?;
+        // Another call may have loaded them meanwhile: the first stays.
+        let mut open = self.constitutions.lock().expect("not poisoned");
+        Ok(open.entry(key).or_insert_with(|| Live::new(loaded)).clone())
     }
 
     /// The repository named `name`.
@@ -460,29 +449,30 @@ impl Host {
     /// Changes `repo`'s constitution with `edit`, which checks what it
     /// adds, and saves it. Runs going on check with the new rules from
     /// their next tool call.
-    fn edit(
+    async fn edit(
         &self,
         cx: &HostCx,
         repo: &str,
         edit: impl FnOnce(&mut Constitution) -> Result<(), crate::RuleError>,
     ) -> anyhow::Result<()> {
         let repo = Self::repo(cx, repo)?;
-        let live = self.constitution(repo)?;
+        let live = self.constitution(repo).await?;
         let mut constitution = (*live.get()).clone();
         edit(&mut constitution)?;
-        self.runtime
-            .block_on(constitution.save(self.db()?, &rules_key(repo)))?;
+        constitution
+            .save(self.db().await?, &rules_key(repo))
+            .await?;
         live.set(constitution);
         Ok(())
     }
 
     /// Replaces `repo`'s stored constitution with an empty one: the way
     /// out when the stored one cannot be read, which no edit can fix.
-    fn reset(&self, cx: &HostCx, repo: &str) -> anyhow::Result<()> {
+    async fn reset(&self, cx: &HostCx, repo: &str) -> anyhow::Result<()> {
         let repo = Self::repo(cx, repo)?;
         let key = rules_key(repo);
         let fresh = Constitution::default();
-        self.runtime.block_on(fresh.save(self.db()?, &key))?;
+        fresh.save(self.db().await?, &key).await?;
         let mut open = self.constitutions.lock().expect("not poisoned");
         match open.get(&key) {
             Some(live) => live.set(fresh),
@@ -494,27 +484,34 @@ impl Host {
     }
 
     /// What a person reviewed; none when the database cannot be read.
-    fn reviewed(&self) -> Vec<(String, String)> {
-        let reviewed = self
-            .db()
-            .and_then(|db| Ok(self.runtime.block_on(db.reviewed())?));
+    async fn reviewed(&self) -> Vec<(String, String)> {
+        let reviewed = match self.db().await {
+            Ok(db) => db.reviewed().await.map_err(anyhow::Error::from),
+            Err(error) => Err(error),
+        };
         reviewed.unwrap_or_else(|error| {
             eprintln!("{NAME}: could not read what was reviewed: {error:#}");
             Vec::new()
         })
     }
 
-    fn set_reviewed(&self, run: String, key: String) -> anyhow::Result<()> {
-        Ok(self
-            .runtime
-            .block_on(self.db()?.mark_reviewed(&run, &key))?)
+    async fn set_reviewed(
+        &self,
+        run: String,
+        key: String,
+    ) -> anyhow::Result<()> {
+        Ok(self.db().await?.mark_reviewed(&run, &key).await?)
     }
 
     /// What the checks did in each stored run of `repo`, from the
     /// plugin's records, counted as a run's view counts them.
-    fn history(&self, repo: &RepoCtx, cx: &HostCx) -> Vec<(String, Stats)> {
+    async fn history(
+        &self,
+        repo: &RepoCtx,
+        cx: &HostCx,
+    ) -> Vec<(String, Stats)> {
         let (Ok(records), Ok(ours)) =
-            (cx.records_everywhere(NAME), cx.runs_in(repo))
+            (cx.records_everywhere(NAME).await, cx.runs_in(repo).await)
         else {
             return Vec::new();
         };
@@ -553,7 +550,7 @@ impl UiPlugin for ConstitutionUi {
     /// The repository's rules, checked with Jev when there is a key, in
     /// a run and its sub-agents alike. Rules that cannot be read fail
     /// the run: they are never skipped.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         host: &Host,
         run: &RunCtx,
@@ -562,11 +559,11 @@ impl UiPlugin for ConstitutionUi {
         let Some(jev) = run.services.get::<Arc<dyn Jev>>() else {
             return Ok(Vec::new());
         };
-        let rules = host.constitution(&run.repo)?;
+        let rules = host.constitution(&run.repo).await?;
         Ok(vec![Box::new(ConstitutionPlugin::live(jev.clone(), rules))])
     }
 
-    fn starting(
+    async fn starting(
         &self,
         host: &Host,
         run: &RunCtx,
@@ -575,6 +572,7 @@ impl UiPlugin for ConstitutionUi {
         let jev = run.services.get::<Arc<dyn Jev>>().is_some();
         let rules = host
             .constitution(&run.repo)
+            .await
             .ok()
             .map(|live| live.get().rules.len());
         vec![Record::Starting {
@@ -582,14 +580,19 @@ impl UiPlugin for ConstitutionUi {
         }]
     }
 
-    fn catalog(&self, host: &Host, cx: &HostCx, _settings: &()) -> PluginInfo {
+    async fn catalog(
+        &self,
+        host: &Host,
+        cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
-        let rules: usize = cx
-            .repos
-            .iter()
-            .filter_map(|repo| host.constitution(repo).ok())
-            .map(|live| live.get().rules.len())
-            .sum();
+        let mut rules = 0;
+        for repo in &cx.repos {
+            if let Ok(live) = host.constitution(repo).await {
+                rules += live.get().rules.len();
+            }
+        }
         PluginInfo {
             description: if jev {
                 format!(
@@ -604,15 +607,20 @@ impl UiPlugin for ConstitutionUi {
         }
     }
 
-    fn data(&self, host: &Host, _cx: &HostCx) -> Data {
+    async fn data(&self, host: &Host, _cx: &HostCx) -> Data {
         Data {
-            reviewed: host.reviewed(),
+            reviewed: host.reviewed().await,
         }
     }
 
-    fn repo_data(&self, host: &Host, repo: &RepoCtx, cx: &HostCx) -> Rules {
-        let history = host.history(repo, cx);
-        match host.constitution(repo) {
+    async fn repo_data(
+        &self,
+        host: &Host,
+        repo: &RepoCtx,
+        cx: &HostCx,
+    ) -> Rules {
+        let history = host.history(repo, cx).await;
+        match host.constitution(repo).await {
             Ok(live) => {
                 let loaded = live.get();
                 Rules {
@@ -645,7 +653,7 @@ impl UiPlugin for ConstitutionUi {
         }
     }
 
-    fn act(
+    async fn act(
         &self,
         host: &Host,
         action: Value,
@@ -662,12 +670,14 @@ impl UiPlugin for ConstitutionUi {
                 answers,
             } => {
                 let result =
-                    try_rule(cx, &text, &on, review, block, &calls, &answers);
+                    try_rule(cx, &text, &on, review, block, &calls, &answers)
+                        .await;
                 return Ok(Some(serde_json::to_value(result)?));
             }
-            Act::Reviewed { run, key } => {
-                (host.set_reviewed(run, key), "Could not save the review")
-            }
+            Act::Reviewed { run, key } => (
+                host.set_reviewed(run, key).await,
+                "Could not save the review",
+            ),
             Act::Add {
                 repo,
                 text,
@@ -677,7 +687,8 @@ impl UiPlugin for ConstitutionUi {
             } => (
                 host.edit(cx, &repo, |rules| {
                     rules.add(&text, &on, review, block).map(drop)
-                }),
+                })
+                .await,
                 "Could not add the rule",
             ),
             Act::Update {
@@ -690,14 +701,16 @@ impl UiPlugin for ConstitutionUi {
             } => (
                 host.edit(cx, &repo, |rules| {
                     rules.replace(&id, &text, &on, review, block)
-                }),
+                })
+                .await,
                 "Could not save the rule",
             ),
             Act::Remove { repo, id } => (
                 host.edit(cx, &repo, |rules| {
                     rules.remove(&id);
                     Ok(())
-                }),
+                })
+                .await,
                 "Could not remove the rule",
             ),
             Act::Settings {
@@ -713,11 +726,12 @@ impl UiPlugin for ConstitutionUi {
                     };
                     rules.max_holds = max_holds;
                     Ok(())
-                }),
+                })
+                .await,
                 "Could not save the constitution",
             ),
             Act::Reset { repo } => {
-                (host.reset(cx, &repo), "Could not remove the rules")
+                (host.reset(cx, &repo).await, "Could not remove the rules")
             }
         };
         if let Err(error) = done {
@@ -755,12 +769,10 @@ impl UiPlugin for ConstitutionUi {
 }
 
 impl PluginHost for Host {
-    fn new(cx: &HostCx) -> anyhow::Result<Self> {
+    async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         Ok(Host {
-            db: OnceLock::new(),
-            opening: Mutex::default(),
+            db: tokio::sync::OnceCell::new(),
             path: cx.plugin_dir(NAME).join("constitution.db"),
-            runtime: cx.runtime.clone(),
             constitutions: Mutex::default(),
         })
     }
@@ -799,7 +811,7 @@ impl PluginUi for page::Ui {
 
 /// Asks Jev what a rule being written makes of past `calls` and
 /// `answers`, as a check would ask. Blocks.
-fn try_rule(
+async fn try_rule(
     cx: &HostCx,
     text: &str,
     on: &[String],
@@ -824,8 +836,7 @@ fn try_rule(
         "Trying a rule asks Jev: add a TypeSafe key on the Models screen."
             .to_owned()
     })?;
-    cx.runtime
-        .block_on(crate::try_rule(&**jev, &rule, calls, answers))
+    crate::try_rule(&**jev, &rule, calls, answers).await
 }
 
 /// The repository's rules in the sidebar: how many, and what waits for

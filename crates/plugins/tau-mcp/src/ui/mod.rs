@@ -460,7 +460,7 @@ impl UiPlugin for McpUi {
 
     /// The repository's servers, started on its first run, when it has
     /// any that would connect.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         host: &Host,
         run: &RunCtx,
@@ -469,7 +469,7 @@ impl UiPlugin for McpUi {
         host::agent_plugins(host, run, settings)
     }
 
-    fn catalog(
+    async fn catalog(
         &self,
         host: &Host,
         cx: &HostCx,
@@ -478,15 +478,20 @@ impl UiPlugin for McpUi {
         host::catalog(host, cx, settings)
     }
 
-    fn data(&self, host: &Host, cx: &HostCx) -> Servers {
+    async fn data(&self, host: &Host, cx: &HostCx) -> Servers {
         host::data(host, cx)
     }
 
-    fn repo_data(&self, host: &Host, repo: &RepoCtx, cx: &HostCx) -> Servers {
+    async fn repo_data(
+        &self,
+        host: &Host,
+        repo: &RepoCtx,
+        cx: &HostCx,
+    ) -> Servers {
         host::repo_data(host, repo, cx)
     }
 
-    fn act(
+    async fn act(
         &self,
         host: &Host,
         action: Value,

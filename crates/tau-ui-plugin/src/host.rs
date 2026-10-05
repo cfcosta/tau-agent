@@ -226,6 +226,8 @@ pub struct HostRecord {
 #[derive(Clone)]
 pub struct HostCx {
     pub store: Store,
+    /// The host's runtime, to spawn background work on. Nothing blocks
+    /// on it (ADR 0027).
     pub runtime: tokio::runtime::Handle,
     /// Host-wide services, by type.
     pub services: Services,
@@ -267,13 +269,12 @@ impl HostCx {
     }
 
     /// `plugin`'s records along `run`'s fork chain, oldest first.
-    pub fn records(
+    pub async fn records(
         &self,
         run: &RunId,
         plugin: &str,
     ) -> anyhow::Result<Vec<Value>> {
-        let bodies =
-            self.runtime.block_on(self.store.records(&run.0, plugin))?;
+        let bodies = self.store.records(&run.0, plugin).await?;
         Ok(bodies
             .iter()
             .filter_map(|body| serde_json::from_str(body).ok())
@@ -281,12 +282,13 @@ impl HostCx {
     }
 
     /// Every stored run that works in `repo`.
-    pub fn runs_in(
+    pub async fn runs_in(
         &self,
         repo: &RepoCtx,
     ) -> anyhow::Result<std::collections::BTreeSet<RunId>> {
         Ok(self
-            .records_everywhere(HOST_RECORD)?
+            .records_everywhere(HOST_RECORD)
+            .await?
             .into_iter()
             .filter(|(_, body)| {
                 serde_json::from_value::<HostRecord>(body.clone())
@@ -297,13 +299,11 @@ impl HostCx {
     }
 
     /// `plugin`'s records in every run, each with the run that stored it.
-    pub fn records_everywhere(
+    pub async fn records_everywhere(
         &self,
         plugin: &str,
     ) -> anyhow::Result<Vec<(RunId, Value)>> {
-        let rows = self
-            .runtime
-            .block_on(self.store.plugin_entries_everywhere(plugin))?;
+        let rows = self.store.plugin_entries_everywhere(plugin).await?;
         Ok(rows
             .into_iter()
             .filter_map(|(run, body)| {
@@ -315,7 +315,7 @@ impl HostCx {
     /// Stores `body` as `plugin`'s record with `run`, and hands it to the
     /// interface, which folds it as if the run had published it: an
     /// interface's own change to a plugin's state (pause a goal).
-    pub fn publish(
+    pub async fn publish(
         &self,
         run: &RunId,
         plugin: &str,
@@ -325,11 +325,9 @@ impl HostCx {
             plugin: plugin.to_owned(),
             body: body.to_string(),
         };
-        self.runtime.block_on(self.store.append_turn(
-            &run.0,
-            &[entry],
-            TurnUsage::default(),
-        ))?;
+        self.store
+            .append_turn(&run.0, &[entry], TurnUsage::default())
+            .await?;
         (self.push)(Push::Record {
             run: run.clone(),
             plugin: plugin.to_owned(),

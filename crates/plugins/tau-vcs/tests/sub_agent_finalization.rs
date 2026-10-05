@@ -200,7 +200,7 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                     Identity::default(),
                     agents,
                     &[],
-                    move |workspace, _| {
+                    ready_child(move |workspace, _| {
                         let agent = if mode == 4 {
                             tau_agent::agent::Agent::new(child_script.clone())
                                 .plugin(TagOnFinish(workspace.vcs().clone()))
@@ -222,7 +222,7 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                         } else {
                             agent
                         })
-                    },
+                    }),
                 ));
             let outcome =
                 agent.run("hand the writes over", &store).await.unwrap();
@@ -362,10 +362,10 @@ fn oversized_untracked_child_files_are_not_discarded() {
                     Identity::default(),
                     agents,
                     &[],
-                    move |workspace, _| {
+                    ready_child(move |workspace, _| {
                         Ok(coder(script.clone(), &workspace, true)
                             .limits(Limits::default().max_turns(1)))
-                    },
+                    }),
                 ));
             let outcome = agent.run("delegate", &store).await.unwrap();
             let requests = llm.requests();
@@ -400,5 +400,28 @@ fn oversized_untracked_child_files_are_not_discarded() {
             child.assert_exhausted();
             llm.assert_exhausted();
         });
+    }
+}
+
+/// A sub-agent factory that builds its agent at once, as `Spawn` takes
+/// one: a future that is ready.
+fn ready_child(
+    child: impl Fn(
+        tau_vcs::RunWorkspace,
+        &tau_vcs::sub_agents::ChildModel,
+    )
+        -> Result<tau_agent::agent::Agent, tau_agent::error::ToolError>
+    + Send
+    + Sync
+    + 'static,
+) -> impl Fn(
+    tau_vcs::RunWorkspace,
+    &tau_vcs::sub_agents::ChildModel,
+) -> tau_vcs::sub_agents::ChildFuture
++ Send
++ Sync
++ 'static {
+    move |workspace, model| {
+        Box::pin(std::future::ready(child(workspace, model)))
     }
 }

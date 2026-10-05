@@ -287,7 +287,7 @@ impl UiPlugin for ReasoningPlugin {
     }
 
     /// On auto, with Jev: an effort picked by hand stands.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         _host: &(),
         run: &RunCtx,
@@ -306,7 +306,7 @@ impl UiPlugin for ReasoningPlugin {
         )])
     }
 
-    fn starting(
+    async fn starting(
         &self,
         _host: &(),
         run: &RunCtx,
@@ -323,7 +323,7 @@ impl UiPlugin for ReasoningPlugin {
         }]
     }
 
-    fn catalog(
+    async fn catalog(
         &self,
         _host: &(),
         cx: &HostCx,

@@ -78,49 +78,61 @@ pub struct CommandInfo {
 /// A host half's state, made once per host by [`ErasedPlugin::host`].
 pub type HostState = Box<dyn Any + Send + Sync>;
 
+/// What a host half's hook gives back: a future the host awaits on its
+/// runtime (ADR 0027).
+pub type HostFuture<'a, T> =
+    std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 /// [`UiPlugin`] with its types erased.
 pub trait ErasedPlugin: Send + Sync {
     fn name(&self) -> &'static str;
 
-    fn host(&self, cx: &HostCx) -> anyhow::Result<HostState>;
+    fn host<'a>(
+        &'a self,
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, anyhow::Result<HostState>>;
     fn default_settings(&self) -> PluginValue;
-    fn agent_plugins(
-        &self,
-        host: &HostState,
-        run: &RunCtx,
-        settings: &PluginValue,
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>>;
-    fn starting(
-        &self,
-        host: &HostState,
-        run: &RunCtx,
-        settings: &PluginValue,
-    ) -> Vec<Value>;
-    fn catalog(
-        &self,
-        host: &HostState,
-        cx: &HostCx,
-        settings: &PluginValue,
-    ) -> PluginInfo;
-    fn data(&self, host: &HostState, cx: &HostCx) -> PluginValue;
-    fn launcher(
-        &self,
-        host: &HostState,
-        repo: &RepoCtx,
-        settings: &PluginValue,
-    ) -> Option<std::sync::Arc<dyn tau_agent::launch::Launcher>>;
-    fn repo_data(
-        &self,
-        host: &HostState,
-        repo: &RepoCtx,
-        cx: &HostCx,
-    ) -> PluginValue;
-    fn act(
-        &self,
-        host: &HostState,
+    fn agent_plugins<'a>(
+        &'a self,
+        host: &'a HostState,
+        run: &'a RunCtx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, anyhow::Result<Vec<Box<dyn Plugin>>>>;
+    fn starting<'a>(
+        &'a self,
+        host: &'a HostState,
+        run: &'a RunCtx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, Vec<Value>>;
+    fn catalog<'a>(
+        &'a self,
+        host: &'a HostState,
+        cx: &'a HostCx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, PluginInfo>;
+    fn data<'a>(
+        &'a self,
+        host: &'a HostState,
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, PluginValue>;
+    fn launcher<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, Option<std::sync::Arc<dyn tau_agent::launch::Launcher>>>;
+    fn repo_data<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, PluginValue>;
+    fn act<'a>(
+        &'a self,
+        host: &'a HostState,
         action: Value,
-        cx: &HostCx,
-    ) -> anyhow::Result<Option<Value>>;
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, anyhow::Result<Option<Value>>>;
 
     /// Folds `body`, a record the plugin published (or the details of a
     /// rewrite, [`crate::REWRITE`]), into its state in a run.
@@ -170,7 +182,7 @@ struct Typed<P: UiPlugin> {
 }
 
 impl<P: UiPlugin> Typed<P> {
-    fn host<'h>(&self, host: &'h HostState) -> &'h P::Host {
+    fn host_of<'h>(&self, host: &'h HostState) -> &'h P::Host {
         host.downcast_ref()
             .expect("a host state is made by its own plugin")
     }
@@ -208,81 +220,111 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         self.plugin.name()
     }
 
-    fn host(&self, cx: &HostCx) -> anyhow::Result<HostState> {
-        Ok(Box::new(<P::Host as PluginHost>::new(cx)?))
+    fn host<'a>(
+        &'a self,
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, anyhow::Result<HostState>> {
+        Box::pin(async move {
+            Ok(Box::new(<P::Host as PluginHost>::new(cx).await?) as HostState)
+        })
     }
 
     fn default_settings(&self) -> PluginValue {
         PluginValue::typed(P::Settings::default())
     }
 
-    fn agent_plugins(
-        &self,
-        host: &HostState,
-        run: &RunCtx,
-        settings: &PluginValue,
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        self.plugin
-            .agent_plugins(self.host(host), run, settings.get())
+    fn agent_plugins<'a>(
+        &'a self,
+        host: &'a HostState,
+        run: &'a RunCtx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, anyhow::Result<Vec<Box<dyn Plugin>>>> {
+        Box::pin(self.plugin.agent_plugins(
+            self.host_of(host),
+            run,
+            settings.get(),
+        ))
     }
 
-    fn starting(
-        &self,
-        host: &HostState,
-        run: &RunCtx,
-        settings: &PluginValue,
-    ) -> Vec<Value> {
-        self.plugin
-            .starting(self.host(host), run, settings.get())
-            .iter()
-            .map(|record| {
-                serde_json::to_value(record)
-                    .expect("a plugin's record serializes")
-            })
-            .collect()
+    fn starting<'a>(
+        &'a self,
+        host: &'a HostState,
+        run: &'a RunCtx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, Vec<Value>> {
+        Box::pin(async move {
+            self.plugin
+                .starting(self.host_of(host), run, settings.get())
+                .await
+                .iter()
+                .map(|record| {
+                    serde_json::to_value(record)
+                        .expect("a plugin's record serializes")
+                })
+                .collect()
+        })
     }
 
-    fn catalog(
-        &self,
-        host: &HostState,
-        cx: &HostCx,
-        settings: &PluginValue,
-    ) -> PluginInfo {
-        PluginInfo {
-            name: self.plugin.name().to_owned(),
-            ..self.plugin.catalog(self.host(host), cx, settings.get())
-        }
+    fn catalog<'a>(
+        &'a self,
+        host: &'a HostState,
+        cx: &'a HostCx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, PluginInfo> {
+        Box::pin(async move {
+            PluginInfo {
+                name: self.plugin.name().to_owned(),
+                ..self
+                    .plugin
+                    .catalog(self.host_of(host), cx, settings.get())
+                    .await
+            }
+        })
     }
 
-    fn data(&self, host: &HostState, cx: &HostCx) -> PluginValue {
-        PluginValue::typed(self.plugin.data(self.host(host), cx))
+    fn data<'a>(
+        &'a self,
+        host: &'a HostState,
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, PluginValue> {
+        Box::pin(async move {
+            PluginValue::typed(self.plugin.data(self.host_of(host), cx).await)
+        })
     }
 
-    fn launcher(
-        &self,
-        host: &HostState,
-        repo: &RepoCtx,
-        settings: &PluginValue,
-    ) -> Option<std::sync::Arc<dyn tau_agent::launch::Launcher>> {
-        self.plugin.launcher(self.host(host), repo, settings.get())
+    fn launcher<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, Option<std::sync::Arc<dyn tau_agent::launch::Launcher>>>
+    {
+        Box::pin(
+            self.plugin
+                .launcher(self.host_of(host), repo, settings.get()),
+        )
     }
 
-    fn repo_data(
-        &self,
-        host: &HostState,
-        repo: &RepoCtx,
-        cx: &HostCx,
-    ) -> PluginValue {
-        PluginValue::typed(self.plugin.repo_data(self.host(host), repo, cx))
+    fn repo_data<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, PluginValue> {
+        Box::pin(async move {
+            PluginValue::typed(
+                self.plugin.repo_data(self.host_of(host), repo, cx).await,
+            )
+        })
     }
 
-    fn act(
-        &self,
-        host: &HostState,
+    fn act<'a>(
+        &'a self,
+        host: &'a HostState,
         action: Value,
-        cx: &HostCx,
-    ) -> anyhow::Result<Option<Value>> {
-        self.plugin.act(self.host(host), action, cx)
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, anyhow::Result<Option<Value>>> {
+        Box::pin(self.plugin.act(self.host_of(host), action, cx))
     }
 
     fn apply(
@@ -572,7 +614,7 @@ mod tests {
             "counter"
         }
 
-        fn agent_plugins(
+        async fn agent_plugins(
             &self,
             _: &(),
             _: &RunCtx,
@@ -581,7 +623,7 @@ mod tests {
             Ok(Vec::new())
         }
 
-        fn catalog(&self, _: &(), _: &HostCx, _: &()) -> PluginInfo {
+        async fn catalog(&self, _: &(), _: &HostCx, _: &()) -> PluginInfo {
             unreachable!()
         }
 

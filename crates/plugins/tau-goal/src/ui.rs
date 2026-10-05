@@ -286,7 +286,7 @@ impl UiPlugin for GoalUi {
     }
 
     /// A run's goal, checked with Jev; a sub-agent has none.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         _host: &(),
         run: &RunCtx,
@@ -300,7 +300,7 @@ impl UiPlugin for GoalUi {
         })
     }
 
-    fn starting(
+    async fn starting(
         &self,
         _host: &(),
         run: &RunCtx,
@@ -311,7 +311,12 @@ impl UiPlugin for GoalUi {
         vec![Record::Starting { checks }]
     }
 
-    fn catalog(&self, _host: &(), cx: &HostCx, _settings: &()) -> PluginInfo {
+    async fn catalog(
+        &self,
+        _host: &(),
+        cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
             description: needs_jev(

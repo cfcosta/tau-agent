@@ -213,7 +213,7 @@ impl UiPlugin for AskUi {
 
     /// The `ask` tool. A sub-agent has no one to ask: its `ask` refuses,
     /// and is there so its tools match its caller's.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         host: &Host,
         run: &RunCtx,
@@ -237,7 +237,7 @@ impl UiPlugin for AskUi {
         }
     }
 
-    fn catalog(
+    async fn catalog(
         &self,
         _host: &Host,
         _cx: &HostCx,
@@ -253,7 +253,7 @@ impl UiPlugin for AskUi {
         }
     }
 
-    fn act(
+    async fn act(
         &self,
         host: &Host,
         action: Value,

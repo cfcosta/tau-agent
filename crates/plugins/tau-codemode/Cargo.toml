@@ -38,7 +38,7 @@ tau-ai.workspace = true
 tau-jev.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
-tokio = { workspace = true, features = ["sync", "time"], optional = true }
+tokio = { workspace = true, features = ["rt", "sync", "time"], optional = true }
 tokio-util = { workspace = true, optional = true }
 uuid.workspace = true
 

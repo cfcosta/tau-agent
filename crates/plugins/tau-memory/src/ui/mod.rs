@@ -426,7 +426,7 @@ impl UiPlugin for MemoryUi {
     /// Notes for a run and its sub-agents alike, marked stale when a
     /// turn changes what they are about. Notes that cannot be opened
     /// leave memory out of the run, which goes on.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         host: &Host,
         run: &RunCtx,
@@ -448,7 +448,7 @@ impl UiPlugin for MemoryUi {
         Ok(vec![Box::new(plugin)])
     }
 
-    fn starting(
+    async fn starting(
         &self,
         host: &Host,
         run: &RunCtx,
@@ -458,7 +458,7 @@ impl UiPlugin for MemoryUi {
         vec![Record::Starting { notes }]
     }
 
-    fn catalog(
+    async fn catalog(
         &self,
         _host: &Host,
         _cx: &HostCx,
@@ -479,11 +479,16 @@ impl UiPlugin for MemoryUi {
         }
     }
 
-    fn data(&self, host: &Host, _cx: &HostCx) -> Notebook {
+    async fn data(&self, host: &Host, _cx: &HostCx) -> Notebook {
         host.memories.notebook(&host.user)
     }
 
-    fn repo_data(&self, host: &Host, repo: &RepoCtx, _cx: &HostCx) -> Notebook {
+    async fn repo_data(
+        &self,
+        host: &Host,
+        repo: &RepoCtx,
+        _cx: &HostCx,
+    ) -> Notebook {
         host.memories.notebook(&repo_dir(repo))
     }
 
@@ -510,7 +515,7 @@ impl UiPlugin for MemoryUi {
 }
 
 impl PluginHost for Host {
-    fn new(cx: &HostCx) -> anyhow::Result<Self> {
+    async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         let search = cx.services.get::<Search>().copied().unwrap_or_default();
         Ok(Host {
             memories: Memories::new(search),

@@ -216,7 +216,11 @@ fn startup_status_and_plugin_presence_follow_key_and_effort() {
             let run = run(effort, jev);
             let mut state = State::default();
             let mut anchors = FakeRun::default();
-            for body in ReasoningPlugin.starting(&(), &run, &settings) {
+            for body in tau_testing::block_on(ReasoningPlugin.starting(
+                &(),
+                &run,
+                &settings,
+            )) {
                 state.apply(body, &mut anchors);
             }
             let status = state.starting.unwrap();
@@ -230,8 +234,12 @@ fn startup_status_and_plugin_presence_follow_key_and_effort() {
             }
 
             let should_auto_pick = jev && effort.is_none();
-            let plugins =
-                ReasoningPlugin.agent_plugins(&(), &run, &settings).unwrap();
+            let plugins = tau_testing::block_on(ReasoningPlugin.agent_plugins(
+                &(),
+                &run,
+                &settings,
+            ))
+            .unwrap();
             assert_eq!(plugins.len(), usize::from(should_auto_pick));
             assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
         }

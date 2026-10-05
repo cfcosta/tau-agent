@@ -23,7 +23,11 @@ sha2 = { workspace = true, optional = true }
 tau-agent.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
-tokio = { workspace = true, optional = true, features = ["process", "io-util"] }
+tokio = { workspace = true, optional = true, features = [
+  "process",
+  "io-util",
+  "rt",
+] }
 toml = { workspace = true, optional = true }
 
 [dev-dependencies]

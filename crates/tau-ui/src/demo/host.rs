@@ -56,7 +56,7 @@ pub struct DemoHost {
     pushed: Mutex<Option<mpsc::UnboundedReceiver<Push>>>,
     // Dropped last: the plugins' files, and the runtime their work runs
     // on.
-    _runtime: Runtime,
+    runtime: Runtime,
     _dir: tempfile::TempDir,
 }
 
@@ -119,21 +119,21 @@ impl DemoHost {
             }),
         );
         tau_memory::demo::seed(&cx)?;
-        let hosted = hosted::host_all(&cx);
+        let hosted = runtime.block_on(hosted::host_all(&cx));
         for act in tau_constitution::demo::acts() {
-            hosted::act(
+            runtime.block_on(hosted::act(
                 &hosted,
                 tau_constitution::NAME,
                 serde_json::to_value(act)?,
                 &cx,
-            )?;
+            ))?;
         }
         Ok(Self {
             cx,
             hosted,
             settings,
             pushed: Mutex::new(Some(pushed)),
-            _runtime: runtime,
+            runtime,
             _dir: dir,
         })
     }
@@ -141,10 +141,11 @@ impl DemoHost {
     /// `catalog` with what the plugins have now: their entries, data and
     /// settings, and each repository's plugin data.
     pub fn catalog(&self, mut catalog: Catalog) -> Catalog {
-        let (mut plugins, data, settings) =
+        let (mut plugins, data, settings) = self.runtime.block_on(
             hosted::catalog(&self.hosted, &self.cx, |plugin| {
                 self.settings_of(plugin)
-            });
+            }),
+        );
         for plugin in &mut plugins {
             plugin.spend = SPEND
                 .iter()
@@ -156,7 +157,11 @@ impl DemoHost {
         catalog.plugin_settings = settings;
         for repo in &mut catalog.repos {
             if let Some(ctx) = self.cx.repo(&repo.name) {
-                repo.plugins = hosted::repo_data(&self.hosted, ctx, &self.cx);
+                repo.plugins = self.runtime.block_on(hosted::repo_data(
+                    &self.hosted,
+                    ctx,
+                    &self.cx,
+                ));
             }
             // No server answers in a demo: tau-agent's show as a host
             // that started them would see them.
@@ -185,7 +190,12 @@ impl DemoHost {
         plugin: &str,
         action: Value,
     ) -> anyhow::Result<Option<Value>> {
-        hosted::act(&self.hosted, plugin, action, &self.cx)
+        self.runtime.block_on(hosted::act(
+            &self.hosted,
+            plugin,
+            action,
+            &self.cx,
+        ))
     }
 
     /// Saves `plugin`'s settings.

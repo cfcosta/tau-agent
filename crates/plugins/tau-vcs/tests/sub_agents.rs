@@ -68,7 +68,7 @@ fn spawning(
             Identity::default(),
             agents.clone(),
             &[],
-            move |workspace, _: &ChildModel| child(workspace),
+            ready_child(move |workspace, _: &ChildModel| child(workspace)),
         ))
         .tool(Wait::new(workspace.clone(), agents.clone()))
 }
@@ -658,11 +658,11 @@ fn a_call_can_pick_its_model_and_effort() {
                 Identity::default(),
                 agents.clone(),
                 &["gpt-5.5".to_owned(), "gpt-5.5-mini".to_owned()],
-                move |workspace, model: &ChildModel| {
+                ready_child(move |workspace, model: &ChildModel| {
                     seen.lock().unwrap().push(model.clone());
                     let script = ScriptedModel::new().turn(|t| t.text("ok"));
                     Ok(coder(script, &workspace, true))
-                },
+                }),
             ))
             .tool(Wait::new(parent.clone(), agents));
         let outcome = agent.run("pick", &store).await.unwrap();
@@ -874,5 +874,28 @@ impl AgentTool for Hold {
             _ = self.0.notified() => Ok(ToolOutput::text("go on")),
             _ = ctx.cancel.cancelled() => Err("cancelled".into()),
         }
+    }
+}
+
+/// A sub-agent factory that builds its agent at once, as `Spawn` takes
+/// one: a future that is ready.
+fn ready_child(
+    child: impl Fn(
+        tau_vcs::RunWorkspace,
+        &tau_vcs::sub_agents::ChildModel,
+    )
+        -> Result<tau_agent::agent::Agent, tau_agent::error::ToolError>
+    + Send
+    + Sync
+    + 'static,
+) -> impl Fn(
+    tau_vcs::RunWorkspace,
+    &tau_vcs::sub_agents::ChildModel,
+) -> tau_vcs::sub_agents::ChildFuture
++ Send
++ Sync
++ 'static {
+    move |workspace, model| {
+        Box::pin(std::future::ready(child(workspace, model)))
     }
 }

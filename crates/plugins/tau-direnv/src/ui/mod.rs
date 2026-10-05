@@ -73,7 +73,7 @@ impl UiPlugin for DirenvUi {
     /// The run hears of its workspace's environment. A sub-agent's
     /// commands go through it too, but no one sees the sub-agent's
     /// cards.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         host: &Host,
         run: &RunCtx,
@@ -99,7 +99,7 @@ impl UiPlugin for DirenvUi {
         }
     }
 
-    fn launcher(
+    async fn launcher(
         &self,
         host: &Host,
         repo: &RepoCtx,
@@ -116,7 +116,7 @@ impl UiPlugin for DirenvUi {
         }
     }
 
-    fn catalog(
+    async fn catalog(
         &self,
         _host: &Host,
         _cx: &HostCx,
@@ -132,7 +132,12 @@ impl UiPlugin for DirenvUi {
         }
     }
 
-    fn repo_data(&self, host: &Host, repo: &RepoCtx, _cx: &HostCx) -> RepoData {
+    async fn repo_data(
+        &self,
+        host: &Host,
+        repo: &RepoCtx,
+        _cx: &HostCx,
+    ) -> RepoData {
         #[cfg(feature = "host")]
         {
             host.repo_data(repo)
@@ -144,7 +149,7 @@ impl UiPlugin for DirenvUi {
         }
     }
 
-    fn act(
+    async fn act(
         &self,
         host: &Host,
         action: Value,

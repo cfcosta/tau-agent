@@ -192,7 +192,14 @@ pub fn decide_promotion(
     );
 }
 
+/// Decides a promotion request, under the repository's manifest lock.
+/// Blocks: it holds a file lock across its reads of the store, so it
+/// runs in `spawn_blocking` (ADR 0027).
 #[cfg(feature = "host")]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "runs in spawn_blocking, holding a file lock across its store reads (ADR 0027)"
+)]
 fn approve_or_decline(
     cx: &HostCx,
     run: &RunId,
@@ -324,7 +331,13 @@ fn approve_or_decline(
             promotion::Record::Decided(terminal),
         ))
         .map_err(|error| error.to_string())?;
-        cx.publish(run, PLUGIN, &body).map_err(|error| format!("terminal record could not be stored; retry this decision: {error}"))?;
+        cx.runtime
+            .block_on(cx.publish(run, PLUGIN, &body))
+            .map_err(|error| {
+                format!(
+                    "terminal record could not be stored; retry this decision: {error}"
+                )
+            })?;
     }
     Ok(())
 }
@@ -717,7 +730,7 @@ impl UiPlugin for CodemodeUi {
 
     /// The `codemode` tool, asking the run's metered Jev when there is a
     /// key; without one, scripts run and `jev` is nil.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         _host: &(),
         run: &RunCtx,
@@ -739,7 +752,12 @@ impl UiPlugin for CodemodeUi {
         }
     }
 
-    fn catalog(&self, _host: &(), cx: &HostCx, _settings: &()) -> PluginInfo {
+    async fn catalog(
+        &self,
+        _host: &(),
+        cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
             description: description(jev),
@@ -749,42 +767,53 @@ impl UiPlugin for CodemodeUi {
         }
     }
 
-    fn act(
+    async fn act(
         &self,
         _host: &(),
         action: Value,
         cx: &HostCx,
     ) -> anyhow::Result<Option<Value>> {
-        let result = (|| match serde_json::from_value::<Action>(action)
-            .map_err(|_| "Invalid module action".to_owned())?
-        {
-            Action::Select { run, name, version } => {
-                let records = cx
-                    .records(&run, PLUGIN)
-                    .map_err(|error| error.to_string())?;
-                let selection = validate_selection(&records, &name, &version)?;
-                let body = serde_json::to_value(Record::Module(selection))
-                    .map_err(|error| error.to_string())?;
-                cx.publish(&run, PLUGIN, &body)
-                    .map_err(|error| error.to_string())
-            }
-            Action::Promote {
-                run,
-                request_id,
-                decision,
-            } => {
-                #[cfg(feature = "host")]
-                {
-                    approve_or_decline(cx, &run, &request_id, decision)
+        let result: Result<(), String> = async {
+            match serde_json::from_value::<Action>(action)
+                .map_err(|_| "Invalid module action".to_owned())?
+            {
+                Action::Select { run, name, version } => {
+                    let records = cx
+                        .records(&run, PLUGIN)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    let selection =
+                        validate_selection(&records, &name, &version)?;
+                    let body = serde_json::to_value(Record::Module(selection))
+                        .map_err(|error| error.to_string())?;
+                    cx.publish(&run, PLUGIN, &body)
+                        .await
+                        .map_err(|error| error.to_string())
+                }
+                Action::Promote {
+                    run,
+                    request_id,
+                    decision,
+                } => {
+                    #[cfg(feature = "host")]
+                    {
+                        let cx = cx.clone();
+                        tokio::task::spawn_blocking(move || {
+                            approve_or_decline(&cx, &run, &request_id, decision)
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?
                         .map_err(|error| format!("Promotion: {error}"))
-                }
-                #[cfg(not(feature = "host"))]
-                {
-                    let _ = (cx, run, request_id, decision);
-                    Err("Promotion: repository host is unavailable".into())
+                    }
+                    #[cfg(not(feature = "host"))]
+                    {
+                        let _ = (cx, run, request_id, decision);
+                        Err("Promotion: repository host is unavailable".into())
+                    }
                 }
             }
-        })();
+        }
+        .await;
         Ok(result.err().map(|error| {
             serde_json::to_value(ActionReply { error })
                 .expect("reply serializes")

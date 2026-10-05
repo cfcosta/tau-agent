@@ -540,7 +540,10 @@ impl Fixture {
             vec![repo.clone()],
             Arc::new(move |push| pushed.lock().unwrap().push(push)),
         );
-        let host = <Host as tau_ui_plugin::PluginHost>::new(&cx).unwrap();
+        let host = cx
+            .runtime
+            .block_on(<Host as tau_ui_plugin::PluginHost>::new(&cx))
+            .unwrap();
         Self {
             _dirs: (user_dir, repo_dir),
             pushes,
@@ -556,14 +559,25 @@ impl Fixture {
     }
 
     fn act(&self, act: Act) -> anyhow::Result<()> {
-        McpUi
-            .act(self.host(), serde_json::to_value(act).unwrap(), &self.cx)
+        self.cx
+            .runtime
+            .block_on(McpUi.act(
+                self.host(),
+                serde_json::to_value(act).unwrap(),
+                &self.cx,
+            ))
             .map(drop)
     }
 
     fn reply(&self, act: Act) -> Reply {
-        let reply = McpUi
-            .act(self.host(), serde_json::to_value(act).unwrap(), &self.cx)
+        let reply = self
+            .cx
+            .runtime
+            .block_on(McpUi.act(
+                self.host(),
+                serde_json::to_value(act).unwrap(),
+                &self.cx,
+            ))
             .unwrap()
             .expect("a reply");
         serde_json::from_value(reply).unwrap()
@@ -574,7 +588,11 @@ impl Fixture {
     }
 
     fn repo_data(&self) -> Servers {
-        McpUi.repo_data(self.host(), &self.repo, &self.cx)
+        self.cx.runtime.block_on(McpUi.repo_data(
+            self.host(),
+            &self.repo,
+            &self.cx,
+        ))
     }
 }
 
@@ -679,7 +697,10 @@ fn the_page_edits_only_its_own_servers() {
         json!({ "command": MISSING })
     );
     assert!(fixture.settings().disabled.is_off(None, "git"));
-    let data = McpUi.data(fixture.host(), &fixture.cx);
+    let data = fixture
+        .cx
+        .runtime
+        .block_on(McpUi.data(fixture.host(), &fixture.cx));
     let names: Vec<(&str, Defined, bool)> = data
         .servers
         .iter()
@@ -796,16 +817,20 @@ fn a_repository_keeps_its_plugin_until_its_servers_change() {
         effort: None,
         services: Services::default(),
     };
-    let plugins = McpUi
-        .agent_plugins(empty.host(), &run, &Settings::default())
+    let plugins = empty
+        .cx
+        .runtime
+        .block_on(McpUi.agent_plugins(empty.host(), &run, &Settings::default()))
         .unwrap();
     assert!(plugins.is_empty());
     let run = tau_ui_plugin::RunCtx {
         repo: fixture.repo.clone(),
         ..run
     };
-    let plugins = McpUi
-        .agent_plugins(fixture.host(), &run, &settings)
+    let plugins = fixture
+        .cx
+        .runtime
+        .block_on(McpUi.agent_plugins(fixture.host(), &run, &settings))
         .unwrap();
     assert_eq!(plugins.len(), 1);
     assert_eq!(plugins[0].name(), NAME);
@@ -1699,7 +1724,11 @@ fn the_page_is_drawn_again_when_connections_change() {
             .count()
     };
     let state = || {
-        McpUi.data(fixture.host(), &fixture.cx).servers[0]
+        fixture
+            .cx
+            .runtime
+            .block_on(McpUi.data(fixture.host(), &fixture.cx))
+            .servers[0]
             .state
             .clone()
     };
@@ -1730,7 +1759,11 @@ fn the_page_is_drawn_again_when_connections_change() {
         .runtime
         .block_on(server.add_tool(common::tool("late", "Late.")));
     assert!(wait(&|| pushes() > before), "no redraw for a new tool");
-    let listed = McpUi.data(fixture.host(), &fixture.cx).servers[0]
+    let listed = fixture
+        .cx
+        .runtime
+        .block_on(McpUi.data(fixture.host(), &fixture.cx))
+        .servers[0]
         .tools
         .iter()
         .any(|tool| tool.tool == "late");

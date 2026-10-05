@@ -64,8 +64,12 @@ onto GPUI's thread freezes the interface.
 - `Project` gets an async handle the same way, one lock per repository.
   jj transactions on one repository stop racing each other, and nothing
   else touches the repository.
-- The plugins' host half is async, and `HostCx` stops handing out a
-  runtime.
+- The plugins' host half is async: making its state, and every hook
+  the host asks (`agent_plugins`, `starting`, `launcher`, `catalog`,
+  `data`, `repo_data`, `act`). `HostCx` keeps the runtime's handle, to
+  spawn background work on; the lint keeps anything from blocking on it.
+  A sub-agent's plugins are built inside the `spawn` call, so `spawn`'s
+  factory is async too.
 - GitHub and sign-in run as tokio tasks.
 
 ### One bridge from the interface to the host
@@ -130,10 +134,14 @@ Each step lands on its own, with the tests passing:
    and the bridge, `on_host`, beside `off_thread`.
 2. `Vcs` on the lock and `spawn_blocking`; `Project`'s async handle;
    `tau-vcs` without `pollster` outside its jobs.
-3. `Host` to async, area by area: store reads and history, landing and
-   the queue, repositories and updates, pull requests and pushes. Each
-   area's callers move to `on_host`. `off_thread` goes with the last.
-4. `RepoState`: the per-repository lock and published state.
-5. The plugins' host half to async.
+3. The plugins' host half to async. It comes before the host: once a
+   host function runs on the runtime, a hook that still blocks would
+   panic there. Until the host is async, its synchronous functions wait
+   on these hooks, which is safe only because nothing on the runtime
+   calls them.
+4. `Host` to async: store reads and history, landing and the queue,
+   repositories and updates, pull requests and pushes. Callers move to
+   `on_host`; `off_thread` goes.
+5. `RepoState`: the per-repository lock and published state.
 6. The catalog and spend pushed instead of read.
 7. GitHub and sign-in as tokio tasks; the last crate-wide allow goes.

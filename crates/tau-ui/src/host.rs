@@ -615,13 +615,14 @@ impl Host {
                         .map_or(0, |changes| changes.len() as u32);
                     repo.trunk = project.blocking().trunk_name().ok();
                 }
-                repo.plugins = self.registered_repo_data(slot);
+                repo.plugins =
+                    self.runtime.block_on(self.registered_repo_data(slot));
                 Some(repo)
             })
             .collect();
         // The plugins with their UI, with their data and settings.
         let (registered, plugin_data, plugin_settings) =
-            self.registered_catalog();
+            self.runtime.block_on(self.registered_catalog());
         plugins.extend(registered);
         // What each plugin cost over the runs of the last 30 days.
         let spend = self
@@ -705,10 +706,10 @@ impl Host {
         // The plugins with their UI, after the rest: the repository's
         // rules check what the tools do, tau-goal's hold of a stop comes
         // after theirs, and context compaction goes by the run's model.
-        let registered = self.registered(repo);
+        let registered = self.runtime.block_on(self.registered(repo));
         let project = repo.project()?;
         // What the plugins give the run's commands: an environment.
-        let launcher = self.launcher_of(repo);
+        let launcher = self.runtime.block_on(self.launcher_of(repo));
         let artifacts =
             Bytes::new(project.root().join("artifacts"), Quotas::default())?;
         // A run and its sub-agents work the same way, each in its own
@@ -782,7 +783,12 @@ impl Host {
                 agents.clone(),
                 &models,
                 move |child, asked| {
-                    let choice = child_choice(&caller, asked)?;
+                    let choice = match child_choice(&caller, asked) {
+                        Ok(choice) => choice,
+                        Err(error) => {
+                            return Box::pin(std::future::ready(Err(error)));
+                        }
+                    };
                     let agent = for_model(&choice, &child)
                         .tool(RefusingSpawn::new(&refused))
                         .tool(RefusingWait::default());
@@ -791,13 +797,15 @@ impl Host {
                         child,
                         Some(SUB_AGENTS_DO_NOT_LAND),
                     );
-                    registered(
+                    let built = registered(
                         agent,
                         tau_ui_plugin::RunKind::SubAgent,
                         &choice,
                         services,
-                    )
-                    .map_err(|error| format!("{error:#}").into())
+                    );
+                    Box::pin(async move {
+                        built.await.map_err(|error| format!("{error:#}").into())
+                    })
                 },
             );
             let wait = Wait::new(workspace.clone(), agents);
@@ -823,7 +831,10 @@ impl Host {
         } else {
             tau_ui_plugin::RunKind::Chat
         };
-        Ok((registered(agent, kind, choice, services)?, name))
+        let agent = self
+            .runtime
+            .block_on(registered(agent, kind, choice, services))?;
+        Ok((agent, name))
     }
 
     /// Jev, when there is a TypeSafe key (or one given for tests).
@@ -942,11 +953,11 @@ impl Host {
         // What each plugin's state is as the fork inherits it: a goal set
         // in the main chat, which tau-goal goes on checking; then what it
         // says as the fork starts.
-        let starting = self.starting(&self.run_ctx(
+        let starting = self.runtime.block_on(self.starting(&self.run_ctx(
             tau_ui_plugin::RunKind::Chat,
             repo,
             choice,
-        ));
+        )));
         let inherited: Vec<(String, Vec<serde_json::Value>)> = self
             .hosted
             .iter()
@@ -1208,7 +1219,7 @@ impl Host {
         view.push_user(prompt);
         // What plugins say as it starts.
         let run = self.run_ctx(tau_ui_plugin::RunKind::Chat, repo, &choice);
-        for (plugin, body) in self.starting(&run) {
+        for (plugin, body) in self.runtime.block_on(self.starting(&run)) {
             view.fold(&plugin, &body);
         }
         view.context = ContextWindow {

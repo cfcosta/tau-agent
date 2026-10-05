@@ -291,8 +291,16 @@ fn restarted_inspector_preview_reads_only_its_runs_grant() {
         Arc::new(|_| {}),
     );
     let action = |run: &str| json!({"action":"read","run":RunId(run.into()),"id":artifact.id(),"offset":0,"encoding":"utf8"});
-    let allowed = ToolsUi.act(&(), action("allowed"), &cx).unwrap().unwrap();
+    let allowed = cx
+        .runtime
+        .block_on(ToolsUi.act(&(), action("allowed"), &cx))
+        .unwrap()
+        .unwrap();
     assert_eq!(allowed["range"]["data"], "preview after restart");
-    let denied = ToolsUi.act(&(), action("other"), &cx).unwrap().unwrap();
+    let denied = cx
+        .runtime
+        .block_on(ToolsUi.act(&(), action("other"), &cx))
+        .unwrap()
+        .unwrap();
     assert!(denied["error"].as_str().unwrap().contains("not granted"));
 }

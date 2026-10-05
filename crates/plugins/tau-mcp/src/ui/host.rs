@@ -901,7 +901,7 @@ impl Plugin for RunServers {
 }
 
 impl PluginHost for Host {
-    fn new(cx: &HostCx) -> anyhow::Result<Self> {
+    async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         let refresher = cx.clone();
         Ok(
             Host::new(cx.runtime.clone(), cx.config_dir().map(Path::to_owned))

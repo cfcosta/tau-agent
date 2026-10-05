@@ -24,7 +24,8 @@ pub(super) use crate::hosted::Hosted;
 impl Host {
     /// Makes each plugin's host state.
     pub(super) fn host_plugins(&mut self) {
-        self.hosted = hosted::host_all(&self.host_cx());
+        let cx = self.host_cx();
+        self.hosted = self.runtime.block_on(hosted::host_all(&cx));
     }
 
     /// What every plugin reaches of this host now.
@@ -138,19 +139,19 @@ impl Host {
 
     /// What commands in `repo` start through: every plugin's launcher,
     /// joined in the registry's order; none when no plugin gives one.
-    pub(super) fn launcher_of(
+    pub(super) async fn launcher_of(
         &self,
         repo: &RepoSlot,
     ) -> Option<Arc<dyn tau_agent::launch::Launcher>> {
         let ctx = self.repo_ctx(repo);
-        let mut launchers: Vec<Arc<dyn tau_agent::launch::Launcher>> = self
-            .hosted
-            .iter()
-            .filter_map(|hosted| {
-                let settings = self.plugin_settings(hosted.plugin.as_ref());
-                hosted.plugin.launcher(&hosted.state, &ctx, &settings)
-            })
-            .collect();
+        let mut launchers: Vec<Arc<dyn tau_agent::launch::Launcher>> =
+            Vec::new();
+        for hosted in &self.hosted {
+            let settings = self.plugin_settings(hosted.plugin.as_ref());
+            launchers.extend(
+                hosted.plugin.launcher(&hosted.state, &ctx, &settings).await,
+            );
+        }
         match launchers.len() {
             0 => None,
             1 => launchers.pop(),
@@ -162,11 +163,18 @@ impl Host {
     /// an agent in `repo`: the run's, or a sub-agent's, on its model, with
     /// what its workspace offers (`services`). A plugin that cannot build
     /// its own fails the run.
-    pub(super) fn registered(
+    pub(super) async fn registered(
         &self,
         repo: &RepoSlot,
-    ) -> impl Fn(Agent, RunKind, &ModelChoice, Services) -> anyhow::Result<Agent>
-    + Clone
+    ) -> impl Fn(
+        Agent,
+        RunKind,
+        &ModelChoice,
+        Services,
+    ) -> tau_ui_plugin::registry::HostFuture<
+        'static,
+        anyhow::Result<Agent>,
+    > + Clone
     + Send
     + Sync
     + 'static {
@@ -180,13 +188,14 @@ impl Host {
         let jev = self.jev();
         // The repository's own commands (its MCP servers) start through
         // what the plugins give it, in its main workspace.
-        let repo_launcher = self.launcher_of(repo).and_then(|launcher| {
+        let repo_launcher = self.launcher_of(repo).await.and_then(|launcher| {
             let project = repo.project.wait()?;
             Some(tau_ui_plugin::RepoLauncher {
                 launcher,
                 dir: project.workspace_dir(DEFAULT_WORKSPACE),
             })
         });
+        let hosted = Arc::new(hosted);
         let repo = self.repo_ctx(repo);
         move |agent: Agent,
               kind: RunKind,
@@ -208,56 +217,65 @@ impl Host {
                     .map(|effort| effort.as_str().to_owned()),
                 services,
             };
-            hosted.iter().try_fold(agent, |agent, (hosted, settings)| {
-                Ok(hosted
-                    .plugin
-                    .agent_plugins(&hosted.state, &run, settings)?
-                    .into_iter()
-                    .fold(agent, Agent::boxed_plugin))
+            let hosted = hosted.clone();
+            Box::pin(async move {
+                let mut agent = agent;
+                for (hosted, settings) in hosted.iter() {
+                    agent = hosted
+                        .plugin
+                        .agent_plugins(&hosted.state, &run, settings)
+                        .await?
+                        .into_iter()
+                        .fold(agent, Agent::boxed_plugin);
+                }
+                Ok(agent)
             })
         }
     }
 
     /// What plugins say as `run` starts or goes on, by plugin, to fold
     /// into its view.
-    pub(super) fn starting(&self, run: &RunCtx) -> Vec<(String, Value)> {
-        self.hosted
-            .iter()
-            .flat_map(|hosted| {
-                let settings = self.plugin_settings(hosted.plugin.as_ref());
+    pub(super) async fn starting(&self, run: &RunCtx) -> Vec<(String, Value)> {
+        let mut said = Vec::new();
+        for hosted in &self.hosted {
+            let settings = self.plugin_settings(hosted.plugin.as_ref());
+            said.extend(
                 hosted
                     .plugin
                     .starting(&hosted.state, run, &settings)
+                    .await
                     .into_iter()
-                    .map(|body| (hosted.plugin.name().to_owned(), body))
-                    .collect::<Vec<_>>()
-            })
-            .collect()
+                    .map(|body| (hosted.plugin.name().to_owned(), body)),
+            );
+        }
+        said
     }
 
     /// Each plugin's catalog entry, its data, and its settings.
-    pub(super) fn registered_catalog(&self) -> hosted::Catalogued {
+    pub(super) async fn registered_catalog(&self) -> hosted::Catalogued {
         hosted::catalog(&self.hosted, &self.host_cx(), |plugin| {
             self.plugin_settings(plugin)
         })
+        .await
     }
 
     /// Each plugin's data for the repository in `slot`.
-    pub(super) fn registered_repo_data(
+    pub(super) async fn registered_repo_data(
         &self,
         slot: &RepoSlot,
     ) -> BTreeMap<String, PluginValue> {
         hosted::repo_data(&self.hosted, &self.repo_ctx(slot), &self.host_cx())
+            .await
     }
 
     /// Carries out what `plugin`'s UI asked; its answer, if any, goes
     /// back to the UI.
-    pub fn plugin_act(
+    pub async fn plugin_act(
         &self,
         plugin: &str,
         action: Value,
     ) -> anyhow::Result<Option<Value>> {
-        hosted::act(&self.hosted, plugin, action, &self.host_cx())
+        hosted::act(&self.hosted, plugin, action, &self.host_cx()).await
     }
 
     /// Saves `plugin`'s settings with the model settings; runs started
@@ -306,7 +324,8 @@ impl Host {
         } else {
             RunKind::Chat
         };
-        self.starting(&self.run_ctx(kind, &slot, choice))
+        self.runtime
+            .block_on(self.starting(&self.run_ctx(kind, &slot, choice)))
     }
 }
 

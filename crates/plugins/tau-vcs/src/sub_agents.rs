@@ -57,8 +57,13 @@ pub struct ChildModel {
 /// Builds a sub-agent's agent around its workspace, on the model its
 /// call asks for: the tools and plugins it runs with, the workspace
 /// among them.
-pub type ChildAgent = Arc<
-    dyn Fn(RunWorkspace, &ChildModel) -> Result<Agent, ToolError> + Send + Sync,
+pub type ChildAgent =
+    Arc<dyn Fn(RunWorkspace, &ChildModel) -> ChildFuture + Send + Sync>;
+
+/// What [`ChildAgent`] gives back: the sub-agent's agent, once the
+/// plugins it runs with are built.
+pub type ChildFuture = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Agent, ToolError>> + Send>,
 >;
 
 /// Sub-agents of one caller that run at once. `spawn` past it is
@@ -548,7 +553,7 @@ impl Spawn {
         identity: Identity,
         agents: SubAgents,
         models: &[String],
-        child: impl Fn(RunWorkspace, &ChildModel) -> Result<Agent, ToolError>
+        child: impl Fn(RunWorkspace, &ChildModel) -> ChildFuture
         + Send
         + Sync
         + 'static,
@@ -627,7 +632,7 @@ impl AgentTool for Spawn {
             self.identity.clone(),
         )?
         .with_base(head.clone());
-        let agent = (self.child)(workspace.clone(), &asked)?;
+        let agent = (self.child)(workspace.clone(), &asked).await?;
         let run = agent
             .as_tool(SPAWN, "")
             .forking()

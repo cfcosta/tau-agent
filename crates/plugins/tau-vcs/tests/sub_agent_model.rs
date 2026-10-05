@@ -537,7 +537,7 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                 Identity::default(),
                 agents.clone(),
                 &models,
-                move |workspace, model: &ChildModel| {
+                ready_child(move |workspace, model: &ChildModel| {
                     let i: usize = model.model.as_deref().unwrap()[1..]
                         .parse()
                         .unwrap();
@@ -552,7 +552,7 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                         max_turns: Some(subs[i].steps.len() as u32 + 1),
                         ..Limits::default()
                     }))
-                },
+                }),
             )
         };
         let run = coder(llm.clone(), &caller, true)
@@ -833,4 +833,27 @@ fn landing_ids(
         .collect();
     assert_eq!(ids.len(), count, "{run}'s landed changes");
     ids
+}
+
+/// A sub-agent factory that builds its agent at once, as `Spawn` takes
+/// one: a future that is ready.
+fn ready_child(
+    child: impl Fn(
+        tau_vcs::RunWorkspace,
+        &tau_vcs::sub_agents::ChildModel,
+    )
+        -> Result<tau_agent::agent::Agent, tau_agent::error::ToolError>
+    + Send
+    + Sync
+    + 'static,
+) -> impl Fn(
+    tau_vcs::RunWorkspace,
+    &tau_vcs::sub_agents::ChildModel,
+) -> tau_vcs::sub_agents::ChildFuture
++ Send
++ Sync
++ 'static {
+    move |workspace, model| {
+        Box::pin(std::future::ready(child(workspace, model)))
+    }
 }

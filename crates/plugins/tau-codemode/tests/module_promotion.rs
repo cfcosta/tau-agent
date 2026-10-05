@@ -175,16 +175,18 @@ impl Fixture {
     }
 
     fn act(&self, request: &Request, decision: Decision) -> Option<Value> {
-        CodemodeUi
-            .act(
-                &(),
-                serde_json::to_value(Action::Promote {
-                    run: self.run.clone(),
-                    request_id: request.id.clone(),
-                    decision,
-                })
-                .unwrap(),
-                &self.cx(),
+        self.runtime
+            .block_on(
+                CodemodeUi.act(
+                    &(),
+                    serde_json::to_value(Action::Promote {
+                        run: self.run.clone(),
+                        request_id: request.id.clone(),
+                        decision,
+                    })
+                    .unwrap(),
+                    &self.cx(),
+                ),
             )
             .unwrap()
     }
@@ -232,7 +234,7 @@ fn exact_old_request_approves_saved_bytes_after_scratch_replacement() {
     );
     assert!(
         tau_codemode::modules::pin_for_run(
-            &f.cx().records(&f.run, PLUGIN).unwrap(),
+            &f.runtime.block_on(f.cx().records(&f.run, PLUGIN)).unwrap(),
             &f.run.0
         )
         .unwrap()
@@ -291,7 +293,8 @@ fn changed_request_source_digest_dependencies_id_owner_and_scope_fail() {
             BTreeMap::from([("base".into(), dependency.version().into())]),
         );
         let request = f.request(root, &[dependency]);
-        let mut records = f.cx().records(&f.run, PLUGIN).unwrap();
+        let mut records =
+            f.runtime.block_on(f.cx().records(&f.run, PLUGIN)).unwrap();
         let value = records
             .iter_mut()
             .find(|value| value.get("kind") == Some(&json!("promotion")))
@@ -390,7 +393,12 @@ fn wrong_run_repository_duplicate_and_store_payload_cannot_authorize() {
         decision: Decision::Approved,
     })
     .unwrap();
-    assert!(CodemodeUi.act(&(), wrong_run, &f.cx()).unwrap().is_some());
+    assert!(
+        f.runtime
+            .block_on(CodemodeUi.act(&(), wrong_run, &f.cx()))
+            .unwrap()
+            .is_some()
+    );
     let wrong_repo = HostCx::new(
         f.store.clone(),
         f.runtime.handle().clone(),
@@ -411,8 +419,8 @@ fn wrong_run_repository_duplicate_and_store_payload_cannot_authorize() {
     })
     .unwrap();
     assert!(
-        CodemodeUi
-            .act(&(), action.clone(), &wrong_repo)
+        f.runtime
+            .block_on(CodemodeUi.act(&(), action.clone(), &wrong_repo))
             .unwrap()
             .is_some()
     );
@@ -420,7 +428,12 @@ fn wrong_run_repository_duplicate_and_store_payload_cannot_authorize() {
     f.append_codemode(store::Record::Promotion(PromotionRecord::Requested(
         Box::new(request.clone()),
     )));
-    assert!(CodemodeUi.act(&(), action, &f.cx()).unwrap().is_some());
+    assert!(
+        f.runtime
+            .block_on(CodemodeUi.act(&(), action, &f.cx()))
+            .unwrap()
+            .is_some()
+    );
     assert!(f.selected().is_empty());
 }
 

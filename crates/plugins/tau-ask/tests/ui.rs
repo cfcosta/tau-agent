@@ -18,9 +18,12 @@ fn every_run_gets_ask_and_a_sub_agent_s_refuses() {
         .build()
         .unwrap();
     for kind in [RunKind::Main, RunKind::Chat, RunKind::SubAgent] {
-        let plugins = tau_ask::AskUi
-            .agent_plugins(&waiting, &run_ctx(kind), &())
-            .unwrap();
+        let plugins = tau_testing::block_on(tau_ask::AskUi.agent_plugins(
+            &waiting,
+            &run_ctx(kind),
+            &(),
+        ))
+        .unwrap();
         let tools: Vec<_> =
             plugins.iter().flat_map(|plugin| plugin.tools()).collect();
         let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();

@@ -23,20 +23,20 @@ pub struct Hosted {
 
 /// Each plugin's host state; a plugin whose state cannot be made is left
 /// out, and says why.
-pub fn host_all(cx: &HostCx) -> Vec<Hosted> {
-    registry()
-        .plugins()
-        .filter_map(|plugin| match plugin.host(cx) {
-            Ok(state) => Some(Hosted {
+pub async fn host_all(cx: &HostCx) -> Vec<Hosted> {
+    let mut hosted = Vec::new();
+    for plugin in registry().plugins() {
+        match plugin.host(cx).await {
+            Ok(state) => hosted.push(Hosted {
                 plugin: plugin.clone(),
                 state: Arc::new(state),
             }),
             Err(error) => {
                 eprintln!("tau-ui: {} is off: {error:#}", plugin.name());
-                None
             }
-        })
-        .collect()
+        }
+    }
+    hosted
 }
 
 /// What the catalog lists of the plugins: each one's entry, by name its
@@ -49,7 +49,7 @@ pub type Catalogued = (
 
 /// Each plugin's catalog entry, its data, and its settings, which
 /// `settings` reads.
-pub fn catalog(
+pub async fn catalog(
     hosted: &[Hosted],
     cx: &HostCx,
     settings: impl Fn(&dyn ErasedPlugin) -> PluginValue,
@@ -60,7 +60,7 @@ pub fn catalog(
     for hosted in hosted {
         let name = hosted.plugin.name().to_owned();
         let settings = settings(hosted.plugin.as_ref());
-        let info = hosted.plugin.catalog(&hosted.state, cx, &settings);
+        let info = hosted.plugin.catalog(&hosted.state, cx, &settings).await;
         plugins.push(PluginInfo {
             name: info.name,
             description: info.description,
@@ -68,32 +68,31 @@ pub fn catalog(
             spend: info.spend,
             page: info.page,
         });
-        data.insert(name.clone(), hosted.plugin.data(&hosted.state, cx));
+        data.insert(name.clone(), hosted.plugin.data(&hosted.state, cx).await);
         saved.insert(name, settings);
     }
     (plugins, data, saved)
 }
 
 /// Each plugin's data for the repository `repo`.
-pub fn repo_data(
+pub async fn repo_data(
     hosted: &[Hosted],
     repo: &RepoCtx,
     cx: &HostCx,
 ) -> BTreeMap<String, PluginValue> {
-    hosted
-        .iter()
-        .map(|hosted| {
-            (
-                hosted.plugin.name().to_owned(),
-                hosted.plugin.repo_data(&hosted.state, repo, cx),
-            )
-        })
-        .collect()
+    let mut data = BTreeMap::new();
+    for hosted in hosted {
+        data.insert(
+            hosted.plugin.name().to_owned(),
+            hosted.plugin.repo_data(&hosted.state, repo, cx).await,
+        );
+    }
+    data
 }
 
 /// Carries out what `plugin`'s UI asked; its answer, if any, goes back
 /// to the UI.
-pub fn act(
+pub async fn act(
     hosted: &[Hosted],
     plugin: &str,
     action: Value,
@@ -103,5 +102,5 @@ pub fn act(
         .iter()
         .find(|hosted| hosted.plugin.name() == plugin)
         .ok_or_else(|| anyhow::anyhow!("No plugin {plugin} here"))?;
-    hosted.plugin.act(&hosted.state, action, cx)
+    hosted.plugin.act(&hosted.state, action, cx).await
 }

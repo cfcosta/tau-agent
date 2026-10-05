@@ -22,11 +22,6 @@
 //! - [`CodemodeUi`] is the plugin with its UI (ADR 0017): its card, its
 //!   store in the inspector, and its entry on the Plugins screen.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "not migrated to async yet (ADR 0027)"
-)]
-
 pub mod description;
 #[cfg(feature = "host")]
 mod engine;

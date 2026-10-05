@@ -326,7 +326,7 @@ impl UiPlugin for FastCompactionUi {
 
     /// Pruning with Jev, when there is a key, on the run's model's
     /// window, archiving to the repository's directory in tau's.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         _host: &(),
         run: &RunCtx,
@@ -351,7 +351,7 @@ impl UiPlugin for FastCompactionUi {
         )])
     }
 
-    fn starting(
+    async fn starting(
         &self,
         _host: &(),
         run: &RunCtx,
@@ -361,7 +361,12 @@ impl UiPlugin for FastCompactionUi {
         vec![Record::Starting { on }]
     }
 
-    fn catalog(&self, _host: &(), cx: &HostCx, _settings: &()) -> PluginInfo {
+    async fn catalog(
+        &self,
+        _host: &(),
+        cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
             description: needs_jev(

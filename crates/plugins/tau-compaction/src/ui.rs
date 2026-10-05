@@ -34,7 +34,7 @@ impl UiPlugin for CompactionUi {
     }
 
     /// Summarizing by the window of the run's own model.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         _host: &(),
         run: &RunCtx,
@@ -47,7 +47,12 @@ impl UiPlugin for CompactionUi {
         Ok(vec![Box::new(compaction)])
     }
 
-    fn catalog(&self, _host: &(), _cx: &HostCx, _settings: &()) -> PluginInfo {
+    async fn catalog(
+        &self,
+        _host: &(),
+        _cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
         PluginInfo {
             description: "Summarizes the context when it nears the window"
                 .into(),

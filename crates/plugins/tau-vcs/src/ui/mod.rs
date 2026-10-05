@@ -195,7 +195,7 @@ impl UiPlugin for VcsUi {
 
     /// None here: the host builds the tools with the run's workspace,
     /// which they act on.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         _host: &(),
         _run: &RunCtx,
@@ -204,7 +204,12 @@ impl UiPlugin for VcsUi {
         Ok(Vec::new())
     }
 
-    fn catalog(&self, _host: &(), _cx: &HostCx, _settings: &()) -> PluginInfo {
+    async fn catalog(
+        &self,
+        _host: &(),
+        _cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
         PluginInfo {
             description: "status diff log show describe commit new restore \
                           resolve undo, on the run's workspace"

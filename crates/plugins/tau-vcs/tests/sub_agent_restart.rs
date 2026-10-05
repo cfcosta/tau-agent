@@ -77,7 +77,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
             Identity::default(),
             agents,
             &[],
-            move |workspace, _: &ChildModel| {
+            ready_child(move |workspace, _: &ChildModel| {
                 seen.lock().unwrap().push(workspace.name().to_owned());
                 let script = ScriptedModel::new()
                     .turn(|t| {
@@ -92,7 +92,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
                     })
                     .turn(|t| t.text("written"));
                 Ok(coder(script, &workspace, true))
-            },
+            }),
         ));
         let outcome = agent.run("work, then hand over", &store).await.unwrap();
         assert_eq!(outcome.text, "done");
@@ -108,4 +108,27 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
             "the earlier process's commit landed on the caller"
         );
     });
+}
+
+/// A sub-agent factory that builds its agent at once, as `Spawn` takes
+/// one: a future that is ready.
+fn ready_child(
+    child: impl Fn(
+        tau_vcs::RunWorkspace,
+        &tau_vcs::sub_agents::ChildModel,
+    )
+        -> Result<tau_agent::agent::Agent, tau_agent::error::ToolError>
+    + Send
+    + Sync
+    + 'static,
+) -> impl Fn(
+    tau_vcs::RunWorkspace,
+    &tau_vcs::sub_agents::ChildModel,
+) -> tau_vcs::sub_agents::ChildFuture
++ Send
++ Sync
++ 'static {
+    move |workspace, model| {
+        Box::pin(std::future::ready(child(workspace, model)))
+    }
 }

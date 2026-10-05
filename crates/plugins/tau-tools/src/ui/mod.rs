@@ -410,7 +410,7 @@ impl UiPlugin for ToolsUi {
 
     /// None here: the host builds the tools on the run's workspace,
     /// where they act.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         _host: &(),
         _run: &RunCtx,
@@ -419,7 +419,12 @@ impl UiPlugin for ToolsUi {
         Ok(Vec::new())
     }
 
-    fn catalog(&self, _host: &(), _cx: &HostCx, _settings: &()) -> PluginInfo {
+    async fn catalog(
+        &self,
+        _host: &(),
+        _cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
         PluginInfo {
             description: "read, bash, edit, write, grep, find and ls on the \
                           run's workspace"
@@ -430,7 +435,7 @@ impl UiPlugin for ToolsUi {
         }
     }
 
-    fn act(
+    async fn act(
         &self,
         _host: &(),
         action: Value,
@@ -446,15 +451,16 @@ impl UiPlugin for ToolsUi {
                 offset,
                 encoding,
             } = serde_json::from_value(action)?;
-            let read = (|| -> anyhow::Result<Value> {
+            let read = async {
                 let encoding = match encoding.as_str() {
                     "utf8" => Encoding::Utf8,
                     "base64" => Encoding::Base64,
                     _ => anyhow::bail!("unsupported encoding"),
                 };
-                let starts = cx.runtime.block_on(
-                    cx.store.plugin_entries(&run.0, tau_ui_plugin::HOST_RECORD),
-                )?;
+                let starts = cx
+                    .store
+                    .plugin_entries(&run.0, tau_ui_plugin::HOST_RECORD)
+                    .await?;
                 let (_, start) =
                     starts.first().context("run has no repository")?;
                 if starts.len() != 1 {
@@ -465,8 +471,9 @@ impl UiPlugin for ToolsUi {
                 let repo =
                     cx.repo(&start.repo).context("repository unavailable")?;
                 let records: Vec<Value> = cx
-                    .runtime
-                    .block_on(cx.store.records(&run.0, NAME))?
+                    .store
+                    .records(&run.0, NAME)
+                    .await?
                     .into_iter()
                     .map(|body| serde_json::from_str(&body))
                     .collect::<Result<_, _>>()?;
@@ -478,17 +485,21 @@ impl UiPlugin for ToolsUi {
                 let artifact: Artifact = serde_json::from_value(
                     serde_json::to_value(&grant.artifact)?,
                 )?;
-                let bytes =
-                    Bytes::new(repo.dir.join("artifacts"), Quotas::default())?;
-                let range = bytes.read_range(
-                    &artifact,
-                    offset,
-                    1024,
-                    encoding,
-                    &tokio_util::sync::CancellationToken::new(),
-                )?;
-                Ok(serde_json::to_value(range)?)
-            })();
+                // Files: read off the async workers (ADR 0027).
+                let dir = repo.dir.join("artifacts");
+                let range = tokio::task::spawn_blocking(move || {
+                    Bytes::new(dir, Quotas::default())?.read_range(
+                        &artifact,
+                        offset,
+                        1024,
+                        encoding,
+                        &tokio_util::sync::CancellationToken::new(),
+                    )
+                })
+                .await??;
+                Ok::<_, anyhow::Error>(serde_json::to_value(range)?)
+            }
+            .await;
             Ok(Some(serde_json::to_value(match read {
                 Ok(range) => ActionReply {
                     id,

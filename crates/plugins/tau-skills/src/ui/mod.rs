@@ -36,7 +36,7 @@ pub struct Host {
 
 #[cfg(feature = "host")]
 impl tau_ui_plugin::PluginHost for Host {
-    fn new(cx: &HostCx) -> anyhow::Result<Self> {
+    async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         Ok(Self {
             dir: cx
                 .services
@@ -74,7 +74,7 @@ impl UiPlugin for SkillsUi {
 
     /// Reads the folder as the run starts; with no skills, the run gets
     /// neither the list nor the tool.
-    fn agent_plugins(
+    async fn agent_plugins(
         &self,
         host: &Host,
         _run: &RunCtx,
@@ -95,8 +95,13 @@ impl UiPlugin for SkillsUi {
         }
     }
 
-    fn catalog(&self, host: &Host, cx: &HostCx, _settings: &()) -> PluginInfo {
-        let found = self.data(host, cx).found.len();
+    async fn catalog(
+        &self,
+        host: &Host,
+        cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
+        let found = self.data(host, cx).await.found.len();
         PluginInfo {
             description: match found {
                 1 => "Instructions the agent loads when a task calls for \
@@ -113,7 +118,7 @@ impl UiPlugin for SkillsUi {
         }
     }
 
-    fn data(&self, host: &Host, _cx: &HostCx) -> Skills {
+    async fn data(&self, host: &Host, _cx: &HostCx) -> Skills {
         #[cfg(feature = "host")]
         {
             Self::skills(host)

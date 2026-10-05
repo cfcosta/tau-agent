@@ -378,23 +378,35 @@ fn host_action_revalidates_persisted_records_and_publishes_selection() {
         .unwrap()
     };
     assert!(
-        CodemodeUi
-            .act(&(), action("alpha", first.version()), &cx)
+        cx.runtime
+            .block_on(CodemodeUi.act(
+                &(),
+                action("alpha", first.version()),
+                &cx
+            ))
             .unwrap()
             .is_none()
     );
     assert_eq!(
-        modules::fold(&cx.records(&run, PLUGIN).unwrap()).selected()["alpha"],
+        modules::fold(&cx.runtime.block_on(cx.records(&run, PLUGIN)).unwrap())
+            .selected()["alpha"],
         first.version()
     );
-    let count = cx.records(&run, PLUGIN).unwrap().len();
+    let count = cx.runtime.block_on(cx.records(&run, PLUGIN)).unwrap().len();
     for bad in [
         action("alpha", &"f".repeat(64)),
         action("beta", first.version()),
     ] {
-        let reply = CodemodeUi.act(&(), bad, &cx).unwrap().unwrap();
+        let reply = cx
+            .runtime
+            .block_on(CodemodeUi.act(&(), bad, &cx))
+            .unwrap()
+            .unwrap();
         assert!(reply["error"].is_string());
-        assert_eq!(cx.records(&run, PLUGIN).unwrap().len(), count);
+        assert_eq!(
+            cx.runtime.block_on(cx.records(&run, PLUGIN)).unwrap().len(),
+            count
+        );
     }
 }
 

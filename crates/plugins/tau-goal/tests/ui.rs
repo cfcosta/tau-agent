@@ -143,12 +143,15 @@ fn starting_checks_and_plugin_presence_follow_key_and_run_kind() {
             let should_check = jev && kind != RunKind::SubAgent;
             let mut state = State::default();
             let mut anchors = FakeRun::default();
-            for record in GoalUi.starting(&(), &run, &()) {
+            for record in tau_testing::block_on(GoalUi.starting(&(), &run, &()))
+            {
                 state.apply(record, &mut anchors);
             }
             assert_eq!(state.checks, should_check);
 
-            let plugins = GoalUi.agent_plugins(&(), &run, &()).unwrap();
+            let plugins =
+                tau_testing::block_on(GoalUi.agent_plugins(&(), &run, &()))
+                    .unwrap();
             assert_eq!(plugins.len(), usize::from(should_check));
             assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
         }

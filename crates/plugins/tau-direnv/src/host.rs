@@ -63,7 +63,7 @@ struct Inner {
     roots: Mutex<BTreeMap<String, PathBuf>>,
     workspaces: Mutex<HashMap<PathBuf, Workspace>>,
     /// Records to store with runs, in order, on a thread of their own.
-    records: std::sync::mpsc::Sender<(RunId, Record)>,
+    records: tokio::sync::mpsc::UnboundedSender<(RunId, Record)>,
 }
 
 /// A workspace tau looked at.
@@ -75,7 +75,7 @@ struct Workspace {
 }
 
 impl PluginHost for Host {
-    fn new(cx: &HostCx) -> anyhow::Result<Self> {
+    async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         let direnv = Direnv::find(&cx.plugin_dir(NAME));
         Ok(Self::with_direnv(cx, direnv))
     }
@@ -86,20 +86,18 @@ impl Host {
     /// for [`PluginHost::new`].
     pub fn with_direnv(cx: &HostCx, direnv: Option<Direnv>) -> Self {
         let settings: Settings = cx.settings(NAME);
-        let (records, receive) = std::sync::mpsc::channel::<(RunId, Record)>();
+        let (records, mut receive) =
+            tokio::sync::mpsc::unbounded_channel::<(RunId, Record)>();
         let publisher = cx.clone();
-        std::thread::Builder::new()
-            .name("tau-direnv".into())
-            .spawn(move || {
-                for (run, record) in receive {
-                    let body = serde_json::to_value(&record)
-                        .expect("a record serializes");
-                    if let Err(error) = publisher.publish(&run, NAME, &body) {
-                        eprintln!("{NAME}: cannot store a record: {error:#}");
-                    }
+        cx.runtime.spawn(async move {
+            while let Some((run, record)) = receive.recv().await {
+                let body =
+                    serde_json::to_value(&record).expect("a record serializes");
+                if let Err(error) = publisher.publish(&run, NAME, &body).await {
+                    eprintln!("{NAME}: cannot store a record: {error:#}");
                 }
-            })
-            .expect("a thread starts");
+            }
+        });
         let inner = Inner {
             direnv,
             cx: cx.clone(),

@@ -18,11 +18,6 @@
 //!   its pages, the points it declares, and its contributions to points,
 //!   `tau-ui`'s ([`points`]) or other plugins'.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "not migrated to async yet (ADR 0027)"
-)]
-
 pub mod host;
 pub mod manifest;
 pub mod points;
@@ -126,7 +121,7 @@ pub trait Fold:
     /// What the plugin publishes, one record at a time: the agent half
     /// writes it, this fold reads it. A record this fold cannot read is
     /// skipped, and said once.
-    type Record: Serialize + DeserializeOwned;
+    type Record: Serialize + DeserializeOwned + Send;
 
     fn apply(&mut self, record: Self::Record, run: &mut dyn RunCx);
 
@@ -147,12 +142,12 @@ impl Fold for () {
 /// What a plugin keeps on the host, made once from the host's context.
 /// Any `Default` type is made by its default.
 pub trait PluginHost: Send + Sync + Sized + 'static {
-    fn new(cx: &HostCx) -> anyhow::Result<Self>;
+    fn new(cx: &HostCx) -> impl Future<Output = anyhow::Result<Self>> + Send;
 }
 
 impl<T: Default + Send + Sync + 'static> PluginHost for T {
-    fn new(_: &HostCx) -> anyhow::Result<Self> {
-        Ok(Self::default())
+    fn new(_: &HostCx) -> impl Future<Output = anyhow::Result<Self>> + Send {
+        std::future::ready(Ok(Self::default()))
     }
 }
 
@@ -281,7 +276,7 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         host: &Self::Host,
         run: &RunCtx,
         settings: &Self::Settings,
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>>;
+    ) -> impl Future<Output = anyhow::Result<Vec<Box<dyn Plugin>>>> + Send;
 
     /// Records to fold into a run's state as it starts or goes on, before
     /// anything is published: whether the plugin is on, and why not.
@@ -290,8 +285,8 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         _host: &Self::Host,
         _run: &RunCtx,
         _settings: &Self::Settings,
-    ) -> Vec<RecordOf<Self>> {
-        Vec::new()
+    ) -> impl Future<Output = Vec<RecordOf<Self>>> + Send {
+        std::future::ready(Vec::new())
     }
 
     /// What agent commands in `repo` start through, when the plugin
@@ -304,8 +299,10 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         _host: &Self::Host,
         _repo: &RepoCtx,
         _settings: &Self::Settings,
-    ) -> Option<std::sync::Arc<dyn tau_agent::launch::Launcher>> {
-        None
+    ) -> impl Future<
+        Output = Option<std::sync::Arc<dyn tau_agent::launch::Launcher>>,
+    > + Send {
+        std::future::ready(None)
     }
 
     /// Its entry on the Plugins screen. The registry sets its name.
@@ -314,10 +311,14 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         host: &Self::Host,
         cx: &HostCx,
         settings: &Self::Settings,
-    ) -> PluginInfo;
+    ) -> impl Future<Output = PluginInfo> + Send;
 
-    fn data(&self, _host: &Self::Host, _cx: &HostCx) -> Self::Data {
-        Self::Data::default()
+    fn data(
+        &self,
+        _host: &Self::Host,
+        _cx: &HostCx,
+    ) -> impl Future<Output = Self::Data> + Send {
+        std::future::ready(Self::Data::default())
     }
 
     fn repo_data(
@@ -325,8 +326,8 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         _host: &Self::Host,
         _repo: &RepoCtx,
         _cx: &HostCx,
-    ) -> Self::RepoData {
-        Self::RepoData::default()
+    ) -> impl Future<Output = Self::RepoData> + Send {
+        std::future::ready(Self::RepoData::default())
     }
 
     /// Carries out what the plugin's UI asked; a reply goes back to its
@@ -336,8 +337,8 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         _host: &Self::Host,
         _action: Value,
         _cx: &HostCx,
-    ) -> anyhow::Result<Option<Value>> {
-        Ok(None)
+    ) -> impl Future<Output = anyhow::Result<Option<Value>>> + Send {
+        std::future::ready(Ok(None))
     }
 
     // In the interface.

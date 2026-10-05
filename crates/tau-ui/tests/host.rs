@@ -1657,8 +1657,13 @@ fn a_finished_run_goes_on_in_its_workspace() {
 /// Asks tau-constitution's host half to carry out `act`, as its page
 /// does; what it answers, if anything.
 fn rules_act(host: &Host, act: Act) -> Option<serde_json::Value> {
-    host.plugin_act(tau_constitution::NAME, serde_json::to_value(act).unwrap())
-        .unwrap()
+    host.block_on(
+        host.plugin_act(
+            tau_constitution::NAME,
+            serde_json::to_value(act).unwrap(),
+        ),
+    )
+    .unwrap()
 }
 
 /// A repository's constitution, as its page gets it.

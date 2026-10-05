@@ -694,15 +694,14 @@ impl Host {
                     });
                 }
                 WorkspaceEvent::PluginAct { plugin, action } => {
-                    // Off the UI thread: an action may ask Jev, or the
-                    // store.
+                    // On the host: an action may ask Jev, or the store.
                     let (job_plugin, plugin, action) =
                         (plugin.clone(), plugin.clone(), action.clone());
                     let failed = alert(format!("{plugin} could not do that"));
-                    off_thread(
+                    on_host(
                         &handler,
                         &workspace,
-                        move |host| host.plugin_act(&job_plugin, action),
+                        async move |host| host.plugin_act(&job_plugin, action).await,
                         move |ws, reply, cx| {
                             if let Some(reply) = reply {
                                 ws.apply(HostUpdate::PluginReply { plugin, reply }, cx)

@@ -153,7 +153,7 @@ fn wait_for_record(
 }
 
 fn act(host: &Host, act: Act) {
-    host.plugin_act(NAME, serde_json::to_value(act).unwrap())
+    host.block_on(host.plugin_act(NAME, serde_json::to_value(act).unwrap()))
         .unwrap();
 }
 

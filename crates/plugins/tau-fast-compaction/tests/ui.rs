@@ -175,13 +175,20 @@ fn it_says_whether_it_is_on() {
     for jev in [false, true] {
         let run = run(jev);
         let mut state = State::default();
-        for body in FastCompactionUi.starting(&(), &run, &()) {
+        for body in
+            tau_testing::block_on(FastCompactionUi.starting(&(), &run, &()))
+        {
             state.apply(body, &mut FakeRun::default());
         }
         assert_eq!(state.on, Some(jev));
         let status = state.status().unwrap();
         assert_eq!(status == tau_ui_plugin::NO_KEY, !jev, "{status}");
-        let plugins = FastCompactionUi.agent_plugins(&(), &run, &()).unwrap();
+        let plugins = tau_testing::block_on(FastCompactionUi.agent_plugins(
+            &(),
+            &run,
+            &(),
+        ))
+        .unwrap();
         assert_eq!(plugins.len(), usize::from(jev));
         assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
         assert!(FastCompactionUi.rewrites_keep_transcript());
