@@ -374,9 +374,9 @@ fn repo_group(
     // lists its runs.
     for row in ws.repo_tree(&rows) {
         body = match row {
-            TreeRow::Run { run, depth } => {
+            TreeRow::Run { run, depth, folded } => {
                 let active = on_run && current.as_ref() == Some(&run.id);
-                body.child(run_row(ws, run, active, depth, t, cx))
+                body.child(run_row(ws, run, active, depth, folded, t, cx))
             }
             TreeRow::Child { child, depth, .. } => {
                 body.child(child_row(ws, &row, child, depth, t, cx))
@@ -470,21 +470,25 @@ fn indent(depth: usize) -> f32 {
 /// A conversation in the tree: a dot and one word in the color of what
 /// it needs of the person, and its title; its unread replies as a
 /// count. Hovering it offers to close it, unless it is its repository's
-/// main chat or it ended for good. A fork sits under its run.
+/// main chat or it ended for good. A fork or sub-agent sits under its
+/// run, which folds them away with a chevron when `folded` is given.
 fn run_row(
     ws: &Workspace,
     run: &RunView,
     active: bool,
     depth: usize,
+    folded: Option<bool>,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let route = Route::Run(run.id.clone());
     let hovered = ws.hovered_run.as_ref() == Some(&run.id);
     let unread = ws.unread(run);
-    let (hover_id, close_id) = (run.id.clone(), run.id.clone());
+    let (hover_id, close_id, fold_id) =
+        (run.id.clone(), run.id.clone(), run.id.clone());
     let attention = ws.attention(run, cx);
-    let ended = matches!(attention, Attention::Landed | Attention::Dropped);
+    let ended = matches!(attention, Attention::Landed | Attention::Dropped)
+        || ws.has_ended(run);
     let note = ws.run_rows(run, cx).into_iter().next();
     let unpushed = super::push::row(ws, run, t, cx).is_some();
     let (word, ink) = state_word(&attention, note.as_ref(), unpushed, t);
@@ -525,6 +529,28 @@ fn run_row(
                 .when(strong, |title| title.font_weight(weight::EMPHASIS))
                 .child(run.title.clone()),
         )
+        .when_some(folded, |row, folded| {
+            row.child(
+                div()
+                    .id("fold-run")
+                    .size(rems(1.125))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(radius::TAG)
+                    .hover(|style| style.bg(t.border_strong))
+                    .child(icon(
+                        if folded { Icon::Chevron } else { Icon::Down },
+                        IconSize::TINY,
+                        t.dim,
+                    ))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.toggle_fold(&fold_id, cx)
+                    })),
+            )
+        })
         .map(|row| {
             if hovered && !ended && !ws.is_main(&run.id) {
                 row.child(

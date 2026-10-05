@@ -422,3 +422,45 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
         assert_eq!(ws.need_you(REPO, cx), 0);
     });
 }
+
+/// A run with forks or sub-agents folds them away, and shows them
+/// again; a run with none has nothing to fold. A sub-agent the host
+/// closed stays listed under its parent, ended.
+#[gpui::test]
+fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
+    cx.update(tau_ui_remote::init);
+    let mut runs = runs();
+    let mut sub = RunView::new(id("sub"), "sub", "coder", "gpt-5.5")
+        .in_repo(REPO)
+        .with_origin(Origin::SubAgent { parent: id("main") });
+    sub.finish_stored(StopReason::Stop, 0.0, 0.0);
+    runs.insert(0, sub);
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("tau", runs, catalog(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let tree = |ws: &Workspace| -> Vec<(String, Option<bool>)> {
+        let all = ws.repo_rows("");
+        all.iter()
+            .flat_map(|rows| ws.repo_tree(rows))
+            .filter_map(|row| match row {
+                TreeRow::Run { run, folded, .. } => {
+                    Some((run.title.clone(), folded))
+                }
+                TreeRow::Child { .. } => None,
+            })
+            .collect()
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply(HostUpdate::Closed(id("sub")), cx);
+        let open = tree(ws);
+        assert_eq!(open[0], ("main".to_owned(), Some(false)));
+        assert_eq!(open[1], ("sub".to_owned(), None), "listed though closed");
+        assert!(ws.has_ended(ws.run(&id("sub")).unwrap()));
+        ws.toggle_fold(&id("main"), cx);
+        assert_eq!(tree(ws), [("main".to_owned(), Some(true))]);
+        ws.toggle_fold(&id("main"), cx);
+        assert_eq!(tree(ws), open);
+    });
+}

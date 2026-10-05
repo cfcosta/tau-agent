@@ -42,8 +42,13 @@ pub struct RepoRows<'a> {
 /// list both draw it.
 #[derive(Debug, Clone, Copy)]
 pub enum TreeRow<'a> {
-    /// A conversation, `depth` levels in.
-    Run { run: &'a RunView, depth: usize },
+    /// A conversation, `depth` levels in. `folded` says whether its
+    /// children are folded away; none when it has no children.
+    Run {
+        run: &'a RunView,
+        depth: usize,
+        folded: Option<bool>,
+    },
     /// A child of `parent` with no conversation here: a fork opens the
     /// comparison with its run.
     Child {
@@ -105,16 +110,34 @@ impl Workspace {
     }
 
     /// `run`'s forks and sub-agents the sidebar lists under it, newest
-    /// first: those with a view of their own that are open, or that
-    /// landed or were dropped, which stay listed, dim, saying so.
+    /// first: those with a view of their own that are open, every
+    /// sub-agent, and forks that landed or were dropped. Those that
+    /// ended stay listed, dim, saying so.
     pub fn listed_children<'a>(
         &'a self,
         run: &'a RunView,
     ) -> impl Iterator<Item = &'a RunView> {
         self.runs.iter().filter(move |view| {
             view.origin.parent() == Some(&run.id)
-                && (!self.closed.contains(&view.id) || view.ending.is_some())
+                && (matches!(view.origin, Origin::SubAgent { .. })
+                    || !self.closed.contains(&view.id)
+                    || view.ending.is_some())
         })
+    }
+
+    /// Whether `run` ended for good: it landed, was dropped, or was
+    /// closed. The sidebar draws it dim.
+    pub fn has_ended(&self, run: &RunView) -> bool {
+        run.ending.is_some() || self.closed.contains(&run.id)
+    }
+
+    /// Folds `run`'s forks and sub-agents away in the sidebar, or shows
+    /// them again.
+    pub fn toggle_fold(&mut self, run: &RunId, cx: &mut Context<Self>) {
+        if !self.folded.remove(run) {
+            self.folded.insert(run.clone());
+        }
+        cx.notify();
     }
 
     /// A repository's listed runs as its tree has them: each run, then
@@ -139,20 +162,30 @@ impl Workspace {
         limit: Option<usize>,
         flat: bool,
     ) {
-        tree.push(TreeRow::Run { run, depth });
-        if flat {
-            return;
-        }
         // A fork is a conversation of its own: it opens like one.
         let children: Vec<&RunView> = self.listed_children(run).collect();
+        let others: Vec<&ChildRun> = run
+            .children
+            .iter()
+            .filter(|child| {
+                !self.is_closed(&child.id) && self.run(&child.id).is_none()
+            })
+            .collect();
+        let has = !flat && (!children.is_empty() || !others.is_empty());
+        let folded = has && self.folded.contains(&run.id);
+        tree.push(TreeRow::Run {
+            run,
+            depth,
+            folded: has.then_some(folded),
+        });
+        if !has || folded {
+            return;
+        }
         let shown = limit.unwrap_or(children.len());
         for child in children.into_iter().take(shown) {
             self.tree_rows(tree, child, depth + 1, None, false);
         }
-        for child in &run.children {
-            if self.is_closed(&child.id) || self.run(&child.id).is_some() {
-                continue;
-            }
+        for child in others {
             tree.push(TreeRow::Child {
                 parent: run,
                 child,

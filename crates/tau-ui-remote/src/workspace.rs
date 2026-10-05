@@ -500,6 +500,8 @@ pub struct Workspace {
     pub(crate) open_repos: HashSet<String>,
     /// Repositories that list all their runs, not only the newest.
     pub(crate) all_runs: HashSet<String>,
+    /// Runs whose forks and sub-agents the sidebar folds away.
+    pub(crate) folded: HashSet<RunId>,
     /// The repository row under the pointer, which shows its actions.
     pub(crate) hovered_repo: Option<String>,
     /// The repository whose menu is open.
@@ -748,6 +750,7 @@ impl Workspace {
             repo: None,
             open_repos: HashSet::new(),
             all_runs: HashSet::new(),
+            folded: HashSet::new(),
             hovered_repo: None,
             repo_menu: None,
             sidebar_filter,
@@ -1068,7 +1071,8 @@ impl Workspace {
                 parent: parent.clone(),
             });
             child.update(RunUpdate::User(task));
-            self.runs.push(child);
+            // Newest first, as the sidebar lists a run's children.
+            self.runs.insert(0, child);
         }
         for run in &mut self.runs {
             run.apply(event);

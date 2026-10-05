@@ -136,6 +136,7 @@ impl Workspace {
             repo: _,
             open_repos: _,
             all_runs: _,
+            folded: _,
             hovered_repo: _,
             repo_menu: _,
             sidebar_filter: _,

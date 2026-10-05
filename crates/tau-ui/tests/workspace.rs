@@ -1898,6 +1898,7 @@ fn a_fork_is_dropped_after_asking(cx: &mut TestAppContext) {
 /// parent's `spawn` handed it. It stays open after it finishes, until
 /// the `wait` that lands it returns; one that fails is dropped and
 /// closes at once. A sibling from the same batch keeps its own task.
+/// Both stay in the sidebar under their parent, newest first, dim.
 #[gpui::test]
 fn a_sub_agent_is_a_chat_until_it_lands(cx: &mut TestAppContext) {
     use std::sync::Arc;
@@ -1997,6 +1998,20 @@ fn a_sub_agent_is_a_chat_until_it_lands(cx: &mut TestAppContext) {
         assert!(tau_vcs::ui::waited(&card.data).iter().any(|landed| landed.from == child));
         let card = ws.run(&parent).unwrap().tool("d1").unwrap();
         assert_eq!(tau_vcs::ui::spawned(&card.data), Some(RunId("d1".into())));
+        // The host takes the closings; the sidebar keeps them listed.
+        for run in [&child, &sibling] {
+            ws.apply(tau_ui_remote::update::HostUpdate::Closed(run.clone()), cx);
+        }
+        let view = ws.run(&parent).unwrap();
+        let listed: Vec<RunId> = ws
+            .listed_children(view)
+            .filter(|view| matches!(view.origin, tau_ui_remote::view::Origin::SubAgent { .. }))
+            .map(|view| view.id.clone())
+            .collect();
+        assert_eq!(listed, [child.clone(), sibling.clone()], "newest first");
+        for run in [&child, &sibling] {
+            assert!(ws.has_ended(ws.run(run).unwrap()), "{run} is dim");
+        }
     });
     assert!(events.borrow().iter().any(|event| matches!(event,
         WorkspaceEvent::CloseRun { run } if *run == child)));

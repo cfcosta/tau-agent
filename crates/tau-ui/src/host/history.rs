@@ -213,11 +213,11 @@ pub async fn history(
         views.push(stored_view(store, record).await?);
     }
     // Sub-agents are left out of the list: they come back under the
-    // runs that called them, however they ended.
+    // runs that called them, however they ended, newest first.
     let parents: Vec<RunId> =
         views.iter().map(|view| view.id.clone()).collect();
     for parent in parents {
-        for record in store.subagents(&parent.0).await? {
+        for record in store.subagents(&parent.0).await?.into_iter().rev() {
             let view = stored_view(store, &record).await?.with_origin(
                 Origin::SubAgent {
                     parent: parent.clone(),
