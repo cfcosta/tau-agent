@@ -252,6 +252,7 @@ fn hook_name(hook: &Hook) -> String {
         Hook::TurnEnd => "turn_end".into(),
         Hook::RunEnd => "run_end".into(),
         Hook::View => "view".into(),
+        Hook::SettingsView => "settings.view".into(),
         Hook::Action(name) => format!("action {name}"),
     }
 }

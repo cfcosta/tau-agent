@@ -14,15 +14,19 @@
 
 #[cfg(feature = "host")]
 pub mod agent;
+pub mod pane;
 #[cfg(feature = "host")]
 pub mod registry;
 #[cfg(feature = "host")]
 pub mod runtime;
+pub mod settings;
 #[cfg(feature = "host")]
 pub mod skill;
 #[cfg(feature = "host")]
 pub mod testing;
 pub mod ui;
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -100,6 +104,9 @@ pub struct Hooks {
     pub run_end: bool,
     #[serde(default)]
     pub view: bool,
+    /// `settings.view`: a settings page of its own. It reaches nothing.
+    #[serde(default)]
+    pub settings_view: bool,
 }
 
 impl Hooks {
@@ -118,7 +125,7 @@ impl Hooks {
 }
 
 /// What a plugin declares, read without running its hooks.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Declaration {
     pub name: String,
     #[serde(default)]
@@ -144,6 +151,15 @@ impl Declaration {
         let mut grown = self.uses.grown_from(&before.uses);
         grown.extend(self.hooks.grown_from(&before.hooks));
         grown
+    }
+
+    /// A plugin named `name` that declares nothing: what one never
+    /// allowed before may reach.
+    pub fn named(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            ..Self::default()
+        }
     }
 
     /// Its settings' defaults, or an empty object.
@@ -213,6 +229,27 @@ pub enum Act {
     /// Lets `plugin`'s waiting version reach what it asks, and activates
     /// it.
     Allow { plugin: String },
+    /// Draws `plugin`'s settings page (`settings.view`) of `settings`;
+    /// the answer is a [`SettingsPage`].
+    SettingsView { plugin: String, settings: Value },
+}
+
+/// A Luau plugin's settings page as the host drew it, for the settings
+/// it shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SettingsPage {
+    pub plugin: String,
+    pub settings: Value,
+    /// The view tree, or why it could not be drawn.
+    pub page: Result<Value, String>,
+}
+
+/// What the person set for each Luau plugin, by plugin: tau-luau-plugins'
+/// own settings, kept everywhere or as a repository's copy (ADR 0029).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct LuauSettings {
+    #[serde(default)]
+    pub plugins: BTreeMap<String, Value>,
 }
 
 /// What the host publishes about a run's Luau plugins, as tau-luau-plugins'

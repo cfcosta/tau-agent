@@ -26,3 +26,10 @@ t.case("leaves other commands alone", function()
 	t.equal(run:before_tool({ name = "bash", args = { command = "make test" } }), nil)
 	t.equal(run:before_tool({ name = "read", args = { path = "deploy.md" } }), nil)
 end)
+
+t.case("its settings page offers every day", function()
+	local page = t.run({ settings = { days = { "Monday" } } }):settings_view()
+	t.equal(page.children[2], tau.ui.choice("days", {
+		"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+	}, { multi = true }))
+end)

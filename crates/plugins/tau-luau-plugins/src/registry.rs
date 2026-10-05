@@ -235,7 +235,7 @@ impl Registry {
             let grown = match allowed.get(&name) {
                 Some(allowed) if allowed.digest == loaded.digest => Vec::new(),
                 Some(allowed) => declaration.grown_from(&allowed.declaration),
-                None => declaration.grown_from(&Declaration::nothing()),
+                None => declaration.grown_from(&Declaration::default()),
             };
             let standing = if tests.iter().any(|test| !test.passed) {
                 Standing::Failing
@@ -273,6 +273,52 @@ impl Registry {
         (self.0.refresh)();
     }
 
+    /// Draws `plugin`'s settings page of `settings`: the version waiting
+    /// for the person, else the active one.
+    pub async fn settings_page(
+        &self,
+        plugin: &str,
+        settings: serde_json::Value,
+    ) -> crate::SettingsPage {
+        let loaded = {
+            let state = self.0.state.read().await;
+            state.waiting.get(plugin).cloned().or_else(|| {
+                state
+                    .active
+                    .iter()
+                    .find(|active| active.loaded.declaration.name == plugin)
+                    .map(|active| active.loaded.clone())
+            })
+        };
+        let page = match loaded {
+            None => Err(format!("{plugin} is not loaded")),
+            Some(loaded) => {
+                let context = crate::runtime::Context {
+                    settings: settings.clone(),
+                    ..Default::default()
+                };
+                let outcome = loaded
+                    .call(
+                        &crate::runtime::Hook::SettingsView,
+                        settings.clone(),
+                        &context,
+                        std::sync::Arc::new(crate::runtime::NoReach),
+                        CancellationToken::new(),
+                    )
+                    .await;
+                match outcome.error {
+                    Some(error) => Err(error),
+                    None => Ok(outcome.value),
+                }
+            }
+        };
+        crate::SettingsPage {
+            plugin: plugin.to_owned(),
+            settings,
+            page,
+        }
+    }
+
     /// The person allows `plugin`'s waiting version: it activates, and
     /// what it reaches becomes what that plugin may reach.
     pub async fn allow(&self, plugin: &str) -> anyhow::Result<()> {
@@ -304,21 +350,6 @@ impl Registry {
         drop(state);
         (self.0.refresh)();
         Ok(())
-    }
-}
-
-impl Declaration {
-    /// What a plugin never allowed before may reach: nothing.
-    fn nothing() -> Self {
-        Self {
-            name: String::new(),
-            description: String::new(),
-            uses: Default::default(),
-            settings: None,
-            tools: Vec::new(),
-            hooks: Default::default(),
-            actions: Vec::new(),
-        }
     }
 }
 

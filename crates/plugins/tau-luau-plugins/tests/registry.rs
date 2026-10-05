@@ -167,3 +167,50 @@ fn what_was_allowed_is_kept() {
     block_on_io(second.reload(&v1, &trunk));
     assert_eq!(standing(&second), Standing::Active);
 }
+
+/// A plugin's own settings page is drawn on the host, of the settings it
+/// is given (ADR 0029); one that is not loaded says so.
+#[test]
+fn a_settings_page_is_drawn_of_the_settings_given() {
+    const PAGED: &str = r#"
+local tau = require("tau")
+local ui = tau.ui
+return tau.plugin {
+  name = "greet",
+  tools = { hello = { description = "Hello.", call = function() return "hi" end } },
+  settings = {
+    schema = { type = "object", properties = { loud = { type = "boolean" } } },
+    default = { loud = false },
+    view = function(settings, ctx)
+      return ui.stack { ui.text(settings.loud and "loud" or "quiet"), ui.toggle("loud", "Shout") }
+    end,
+  },
+}
+"#;
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        || {},
+    );
+    let (v1, trunk) = project(home.path(), 1, PAGED, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    assert_eq!(standing(&registry), Standing::Active);
+    let page = block_on_io(
+        registry.settings_page("greet", serde_json::json!({ "loud": true })),
+    );
+    assert_eq!(
+        page.page.unwrap(),
+        serde_json::json!({ "piece": "stack", "children": [
+            { "piece": "text", "text": "loud" },
+            { "piece": "toggle", "key": "loud", "label": "Shout" },
+        ] })
+    );
+    let declared = &block_on_io(registry.overview()).plugins[0];
+    assert!(declared.declaration.as_ref().unwrap().hooks.settings_view);
+    assert!(
+        block_on_io(registry.settings_page("other", serde_json::json!({})))
+            .page
+            .is_err()
+    );
+}

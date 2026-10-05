@@ -49,7 +49,7 @@ return tau.plugin {
   name = "...",              -- the folder's name
   description = "...",       -- one line, for the Plugins screen
   uses = { tools = { "bash" }, jev = false, infer = false },
-  settings = { default = { ... } },  -- ctx.settings
+  settings = { schema = { ... }, default = { ... }, view = function(settings, ctx) end },
   tools = { name = { description, parameters, call, card } },
   before_tool = function(call, ctx) end,
   before_stop = function(stop, ctx) end,
@@ -89,7 +89,7 @@ Every field but `name` is optional.
 | -------------- | ------------------------------------------------------------------------------------------------- |
 | `ctx.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`                               |
 | `ctx.now`      | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on                                       |
-| `ctx.settings` | the plugin's settings: `settings.default`, for now                                                |
+| `ctx.settings` | what the person set, over `settings.default`; per repository when one keeps its own copy          |
 | `ctx.state`    | the plugin's table for this run; what a hook leaves in it is kept                                 |
 | `ctx.tools`    | in a tool's `call` only: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })` |
 | `ctx.jev`      | Jev, when `uses.jev`                                                                              |
@@ -122,6 +122,32 @@ Plain tables, drawn by tau on the computer and on the phone:
 `view` is called after each hook that changed the state. It must only
 read the state: it has no tools.
 
+### Settings
+
+What the person can set lives in `settings`:
+
+- `schema`: a JSON schema of an object, its properties each a boolean,
+  a string (with an `enum`, a choice), a number, an integer, or an
+  array of strings with an `enum` (a choice of several). Nothing is
+  saved that it does not accept, and it takes no keys beyond its
+  properties.
+- `default`: the values before anything is set.
+- `view(settings, ctx)`, optional: the plugin's own settings page,
+  drawn from `tau.ui`. Without it, tau draws a form from `schema`.
+
+The page is drawn in the plugin's pane on the Plugins screen, and in a
+chat's side panel. Three pieces are bound to a key of the settings
+(dotted for a table inside: `limits.max`), and changing one saves it:
+
+- `ui.toggle(key, label)`: a switch, for a boolean.
+- `ui.choice(key, options, { multi = true })`: one of `options`, or
+  several.
+- `ui.field(key, { kind = "number", placeholder = "..." })`: a line of
+  text, or a number; Enter saves it.
+
+The person sets them everywhere or per repository. A value the schema
+no longer accepts gives way to the defaults, and the pane says so.
+
 ### Modules
 
 `lib/<module>.luau` is `require("<module>")` in `plugin.luau`. A module
@@ -150,6 +176,7 @@ end)
 ```
 
 - `run:tool(name, args)`, `run:card(name, args, result)`,
+  `run:settings_view(settings)`,
   `run:before_tool(call)`, `run:before_stop(stop)`,
   `run:turn_end(turn)`, `run:run_end(run)`, `run:view()`.
 - `run.state` is the state the last hook left; `run.logs` its log lines.

@@ -195,6 +195,8 @@ pub enum Hook {
     TurnEnd,
     RunEnd,
     View,
+    /// Its settings page, with the settings shown as input (ADR 0029).
+    SettingsView,
     /// A button's action, with its arguments as input.
     Action(String),
 }
@@ -204,7 +206,7 @@ impl Hook {
     pub fn limit(&self) -> Duration {
         Duration::from_millis(match self {
             Self::Tool(_) => 60_000,
-            Self::Card(_) | Self::View => 200,
+            Self::Card(_) | Self::View | Self::SettingsView => 200,
             Self::BeforeTool | Self::TurnEnd | Self::Action(_) => 2_000,
             Self::BeforeStop | Self::RunEnd => 10_000,
         })
@@ -222,6 +224,7 @@ impl Hook {
             Self::TurnEnd => "p.turn_end(input, ctx)".into(),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
             Self::View => "p.view(ctx.state, ctx)".into(),
+            Self::SettingsView => "p.settings.view(input, ctx)".into(),
             Self::Action(name) => format!("p.actions[\"{name}\"](input, ctx)"),
         }
     }
@@ -238,6 +241,7 @@ impl Hook {
             Self::TurnEnd => declaration.hooks.turn_end,
             Self::RunEnd => declaration.hooks.run_end,
             Self::View => declaration.hooks.view,
+            Self::SettingsView => declaration.hooks.settings_view,
             Self::Action(name) => declaration.actions.contains(name),
         }
     }

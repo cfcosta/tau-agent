@@ -128,6 +128,43 @@ function ui.button(label, action, args)
 	return { piece = "button", label = tostring(label), action = tostring(action), args = args or {} }
 end
 
+-- Pieces bound to a key of the plugin's settings, for its settings page:
+-- changing one saves that key, once the schema accepts the value.
+-- A dotted key reaches into tables: `limits.max`.
+
+function ui.toggle(key, label)
+	return { piece = "toggle", key = tostring(key), label = label and tostring(label) or json.null }
+end
+
+-- One of `options`, or several with `{ multi = true }`.
+function ui.choice(key, options, opts)
+	local out = array({})
+	for _, option in ipairs(options or {}) do
+		table.insert(out, tostring(option))
+	end
+	return {
+		piece = "choice",
+		key = tostring(key),
+		options = out,
+		multi = (opts and opts.multi) == true,
+	}
+end
+
+-- A line of text, or a number with `{ kind = "number" }`.
+function ui.field(key, opts)
+	opts = opts or {}
+	local kind = opts.kind or "text"
+	if kind ~= "text" and kind ~= "number" then
+		error("a field's kind is text or number, not " .. tostring(kind), 2)
+	end
+	return {
+		piece = "field",
+		key = tostring(key),
+		kind = kind,
+		placeholder = opts.placeholder and tostring(opts.placeholder) or json.null,
+	}
+end
+
 -- The run's status line: a short text, a detail, and a tone.
 function ui.status(text, detail, of)
 	return {
@@ -166,7 +203,11 @@ function tau._describe(plugin)
 			jev = uses.jev == true,
 			infer = uses.infer == true,
 		},
-		settings = plugin.settings or json.null,
+		-- What can be set; `view` draws the settings page, on the host.
+		settings = plugin.settings and {
+			schema = plugin.settings.schema or json.null,
+			default = plugin.settings.default or json.null,
+		} or json.null,
 		tools = tools,
 		hooks = {
 			before_tool = plugin.before_tool ~= nil,
@@ -174,6 +215,7 @@ function tau._describe(plugin)
 			turn_end = plugin.turn_end ~= nil,
 			run_end = plugin.run_end ~= nil,
 			view = plugin.view ~= nil,
+			settings_view = plugin.settings ~= nil and plugin.settings.view ~= nil,
 		},
 		actions = actions,
 	}
@@ -326,6 +368,13 @@ function test.run(spec)
 		return call(function(_, ctx)
 			return view(ctx.state, ctx)
 		end, nil)
+	end
+	-- The settings page, of `settings` or the run's.
+	function run:settings_view(settings)
+		local page = need(plugin.settings and plugin.settings.view, "settings.view")
+		return call(function(input, ctx)
+			return page(input, ctx)
+		end, settings or run.data.settings)
 	end
 	function run:action(name, args)
 		return call(need((plugin.actions or {})[name], "action " .. name), args or {})

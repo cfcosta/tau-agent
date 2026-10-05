@@ -53,7 +53,16 @@ use tau_ui_plugin::{
     points::{self, AtCard, CardView},
 };
 
-use crate::{Act, NAME, Overview, Record, Standing};
+use crate::{
+    Act,
+    LuauSettings,
+    NAME,
+    Overview,
+    Record,
+    SettingsPage,
+    Standing,
+    pane::{Bind, SettingsUi},
+};
 
 /// The page that lists the plugins repository's plugins.
 pub const PAGE: &str = "luau-plugins";
@@ -168,7 +177,13 @@ fn tone(of: &Value) -> Tone {
 /// Draws a view tree a Luau plugin returned. A piece it does not know,
 /// or past [`MAX_DEPTH`], draws as a red box that says so.
 pub fn draw(piece: &Value, t: &Theme) -> AnyElement {
-    draw_at(piece, t, 0)
+    draw_at(piece, t, 0, None)
+}
+
+/// Draws a settings page: its bound pieces read and save the settings
+/// through `bind` (ADR 0029).
+pub fn draw_bound(piece: &Value, t: &Theme, bind: &Bind) -> AnyElement {
+    draw_at(piece, t, 0, Some(bind))
 }
 
 fn text(piece: &Value, key: &str) -> String {
@@ -180,13 +195,14 @@ fn children(
     key: &str,
     t: &Theme,
     depth: usize,
+    bind: Option<&Bind>,
 ) -> Vec<AnyElement> {
     piece[key]
         .as_array()
         .into_iter()
         .flatten()
         .take(MAX_CHILDREN)
-        .map(|child| draw_at(child, t, depth + 1))
+        .map(|child| draw_at(child, t, depth + 1, bind))
         .collect()
 }
 
@@ -203,7 +219,12 @@ fn unknown(what: String, t: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-fn draw_at(piece: &Value, t: &Theme, depth: usize) -> AnyElement {
+fn draw_at(
+    piece: &Value,
+    t: &Theme,
+    depth: usize,
+    bind: Option<&Bind>,
+) -> AnyElement {
     if depth > MAX_DEPTH {
         return unknown("the view nests too deep".into(), t);
     }
@@ -281,7 +302,7 @@ fn draw_at(piece: &Value, t: &Theme, depth: usize) -> AnyElement {
             .flex()
             .flex_col()
             .gap(sp(1.))
-            .children(children(piece, "items", t, depth).into_iter().map(
+            .children(children(piece, "items", t, depth, bind).into_iter().map(
                 |item| {
                     div()
                         .flex()
@@ -323,18 +344,24 @@ fn draw_at(piece: &Value, t: &Theme, depth: usize) -> AnyElement {
             .flex()
             .flex_col()
             .gap(sp(2.))
-            .children(children(piece, "children", t, depth))
+            .children(children(piece, "children", t, depth, bind))
             .into_any_element(),
         "row" => div()
             .flex()
             .flex_wrap()
             .items_center()
             .gap(sp(2.))
-            .children(children(piece, "children", t, depth))
+            .children(children(piece, "children", t, depth, bind))
             .into_any_element(),
         // Buttons send their action once actions arrive (ADR 0027, phase 2).
         "button" => badge(text(piece, "label"), t.muted, t.border_strong)
             .into_any_element(),
+        "toggle" | "choice" | "field" => match bind {
+            Some(bind) => crate::pane::bound(piece, t, bind),
+            None => {
+                unknown("a setting, drawn on a settings page only".into(), t)
+            }
+        },
         other => unknown(format!("unknown piece `{other}`"), t),
     }
 }
@@ -343,12 +370,12 @@ impl UiPlugin for LuauPluginsUi {
     type State = State;
     type Data = Overview;
     type RepoData = ();
-    type Settings = ();
+    type Settings = LuauSettings;
     #[cfg(feature = "host")]
     type Host = crate::registry::Registry;
     #[cfg(not(feature = "host"))]
     type Host = ();
-    type Ui = ();
+    type Ui = SettingsUi;
 
     fn name(&self) -> &'static str {
         NAME
@@ -358,7 +385,7 @@ impl UiPlugin for LuauPluginsUi {
         &self,
         host: &Self::Host,
         run: &RunCtx,
-        _settings: &(),
+        settings: &LuauSettings,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         #[cfg(feature = "host")]
         {
@@ -372,7 +399,21 @@ impl UiPlugin for LuauPluginsUi {
                     dir.0.clone(),
                 )));
             }
-            let active = host.active().await;
+            // Each plugin takes what the person set, over its defaults.
+            let active: Vec<crate::agent::Active> = host
+                .active()
+                .await
+                .into_iter()
+                .map(|mut active| {
+                    let name = &active.loaded.declaration.name;
+                    active.settings = crate::settings::effective(
+                        &active.loaded.declaration,
+                        settings.plugins.get(name),
+                    )
+                    .0;
+                    active
+                })
+                .collect();
             if active.is_empty() {
                 return Ok(plugins);
             }
@@ -397,7 +438,7 @@ impl UiPlugin for LuauPluginsUi {
         }
         #[cfg(not(feature = "host"))]
         {
-            let _ = (host, run);
+            let _ = (host, run, settings);
             Ok(Vec::new())
         }
     }
@@ -406,7 +447,7 @@ impl UiPlugin for LuauPluginsUi {
         &self,
         host: &Self::Host,
         _cx: &HostCx,
-        _settings: &(),
+        _settings: &LuauSettings,
     ) -> PluginInfo {
         #[cfg(feature = "host")]
         let description = {
@@ -433,6 +474,17 @@ impl UiPlugin for LuauPluginsUi {
             let _ = host;
             "Plugins written in Luau".to_owned()
         };
+        // Each plugin of the repository is a row of its own.
+        #[cfg(feature = "host")]
+        let entries: Vec<tau_ui_plugin::CatalogEntry> = host
+            .overview()
+            .await
+            .plugins
+            .iter()
+            .map(entry_row)
+            .collect();
+        #[cfg(not(feature = "host"))]
+        let entries = Vec::new();
         PluginInfo {
             group: tau_ui_plugin::Group::Yours,
             description,
@@ -443,6 +495,7 @@ impl UiPlugin for LuauPluginsUi {
                 Seam::Finish,
             ],
             page: Some(Link::page(PAGE)),
+            entries,
             ..Default::default()
         }
     }
@@ -469,15 +522,32 @@ impl UiPlugin for LuauPluginsUi {
         #[cfg(feature = "host")]
         match action {
             Act::Allow { plugin } => host.allow(&plugin).await?,
+            Act::SettingsView { plugin, settings } => {
+                let page = host.settings_page(&plugin, settings).await;
+                return Ok(Some(serde_json::to_value(page)?));
+            }
         }
         #[cfg(not(feature = "host"))]
         let _ = (host, action);
         Ok(None)
     }
 
+    /// A settings page the host drew.
+    fn reply(
+        &self,
+        ui: &mut SettingsUi,
+        reply: Value,
+        cx: &mut gpui::Context<SettingsUi>,
+    ) {
+        if let Ok(page) = serde_json::from_value::<SettingsPage>(reply) {
+            ui.take_page(page, cx);
+        }
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(Page::new(PAGE, page).title(|_| "Luau plugins".to_owned()))
+            .settings(crate::pane::render)
             .command(
                 SlashCommand::new(
                     "plugin",
@@ -527,6 +597,46 @@ impl UiPlugin for LuauPluginsUi {
     }
 }
 
+/// A plugin of the repository as a row of the Plugins screen: where it
+/// steps in, and a word when it needs the person.
+#[cfg(feature = "host")]
+fn entry_row(entry: &crate::Entry) -> tau_ui_plugin::CatalogEntry {
+    use tau_ui_plugin::{CatalogEntry, Note};
+
+    let mut seams = Vec::new();
+    if let Some(declaration) = &entry.declaration {
+        if !declaration.tools.is_empty() {
+            seams.push(Seam::Tools);
+        }
+        if declaration.hooks.before_tool {
+            seams.push(Seam::BeforeTool);
+        }
+        if declaration.hooks.before_stop {
+            seams.push(Seam::BeforeStop);
+        }
+        if declaration.hooks.run_end {
+            seams.push(Seam::Finish);
+        }
+    }
+    let note = match &entry.standing {
+        Standing::Active => None,
+        Standing::Waiting { .. } => {
+            Some(Note::new("waits for you", Tone::Warn))
+        }
+        Standing::Failing => Some(Note::new("tests fail", Tone::Danger)),
+        Standing::Broken { .. } => {
+            Some(Note::new("does not load", Tone::Danger))
+        }
+    };
+    CatalogEntry {
+        name: entry.name.clone(),
+        description: entry.description.clone(),
+        group: tau_ui_plugin::Group::Yours,
+        seams,
+        note,
+    }
+}
+
 /// The plugins page: each plugin of the plugins repository, where it
 /// stands, its tests, and Allow for a version waiting for the person.
 fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
@@ -554,7 +664,13 @@ fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
             .child(empty("No plugins yet.", &t))
             .into_any_element();
     }
-    for entry in &overview.plugins {
+    // Opened from one plugin's row, the page is that plugin's.
+    let only = view.entry().map(str::to_owned);
+    for entry in overview
+        .plugins
+        .iter()
+        .filter(|entry| only.as_ref().is_none_or(|only| &entry.name == only))
+    {
         let (label, tone_of) = match &entry.standing {
             Standing::Active => ("active", Tone::Good),
             Standing::Waiting { .. } => ("waiting for you", Tone::Warn),
