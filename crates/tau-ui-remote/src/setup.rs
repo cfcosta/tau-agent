@@ -108,7 +108,14 @@ pub struct RepoChoice {
     pub description: String,
     pub branch: String,
     pub selected: bool,
+    /// When it was last pushed to, as GitHub writes it
+    /// (`2026-10-04T21:13:07Z`): the list shows the newest first.
+    #[serde(default)]
+    pub pushed_at: String,
 }
+
+/// How many repositories the picker shows before "Show more".
+pub const SHOWN_REPOS: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CloneState {
@@ -208,6 +215,28 @@ impl Setup {
         })
     }
 
+    /// What the picker shows for `filter`: the first [`SHOWN_REPOS`]
+    /// matches, and any picked one past them, unless `expanded`, which
+    /// shows them all; and how many matches it leaves out.
+    pub fn shown<'a>(
+        &'a self,
+        filter: &'a str,
+        expanded: bool,
+    ) -> (Vec<&'a RepoChoice>, usize) {
+        let matching: Vec<&RepoChoice> = self.matching(filter).collect();
+        if expanded {
+            return (matching, 0);
+        }
+        let shown: Vec<&RepoChoice> = matching
+            .iter()
+            .enumerate()
+            .filter(|(n, repo)| *n < SHOWN_REPOS || repo.selected)
+            .map(|(_, repo)| *repo)
+            .collect();
+        let hidden = matching.len() - shown.len();
+        (shown, hidden)
+    }
+
     /// The model label for the first run's chips.
     pub fn model_label(&self) -> Option<&str> {
         match &self.model {
@@ -235,7 +264,29 @@ mod tests {
             description: description.into(),
             branch: "main".into(),
             selected: false,
+            pushed_at: String::new(),
         }
+    }
+
+    /// The picker shows the first twenty matches and any picked one past
+    /// them, in the list's order, and counts the rest; expanded, it shows
+    /// every match.
+    #[test]
+    fn the_picker_shows_twenty_and_what_is_picked() {
+        let mut setup = Setup {
+            repos: (0..30).map(|n| repo(&format!("a/r{n:02}"), "")).collect(),
+            ..Setup::default()
+        };
+        setup.toggle("a/r25");
+        let (shown, hidden) = setup.shown("", false);
+        let names: Vec<&str> = shown.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names.len(), SHOWN_REPOS + 1);
+        assert_eq!(names[SHOWN_REPOS - 1], "a/r19");
+        assert_eq!(names[SHOWN_REPOS], "a/r25");
+        assert_eq!(hidden, 9);
+        assert_eq!(setup.shown("", true), (setup.repos.iter().collect(), 0));
+        let (shown, hidden) = setup.shown("r1", false);
+        assert_eq!((shown.len(), hidden), (10, 0));
     }
 
     #[test]

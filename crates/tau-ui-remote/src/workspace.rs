@@ -491,6 +491,9 @@ pub struct Workspace {
     /// What a run that stopped on the ChatGPT plan asks of the user.
     pub(crate) plan_alert: Option<PlanAlert>,
     pub(crate) repo_filter: Entity<TextInput>,
+    /// The repository picker shows every match, not only the first
+    /// [`crate::setup::SHOWN_REPOS`].
+    pub(crate) repos_expanded: bool,
     pub(crate) first_task: Entity<TextInput>,
     pub(crate) pr_title: Entity<TextInput>,
     pub(crate) reviewers: Entity<TextInput>,
@@ -751,6 +754,7 @@ impl Workspace {
             chatgpt_callback,
             plan_alert: None,
             repo_filter,
+            repos_expanded: false,
             first_task,
             pr_title,
             reviewers,

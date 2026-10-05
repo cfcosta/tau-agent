@@ -107,9 +107,13 @@ fn repositories_come_from_the_apps_installations() {
             200,
             json!({ "repositories": [
                 { "full_name": "cfcosta/tau-agent", "description": "agents",
-                  "default_branch": "main" },
+                  "default_branch": "main",
+                  "pushed_at": "2026-10-04T21:13:07Z" },
                 { "full_name": "cfcosta/docbert", "description": null,
-                  "default_branch": "trunk" }
+                  "default_branch": "trunk",
+                  "pushed_at": "2026-09-30T08:00:00Z" },
+                { "full_name": "cfcosta/old", "default_branch": "main",
+                  "pushed_at": "2024-01-02T03:04:05Z" }
             ]}),
         ),
         "GET /user/installations/9/repositories?per_page=100&page=1" => (
@@ -127,11 +131,16 @@ fn repositories_come_from_the_apps_installations() {
         .iter()
         .map(|repo| (repo.name.as_str(), repo.branch.as_str()))
         .collect();
+    // The most recently pushed first, each once.
     assert_eq!(
         names,
-        [("cfcosta/docbert", "trunk"), ("cfcosta/tau-agent", "main")]
+        [
+            ("cfcosta/tau-agent", "main"),
+            ("cfcosta/docbert", "trunk"),
+            ("cfcosta/old", "main"),
+        ]
     );
-    assert_eq!(repos[1].description, "agents");
+    assert_eq!(repos[0].description, "agents");
 }
 
 /// A full page means there may be more: every page is read, until one

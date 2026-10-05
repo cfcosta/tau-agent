@@ -391,6 +391,17 @@ impl Workspace {
         ui::modal(glyph, alert.title(), alert.message(), None, actions, t)
     }
 
+    /// Shows every repository in the picker, or only the first ones.
+    pub fn toggle_repos_expanded(&mut self, cx: &mut Context<Self>) {
+        self.repos_expanded = !self.repos_expanded;
+        cx.notify();
+    }
+
+    /// Whether the picker shows every repository.
+    pub fn repos_expanded(&self) -> bool {
+        self.repos_expanded
+    }
+
     pub fn toggle_repo(&mut self, name: &str, cx: &mut Context<Self>) {
         self.setup.toggle(name);
         cx.notify();

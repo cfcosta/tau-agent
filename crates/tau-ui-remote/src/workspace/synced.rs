@@ -130,6 +130,7 @@ impl Workspace {
             github_token: _,
             chatgpt_callback: _,
             repo_filter: _,
+            repos_expanded: _,
             first_task: _,
             pr_title: _,
             reviewers: _,

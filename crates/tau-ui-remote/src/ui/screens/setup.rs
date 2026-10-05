@@ -63,7 +63,7 @@ use crate::{
     route::Route,
     setup::{CloneState, DeviceCode, GitHub, ModelAccess, SetupStep},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{Material as _, bar, icon, icon_button, mono, text_link},
+    ui::{Material as _, bar, icon, icon_button, link, mono, text_link},
     workspace::{Workspace, WorkspaceEvent},
 };
 
@@ -2683,9 +2683,10 @@ fn repos(
     let motion = &ws.setup_motion;
     let look = &t.setup;
     let filter = ws.repo_filter.read(cx).text().to_owned();
-    let rows: Vec<_> = ws
-        .setup
-        .matching(&filter)
+    // The most recently pushed first, twenty of them until expanded.
+    let (shown, hidden) = ws.setup.shown(&filter, ws.repos_expanded);
+    let rows: Vec<_> = shown
+        .into_iter()
         .enumerate()
         .map(|(n, repo)| {
             let name = repo.name.clone();
@@ -2733,38 +2734,65 @@ fn repos(
         })
         .collect();
     let count = ws.setup.selected().count();
-    let panel = glass(t)
-        .w_full()
-        .max_w(rems(40.))
-        .rounded(radius::BUBBLE)
-        .overflow_hidden()
-        .shadow(vec![
-            BoxShadow::new(px(0.), px(30.), gpui::black().opacity(0.45))
-                .blur_radius(px(80.)),
-        ])
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .h(rems(2.875))
-                .px(sp(4.5))
-                .border_b_1()
-                .border_color(look.surface_border)
-                .child(icon(Icon::Search, IconSize::MEDIUM, t.dim))
-                .child(
+    let panel =
+        glass(t)
+            .w_full()
+            .max_w(rems(40.))
+            .rounded(radius::BUBBLE)
+            .overflow_hidden()
+            .shadow(vec![
+                BoxShadow::new(px(0.), px(30.), gpui::black().opacity(0.45))
+                    .blur_radius(px(80.)),
+            ])
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(2.5))
+                    .h(rems(2.875))
+                    .px(sp(4.5))
+                    .border_b_1()
+                    .border_color(look.surface_border)
+                    .child(icon(Icon::Search, IconSize::MEDIUM, t.dim))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(rems(0.))
+                            .child(ws.repo_filter.clone()),
+                    )
+                    .child(mono(
+                        format!("{} repositories", ws.setup.repos.len()),
+                        Type::CAPTION,
+                        look.faint,
+                    )),
+            )
+            .children(rows)
+            .when(hidden > 0 || ws.repos_expanded, |panel| {
+                let label = if ws.repos_expanded {
+                    "Show fewer".to_owned()
+                } else if hidden == 1 {
+                    "Show 1 more".to_owned()
+                } else {
+                    format!("Show {hidden} more")
+                };
+                panel.child(
                     div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .child(ws.repo_filter.clone()),
+                        .id("repos-more")
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .py(sp(3.))
+                        .border_t_1()
+                        .border_color(look.divider)
+                        .cursor_pointer()
+                        .hover(|style| style.bg(t.accent.opacity(0.03)))
+                        .child(link(label, t))
+                        .on_click(cx.listener(|ws, _, _, cx| {
+                            ws.toggle_repos_expanded(cx)
+                        })),
                 )
-                .child(mono(
-                    format!("{} repositories", ws.setup.repos.len()),
-                    Type::CAPTION,
-                    look.faint,
-                )),
-        )
-        .children(rows);
+            });
     div()
         .child(handshake(ws, (None, None), compact, t))
         .child(

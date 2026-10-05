@@ -375,8 +375,14 @@ impl Api {
                 found.extend(repositories.iter().filter_map(repo_choice));
             }
         }
+        // One of each, the most recently pushed first.
         found.sort_by(|a, b| a.name.cmp(&b.name));
         found.dedup_by(|a, b| a.name == b.name);
+        found.sort_by(|a, b| {
+            b.pushed_at
+                .cmp(&a.pushed_at)
+                .then_with(|| a.name.cmp(&b.name))
+        });
         Ok(found)
     }
 }
@@ -543,6 +549,11 @@ fn repo_choice(repo: &Value) -> Option<RepoChoice> {
             .unwrap_or("main")
             .to_owned(),
         selected: false,
+        pushed_at: repo
+            .get("pushed_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
     })
 }
 

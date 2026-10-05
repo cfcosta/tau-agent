@@ -620,13 +620,36 @@ fn repos() -> Vec<RepoChoice> {
         ("cfcosta/home.nix", "Home Manager configuration", false),
         ("cfcosta/duskpi", "", false),
         ("cfcosta/cfcosta.github.io", "", false),
+        (
+            "cfcosta/dotfiles",
+            "Shell, editor and terminal settings",
+            false,
+        ),
+        ("cfcosta/ascend", "Operator billing and accounts", false),
+        ("cfcosta/jj-notes", "Notes on Jujutsu workflows", false),
+        ("cfcosta/ledger", "Plain-text accounting", false),
+        ("cfcosta/advent-of-code", "Puzzles, in Rust", false),
+        ("cfcosta/nix-templates", "Flake templates", false),
+        ("cfcosta/keyboard", "QMK layout", false),
+        ("cfcosta/talks", "Slides and notes", false),
+        ("cfcosta/gpui-sketches", "", false),
+        ("cfcosta/luau-playground", "", false),
+        ("cfcosta/recipes", "", false),
+        ("cfcosta/resume", "", false),
+        ("cfcosta/old-blog", "", false),
+        ("cfcosta/rss", "Feed reader", false),
+        ("cfcosta/sandbox", "", false),
+        ("cfcosta/scratch", "", false),
     ]
     .into_iter()
-    .map(|(name, description, selected)| RepoChoice {
+    .enumerate()
+    .map(|(n, (name, description, selected))| RepoChoice {
         name: name.into(),
         description: description.into(),
         branch: "main".into(),
         selected,
+        // Listed as GitHub orders them: the most recently pushed first.
+        pushed_at: format!("2026-10-{:02}T12:00:00Z", 22 - n.min(21)),
     })
     .collect()
 }
