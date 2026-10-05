@@ -19,7 +19,6 @@ use tau_ai::message::InputBlock;
 use tau_codemode::{
     CancellationToken,
     Host,
-    Item,
     Request,
     ToolCall,
     ToolEntry,
@@ -333,10 +332,10 @@ pub(crate) async fn grade_case(
     )
     .await;
     let failure = outcome.failure.as_ref().map(|error| error.head());
-    let envelope = outcome.items.iter().find_map(|item| match item {
-        Item::Text(text) => serde_json::from_str::<Value>(text).ok(),
-        Item::Image(_) => None,
-    });
+    let envelope = outcome
+        .items
+        .iter()
+        .find_map(|item| serde_json::from_str::<Value>(item.text()?).ok());
     let result = envelope
         .as_ref()
         .and_then(|value| value.get("result"))
