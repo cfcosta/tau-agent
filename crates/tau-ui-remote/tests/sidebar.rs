@@ -464,3 +464,93 @@ fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
         assert_eq!(tree(ws), open);
     });
 }
+
+/// A row's icon says where its run stands, git's way, and its counts
+/// say how much: main's changes to push, a fork's to land or its
+/// conflicting files, its place in the queue, what it landed.
+#[test]
+fn a_row_says_where_its_run_stands_and_how_much() {
+    use tau_ui_kit::{assets::Icon, theme::Theme};
+    use tau_ui_remote::{
+        attention::Queued,
+        ui::chrome::{counts, state_icon},
+    };
+
+    let t = Theme::tokyo_night();
+    let fork = chat("fork", None);
+    let mut sub = RunView::new(id("sub"), "sub", "coder", "gpt-5.5")
+        .with_origin(Origin::SubAgent { parent: id("main") });
+    let main = RunView::new(id("main"), "main", "coder", "gpt-5.5");
+    let icon = |attention: &Attention, run: &RunView, is_main, unpushed| {
+        state_icon(attention, run, is_main, unpushed, &t).0
+    };
+    let said =
+        |attention: &Attention, run: &RunView, unpushed| -> Vec<String> {
+            counts(attention, run, None, unpushed, &t)
+                .into_iter()
+                .map(|(count, _)| count)
+                .collect()
+        };
+    // Main is its branch, at work or at rest, with what it would push.
+    assert_eq!(icon(&Attention::Idle, &main, true, 2), Icon::Branch);
+    assert_eq!(
+        icon(&Attention::Working { turn: 1 }, &main, true, 0),
+        Icon::Branch
+    );
+    assert_eq!(said(&Attention::Idle, &main, 2), ["↑2"]);
+    assert!(said(&Attention::Idle, &main, 0).is_empty());
+    // A fork at work is a draft; done, a pull request with its changes.
+    assert_eq!(
+        icon(&Attention::Working { turn: 1 }, &fork, false, 0),
+        Icon::Draft
+    );
+    let ready = Attention::ReadyToLand { changes: 3 };
+    assert_eq!(
+        (icon(&ready, &fork, false, 0), said(&ready, &fork, 0)),
+        (Icon::PullRequest, vec!["3".to_owned()])
+    );
+    let conflict = Attention::WouldConflict {
+        files: vec!["a".into(), "b".into()],
+    };
+    assert_eq!(
+        (icon(&conflict, &fork, false, 0), said(&conflict, &fork, 0)),
+        (Icon::Warning, vec!["2 files".to_owned()])
+    );
+    let queued = Attention::Queued(Queued {
+        position: 2,
+        needs_confirmation: false,
+    });
+    assert_eq!(
+        (icon(&queued, &fork, false, 0), said(&queued, &fork, 0)),
+        (Icon::Clock, vec!["#2".to_owned()])
+    );
+    assert_eq!(
+        icon(
+            &Attention::Asks {
+                question: "?".into()
+            },
+            &fork,
+            false,
+            0
+        ),
+        Icon::Question
+    );
+    assert_eq!(icon(&Attention::Failed, &sub, false, 0), Icon::Failed);
+    // At the end: a merge, with what it landed, or a closed one.
+    sub.ending = Some(Ending::Landed {
+        on: id("main"),
+        changes: 4,
+    });
+    assert_eq!(
+        (
+            icon(&Attention::Landed, &sub, false, 0),
+            said(&Attention::Landed, &sub, 0)
+        ),
+        (Icon::Merge, vec!["4".to_owned()])
+    );
+    assert_eq!(icon(&Attention::Dropped, &fork, false, 0), Icon::Closed);
+    // At rest, a run is what it is.
+    assert_eq!(icon(&Attention::Idle, &fork, false, 0), Icon::Fork);
+    sub.ending = None;
+    assert_eq!(icon(&Attention::Idle, &sub, false, 0), Icon::SubAgent);
+}

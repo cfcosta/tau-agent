@@ -37,7 +37,7 @@ use crate::{
     repos::{RepoRows, TreeRow},
     route::{Route, Tab},
     theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
-    view::{ChildKind, RunView, usd},
+    view::{ChildKind, Ending, Origin, RunView, usd},
     workspace::Workspace,
 };
 
@@ -321,7 +321,15 @@ fn repo_group(
                 })
                 .map(|row| {
                     if rows.open {
+                        let ahead = ws.unpushed(&name).map(|(ahead, _)| ahead);
                         row.child(mono(branch, Type::MICRO, t.roles.branch))
+                            .when_some(ahead, |row, ahead| {
+                                row.child(mono(
+                                    format!("↑{ahead}"),
+                                    Type::MICRO,
+                                    t.roles.waiting,
+                                ))
+                            })
                     } else {
                         row.child(
                             div()
@@ -467,11 +475,14 @@ fn indent(depth: usize) -> f32 {
     2.5 + 4.5 * depth.min(4) as f32
 }
 
-/// A conversation in the tree: a dot and one word in the color of what
-/// it needs of the person, and its title; its unread replies as a
-/// count. Hovering it offers to close it, unless it is its repository's
-/// main chat or it ended for good. A fork or sub-agent sits under its
-/// run, which folds them away with a chevron when `folded` is given.
+/// A conversation in the tree: an icon in the color of where it stands,
+/// git's way (a draft at work, a pull request to land, a merge once it
+/// landed), its title, and its counts: changes to push or land,
+/// conflicting files, its place in the queue. Its unread replies show
+/// as a count in their place. Hovering it offers to close it, unless it
+/// is its repository's main chat or it ended for good. A fork or
+/// sub-agent sits under its run, which folds them away with a chevron
+/// when `folded` is given.
 fn run_row(
     ws: &Workspace,
     run: &RunView,
@@ -490,8 +501,16 @@ fn run_row(
     let ended = matches!(attention, Attention::Landed | Attention::Dropped)
         || ws.has_ended(run);
     let note = ws.run_rows(run, cx).into_iter().next();
-    let unpushed = super::push::row(ws, run, t, cx).is_some();
-    let (word, ink) = state_word(&attention, note.as_ref(), unpushed, t);
+    let is_main = ws.is_main(&run.id);
+    let unpushed = is_main
+        .then(|| ws.main_repo(&run.id))
+        .flatten()
+        .and_then(|repo| ws.unpushed(repo))
+        .map_or(0, |(ahead, _)| ahead);
+    let (glyph, ink) = state_icon(&attention, run, is_main, unpushed, t);
+    let counts = counts(&attention, run, note.as_ref(), unpushed, t);
+    let sub_agent = matches!(run.origin, Origin::SubAgent { .. })
+        && glyph != Icon::SubAgent;
     let strong = active || unread > 0 || attention.needs_you();
     div()
         .id(SharedString::from(format!("run-{}", run.id)))
@@ -513,13 +532,10 @@ fn run_row(
         })
         .when(active, |row| row.bg(t.raised))
         .when(!active, |row| row.hover(|style| style.bg(t.card)))
-        .child(dot(
-            if word.is_empty() {
-                t.border_strong
-            } else {
-                ink
-            },
-            6.,
+        .child(icon(
+            glyph,
+            IconSize::SMALL,
+            if ended { t.dim } else { ink },
         ))
         .child(
             div()
@@ -529,6 +545,9 @@ fn run_row(
                 .when(strong, |title| title.font_weight(weight::EMPHASIS))
                 .child(run.title.clone()),
         )
+        .when(sub_agent, |row| {
+            row.child(icon(Icon::SubAgent, IconSize::TINY, t.dim))
+        })
         .when_some(folded, |row, folded| {
             row.child(
                 div()
@@ -572,7 +591,11 @@ fn run_row(
                 row.child(super::count_pill(unread, t))
             } else {
                 row.child(
-                    div().typeset(Type::CAPTION).text_color(ink).child(word),
+                    div().flex().gap(sp(1.5)).children(
+                        counts.into_iter().map(|(count, ink)| {
+                            mono(count, Type::CAPTION, ink)
+                        }),
+                    ),
                 )
             }
         })
@@ -584,36 +607,97 @@ fn run_row(
         )
 }
 
-/// One word for what a run needs of the person, and its color: what it
-/// does, else what a plugin says of it (a goal met), else that it has
-/// changes to push.
-fn state_word(
+/// The icon for where a run stands, and its color: git's, for what is
+/// git's (a branch for main, at work or at rest; a draft at work, a pull
+/// request to land, a merge or a closed one at the end), else what it
+/// needs of the person.
+/// A run at rest is drawn as what it is: a fork, a sub-agent, a chat.
+pub fn state_icon(
     attention: &Attention,
-    note: Option<&tau_ui_plugin::RowNote>,
-    unpushed: bool,
+    run: &RunView,
+    is_main: bool,
+    unpushed: u32,
     t: &Theme,
-) -> (String, gpui::Hsla) {
-    let word = |ink| (attention.word().to_owned(), ink);
+) -> (Icon, gpui::Hsla) {
     match attention {
-        Attention::Working { .. } => word(t.roles.live),
-        Attention::Asks { .. } | Attention::ReadyToLand { .. } => {
-            word(t.roles.waiting)
+        // Main is the branch others land on, whatever it does.
+        Attention::Working { .. } if is_main => (Icon::Branch, t.roles.live),
+        Attention::Working { .. } => (Icon::Draft, t.roles.live),
+        Attention::Asks { .. } => (Icon::Question, t.roles.waiting),
+        Attention::ReadyToLand { .. } => (Icon::PullRequest, t.green),
+        Attention::WouldConflict { .. } | Attention::ConflictsOnMain { .. } => {
+            (Icon::Warning, t.red)
         }
-        Attention::WouldConflict { .. }
-        | Attention::ConflictsOnMain { .. }
-        | Attention::Failed => word(t.red),
-        Attention::Queued(_)
-        | Attention::Interrupted
-        | Attention::Landed
-        | Attention::Dropped => word(t.dim),
-        Attention::Idle => match note
-            .and_then(|note| Some((note.count.clone()?, t.tone(note.tone))))
-        {
-            Some(said) => said,
-            None if unpushed => ("to push".to_owned(), t.roles.waiting),
-            None => (String::new(), t.dim),
+        Attention::Queued(queued) if queued.needs_confirmation => {
+            (Icon::Clock, t.roles.waiting)
+        }
+        Attention::Queued(_) => (Icon::Clock, t.dim),
+        Attention::Interrupted => (Icon::Interrupted, t.dim),
+        Attention::Failed => (Icon::Failed, t.red),
+        Attention::Landed => (Icon::Merge, t.change),
+        Attention::Dropped => (Icon::Closed, t.dim),
+        Attention::Idle if is_main => (
+            Icon::Branch,
+            if unpushed > 0 { t.roles.waiting } else { t.dim },
+        ),
+        Attention::Idle => match run.origin {
+            Origin::Fork { .. } => (Icon::Fork, t.dim),
+            Origin::SubAgent { .. } => (Icon::SubAgent, t.dim),
+            Origin::Root => (Icon::Chat, t.dim),
         },
     }
+}
+
+/// A run's counts, each in its color: main's changes to push, a fork's
+/// changes to land or its conflicting files, its place in the landing
+/// queue, the changes it landed; else what a plugin says of it (a goal
+/// met).
+pub fn counts(
+    attention: &Attention,
+    run: &RunView,
+    note: Option<&tau_ui_plugin::RowNote>,
+    unpushed: u32,
+    t: &Theme,
+) -> Vec<(String, gpui::Hsla)> {
+    let files = |n: usize| {
+        if n == 1 {
+            "1 file".to_owned()
+        } else {
+            format!("{n} files")
+        }
+    };
+    let mut out = Vec::new();
+    if unpushed > 0 {
+        out.push((format!("↑{unpushed}"), t.roles.waiting));
+    }
+    match attention {
+        Attention::ReadyToLand { changes } => {
+            out.push((changes.to_string(), t.green));
+        }
+        Attention::WouldConflict { files: names }
+        | Attention::ConflictsOnMain { files: names } => {
+            out.push((files(names.len()), t.red));
+        }
+        Attention::Queued(queued) => {
+            out.push((format!("#{}", queued.position), t.dim));
+        }
+        Attention::Landed => {
+            if let Some(Ending::Landed { changes, .. }) = run.ending
+                && changes > 0
+            {
+                out.push((changes.to_string(), t.dim));
+            }
+        }
+        Attention::Idle => {
+            if let Some(said) = note
+                .and_then(|note| Some((note.count.clone()?, t.tone(note.tone))))
+            {
+                out.push(said);
+            }
+        }
+        _ => {}
+    }
+    out
 }
 
 /// A repository's menu, under its row.
