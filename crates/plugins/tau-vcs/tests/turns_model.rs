@@ -338,7 +338,10 @@ fn merge(
 /// its parent as it is now, and its files, the turn's work merged onto
 /// that parent. The turn's parent is followed by change id, except into
 /// the run's `@` (an undo took it back), where the fork goes one change
-/// down. `None` when the merge conflicts.
+/// down; and an abandoned parent is stood on as it was, except when its
+/// own parent's change is the run's `@`, where the fork goes down past
+/// both: the abandoned commit would bring that change back beside `@`.
+/// `None` when the merge conflicts.
 fn fork_base(model: &Model, at: &AtTurn) -> Option<(Tree, Tree)> {
     let tree_of = |stack: &[Change]| {
         stack
@@ -346,12 +349,21 @@ fn fork_base(model: &Model, at: &AtTurn) -> Option<(Tree, Tree)> {
             .map(|c| c.tree.clone())
             .unwrap_or_else(trunk_tree)
     };
+    let abandoned =
+        |id| id != model.wc.id && !model.stack.iter().any(|c| c.id == id);
+    let n = at.stack.len();
     let (then, now) = match at.stack.last() {
         None => (trunk_tree(), trunk_tree()),
-        Some(parent) if parent.id == model.wc.id => (
-            tree_of(&at.stack[..at.stack.len() - 1]),
-            model.parent_tree(),
-        ),
+        Some(parent) if parent.id == model.wc.id => {
+            (tree_of(&at.stack[..n - 1]), model.parent_tree())
+        }
+        Some(parent)
+            if abandoned(parent.id)
+                && n >= 2
+                && at.stack[n - 2].id == model.wc.id =>
+        {
+            (tree_of(&at.stack[..n - 2]), model.parent_tree())
+        }
         Some(parent) => {
             let now = model
                 .stack
