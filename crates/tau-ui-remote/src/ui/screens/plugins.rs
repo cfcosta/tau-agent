@@ -160,10 +160,16 @@ impl Workspace {
         if self.compact() {
             return None;
         }
-        self.catalog
-            .plugins
-            .first()
-            .map(|plugin| (plugin.name.clone(), None))
+        // The first row the list shows.
+        let rows = rows(self);
+        Group::ALL.into_iter().find_map(|group| {
+            rows.iter().find(|row| row.group() == group).map(|row| {
+                (
+                    row.plugin.name.clone(),
+                    row.entry.map(|entry| entry.name.clone()),
+                )
+            })
+        })
     }
 }
 
@@ -400,13 +406,28 @@ fn pane(
                 .leading(1.5)
                 .child(row.description().to_owned()),
         );
+    // The tabs it has: settings when it draws them, its work when it
+    // keeps a page; the one picked, else the first.
+    let has = |tab: Tab| match tab {
+        Tab::Settings => row.plugin.settings,
+        Tab::Work => row.plugin.page.is_some(),
+        Tab::About => true,
+    };
+    let shown = if has(selection.tab) {
+        selection.tab
+    } else {
+        Tab::ALL
+            .into_iter()
+            .find(|tab| has(*tab))
+            .unwrap_or(Tab::About)
+    };
     let tabs = div()
         .flex()
         .gap(sp(6.))
         .border_b_1()
         .border_color(t.border)
-        .children(Tab::ALL.into_iter().map(|tab| {
-            let on = tab == selection.tab;
+        .children(Tab::ALL.into_iter().filter(|tab| has(*tab)).map(|tab| {
+            let on = tab == shown;
             div()
                 .id(SharedString::from(format!("plugin-tab-{}", tab.label())))
                 .cursor_pointer()
@@ -419,7 +440,7 @@ fn pane(
                     cx.listener(move |ws, _, _, cx| ws.set_plugin_tab(tab, cx)),
                 )
         }));
-    let body = match selection.tab {
+    let body = match shown {
         Tab::Settings => settings(ws, row, selection, t, cx),
         Tab::Work => work(ws, row, t, cx),
         Tab::About => about(row, t),
