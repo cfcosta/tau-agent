@@ -63,6 +63,13 @@ pub fn item(
         // A main chat's: what waits to land on it, and conflicts left
         // on it.
         let queue = super::queue::cards(ws, run, t, cx);
+        // The model asked and nothing back yet: it reasons.
+        let open =
+            matches!(run.items.last(), Some(Item::Thinking { secs: None, .. }));
+        let waiting = ws
+            .reasoning_for(&run.id)
+            .filter(|_| !open)
+            .map(|waited| reasoning("", None, Some(waited), t));
         return column(
             div()
                 .pt(sp(3.))
@@ -71,6 +78,7 @@ pub fn item(
                 .flex()
                 .flex_col()
                 .gap(sp(4.))
+                .children(waiting)
                 .children(
                     queue
                         .into_iter()
@@ -161,7 +169,12 @@ fn item_view(
                 t,
             ))
             .into_any_element(),
-        Item::Thinking(text) => thinking(text, t).into_any_element(),
+        Item::Thinking { text, secs } => {
+            let live = (secs.is_none() && index + 1 == run.items.len())
+                .then(|| ws.reasoning_for(&run.id))
+                .flatten();
+            reasoning(text, *secs, live, t).into_any_element()
+        }
         Item::TurnEnd { turn } => {
             turn_end(ws, run, *turn, t, compact, cx).into_any_element()
         }
@@ -395,16 +408,81 @@ fn turn_end(
     })
 }
 
-fn thinking(text: &str, t: &Theme) -> Div {
+/// The model's reasoning as one row: while it goes (`live`, how long it
+/// has), a spinner, the seconds, the words so far and its latest line;
+/// once it ended, how long it took and how many words it had.
+fn reasoning(
+    text: &str,
+    secs: Option<u64>,
+    live: Option<std::time::Duration>,
+    t: &Theme,
+) -> Div {
     let words = text.split_whitespace().count();
+    let mut parts = vec![
+        if live.is_some() {
+            "Reasoning"
+        } else {
+            "Reasoned"
+        }
+        .to_owned(),
+    ];
+    if let Some(secs) = live.map(|waited| waited.as_secs()).or(secs) {
+        parts.push(duration(secs));
+    }
+    if words > 0 {
+        parts.push(format!("{words} words"));
+    }
+    let latest = live
+        .and_then(|_| {
+            text.lines().map(str::trim).rfind(|line| !line.is_empty())
+        })
+        .map(|line| line.chars().take(400).collect::<String>());
     div()
         .flex()
-        .items_center()
-        .gap(sp(2.))
-        .typeset(Type::CAPTION)
-        .text_color(t.dim)
-        .child(icon(Icon::Chevron, IconSize::SMALL, t.dim))
-        .child(format!("Reasoned · {words} words"))
+        .flex_col()
+        .gap(sp(1.5))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .typeset(Type::CAPTION)
+                .text_color(t.dim)
+                .child(match live {
+                    Some(_) => icon(Icon::Spinner, IconSize::SMALL, t.blue),
+                    None => icon(Icon::Chevron, IconSize::SMALL, t.dim),
+                })
+                // Live, the word reads brighter than what follows it.
+                .when(live.is_some(), |row| {
+                    let word = parts.remove(0);
+                    row.child(div().text_color(t.text_soft).child(word))
+                        .when(!parts.is_empty(), |row| {
+                            row.child(format!("· {}", parts.join(" · ")))
+                        })
+                })
+                .when(live.is_none(), |row| row.child(parts.join(" · "))),
+        )
+        .when_some(latest, |row, line| {
+            row.child(
+                div()
+                    .ml(sp(6.))
+                    .pl(sp(2.5))
+                    .border_l_2()
+                    .border_color(t.border)
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .truncate()
+                    .child(line),
+            )
+        })
+}
+
+/// `secs` for a person: `18s`, `2m 05s`.
+fn duration(secs: u64) -> String {
+    match secs {
+        0..60 => format!("{secs}s"),
+        _ => format!("{}m {:02}s", secs / 60, secs % 60),
+    }
 }
 
 fn tool(

@@ -151,7 +151,13 @@ pub enum Item {
     User(String),
     /// Assistant text; deltas append to the last one.
     Text(String),
-    Thinking(String),
+    /// What the model reasoned, and how long it took once it ended: the
+    /// seconds from asking the model to its first answer. A model that
+    /// keeps its reasoning to itself leaves only the time.
+    Thinking {
+        text: String,
+        secs: Option<u64>,
+    },
     /// Boxed: a card is the largest item by far.
     Tool(Box<ToolCard>),
     Plugin(PluginNote),
@@ -842,9 +848,12 @@ impl RunView {
                         AssistantBlock::Text(text) => {
                             view.items.push(Item::Text(text.text.clone()))
                         }
-                        AssistantBlock::Thinking(thinking) => view
-                            .items
-                            .push(Item::Thinking(thinking.thinking.clone())),
+                        AssistantBlock::Thinking(thinking) => {
+                            view.items.push(Item::Thinking {
+                                text: thinking.thinking.clone(),
+                                secs: None,
+                            })
+                        }
                         AssistantBlock::ToolCall(call) => {
                             let args = Value::Object(call.arguments.clone());
                             view.items.push(Item::Tool(Box::new(ToolCard {
@@ -1291,8 +1300,13 @@ impl RunView {
             },
             RunEvent::ThinkingDelta { delta, .. } => {
                 match self.items.last_mut() {
-                    Some(Item::Thinking(text)) => text.push_str(delta),
-                    _ => self.items.push(Item::Thinking(delta.clone())),
+                    Some(Item::Thinking { text, secs: None }) => {
+                        text.push_str(delta)
+                    }
+                    _ => self.items.push(Item::Thinking {
+                        text: delta.clone(),
+                        secs: None,
+                    }),
                 }
             }
             RunEvent::ToolCallDelta { .. } => {}

@@ -8,7 +8,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use gpui::{
@@ -124,6 +124,7 @@ mod onboarding;
 mod pairing;
 mod pull_request;
 mod push;
+mod reasoning;
 mod synced;
 
 pub use synced::Synced;
@@ -536,6 +537,12 @@ pub struct Workspace {
     focus: FocusHandle,
     /// Scripted runs playing, for demos. Several can play at once.
     replays: Vec<Task<()>>,
+    /// When each run asked its model, until the model answers: its
+    /// reasoning row counts the seconds from here. This device's own.
+    pub(crate) asked: HashMap<RunId, Instant>,
+    /// Whether a redraw comes once a second, as it does while a run
+    /// waits on its model, so the reasoning row's seconds move.
+    ticking: bool,
     /// Draw the phone layout in a phone-sized frame, whatever the width.
     phone_preview: bool,
     /// Echo what the host applies, for phones.
@@ -787,6 +794,8 @@ impl Workspace {
             follow: true,
             focus: cx.focus_handle(),
             replays: Vec::new(),
+            asked: HashMap::new(),
+            ticking: false,
             phone_preview: false,
             mirrored: false,
             frame: None,
@@ -1040,6 +1049,7 @@ impl Workspace {
     /// Feeds a run event to every run it belongs to: its own run, and
     /// the parent that lists it as a child.
     pub fn apply_event(&mut self, event: &RunEvent, cx: &mut Context<Self>) {
+        self.time_reasoning(event, cx);
         // A sub-agent is a chat of its own (ADR 0009), started on the
         // task its parent's call handed it.
         if let RunEvent::RunStart {

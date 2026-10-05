@@ -154,6 +154,8 @@ impl Workspace {
             follow: _,
             focus: _,
             replays: _,
+            asked: _,
+            ticking: _,
             phone_preview: _,
             mirrored: _,
             frame: _,

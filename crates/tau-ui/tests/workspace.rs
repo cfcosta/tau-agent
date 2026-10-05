@@ -3299,3 +3299,57 @@ fn a_skill_command_sends_its_name_and_the_task(cx: &mut TestAppContext) {
         events.borrow()
     );
 }
+
+/// From the turn asking the model to its first answer, the run reasons:
+/// the transcript counts the seconds, and keeps them on the reasoning
+/// once the model answers. A model that streamed no reasoning but took
+/// a second or more gets a reasoning row holding only the time.
+#[gpui::test]
+fn the_transcript_times_the_model_reasoning(cx: &mut TestAppContext) {
+    use tau_agent::event::RunEvent;
+
+    let (workspace, mut cx, _) = open_demo(cx);
+    let run = demo::run_id();
+    let turn = |turn| RunEvent::TurnStart {
+        run: run.clone(),
+        turn,
+    };
+    let text = RunEvent::TextDelta {
+        run: run.clone(),
+        parent: None,
+        delta: "Done.".into(),
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply_event(&turn(7), cx);
+        assert!(ws.reasoning_for(&run).is_some(), "it waits on its model");
+        ws.apply_event(
+            &RunEvent::ThinkingDelta {
+                run: run.clone(),
+                delta: "Check the header first.".into(),
+            },
+            cx,
+        );
+        ws.apply_event(&text, cx);
+        assert!(ws.reasoning_for(&run).is_none(), "it answered");
+        let items = &ws.run(&run).unwrap().items;
+        assert!(matches!(
+            &items[items.len() - 2],
+            Item::Thinking { text, secs: Some(0) } if text == "Check the header first."
+        ));
+        // Answered at once, with no reasoning: nothing to say.
+        let before = ws.run(&run).unwrap().items.len();
+        ws.apply_event(&turn(8), cx);
+        ws.apply_event(&text, cx);
+        assert_eq!(ws.run(&run).unwrap().items.len(), before);
+        ws.apply_event(&turn(9), cx);
+    });
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply_event(&text, cx);
+        let items = &ws.run(&run).unwrap().items;
+        assert!(matches!(
+            &items[items.len() - 2],
+            Item::Thinking { text, secs: Some(1) } if text.is_empty()
+        ));
+    });
+}
