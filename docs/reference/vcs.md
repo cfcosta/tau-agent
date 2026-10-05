@@ -351,38 +351,59 @@ model gave it, and the real message puts it in backquotes.
 ## Projects
 
 A `Project` is a repository tau owns, in a directory of its own
-(the host uses `$XDG_DATA_HOME/tau/repos/<name>/`). Runs never work in
+(the host uses `$XDG_DATA_HOME/tau/repos/github/<owner>/<name>/` for a
+clone from GitHub). Runs never work in
 the user's checkout.
 
-| Path           | What it is                                                             |
-| -------------- | ---------------------------------------------------------------------- |
-| `git/`         | A bare copy of the source's Git store; jj's Git store.                 |
-| `main/`        | The jj repository (`main/.jj/repo`). Its own working copy stays empty. |
-| `runs/<name>/` | One jj workspace per run, named by the host.                           |
+| Path           | What it is                                                                     |
+| -------------- | ------------------------------------------------------------------------------ |
+| `main/`        | The jj repository, colocated with its Git store: `main/.jj` beside `main/.git` |
+| `runs/<name>/` | One jj workspace per run, named by the host.                                   |
 
+`main/` is colocated as `jj git init --colocate` makes a repository, so
+`jj` and `git` both work in it:
+
+- Upstream's branches are remote-tracking branches,
+  `refs/remotes/origin/<branch>`, which jj imports as `<branch>@origin`,
+  each tracked by the bookmark of the same name. Its tags are tags, and
+  `refs/remotes/origin/HEAD` names its default branch. `origin` holds
+  upstream's URL (or, for a local source, its path) and no fetch
+  refspec.
+- Every operation tau writes exports the bookmarks and tags to Git's
+  `refs/heads/` and `refs/tags/`, and, when the main workspace's `@`
+  moved, points Git's `HEAD` at `@-` and resets the index to it, as
+  the jj CLI does after each command. `git status` in `main/` shows
+  `@`'s changes.
+- Run workspaces are plain jj workspaces, with no `.git`: jj-lib cannot
+  make one a Git worktree.
+
+- `Project::clone(url, token, root, identity)` makes the project at
+  `root` by fetching every branch and tag of `url` with gix, as
+  `jj git clone --colocate` would. The token answers the server's
+  request for credentials and is not written anywhere. A failed clone
+  removes `root`.
 - `Project::open_or_import(source, root, identity)` opens the project at
   `root`, or makes it from the local repository at `source` (a checkout,
-  a linked worktree or a bare repository) and imports every branch as a
-  bookmark. No `git` is needed: the object files are hard-linked (they
-  never change once written), and the refs, `HEAD`, config and
-  `shallow` (where a shallow clone's history starts) copied. Cloning
-  and fetching go through gix; only pushing runs `git`, through jj-lib
+  a linked worktree or a bare repository) as if cloned from it. No
+  `git` is needed: the object files are hard-linked (they never change
+  once written), the branches and tags written as a fetch would write
+  them, the branch `HEAD` names made `origin/HEAD`, and `shallow`
+  (where a shallow clone's history starts) copied. Cloning and
+  fetching go through gix; only pushing runs `git`, through jj-lib
   (see "Pushing").
-- `clone_bare(url, token, into)` clones a remote into a bare
-  repository with gix, keeping every branch and tag under its own
-  name, as `git clone --bare` does; `open_or_import` takes that clone
-  as its source.
 - `update(from)` brings in what changed at the source since the import
   or the last update: from the checkout (`UpdateFrom::Checkout`) or
   from a remote (`UpdateFrom::Remote`, a fetch through gix). The
-  copy's branches and tags become the source's: those the source
-  deleted go. A remote's or a bare repository's `HEAD` comes too, so
-  trunk follows a new default branch. A checkout's does not: it names
-  the branch checked out there, so trunk stays on the branch the
-  import's `HEAD` named. It returns trunk before and after (`Updated`). Runs keep their
+  remote-tracking branches and tags become the source's: those the
+  source deleted go. A remote's or a bare repository's `HEAD` comes too,
+  so trunk follows a new default branch; a detached one leaves no
+  default branch. A checkout's does not: it names the branch checked
+  out there, so trunk stays on the branch the import's `HEAD` named. It
+  returns trunk before and after (`Updated`). Runs keep their
   workspaces and commits.
-- `trunk()` is the commit new runs start from: the branch the copy's
-  `HEAD` names, else `main`, `master` or `trunk`, else the root commit.
+- `trunk()` is the commit new runs start from: the bookmark of the
+  branch `origin/HEAD` names, else `main`, `master` or `trunk`, else
+  the root commit.
 - `add_workspace(name, base)` makes `runs/<name>` on a new empty commit
   on top of `base` and checks out its files. When `base` was rewritten
   since the caller read it, as the main chat's catch-up rewrites its
@@ -681,7 +702,7 @@ than aside.
 
 An update can also land while the main chat's turn runs. So when an
 update has moved a run's bookmark (it names upstream's commit, as
-`<bookmark>@git` does, which a run's own commits never do) to a commit
+`<bookmark>@origin` does, which a run's own commits never do) to a commit
 the run's newest commit does not have, `commit_all`, `end_turn` and
 `Vcs::land` first move the run's changes, up to `@`, onto it, as a
 catch-up does, in the same operation: trunk moves forward, never aside.
@@ -789,10 +810,10 @@ is the one place tau runs `git`; the Nix package puts it on `tau-ui`'s
   The token is never written to a file or put on a command line.
 - The Git store's `origin` is rewritten before each push to hold the
   URL and nothing else. Without a fetch refspec, `git push` writes no
-  remote-tracking ref, so jj never imports `<branch>@origin`, which
-  would make pushed commits immutable (see "Scoping rules").
+  remote-tracking ref of its own: a pull request's branch stays out of
+  the project until a fetch brings it.
 - `Project::upstream()` is GitHub's trunk as the last fetch or push
-  left it: what `<trunk>@git` names.
+  left it: what `<trunk>@origin` names.
 - `Project::unpushed()` lists trunk's commits that `upstream()` lacks,
   oldest first: the main chat's work waiting to go.
 - `Project::push_trunk(remote)` pushes trunk to the remote's branch of
@@ -803,8 +824,10 @@ is the one place tau runs `git`; the Nix package puts it on `tau-ui`'s
   or a non-fast-forward): `VcsError::PushRejected`. A remote that
   refuses for its own reasons, such as a hook or a protected branch, is
   `VcsError::PushRefused` with its reason. Once pushed, the Git store's
-  branch names the pushed commit and an import moves `<trunk>@git`
-  there, as a fetch would, so nothing is ahead.
+  remote-tracking branch names the pushed commit and an import moves
+  `<trunk>@origin` there, as a fetch would, so nothing is ahead. The
+  pushed commits are then immutable, as upstream's are (see "Scoping
+  rules").
 - `Project::replay(commits, onto)` copies commits (oldest first, each on
   the one before) onto `onto`: each copy's tree is jj's three-way merge
   of the copy before (`onto` for the first), the commit's parent tree,
