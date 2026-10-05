@@ -31,6 +31,8 @@ tau-agent.workspace = true
 tau-ai.workspace = true
 tau-codemode = { workspace = true, optional = true }
 tau-jev.workspace = true
+# Where the skill tau ships is installed.
+tau-skills = { path = "../tau-skills", default-features = false }
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true

@@ -91,6 +91,10 @@ struct State {
 
 impl PluginHost for Registry {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
+        // The skill runs read to write a plugin, as this build has it.
+        let skills = cx.dir.join(tau_skills::BUILTIN_DIR);
+        tokio::task::spawn_blocking(move || crate::skill::install(&skills))
+            .await??;
         let refresher = cx.clone();
         let registry = Self::at(
             cx.dir.join(ROOT),

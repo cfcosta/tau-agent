@@ -19,6 +19,8 @@ pub mod registry;
 #[cfg(feature = "host")]
 pub mod runtime;
 #[cfg(feature = "host")]
+pub mod skill;
+#[cfg(feature = "host")]
 pub mod testing;
 pub mod ui;
 

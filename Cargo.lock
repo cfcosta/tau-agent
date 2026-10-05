@@ -9607,6 +9607,7 @@ dependencies = [
  "tau-ai",
  "tau-codemode",
  "tau-jev",
+ "tau-skills",
  "tau-store",
  "tau-testing",
  "tau-ui-kit",
