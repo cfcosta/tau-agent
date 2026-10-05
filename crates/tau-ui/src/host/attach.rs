@@ -718,14 +718,19 @@ impl Host {
                     );
                 }
                 WorkspaceEvent::JevKey { key } => {
-                    let saved =
-                        handler.config.credentials.set_jev_key(key.as_deref());
-                    handler.catalog_changed();
-                    if let Err(error) = saved {
-                        workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::alert("Could not save the TypeSafe key", error.to_string()), cx);
-                        });
-                    }
+                    let key = key.clone();
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| {
+                            let saved = host.set_jev_key(key.as_deref()).await;
+                            host.catalog_changed();
+                            saved
+                        },
+                        |_, (), _| {},
+                        alert("Could not save the TypeSafe key"),
+                        cx,
+                    );
                 }
                 WorkspaceEvent::PluginAct { plugin, action } => {
                     // On the host: an action may ask Jev, or the store.

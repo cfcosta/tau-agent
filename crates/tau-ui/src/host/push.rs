@@ -7,7 +7,7 @@ use crate::push::{PushFailure, Pushed, PushedChange};
 impl Host {
     /// Where `repo` pushes: its GitHub repository's URL, and the token
     /// of the GitHub sign-in.
-    pub(super) fn github_remote(
+    pub(super) async fn github_remote(
         &self,
         repo: &str,
     ) -> anyhow::Result<(String, String)> {
@@ -15,6 +15,7 @@ impl Host {
             anyhow::anyhow!("{repo} was not cloned from GitHub")
         })?;
         let token = github::Token::load(&self.config.credentials)
+            .await
             .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
         Ok((self.github.clone_url(&full_name), token.token))
     }
@@ -36,7 +37,7 @@ impl Host {
             .slot(repo)
             .ok_or_else(|| failed(anyhow::anyhow!("No repository {repo}")))?;
         let project = slot.project().await.map_err(failed)?;
-        let (url, token) = self.github_remote(repo).map_err(failed)?;
+        let (url, token) = self.github_remote(repo).await.map_err(failed)?;
         if fetch {
             let main = self.main_of(repo).await.map_err(failed)?;
             if self.is_running(&main) {

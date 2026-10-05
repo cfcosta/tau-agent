@@ -206,7 +206,7 @@ impl Host {
             access: AccessInfo {
                 label: self.access_label().into(),
                 chatgpt: account.is_some(),
-                jev: credentials.jev_key().is_some(),
+                jev: self.has_jev_key(),
                 accounts: credentials.accounts(),
             },
             agents: vec![(

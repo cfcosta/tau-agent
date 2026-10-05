@@ -117,13 +117,12 @@ fn host(
         repo_list: data.join("repos.json"),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
     };
-    Token {
+    let token = Token {
         token: "ghu_token".into(),
         user: "cfcosta".into(),
         expires_at: None,
-    }
-    .save(&config.credentials)
-    .unwrap();
+    };
+    tau_testing::block_on_io(token.save(&config.credentials)).unwrap();
     let agent = Agent::new(llm).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     (host.with_github(Api::at(&github.web(), api)), events)

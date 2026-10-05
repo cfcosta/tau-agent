@@ -1369,13 +1369,12 @@ fn served(remote: &Path, full_name: &str) -> std::path::PathBuf {
 
 /// `host`, signed in to GitHub and reaching it at `remote`.
 fn on_github(host: Host, remote: &Path) -> Host {
-    Token {
+    let token = Token {
         token: "ghu_token".into(),
         user: "cfcosta".into(),
         expires_at: None,
-    }
-    .save(&host_credentials(&host))
-    .unwrap();
+    };
+    tau_testing::block_on_io(token.save(&host_credentials(&host))).unwrap();
     let web = format!("file://{}", remote.display());
     host.with_github(Api::at(&web, "http://127.0.0.1:9"))
 }
@@ -1600,13 +1599,12 @@ fn github_repositories_clone_into_tau() {
         .unwrap_err();
     assert!(error.to_string().contains("Sign in to GitHub"), "{error}");
 
-    Token {
+    let token = Token {
         token: "ghu_token".into(),
         user: "cfcosta".into(),
         expires_at: None,
-    }
-    .save(&credentials)
-    .unwrap();
+    };
+    tau_testing::block_on_io(token.save(&credentials)).unwrap();
     assert!(host.block_on(host.clone_github("../escape")).is_err());
     assert!(host.block_on(host.clone_github("cfcosta/..")).is_err());
     let repo = host.block_on(host.clone_github("cfcosta/hello")).unwrap();

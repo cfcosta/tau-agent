@@ -112,7 +112,7 @@ impl Host {
                 slot.name
             )
         })?;
-        let (url, token) = self.github_remote(&slot.name)?;
+        let (url, token) = self.github_remote(&slot.name).await?;
         let project =
             slot.project.wait().await.ok_or_else(|| {
                 anyhow::anyhow!("{} has no project", slot.name)
@@ -235,7 +235,7 @@ impl Host {
     ) -> anyhow::Result<(github::Opened, String)> {
         let slot = self.slot_of_run(run).await?;
         let project = slot.project().await?;
-        let (url, token) = self.github_remote(&slot.name)?;
+        let (url, token) = self.github_remote(&slot.name).await?;
         let (job_run, branch, push_token) =
             (run.clone(), draft.head.clone(), token.clone());
         let (head, change) = project
@@ -302,7 +302,7 @@ impl Host {
         }
         let slot = self.slot_of_run(run).await?;
         let project = slot.project().await?;
-        let (url, token) = self.github_remote(&slot.name)?;
+        let (url, token) = self.github_remote(&slot.name).await?;
         let (job_run, pushed) = (run.clone(), open.clone());
         let last = project
             .run(move |project| {
@@ -362,6 +362,7 @@ impl Host {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("No pull request for the run"))?;
         let token = github::Token::load(&self.config.credentials)
+            .await
             .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
         self.github
             .checks(&token.token, &open.repo, &open.head)

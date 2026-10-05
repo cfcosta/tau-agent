@@ -48,19 +48,20 @@ impl Token {
     }
 
     /// The saved sign-in, unless it expired.
-    pub fn load(credentials: &Credentials) -> Option<Self> {
-        let text = std::fs::read_to_string(credentials.github()).ok()?;
+    pub async fn load(credentials: &Credentials) -> Option<Self> {
+        let text =
+            tokio::fs::read_to_string(credentials.github()).await.ok()?;
         let token: Self = serde_json::from_str(&text).ok()?;
         (!token.is_expired(now_ms())).then_some(token)
     }
 
-    pub fn save(&self, credentials: &Credentials) -> std::io::Result<()> {
+    pub async fn save(&self, credentials: &Credentials) -> std::io::Result<()> {
         let text = serde_json::to_vec_pretty(self)?;
-        tau_ai::files::write_private(&credentials.github(), &text)
+        tau_ai::files::write_private_async(&credentials.github(), &text).await
     }
 
-    pub fn forget(credentials: &Credentials) -> std::io::Result<()> {
-        match std::fs::remove_file(credentials.github()) {
+    pub async fn forget(credentials: &Credentials) -> std::io::Result<()> {
+        match tokio::fs::remove_file(credentials.github()).await {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                 Err(error)
             }
@@ -661,14 +662,29 @@ pub fn handle(
             true
         }
         WorkspaceEvent::GitHubSignOut => {
-            let update = match Token::forget(credentials) {
-                Ok(()) => GitHub::SignedOut,
-                Err(error) => GitHub::Failed(error.to_string()),
-            };
-            workspace.update(cx, |ws, cx| {
-                ws.apply(HostUpdate::Setup(SetupUpdate::GitHub(update)), cx);
-                ws.apply(HostUpdate::Setup(SetupUpdate::Repos(Vec::new())), cx);
+            let forgotten = background({
+                let credentials = credentials.clone();
+                async move { Token::forget(&credentials).await }
             });
+            let workspace = workspace.downgrade();
+            cx.spawn(async move |cx| {
+                let update = match forgotten.await {
+                    Ok(Ok(())) => GitHub::SignedOut,
+                    Ok(Err(error)) => GitHub::Failed(error.to_string()),
+                    Err(error) => GitHub::Failed(error.to_string()),
+                };
+                let _ = workspace.update(cx, |ws, cx| {
+                    ws.apply(
+                        HostUpdate::Setup(SetupUpdate::GitHub(update)),
+                        cx,
+                    );
+                    ws.apply(
+                        HostUpdate::Setup(SetupUpdate::Repos(Vec::new())),
+                        cx,
+                    );
+                });
+            })
+            .detach();
             true
         }
         _ => false,
@@ -686,14 +702,18 @@ fn finish(
 ) {
     let (workspace, credentials, api) =
         (workspace.downgrade(), credentials.clone(), api.clone());
+    let credentials = credentials.clone();
+    // The sign-in, then its save, on the interface's runtime.
+    let saved = background(async move {
+        let token = done.await.unwrap_or_else(|_| Err("stopped".into()))?;
+        token
+            .save(&credentials)
+            .await
+            .map(|()| token)
+            .map_err(|error| error.to_string())
+    });
     cx.spawn(async move |cx| {
-        let result = done.await.unwrap_or_else(|_| Err("stopped".into()));
-        let result = result.and_then(|token| {
-            token
-                .save(&credentials)
-                .map(|()| token)
-                .map_err(|error| error.to_string())
-        });
+        let result = saved.await.unwrap_or_else(|_| Err("stopped".into()));
         let Ok(token) = result else {
             let error = result.err().unwrap_or_default();
             let _ = workspace.update(cx, |ws, cx| {
@@ -727,20 +747,26 @@ pub fn restore(
     api: &Api,
     cx: &mut App,
 ) {
-    let Some(token) = Token::load(credentials) else {
-        return;
-    };
-    workspace.update(cx, |ws, cx| {
-        ws.apply(
-            HostUpdate::Setup(SetupUpdate::GitHub(GitHub::SignedIn {
-                user: token.user.clone(),
-            })),
-            cx,
-        )
+    let saved = background({
+        let credentials = credentials.clone();
+        async move { Token::load(&credentials).await }
     });
     let (workspace, api) = (workspace.downgrade(), api.clone());
-    cx.spawn(async move |cx| list_repos(&api, &token, workspace, cx).await)
-        .detach();
+    cx.spawn(async move |cx| {
+        let Ok(Some(token)) = saved.await else {
+            return;
+        };
+        let _ = workspace.update(cx, |ws, cx| {
+            ws.apply(
+                HostUpdate::Setup(SetupUpdate::GitHub(GitHub::SignedIn {
+                    user: token.user.clone(),
+                })),
+                cx,
+            )
+        });
+        list_repos(&api, &token, workspace, cx).await
+    })
+    .detach();
 }
 
 async fn list_repos(
@@ -812,17 +838,19 @@ mod tests {
             user: "octocat".into(),
             expires_at: Some(now_ms() + 60_000),
         };
-        token.save(&credentials).unwrap();
-        assert_eq!(Token::load(&credentials), Some(token.clone()));
-        Token {
+        tau_testing::block_on_io(token.save(&credentials)).unwrap();
+        assert_eq!(
+            tau_testing::block_on_io(Token::load(&credentials)),
+            Some(token.clone())
+        );
+        let expired = Token {
             expires_at: Some(1),
             ..token
-        }
-        .save(&credentials)
-        .unwrap();
-        assert_eq!(Token::load(&credentials), None);
-        Token::forget(&credentials).unwrap();
-        Token::forget(&credentials).unwrap();
+        };
+        tau_testing::block_on_io(expired.save(&credentials)).unwrap();
+        assert_eq!(tau_testing::block_on_io(Token::load(&credentials)), None);
+        tau_testing::block_on_io(Token::forget(&credentials)).unwrap();
+        tau_testing::block_on_io(Token::forget(&credentials)).unwrap();
         assert!(!credentials.github().exists());
     }
 

@@ -246,6 +246,9 @@ pub struct Host {
     /// Held while a run starts, and while a sweep reads what the
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
+    /// The saved TypeSafe key, read once as the host starts and kept as
+    /// it changes ([`Host::set_jev_key`]): Jev is asked for often.
+    jev_key: Mutex<Option<String>>,
     /// The saves of `repos.json`, and of the model settings, in order.
     list_saving: Saving,
     settings_saving: Saving,
@@ -467,10 +470,11 @@ impl Host {
         if let Err(error) = runtime.block_on(store.interrupt_running()) {
             eprintln!("tau-ui: cannot mark interrupted runs: {error:#}");
         }
-        let (settings, list) = runtime.block_on(async {
+        let (settings, list, jev_key) = runtime.block_on(async {
             (
                 load_settings(&config.settings, &config.default_model()).await,
                 RepoList::load(&config.repo_list).await,
+                config.credentials.jev_key().await,
             )
         });
         let mut host = Self {
@@ -502,6 +506,7 @@ impl Host {
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
+            jev_key: Mutex::new(jev_key),
             list_saving: Saving::default(),
             settings_saving: Saving::default(),
             repo_states: Mutex::default(),
@@ -741,6 +746,7 @@ impl Host {
                         .into(),
             },
             pull_requests: github::Token::load(&self.config.credentials)
+                .await
                 .is_some(),
             project,
             update: self.last_update.lock().expect("not poisoned").clone(),
@@ -921,9 +927,13 @@ impl Host {
     /// Jev, when there is a TypeSafe key (or one given for tests).
     fn jev(&self) -> Option<Arc<dyn tau_jev::Jev>> {
         let inner = self.jev.clone().or_else(|| {
-            self.config.credentials.jev_key().map(|key| {
-                Arc::new(TypeSafe::new(key)) as Arc<dyn tau_jev::Jev>
-            })
+            self.jev_key
+                .lock()
+                .expect("not poisoned")
+                .clone()
+                .map(|key| {
+                    Arc::new(TypeSafe::new(key)) as Arc<dyn tau_jev::Jev>
+                })
         })?;
         Some(Arc::new(crate::metered::Metered::new(
             inner,
@@ -931,10 +941,26 @@ impl Host {
         )))
     }
 
+    /// Whether a TypeSafe key is saved.
+    pub(super) fn has_jev_key(&self) -> bool {
+        self.jev_key.lock().expect("not poisoned").is_some()
+    }
+
+    /// Saves the TypeSafe key, or forgets it with `None`; runs started
+    /// from now on ask Jev with it.
+    pub async fn set_jev_key(&self, key: Option<&str>) -> anyhow::Result<()> {
+        self.config.credentials.set_jev_key(key).await?;
+        *self.jev_key.lock().expect("not poisoned") = key
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(str::to_owned);
+        Ok(())
+    }
+
     /// What Jev did this session, for the Plugins screen, when there is
     /// a key.
     fn jev_stats(&self) -> Option<crate::catalog::JevStats> {
-        if self.jev.is_none() && self.config.credentials.jev_key().is_none() {
+        if self.jev.is_none() && !self.has_jev_key() {
             return None;
         }
         let meter = self.jev_meter.lock().expect("not poisoned").clone();

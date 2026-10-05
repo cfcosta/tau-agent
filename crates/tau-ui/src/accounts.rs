@@ -83,20 +83,22 @@ impl Credentials {
     }
 
     /// The saved TypeSafe key, which tau-constitution checks with.
-    pub fn jev_key(&self) -> Option<String> {
-        std::fs::read_to_string(self.jev())
+    pub async fn jev_key(&self) -> Option<String> {
+        tokio::fs::read_to_string(self.jev())
+            .await
             .ok()
             .map(|key| key.trim().to_owned())
             .filter(|key| !key.is_empty())
     }
 
     /// Saves the TypeSafe key, or forgets it with `None`.
-    pub fn set_jev_key(&self, key: Option<&str>) -> io::Result<()> {
+    pub async fn set_jev_key(&self, key: Option<&str>) -> io::Result<()> {
         match key.map(str::trim).filter(|key| !key.is_empty()) {
             Some(key) => {
-                tau_ai::files::write_private(&self.jev(), key.as_bytes())
+                tau_ai::files::write_private_async(&self.jev(), key.as_bytes())
+                    .await
             }
-            None => remove(&self.jev()),
+            None => remove(&self.jev()).await,
         }
     }
 
@@ -157,8 +159,8 @@ impl Credentials {
     }
 }
 
-fn remove(path: &Path) -> io::Result<()> {
-    match std::fs::remove_file(path) {
+async fn remove(path: &Path) -> io::Result<()> {
+    match tokio::fs::remove_file(path).await {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }
@@ -510,7 +512,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let credentials = Credentials::new(dir.path().join("tau"));
-        credentials.set_jev_key(Some("ts-x")).unwrap();
+        tau_testing::block_on_io(credentials.set_jev_key(Some("ts-x")))
+            .unwrap();
         let mode = std::fs::metadata(credentials.jev())
             .unwrap()
             .permissions()

@@ -509,6 +509,7 @@ impl Host {
     /// clone; the import goes on in the background.
     pub async fn clone_github(&self, full_name: &str) -> anyhow::Result<Repo> {
         let token = github::Token::load(&self.config.credentials)
+            .await
             .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
         let (owner, name) = full_name
             .split_once('/')
@@ -545,7 +546,7 @@ impl Host {
         let full_name = self.github_of(name).ok_or_else(|| {
             anyhow::anyhow!("{name} was not cloned from GitHub")
         })?;
-        let token = github::Token::load(&self.config.credentials);
+        let token = github::Token::load(&self.config.credentials).await;
         let url = self.github.clone_url(&full_name);
         Ok(project
             .run(move |project| {
