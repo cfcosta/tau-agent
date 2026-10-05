@@ -30,6 +30,11 @@
 //!
 //! The exit status is the number of failed checks.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     collections::HashSet,
     path::PathBuf,

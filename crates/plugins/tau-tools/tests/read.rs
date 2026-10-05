@@ -1,6 +1,11 @@
 //! `read` (`tau_tools::read`), on real files (`docs/reference/tools.md`,
 //! "read"; `docs/reference/testing.md`, "tau-tools").
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::io::Cursor;
 
 use base64::{Engine, engine::general_purpose::STANDARD};

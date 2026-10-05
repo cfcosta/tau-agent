@@ -459,6 +459,10 @@ fn parse_head(raw: &[u8]) -> io::Result<Option<Head>> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 mod tests {
     use std::{
         pin::Pin,

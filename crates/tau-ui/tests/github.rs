@@ -1,6 +1,11 @@
 //! Signing in to GitHub and listing repositories, against a fake GitHub
 //! that answers the way the real one does.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod support;
 
 use std::sync::{

@@ -4,6 +4,11 @@
 //! chat that lands moves main, and the other chat's forecast changes
 //! with it.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::time::Duration;
 
 use gpui::{Entity, TestAppContext, VisualTestContext};

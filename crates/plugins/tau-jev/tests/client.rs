@@ -1,6 +1,11 @@
 //! `TypeSafe`, the HTTP client, against a local server that plays back
 //! scripted responses and records the requests it gets.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     sync::{Arc, Mutex},
     time::Duration,

@@ -25,6 +25,11 @@
 //! in, over HTTPS, for [`Project::import`], and [`Project::push_trunk`]
 //! and [`Project::push_branch`] push through jj-lib, which runs `git`.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "not migrated to async yet (ADR 0027)"
+)]
+
 #[cfg(feature = "host")]
 mod clone;
 pub mod details;

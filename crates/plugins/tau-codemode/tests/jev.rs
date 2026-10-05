@@ -1,5 +1,10 @@
 //! The `jev` global against fake Jevs.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

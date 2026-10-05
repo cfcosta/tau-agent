@@ -1,6 +1,11 @@
 //! tau-ask's UI half: who gets the tool. Its design values are checked
 //! with every plugin's, in tau-ui-kit's tests.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 /// Every run gets `ask`, so their tools match and share the prompt
 /// cache; a sub-agent's, which nobody watches, refuses every call.
 #[cfg(feature = "host")]

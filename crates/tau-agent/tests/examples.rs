@@ -3,6 +3,11 @@
 //! fan-out. Each is written the way the doc writes it, against
 //! `ScriptedModel` and `Store::memory()`.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::time::Duration;
 
 use futures_util::StreamExt;

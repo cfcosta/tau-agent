@@ -7,6 +7,10 @@
 //! unpaused runtime (`docs/reference/testing.md`, "Async code": paused
 //! time and real I/O must never mix).
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 #![cfg(unix)]
 
 use std::{

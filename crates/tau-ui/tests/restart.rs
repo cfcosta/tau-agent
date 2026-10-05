@@ -2,6 +2,11 @@
 //! it closed: a host over the same store, repository list and project
 //! stands for tau started again.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{path::PathBuf, time::Duration};
 
 use tau_agent::{agent::Agent, event::RunEvent, tool::RunId};

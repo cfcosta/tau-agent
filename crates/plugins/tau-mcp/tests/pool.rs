@@ -6,6 +6,11 @@
 //! entry reconnects only its server, and two repositories share one
 //! connection to a user server.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

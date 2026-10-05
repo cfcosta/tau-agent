@@ -2,6 +2,11 @@
 //! imported into a project, a workspace per run, a commit per turn, and
 //! a fork that starts from one turn's code.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

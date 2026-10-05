@@ -20,6 +20,11 @@
 //! - the connection's watch sees it wait for a sign-in and connect;
 //! - the host's page shows the sign-in, and its actions sign in and out.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

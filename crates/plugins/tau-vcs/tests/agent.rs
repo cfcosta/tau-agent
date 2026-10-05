@@ -2,6 +2,11 @@
 //! status, commits and reads the log, with `ScriptedModel` choosing the
 //! calls.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use serde_json::json;
 use tau_agent::agent::Agent;
 use tau_ai::message::{InputBlock, Message};

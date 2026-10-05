@@ -2,6 +2,10 @@
 //! (`docs/decisions/0010-terminal-rendering.md`). Real processes, on a
 //! normal, unpaused runtime.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 #![cfg(unix)]
 
 use std::{

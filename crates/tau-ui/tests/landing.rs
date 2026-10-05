@@ -4,6 +4,11 @@
 //! trunk, so landing on it moves main; a landing that conflicts starts
 //! the main chat's turn to resolve it, and its commit moves main too.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::time::Duration;
 
 use gpui::{Entity, TestAppContext, VisualTestContext};

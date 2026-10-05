@@ -5,6 +5,11 @@
 //! versions. Workspace hegel.toml supplies case counts and CI's deterministic
 //! profile; no per-test override is needed.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{collections::BTreeMap, sync::Arc};
 
 use hegel::generators as gs;

@@ -4,6 +4,11 @@
 //! bookmark, and a workspace or bookmark no run owns goes. Sweeping
 //! again finds nothing.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use jj_lib::{

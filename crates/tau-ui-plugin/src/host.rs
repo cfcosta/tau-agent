@@ -384,6 +384,10 @@ impl HostCx {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 mod tests {
     use std::sync::Mutex;
 

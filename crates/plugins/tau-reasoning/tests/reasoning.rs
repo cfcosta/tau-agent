@@ -2,6 +2,11 @@
 //! is not, fails, or someone chose one. On the models whose cache
 //! survives a change of effort, Jev picks again when its lease ends.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;

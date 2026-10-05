@@ -1,6 +1,11 @@
 //! A host and phones in one process, over real TLS and WebSockets on
 //! the loopback.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::time::Duration;
 
 use serde_json::{Value, json};

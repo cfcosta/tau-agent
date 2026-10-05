@@ -24,6 +24,11 @@
 //!   host updates when they are edited: an edit applies from the next
 //!   tool call, in runs already going too.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "not migrated to async yet (ADR 0027)"
+)]
+
 pub mod db;
 #[cfg(feature = "demo")]
 pub mod demo;

@@ -5,6 +5,11 @@
 //! sidebar draw what the host says; and the UI keeps to the design
 //! language.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

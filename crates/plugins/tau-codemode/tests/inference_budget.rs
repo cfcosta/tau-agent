@@ -9,6 +9,11 @@
 //! CI derandomizes and disables the example database. No per-test count is
 //! needed for this small, deterministic, paused-time model.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::time::Duration;
 
 use hegel::{TestCase, generators as gs};

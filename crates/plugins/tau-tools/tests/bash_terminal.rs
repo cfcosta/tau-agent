@@ -3,6 +3,10 @@
 //! the byte stream in the updates and the result's details. The
 //! terminal's own behavior is tested in tau-terminal.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 #![cfg(all(unix, feature = "terminal"))]
 
 use base64::Engine as _;

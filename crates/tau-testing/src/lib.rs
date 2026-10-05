@@ -16,6 +16,10 @@ use std::future::Future;
 /// Timers advance instantly and tasks run in a repeatable order, so a
 /// failing property replays exactly. Never use this with real sockets:
 /// paused time jumps forward while the runtime waits on I/O.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests are synchronous entry points, and run async code through here (ADR 0027)"
+)]
 pub fn block_on<F: Future>(future: F) -> F::Output {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -39,6 +43,10 @@ thread_local! {
 /// Every call on a thread shares one runtime, so what one call opens
 /// (an in-memory store lives in the runtime that opened it) still works
 /// in the next.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests are synchronous entry points, and run async code through here (ADR 0027)"
+)]
 pub fn block_on_io<F: Future>(future: F) -> F::Output {
     IO_RUNTIME.with(|runtime| runtime.block_on(future))
 }

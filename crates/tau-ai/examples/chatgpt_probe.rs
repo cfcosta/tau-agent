@@ -20,6 +20,11 @@
 //! request ids, error bodies and stream events verbatim, and never a
 //! token.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{collections::HashMap, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};

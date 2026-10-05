@@ -35,6 +35,11 @@
 //! resolves exactly when its trivial merge of whole files does, and
 //! every conflict jj writes has markers.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

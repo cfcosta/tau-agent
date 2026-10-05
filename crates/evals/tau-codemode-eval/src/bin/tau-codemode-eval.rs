@@ -62,6 +62,10 @@ fn parse_arguments() -> Result<Arguments, String> {
     })
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the process's entry point runs its async work here (ADR 0027)"
+)]
 fn main() -> Result<(), String> {
     let Arguments {
         output,

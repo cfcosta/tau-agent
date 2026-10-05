@@ -6,6 +6,11 @@
 //! exposure is the widest among the servers that offer resources, and
 //! MCP apps are recognized whatever the case and spacing of their type.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

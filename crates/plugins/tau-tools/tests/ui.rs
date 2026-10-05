@@ -1,6 +1,11 @@
 //! tau-tools' UI: what its cards read from a call, and that it keeps to
 //! the design language.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use hegel::generators as gs;
 use serde_json::json;
 use tau_tools::{

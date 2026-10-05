@@ -1,6 +1,11 @@
 //! The workspace's onboarding and pull request flows, driven the way a
 //! host drives them, in GPUI's test app.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use tau_agent::event::StopReason;
 use tau_ui::demo;

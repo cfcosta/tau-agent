@@ -4,6 +4,11 @@
 //! resolving turn that leaves conflicts is held once, then marks main,
 //! which refuses new chats until Resolve again clears it.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     sync::{Arc, Mutex},
     time::Duration,

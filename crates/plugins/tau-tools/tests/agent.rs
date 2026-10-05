@@ -2,6 +2,10 @@
 //! writes, edits, reads, searches and runs a command in a real
 //! directory, with `ScriptedModel` choosing the calls.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 #![cfg(unix)]
 
 use serde_json::json;

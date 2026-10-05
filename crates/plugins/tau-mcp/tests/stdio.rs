@@ -3,6 +3,11 @@
 //! connection ends the server and whatever it started, by its process
 //! group.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

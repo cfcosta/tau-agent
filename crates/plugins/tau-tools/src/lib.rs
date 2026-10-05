@@ -14,6 +14,11 @@
 //! `docs/decisions/0010-terminal-rendering.md`). Without it, `bash` uses
 //! pipes and neither is built.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "not migrated to async yet (ADR 0027)"
+)]
+
 pub mod artifact_grant;
 #[cfg(feature = "host")]
 pub mod artifact_read;

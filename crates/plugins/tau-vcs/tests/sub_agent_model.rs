@@ -28,6 +28,11 @@
 //! - afterwards only the caller's workspace and bookmark are left;
 //! - the leftover commit's message is asked with the sub-agent's task.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

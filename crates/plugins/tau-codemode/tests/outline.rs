@@ -2,6 +2,11 @@
 //! script made it, strings as text and other values as JSON, and the
 //! outline gives each a line.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{collections::BTreeSet, sync::Arc};

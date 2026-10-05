@@ -5,6 +5,10 @@
 //! command back is waited for, within the command's timeout, and a
 //! cancel ends the wait.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 #![cfg(unix)]
 
 use std::{

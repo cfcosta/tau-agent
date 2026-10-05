@@ -1,6 +1,11 @@
 //! Finalization is a handoff, not permission to discard a child's edits.
 //! Generated operation histories carry an independent path -> bytes model.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::collections::BTreeMap;

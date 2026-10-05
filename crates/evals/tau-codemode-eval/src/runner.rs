@@ -415,6 +415,10 @@ pub async fn evaluate_offline_with_timings(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 mod tests {
     use super::*;
 

@@ -1,6 +1,11 @@
 //! Landing a child run on its parent (ADR 0009): the child's changes
 //! restack onto the parent's newest commit, keeping their change ids.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::path::Path;

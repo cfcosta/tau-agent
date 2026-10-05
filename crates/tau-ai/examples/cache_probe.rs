@@ -34,6 +34,11 @@
 //! run, cached. Requests are about 4k tokens. It prints each response's
 //! input and cached tokens, and never a token of the sign-in.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{collections::HashMap, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};

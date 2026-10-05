@@ -23,6 +23,11 @@
 //! - a fork at a turn starts on exactly that turn's files, on that turn's
 //!   parent, and the two runs never see each other's edits.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

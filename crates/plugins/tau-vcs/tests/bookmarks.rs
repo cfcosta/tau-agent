@@ -2,6 +2,11 @@
 //! tools cannot make either, so the test does it with jj-lib directly,
 //! as the host (or the user's own `jj`) would.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::path::Path;
 
 use jj_lib::{

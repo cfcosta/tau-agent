@@ -5,6 +5,11 @@
 //! withdrawn tool fails. And the `<mcp_servers>` block's limits, as a
 //! property.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{sync::Arc, time::Duration};

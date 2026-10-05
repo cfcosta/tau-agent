@@ -36,6 +36,41 @@ fn off_thread<T: Send + 'static>(
     .detach();
 }
 
+/// Runs `job`'s future on the host's runtime, then hands what it gave
+/// to the workspace: `done` with its value, or `failed` with what went
+/// wrong (ADR 0027). GPUI awaits the task without blocking a thread,
+/// and nothing of it runs on the interface's thread.
+fn on_host<T, F>(
+    host: &Arc<Host>,
+    workspace: &Entity<Workspace>,
+    job: impl FnOnce(Arc<Host>) -> F + Send + 'static,
+    done: impl FnOnce(&mut Workspace, T, &mut Context<Workspace>) + 'static,
+    failed: impl FnOnce(&mut Workspace, String, &mut Context<Workspace>) + 'static,
+    cx: &mut App,
+) where
+    T: Send + 'static,
+    F: Future<Output = anyhow::Result<T>> + Send + 'static,
+{
+    let counted = host.job();
+    let job = {
+        let worker = host.clone();
+        host.runtime.spawn(async move { job(worker).await })
+    };
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let result = match job.await {
+            Ok(result) => result.map_err(|error| format!("{error:#}")),
+            Err(error) => Err(error.to_string()),
+        };
+        let _ = workspace.update(cx, |ws, cx| match result {
+            Ok(value) => done(ws, value, cx),
+            Err(error) => failed(ws, error, cx),
+        });
+        drop(counted);
+    })
+    .detach();
+}
+
 /// A failure as an alert titled `title`.
 fn alert(
     title: impl Into<String>,
@@ -638,10 +673,10 @@ impl Host {
                 }
                 WorkspaceEvent::Query { sql } => {
                     let sql = sql.clone();
-                    off_thread(
+                    on_host(
                         &handler,
                         &workspace,
-                        move |host| Ok(host.block_on(host.store.query(&sql, 200))?),
+                        async move |host| Ok(host.store.query(&sql, 200).await?),
                         |ws, table, cx| ws.apply(HostUpdate::QueryResult(Ok(table)), cx),
                         |ws, error, cx| ws.apply(HostUpdate::QueryResult(Err(error)), cx),
                         cx,

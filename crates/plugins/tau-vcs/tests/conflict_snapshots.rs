@@ -2,6 +2,11 @@
 //! These histories model presence, bytes and explicit side selection;
 //! they never learn the expected conflict set from the implementation.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::collections::{BTreeMap, BTreeSet};

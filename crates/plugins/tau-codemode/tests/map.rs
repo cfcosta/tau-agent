@@ -6,6 +6,11 @@
 //! workspace hegel.toml development profile locally and its shipped CI
 //! profile on CI, so this test needs no per-test case count.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

@@ -18,6 +18,11 @@
 //!   its pages, the points it declares, and its contributions to points,
 //!   `tau-ui`'s ([`points`]) or other plugins'.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "not migrated to async yet (ADR 0027)"
+)]
+
 pub mod host;
 pub mod manifest;
 pub mod points;

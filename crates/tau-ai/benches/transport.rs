@@ -16,6 +16,11 @@
 //! RUNS=128 TURNS=60 PAYLOAD=16384 cargo bench -p tau-ai --bench transport
 //! ```
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     io,
     sync::{

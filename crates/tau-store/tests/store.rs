@@ -6,6 +6,11 @@
 //! sqlx's SQLite driver waits on its own worker threads, and paused time
 //! would jump forward during those waits and fire sqlx's timeouts.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::collections::BTreeMap;
 
 use hegel::{

@@ -1,0 +1,9 @@
+# Nothing blocks outside `spawn_blocking` (docs/decisions/0027). A jj
+# job running in `spawn_blocking` and tau-testing's helpers allow these
+# where they use them, with their reason.
+disallowed-methods = [
+  { path = "tokio::runtime::Runtime::block_on", reason = "await it instead, or run blocking work in spawn_blocking (ADR 0027)" },
+  { path = "tokio::runtime::Handle::block_on", reason = "await it instead, or run blocking work in spawn_blocking (ADR 0027)" },
+  { path = "pollster::block_on", reason = "only inside a job running in spawn_blocking (ADR 0027)" },
+  { path = "futures::executor::block_on", reason = "await it instead, or run blocking work in spawn_blocking (ADR 0027)" },
+]

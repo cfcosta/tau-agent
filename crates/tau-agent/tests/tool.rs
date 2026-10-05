@@ -1,5 +1,10 @@
 //! Tool traits (`tau_agent::tool`).
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;

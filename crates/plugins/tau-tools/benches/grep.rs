@@ -9,6 +9,11 @@
 //! FILES=20000 FILE_KB=16 cargo bench -p tau-tools --bench grep
 //! ```
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     fs,
     path::Path,

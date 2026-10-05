@@ -2,6 +2,11 @@
 //! With a project, each run works in a workspace of its own, forks
 //! start from a turn's code, and past runs come back as history.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{path::Path, time::Duration};
 
 use tau_agent::{

@@ -2,6 +2,11 @@
 //! makes a commit immutable; the tools cannot make one, so the test
 //! sets it with jj-lib directly, as the host would.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::path::Path;
 
 use jj_lib::{

@@ -8,6 +8,11 @@
 //! `PATH` and the XDG directories are set once for this whole binary,
 //! before any host looks for direnv, to the same values for every test.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},

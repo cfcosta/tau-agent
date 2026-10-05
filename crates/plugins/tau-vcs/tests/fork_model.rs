@@ -6,6 +6,11 @@
 //! (ADR 0014); what the run leaves uncommitted is committed at the end,
 //! with a message its model writes.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{collections::BTreeMap, path::Path};

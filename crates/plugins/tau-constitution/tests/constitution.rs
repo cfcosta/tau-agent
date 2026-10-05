@@ -4,6 +4,11 @@
 //! every decision is reported and recorded. Edited rules apply from the
 //! next tool call, and a constitution comes back from the store as saved.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},

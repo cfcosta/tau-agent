@@ -2,6 +2,11 @@
 //! history, its output and failure read back from the result, the store
 //! folds as the plugin folds it, and it keeps to the design language.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     collections::BTreeMap,
     rc::Rc,

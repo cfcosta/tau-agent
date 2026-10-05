@@ -2,6 +2,11 @@
 //! the caller's code beside it, its changes land on the caller's stack,
 //! and it closes.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

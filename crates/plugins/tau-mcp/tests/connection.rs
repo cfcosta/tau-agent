@@ -5,6 +5,11 @@
 //! retries. Both protocols: 2026-07-28 (list changes through
 //! `subscriptions/listen`) and 2025-11-25 (plain notifications).
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

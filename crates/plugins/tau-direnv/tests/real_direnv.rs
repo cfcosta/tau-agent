@@ -4,6 +4,11 @@
 //! holds. direnv's data directory is the test's own, so the person's
 //! allow and deny records are never read or written.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{path::Path, sync::Arc};
 
 use tau_agent::launch::Launch;

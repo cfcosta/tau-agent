@@ -8,6 +8,11 @@
 //! flags shrink to individual attempts. CI uses workspace `hegel.toml`;
 //! no per-test count override is needed.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::tool::RunId;

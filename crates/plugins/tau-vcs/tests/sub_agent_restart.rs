@@ -2,6 +2,11 @@
 //! "Sub-agents: spawn and wait"), in a test binary of its own: a fresh
 //! process, as tau is after a restart.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use common::{coder, project_with};

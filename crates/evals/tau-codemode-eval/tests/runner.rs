@@ -4,6 +4,11 @@
 //! the scripts or simulator. No generator is needed for this fixed VM corpus.
 //! Hegel's workspace hegel.toml governs the generated fixture properties.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::process::Command;
 
 use tau_codemode_eval::runner::{EvalReport, Mode, evaluate_offline};

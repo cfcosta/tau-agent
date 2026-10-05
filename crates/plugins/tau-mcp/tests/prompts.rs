@@ -5,6 +5,11 @@
 //! in-process server: the commands of every page of prompts, getting one
 //! with arguments, and the errors a person reads.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};

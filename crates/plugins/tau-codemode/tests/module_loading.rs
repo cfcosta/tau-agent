@@ -1,5 +1,10 @@
 //! Registered module loading through a controlled host; no provider calls.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 mod common;
 
 use std::{

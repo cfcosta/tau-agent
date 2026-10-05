@@ -11,6 +11,11 @@
 //! computer shows ([`Workspace::synced`]), and the computer shows what
 //! the person asked for, from whichever device they asked.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},

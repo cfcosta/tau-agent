@@ -36,6 +36,11 @@
 //! catch-up, and a drop catches up and keeps what the main chat's `@`
 //! stands on.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
