@@ -286,21 +286,20 @@ pub(super) fn started(created_at: &str) -> String {
 impl Host {
     /// Runs from earlier sessions, newest first, rebuilt from the store.
     /// The view of `repo`'s main chat, as history shows it.
-    pub fn main_view(&self, repo: &Repo) -> anyhow::Result<Option<RunView>> {
+    pub async fn main_view(
+        &self,
+        repo: &Repo,
+    ) -> anyhow::Result<Option<RunView>> {
         let Some(main) = &repo.main else {
             return Ok(None);
         };
-        self.runtime.block_on(async {
-            match self.store.run(&main.0).await? {
-                Some(record) => {
-                    Ok(Some(stored_view(&self.store, &record).await?))
-                }
-                None => Ok(None),
-            }
-        })
+        match self.store.run(&main.0).await? {
+            Some(record) => Ok(Some(stored_view(&self.store, &record).await?)),
+            None => Ok(None),
+        }
     }
 
-    pub fn history(&self) -> anyhow::Result<Vec<RunView>> {
-        self.runtime.block_on(history(&self.store, &self.mains()))
+    pub async fn history(&self) -> anyhow::Result<Vec<RunView>> {
+        history(&self.store, &self.mains()).await
     }
 }

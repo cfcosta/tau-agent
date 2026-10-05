@@ -123,7 +123,7 @@ const PROBE: &str = "echo probe=${TAU_PROBE:-none}";
 
 /// tau-direnv's records for `run`, as stored.
 fn records(host: &Host, run: &RunId) -> Vec<Record> {
-    host.plugin_records(run, NAME)
+    host.block_on(host.plugin_records(run, NAME))
         .into_iter()
         .filter_map(|body| serde_json::from_value(body).ok())
         .collect()
@@ -208,7 +208,7 @@ fn bash_sees_the_environment_only_once_the_person_allows_it() {
         bash_then_done(bash_then_done(ScriptedModel::new(), PROBE), PROBE);
     let (host, mut events, _data) = host(llm, "export TAU_PROBE=1\n");
     let first = host
-        .start("check the probe", &ModelChoice::default(), REPO)
+        .block_on(host.start("check the probe", &ModelChoice::default(), REPO))
         .unwrap();
     let asked = wait_for_record(&host, &first.id, |r| {
         matches!(r, Record::Asked { .. })
@@ -235,7 +235,7 @@ fn bash_sees_the_environment_only_once_the_person_allows_it() {
     assert!(kinds.contains(&Record::Loaded), "{kinds:?}");
 
     let second = host
-        .start("check it again", &ModelChoice::default(), REPO)
+        .block_on(host.start("check it again", &ModelChoice::default(), REPO))
         .unwrap();
     let output = bash_output(&host, &second.id, &mut events);
     assert!(output.contains("probe=1"), "{output}");
@@ -253,7 +253,7 @@ fn run_without_it_leaves_commands_as_they_were() {
     let llm = bash_then_done(ScriptedModel::new(), PROBE);
     let (host, mut events, _data) = host(llm, "export TAU_PROBE=1\n");
     let run = host
-        .start("check the probe", &ModelChoice::default(), REPO)
+        .block_on(host.start("check the probe", &ModelChoice::default(), REPO))
         .unwrap();
     wait_for_record(&host, &run.id, |r| matches!(r, Record::Asked { .. }));
     act(
@@ -276,7 +276,7 @@ fn a_failed_load_runs_without_it_until_tried_again() {
     let (host, mut events, _data) =
         host(llm, "echo 'no devShell here' >&2\nexit 1\n");
     let run = host
-        .start("check the probe", &ModelChoice::default(), REPO)
+        .block_on(host.start("check the probe", &ModelChoice::default(), REPO))
         .unwrap();
     wait_for_record(&host, &run.id, |r| matches!(r, Record::Asked { .. }));
     act(
@@ -298,7 +298,7 @@ fn a_failed_load_runs_without_it_until_tried_again() {
     let output = bash_output(&host, &run.id, &mut events);
     assert!(output.contains("probe=none"), "{output}");
 
-    let workspace = host.workspace(&run.id).unwrap();
+    let workspace = host.block_on(host.workspace(&run.id)).unwrap();
     std::fs::write(workspace.join(".envrc"), "export TAU_PROBE=1\n").unwrap();
     act(
         &host,
@@ -329,9 +329,13 @@ fn the_repositorys_mcp_servers_start_in_the_environment() {
     .unwrap();
     // The main chat goes on: its turn brings main's files, the
     // `.envrc` among them.
-    let main = host.main_of(REPO).unwrap();
-    host.resume(&main, "check the probe", &ModelChoice::default())
-        .unwrap();
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    host.block_on(host.resume(
+        &main,
+        "check the probe",
+        &ModelChoice::default(),
+    ))
+    .unwrap();
     wait_for_record(&host, &main, |r| matches!(r, Record::Asked { .. }));
     act(
         &host,

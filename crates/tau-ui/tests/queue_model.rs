@@ -73,15 +73,15 @@ impl World {
 }
 
 impl Main for World {
-    fn busy(&self) -> bool {
+    async fn busy(&self) -> bool {
         self.busy
     }
 
-    fn conflicts(&mut self) -> anyhow::Result<Vec<String>> {
+    async fn conflicts(&mut self) -> anyhow::Result<Vec<String>> {
         Ok(self.stack.iter().cloned().collect())
     }
 
-    fn preview(&mut self, run: &str) -> Result<Preview, Unlandable> {
+    async fn preview(&mut self, run: &str) -> Result<Preview, Unlandable> {
         let chat = self.chat(run);
         if chat.landed || chat.dropped {
             return Err(Unlandable::Gone);
@@ -92,7 +92,7 @@ impl Main for World {
         })
     }
 
-    fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable> {
+    async fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable> {
         assert!(!self.busy, "{run} landed while main ran");
         assert!(
             self.stack.is_empty(),
@@ -121,11 +121,11 @@ impl Main for World {
         Ok(chat.conflicts.into_iter().collect())
     }
 
-    fn title(&self, run: &str) -> String {
+    async fn title(&self, run: &str) -> String {
         format!("chat {run}")
     }
 
-    fn store(&mut self, record: &Record) -> anyhow::Result<()> {
+    async fn store(&mut self, record: &Record) -> anyhow::Result<()> {
         // A chat that left without landing leaves the model's order too.
         if let Record::Left { run } = record {
             self.left(run);
@@ -155,14 +155,17 @@ impl Machine {
     /// Lands what may land, as the host does after each event, and
     /// starts tau's resolving turn when a landing left conflicts.
     fn drain(&mut self) {
-        let drained = drain(&mut self.lane, &mut self.world).unwrap();
+        let drained =
+            tau_testing::block_on(drain(&mut self.lane, &mut self.world))
+                .unwrap();
         self.after(drained);
         self.stopped_for_a_reason();
     }
 
     fn perform(&mut self, actions: Vec<tau_ui::host::queue::Action>) {
         let mut drained = Drained::default();
-        drained.perform(&mut self.world, actions).unwrap();
+        tau_testing::block_on(drained.perform(&mut self.world, actions))
+            .unwrap();
         self.after(drained);
     }
 
@@ -456,15 +459,15 @@ struct Plain {
 }
 
 impl Main for Plain {
-    fn busy(&self) -> bool {
+    async fn busy(&self) -> bool {
         false
     }
 
-    fn conflicts(&mut self) -> anyhow::Result<Vec<String>> {
+    async fn conflicts(&mut self) -> anyhow::Result<Vec<String>> {
         Ok(self.stack.iter().cloned().collect())
     }
 
-    fn preview(&mut self, run: &str) -> Result<Preview, Unlandable> {
+    async fn preview(&mut self, run: &str) -> Result<Preview, Unlandable> {
         let waiting = self.queued.iter().find(|w| w.run == run).unwrap();
         Ok(Preview {
             changes: 1,
@@ -472,7 +475,7 @@ impl Main for Plain {
         })
     }
 
-    fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable> {
+    async fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable> {
         let waiting = self.queued.iter().find(|w| w.run == run).unwrap();
         assert!(
             waiting
@@ -487,11 +490,11 @@ impl Main for Plain {
         Ok(waiting.conflicts.clone())
     }
 
-    fn title(&self, run: &str) -> String {
+    async fn title(&self, run: &str) -> String {
         run.to_owned()
     }
 
-    fn store(&mut self, _record: &Record) -> anyhow::Result<()> {
+    async fn store(&mut self, _record: &Record) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -541,7 +544,7 @@ fn sub_agents_land_whatever_they_bring(tc: TestCase) {
     for waiting in &queued {
         let _ = lane.queue(waiting.clone());
     }
-    let drained = drain(&mut lane, &mut main).unwrap();
+    let drained = tau_testing::block_on(drain(&mut lane, &mut main)).unwrap();
 
     // What the queue promises, walked by hand.
     let mut landed = Vec::new();

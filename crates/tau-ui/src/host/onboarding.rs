@@ -58,10 +58,15 @@ pub(super) fn check_eligibility(
     let Some(check) = host.check_eligibility() else {
         return;
     };
+    let catalog = host.spawn(async move |host| {
+        let _ = check.await;
+        host.catalog().await
+    });
     let (host, workspace) = (host.clone(), workspace.downgrade());
     cx.spawn(async move |cx| {
-        let _ = check.await;
-        let catalog = host.catalog();
+        let Ok(catalog) = catalog.await else {
+            return;
+        };
         let refused = host.not_eligible();
         let _ = workspace.update(cx, |ws, cx| {
             let account = catalog

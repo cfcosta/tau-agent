@@ -157,7 +157,8 @@ fn go_on(
     run: &RunId,
     prompt: &str,
 ) {
-    host.resume(run, prompt, &ModelChoice::default()).unwrap();
+    host.block_on(host.resume(run, prompt, &ModelChoice::default()))
+        .unwrap();
     until_end(events);
     wait_until_done(host, run);
 }
@@ -172,7 +173,7 @@ fn commit(message: &str) -> serde_json::Value {
 
 /// The repository as the sidebar lists it.
 fn listed(host: &Host, name: &str) -> tau_ui_remote::catalog::Repo {
-    host.catalog().repo(name).unwrap().clone()
+    host.block_on(host.catalog()).repo(name).unwrap().clone()
 }
 
 /// The main chat's commits go to GitHub as they are, and the count
@@ -193,9 +194,9 @@ fn main_pushes_and_a_moved_main_fetches_first() {
         .turn(|t| t.text("done"));
     let (host, mut events) =
         host(llm, &github, "http://127.0.0.1:9", data.path());
-    let repo = host.clone_github(FULL_NAME).unwrap();
-    let project = host.project_of(&repo.name).unwrap();
-    let main = host.main_of(&repo.name).unwrap();
+    let repo = host.block_on(host.clone_github(FULL_NAME)).unwrap();
+    let project = host.block_on(host.project_of(&repo.name)).unwrap();
+    let main = host.block_on(host.main_of(&repo.name)).unwrap();
     assert_eq!(listed(&host, &repo.name).unpushed, 0);
 
     go_on(&host, &mut events, &main, "write m");
@@ -203,7 +204,7 @@ fn main_pushes_and_a_moved_main_fetches_first() {
     assert_eq!(ahead.unpushed, 1);
     assert_eq!(ahead.trunk.as_deref(), Some("main"));
 
-    let pushed = host.push_main(&repo.name, false).unwrap();
+    let pushed = host.block_on(host.push_main(&repo.name, false)).unwrap();
     assert_eq!(pushed.branch, "main");
     assert_eq!(pushed.changes.len(), 1);
     assert_eq!(pushed.changes[0].title, "feat: add m");
@@ -217,7 +218,9 @@ fn main_pushes_and_a_moved_main_fetches_first() {
     assert_eq!(waiting.len(), 1);
     github.push_upstream("u.txt");
     let before = github.branch("main");
-    let refused = host.push_main(&repo.name, false).unwrap_err();
+    let refused = host
+        .block_on(host.push_main(&repo.name, false))
+        .unwrap_err();
     assert_eq!(
         refused,
         PushFailure::Moved {
@@ -227,7 +230,7 @@ fn main_pushes_and_a_moved_main_fetches_first() {
     );
     assert_eq!(github.branch("main"), before, "nothing was pushed");
 
-    let pushed = host.push_main(&repo.name, true).unwrap();
+    let pushed = host.block_on(host.push_main(&repo.name, true)).unwrap();
     assert_eq!(pushed.from.as_deref(), Some(before.as_str()));
     assert_eq!(pushed.changes.len(), 1);
     assert_eq!(pushed.changes[0].change_id, waiting[0].change_id);
@@ -284,23 +287,27 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: add d")))
         .turn(|t| t.text("Added d.txt."));
     let (host, mut events) = host(llm, &github, &api, data.path());
-    let repo = host.clone_github(FULL_NAME).unwrap();
-    let project = host.project_of(&repo.name).unwrap();
-    let main = host.main_of(&repo.name).unwrap();
+    let repo = host.block_on(host.clone_github(FULL_NAME)).unwrap();
+    let project = host.block_on(host.project_of(&repo.name)).unwrap();
+    let main = host.block_on(host.main_of(&repo.name)).unwrap();
     go_on(&host, &mut events, &main, "write m");
     let mains = project.blocking().trunk().unwrap();
     let origin = github.branch("main");
 
     let chat = host
-        .start("write c, please", &ModelChoice::default(), &repo.name)
+        .block_on(host.start(
+            "write c, please",
+            &ModelChoice::default(),
+            &repo.name,
+        ))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
 
-    let error = host.prepare_pull_request(&main).unwrap_err();
+    let error = host.block_on(host.prepare_pull_request(&main)).unwrap_err();
     assert!(error.to_string().contains("pushes to GitHub"), "{error}");
 
-    let draft = host.prepare_pull_request(&chat.id).unwrap();
+    let draft = host.block_on(host.prepare_pull_request(&chat.id)).unwrap();
     assert_eq!(draft.repo, FULL_NAME);
     assert_eq!(draft.base, "main");
     assert!(draft.mergeable);
@@ -314,7 +321,7 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
     );
 
     let (opened, head) = host
-        .create_pull_request(
+        .block_on(host.create_pull_request(
             &chat.id,
             &draft,
             "Write c",
@@ -322,7 +329,7 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
             true,
             true,
             &["alice".into()],
-        )
+        ))
         .unwrap();
     assert_eq!(opened.number, 7);
     assert_eq!(github.branch(&draft.head), head);
@@ -353,14 +360,14 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
         "no objects made through the API: {requests:?}"
     );
     assert_eq!(
-        host.pull_request_checks(&chat.id).unwrap(),
+        host.block_on(host.pull_request_checks(&chat.id)).unwrap(),
         tau_ui_remote::pull_request::Checks::Passed
     );
 
     // A later commit goes on top of the branch.
     assert!(host.keeps_pushing(&chat.id));
     go_on(&host, &mut events, &chat.id, "add d");
-    assert!(host.push_later_commits(&chat.id).unwrap());
+    assert!(host.block_on(host.push_later_commits(&chat.id)).unwrap());
     let later = github.branch(&draft.head);
     assert_eq!(
         git(&github.bare, &["rev-parse", &format!("{later}^")]),
@@ -368,7 +375,10 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
     );
     assert!(github.has(&later, "d.txt"));
     assert!(!github.has(&later, "m.txt"));
-    assert!(!host.push_later_commits(&chat.id).unwrap(), "nothing new");
+    assert!(
+        !host.block_on(host.push_later_commits(&chat.id)).unwrap(),
+        "nothing new"
+    );
 }
 
 /// A chat that changes what the main chat has not pushed cannot go on
@@ -386,14 +396,16 @@ fn a_chat_on_mains_unpushed_file_would_conflict() {
         .turn(|t| t.text("done"));
     let (host, mut events) =
         host(llm, &github, "http://127.0.0.1:9", data.path());
-    let repo = host.clone_github(FULL_NAME).unwrap();
-    let main = host.main_of(&repo.name).unwrap();
+    let repo = host.block_on(host.clone_github(FULL_NAME)).unwrap();
+    let main = host.block_on(host.main_of(&repo.name)).unwrap();
     go_on(&host, &mut events, &main, "write m");
     let chat = host
-        .start("change m", &ModelChoice::default(), &repo.name)
+        .block_on(host.start("change m", &ModelChoice::default(), &repo.name))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
-    let error = host.prepare_pull_request(&chat.id).unwrap_err();
+    let error = host
+        .block_on(host.prepare_pull_request(&chat.id))
+        .unwrap_err();
     assert_eq!(error.to_string(), "would conflict on origin/main: m.txt");
 }

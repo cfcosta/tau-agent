@@ -353,18 +353,29 @@ pub fn resolve_prompt(title: &str, conflicts: &[String]) -> String {
 /// The main chat a [`drain`] lands on.
 pub trait Main {
     /// Main is in a turn now.
-    fn busy(&self) -> bool;
+    fn busy(&self) -> impl Future<Output = bool> + Send;
     /// The files main's stack holds in conflict, after catching up with
     /// trunk.
-    fn conflicts(&mut self) -> anyhow::Result<Vec<String>>;
+    fn conflicts(
+        &mut self,
+    ) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
     /// What landing `run` would do now.
-    fn preview(&mut self, run: &str) -> Result<Preview, Unlandable>;
+    fn preview(
+        &mut self,
+        run: &str,
+    ) -> impl Future<Output = Result<Preview, Unlandable>> + Send;
     /// Lands `run`; returns the files it left in conflict.
-    fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable>;
+    fn land(
+        &mut self,
+        run: &str,
+    ) -> impl Future<Output = Result<Vec<String>, Unlandable>> + Send;
     /// `run`'s title, for the resolving turn's message.
-    fn title(&self, run: &str) -> String;
+    fn title(&self, run: &str) -> impl Future<Output = String> + Send;
     /// Stores `record` on the main chat.
-    fn store(&mut self, record: &Record) -> anyhow::Result<()>;
+    fn store(
+        &mut self,
+        record: &Record,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
 /// What a [`drain`] did.
@@ -385,14 +396,14 @@ pub struct Drained {
 
 impl Drained {
     /// Carries `actions` out on `main`.
-    pub fn perform(
+    pub async fn perform(
         &mut self,
         main: &mut impl Main,
         actions: Vec<Action>,
     ) -> anyhow::Result<()> {
         for action in actions {
             match action {
-                Action::Store(record) => main.store(&record)?,
+                Action::Store(record) => main.store(&record).await?,
                 Action::Notify(files) => self.notify = Some(files),
             }
         }
@@ -404,9 +415,12 @@ impl Drained {
 /// previewed again first. Stops at a chat whose conflicts the person
 /// did not confirm, after a landing that leaves conflicts (tau's turn
 /// resolves them first), and while main is busy or conflicted.
-pub fn drain(lane: &mut Lane, main: &mut impl Main) -> anyhow::Result<Drained> {
+pub async fn drain(
+    lane: &mut Lane,
+    main: &mut impl Main,
+) -> anyhow::Result<Drained> {
     let mut drained = Drained::default();
-    if main.busy() {
+    if main.busy().await {
         lane.started();
     }
     if lane.is_busy() || lane.is_pending() {
@@ -414,9 +428,9 @@ pub fn drain(lane: &mut Lane, main: &mut impl Main) -> anyhow::Result<Drained> {
     }
     // Main's stack as it is now, after catching up: marked when a
     // landing's conflicts outlived tau, clean once they are resolved.
-    let files = main.conflicts()?;
+    let files = main.conflicts().await?;
     let actions = lane.checked(files);
-    drained.perform(main, actions)?;
+    drained.perform(main, actions).await?;
     while let Some(head) = lane.next() {
         let run = head.run.clone();
         // A sub-agent with nothing to land is only reported.
@@ -427,31 +441,32 @@ pub fn drain(lane: &mut Lane, main: &mut impl Main) -> anyhow::Result<Drained> {
         {
             drained.reported.push(head.clone());
             let actions = lane.unqueue(&run);
-            drained.perform(main, actions)?;
+            drained.perform(main, actions).await?;
             continue;
         }
         let sub_agent = head.sub_agent.is_some().then(|| head.clone());
-        let preview = match main.preview(&run) {
+        let preview = match main.preview(&run).await {
             Ok(preview) => preview,
             Err(Unlandable::Busy) => {
                 lane.started();
                 break;
             }
             Err(why) => {
-                drained.leave(lane, main, &run, why)?;
+                drained.leave(lane, main, &run, why).await?;
                 continue;
             }
         };
         let (lands, actions) = lane.previewed(&run, &preview);
-        drained.perform(main, actions)?;
+        drained.perform(main, actions).await?;
         if !lands {
             break;
         }
-        match main.land(&run) {
+        match main.land(&run).await {
             Ok(conflicts) => {
-                let prompt = resolve_prompt(&main.title(&run), &conflicts);
+                let prompt =
+                    resolve_prompt(&main.title(&run).await, &conflicts);
                 let actions = lane.landed(&run, &conflicts, prompt.clone());
-                drained.perform(main, actions)?;
+                drained.perform(main, actions).await?;
                 drained.landed.push(run);
                 drained.reported.extend(sub_agent);
                 if !conflicts.is_empty() {
@@ -463,7 +478,7 @@ pub fn drain(lane: &mut Lane, main: &mut impl Main) -> anyhow::Result<Drained> {
                 lane.started();
                 break;
             }
-            Err(why) => drained.leave(lane, main, &run, why)?,
+            Err(why) => drained.leave(lane, main, &run, why).await?,
         }
     }
     if !drained.reported.is_empty() && drained.resolve.is_none() {
@@ -473,7 +488,7 @@ pub fn drain(lane: &mut Lane, main: &mut impl Main) -> anyhow::Result<Drained> {
 }
 
 impl Drained {
-    fn leave(
+    async fn leave(
         &mut self,
         lane: &mut Lane,
         main: &mut impl Main,
@@ -495,6 +510,6 @@ impl Drained {
             self.failed.push((run.to_owned(), error));
         }
         let actions = lane.unqueue(run);
-        self.perform(main, actions)
+        self.perform(main, actions).await
     }
 }

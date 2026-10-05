@@ -35,15 +35,20 @@ impl Host {
     /// neither catching the parent up with trunk nor making workspaces,
     /// so it can run while the person works. `None` when there is
     /// nothing to land.
-    pub fn forecast_landing(
+    pub async fn forecast_landing(
         &self,
         child: &RunId,
     ) -> anyhow::Result<Option<Forecast>> {
-        let project = self.slot_of_run(child)?.project()?;
-        if project.blocking().bookmark(&bookmark(child))?.is_none() {
+        let project = self.slot_of_run(child).await?.project().await?;
+        let name = bookmark(child);
+        if project
+            .run(move |project| project.bookmark(&name))
+            .await?
+            .is_none()
+        {
             return Ok(None);
         }
-        let landing = self.land_dry(child, Reading::Forecast)?;
+        let landing = self.land_dry(child, Reading::Forecast).await?;
         Ok(Some(Forecast::from(&landing)))
     }
 
@@ -123,23 +128,23 @@ fn forecast_in_background(
     let counted = host.job();
     let job = {
         let (worker, repo) = (host.clone(), repo.clone());
-        host.runtime.spawn_blocking(move || {
+        host.runtime.spawn(async move {
             let host = worker;
-            std::thread::sleep(host.forecast_wait);
+            tokio::time::sleep(host.forecast_wait).await;
             let mut found = Vec::new();
             for fork in forks {
                 if !host.forecast_current(&repo, generation) {
                     return Vec::new();
                 }
-                let Ok(parent) = host.parent_of(&fork) else {
+                let Ok(parent) = host.parent_of(&fork).await else {
                     continue;
                 };
-                host.settle(&fork);
-                host.settle(&parent);
+                host.settle(&fork).await;
+                host.settle(&parent).await;
                 if host.is_running(&fork) || host.is_running(&parent) {
                     continue;
                 }
-                match host.forecast_landing(&fork) {
+                match host.forecast_landing(&fork).await {
                     Ok(forecast) => found.push((fork, forecast)),
                     Err(error) => eprintln!(
                         "tau-ui: cannot forecast landing {}: {error:#}",

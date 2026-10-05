@@ -1,40 +1,10 @@
 //! The interface asking the host for something, and the host answering
-//! it off the interface's thread.
+//! it on its runtime (ADR 0028): nothing here waits on the interface's
+//! thread.
 
 use gpui::Context;
 
 use super::*;
-
-/// Runs `job` on the host's blocking pool, off the interface's thread,
-/// then hands what it gave to the workspace: `done` with its value, or
-/// `failed` with what went wrong.
-fn off_thread<T: Send + 'static>(
-    host: &Arc<Host>,
-    workspace: &Entity<Workspace>,
-    job: impl FnOnce(&Host) -> anyhow::Result<T> + Send + 'static,
-    done: impl FnOnce(&mut Workspace, T, &mut Context<Workspace>) + 'static,
-    failed: impl FnOnce(&mut Workspace, String, &mut Context<Workspace>) + 'static,
-    cx: &mut App,
-) {
-    let counted = host.job();
-    let job = {
-        let worker = host.clone();
-        host.runtime.spawn_blocking(move || job(&worker))
-    };
-    let workspace = workspace.downgrade();
-    cx.spawn(async move |cx| {
-        let result = match job.await {
-            Ok(result) => result.map_err(|error| format!("{error:#}")),
-            Err(error) => Err(error.to_string()),
-        };
-        let _ = workspace.update(cx, |ws, cx| match result {
-            Ok(value) => done(ws, value, cx),
-            Err(error) => failed(ws, error, cx),
-        });
-        drop(counted);
-    })
-    .detach();
-}
 
 /// Runs `job`'s future on the host's runtime, then hands what it gave
 /// to the workspace: `done` with its value, or `failed` with what went
@@ -52,10 +22,7 @@ fn on_host<T, F>(
     F: Future<Output = anyhow::Result<T>> + Send + 'static,
 {
     let counted = host.job();
-    let job = {
-        let worker = host.clone();
-        host.runtime.spawn(async move { job(worker).await })
-    };
+    let job = host.spawn(job);
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
         let result = match job.await {
@@ -79,10 +46,25 @@ fn alert(
     move |ws, error, cx| ws.apply(HostUpdate::alert(title, error), cx)
 }
 
-/// Has a model write `run`'s title from `prompt`, keeps it in the store
-/// and shows it. Without a client, as in tests, or when the call fails,
-/// the run keeps its placeholder. The run's record is written as it
-/// starts, well before the model answers.
+/// Builds the catalog on the host's runtime and shows it: after
+/// anything that changes what it lists.
+pub(super) fn refresh_catalog(
+    host: &Arc<Host>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let catalog = host.spawn(async move |host| host.catalog().await);
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let Ok(catalog) = catalog.await else {
+            return;
+        };
+        let _ = workspace
+            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+    })
+    .detach();
+}
+
 /// Goes on with `run`, a finished chat, on `prompt`: it shows first,
 /// so it comes before what the run does, and is taken back if the run
 /// cannot go on.
@@ -102,31 +84,39 @@ fn go_on(
         };
         ws.apply(resumed, cx)
     });
-    match host.resume(run, prompt, model) {
-        Ok(()) => {
+    let (job_run, job_prompt, job_model) =
+        (run.clone(), prompt.to_owned(), model.clone());
+    let (run, failed_run) = (run.clone(), run.clone());
+    on_host(
+        host,
+        workspace,
+        async move |host| {
+            host.resume(&job_run, &job_prompt, &job_model).await?;
             // A message opens a closed conversation again.
-            let _ = host.set_closed(run, false);
-            let starting = host.starting_of(run, model);
-            workspace.update(cx, |ws, cx| {
-                for (plugin, body) in starting {
-                    let run = run.clone();
-                    ws.apply(HostUpdate::PluginFold { run, plugin, body }, cx);
-                }
-            });
-        }
-        Err(error) => workspace.update(cx, |ws, cx| {
-            ws.apply(HostUpdate::ResumeFailed(run.clone()), cx);
+            let _ = host.set_closed(&job_run, false);
+            Ok(host.starting_of(&job_run, &job_model).await)
+        },
+        move |ws, starting, cx| {
+            for (plugin, body) in starting {
+                let run = run.clone();
+                ws.apply(HostUpdate::PluginFold { run, plugin, body }, cx);
+            }
+        },
+        move |ws, error, cx| {
+            ws.apply(HostUpdate::ResumeFailed(failed_run), cx);
             ws.apply(
-                HostUpdate::alert(
-                    "Could not go on with the run",
-                    format!("{error:#}"),
-                ),
+                HostUpdate::alert("Could not go on with the run", error),
                 cx,
             )
-        }),
-    }
+        },
+        cx,
+    );
 }
 
+/// Has a model write `run`'s title from `prompt`, keeps it in the store
+/// and shows it. Without a client, as in tests, or when the call fails,
+/// the run keeps its placeholder. The run's record is written as it
+/// starts, well before the model answers.
 pub(super) fn title_in_background(
     host: &Arc<Host>,
     run: &RunId,
@@ -142,9 +132,8 @@ pub(super) fn title_in_background(
         |choice| choice.model.clone(),
     );
     let job = {
-        let (writer, run, prompt) =
-            (host.clone(), run.clone(), prompt.to_owned());
-        host.runtime.spawn(async move {
+        let (run, prompt) = (run.clone(), prompt.to_owned());
+        host.spawn(async move |writer| {
             let title = crate::titles::write(&client, &model, &prompt).await?;
             writer.store.set_title(&run.0, &title).await?;
             anyhow::Ok(title)
@@ -227,9 +216,7 @@ pub(super) fn show_drain(
     // Landing on a main chat moves trunk: what it would push to GitHub
     // changes too.
     if has_landed {
-        let catalog = host.catalog();
-        workspace
-            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+        refresh_catalog(host, workspace, cx);
     }
     if let (Some(files), Some(hook)) = (notify, host.conflicts_hook.clone()) {
         hook(&main, &repo, &files, cx);
@@ -239,18 +226,19 @@ pub(super) fn show_drain(
     }
 }
 
-/// Runs `job`, which drains a main chat's queue, off the interface's
-/// thread, then shows what it did; a failure is an alert titled
-/// `failed`.
-fn drain_off_thread(
+/// Runs `job`, which drains a main chat's queue, on the host, then shows
+/// what it did; a failure is an alert titled `failed`.
+fn drain_on_host<F>(
     host: &Arc<Host>,
     workspace: &Entity<Workspace>,
-    job: impl FnOnce(&Host) -> anyhow::Result<DrainReport> + Send + 'static,
+    job: impl FnOnce(Arc<Host>) -> F + Send + 'static,
     failed: &'static str,
     cx: &mut App,
-) {
+) where
+    F: Future<Output = anyhow::Result<DrainReport>> + Send + 'static,
+{
     let shower = host.clone();
-    off_thread(
+    on_host(
         host,
         workspace,
         job,
@@ -273,44 +261,46 @@ fn resolve_main(
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
-    let started = std::cell::Cell::new(true);
+    let shower = host.clone();
+    let failed_main = main.clone();
     tau_turn(
         host,
         main,
         prompt,
-        |host, run, prompt| {
-            let result = host.start_resolving(run, prompt);
-            started.set(result.is_ok());
-            result
+        async move |host, run, prompt| {
+            host.start_resolving(&run, &prompt).await
         },
         "Could not start resolving the conflicts",
+        move |cx| {
+            drain_on_host(
+                &shower,
+                &cx.entity(),
+                async move |host| host.resolving_failed(&failed_main).await,
+                "Could not check main for conflicts",
+                cx,
+            )
+        },
         workspace,
         cx,
     );
-    if !started.get() {
-        let main = main.clone();
-        drain_off_thread(
-            host,
-            workspace,
-            move |host| host.resolving_failed(&main),
-            "Could not check main for conflicts",
-            cx,
-        );
-    }
 }
 
 /// Starts a turn of `run` that tau asks for, with `prompt`: its chat
-/// shows the message as tau's, then `start` resumes it. A failure says
-/// `failed` and why.
-pub(super) fn tau_turn(
+/// shows the message as tau's, then `start` resumes it on the host. A
+/// failure says `failed` and why, then calls `then_failed`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn tau_turn<F>(
     host: &Arc<Host>,
     run: &RunId,
     prompt: String,
-    start: impl FnOnce(&Host, &RunId, &str) -> anyhow::Result<()>,
+    start: impl FnOnce(Arc<Host>, RunId, String) -> F + Send + 'static,
     failed: &str,
+    then_failed: impl FnOnce(&mut Context<Workspace>) + 'static,
     workspace: &Entity<Workspace>,
     cx: &mut App,
-) {
+) where
+    F: Future<Output = anyhow::Result<()>> + Send + 'static,
+{
     workspace.update(cx, |ws, cx| {
         ws.apply(
             HostUpdate::TauTurn {
@@ -320,17 +310,25 @@ pub(super) fn tau_turn(
             cx,
         )
     });
-    if let Err(error) = start(host, run, &prompt) {
-        workspace.update(cx, |ws, cx| {
-            ws.apply(HostUpdate::ResumeFailed(run.clone()), cx);
-            ws.apply(HostUpdate::alert(failed, format!("{error:#}")), cx);
-        });
-    }
+    let (job_run, failed_run, failed) =
+        (run.clone(), run.clone(), failed.to_owned());
+    on_host(
+        host,
+        workspace,
+        move |host| start(host, job_run, prompt),
+        |_, (), _| {},
+        move |ws, error, cx| {
+            ws.apply(HostUpdate::ResumeFailed(failed_run), cx);
+            ws.apply(HostUpdate::alert(failed, error), cx);
+            then_failed(cx);
+        },
+        cx,
+    );
 }
 
-/// Updates repository `name` off the UI thread, saying so in the status
-/// bar. An update the user asked for says what went wrong in a dialog;
-/// one at startup only in the status bar.
+/// Updates repository `name` on the host, saying so in the status bar.
+/// An update the user asked for says what went wrong in a dialog; one
+/// at startup only in the status bar.
 pub(super) fn update_in_background(
     host: &Arc<Host>,
     name: &str,
@@ -345,43 +343,43 @@ pub(super) fn update_in_background(
         }
         updating.push(name.to_owned());
     }
-    let catalog = host.catalog();
-    workspace.update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+    refresh_catalog(host, workspace, cx);
     let counted = host.job();
     let job = {
-        let (updater, name) = (host.clone(), name.to_owned());
-        host.runtime
-            .spawn_blocking(move || updater.update_repo(&name))
+        let name = name.to_owned();
+        host.spawn(async move |updater| {
+            let result = updater.update_repo(&name).await;
+            updater
+                .updating
+                .lock()
+                .expect("not poisoned")
+                .retain(|repo| *repo != name);
+            let summary = match &result {
+                Ok(updated) if updated.changed() => format!(
+                    "{name} updated to {}",
+                    updated.after.get(..7).unwrap_or(&updated.after)
+                ),
+                Ok(_) => format!("{name} is up to date"),
+                Err(_) => format!("{name} was not updated"),
+            };
+            *updater.last_update.lock().expect("not poisoned") = Some(summary);
+            (result.map(drop), updater.catalog().await)
+        })
     };
-    let (host, name) = (host.clone(), name.to_owned());
+    let name = name.to_owned();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
         let _counted = counted;
-        let result = match job.await {
-            Ok(result) => result.map_err(|error| format!("{error:#}")),
-            Err(error) => Err(error.to_string()),
+        let Ok((result, catalog)) = job.await else {
+            return;
         };
-        host.updating
-            .lock()
-            .expect("not poisoned")
-            .retain(|repo| *repo != name);
-        let summary = match &result {
-            Ok(updated) if updated.changed() => format!(
-                "{name} updated to {}",
-                updated.after.get(..7).unwrap_or(&updated.after)
-            ),
-            Ok(_) => format!("{name} is up to date"),
-            Err(_) => format!("{name} was not updated"),
-        };
-        *host.last_update.lock().expect("not poisoned") = Some(summary);
-        let catalog = host.catalog();
         let _ = workspace.update(cx, |ws, cx| {
             ws.apply(HostUpdate::catalog(catalog), cx);
             if let (true, Err(error)) = (asked, result) {
                 ws.apply(
                     HostUpdate::alert(
                         format!("Could not update {name}"),
-                        error,
+                        format!("{error:#}"),
                     ),
                     cx,
                 );
@@ -391,17 +389,14 @@ pub(super) fn update_in_background(
     .detach();
 }
 
-/// Drains every main chat's queue off the interface's thread, as tau
-/// starts, and shows each.
-fn drain_all_off_thread(
+/// Drains every main chat's queue on the host, as tau starts, and shows
+/// each.
+fn drain_all_in_background(
     host: &Arc<Host>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
-    let job = {
-        let drainer = host.clone();
-        host.runtime.spawn_blocking(move || drainer.drain_all())
-    };
+    let job = host.spawn(async move |drainer| drainer.drain_all().await);
     let (host, workspace) = (host.clone(), workspace.downgrade());
     cx.spawn(async move |cx| {
         let Ok(reports) = job.await else {
@@ -419,9 +414,9 @@ fn drain_all_off_thread(
     .detach();
 }
 
-/// Finishes what the last tau left as it closed (`Host::recover`), off
-/// the interface's thread, then brings in what changed upstream while it
-/// was closed, quietly: an update moves trunk, which recovery reads.
+/// Finishes what the last tau left as it closed (`Host::recover`) on
+/// the host, then brings in what changed upstream while it was closed,
+/// quietly: an update moves trunk, which recovery reads.
 fn recover_in_background(
     host: &Arc<Host>,
     slots: Vec<RepoSlot>,
@@ -430,15 +425,10 @@ fn recover_in_background(
 ) {
     // The repositories as they are, before recovery and updates.
     if !slots.is_empty() {
-        let catalog = host.catalog();
-        workspace
-            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+        refresh_catalog(host, workspace, cx);
     }
     let counted = host.job();
-    let job = {
-        let recoverer = host.clone();
-        host.runtime.spawn_blocking(move || recoverer.recover())
-    };
+    let job = host.spawn(async move |recoverer| recoverer.recover().await);
     let host = host.clone();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
@@ -465,14 +455,43 @@ fn recover_in_background(
             });
             // What waited to land when tau closed lands now, and the
             // conflicts on each main chat are read again (ADR 0024).
-            let host_job = host.clone();
-            drain_all_off_thread(&host_job, &workspace, cx);
+            drain_all_in_background(&host, &workspace, cx);
             for slot in &slots {
                 update_in_background(&host, &slot.name, &workspace, false, cx);
             }
         });
     })
     .detach();
+}
+
+/// Starts a run with `start` on the host, then shows it and has its
+/// title written; a failure is an alert titled `failed`.
+fn start_on_host<F>(
+    host: &Arc<Host>,
+    prompt: &str,
+    start: impl FnOnce(Arc<Host>) -> F + Send + 'static,
+    failed: &'static str,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) where
+    F: Future<Output = anyhow::Result<RunView>> + Send + 'static,
+{
+    let (titler, prompt) = (host.clone(), prompt.to_owned());
+    on_host(
+        host,
+        workspace,
+        start,
+        move |ws, view, cx| {
+            let run = view.id.clone();
+            ws.apply(HostUpdate::Run(Box::new(view)), cx);
+            let workspace = cx.entity();
+            cx.defer(move |cx| {
+                title_in_background(&titler, &run, &prompt, &workspace, cx)
+            });
+        },
+        alert(failed),
+        cx,
+    );
 }
 
 impl Host {
@@ -484,13 +503,27 @@ impl Host {
         mut events: mpsc::UnboundedReceiver<RunEvent>,
         cx: &mut App,
     ) -> Arc<Host> {
-        match self.history() {
-            Ok(runs) => workspace
-                .update(cx, |ws, cx| ws.apply(HostUpdate::History(runs), cx)),
-            Err(error) => eprintln!("tau-ui: cannot read past runs: {error:#}"),
-        }
         let host = Arc::new(self);
         let attached = host.clone();
+        refresh_catalog(&host, workspace, cx);
+        {
+            let history = host.spawn(async move |host| host.history().await);
+            let workspace = workspace.downgrade();
+            cx.spawn(async move |cx| match history.await {
+                Ok(Ok(runs)) => {
+                    let _ = workspace.update(cx, |ws, cx| {
+                        ws.apply(HostUpdate::History(runs), cx)
+                    });
+                }
+                Ok(Err(error)) => {
+                    eprintln!("tau-ui: cannot read past runs: {error:#}")
+                }
+                Err(error) => {
+                    eprintln!("tau-ui: cannot read past runs: {error}")
+                }
+            })
+            .detach();
+        }
         // Finished forks say whether they would land cleanly.
         super::forecast::follow(&host, workspace, cx);
         // Phones reach this host once allowed.
@@ -515,14 +548,13 @@ impl Host {
             let (host, entity) = (host.clone(), workspace.downgrade());
             std::rc::Rc::new(move |account, cx| {
                 let applied = host.set_account(account);
-                let catalog = host.catalog();
                 let Some(workspace) = entity.upgrade() else {
                     return;
                 };
                 check_eligibility(&host, &workspace, cx);
-                workspace.update(cx, |ws, cx| {
-                    ws.apply(HostUpdate::catalog(catalog), cx);
-                    if let Err(error) = applied {
+                refresh_catalog(&host, &workspace, cx);
+                if let Err(error) = applied {
+                    workspace.update(cx, |ws, cx| {
                         ws.apply(
                             HostUpdate::alert(
                                 "Could not use the new sign-in",
@@ -530,8 +562,8 @@ impl Host {
                             ),
                             cx,
                         );
-                    }
-                });
+                    });
+                }
             })
         };
         let sign_ins = accounts::SignIns::default();
@@ -567,22 +599,26 @@ impl Host {
                     prompt,
                     model,
                     repo,
-                } => match handler.start(prompt, model, repo) {
-                    Ok(view) => {
-                        let run = view.id.clone();
-                        workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Run(Box::new(view)), cx));
-                        title_in_background(&handler, &run, prompt, &workspace, cx);
-                    }
-                    Err(error) => workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::alert("Could not start the run", format!("{error:#}")), cx)
-                    }),
-                },
+                } => {
+                    let (job_prompt, model, repo) =
+                        (prompt.clone(), model.clone(), repo.clone());
+                    start_on_host(
+                        &handler,
+                        prompt,
+                        async move |host| {
+                            host.start(&job_prompt, &model, &repo).await
+                        },
+                        "Could not start the run",
+                        &workspace,
+                        cx,
+                    );
+                }
                 WorkspaceEvent::PreparePullRequest { run } => {
                     let (job_run, run) = (run.clone(), run.clone());
-                    off_thread(
+                    on_host(
                         &handler,
                         &workspace,
-                        move |host| host.prepare_pull_request(&job_run),
+                        async move |host| host.prepare_pull_request(&job_run).await,
                         move |ws, draft, cx| {
                             let pr = Box::new(draft);
                             ws.apply(HostUpdate::PullRequest { run, pr }, cx)
@@ -606,11 +642,10 @@ impl Host {
                         return;
                     };
                     let job = {
-                        let host = handler.clone();
                         let (run, title, body, reviewers) =
                             (run.clone(), title.clone(), body.clone(), reviewers.clone());
                         let (draft, keep_pushing) = (*draft, *keep_pushing);
-                        handler.runtime.spawn_blocking(move || {
+                        handler.spawn(async move |host| {
                             host.create_pull_request(
                                 &run,
                                 &prepared,
@@ -620,6 +655,7 @@ impl Host {
                                 keep_pushing,
                                 &reviewers,
                             )
+                            .await
                         })
                     };
                     let (host, run, workspace) =
@@ -649,23 +685,25 @@ impl Host {
                 }
                 WorkspaceEvent::Push { repo, fetch } => {
                     let (job_repo, fetch) = (repo.clone(), *fetch);
-                    let job = {
-                        let host = handler.clone();
-                        handler.runtime.spawn_blocking(move || {
-                            host.push_main(&job_repo, fetch)
-                        })
-                    };
-                    let (host, repo, workspace) =
-                        (handler.clone(), repo.clone(), workspace.downgrade());
-                    cx.spawn(async move |cx| {
-                        let result = job.await.unwrap_or_else(|error| {
-                            Err(crate::push::PushFailure::Failed(error.to_string()))
-                        });
+                    let job = handler.spawn(async move |host| {
+                        let result = host.push_main(&job_repo, fetch).await;
                         // The count ahead of GitHub, and trunk after a
                         // fetch, change with it.
-                        let catalog = host.catalog();
+                        (result, host.catalog().await)
+                    });
+                    let (repo, workspace) = (repo.clone(), workspace.downgrade());
+                    cx.spawn(async move |cx| {
+                        let (result, catalog) = match job.await {
+                            Ok((result, catalog)) => (result, Some(catalog)),
+                            Err(error) => (
+                                Err(crate::push::PushFailure::Failed(error.to_string())),
+                                None,
+                            ),
+                        };
                         let _ = workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::catalog(catalog), cx);
+                            if let Some(catalog) = catalog {
+                                ws.apply(HostUpdate::catalog(catalog), cx);
+                            }
                             ws.apply(HostUpdate::Pushed { repo, result }, cx);
                         });
                     })
@@ -685,13 +723,12 @@ impl Host {
                 WorkspaceEvent::JevKey { key } => {
                     let saved =
                         handler.config.credentials.set_jev_key(key.as_deref());
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = saved {
+                    refresh_catalog(&handler, &workspace, cx);
+                    if let Err(error) = saved {
+                        workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::alert("Could not save the TypeSafe key", error.to_string()), cx);
-                        }
-                    });
+                        });
+                    }
                 }
                 WorkspaceEvent::PluginAct { plugin, action } => {
                     // On the host: an action may ask Jev, or the store.
@@ -714,20 +751,31 @@ impl Host {
                 WorkspaceEvent::PluginSettings { plugin, settings } => {
                     let saved =
                         handler.save_plugin_settings(plugin, settings.clone());
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = saved {
+                    refresh_catalog(&handler, &workspace, cx);
+                    if let Err(error) = saved {
+                        workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::alert(format!("Could not save {plugin}'s settings"), format!("{error:#}")), cx);
-                        }
-                    });
+                        });
+                    }
                 }
                 WorkspaceEvent::PluginRecord { run, plugin, body } => {
-                    let stored = handler.store_plugin_record(run, plugin, body);
-                    workspace.update(cx, |ws, cx| match stored {
-                        Ok(()) => ws.apply(HostUpdate::PluginRecord { run: run.clone(), plugin: plugin.clone(), body: body.clone() }, cx),
-                        Err(error) => ws.apply(HostUpdate::alert(format!("Could not save what {plugin} changed"), format!("{error:#}")), cx),
-                    });
+                    let (job_run, job_plugin, job_body) =
+                        (run.clone(), plugin.clone(), body.clone());
+                    let (run, plugin, body) = (run.clone(), plugin.clone(), body.clone());
+                    let failed = alert(format!("Could not save what {plugin} changed"));
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| {
+                            host.store_plugin_record(&job_run, &job_plugin, &job_body)
+                                .await
+                        },
+                        move |ws, (), cx| {
+                            ws.apply(HostUpdate::PluginRecord { run, plugin, body }, cx)
+                        },
+                        failed,
+                        cx,
+                    );
                 }
                 WorkspaceEvent::CloseRun { run } => {
                     if let Err(error) = handler.set_closed(run, true) {
@@ -736,22 +784,34 @@ impl Host {
                     workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Closed(run.clone()), cx));
                 }
                 WorkspaceEvent::Say { run, text, model } => {
-                    match handler.steer(run, text) {
-                        Ok(true) => workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::Steered { run: run.clone(), text: text.clone() }, cx)
-                        }),
-                        Ok(false) => go_on(&handler, run, text, model, &workspace, cx),
-                        Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::alert("Could not send the message", format!("{error:#}")), cx)
-                        }),
-                    }
+                    let (job_run, job_text) = (run.clone(), text.clone());
+                    let (run, text, model) = (run.clone(), text.clone(), model.clone());
+                    let goer = handler.clone();
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| host.steer(&job_run, &job_text).await,
+                        move |ws, steered, cx| {
+                            if steered {
+                                ws.apply(HostUpdate::Steered { run, text }, cx);
+                            } else {
+                                let workspace = cx.entity();
+                                cx.defer(move |cx| {
+                                    go_on(&goer, &run, &text, &model, &workspace, cx)
+                                });
+                            }
+                        },
+                        alert("Could not send the message"),
+                        cx,
+                    );
                 }
                 WorkspaceEvent::ResumeCutOff { run } => tau_turn(
                     &handler,
                     run,
                     CUT_OFF.to_owned(),
-                    |host, run, _| host.resume_cut_off(run),
+                    async move |host, run, _| host.resume_cut_off(&run).await,
                     "Could not resume the run",
+                    |_| {},
                     &workspace,
                     cx,
                 ),
@@ -760,16 +820,20 @@ impl Host {
                     turn,
                     prompt,
                     model,
-                } => match handler.fork(run, *turn, prompt, model) {
-                    Ok(view) => {
-                        let run = view.id.clone();
-                        workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Run(Box::new(view)), cx));
-                        title_in_background(&handler, &run, prompt, &workspace, cx);
-                    }
-                    Err(error) => workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::alert("Could not fork the run", format!("{error:#}")), cx)
-                    }),
-                },
+                } => {
+                    let (run, turn, job_prompt, model) =
+                        (run.clone(), *turn, prompt.clone(), model.clone());
+                    start_on_host(
+                        &handler,
+                        prompt,
+                        async move |host| {
+                            host.fork(&run, turn, &job_prompt, &model).await
+                        },
+                        "Could not fork the run",
+                        &workspace,
+                        cx,
+                    );
+                }
                 WorkspaceEvent::CompareCode { main, fork } => {
                     let code = |ws: &mut Workspace, main, fork, code, cx: &mut Context<Workspace>| {
                         ws.apply(HostUpdate::BranchCode { main, fork, code }, cx)
@@ -777,12 +841,10 @@ impl Host {
                     let (job_main, job_fork) = (main.clone(), fork.clone());
                     let (main, fork) = (main.clone(), fork.clone());
                     let (failed_main, failed_fork) = (main.clone(), fork.clone());
-                    off_thread(
+                    on_host(
                         &handler,
                         &workspace,
-                        move |host| {
-                            host.block_on(host.branch_code(&job_main, &job_fork))
-                        },
+                        async move |host| host.branch_code(&job_main, &job_fork).await,
                         move |ws, ready, cx| code(ws, main, fork, CodeState::Ready(ready), cx),
                         move |ws, error, cx| {
                             code(ws, failed_main, failed_fork, CodeState::Unavailable(error), cx)
@@ -804,23 +866,22 @@ impl Host {
                     });
                     // What is saved, for every interface; the one that
                     // changed it showed the change already.
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = saved {
+                    refresh_catalog(&handler, &workspace, cx);
+                    if let Err(error) = saved {
+                        workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::alert("Could not save the model settings", format!("{error:#}")), cx)
-                        }
-                    });
+                        });
+                    }
                 }
                 WorkspaceEvent::PreviewLanding { run } => {
                     let preview = |ws: &mut Workspace, run, preview, cx: &mut Context<Workspace>| {
                         ws.apply(HostUpdate::LandingPreview { run, preview }, cx)
                     };
                     let (job_run, run, failed_run) = (run.clone(), run.clone(), run.clone());
-                    off_thread(
+                    on_host(
                         &handler,
                         &workspace,
-                        move |host| host.preview_landing(&job_run),
+                        async move |host| host.preview_landing(&job_run).await,
                         move |ws, landing, cx| preview(ws, run, Ok(landing), cx),
                         move |ws, error, cx| preview(ws, failed_run, Err(error), cx),
                         cx,
@@ -833,15 +894,13 @@ impl Host {
                 WorkspaceEvent::Land { run } => {
                     let (job_run, failed_run) = (run.clone(), run.clone());
                     let shower = handler.clone();
-                    off_thread(
+                    on_host(
                         &handler,
                         &workspace,
-                        move |host| host.queue_landing(&job_run),
-                        move |ws, report, cx| {
+                        async move |host| host.queue_landing(&job_run).await,
+                        move |_, report, cx| {
                             let workspace = cx.entity();
-                            let host = shower.clone();
-                            let _ = ws;
-                            cx.defer(move |cx| show_drain(&host, report, &workspace, cx));
+                            cx.defer(move |cx| show_drain(&shower, report, &workspace, cx));
                         },
                         move |ws, error, cx| {
                             ws.apply(HostUpdate::Landed { run: failed_run, landing: Err(error) }, cx)
@@ -851,49 +910,57 @@ impl Host {
                 }
                 WorkspaceEvent::Unqueue { run } => {
                     let run = run.clone();
-                    drain_off_thread(
+                    drain_on_host(
                         &handler,
                         &workspace,
-                        move |host| host.unqueue(&run),
+                        async move |host| host.unqueue(&run).await,
                         "Could not take the chat out of the queue",
                         cx,
                     );
                 }
                 WorkspaceEvent::DismissConflicts { main } => {
                     let main = main.clone();
-                    drain_off_thread(
+                    drain_on_host(
                         &handler,
                         &workspace,
-                        move |host| host.dismiss_conflicts(&main),
+                        async move |host| host.dismiss_conflicts(&main).await,
                         "Could not save that",
                         cx,
                     );
                 }
                 WorkspaceEvent::ResolveAgain { main } => {
-                    match handler.resolve_again_prompt(main) {
-                        Ok(prompt) => resolve_main(&handler, main, prompt, &workspace, cx),
-                        Err(error) => workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::alert("Could not resolve again", format!("{error:#}")), cx)
-                        }),
-                    }
+                    let (job_main, main) = (main.clone(), main.clone());
+                    let resolver = handler.clone();
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| host.resolve_again_prompt(&job_main).await,
+                        move |_, prompt, cx| {
+                            let workspace = cx.entity();
+                            cx.defer(move |cx| {
+                                resolve_main(&resolver, &main, prompt, &workspace, cx)
+                            });
+                        },
+                        alert("Could not resolve again"),
+                        cx,
+                    );
                 }
                 WorkspaceEvent::DropChild { run } => {
                     // A dropped chat leaves the queue it waited in.
                     let (job_run, run) = (run.clone(), run.clone());
                     let failed_run = run.clone();
                     let shower = handler.clone();
-                    off_thread(
+                    on_host(
                         &handler,
                         &workspace,
-                        move |host| {
-                            host.drop_child(&job_run)?;
-                            host.unqueue(&job_run)
+                        async move |host| {
+                            host.drop_child(&job_run).await?;
+                            host.unqueue(&job_run).await
                         },
                         move |ws, report, cx| {
                             ws.apply(HostUpdate::Dropped { run, result: Ok(()) }, cx);
                             let workspace = cx.entity();
-                            let host = shower.clone();
-                            cx.defer(move |cx| show_drain(&host, report, &workspace, cx));
+                            cx.defer(move |cx| show_drain(&shower, report, &workspace, cx));
                         },
                         move |ws, error, cx| {
                             ws.apply(HostUpdate::Dropped { run: failed_run, result: Err(error) }, cx)
@@ -902,23 +969,26 @@ impl Host {
                     );
                 }
                 WorkspaceEvent::KeepBranch { run } => {
-                    let kept = handler.keep_branch(run);
-                    workspace.update(cx, |ws, cx| match kept {
-                        Ok(()) => ws.apply(HostUpdate::BranchKept(run.clone()), cx),
-                        Err(error) => ws.apply(HostUpdate::alert("Could not drop the other branches", format!("{error:#}")), cx),
-                    });
+                    let (job_run, run) = (run.clone(), run.clone());
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| host.keep_branch(&job_run).await,
+                        move |ws, (), cx| ws.apply(HostUpdate::BranchKept(run), cx),
+                        alert("Could not drop the other branches"),
+                        cx,
+                    );
                 }
                 WorkspaceEvent::HideRepo { repo } => {
                     // The list without it, for every interface; the one
                     // that hid it showed that already.
                     let hidden = handler.hide_repo(repo);
-                    let catalog = handler.catalog();
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx);
-                        if let Err(error) = hidden {
+                    refresh_catalog(&handler, &workspace, cx);
+                    if let Err(error) = hidden {
+                        workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::alert("Could not save the repository list", format!("{error:#}")), cx)
-                        }
-                    });
+                        });
+                    }
                 }
                 WorkspaceEvent::OpenRepos(open) => {
                     if let Err(error) = handler.set_open_repos(open.clone()) {
@@ -958,20 +1028,22 @@ impl Host {
             while let Some(event) = events.recv().await {
                 // The run may have asked Jev: the Plugins screen's count
                 // follows.
-                if matches!(event, RunEvent::RunEnd { .. }) {
-                    let catalog = host.catalog();
-                    let _ = workspace.update(cx, |ws, cx| {
-                        ws.apply(HostUpdate::catalog(catalog), cx)
-                    });
+                if matches!(event, RunEvent::RunEnd { .. })
+                    && let Some(entity) = workspace.upgrade()
+                {
+                    let host = host.clone();
+                    cx.update(|cx| refresh_catalog(&host, &entity, cx));
                 }
                 // A pull request that keeps pushing takes the commits the
                 // turn made.
                 if let RunEvent::TurnEnd { run, .. } = &event
                     && host.keeps_pushing(run)
                 {
-                    let (pusher, run) = (host.clone(), run.clone());
-                    host.runtime.spawn_blocking(move || {
-                        if let Err(error) = pusher.push_later_commits(&run) {
+                    let run = run.clone();
+                    host.spawn(async move |pusher| {
+                        if let Err(error) =
+                            pusher.push_later_commits(&run).await
+                        {
                             eprintln!(
                                 "tau-ui: cannot push the turn: {error:#}"
                             );
@@ -1045,10 +1117,12 @@ impl Host {
                 {
                     let host = host.clone();
                     cx.update(|cx| {
-                        drain_off_thread(
+                        drain_on_host(
                             &host,
                             &entity,
-                            move |host| host.sub_agent_ended(&child),
+                            async move |host| {
+                                host.sub_agent_ended(&child).await
+                            },
                             "Could not land the sub-agent's work",
                             cx,
                         )
@@ -1059,14 +1133,14 @@ impl Host {
                 {
                     let host = host.clone();
                     cx.update(|cx| {
-                        drain_off_thread(
+                        drain_on_host(
                             &host,
                             &entity,
-                            move |host| {
+                            async move |host| {
                                 if stopped {
-                                    host.main_turn_stopped(&main)
+                                    host.main_turn_stopped(&main).await
                                 } else {
-                                    host.main_turn_ended(&main)
+                                    host.main_turn_ended(&main).await
                                 }
                             },
                             "Could not land what waits on main",

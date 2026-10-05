@@ -89,8 +89,7 @@ pub(super) async fn branch_code(
     main: RunId,
     fork: RunId,
 ) -> anyhow::Result<BranchCode> {
-    let slot = slot?;
-    let project = tokio::task::spawn_blocking(move || slot.project()).await??;
+    let project = slot?.project().await?;
     let record = store
         .run(&fork.0)
         .await?
@@ -114,38 +113,33 @@ pub(super) async fn branch_code(
     };
     let main_head = head(&main).await?;
     let fork_head = head(&fork).await?;
-    tokio::task::spawn_blocking(move || {
-        // Each at the commit its change has now.
-        let [base, main_head, fork_head]: [Link; 3] = project
-            .blocking()
-            .current([base, main_head, fork_head])?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Three links went in"))?;
-        let (base, main_head, fork_head) =
-            (base.commit_id, main_head.commit_id, fork_head.commit_id);
-        let stats = |from: &str, to: &str| -> anyhow::Result<Vec<FileStat>> {
-            Ok(project
-                .blocking()
-                .diff(from, to)?
-                .iter()
-                .map(file_stat)
-                .collect())
-        };
-        Ok(BranchCode {
-            main: stats(&base, &main_head)?,
-            fork: stats(&base, &fork_head)?,
-            between: project
-                .blocking()
-                .diff(&main_head, &fork_head)?
-                .iter()
-                .map(|file| FileChange {
-                    stat: file_stat(file),
-                    lines: tau_ui_kit::diff::parse(&file.text),
-                })
-                .collect(),
+    project
+        .run(move |project| {
+            // Each at the commit its change has now.
+            let [base, main_head, fork_head]: [Link; 3] = project
+                .current([base, main_head, fork_head])?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Three links went in"))?;
+            let (base, main_head, fork_head) =
+                (base.commit_id, main_head.commit_id, fork_head.commit_id);
+            let stats =
+                |from: &str, to: &str| -> anyhow::Result<Vec<FileStat>> {
+                    Ok(project.diff(from, to)?.iter().map(file_stat).collect())
+                };
+            Ok(BranchCode {
+                main: stats(&base, &main_head)?,
+                fork: stats(&base, &fork_head)?,
+                between: project
+                    .diff(&main_head, &fork_head)?
+                    .iter()
+                    .map(|file| FileChange {
+                        stat: file_stat(file),
+                        lines: tau_ui_kit::diff::parse(&file.text),
+                    })
+                    .collect(),
+            })
         })
-    })
-    .await?
+        .await
 }
 
 pub(super) fn file_stat(file: &FileDiff) -> FileStat {
@@ -170,8 +164,11 @@ impl Host {
     /// it is, without catching a main chat up with trunk. What it finds
     /// is what the person confirms when they land the child
     /// ([`Host::queue_landing`]).
-    pub fn preview_landing(&self, child: &RunId) -> anyhow::Result<Landing> {
-        let landing = self.land_dry(child, Reading::Preview)?;
+    pub async fn preview_landing(
+        &self,
+        child: &RunId,
+    ) -> anyhow::Result<Landing> {
+        let landing = self.land_dry(child, Reading::Preview).await?;
         self.previews.lock().expect("not poisoned").insert(
             child.clone(),
             Preview {
@@ -184,18 +181,14 @@ impl Host {
 
     /// What landing `child` would do, read as `reading` says, without
     /// landing it.
-    pub(super) fn land_dry(
+    pub(super) async fn land_dry(
         &self,
         child: &RunId,
         reading: Reading,
     ) -> anyhow::Result<Landing> {
-        let plan = self.landing(child, reading)?;
-        let into = self.bookmark_of(&plan.parent, &plan.project)?;
-        Ok(self.runtime.block_on(plan.parent_vcs.land(
-            &plan.child_head,
-            into,
-            false,
-        ))?)
+        let plan = self.landing(child, reading).await?;
+        let into = self.bookmark_of(&plan.parent, &plan.project).await?;
+        Ok(plan.parent_vcs.land(&plan.child_head, into, false).await?)
     }
 
     /// Lands `child` on its parent (ADR 0009): restacks its changes onto
@@ -207,22 +200,22 @@ impl Host {
     /// finishes it ([`Host::finish_landings`]): an intent is stored
     /// first, the restack is one jj operation that records what it did,
     /// and the steps after it find nothing to do when done before.
-    pub fn land(&self, child: &RunId) -> anyhow::Result<Landing> {
-        self.land_as(child, false)
+    pub async fn land(&self, child: &RunId) -> anyhow::Result<Landing> {
+        self.land_as(child, false).await
     }
 
     /// [`Host::land`]; `recovered` when tau finishes, at start, a
     /// landing it was asked for before it closed.
-    fn land_as(
+    async fn land_as(
         &self,
         child: &RunId,
         recovered: bool,
     ) -> anyhow::Result<Landing> {
         // No run starts while it lands: a main chat's turn would start
         // on the stack the landing rewrites.
-        let _starting = self.starting.lock().expect("not poisoned");
-        let plan = self.landing(child, Reading::Land)?;
-        let into = self.bookmark_of(&plan.parent, &plan.project)?;
+        let _starting = self.starting.lock().await;
+        let plan = self.landing(child, Reading::Land).await?;
+        let into = self.bookmark_of(&plan.parent, &plan.project).await?;
         let intent = Intent {
             from: child.0.to_string(),
             child_head: plan.child_head.clone(),
@@ -230,13 +223,9 @@ impl Host {
             parent_workspace: plan.parent_workspace.clone(),
             cancelled: false,
         };
-        self.store_intent(&plan.parent, &intent)?;
+        self.store_intent(&plan.parent, &intent).await?;
         self.cut(LandingStep::Intent)?;
-        let landed = self.runtime.block_on(plan.parent_vcs.land(
-            &plan.child_head,
-            into,
-            true,
-        ));
+        let landed = plan.parent_vcs.land(&plan.child_head, into, true).await;
         let landing = match landed {
             Ok(landing) => landing,
             // It did not land: the next start does not try again.
@@ -245,7 +234,7 @@ impl Host {
                     cancelled: true,
                     ..intent
                 };
-                self.store_intent(&plan.parent, &cancelled)?;
+                self.store_intent(&plan.parent, &cancelled).await?;
                 return Err(error.into());
             }
         };
@@ -256,7 +245,8 @@ impl Host {
             &intent,
             &landing,
             recovered,
-        )?;
+        )
+        .await?;
         Ok(landing)
     }
 
@@ -264,7 +254,7 @@ impl Host {
     /// to do when it was done before: records the landed changes as the
     /// parent's links with a record of the landing, then forgets the
     /// child's workspace and removes its bookmark.
-    fn finish_landing(
+    async fn finish_landing(
         &self,
         project: &Project,
         parent: &RunId,
@@ -275,16 +265,18 @@ impl Host {
         let child = RunId(intent.from.as_str().into());
         let record = LandingRecord {
             from: intent.from.clone(),
-            title: self.title_of(&child)?,
+            title: self.title_of(&child).await?,
             landing: landing.clone(),
             recovered,
         };
-        if self.landing_record(parent, &child)?.is_none() {
+        if self.landing_record(parent, &child).await?.is_none() {
             // The landed changes join the parent's links, oldest first,
             // at the parent's latest turn, so forks, the compare view and
             // pull requests see them as the parent's own.
-            let turn =
-                self.link(parent, None)?.map_or(0, |(_, link)| link.turn);
+            let turn = self
+                .link(parent, None)
+                .await?
+                .map_or(0, |(_, link)| link.turn);
             let mut entries = landing
                 .changes
                 .iter()
@@ -311,32 +303,35 @@ impl Host {
                 plugin: LANDING_RECORD.to_owned(),
                 body: serde_json::to_string(&record)?,
             });
-            self.runtime.block_on(self.store.append_turn(
-                &parent.0,
-                &entries,
-                TurnUsage::default(),
-            ))?;
+            self.store
+                .append_turn(&parent.0, &entries, TurnUsage::default())
+                .await?;
         }
         self.cut(LandingStep::Record)?;
         // The child's changes live on the parent's stack now.
+        let workspace = intent.child_workspace.clone();
         project
-            .blocking()
-            .forget_workspace(&intent.child_workspace)?;
+            .run(move |project| project.forget_workspace(&workspace))
+            .await?;
         self.cut(LandingStep::Workspace)?;
-        project.blocking().remove_bookmark(&bookmark(&child))?;
+        let name = bookmark(&child);
+        project
+            .run(move |project| project.remove_bookmark(&name))
+            .await?;
         self.session(&child, |run| run.workspace.take());
         Ok(record)
     }
 
     /// The record `parent` keeps of `child`'s landing, once stored.
-    fn landing_record(
+    async fn landing_record(
         &self,
         parent: &RunId,
         child: &RunId,
     ) -> anyhow::Result<Option<LandingRecord>> {
         Ok(self
-            .runtime
-            .block_on(self.store.plugin_entries(&parent.0, LANDING_RECORD))?
+            .store
+            .plugin_entries(&parent.0, LANDING_RECORD)
+            .await?
             .iter()
             .filter_map(|(_, body)| {
                 serde_json::from_str::<LandingRecord>(body).ok()
@@ -344,19 +339,21 @@ impl Host {
             .find(|record| *record.from == *child.0))
     }
 
-    fn store_intent(
+    async fn store_intent(
         &self,
         parent: &RunId,
         intent: &Intent,
     ) -> anyhow::Result<()> {
-        self.runtime.block_on(self.store.append_turn(
-            &parent.0,
-            &[Entry::Plugin {
-                plugin: LANDING_INTENT.to_owned(),
-                body: serde_json::to_string(intent)?,
-            }],
-            TurnUsage::default(),
-        ))?;
+        self.store
+            .append_turn(
+                &parent.0,
+                &[Entry::Plugin {
+                    plugin: LANDING_INTENT.to_owned(),
+                    body: serde_json::to_string(intent)?,
+                }],
+                TurnUsage::default(),
+            )
+            .await?;
         Ok(())
     }
 
@@ -383,10 +380,9 @@ impl Host {
     /// landings it finished, each marked recovered, for their cards. A
     /// landing whose record was stored is done but for its workspace
     /// and bookmark, which the sweep after takes.
-    pub fn finish_landings(&self) -> anyhow::Result<Vec<LandingRecord>> {
-        let intents = self
-            .runtime
-            .block_on(self.store.plugin_entries_everywhere(LANDING_INTENT))?;
+    pub async fn finish_landings(&self) -> anyhow::Result<Vec<LandingRecord>> {
+        let intents =
+            self.store.plugin_entries_everywhere(LANDING_INTENT).await?;
         // The latest intent of each child, with the parent it is on.
         let mut latest: Vec<(RunId, Intent)> = Vec::new();
         for (parent, body) in intents {
@@ -399,24 +395,28 @@ impl Host {
         let mut finished = Vec::new();
         for (parent, intent) in latest {
             let child = RunId(intent.from.as_str().into());
-            if intent.cancelled || self.ending_of(&child)?.is_some() {
+            if intent.cancelled || self.ending_of(&child).await?.is_some() {
                 continue;
             }
-            let finish = || -> anyhow::Result<LandingRecord> {
-                let project = self.slot_of_run(&child)?.project()?;
-                match project.blocking().landed(&intent.child_head)? {
-                    Some(landing) => self.finish_landing(
-                        &project, &parent, &intent, &landing, true,
-                    ),
+            let finish = async {
+                let project = self.slot_of_run(&child).await?.project().await?;
+                let head = intent.child_head.clone();
+                match project.run(move |project| project.landed(&head)).await? {
+                    Some(landing) => {
+                        self.finish_landing(
+                            &project, &parent, &intent, &landing, true,
+                        )
+                        .await
+                    }
                     None => {
-                        self.land_as(&child, true)?;
-                        self.landing_record(&parent, &child)?.ok_or_else(|| {
-                            anyhow::anyhow!("The landing left no record")
-                        })
+                        self.land_as(&child, true).await?;
+                        self.landing_record(&parent, &child).await?.ok_or_else(
+                            || anyhow::anyhow!("The landing left no record"),
+                        )
                     }
                 }
             };
-            match finish() {
+            match finish.await {
                 Ok(record) => finished.push(record),
                 Err(error) => eprintln!(
                     "tau-ui: cannot finish the landing of {}: {error:#}",
@@ -430,7 +430,7 @@ impl Host {
     /// Starts `run`'s next turn itself, with `prompt`: the turn that
     /// resolves a landing's conflicts (ADR 0014), on the model the run
     /// was on.
-    pub fn start_resolving(
+    pub async fn start_resolving(
         &self,
         run: &RunId,
         prompt: &str,
@@ -439,13 +439,14 @@ impl Host {
             ModelChoice::new(self.config.default_model(), Effort::Auto)
         });
         self.resume_as(run, prompt, &choice, self.is_main(run))
+            .await
     }
 
     /// Drops `child`: abandons its own changes, the ones its parent does
     /// not have, and closes it like a landing does (ADR 0009). Both runs
     /// must be idle. The operation log keeps what was abandoned.
-    pub fn drop_child(&self, child: &RunId) -> anyhow::Result<()> {
-        let parent = self.parent_of(child)?;
+    pub async fn drop_child(&self, child: &RunId) -> anyhow::Result<()> {
+        let parent = self.parent_of(child).await?;
         for run in [child, &parent] {
             if self.is_running(run) {
                 anyhow::bail!(
@@ -454,66 +455,79 @@ impl Host {
                 );
             }
         }
-        let project = self.slot_of_run(child)?.project()?;
+        let project = self.slot_of_run(child).await?.project().await?;
         // The record first: once it is stored the chat takes no more
         // messages, and should tau close before the rest is done, its
         // start finishes it (`Host::sweep`).
-        let ending = self.ending_of(child)?;
+        let ending = self.ending_of(child).await?;
         if let Some(Ending::Landed { .. }) = ending {
             anyhow::bail!("{} landed already; it cannot be dropped", child.0);
         }
         if ending.is_none() {
-            self.runtime.block_on(self.store.append_turn(
-                &child.0,
-                &[Entry::Plugin {
-                    plugin: DROPPED_RECORD.to_owned(),
-                    body: serde_json::to_string(&serde_json::json!({
-                        "parent": parent.0.to_string(),
-                    }))?,
-                }],
-                TurnUsage::default(),
-            ))?;
+            self.store
+                .append_turn(
+                    &child.0,
+                    &[Entry::Plugin {
+                        plugin: DROPPED_RECORD.to_owned(),
+                        body: serde_json::to_string(&serde_json::json!({
+                            "parent": parent.0.to_string(),
+                        }))?,
+                    }],
+                    TurnUsage::default(),
+                )
+                .await?;
         }
         // A main chat catches up with trunk first, as for a landing, and
         // keeps what its working copy stands on: its commits that an
         // update moved trunk past are its own, not the child's.
         let main = self.is_main(&parent);
         if main {
-            self.catch_up(&project, DEFAULT_WORKSPACE)?;
+            self.catch_up(&project, DEFAULT_WORKSPACE).await?;
         }
-        if let Some(head) = project.blocking().bookmark(&bookmark(child))? {
-            let stands_on =
-                match project.blocking().workspace_head(DEFAULT_WORKSPACE)? {
-                    Some(wc) if main => project.blocking().parent_of(&wc)?,
-                    _ => None,
-                };
-            let keep = match stands_on {
-                Some(keep) => keep,
-                None => match project
-                    .blocking()
-                    .bookmark(&self.bookmark_of(&parent, &project)?)?
-                {
-                    Some(keep) => keep,
-                    None => project.blocking().trunk()?,
-                },
-            };
-            project.blocking().abandon_between(&keep, &head)?;
-        }
-        let workspace = self
-            .session(child, |run| run.workspace.take())
-            .or(self.link(child, None)?.map(|(_, link)| link.workspace));
-        if let Some(name) = workspace {
-            project.blocking().forget_workspace(&name)?;
-        }
-        project.blocking().remove_bookmark(&bookmark(child))?;
-        Ok(())
+        let into = self.bookmark_of(&parent, &project).await?;
+        let workspace = match self.session(child, |run| run.workspace.take()) {
+            Some(name) => Some(name),
+            None => self
+                .link(child, None)
+                .await?
+                .map(|(_, link)| link.workspace),
+        };
+        let child_bookmark = bookmark(child);
+        project
+            .run(move |project| {
+                if let Some(head) = project.bookmark(&child_bookmark)? {
+                    let stands_on =
+                        match project.workspace_head(DEFAULT_WORKSPACE)? {
+                            Some(wc) if main => project.parent_of(&wc)?,
+                            _ => None,
+                        };
+                    let keep = match stands_on {
+                        Some(keep) => keep,
+                        None => match project.bookmark(&into)? {
+                            Some(keep) => keep,
+                            None => project.trunk()?,
+                        },
+                    };
+                    project.abandon_between(&keep, &head)?;
+                }
+                if let Some(name) = workspace {
+                    project.forget_workspace(&name)?;
+                }
+                project.remove_bookmark(&child_bookmark)?;
+                anyhow::Ok(())
+            })
+            .await
     }
 
     /// The run `child` was forked from or called by.
-    pub(super) fn parent_of(&self, child: &RunId) -> anyhow::Result<RunId> {
+    pub(super) async fn parent_of(
+        &self,
+        child: &RunId,
+    ) -> anyhow::Result<RunId> {
         let record = self
-            .runtime
-            .block_on(self.store.run(&child.0))?
+            .store
+            .run(&child.0)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("No run {}", child.0))?;
         match record.kind {
             RunKind::Fork { parent, .. } | RunKind::Subagent { parent, .. } => {
@@ -523,16 +537,31 @@ impl Host {
         }
     }
 
+    /// The workspace `run` works in: as this session knows it, or as its
+    /// latest link says.
+    async fn workspace_of(&self, run: &RunId) -> anyhow::Result<String> {
+        match self.session_of(run).workspace {
+            Some(name) => Ok(name),
+            None => self
+                .link(run, None)
+                .await?
+                .map(|(_, link)| link.workspace)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("{} has not finished a turn", run.0)
+                }),
+        }
+    }
+
     /// Everything landing `child` needs, once both runs are idle; to
     /// read it without landing (a preview or a forecast), the parent may
     /// be running.
-    pub(super) fn landing(
+    pub(super) async fn landing(
         &self,
         child: &RunId,
         reading: Reading,
     ) -> anyhow::Result<LandingPlan> {
-        let parent = self.parent_of(child)?;
-        match self.ending_of(child)? {
+        let parent = self.parent_of(child).await?;
+        match self.ending_of(child).await? {
             None => {}
             Some(Ending::Landed { .. }) => {
                 anyhow::bail!("{} landed already", child.0)
@@ -542,7 +571,7 @@ impl Host {
             }
         }
         for run in [child, &parent] {
-            self.settle(run);
+            self.settle(run).await;
         }
         // A preview reads a running parent as it is.
         let parent_busy = self.is_running(&parent);
@@ -554,21 +583,9 @@ impl Host {
                 anyhow::bail!("{} is still running; land once it stops", run.0);
             }
         }
-        let project = self.slot_of_run(child)?.project()?;
-        let workspace_of = |run: &RunId| -> anyhow::Result<String> {
-            let known = self.session_of(run).workspace;
-            match known {
-                Some(name) => Ok(name),
-                None => self
-                    .link(run, None)?
-                    .map(|(_, link)| link.workspace)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("{} has not finished a turn", run.0)
-                    }),
-            }
-        };
-        let child_workspace = workspace_of(child)?;
-        let parent_workspace = match workspace_of(&parent) {
+        let project = self.slot_of_run(child).await?.project().await?;
+        let child_workspace = self.workspace_of(child).await?;
+        let parent_workspace = match self.workspace_of(&parent).await {
             // A main chat works in the repository's own checkout.
             _ if self.is_main(&parent) => {
                 self.session(&parent, |run| {
@@ -579,7 +596,13 @@ impl Host {
             Ok(name) => {
                 // Opening a workspace that is gone would make a new one
                 // on trunk; landing there would lose the parent's work.
-                if !project.blocking().workspaces()?.contains(&name) {
+                let known = name.clone();
+                let gone = project
+                    .run(move |project| {
+                        anyhow::Ok(!project.workspaces()?.contains(&known))
+                    })
+                    .await?;
+                if gone {
                     anyhow::bail!("The parent's workspace is gone");
                 }
                 name
@@ -590,36 +613,43 @@ impl Host {
         // may restack the child, so its head is read after it.
         let writes = reading != Reading::Forecast;
         if self.is_main(&parent) && !parent_busy && writes {
-            self.catch_up(&project, &parent_workspace)?;
+            self.catch_up(&project, &parent_workspace).await?;
         }
         // A completed run may have failed its final commit. Do not land
         // only its earlier commits and then delete the remaining edits.
         // Open the existing workspace, never recreate a missing one.
-        let child_vcs = self.runtime.block_on(tau_vcs::Vcs::open(
+        let child_vcs = tau_vcs::Vcs::open(
             project.workspace_dir(&child_workspace),
             identity(),
-        ))?;
-        let copy = self.runtime.block_on(child_vcs.working_copy())?;
+        )
+        .await?;
+        let copy = child_vcs.working_copy().await?;
         if !copy.is_committed() {
             anyhow::bail!(
                 "The child has uncommitted or oversized untracked files; its workspace \
                  is retained. Commit or recover its work before landing."
             );
         }
-        let child_head =
-            project.blocking().bookmark(&bookmark(child))?.ok_or_else(
-                || anyhow::anyhow!("{} has no changes to land", child.0),
-            )?;
+        let child_bookmark = bookmark(child);
+        let child_head = project
+            .run(move |project| project.bookmark(&child_bookmark))
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("{} has no changes to land", child.0)
+            })?;
         let parent_vcs = if parent_busy || !writes {
-            self.runtime.block_on(tau_vcs::Vcs::open(
+            tau_vcs::Vcs::open(
                 project.workspace_dir(&parent_workspace),
                 identity(),
-            ))?
+            )
+            .await?
         } else {
-            project.blocking().add_workspace(
-                &parent_workspace,
-                &project.blocking().trunk()?,
-            )?
+            let name = parent_workspace.clone();
+            project
+                .run(move |project| {
+                    project.add_workspace(&name, &project.trunk()?)
+                })
+                .await?
         };
         Ok(LandingPlan {
             parent,
@@ -634,9 +664,9 @@ impl Host {
     /// Keeps `run`, a branch of a fork, and removes the workspaces of the
     /// other branches that are not running: the run it was forked from,
     /// and its other forks. Their commits stay in the project.
-    pub fn keep_branch(&self, run: &RunId) -> anyhow::Result<()> {
-        let project = self.slot_of_run(run)?.project()?;
-        let store = self.store.clone();
+    pub async fn keep_branch(&self, run: &RunId) -> anyhow::Result<()> {
+        let project = self.slot_of_run(run).await?.project().await?;
+        let store = &self.store;
         let kept = run.0.to_string();
         let running: Vec<String> = self
             .runs
@@ -645,56 +675,56 @@ impl Host {
             .keys()
             .map(|run| run.0.to_string())
             .collect();
-        self.runtime.block_on(async move {
-            let record = store
-                .run(&kept)
+        let record = store
+            .run(&kept)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No run {kept}"))?;
+        let RunKind::Fork { parent, .. } = record.kind else {
+            return Ok(());
+        };
+        let family: Vec<String> = store
+            .recent_runs(1000)
+            .await?
+            .into_iter()
+            .filter(|other| {
+                other.id == parent
+                    || matches!(&other.kind, RunKind::Fork { parent: p, .. } if *p == parent)
+            })
+            .map(|other| other.id)
+            .filter(|id| *id != kept && !running.contains(id))
+            .collect();
+        for other in family {
+            let names: Vec<String> = store
+                .plugin_entries(&other, WORKSPACE_PLUGIN)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("No run {kept}"))?;
-            let RunKind::Fork { parent, .. } = record.kind else {
-                return Ok(());
-            };
-            let family: Vec<String> = store
-                .recent_runs(1000)
-                .await?
-                .into_iter()
-                .filter(|other| {
-                    other.id == parent
-                        || matches!(&other.kind, RunKind::Fork { parent: p, .. } if *p == parent)
-                })
-                .map(|other| other.id)
-                .filter(|id| *id != kept && !running.contains(id))
+                .iter()
+                .filter_map(|(_, body)| Link::parse(body))
+                .map(|link| link.workspace)
                 .collect();
-            for other in family {
-                let names: Vec<String> = store
-                    .plugin_entries(&other, WORKSPACE_PLUGIN)
-                    .await?
-                    .iter()
-                    .filter_map(|(_, body)| Link::parse(body))
-                    .map(|link| link.workspace)
-                    .collect();
-                let project = project.clone();
-                tokio::task::spawn_blocking(move || {
-                    names.iter().try_for_each(|name| project.blocking().forget_workspace(name))
+            project
+                .run(move |project| {
+                    names
+                        .iter()
+                        .try_for_each(|name| project.forget_workspace(name))
                 })
-                .await??;
-            }
-            Ok(())
-        })
+                .await?;
+        }
+        Ok(())
     }
 
     /// The code of `main` and its fork `fork`: what each changed after
     /// the fork point, and how the fork's code differs from the run's.
-    pub fn branch_code(
+    pub async fn branch_code(
         &self,
         main: &RunId,
         fork: &RunId,
-    ) -> impl std::future::Future<Output = anyhow::Result<BranchCode>> + Send + 'static
-    {
+    ) -> anyhow::Result<BranchCode> {
         branch_code(
             self.store.clone(),
-            self.slot_of_run(main),
+            self.slot_of_run(main).await,
             main.clone(),
             fork.clone(),
         )
+        .await
     }
 }

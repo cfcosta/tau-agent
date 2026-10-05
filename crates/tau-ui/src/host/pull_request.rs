@@ -26,81 +26,75 @@ pub(super) struct Replayed {
     pub(super) copies: Vec<String>,
 }
 
-impl Host {
-    /// The commits on `run`'s stack, oldest first: the model's, and
-    /// those its children landed (ADR 0014).
-    pub(super) fn stack(
-        &self,
-        run: &RunId,
-        project: &Project,
-    ) -> anyhow::Result<Vec<tau_vcs::StackChange>> {
-        let Some(head) = project.blocking().bookmark(&bookmark(run))? else {
-            return Ok(Vec::new());
-        };
-        Ok(project.blocking().stack(&head)?)
-    }
+/// The commits on `run`'s stack, oldest first: the model's, and those
+/// its children landed (ADR 0014). Runs in a job on the project.
+pub(super) fn stack(
+    run: &RunId,
+    project: &ProjectRepo,
+) -> anyhow::Result<Vec<tau_vcs::StackChange>> {
+    let Some(head) = project.bookmark(&bookmark(run))? else {
+        return Ok(Vec::new());
+    };
+    Ok(project.stack(&head)?)
+}
 
-    /// `run`'s commits replayed onto GitHub's trunk as the last fetch
-    /// left it, so the pull request carries only the run's own work and
-    /// none of what the main chat has not pushed. `after` is the pull
-    /// request's branch and the change id of the run's last commit in
-    /// it: only the commits after that one replay, onto the branch. A
-    /// replay that would conflict is refused, naming the files.
-    pub(super) fn replayed(
-        &self,
-        run: &RunId,
-        project: &Project,
-        after: Option<(&str, &str)>,
-    ) -> anyhow::Result<Replayed> {
-        let all = self.stack(run, project)?;
-        if all.is_empty() {
-            anyhow::bail!(
-                "The run has no commits, so there is nothing to propose"
-            );
-        }
-        let trunk = project.blocking().trunk_name()?;
-        let upstream = || {
-            project.blocking().upstream()?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "GitHub has no {trunk} for the pull request to go on"
-                )
-            })
-        };
-        let (onto, changes) = match after {
-            Some((head, pushed)) => {
-                // Changes keep their ids when a landing restacks them.
-                match all.iter().position(|change| change.change_id == pushed) {
-                    Some(at) => (head.to_owned(), all[at + 1..].to_vec()),
-                    None => (upstream()?, all),
-                }
-            }
-            None => (upstream()?, all),
-        };
-        let ids: Vec<String> = changes
-            .iter()
-            .map(|change| change.commit_id.clone())
-            .collect();
-        let copies = project.blocking().replay(&ids, &onto).map_err(
-            |error| match error {
-                tau_vcs::VcsError::WouldConflict(paths) => anyhow::anyhow!(
-                    "would conflict on origin/{trunk}: {}",
-                    paths.join(", ")
-                ),
-                error => error.into(),
-            },
-        )?;
-        Ok(Replayed {
-            onto,
-            changes,
-            copies,
+/// `run`'s commits replayed onto GitHub's trunk as the last fetch left
+/// it, so the pull request carries only the run's own work and none of
+/// what the main chat has not pushed. `after` is the pull request's
+/// branch and the change id of the run's last commit in it: only the
+/// commits after that one replay, onto the branch. A replay that would
+/// conflict is refused, naming the files. Runs in a job on the project.
+pub(super) fn replayed(
+    run: &RunId,
+    project: &ProjectRepo,
+    after: Option<(&str, &str)>,
+) -> anyhow::Result<Replayed> {
+    let all = stack(run, project)?;
+    if all.is_empty() {
+        anyhow::bail!("The run has no commits, so there is nothing to propose");
+    }
+    let trunk = project.trunk_name()?;
+    let upstream = || {
+        project.upstream()?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "GitHub has no {trunk} for the pull request to go on"
+            )
         })
-    }
+    };
+    let (onto, changes) = match after {
+        Some((head, pushed)) => {
+            // Changes keep their ids when a landing restacks them.
+            match all.iter().position(|change| change.change_id == pushed) {
+                Some(at) => (head.to_owned(), all[at + 1..].to_vec()),
+                None => (upstream()?, all),
+            }
+        }
+        None => (upstream()?, all),
+    };
+    let ids: Vec<String> = changes
+        .iter()
+        .map(|change| change.commit_id.clone())
+        .collect();
+    let copies = project.replay(&ids, &onto).map_err(|error| match error {
+        tau_vcs::VcsError::WouldConflict(paths) => anyhow::anyhow!(
+            "would conflict on origin/{trunk}: {}",
+            paths.join(", ")
+        ),
+        error => error.into(),
+    })?;
+    Ok(Replayed {
+        onto,
+        changes,
+        copies,
+    })
+}
 
+impl Host {
     /// Writes a pull request draft from `run`: its commits replayed on
     /// its repository's default branch, its prompt as the title and its
     /// last answer as the description. A main chat has none: it pushes
     /// to GitHub itself.
-    pub fn prepare_pull_request(
+    pub async fn prepare_pull_request(
         &self,
         run: &RunId,
     ) -> anyhow::Result<PullRequest> {
@@ -110,7 +104,7 @@ impl Host {
                  a pull request"
             );
         }
-        let slot = self.slot_of_run(run)?;
+        let slot = self.slot_of_run(run).await?;
         let repo = self.github_of(&slot.name).ok_or_else(|| {
             anyhow::anyhow!(
                 "Pull requests need a repository cloned from GitHub; {} was \
@@ -119,35 +113,52 @@ impl Host {
             )
         })?;
         let (url, token) = self.github_remote(&slot.name)?;
-        let project = slot
-            .project
-            .wait()
-            .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
-        // What GitHub's default branch is now, for the replay to go on.
-        let _ = project.blocking().update(tau_vcs::UpdateFrom::Remote {
-            url: &url,
-            token: Some(&token),
-        });
-        let replayed = self.replayed(run, &project, None)?;
-        let last = replayed.copies.last().expect("a replay of some commits");
-        let changed = project.blocking().diff(&replayed.onto, last)?.len();
-        let mut commits = Vec::new();
-        let mut previous = replayed.onto.clone();
-        for (change, copy) in replayed.changes.iter().zip(&replayed.copies) {
-            let files = project.blocking().diff(&previous, copy)?;
-            commits.push(PrCommit {
-                title: change
-                    .description
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned(),
-                added: files.iter().map(|file| file.added as u32).sum(),
-                removed: files.iter().map(|file| file.removed as u32).sum(),
-            });
-            previous = copy.clone();
-        }
-        let view = self.history()?.into_iter().find(|view| &view.id == run);
+        let project =
+            slot.project.wait().await.ok_or_else(|| {
+                anyhow::anyhow!("{} has no project", slot.name)
+            })?;
+        let job_run = run.clone();
+        let (changed, commits, base) = project
+            .run(move |project| {
+                // What GitHub's default branch is now, for the replay to
+                // go on.
+                let _ = project.update(tau_vcs::UpdateFrom::Remote {
+                    url: &url,
+                    token: Some(&token),
+                });
+                let replayed = replayed(&job_run, project, None)?;
+                let last =
+                    replayed.copies.last().expect("a replay of some commits");
+                let changed = project.diff(&replayed.onto, last)?.len();
+                let mut commits = Vec::new();
+                let mut previous = replayed.onto.clone();
+                for (change, copy) in
+                    replayed.changes.iter().zip(&replayed.copies)
+                {
+                    let files = project.diff(&previous, copy)?;
+                    commits.push(PrCommit {
+                        title: change
+                            .description
+                            .lines()
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned(),
+                        added: files.iter().map(|file| file.added as u32).sum(),
+                        removed: files
+                            .iter()
+                            .map(|file| file.removed as u32)
+                            .sum(),
+                    });
+                    previous = copy.clone();
+                }
+                anyhow::Ok((changed, commits, project.trunk_name()?))
+            })
+            .await?;
+        let view = self
+            .history()
+            .await?
+            .into_iter()
+            .find(|view| &view.id == run);
         let prompt = view
             .as_ref()
             .and_then(|view| {
@@ -177,13 +188,13 @@ impl Host {
         let draft = PullRequest {
             repo: repo.clone(),
             head,
-            base: project.blocking().trunk_name()?,
+            base,
             // The replay went through: the commits apply on GitHub's
             // branch as it was fetched.
             mergeable: true,
             summary: format!(
                 "{} changed {changed} files over {turns} turns.",
-                self.title_of(run)?,
+                self.title_of(run).await?,
             ),
             tests: tests_passed(&answer),
             title: pr_title(&prompt),
@@ -212,7 +223,7 @@ impl Host {
     /// draft's branch, and opens the pull request, asking `reviewers` to
     /// review it. Returns it and the branch's commit.
     #[allow(clippy::too_many_arguments)]
-    pub fn create_pull_request(
+    pub async fn create_pull_request(
         &self,
         run: &RunId,
         draft: &PullRequest,
@@ -222,26 +233,31 @@ impl Host {
         keep_pushing: bool,
         reviewers: &[String],
     ) -> anyhow::Result<(github::Opened, String)> {
-        let slot = self.slot_of_run(run)?;
-        let project = slot.project()?;
+        let slot = self.slot_of_run(run).await?;
+        let project = slot.project().await?;
         let (url, token) = self.github_remote(&slot.name)?;
-        let replayed = self.replayed(run, &project, None)?;
-        let head = replayed.copies.last().cloned().unwrap_or_default();
-        let change = replayed
-            .changes
-            .last()
-            .map(|change| change.change_id.clone())
-            .unwrap_or_default();
-        let remote = tau_vcs::Remote {
-            url: &url,
-            token: Some(&token),
-        };
-        project
-            .blocking()
-            .push_branch(remote, &draft.head, None, &head)?;
+        let (job_run, branch, push_token) =
+            (run.clone(), draft.head.clone(), token.clone());
+        let (head, change) = project
+            .run(move |project| {
+                let replayed = replayed(&job_run, project, None)?;
+                let head = replayed.copies.last().cloned().unwrap_or_default();
+                let change = replayed
+                    .changes
+                    .last()
+                    .map(|change| change.change_id.clone())
+                    .unwrap_or_default();
+                let remote = tau_vcs::Remote {
+                    url: &url,
+                    token: Some(&push_token),
+                };
+                project.push_branch(remote, &branch, None, &head)?;
+                anyhow::Ok((head, change))
+            })
+            .await?;
         let opened = self
-            .runtime
-            .block_on(self.github.open_pull(
+            .github
+            .open_pull(
                 &token,
                 &draft.repo,
                 title,
@@ -249,15 +265,12 @@ impl Host {
                 &draft.head,
                 &draft.base,
                 as_draft,
-            ))
+            )
+            .await
             .map_err(anyhow::Error::msg)?;
-        self.runtime
-            .block_on(self.github.request_reviewers(
-                &token,
-                &draft.repo,
-                opened.number,
-                reviewers,
-            ))
+        self.github
+            .request_reviewers(&token, &draft.repo, opened.number, reviewers)
+            .await
             .map_err(anyhow::Error::msg)?;
         self.prs.lock().expect("not poisoned").insert(
             run.clone(),
@@ -275,7 +288,10 @@ impl Host {
     /// Pushes the commits `run` made since its pull request's last
     /// push, if it has one that keeps pushing: replayed onto the
     /// branch's commit, a fast-forward. Returns whether it pushed.
-    pub fn push_later_commits(&self, run: &RunId) -> anyhow::Result<bool> {
+    pub async fn push_later_commits(
+        &self,
+        run: &RunId,
+    ) -> anyhow::Result<bool> {
         let Some(open) =
             self.prs.lock().expect("not poisoned").get(run).cloned()
         else {
@@ -284,30 +300,42 @@ impl Host {
         if !open.keep_pushing {
             return Ok(false);
         }
-        let slot = self.slot_of_run(run)?;
-        let project = slot.project()?;
-        let replayed =
-            self.replayed(run, &project, Some((&open.head, &open.change)))?;
-        let (Some(head), Some(last)) =
-            (replayed.copies.last(), replayed.changes.last())
-        else {
+        let slot = self.slot_of_run(run).await?;
+        let project = slot.project().await?;
+        let (url, token) = self.github_remote(&slot.name)?;
+        let (job_run, pushed) = (run.clone(), open.clone());
+        let last = project
+            .run(move |project| {
+                let replayed = replayed(
+                    &job_run,
+                    project,
+                    Some((&pushed.head, &pushed.change)),
+                )?;
+                let (Some(head), Some(last)) =
+                    (replayed.copies.last(), replayed.changes.last())
+                else {
+                    return anyhow::Ok(None);
+                };
+                let remote = tau_vcs::Remote {
+                    url: &url,
+                    token: Some(&token),
+                };
+                project.push_branch(
+                    remote,
+                    &pushed.branch,
+                    Some(&pushed.head),
+                    head,
+                )?;
+                Ok(Some((head.clone(), last.change_id.clone())))
+            })
+            .await?;
+        let Some((head, change)) = last else {
             return Ok(false);
         };
-        let (url, token) = self.github_remote(&slot.name)?;
-        let remote = tau_vcs::Remote {
-            url: &url,
-            token: Some(&token),
-        };
-        project.blocking().push_branch(
-            remote,
-            &open.branch,
-            Some(&open.head),
-            head,
-        )?;
         if let Some(open) = self.prs.lock().expect("not poisoned").get_mut(run)
         {
-            open.head = head.clone();
-            open.change = last.change_id.clone();
+            open.head = head;
+            open.change = change;
         }
         Ok(true)
     }
@@ -322,7 +350,7 @@ impl Host {
     }
 
     /// How the checks on an opened pull request's head stand.
-    pub fn pull_request_checks(
+    pub async fn pull_request_checks(
         &self,
         run: &RunId,
     ) -> anyhow::Result<crate::pull_request::Checks> {
@@ -335,8 +363,9 @@ impl Host {
             .ok_or_else(|| anyhow::anyhow!("No pull request for the run"))?;
         let token = github::Token::load(&self.config.credentials)
             .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
-        self.runtime
-            .block_on(self.github.checks(&token.token, &open.repo, &open.head))
+        self.github
+            .checks(&token.token, &open.repo, &open.head)
+            .await
             .map_err(anyhow::Error::msg)
     }
 }
@@ -384,7 +413,7 @@ pub(super) async fn watch_checks(
         let job = {
             let (checker, run) = (host.clone(), run.clone());
             host.runtime
-                .spawn_blocking(move || checker.pull_request_checks(&run))
+                .spawn(async move { checker.pull_request_checks(&run).await })
         };
         let Ok(Ok(checks)) = job.await else {
             return;

@@ -210,22 +210,28 @@ fn new_chats_fork_the_repository_main_chat() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
         .turn(|t| t.text("wrote b"));
     let (host, mut events) = host(llm.clone());
-    let main = host.main_of(REPO).unwrap();
-    assert_eq!(host.main_of(REPO).unwrap(), main, "made once");
-    let listed = host.history().unwrap();
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    assert_eq!(
+        host.block_on(host.main_of(REPO)).unwrap(),
+        main,
+        "made once"
+    );
+    let listed = host.block_on(host.history()).unwrap();
     let view = listed.iter().find(|view| view.id == main).unwrap();
     assert_eq!((view.title.as_str(), &view.origin), ("main", &Origin::Root));
     assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
     assert_eq!(view.repo, REPO);
     assert!(host.set_closed(&main, true).is_err(), "main stays open");
     assert_eq!(
-        host.catalog().repos[0].main.as_ref(),
+        host.block_on(host.catalog()).repos[0].main.as_ref(),
         Some(&main),
         "the sidebar knows it"
     );
 
     // Before main has a turn, a chat starts from nothing, on trunk.
-    let first = host.start("one", &ModelChoice::default(), REPO).unwrap();
+    let first = host
+        .block_on(host.start("one", &ModelChoice::default(), REPO))
+        .unwrap();
     assert_eq!(
         first.origin,
         Origin::Fork {
@@ -237,11 +243,13 @@ fn new_chats_fork_the_repository_main_chat() {
     wait_until_done(&host, &first.id);
 
     // A message to main goes on with it; the next chat has it.
-    host.resume(&main, "hello main", &ModelChoice::default())
+    host.block_on(host.resume(&main, "hello main", &ModelChoice::default()))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main);
-    let second = host.start("two", &ModelChoice::default(), REPO).unwrap();
+    let second = host
+        .block_on(host.start("two", &ModelChoice::default(), REPO))
+        .unwrap();
     assert_eq!(
         second.origin,
         Origin::Fork {
@@ -258,16 +266,18 @@ fn new_chats_fork_the_repository_main_chat() {
     );
 
     // A chat's work lands on main, which takes its workspace then.
-    let third = host.start("three", &ModelChoice::default(), REPO).unwrap();
+    let third = host
+        .block_on(host.start("three", &ModelChoice::default(), REPO))
+        .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &third.id);
-    host.land(&third.id).unwrap();
-    let dir = host.workspace(&main).unwrap();
+    host.block_on(host.land(&third.id)).unwrap();
+    let dir = host.block_on(host.workspace(&main)).unwrap();
     assert_eq!(
         std::fs::read_to_string(dir.join("a.txt")).unwrap(),
         "a.txt\n"
     );
-    let project = host.project_of(REPO).unwrap();
+    let project = host.block_on(host.project_of(REPO)).unwrap();
     let on_trunk = |path: &str| {
         project
             .blocking()
@@ -278,7 +288,7 @@ fn new_chats_fork_the_repository_main_chat() {
     assert_eq!(on_trunk("a.txt").as_deref(), Some(&b"a.txt\n"[..]));
 
     // The main chat's own commit moves trunk too.
-    host.resume(&main, "write b", &ModelChoice::default())
+    host.block_on(host.resume(&main, "write b", &ModelChoice::default()))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main);
@@ -297,16 +307,18 @@ fn a_new_chat_shows_the_goal_it_inherits() {
         .turn(|t| t.text("hi"))
         .turn(|t| t.text("ok"));
     let (host, mut events) = host_on(llm, dir.path());
-    let main = host.main_of(REPO).unwrap();
-    host.store_plugin_record(
-        &main,
-        tau_goal::NAME,
-        &serde_json::to_value(&tau_goal::Record::Set {
-            goal: "the docs build".into(),
-            continuations: 4,
-            budget: 1.0,
-        })
-        .unwrap(),
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    host.block_on(
+        host.store_plugin_record(
+            &main,
+            tau_goal::NAME,
+            &serde_json::to_value(&tau_goal::Record::Set {
+                goal: "the docs build".into(),
+                continuations: 4,
+                budget: 1.0,
+            })
+            .unwrap(),
+        ),
     )
     .unwrap();
     // A turn after it: new chats fork from there, the goal before.
@@ -314,7 +326,7 @@ fn a_new_chat_shows_the_goal_it_inherits() {
     until_end(&mut events);
     wait_until_done(&host, &main);
     let view = host
-        .start("look around", &ModelChoice::default(), REPO)
+        .block_on(host.start("look around", &ModelChoice::default(), REPO))
         .unwrap();
     let state = goal_of(&view);
     let goal = state.goal.expect("the inherited goal shows");
@@ -369,7 +381,7 @@ fn every_jev_plugin_is_listed() {
         tau_goal::NAME,
     ];
     let (host, _events) = host(ScriptedModel::new());
-    let catalog = host.catalog();
+    let catalog = host.block_on(host.catalog());
     for name in jev_plugins {
         let plugin = catalog
             .plugins
@@ -397,7 +409,7 @@ fn every_jev_plugin_is_listed() {
     );
     let host = host
         .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.5)));
-    let catalog = host.catalog();
+    let catalog = host.block_on(host.catalog());
     assert!(
         !reasoning(&catalog).description.contains("needs"),
         "{:?}",
@@ -412,7 +424,11 @@ fn written_titles_come_back_in_history() {
     let db = data.path().join("runs.db");
     let (host, mut events) = host_with_store(llm, &std::env::temp_dir(), &db);
     let view = host
-        .start("Say hello\nto everyone", &ModelChoice::default(), REPO)
+        .block_on(host.start(
+            "Say hello\nto everyone",
+            &ModelChoice::default(),
+            REPO,
+        ))
         .unwrap();
     assert_eq!(view.title, "Say hello");
     until_end(&mut events);
@@ -425,7 +441,7 @@ fn written_titles_come_back_in_history() {
             let store = Store::open(&db).await.unwrap();
             store.set_title(&view.id.0, "Greet everyone").await.unwrap();
         });
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     assert_eq!(history[0].title, "Greet everyone");
 }
 
@@ -436,11 +452,11 @@ fn a_stored_run_shows_the_plan_it_ran_with() {
     let llm = ScriptedModel::new().turn(|t| t.text("done"));
     let (host, mut events) = host(llm);
     let live = host
-        .start("Look around", &ModelChoice::default(), REPO)
+        .block_on(host.start("Look around", &ModelChoice::default(), REPO))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &live.id);
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let stored = history.iter().find(|view| view.id == live.id).unwrap();
     assert_eq!(stored.plan, live.plan);
     assert!(
@@ -460,7 +476,11 @@ fn a_run_streams_into_its_view() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
     let (host, mut events) = host(llm);
     let mut view = host
-        .start("Say hello, please", &ModelChoice::default(), REPO)
+        .block_on(host.start(
+            "Say hello, please",
+            &ModelChoice::default(),
+            REPO,
+        ))
         .unwrap();
     assert_eq!(view.title, "Say hello, please");
     assert!(
@@ -485,7 +505,9 @@ fn a_run_can_be_cancelled_from_the_ui() {
     let llm = ScriptedModel::new()
         .turn(|t| t.delay(Duration::from_secs(30)).text("too late"));
     let (host, mut events) = host(llm);
-    let view = host.start("wait", &ModelChoice::default(), REPO).unwrap();
+    let view = host
+        .block_on(host.start("wait", &ModelChoice::default(), REPO))
+        .unwrap();
     std::thread::sleep(Duration::from_millis(100));
     assert!(host.is_running(&view.id));
     host.cancel(&view.id);
@@ -502,8 +524,9 @@ fn a_run_can_be_cancelled_from_the_ui() {
 /// Sends `prompt` to the repository's main chat, the top-level run the
 /// others nest under (runs nest one level), and returns its id.
 fn on_main(host: &Host, prompt: &str) -> tau_agent::tool::RunId {
-    let main = host.main_of(REPO).unwrap();
-    host.resume(&main, prompt, &ModelChoice::default()).unwrap();
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    host.block_on(host.resume(&main, prompt, &ModelChoice::default()))
+        .unwrap();
     main
 }
 
@@ -547,7 +570,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     let main = on_main(&host, "write a.txt twice");
     until_end(&mut events);
     wait_until_done(&host, &main);
-    let main_dir = host.workspace(&main).unwrap();
+    let main_dir = host.block_on(host.workspace(&main)).unwrap();
     assert_eq!(
         std::fs::read_to_string(main_dir.join("a.txt")).unwrap(),
         "two\n"
@@ -557,7 +580,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
 
     let other = ModelChoice::new("gpt-6-sol", Effort::High);
     let fork = host
-        .fork(&main, Some(1), "try it another way", &other)
+        .block_on(host.fork(&main, Some(1), "try it another way", &other))
         .unwrap();
     assert_eq!(fork.model, "gpt-6-sol");
     assert_eq!(
@@ -569,7 +592,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     );
     until_end(&mut events);
     wait_until_done(&host, &fork.id);
-    let fork_dir = host.workspace(&fork.id).unwrap();
+    let fork_dir = host.block_on(host.workspace(&fork.id)).unwrap();
     // The fork asked its own model, at its own effort.
     let asked = llm.requests();
     let last = &asked.last().unwrap().settings;
@@ -584,7 +607,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         "one\n"
     );
 
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let ids: Vec<_> = history.iter().map(|view| view.id.clone()).collect();
     assert_eq!(ids, [fork.id.clone(), main.clone()]);
     assert_eq!(history[0].title, "try it another way");
@@ -629,13 +652,18 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     // Runs nest one level: the fork, a chat under the main chat,
     // cannot be forked in turn.
     assert!(
-        host.fork(&fork.id, Some(1), "a third way", &ModelChoice::default())
-            .is_err()
+        host.block_on(host.fork(
+            &fork.id,
+            Some(1),
+            "a third way",
+            &ModelChoice::default()
+        ))
+        .is_err()
     );
 
     // Keeping the fork keeps the main chat's checkout: it is the
     // repository's own, the default workspace, which never goes.
-    host.keep_branch(&fork.id).unwrap();
+    host.block_on(host.keep_branch(&fork.id)).unwrap();
     assert!(main_dir.exists());
     assert!(fork_dir.exists());
 }
@@ -675,21 +703,29 @@ fn a_fork_lands_on_its_parent_and_closes() {
     let main = on_main(&host, "write two files");
     until_end(&mut events);
     wait_until_done(&host, &main);
-    let main_dir = host.workspace(&main).unwrap();
+    let main_dir = host.block_on(host.workspace(&main)).unwrap();
     let fork = host
-        .fork(&main, Some(1), "write c instead", &ModelChoice::default())
+        .block_on(host.fork(
+            &main,
+            Some(1),
+            "write c instead",
+            &ModelChoice::default(),
+        ))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &fork.id);
-    let fork_dir = host.workspace(&fork.id).unwrap();
+    let fork_dir = host.block_on(host.workspace(&fork.id)).unwrap();
     assert!(fork_dir.join("c.txt").exists());
     assert!(!fork_dir.join("b.txt").exists(), "forked before turn 2");
 
     // A repository's main chat has nothing to land on.
-    assert!(host.land(&host.main_of(REPO).unwrap()).is_err());
+    assert!(
+        host.block_on(host.land(&host.block_on(host.main_of(REPO)).unwrap()))
+            .is_err()
+    );
     // From history, the finished fork waits in the main run's chat.
     let waiting = |host: &Host| {
-        host.history()
+        host.block_on(host.history())
             .unwrap()
             .iter()
             .find(|view| view.id == main)
@@ -700,7 +736,7 @@ fn a_fork_lands_on_its_parent_and_closes() {
     };
     assert!(waiting(&host));
 
-    let preview = host.preview_landing(&fork.id).unwrap();
+    let preview = host.block_on(host.preview_landing(&fork.id)).unwrap();
     assert_eq!(preview.changes.len(), 1);
     assert!(preview.conflicts.is_empty());
     assert!(
@@ -708,7 +744,7 @@ fn a_fork_lands_on_its_parent_and_closes() {
         "a preview changes nothing"
     );
 
-    let landed = host.land(&fork.id).unwrap();
+    let landed = host.block_on(host.land(&fork.id)).unwrap();
     assert_eq!(landed.changes.len(), 1);
     // The main run has both its own files and the fork's.
     for file in ["a.txt", "b.txt", "c.txt"] {
@@ -721,11 +757,11 @@ fn a_fork_lands_on_its_parent_and_closes() {
     // The main chat commits on trunk: landing on it moves main.
     assert_eq!(project.blocking().trunk().unwrap(), landed.head);
     // Landing again finds nothing to land.
-    assert!(host.land(&fork.id).is_err());
+    assert!(host.block_on(host.land(&fork.id)).is_err());
 
     // Back from history, the main run shows the landing where it
     // happened: after its last turn, before its stop.
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let items = &history.iter().find(|view| view.id == main).unwrap().items;
     let [.., turn_end, Item::Landed(card), Item::Stop { .. }] =
         items.as_slice()
@@ -785,9 +821,9 @@ fn a_chat_after_an_update() -> AfterUpdate {
     let main = on_main(&host, "write a");
     until_end(&mut events);
     wait_until_done(&host, &main);
-    let main_dir = host.workspace(&main).unwrap();
+    let main_dir = host.block_on(host.workspace(&main)).unwrap();
     let chat = host
-        .fork(&main, None, "write c", &ModelChoice::default())
+        .block_on(host.fork(&main, None, "write c", &ModelChoice::default()))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
@@ -814,7 +850,7 @@ fn a_chat_after_an_update() -> AfterUpdate {
 #[test]
 fn a_chat_lands_after_an_update() {
     let after = a_chat_after_an_update();
-    let landed = after.host.land(&after.chat).unwrap();
+    let landed = after.host.block_on(after.host.land(&after.chat)).unwrap();
     assert_eq!(landed.changes.len(), 1);
     let trunk = after.project.blocking().trunk().unwrap();
     assert_eq!(trunk, landed.head);
@@ -831,7 +867,10 @@ fn a_chat_lands_after_an_update() {
 #[test]
 fn a_chat_drops_after_an_update() {
     let after = a_chat_after_an_update();
-    after.host.drop_child(&after.chat).unwrap();
+    after
+        .host
+        .block_on(after.host.drop_child(&after.chat))
+        .unwrap();
     for file in ["a.txt", "NEW.md"] {
         assert!(after.main_dir.join(file).exists(), "{file}");
     }
@@ -878,20 +917,22 @@ fn a_chat_under_main_is_not_forked() {
     let main = on_main(&host, "write a");
     until_end(&mut events);
     wait_until_done(&host, &main);
-    let child = host.fork(&main, Some(1), "write b", &choice).unwrap();
+    let child = host
+        .block_on(host.fork(&main, Some(1), "write b", &choice))
+        .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &child.id);
     // A chat under the main chat has nothing under it: it cannot be
     // forked, and so it lands with nothing waiting on it.
     let err = host
-        .fork(&child.id, Some(2), "write c", &choice)
+        .block_on(host.fork(&child.id, Some(2), "write c", &choice))
         .unwrap_err()
         .to_string();
     assert!(err.contains("Only a repository's main chat"), "{err}");
 
-    let landed = host.land(&child.id).unwrap();
+    let landed = host.block_on(host.land(&child.id)).unwrap();
     assert_eq!(landed.changes.len(), 1, "b.txt");
-    let main_dir = host.workspace(&main).unwrap();
+    let main_dir = host.block_on(host.workspace(&main)).unwrap();
     assert!(main_dir.join("b.txt").exists());
 }
 
@@ -940,7 +981,7 @@ fn main_waits_for_its_sub_agent_and_it_lands() {
     until_end(&mut events);
     wait_until_done(&host, &main);
 
-    let dir = host.workspace(&main).unwrap();
+    let dir = host.block_on(host.workspace(&main)).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
     // The main chat works in the repository's own checkout, the default
     // workspace.
@@ -952,7 +993,7 @@ fn main_waits_for_its_sub_agent_and_it_lands() {
 
     // From history, main's `wait` card says what landed, and the
     // sub-agent's chat comes back under it.
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let main_view = history.iter().find(|view| view.id == main).unwrap();
     let card = main_view
         .items
@@ -1175,12 +1216,12 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     wait_until_done(&host, &main);
     let child = ended.into_iter().find(|run| *run != main).unwrap();
     assert!(host.is_sub_agent(&child));
-    let dir = host.workspace(&main).unwrap();
+    let dir = host.block_on(host.workspace(&main)).unwrap();
     // The coordinator hears both end, in either order: main's turn
     // ended, then the sub-agent's work lands on main, idle.
-    let before = host.main_turn_ended(&main).unwrap();
+    let before = host.block_on(host.main_turn_ended(&main)).unwrap();
     assert!(before.landed.is_empty(), "nothing waited yet");
-    let report = host.sub_agent_ended(&child).unwrap();
+    let report = host.block_on(host.sub_agent_ended(&child)).unwrap();
     assert_eq!(report.landed.len(), 1, "{report:?}");
     assert_eq!(report.landed[0].0, child);
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
@@ -1208,11 +1249,11 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     assert!(project.blocking().workspaces().unwrap().is_empty());
     assert!(project.blocking().bookmarks("tau/").unwrap().is_empty());
     assert!(matches!(
-        host.ending_of(&child).unwrap(),
+        host.block_on(host.ending_of(&child)).unwrap(),
         Some(tau_ui_remote::view::Ending::Landed { .. })
     ));
     // tau's turn reports it to main.
-    host.start_resolving(&main, &prompt).unwrap();
+    host.block_on(host.start_resolving(&main, &prompt)).unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main);
     let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);
@@ -1250,7 +1291,7 @@ fn a_failed_sub_agent_comes_back_from_history() {
     until_end(&mut events);
     wait_until_done(&host, &main);
 
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let main_view = history.iter().find(|view| view.id == main).unwrap();
     let child = main_view
         .children
@@ -1282,19 +1323,19 @@ fn runs_come_back_under_their_repository() {
     let host = host.with_repo("other", project_of(other.path()));
 
     let here = host
-        .start("in the first", &ModelChoice::default(), REPO)
+        .block_on(host.start("in the first", &ModelChoice::default(), REPO))
         .unwrap();
     assert_eq!(here.repo, REPO);
     until_end(&mut events);
     wait_until_done(&host, &here.id);
     let there = host
-        .start("in the other", &ModelChoice::default(), "other")
+        .block_on(host.start("in the other", &ModelChoice::default(), "other"))
         .unwrap();
     assert_eq!(there.repo, "other");
     until_end(&mut events);
     wait_until_done(&host, &there.id);
 
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let repo_of = |id| {
         history
             .iter()
@@ -1306,7 +1347,7 @@ fn runs_come_back_under_their_repository() {
     assert_eq!(repo_of(there.id.clone()), "other");
     // A repository that is not listed runs nothing.
     assert!(
-        host.start("nowhere", &ModelChoice::default(), "none")
+        host.block_on(host.start("nowhere", &ModelChoice::default(), "none"))
             .is_err()
     );
 }
@@ -1343,7 +1384,7 @@ fn repositories_are_listed_and_remembered() {
     served(remote.path(), "a/proj");
     served(remote.path(), "b/proj");
     let names = |host: &Host| -> Vec<String> {
-        host.catalog()
+        host.block_on(host.catalog())
             .repos
             .iter()
             .map(|repo| repo.name.clone())
@@ -1356,11 +1397,20 @@ fn repositories_are_listed_and_remembered() {
     // started in.
     assert!(names(&host).is_empty());
     // Two repositories with one name get two names.
-    assert_eq!(host.clone_github("a/proj").unwrap().name, "proj");
-    assert_eq!(host.clone_github("b/proj").unwrap().name, "proj-2");
+    assert_eq!(
+        host.block_on(host.clone_github("a/proj")).unwrap().name,
+        "proj"
+    );
+    assert_eq!(
+        host.block_on(host.clone_github("b/proj")).unwrap().name,
+        "proj-2"
+    );
     // Cloning one again keeps its name.
-    assert_eq!(host.clone_github("a/proj").unwrap().name, "proj");
-    assert!(host.clone_github("c/missing").is_err());
+    assert_eq!(
+        host.block_on(host.clone_github("a/proj")).unwrap().name,
+        "proj"
+    );
+    assert!(host.block_on(host.clone_github("c/missing")).is_err());
     host.set_open_repos(vec!["proj-2".into()]).unwrap();
     assert_eq!(names(&host), ["proj", "proj-2"]);
     drop(host);
@@ -1368,7 +1418,7 @@ fn repositories_are_listed_and_remembered() {
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
     let host = on_github(host, remote.path());
     assert_eq!(names(&host), ["proj", "proj-2"]);
-    assert_eq!(host.catalog().open_repos, ["proj-2"]);
+    assert_eq!(host.block_on(host.catalog()).open_repos, ["proj-2"]);
     host.hide_repo("proj").unwrap();
     assert_eq!(names(&host), ["proj-2"]);
     // Closed conversations are remembered too, until opened again.
@@ -1394,7 +1444,7 @@ fn repositories_are_listed_and_remembered() {
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
     let host = on_github(host, remote.path());
     assert_eq!(names(&host), ["proj-2"]);
-    let catalog = host.catalog();
+    let catalog = host.block_on(host.catalog());
     assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
     let reviewed: tau_constitution::ui::Data = serde_json::from_value(
         catalog.plugin_data[tau_constitution::NAME].json().clone(),
@@ -1402,7 +1452,10 @@ fn repositories_are_listed_and_remembered() {
     .unwrap();
     assert_eq!(reviewed.reviewed, [("a".to_owned(), "call-1".to_owned())]);
     // Cloning a removed one lists it again, under its name.
-    assert_eq!(host.clone_github("a/proj").unwrap().name, "proj");
+    assert_eq!(
+        host.block_on(host.clone_github("a/proj")).unwrap().name,
+        "proj"
+    );
     assert_eq!(names(&host), ["proj", "proj-2"]);
 }
 
@@ -1516,7 +1569,9 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     let active = models.access.active_account().unwrap();
     assert_eq!(active.id, declined.to_string());
     assert_eq!(active.state, AccountState::PlanDisabled);
-    let error = host.start("hi", &ModelChoice::default(), REPO).unwrap_err();
+    let error = host
+        .block_on(host.start("hi", &ModelChoice::default(), REPO))
+        .unwrap_err();
     assert!(error.to_string().contains("no ChatGPT plan"), "{error}");
 
     // Back on the plan account, runs use the plan again.
@@ -1536,7 +1591,9 @@ fn github_repositories_clone_into_tau() {
     let (host, _events) = Host::new(config).unwrap();
     let web = format!("file://{}", remote.path().display());
     let host = host.with_github(Api::at(&web, "http://127.0.0.1:9"));
-    let error = host.clone_github("cfcosta/hello").unwrap_err();
+    let error = host
+        .block_on(host.clone_github("cfcosta/hello"))
+        .unwrap_err();
     assert!(error.to_string().contains("Sign in to GitHub"), "{error}");
 
     Token {
@@ -1546,36 +1603,43 @@ fn github_repositories_clone_into_tau() {
     }
     .save(&credentials)
     .unwrap();
-    assert!(host.clone_github("../escape").is_err());
-    assert!(host.clone_github("cfcosta/..").is_err());
-    let repo = host.clone_github("cfcosta/hello").unwrap();
+    assert!(host.block_on(host.clone_github("../escape")).is_err());
+    assert!(host.block_on(host.clone_github("cfcosta/..")).is_err());
+    let repo = host.block_on(host.clone_github("cfcosta/hello")).unwrap();
     assert_eq!(repo.name, "hello");
     assert!(
-        host.catalog()
+        host.block_on(host.catalog())
             .repos
             .iter()
             .any(|listed| listed.name == "hello")
     );
     // Waiting for the project is what blocks, not cloning.
-    let project = host.project_of("hello").expect("the clone imports");
+    let project = host
+        .block_on(host.project_of("hello"))
+        .expect("the clone imports");
     assert!(project.root().starts_with(data.path().join("repos")));
     assert!(!project.blocking().trunk().unwrap().is_empty());
     assert!(!host.is_importing());
     assert_eq!(
-        host.catalog().project,
+        host.block_on(host.catalog()).project,
         tau_ui_remote::catalog::ProjectStatus::Unknown
     );
     // Cloning it again lists the same repository, without fetching.
-    assert_eq!(host.clone_github("cfcosta/hello").unwrap().name, "hello");
+    assert_eq!(
+        host.block_on(host.clone_github("cfcosta/hello"))
+            .unwrap()
+            .name,
+        "hello"
+    );
 
     // New commits on GitHub come in with an update.
     std::fs::write(src.join("NEW.md"), "new\n").unwrap();
     git(&src, &["add", "NEW.md"]);
     git(&src, &["commit", "--quiet", "-m", "second"]);
-    let updated = host.update_repo("hello").unwrap();
+    let updated = host.block_on(host.update_repo("hello")).unwrap();
     assert!(updated.changed());
     assert_eq!(project.blocking().trunk().unwrap(), updated.after);
-    assert!(!host.update_repo("hello").unwrap().changed());
+    assert!(!host.block_on(host.update_repo("hello")).unwrap().changed());
 }
 
 #[test]
@@ -1607,15 +1671,16 @@ fn a_finished_run_goes_on_in_its_workspace() {
     let host = host.with_repo(REPO, project);
 
     let chat = host
-        .start("write a.txt", &ModelChoice::default(), REPO)
+        .block_on(host.start("write a.txt", &ModelChoice::default(), REPO))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
-    let dir = host.workspace(&chat.id).unwrap();
+    let dir = host.block_on(host.workspace(&chat.id)).unwrap();
 
     // The chat goes on on another model, without a fork.
     let other = ModelChoice::new("gpt-6-sol", Effort::Auto);
-    host.resume(&chat.id, "now b.txt", &other).unwrap();
+    host.block_on(host.resume(&chat.id, "now b.txt", &other))
+        .unwrap();
     let turns: Vec<u32> = until_end(&mut events)
         .into_iter()
         .filter_map(|event| match event {
@@ -1626,14 +1691,14 @@ fn a_finished_run_goes_on_in_its_workspace() {
     assert_eq!(turns, [4, 5, 6], "turns keep counting");
     wait_until_done(&host, &chat.id);
     // The same workspace, with both turns' files.
-    assert_eq!(host.workspace(&chat.id).unwrap(), dir);
+    assert_eq!(host.block_on(host.workspace(&chat.id)).unwrap(), dir);
     assert!(dir.join("a.txt").exists() && dir.join("b.txt").exists());
     // The model saw the whole chat.
     let last = llm.requests().pop().unwrap();
     assert!(last.transcript.len() > 4, "{}", last.transcript.len());
     assert_eq!(last.settings.model, "gpt-6-sol");
 
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     assert_eq!(history.len(), 2, "one chat, not two, and main");
     let view = &history[0];
     assert_eq!(view.id, chat.id);
@@ -1695,7 +1760,7 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
     let (host, _events) =
         host_with_store(ScriptedModel::new(), dir.path(), &db);
     let key = host
-        .project_of(REPO)
+        .block_on(host.project_of(REPO))
         .unwrap()
         .root()
         .canonicalize()
@@ -1733,7 +1798,7 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
             },
         ))
         .unwrap();
-    let constitution = || rules_of(&host.catalog().repos[0]);
+    let constitution = || rules_of(&host.block_on(host.catalog()).repos[0]);
     assert!(constitution().error.is_some());
     let add = |host: &Host| {
         rules_act(
@@ -1795,7 +1860,11 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     let host = host
         .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.95)));
     // What the store holds for the repository, as a run would read it.
-    let root = host.project_of(REPO).unwrap().root().to_owned();
+    let root = host
+        .block_on(host.project_of(REPO))
+        .unwrap()
+        .root()
+        .to_owned();
     let rules_db = host
         .plugin_dir(tau_constitution::NAME)
         .join("constitution.db");
@@ -1823,7 +1892,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             block: 0.8,
         },
     );
-    let catalog = host.catalog();
+    let catalog = host.block_on(host.catalog());
     let rules = &rules_of(&catalog.repos[0]);
     assert_eq!(rules.rules.len(), 1);
     assert_eq!(rules.rules[0].applies_to, ["write.content"]);
@@ -1839,7 +1908,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert_eq!((stats.requests, stats.failed), (0, 0));
 
     let mut view = host
-        .start("write a.txt", &ModelChoice::default(), REPO)
+        .block_on(host.start("write a.txt", &ModelChoice::default(), REPO))
         .unwrap();
     for event in until_end(&mut events) {
         view.apply(&event);
@@ -1855,12 +1924,12 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert!(blocked(&view), "the card shows the block live");
     assert_eq!(checks_of(&view).stats.calls, 1);
     // The Plugins screen counts the check Jev answered.
-    let stats = host.catalog().jev.expect("Jev is set up");
+    let stats = host.block_on(host.catalog()).jev.expect("Jev is set up");
     assert!(stats.requests >= 1, "{stats:?}");
     assert!(stats.input_tokens > 0 && stats.spent > 0.0);
     assert_eq!((stats.model.as_str(), stats.failed), ("jev-fake", 0));
     // And in history, from what the plugin recorded.
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     assert!(blocked(&history[0]));
     assert_eq!(checks_of(&history[0]).stats, checks_of(&view).stats);
 
@@ -1876,7 +1945,8 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             block: 0.9,
         },
     );
-    let edited = rules_of(&host.catalog().repos[0]).rules[0].clone();
+    let edited =
+        rules_of(&host.block_on(host.catalog()).repos[0]).rules[0].clone();
     assert_eq!(
         (edited.id.as_str(), edited.text.as_str()),
         ("R1", "No unwrap, ever.")
@@ -1916,7 +1986,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     );
 
     // The store's history counts the run, loaded or not.
-    let history = rules_of(&host.catalog().repos[0]).history;
+    let history = rules_of(&host.block_on(host.catalog()).repos[0]).history;
     assert_eq!(history.len(), 1);
     let (run, checks) = &history[0];
     assert_eq!(**run, *view.id.0);
@@ -1933,7 +2003,11 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             id: "R1".into(),
         },
     );
-    assert!(rules_of(&host.catalog().repos[0]).rules.is_empty());
+    assert!(
+        rules_of(&host.block_on(host.catalog()).repos[0])
+            .rules
+            .is_empty()
+    );
     assert!(stored().rules.is_empty());
     // An edit the rules would refuse is not saved.
     rules_act(
@@ -1983,7 +2057,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     let host = host
         .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.0)));
     let status = host
-        .catalog()
+        .block_on(host.catalog())
         .plugins
         .into_iter()
         .find(|plugin| plugin.name == tau_fast_compaction::NAME)
@@ -1991,7 +2065,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     assert!(status.description.contains("bash outputs"), "{status:?}");
 
     let mut view = host
-        .start("build it", &ModelChoice::default(), REPO)
+        .block_on(host.start("build it", &ModelChoice::default(), REPO))
         .unwrap();
     // With a key, pruning runs with it.
     let pruning: tau_fast_compaction::ui::State = serde_json::from_value(
@@ -2034,7 +2108,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     assert_eq!(pruning.outputs, 1);
     assert!(pruning.status().unwrap().contains("large outputs"));
 
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     assert_eq!(cut_of(&history[0]), Some(cut));
 }
 
@@ -2089,7 +2163,9 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
     });
     let host = host.with_jev(std::sync::Arc::new(jev));
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
-    let mut view = host.start("track down the race", &auto, REPO).unwrap();
+    let mut view = host
+        .block_on(host.start("track down the race", &auto, REPO))
+        .unwrap();
     for event in until_end(&mut events) {
         view.apply(&event);
     }
@@ -2106,7 +2182,7 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
     assert!(view.items.iter().any(|item| matches!(item,
         Item::Anchor { plugin, .. } if plugin == tau_reasoning::NAME)));
     // History shows it again, from the plugin's record.
-    assert!(chosen(&host.history().unwrap()[0]));
+    assert!(chosen(&host.block_on(host.history()).unwrap()[0]));
 
     // An effort someone chose is not scored.
     let (host, mut events) =
@@ -2116,7 +2192,9 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
             panic!("not asked")
         })));
     let low = ModelChoice::new("gpt-5.5", Effort::Low);
-    let run = host.start("rename a variable", &low, REPO).unwrap();
+    let run = host
+        .block_on(host.start("rename a variable", &low, REPO))
+        .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &run.id);
 }
@@ -2165,7 +2243,9 @@ fn reasoning_settings_reach_the_plugin() {
     );
     host.save_settings(settings).unwrap();
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
-    let view = host.start("track down the race", &auto, REPO).unwrap();
+    let view = host
+        .block_on(host.start("track down the race", &auto, REPO))
+        .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &view.id);
     let asked = jev.requests();
@@ -2212,14 +2292,16 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     });
     let host = host.with_jev(std::sync::Arc::new(jev.clone()));
     assert!(
-        host.catalog()
+        host.block_on(host.catalog())
             .plugins
             .iter()
             .any(|p| p.name == tau_goal::NAME)
     );
 
     let prompt = "/goal --continuations 3 the tests pass";
-    let mut view = host.start(prompt, &ModelChoice::default(), REPO).unwrap();
+    let mut view = host
+        .block_on(host.start(prompt, &ModelChoice::default(), REPO))
+        .unwrap();
     assert_eq!(view.title, "the tests pass");
     assert!(goal_of(&view).checks, "with a key, tau-goal checks the run");
     for event in until_end(&mut events) {
@@ -2239,7 +2321,7 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     // History has the goal: the message that set it, the same notes as
     // live, and the state from the records; the check's note holds the
     // continuation it sent.
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let stored = &history[0];
     assert_eq!(goal_of(stored).goal, goal_of(&view).goal);
     assert!(matches!(&stored.items[0], Item::User(text)
@@ -2256,11 +2338,11 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
             .count()
     };
     let asked = goal_checks();
-    host.resume(
+    host.block_on(host.resume(
         &view.id,
         "/goal --continuations 0 it is released",
         &ModelChoice::default(),
-    )
+    ))
     .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &view.id);
@@ -2269,19 +2351,25 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
         tau_goal::Record::Extended { by: 1 },
         tau_goal::Record::Paused,
     ] {
-        host.store_plugin_record(
+        host.block_on(host.store_plugin_record(
             &view.id,
             tau_goal::NAME,
             &serde_json::to_value(&record).unwrap(),
-        )
+        ))
         .unwrap();
     }
-    host.resume(&view.id, "one more thing", &ModelChoice::default())
-        .unwrap();
+    host.block_on(host.resume(
+        &view.id,
+        "one more thing",
+        &ModelChoice::default(),
+    ))
+    .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &view.id);
     assert_eq!(goal_checks(), asked + 1, "paused: not checked");
-    let goal = goal_of(&host.history().unwrap()[0]).goal.unwrap();
+    let goal = goal_of(&host.block_on(host.history()).unwrap()[0])
+        .goal
+        .unwrap();
     assert_eq!(goal.condition, "it is released");
     assert_eq!(goal.status, tau_goal::Status::Paused);
     assert_eq!(goal.max_continuations, 1);
@@ -2295,7 +2383,9 @@ fn an_effort_the_model_does_not_take_runs_at_auto() {
     let (host, mut events) = host_on(llm.clone(), dir.path());
     // gpt-5.5 stops at xhigh; the API would reject max.
     let max = ModelChoice::new("gpt-5.5", Effort::Max);
-    let run = host.start("rename a variable", &max, REPO).unwrap();
+    let run = host
+        .block_on(host.start("rename a variable", &max, REPO))
+        .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &run.id);
     assert_eq!(llm.requests()[0].settings.reasoning, None);
@@ -2341,7 +2431,9 @@ fn each_message_is_scored_again() {
     });
     let host = host.with_jev(std::sync::Arc::new(jev));
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
-    let mut view = host.start("how are you?", &auto, REPO).unwrap();
+    let mut view = host
+        .block_on(host.start("how are you?", &auto, REPO))
+        .unwrap();
     for event in until_end(&mut events) {
         view.apply(&event);
     }
@@ -2349,7 +2441,7 @@ fn each_message_is_scored_again() {
     // What the composer sends next: auto again, not the picked none.
     let next = tau_ui_remote::Workspace::model_of(&view);
     assert_eq!(next, auto);
-    host.resume(&view.id, "prove the Riemann hypothesis", &next)
+    host.block_on(host.resume(&view.id, "prove the Riemann hypothesis", &next))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &view.id);
@@ -2365,7 +2457,7 @@ fn each_message_is_scored_again() {
     );
 
     // History: each choice right after its message.
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let state = reasoning_of(&history[0]);
     let order: Vec<String> = history[0]
         .items
@@ -2433,7 +2525,7 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_repo(REPO, project);
     let memory_of = |host: &Host| {
-        let catalog = host.catalog();
+        let catalog = host.block_on(host.catalog());
         let repo = catalog
             .repos
             .iter()
@@ -2447,14 +2539,14 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     };
     assert!(memory_of(&host).notes.is_empty());
     assert!(
-        host.catalog()
+        host.block_on(host.catalog())
             .plugins
             .iter()
             .any(|plugin| plugin.name == "tau-memory")
     );
 
     let first = host
-        .start("note it", &ModelChoice::default(), REPO)
+        .block_on(host.start("note it", &ModelChoice::default(), REPO))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &first.id);
@@ -2466,7 +2558,7 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     assert!(!kept.body[0].starts_with("May be stale"), "{:?}", kept.body);
 
     let second = host
-        .start("change it", &ModelChoice::default(), REPO)
+        .block_on(host.start("change it", &ModelChoice::default(), REPO))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &second.id);
@@ -2491,13 +2583,16 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
 fn a_repository_main_chat_has_a_view() {
     let (host, _events) = host(ScriptedModel::new());
     let repo = host
-        .catalog()
+        .block_on(host.catalog())
         .repos
         .into_iter()
         .find(|repo| repo.name == REPO)
         .expect("the repository is listed");
     let main = repo.main.clone().expect("it has a main chat");
-    let view = host.main_view(&repo).unwrap().expect("the chat is stored");
+    let view = host
+        .block_on(host.main_view(&repo))
+        .unwrap()
+        .expect("the chat is stored");
     assert_eq!(view.id, main);
     assert_eq!(view.title, "main");
     assert_eq!(view.repo, REPO);
@@ -2517,14 +2612,17 @@ fn landing_keeps_a_chat_whose_final_commit_failed() {
         .turn(|t| t.text(""));
     let (host, mut events) = host(llm.clone());
     let chat = host
-        .start("write both files", &ModelChoice::default(), REPO)
+        .block_on(host.start("write both files", &ModelChoice::default(), REPO))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
-    let dir = host.workspace(&chat.id).unwrap();
-    let project = host.project_of(REPO).unwrap();
+    let dir = host.block_on(host.workspace(&chat.id)).unwrap();
+    let project = host.block_on(host.project_of(REPO)).unwrap();
     let trunk = project.blocking().trunk().unwrap();
-    for action in [host.preview_landing(&chat.id), host.land(&chat.id)] {
+    for action in [
+        host.block_on(host.preview_landing(&chat.id)),
+        host.block_on(host.land(&chat.id)),
+    ] {
         let error = action.unwrap_err().to_string();
         assert!(error.contains("workspace is retained"), "{error}");
     }
@@ -2561,7 +2659,7 @@ fn only_the_main_chat_spawns() {
     until_end(&mut events);
     wait_until_done(&host, &main);
     let chat = host
-        .start("hello chat", &ModelChoice::default(), REPO)
+        .block_on(host.start("hello chat", &ModelChoice::default(), REPO))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
@@ -2631,15 +2729,15 @@ fn a_run_reads_the_repository_s_agents_file() {
     until_end(&mut events);
     wait_until_done(&host, &main);
     let chat = host
-        .start("change the rules", &ModelChoice::default(), REPO)
+        .block_on(host.start("change the rules", &ModelChoice::default(), REPO))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
-    host.resume(&chat.id, "and now?", &ModelChoice::default())
+    host.block_on(host.resume(&chat.id, "and now?", &ModelChoice::default()))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
-    host.resume(&main, "and main?", &ModelChoice::default())
+    host.block_on(host.resume(&main, "and main?", &ModelChoice::default()))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main);
@@ -2715,37 +2813,48 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
         .turn(|t| t.text("wrote b"));
     let src = tempfile::tempdir().unwrap();
     let (host, mut events) = host_on(llm.clone(), src.path());
-    let project = host.project_of(REPO).unwrap();
-    let main = host.main_of(REPO).unwrap();
+    let project = host.block_on(host.project_of(REPO)).unwrap();
+    let main = host.block_on(host.main_of(REPO)).unwrap();
     let mut chat = |prompt: &str| {
-        let view = host.start(prompt, &ModelChoice::default(), REPO).unwrap();
+        let view = host
+            .block_on(host.start(prompt, &ModelChoice::default(), REPO))
+            .unwrap();
         until_end(&mut events);
         wait_until_done(&host, &view.id);
         view.id
     };
     let landed = chat("write a");
     let dropped = chat("write b");
-    host.land(&landed).unwrap();
-    host.drop_child(&dropped).unwrap();
+    host.block_on(host.land(&landed)).unwrap();
+    host.block_on(host.drop_child(&dropped)).unwrap();
     assert_eq!(
-        host.ending_of(&landed).unwrap(),
+        host.block_on(host.ending_of(&landed)).unwrap(),
         Some(Ending::Landed {
             on: main.clone(),
             changes: 1
         })
     );
-    assert_eq!(host.ending_of(&dropped).unwrap(), Some(Ending::Dropped));
+    assert_eq!(
+        host.block_on(host.ending_of(&dropped)).unwrap(),
+        Some(Ending::Dropped)
+    );
 
     let workspaces = project.blocking().workspaces().unwrap();
     for (run, why) in [(&landed, "landed on main"), (&dropped, "was dropped")] {
         let refused = host
-            .resume(run, "one more thing", &ModelChoice::default())
+            .block_on(host.resume(
+                run,
+                "one more thing",
+                &ModelChoice::default(),
+            ))
             .unwrap_err()
             .to_string();
         assert!(refused.contains(why), "{refused}");
         assert!(refused.contains("no longer takes messages"), "{refused}");
-        let refused =
-            host.steer(run, "one more thing").unwrap_err().to_string();
+        let refused = host
+            .block_on(host.steer(run, "one more thing"))
+            .unwrap_err()
+            .to_string();
         assert!(refused.contains(why), "{refused}");
         assert!(!host.is_running(run));
         assert_eq!(
@@ -2756,9 +2865,9 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
             None
         );
         // A dropped chat cannot land, nor a landed one be dropped.
-        assert!(host.land(run).is_err());
+        assert!(host.block_on(host.land(run)).is_err());
     }
-    assert!(host.drop_child(&landed).is_err());
+    assert!(host.block_on(host.drop_child(&landed)).is_err());
     assert_eq!(
         project.blocking().workspaces().unwrap(),
         workspaces,
@@ -2766,7 +2875,7 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
     );
     llm.assert_exhausted();
 
-    let history = host.history().unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let ending = |run: &tau_agent::tool::RunId| {
         history
             .iter()
@@ -2806,7 +2915,7 @@ fn main_chats_and_sub_agents_send_the_same_prefix() {
     until_end(&mut events);
     wait_until_done(&host, &main);
     let chat = host
-        .start("hello chat", &ModelChoice::default(), REPO)
+        .block_on(host.start("hello chat", &ModelChoice::default(), REPO))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
@@ -2869,15 +2978,21 @@ fn conversations_go_back_to_their_connections() {
     let main = on_main(&host, "hi");
     until_end(&mut events);
     wait_until_done(&host, &main);
-    host.resume(&main, "and again", &ModelChoice::default())
+    host.block_on(host.resume(&main, "and again", &ModelChoice::default()))
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main);
-    let chat = host.start("a chat", &ModelChoice::default(), REPO).unwrap();
+    let chat = host
+        .block_on(host.start("a chat", &ModelChoice::default(), REPO))
+        .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
-    host.resume(&main, "main once more", &ModelChoice::default())
-        .unwrap();
+    host.block_on(host.resume(
+        &main,
+        "main once more",
+        &ModelChoice::default(),
+    ))
+    .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main);
 

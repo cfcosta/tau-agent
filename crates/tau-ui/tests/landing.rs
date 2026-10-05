@@ -141,6 +141,13 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     let host = host.with_repo("hello", project.clone());
     cx.update(|_, cx| host.attach(&workspace, events, cx));
+    // The host shows its catalog and history from its runtime, a moment
+    // after.
+    until(&mut cx, "the host's catalog and history", |cx| {
+        workspace.read_with(cx, |ws, _| {
+            !ws.catalog().repos.is_empty() && !ws.runs().is_empty()
+        })
+    });
 
     // The first run proposed its landing: once it stops, the card opens
     // with what landing on the main chat would do.

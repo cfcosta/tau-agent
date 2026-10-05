@@ -577,7 +577,7 @@ impl Tau {
         app.update(tau_ui_remote::init);
         let gate = Gate::default();
         let (host, events) = host(&gate);
-        let catalog = host.catalog();
+        let catalog = host.block_on(host.catalog());
         let mut cx = app.clone();
         let window = cx.add_window(|window, cx| {
             Workspace::new("tau", Vec::new(), catalog, window, cx)

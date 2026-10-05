@@ -87,10 +87,11 @@ pub const CUT_OFF: &str = "tau closed while you were working, and cut \
 impl Host {
     /// Goes on with `run`, which tau closing cut off: in the workspace
     /// it has, with [`CUT_OFF`] as the message, on the model it was on.
-    pub fn resume_cut_off(&self, run: &RunId) -> anyhow::Result<()> {
+    pub async fn resume_cut_off(&self, run: &RunId) -> anyhow::Result<()> {
         let record = self
-            .runtime
-            .block_on(self.store.run(&run.0))?
+            .store
+            .run(&run.0)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("No run {}", run.0))?;
         if record.status != Status::Interrupted {
             anyhow::bail!("{} was not cut off by tau closing", run.0);
@@ -105,17 +106,17 @@ impl Host {
         let choice = self.session_of(run).choice.unwrap_or_else(|| {
             ModelChoice::new(record.model.clone(), Effort::Auto)
         });
-        self.resume(run, CUT_OFF, &choice)
+        self.resume(run, CUT_OFF, &choice).await
     }
 
-    /// Finishes what the last tau left as it closed. Blocks: call it off
-    /// the interface's thread, before updates move trunk.
+    /// Finishes what the last tau left as it closed, before updates move
+    /// trunk.
     ///
     /// Landings cut off are finished first, then the sweep takes what
     /// no open run owns. Returns the landings finished, for their cards.
-    pub fn recover(&self) -> anyhow::Result<Vec<LandingRecord>> {
-        let finished = self.finish_landings()?;
-        self.sweep()?;
+    pub async fn recover(&self) -> anyhow::Result<Vec<LandingRecord>> {
+        let finished = self.finish_landings().await?;
+        self.sweep().await?;
         Ok(finished)
     }
 
@@ -123,23 +124,28 @@ impl Host {
     /// bookmarks no open run owns (`tau_vcs::sweep`): those of runs
     /// gone, landed, dropped, or of sub-agents that failed or were cut
     /// off, whose commits go too. A main chat's checkout, the default
-    /// workspace, and the workspaces of open chats stay. Blocks: call it
-    /// off the interface's thread.
-    pub fn sweep(&self) -> anyhow::Result<()> {
+    /// workspace, and the workspaces of open chats stay.
+    pub async fn sweep(&self) -> anyhow::Result<()> {
         // No run starts while the sweep reads what the projects hold and
         // who owns it.
-        let _starting = self.starting.lock().expect("not poisoned");
+        let _starting = self.starting.lock().await;
         let slots = self.repos.lock().expect("not poisoned").clone();
         // What the projects hold, before what the store says: a run that
         // starts after is in neither.
         let mut held = Vec::new();
         for slot in slots {
-            match slot.project() {
+            match slot.project().await {
                 Ok(project) => {
-                    let workspaces = project.blocking().workspaces()?;
-                    let bookmarks = project
-                        .blocking()
-                        .bookmarks(tau_vcs::sweep::RUN_BOOKMARK_PREFIX)?;
+                    let (workspaces, bookmarks) = project
+                        .run(|project| {
+                            anyhow::Ok((
+                                project.workspaces()?,
+                                project.bookmarks(
+                                    tau_vcs::sweep::RUN_BOOKMARK_PREFIX,
+                                )?,
+                            ))
+                        })
+                        .await?;
                     held.push((
                         slot.name.clone(),
                         project,
@@ -150,7 +156,7 @@ impl Host {
                 Err(error) => eprintln!("tau-ui: cannot sweep: {error:#}"),
             }
         }
-        let runs = self.runtime.block_on(runs(&self.store))?;
+        let runs = runs(&self.store).await?;
         // The runs of this session, and the workspaces they work in,
         // which the store may not name yet.
         let (live, live_workspaces): (HashSet<String>, Vec<String>) = {
@@ -189,7 +195,7 @@ impl Host {
                 .collect();
             let sweep = tau_vcs::sweep::plan(&owners, &workspaces, &bookmarks);
             if !sweep.is_empty() {
-                project.blocking().sweep(&sweep)?;
+                project.run(move |project| project.sweep(&sweep)).await?;
             }
         }
         Ok(())

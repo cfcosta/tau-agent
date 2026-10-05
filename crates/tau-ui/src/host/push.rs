@@ -24,8 +24,8 @@ impl Host {
     /// GitHub has (`update_repo`) and catches the main chat up, which
     /// puts its commits on top of GitHub's new ones; the main chat must
     /// not be running then. A push that finds GitHub's branch moved
-    /// since the last fetch is [`PushFailure::Moved`]. Blocks.
-    pub fn push_main(
+    /// since the last fetch is [`PushFailure::Moved`].
+    pub async fn push_main(
         &self,
         repo: &str,
         fetch: bool,
@@ -35,23 +35,39 @@ impl Host {
         let slot = self
             .slot(repo)
             .ok_or_else(|| failed(anyhow::anyhow!("No repository {repo}")))?;
-        let project = slot.project().map_err(failed)?;
+        let project = slot.project().await.map_err(failed)?;
         let (url, token) = self.github_remote(repo).map_err(failed)?;
         if fetch {
-            let main = self.main_of(repo).map_err(failed)?;
+            let main = self.main_of(repo).await.map_err(failed)?;
             if self.is_running(&main) {
                 return Err(failed(anyhow::anyhow!(
                     "main is running: fetch and push once its turn ends"
                 )));
             }
-            self.update_repo(repo).map_err(failed)?;
-            self.catch_up(&project, DEFAULT_WORKSPACE).map_err(failed)?;
+            self.update_repo(repo).await.map_err(failed)?;
+            self.catch_up(&project, DEFAULT_WORKSPACE)
+                .await
+                .map_err(failed)?;
         }
-        let remote = tau_vcs::Remote {
-            url: &url,
-            token: Some(&token),
-        };
-        match project.blocking().push_trunk(remote) {
+        // The push and, when GitHub moved, what main has that it lacks.
+        let (pushed, ahead) = project
+            .run(move |project| {
+                let remote = tau_vcs::Remote {
+                    url: &url,
+                    token: Some(&token),
+                };
+                let pushed = project.push_trunk(remote);
+                let ahead = matches!(
+                    pushed,
+                    Err(tau_vcs::VcsError::PushRejected { .. })
+                )
+                .then(|| {
+                    project.unpushed().map_or(0, |changes| changes.len() as u32)
+                });
+                (pushed, ahead)
+            })
+            .await;
+        match pushed {
             Ok(pushed) => Ok(Pushed {
                 branch: pushed.branch,
                 from: pushed.from,
@@ -68,10 +84,7 @@ impl Host {
             Err(tau_vcs::VcsError::PushRejected { branch }) => {
                 Err(PushFailure::Moved {
                     branch,
-                    ahead: project
-                        .blocking()
-                        .unpushed()
-                        .map_or(0, |changes| changes.len() as u32),
+                    ahead: ahead.unwrap_or_default(),
                 })
             }
             Err(error) => Err(failed(error.into())),

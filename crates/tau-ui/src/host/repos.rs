@@ -68,11 +68,9 @@ pub(super) fn fnv(text: &str) -> u32 {
 }
 
 /// The project runs work in, which may still be importing. Anything
-/// that needs it waits in [`ProjectSlot::wait`], off the UI thread where
-/// it can.
+/// that needs it awaits [`ProjectSlot::wait`].
 pub(super) struct ProjectSlot {
-    pub(super) state: Mutex<ProjectState>,
-    pub(super) done: std::sync::Condvar,
+    state: tokio::sync::watch::Sender<ProjectState>,
 }
 
 #[derive(Clone)]
@@ -87,26 +85,33 @@ pub(super) enum ProjectState {
 impl ProjectSlot {
     pub(super) fn new(state: ProjectState) -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(state),
-            done: std::sync::Condvar::new(),
+            state: tokio::sync::watch::Sender::new(state),
         })
     }
 
     pub(super) fn set(&self, state: ProjectState) {
-        *self.state.lock().expect("not poisoned") = state;
-        self.done.notify_all();
+        self.state.send_replace(state);
     }
 
     pub(super) fn peek(&self) -> ProjectState {
-        self.state.lock().expect("not poisoned").clone()
+        self.state.borrow().clone()
+    }
+
+    /// The project if it is imported now, without waiting.
+    pub(super) fn ready(&self) -> Option<Project> {
+        match &*self.state.borrow() {
+            ProjectState::Ready(project) => Some(project.clone()),
+            _ => None,
+        }
     }
 
     /// The project, once the import is over; `None` if it failed.
-    pub(super) fn wait(&self) -> Option<Project> {
-        let mut state = self.state.lock().expect("not poisoned");
-        while matches!(*state, ProjectState::Importing) {
-            state = self.done.wait(state).expect("not poisoned");
-        }
+    pub(super) async fn wait(&self) -> Option<Project> {
+        let mut state = self.state.subscribe();
+        let state = state
+            .wait_for(|state| !matches!(state, ProjectState::Importing))
+            .await
+            .ok()?;
         match &*state {
             ProjectState::Ready(project) => Some(project.clone()),
             _ => None,
@@ -124,9 +129,10 @@ pub(super) struct RepoSlot {
 
 impl RepoSlot {
     /// The project runs in the repository work in, once imported.
-    pub(super) fn project(&self) -> anyhow::Result<Project> {
+    pub(super) async fn project(&self) -> anyhow::Result<Project> {
         self.project
             .wait()
+            .await
             .ok_or_else(|| match self.project.peek() {
                 ProjectState::Failed(why) => {
                     anyhow::anyhow!(
@@ -151,12 +157,15 @@ pub(super) fn refresh_when_imported(
         return;
     }
     let project = slot.project.clone();
-    let wait = host.runtime.spawn_blocking(move || project.wait());
-    let host = host.clone();
+    let catalog = host.spawn(async move |host| {
+        project.wait().await;
+        host.catalog().await
+    });
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
-        let _ = wait.await;
-        let catalog = host.catalog();
+        let Ok(catalog) = catalog.await else {
+            return;
+        };
         let _ = workspace
             .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
     })
@@ -197,10 +206,10 @@ pub(super) fn clone_into_tau(
         )
     });
     let job = {
-        let (cloner, name) = (host.clone(), name.to_owned());
-        host.runtime.spawn_blocking(move || {
-            let repo = cloner.clone_github(&name)?;
-            let main = cloner.main_view(&repo)?;
+        let name = name.to_owned();
+        host.spawn(async move |cloner| {
+            let repo = cloner.clone_github(&name).await?;
+            let main = cloner.main_view(&repo).await?;
             anyhow::Ok((repo, main))
         })
     };
@@ -293,7 +302,7 @@ impl Host {
             project: ProjectSlot::new(ProjectState::Ready(project)),
         });
         drop(repos);
-        if let Err(error) = self.main_of(name) {
+        if let Err(error) = self.setting_up(self.main_of(name)) {
             eprintln!("tau-ui: cannot make {name}'s main chat: {error:#}");
         }
         self
@@ -303,7 +312,7 @@ impl Host {
     /// time it is asked for: a run that starts empty and finished, which
     /// a message resumes. Every other chat in the repository is a fork
     /// of it, and it cannot be closed.
-    pub fn main_of(&self, repo: &str) -> anyhow::Result<RunId> {
+    pub async fn main_of(&self, repo: &str) -> anyhow::Result<RunId> {
         let listed = {
             let list = self.list.lock().expect("not poisoned");
             let listed =
@@ -314,12 +323,12 @@ impl Host {
             listed.main.clone()
         };
         if let Some(id) = listed
-            && self.runtime.block_on(self.store.run(&id))?.is_some()
+            && self.store.run(&id).await?.is_some()
         {
             return Ok(RunId(id.into()));
         }
         let id = uuid::Uuid::now_v7().to_string();
-        self.runtime.block_on(async {
+        async {
             self.store
                 .create_run(&tau_store::NewRun {
                     id: &id,
@@ -343,7 +352,8 @@ impl Host {
                 .await?;
             self.store.set_title(&id, MAIN_TITLE).await?;
             self.store.finish_run(&id, Status::Done, None, None).await
-        })?;
+        }
+        .await?;
         let mut list = self.list.lock().expect("not poisoned");
         if let Some(listed) =
             list.repos.iter_mut().find(|listed| listed.name == repo)
@@ -378,13 +388,13 @@ impl Host {
 
     /// The bookmark `run`'s commits move: trunk's for a main chat, which
     /// commits on it, else `tau/<run>`.
-    pub(super) fn bookmark_of(
+    pub(super) async fn bookmark_of(
         &self,
         run: &RunId,
         project: &Project,
     ) -> anyhow::Result<String> {
         if self.is_main(run) {
-            return Ok(project.blocking().trunk_name()?);
+            return Ok(project.run(|project| project.trunk_name()).await?);
         }
         Ok(bookmark(run))
     }
@@ -392,29 +402,25 @@ impl Host {
     /// Brings a main chat's workspace, `name`, up to trunk, which moves
     /// without it on an update from GitHub: its work in `@` goes onto
     /// trunk's head, so its next commit moves trunk forward, not aside.
-    pub(super) fn catch_up(
+    pub(super) async fn catch_up(
         &self,
         project: &Project,
         name: &str,
     ) -> anyhow::Result<()> {
-        let exists = name == DEFAULT_WORKSPACE
-            || project
-                .blocking()
-                .workspaces()?
-                .iter()
-                .any(|known| known == name);
+        let known = name.to_owned();
+        let (exists, trunk, trunk_name) = project
+            .run(move |project| {
+                let exists = known == DEFAULT_WORKSPACE
+                    || project.workspaces()?.contains(&known);
+                anyhow::Ok((exists, project.trunk()?, project.trunk_name()?))
+            })
+            .await?;
         if !exists {
             return Ok(());
         }
-        let vcs = self.runtime.block_on(tau_vcs::Vcs::open(
-            project.workspace_dir(name),
-            identity(),
-        ))?;
-        self.runtime.block_on(vcs.move_onto(
-            project.blocking().trunk()?,
-            project.blocking().trunk_name()?,
-            true,
-        ))?;
+        let vcs =
+            tau_vcs::Vcs::open(project.workspace_dir(name), identity()).await?;
+        vcs.move_onto(trunk, trunk_name, true).await?;
         Ok(())
     }
 
@@ -429,19 +435,22 @@ impl Host {
 
     /// The repository `run` works in: as this session started it, or as
     /// the store recorded it.
-    pub(super) fn slot_of_run(&self, run: &RunId) -> anyhow::Result<RepoSlot> {
-        let known = self.session_of(run).repo;
-        let name = known.or_else(|| {
-            self.runtime.block_on(stored_repo(&self.store, &run.0))
-        });
+    pub(super) async fn slot_of_run(
+        &self,
+        run: &RunId,
+    ) -> anyhow::Result<RepoSlot> {
+        let name = match self.session_of(run).repo {
+            Some(name) => Some(name),
+            None => stored_repo(&self.store, &run.0).await,
+        };
         name.and_then(|name| self.slot(&name)).ok_or_else(|| {
             anyhow::anyhow!("{} works in no listed repository", run.0)
         })
     }
 
     /// A listed repository's project, waiting for its import.
-    pub fn project_of(&self, repo: &str) -> Option<Project> {
-        self.slot(repo)?.project.wait()
+    pub async fn project_of(&self, repo: &str) -> Option<Project> {
+        self.slot(repo)?.project.wait().await
     }
 
     /// Whether a repository is still being imported.
@@ -455,7 +464,7 @@ impl Host {
 
     /// Lists the clone of `full_name` at `dir` and starts importing it.
     /// Returns it as the sidebar shows it.
-    pub(super) fn list_clone(
+    pub(super) async fn list_clone(
         &self,
         dir: &Path,
         full_name: &str,
@@ -481,14 +490,14 @@ impl Host {
             self.repos.lock().expect("not poisoned").push(slot);
         }
         let mut repo = Repo::new(&name, canonical(dir).display().to_string());
-        repo.main = Some(self.main_of(&name)?);
+        repo.main = Some(self.main_of(&name).await?);
         Ok(repo)
     }
 
     /// Clones `full_name` (`owner/name`) from GitHub with the saved
-    /// sign-in, unless it was cloned before, and lists it. Blocks for
-    /// the clone; the import goes on in the background.
-    pub fn clone_github(&self, full_name: &str) -> anyhow::Result<Repo> {
+    /// sign-in, unless it was cloned before, and lists it. Waits for the
+    /// clone; the import goes on in the background.
+    pub async fn clone_github(&self, full_name: &str) -> anyhow::Result<Repo> {
         let token = github::Token::load(&self.config.credentials)
             .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
         let (owner, name) = full_name
@@ -503,31 +512,39 @@ impl Host {
             .ok_or_else(|| anyhow::anyhow!("{full_name} is not owner/name"))?;
         let dir = self.config.repos.join("github").join(owner).join(name);
         if !dir.exists() {
-            tau_vcs::clone_bare(
-                &self.github.clone_url(full_name),
-                Some(&token.token),
-                &dir,
-            )?;
+            let (url, into) = (self.github.clone_url(full_name), dir.clone());
+            // A clone over the network, through git: it blocks.
+            tokio::task::spawn_blocking(move || {
+                tau_vcs::clone_bare(&url, Some(&token.token), &into)
+            })
+            .await??;
         }
-        self.list_clone(&dir, full_name)
+        self.list_clone(&dir, full_name).await
     }
 
     /// Brings new commits from GitHub into a repository's project. New
     /// runs start from the new trunk; runs going on keep their code.
-    /// Blocks.
-    pub fn update_repo(&self, name: &str) -> anyhow::Result<tau_vcs::Updated> {
+    pub async fn update_repo(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<tau_vcs::Updated> {
         let slot = self
             .slot(name)
             .ok_or_else(|| anyhow::anyhow!("No repository {name}"))?;
-        let project = slot.project()?;
+        let project = slot.project().await?;
         let full_name = self.github_of(name).ok_or_else(|| {
             anyhow::anyhow!("{name} was not cloned from GitHub")
         })?;
         let token = github::Token::load(&self.config.credentials);
-        Ok(project.blocking().update(tau_vcs::UpdateFrom::Remote {
-            url: &self.github.clone_url(&full_name),
-            token: token.as_ref().map(|token| token.token.as_str()),
-        })?)
+        let url = self.github.clone_url(&full_name);
+        Ok(project
+            .run(move |project| {
+                project.update(tau_vcs::UpdateFrom::Remote {
+                    url: &url,
+                    token: token.as_ref().map(|token| token.token.as_str()),
+                })
+            })
+            .await?)
     }
 
     /// The `owner/name` a repository was cloned from, if it came from

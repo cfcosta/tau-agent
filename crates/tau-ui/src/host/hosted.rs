@@ -25,7 +25,7 @@ impl Host {
     /// Makes each plugin's host state.
     pub(super) fn host_plugins(&mut self) {
         let cx = self.host_cx();
-        self.hosted = self.runtime.block_on(hosted::host_all(&cx));
+        self.hosted = self.setting_up(hosted::host_all(&cx));
     }
 
     /// What every plugin reaches of this host now.
@@ -189,7 +189,7 @@ impl Host {
         // The repository's own commands (its MCP servers) start through
         // what the plugins give it, in its main workspace.
         let repo_launcher = self.launcher_of(repo).await.and_then(|launcher| {
-            let project = repo.project.wait()?;
+            let project = repo.project.ready()?;
             Some(tau_ui_plugin::RepoLauncher {
                 launcher,
                 dir: project.workspace_dir(DEFAULT_WORKSPACE),
@@ -292,7 +292,7 @@ impl Host {
 
     /// Stores `body` as `plugin`'s record with `run`: a change the
     /// interface made and folded already.
-    pub fn store_plugin_record(
+    pub async fn store_plugin_record(
         &self,
         run: &RunId,
         plugin: &str,
@@ -302,21 +302,19 @@ impl Host {
             plugin: plugin.to_owned(),
             body: body.to_string(),
         };
-        self.runtime.block_on(self.store.append_turn(
-            &run.0,
-            &[entry],
-            tau_store::TurnUsage::default(),
-        ))?;
+        self.store
+            .append_turn(&run.0, &[entry], tau_store::TurnUsage::default())
+            .await?;
         Ok(())
     }
 
     /// What plugins say as `run` goes on, on `choice`.
-    pub fn starting_of(
+    pub async fn starting_of(
         &self,
         run: &RunId,
         choice: &ModelChoice,
     ) -> Vec<(String, Value)> {
-        let Ok(slot) = self.slot_of_run(run) else {
+        let Ok(slot) = self.slot_of_run(run).await else {
             return Vec::new();
         };
         let kind = if self.is_main(run) {
@@ -324,25 +322,24 @@ impl Host {
         } else {
             RunKind::Chat
         };
-        self.runtime
-            .block_on(self.starting(&self.run_ctx(kind, &slot, choice)))
+        self.starting(&self.run_ctx(kind, &slot, choice)).await
     }
 }
 
 /// What a push from a plugin's host half does to the interface.
 pub(super) fn apply_push(
-    host: &Host,
+    host: &Arc<Host>,
     push: Push,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
-    workspace.update(cx, |ws, cx| match push {
-        Push::Record { run, plugin, body } => {
+    match push {
+        Push::Record { run, plugin, body } => workspace.update(cx, |ws, cx| {
             ws.apply(HostUpdate::PluginRecord { run, plugin, body }, cx)
-        }
-        Push::Catalog => ws.apply(HostUpdate::catalog(host.catalog()), cx),
-        Push::Alert { title, message } => {
+        }),
+        Push::Catalog => super::attach::refresh_catalog(host, workspace, cx),
+        Push::Alert { title, message } => workspace.update(cx, |ws, cx| {
             ws.apply(HostUpdate::alert(title, message), cx)
-        }
-    });
+        }),
+    }
 }

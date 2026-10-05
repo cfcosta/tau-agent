@@ -122,6 +122,13 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     let host = host.with_repo("hello", project.clone());
     cx.update(|_, cx| host.attach(&workspace, events, cx));
+    // The host shows its catalog and history from its runtime, a moment
+    // after.
+    until(&mut cx, "the host's catalog and history", |cx| {
+        workspace.read_with(cx, |ws, _| {
+            !ws.catalog().repos.is_empty() && !ws.runs().is_empty()
+        })
+    });
 
     // The first chat finishes: in the background, it is ready to land
     // its one change.

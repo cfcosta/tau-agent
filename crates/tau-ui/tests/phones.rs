@@ -78,6 +78,12 @@ fn a_phone_pairs_and_steers_the_computer(cx: &mut TestAppContext) {
         })
         .detach();
     });
+    // The server starts on the host's runtime, a moment after.
+    until(&mut desktop_cx, "the server to listen", |cx| {
+        desktop.read_with(cx, |ws, _| {
+            ws.phones().listening.is_some() || ws.phones().error.is_some()
+        })
+    });
     desktop.update(&mut desktop_cx, |ws, cx| {
         assert!(ws.phones().listening.is_some(), "{:?}", ws.phones().error);
         ws.ask_phones(PhonesRequest::ShowCode, cx);

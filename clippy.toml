@@ -6,6 +6,7 @@ disallowed-methods = [
   { path = "tokio::runtime::Handle::block_on", reason = "await it instead, or run blocking work in spawn_blocking (ADR 0028)" },
   { path = "pollster::block_on", reason = "only inside a job running in spawn_blocking (ADR 0028)" },
   { path = "futures::executor::block_on", reason = "await it instead, or run blocking work in spawn_blocking (ADR 0028)" },
+  { path = "tau_ui::host::Host::block_on", reason = "for tests only: the interface asks the host with on_host or Host::spawn (ADR 0028)" },
   { path = "tau_vcs::Project::blocking", reason = "for tests only: async code runs a job with Project::run (ADR 0028)" },
   { path = "tau_vcs::ProjectRepo::open", reason = "it blocks: use Project::open (ADR 0028)" },
   { path = "tau_vcs::ProjectRepo::import", reason = "it blocks: use Project::import (ADR 0028)" },

@@ -81,17 +81,16 @@ impl Host {
 
     /// `child`, a sub-agent of a main chat, ended: once its work is
     /// checked, it joins main's queue (unless the person stopped it),
-    /// and what may land now lands. Blocks: call it off the interface's
-    /// thread.
-    pub fn sub_agent_ended(
+    /// and what may land now lands.
+    pub async fn sub_agent_ended(
         &self,
         child: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let main = self.parent_of(child)?;
-        let repo = self.slot_of_run(&main)?.name;
+        let main = self.parent_of(child).await?;
+        let repo = self.slot_of_run(&main).await?.name;
         let agents = self.sub_agents_of(&repo);
-        let ending = self.runtime.block_on(agents.ended(child));
-        let _draining = self.draining.lock().expect("not poisoned");
+        let ending = agents.ended(child).await;
+        let _draining = self.draining.lock().await;
         let end = match ending {
             // Not this session's, or the person stopped it: nothing to
             // land or report.
@@ -111,7 +110,7 @@ impl Host {
         if let Some(end) = end
             && agents.taken(child) != Some(true)
         {
-            let title = self.title_of(child)?;
+            let title = self.title_of(child).await?;
             // What it brings, so its place in the queue shows it before
             // its turn to land previews it again. Read without writing:
             // main may be in a turn. One with nothing to land, or that
@@ -120,28 +119,31 @@ impl Host {
                 Some(_) => (0, Vec::new()),
                 None => self
                     .land_dry(child, Reading::Forecast)
+                    .await
                     .map(|landing| (landing.changes.len(), landing.conflicts))
                     .unwrap_or_default(),
             };
-            let actions = self.with_lane(&main, |lane: &mut Lane| {
-                lane.queue(Waiting {
-                    run: child.0.to_string(),
-                    title,
-                    changes,
-                    conflicts,
-                    confirmed: Vec::new(),
-                    sub_agent: Some(end),
+            let actions = self
+                .with_lane(&main, |lane: &mut Lane| {
+                    lane.queue(Waiting {
+                        run: child.0.to_string(),
+                        title,
+                        changes,
+                        conflicts,
+                        confirmed: Vec::new(),
+                        sub_agent: Some(end),
+                    })
                 })
-            })?;
-            self.perform(&main, actions)?;
+                .await?;
+            self.perform(&main, actions).await?;
         }
-        let (drained, landings) = self.drain_locked(&main)?;
-        self.report(&main, drained, landings)
+        let (drained, landings) = self.drain_locked(&main).await?;
+        self.report(&main, drained, landings).await
     }
 
     /// The message of tau's turn after a drain: each sub-agent it
     /// reports, then the conflicts to resolve, if any.
-    pub(super) fn report_prompt(
+    pub(super) async fn report_prompt(
         &self,
         reported: &[Waiting],
         landings: &[(RunId, Landing)],
@@ -150,42 +152,42 @@ impl Host {
         if reported.is_empty() {
             return resolve;
         }
-        let mut sections: Vec<String> = reported
-            .iter()
-            .map(|waiting| {
-                let run = RunId(waiting.run.as_str().into());
-                let end = waiting.sub_agent.clone().unwrap_or_default();
-                if let Some(failed) = &end.failed {
-                    return format!(
-                        "Sub-agent `{}` ({}) came back with nothing to \
-                         land: {failed}.",
-                        waiting.title, waiting.run
-                    );
-                }
-                let answer = self
-                    .runtime
-                    .block_on(self.store.run(&run.0))
-                    .ok()
-                    .flatten()
-                    .and_then(|record| record.result)
-                    .unwrap_or_default();
-                let note = landings
-                    .iter()
-                    .find(|(landed, _)| *landed == run)
-                    .map(|(_, landing)| {
-                        tau_vcs::sub_agents::landing_note(
-                            landing,
-                            &landing.conflicts,
-                            end.limit.as_deref().and_then(limit_of),
-                        )
-                    })
-                    .unwrap_or_default();
-                format!(
-                    "Sub-agent `{}` ({}) finished.\n\n{answer}\n\n{note}",
+        let mut sections: Vec<String> = Vec::new();
+        for waiting in reported {
+            let run = RunId(waiting.run.as_str().into());
+            let end = waiting.sub_agent.clone().unwrap_or_default();
+            if let Some(failed) = &end.failed {
+                sections.push(format!(
+                    "Sub-agent `{}` ({}) came back with nothing to \
+                     land: {failed}.",
                     waiting.title, waiting.run
-                )
-            })
-            .collect();
+                ));
+                continue;
+            }
+            let answer = self
+                .store
+                .run(&run.0)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|record| record.result)
+                .unwrap_or_default();
+            let note = landings
+                .iter()
+                .find(|(landed, _)| *landed == run)
+                .map(|(_, landing)| {
+                    tau_vcs::sub_agents::landing_note(
+                        landing,
+                        &landing.conflicts,
+                        end.limit.as_deref().and_then(limit_of),
+                    )
+                })
+                .unwrap_or_default();
+            sections.push(format!(
+                "Sub-agent `{}` ({}) finished.\n\n{answer}\n\n{note}",
+                waiting.title, waiting.run
+            ));
+        }
         sections.extend(resolve);
         sections.push(REPORT_END.to_owned());
         Some(sections.join("\n\n"))

@@ -46,20 +46,21 @@ struct OnRepo<'a> {
 }
 
 impl Main for OnRepo<'_> {
-    fn busy(&self) -> bool {
-        self.host.settle(&self.main);
+    async fn busy(&self) -> bool {
+        self.host.settle(&self.main).await;
         self.host.is_running(&self.main)
     }
 
-    fn conflicts(&mut self) -> anyhow::Result<Vec<String>> {
-        self.host.main_conflicts(&self.main)
+    async fn conflicts(&mut self) -> anyhow::Result<Vec<String>> {
+        self.host.main_conflicts(&self.main).await
     }
 
-    fn preview(&mut self, run: &str) -> Result<Preview, Unlandable> {
+    async fn preview(&mut self, run: &str) -> Result<Preview, Unlandable> {
         let child = RunId(run.into());
-        self.unlandable(&child)?;
+        self.unlandable(&child).await?;
         self.host
             .preview_landing(&child)
+            .await
             .map(|landing| Preview {
                 changes: landing.changes.len(),
                 conflicts: landing.conflicts,
@@ -67,39 +68,43 @@ impl Main for OnRepo<'_> {
             .map_err(|error| self.why(error))
     }
 
-    fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable> {
+    async fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable> {
         let child = RunId(run.into());
-        self.unlandable(&child)?;
+        self.unlandable(&child).await?;
         // `wait` may take a sub-agent first: it lands it itself.
         if !self.host.take_sub_agent(&child) {
             return Err(Unlandable::Gone);
         }
-        let landing =
-            self.host.land(&child).map_err(|error| self.why(error))?;
+        let landing = self
+            .host
+            .land(&child)
+            .await
+            .map_err(|error| self.why(error))?;
         let conflicts = landing.conflicts.clone();
         self.landings.push((child, landing));
         Ok(conflicts)
     }
 
-    fn title(&self, run: &str) -> String {
+    async fn title(&self, run: &str) -> String {
         self.host
             .title_of(&RunId(run.into()))
+            .await
             .unwrap_or_else(|_| run.to_owned())
     }
 
-    fn store(&mut self, record: &Record) -> anyhow::Result<()> {
-        self.host.store_queue_record(&self.main, record)
+    async fn store(&mut self, record: &Record) -> anyhow::Result<()> {
+        self.host.store_queue_record(&self.main, record).await
     }
 }
 
 impl OnRepo<'_> {
     /// A chat that ended for good leaves the queue; one that is going
     /// again keeps its place.
-    fn unlandable(&self, child: &RunId) -> Result<(), Unlandable> {
+    async fn unlandable(&self, child: &RunId) -> Result<(), Unlandable> {
         if self.host.sub_agent_taken(child) {
             return Err(Unlandable::Gone);
         }
-        match self.host.ending_of(child) {
+        match self.host.ending_of(child).await {
             Ok(Some(_)) => return Err(Unlandable::Gone),
             Ok(None) => {}
             Err(error) => return Err(Unlandable::Failed(format!("{error:#}"))),
@@ -129,42 +134,51 @@ impl Host {
 
     /// Does `f` with `main`'s lane, restored from the store the first
     /// time.
-    pub(super) fn with_lane<R>(
+    pub(super) async fn with_lane<R>(
         &self,
         main: &RunId,
         f: impl FnOnce(&mut Lane) -> R,
     ) -> anyhow::Result<R> {
-        let mut lanes = self.lanes.lock().expect("not poisoned");
-        if !lanes.contains_key(main) {
+        let known = self.lanes.lock().expect("not poisoned").contains_key(main);
+        if !known {
             let records: Vec<Record> = self
-                .runtime
-                .block_on(self.store.plugin_entries(&main.0, QUEUE_PLUGIN))?
+                .store
+                .plugin_entries(&main.0, QUEUE_PLUGIN)
+                .await?
                 .iter()
                 .filter_map(|(_, body)| serde_json::from_str(body).ok())
                 .collect();
-            lanes.insert(main.clone(), Lane::restore(&records));
+            // Restored once: another call may have restored it meanwhile.
+            self.lanes
+                .lock()
+                .expect("not poisoned")
+                .entry(main.clone())
+                .or_insert_with(|| Lane::restore(&records));
         }
+        let mut lanes = self.lanes.lock().expect("not poisoned");
         Ok(f(lanes.get_mut(main).expect("restored above")))
     }
 
-    fn store_queue_record(
+    async fn store_queue_record(
         &self,
         main: &RunId,
         record: &Record,
     ) -> anyhow::Result<()> {
-        self.runtime.block_on(self.store.append_turn(
-            &main.0,
-            &[Entry::Plugin {
-                plugin: QUEUE_PLUGIN.to_owned(),
-                body: serde_json::to_string(record)?,
-            }],
-            TurnUsage::default(),
-        ))?;
+        self.store
+            .append_turn(
+                &main.0,
+                &[Entry::Plugin {
+                    plugin: QUEUE_PLUGIN.to_owned(),
+                    body: serde_json::to_string(record)?,
+                }],
+                TurnUsage::default(),
+            )
+            .await?;
         Ok(())
     }
 
     /// Carries out what `main`'s lane asked for outside a drain.
-    pub(super) fn perform(
+    pub(super) async fn perform(
         &self,
         main: &RunId,
         actions: Vec<super::queue::Action>,
@@ -175,44 +189,54 @@ impl Host {
             main: main.clone(),
             landings: Vec::new(),
         };
-        drained.perform(&mut repo, actions)?;
+        drained.perform(&mut repo, actions).await?;
         Ok(drained)
     }
 
     /// The files `main`'s stack holds in conflict, once it caught up
     /// with trunk. `main` must be idle.
-    pub fn main_conflicts(&self, main: &RunId) -> anyhow::Result<Vec<String>> {
-        let project = self.slot_of_run(main)?.project()?;
-        self.catch_up(&project, DEFAULT_WORKSPACE)?;
-        let vcs = self.runtime.block_on(tau_vcs::Vcs::open(
+    pub async fn main_conflicts(
+        &self,
+        main: &RunId,
+    ) -> anyhow::Result<Vec<String>> {
+        let project = self.slot_of_run(main).await?.project().await?;
+        self.catch_up(&project, DEFAULT_WORKSPACE).await?;
+        let vcs = tau_vcs::Vcs::open(
             project.workspace_dir(DEFAULT_WORKSPACE),
             identity(),
-        ))?;
-        Ok(self.runtime.block_on(vcs.conflicts())?)
+        )
+        .await?;
+        Ok(vcs.conflicts().await?)
     }
 
     /// `main`'s landing queue and the conflicts on it, as stored.
-    pub fn landing_queue(
+    pub async fn landing_queue(
         &self,
         main: &RunId,
     ) -> anyhow::Result<(Vec<Waiting>, Option<MainConflicts>)> {
         self.with_lane(main, |lane| {
             (lane.waiting().to_vec(), lane.conflicts().cloned())
         })
+        .await
     }
 
     /// Why a chat may not fork `main` now, if it may not: main has
     /// conflicts.
-    pub(super) fn refuse_fork_of(&self, main: &RunId) -> anyhow::Result<()> {
-        if let Some(why) = self.with_lane(main, |lane| lane.refuse_chat())? {
+    pub(super) async fn refuse_fork_of(
+        &self,
+        main: &RunId,
+    ) -> anyhow::Result<()> {
+        if let Some(why) =
+            self.with_lane(main, |lane| lane.refuse_chat()).await?
+        {
             anyhow::bail!(why);
         }
         Ok(())
     }
 
     /// Main started a turn: nothing lands until it ends.
-    pub(super) fn main_started(&self, main: &RunId) {
-        if let Err(error) = self.with_lane(main, Lane::started) {
+    pub(super) async fn main_started(&self, main: &RunId) {
+        if let Err(error) = self.with_lane(main, Lane::started).await {
             eprintln!("tau-ui: cannot read the landing queue: {error:#}");
         }
     }
@@ -221,15 +245,18 @@ impl Host {
     /// with the conflicts they saw in its last preview as confirmed,
     /// and what may land now lands. Queued already, it takes the
     /// conflicts its last preview found as confirmed, in its place.
-    pub fn queue_landing(&self, child: &RunId) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().expect("not poisoned");
-        let main = self.parent_of(child)?;
+    pub async fn queue_landing(
+        &self,
+        child: &RunId,
+    ) -> anyhow::Result<DrainReport> {
+        let _draining = self.draining.lock().await;
+        let main = self.parent_of(child).await?;
         if !self.is_main(&main) {
             anyhow::bail!(
                 "Only a chat under a repository's main chat lands by queue"
             );
         }
-        match self.ending_of(child)? {
+        match self.ending_of(child).await? {
             None => {}
             Some(Ending::Landed { .. }) => {
                 anyhow::bail!("{} landed already", child.0)
@@ -238,7 +265,7 @@ impl Host {
                 anyhow::bail!("{} was dropped; it cannot land", child.0)
             }
         }
-        self.settle(child);
+        self.settle(child).await;
         if self.is_running(child) {
             anyhow::bail!(
                 "{} is still running; land it once it finishes",
@@ -254,137 +281,152 @@ impl Host {
             .unwrap_or_default();
         // A chat never previewed lands only cleanly: nobody confirmed
         // conflicts for it.
-        let title = self.title_of(child)?;
-        let actions = self.with_lane(&main, |lane| {
-            let known = lane.waiting().iter().find(|w| *w.run == *child.0);
-            let waiting = match known {
-                Some(known) => Waiting {
-                    confirmed: known.conflicts.clone(),
-                    title,
-                    ..known.clone()
-                },
-                None => Waiting {
-                    run: child.0.to_string(),
-                    title,
-                    changes: seen.changes,
-                    conflicts: seen.conflicts.clone(),
-                    confirmed: seen.conflicts,
-                    sub_agent: None,
-                },
-            };
-            lane.queue(waiting)
-        })?;
-        self.perform(&main, actions)?;
-        let (drained, landings) = self.drain_locked(&main)?;
-        self.report(&main, drained, landings)
+        let title = self.title_of(child).await?;
+        let actions = self
+            .with_lane(&main, |lane| {
+                let known = lane.waiting().iter().find(|w| *w.run == *child.0);
+                let waiting = match known {
+                    Some(known) => Waiting {
+                        confirmed: known.conflicts.clone(),
+                        title,
+                        ..known.clone()
+                    },
+                    None => Waiting {
+                        run: child.0.to_string(),
+                        title,
+                        changes: seen.changes,
+                        conflicts: seen.conflicts.clone(),
+                        confirmed: seen.conflicts,
+                        sub_agent: None,
+                    },
+                };
+                lane.queue(waiting)
+            })
+            .await?;
+        self.perform(&main, actions).await?;
+        let (drained, landings) = self.drain_locked(&main).await?;
+        self.report(&main, drained, landings).await
     }
 
     /// Takes `child` out of its main chat's queue; what may land now
     /// lands.
-    pub fn unqueue(&self, child: &RunId) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().expect("not poisoned");
-        let main = self.parent_of(child)?;
-        let actions = self.with_lane(&main, |lane| lane.unqueue(&child.0))?;
-        self.perform(&main, actions)?;
-        let (drained, landings) = self.drain_locked(&main)?;
-        self.report(&main, drained, landings)
+    pub async fn unqueue(&self, child: &RunId) -> anyhow::Result<DrainReport> {
+        let _draining = self.draining.lock().await;
+        let main = self.parent_of(child).await?;
+        let actions =
+            self.with_lane(&main, |lane| lane.unqueue(&child.0)).await?;
+        self.perform(&main, actions).await?;
+        let (drained, landings) = self.drain_locked(&main).await?;
+        self.report(&main, drained, landings).await
     }
 
     /// The person will resolve `main`'s conflicts themselves.
-    pub fn dismiss_conflicts(
+    pub async fn dismiss_conflicts(
         &self,
         main: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().expect("not poisoned");
-        let actions = self.with_lane(main, Lane::dismiss)?;
-        self.perform(main, actions)?;
-        self.report(main, Drained::default(), Vec::new())
+        let _draining = self.draining.lock().await;
+        let actions = self.with_lane(main, Lane::dismiss).await?;
+        self.perform(main, actions).await?;
+        self.report(main, Drained::default(), Vec::new()).await
     }
 
     /// The message tau's turn resolving `main`'s conflicts starts with
     /// again: the last one, or one naming the files.
-    pub fn resolve_again_prompt(&self, main: &RunId) -> anyhow::Result<String> {
+    pub async fn resolve_again_prompt(
+        &self,
+        main: &RunId,
+    ) -> anyhow::Result<String> {
         self.with_lane(main, |lane| match lane.conflicts() {
             Some(conflicts) if !conflicts.prompt.is_empty() => {
                 Ok(conflicts.prompt.clone())
             }
             Some(conflicts) => Ok(conflicts_remain(&conflicts.files)),
             None => Err(anyhow::anyhow!("main has no conflicts left")),
-        })?
+        })
+        .await?
     }
 
     /// `main`'s turn ended: what it left in conflict marks it, or its
     /// mark goes, and what may land now lands.
-    pub fn main_turn_ended(&self, main: &RunId) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().expect("not poisoned");
-        self.settle(main);
+    pub async fn main_turn_ended(
+        &self,
+        main: &RunId,
+    ) -> anyhow::Result<DrainReport> {
+        let _draining = self.draining.lock().await;
+        self.settle(main).await;
         if self.is_running(main) {
-            return self.report(main, Drained::default(), Vec::new());
+            return self.report(main, Drained::default(), Vec::new()).await;
         }
-        let files = self.main_conflicts(main)?;
-        let actions = self.with_lane(main, |lane| lane.ended(files))?;
-        let mut drained = self.perform(main, actions)?;
-        let (more, landings) = self.drain_locked(main)?;
+        let files = self.main_conflicts(main).await?;
+        let actions = self.with_lane(main, |lane| lane.ended(files)).await?;
+        let mut drained = self.perform(main, actions).await?;
+        let (more, landings) = self.drain_locked(main).await?;
         drained.landed.extend(more.landed);
         drained.failed.extend(more.failed);
         drained.reported.extend(more.reported);
         drained.resolve = more.resolve;
         drained.notify = drained.notify.or(more.notify);
-        self.report(main, drained, landings)
+        self.report(main, drained, landings).await
     }
 
     /// The person stopped `main`'s turn: what it left in conflict marks
     /// it, or its mark goes, but nothing lands and tau starts no turn on
     /// it. What waits lands after main's next turn, or when a sub-agent
     /// ends.
-    pub fn main_turn_stopped(
+    pub async fn main_turn_stopped(
         &self,
         main: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().expect("not poisoned");
-        self.settle(main);
+        let _draining = self.draining.lock().await;
+        self.settle(main).await;
         if self.is_running(main) {
-            return self.report(main, Drained::default(), Vec::new());
+            return self.report(main, Drained::default(), Vec::new()).await;
         }
-        let files = self.main_conflicts(main)?;
-        let actions = self.with_lane(main, |lane| lane.ended(files))?;
-        let drained = self.perform(main, actions)?;
-        self.report(main, drained, Vec::new())
+        let files = self.main_conflicts(main).await?;
+        let actions = self.with_lane(main, |lane| lane.ended(files)).await?;
+        let drained = self.perform(main, actions).await?;
+        self.report(main, drained, Vec::new()).await
     }
 
     /// tau's resolving turn on `main` did not start: main is idle with
     /// what the landing left on it.
-    pub fn resolving_failed(
+    pub async fn resolving_failed(
         &self,
         main: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().expect("not poisoned");
-        let files = self.main_conflicts(main)?;
-        let actions = self.with_lane(main, |lane| lane.not_resolving(files))?;
-        let drained = self.perform(main, actions)?;
-        self.report(main, drained, Vec::new())
+        let _draining = self.draining.lock().await;
+        let files = self.main_conflicts(main).await?;
+        let actions = self
+            .with_lane(main, |lane| lane.not_resolving(files))
+            .await?;
+        let drained = self.perform(main, actions).await?;
+        self.report(main, drained, Vec::new()).await
     }
 
     /// Lands what may land on `main` now (`queue::drain`).
-    pub fn drain_main(&self, main: &RunId) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().expect("not poisoned");
-        let (drained, landings) = self.drain_locked(main)?;
-        self.report(main, drained, landings)
+    pub async fn drain_main(
+        &self,
+        main: &RunId,
+    ) -> anyhow::Result<DrainReport> {
+        let _draining = self.draining.lock().await;
+        let (drained, landings) = self.drain_locked(main).await?;
+        self.report(main, drained, landings).await
     }
 
-    pub(super) fn drain_locked(
+    pub(super) async fn drain_locked(
         &self,
         main: &RunId,
     ) -> anyhow::Result<(Drained, Vec<(RunId, Landing)>)> {
-        // A copy: the interface's thread reads the lane meanwhile, and
-        // what changes it is serialized by `draining`.
-        let mut lane = self.with_lane(main, |lane| lane.clone())?;
+        // A copy: the interface reads the lane meanwhile, and what changes
+        // it is serialized by `draining`.
+        let mut lane = self.with_lane(main, |lane| lane.clone()).await?;
         let mut repo = OnRepo {
             host: self,
             main: main.clone(),
             landings: Vec::new(),
         };
-        let drained = drain(&mut lane, &mut repo);
+        let drained = drain(&mut lane, &mut repo).await;
         let landings = std::mem::take(&mut repo.landings);
         // The lane goes back whatever the drain came to: what it did is
         // stored as it went.
@@ -394,23 +436,26 @@ impl Host {
                 lane.started();
             }
             *kept = lane;
-        })?;
+        })
+        .await?;
         Ok((drained?, landings))
     }
 
-    pub(super) fn report(
+    pub(super) async fn report(
         &self,
         main: &RunId,
         drained: Drained,
         landings: Vec<(RunId, Landing)>,
     ) -> anyhow::Result<DrainReport> {
-        let (queue, conflicts) = self.landing_queue(main)?;
-        let resolve =
-            self.report_prompt(&drained.reported, &landings, drained.resolve);
+        let (queue, conflicts) = self.landing_queue(main).await?;
+        let resolve = self
+            .report_prompt(&drained.reported, &landings, drained.resolve)
+            .await;
         Ok(DrainReport {
             main: main.clone(),
             repo: self
                 .slot_of_run(main)
+                .await
                 .map(|slot| slot.name)
                 .unwrap_or_default(),
             landed: landings,
@@ -429,25 +474,19 @@ impl Host {
     /// Drains every listed repository's main chat, as tau starts: what
     /// waited when it closed lands now, and main's conflicts are read
     /// again.
-    pub fn drain_all(&self) -> Vec<DrainReport> {
-        let mains: Vec<RunId> = self
-            .mains()
-            .into_iter()
-            .map(|main| RunId(main.as_str().into()))
-            .collect();
-        mains
-            .iter()
-            .filter_map(|main| match self.drain_main(main) {
-                Ok(report) => Some(report),
-                Err(error) => {
-                    eprintln!(
-                        "tau-ui: cannot land what waits on {}: {error:#}",
-                        main.0
-                    );
-                    None
-                }
-            })
-            .collect()
+    pub async fn drain_all(&self) -> Vec<DrainReport> {
+        let mut reports = Vec::new();
+        for main in self.mains() {
+            let main = RunId(main.as_str().into());
+            match self.drain_main(&main).await {
+                Ok(report) => reports.push(report),
+                Err(error) => eprintln!(
+                    "tau-ui: cannot land what waits on {}: {error:#}",
+                    main.0
+                ),
+            }
+        }
+        reports
     }
 }
 

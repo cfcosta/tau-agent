@@ -139,7 +139,7 @@ fn main() {
             };
             let name = "tau";
             let live = match &host {
-                Some((host, _)) => Some(host.catalog()),
+                Some((host, _)) => Some(host.catalog_now()),
                 None if onboarding => Some(Catalog::default()),
                 None => None,
             };
@@ -215,19 +215,26 @@ fn main() {
                         args.model.clone(),
                         credentials.clone(),
                         cx,
-                        move |account, cx| match Host::new(config(account)) {
-                            Ok((host, events)) => {
-                                let catalog = host.catalog();
-                                entity.update(cx, |ws, cx| {
-                                    ws.set_catalog(catalog, cx)
-                                });
-                                with_notices(host).attach(&entity, events, cx);
-                            }
-                            Err(error) => {
-                                eprintln!(
-                                    "tau-ui: cannot start agents: {error}"
-                                )
-                            }
+                        move |account, cx| {
+                            // Off the interface's thread: making the host
+                            // opens its store and its plugins.
+                            let config = config(account);
+                            let made = cx
+                                .background_executor()
+                                .spawn(async move { Host::new(config) });
+                            let entity = entity.clone();
+                            cx.spawn(async move |cx| match made.await {
+                                Ok((host, events)) => cx.update(|cx| {
+                                    with_notices(host)
+                                        .attach(&entity, events, cx);
+                                }),
+                                Err(error) => {
+                                    eprintln!(
+                                        "tau-ui: cannot start agents: {error}"
+                                    )
+                                }
+                            })
+                            .detach();
                         },
                     );
                 }

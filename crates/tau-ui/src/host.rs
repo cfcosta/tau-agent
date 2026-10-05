@@ -52,6 +52,7 @@ use tau_vcs::{
     Landing,
     Link,
     Project,
+    ProjectRepo,
     RefusingSpawn,
     RefusingWait,
     RunWorkspace,
@@ -223,7 +224,7 @@ pub struct Host {
     /// Held while a run starts, and while a sweep reads what the
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
-    starting: Mutex<()>,
+    starting: tokio::sync::Mutex<()>,
     /// The step after which landings stop, as if tau closed there: for
     /// tests ([`Host::cut_landing_after`]).
     cut_landing: Mutex<Option<LandingStep>>,
@@ -231,7 +232,7 @@ pub struct Host {
     /// first time it is asked for (ADR 0024).
     lanes: Mutex<HashMap<RunId, queue::Lane>>,
     /// Held while a landing queue changes or drains: one at a time.
-    draining: Mutex<()>,
+    draining: tokio::sync::Mutex<()>,
     /// What each chat's last landing preview found: what the person
     /// confirms when they land it.
     previews: Mutex<HashMap<RunId, queue::Preview>>,
@@ -361,6 +362,10 @@ impl Host {
 
     /// Opens the store and the project and builds the agent. Returns the
     /// receiving end of the event channel for [`Host::attach`].
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "builds the runtime, then waits on it before anything runs on it (ADR 0028)"
+    )]
     pub fn new(
         config: HostConfig,
     ) -> anyhow::Result<(Self, mpsc::UnboundedReceiver<RunEvent>)> {
@@ -407,7 +412,7 @@ impl Host {
         }
         *host.repos.lock().expect("not poisoned") = slots;
         for listed in &listed {
-            host.main_of(&listed.name)?;
+            host.setting_up(host.main_of(&listed.name))?;
         }
         Ok((host, events))
     }
@@ -415,6 +420,10 @@ impl Host {
     /// A host over an agent built elsewhere: another model, other
     /// plugins, or a scripted model in tests. It lists no repository
     /// until one is cloned, or given with [`Self::with_repo`].
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "builds the host on its runtime before anything runs on it (ADR 0028)"
+    )]
     pub fn with_agent(
         runtime: Runtime,
         agent: Agent,
@@ -459,10 +468,10 @@ impl Host {
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
-            starting: Mutex::new(()),
+            starting: tokio::sync::Mutex::new(()),
             cut_landing: Mutex::new(None),
             lanes: Mutex::default(),
-            draining: Mutex::new(()),
+            draining: tokio::sync::Mutex::new(()),
             previews: Mutex::default(),
             conflicts_hook: None,
             pushes,
@@ -503,13 +512,14 @@ impl Host {
     }
 
     /// `plugin`'s records for `run`, along its fork chain, as stored.
-    pub fn plugin_records(
+    pub async fn plugin_records(
         &self,
         run: &RunId,
         plugin: &str,
     ) -> Vec<serde_json::Value> {
-        self.runtime
-            .block_on(self.store.records(&run.0, plugin))
+        self.store
+            .records(&run.0, plugin)
+            .await
             .unwrap_or_default()
             .iter()
             .filter_map(|body| serde_json::from_str(body).ok())
@@ -519,14 +529,14 @@ impl Host {
     /// Whether `run` is still going.
     /// Waits for a run whose `RunEnd` went by to finish storing its
     /// outcome, a moment at most. A run still working is not waited on.
-    fn settle(&self, run: &RunId) {
+    async fn settle(&self, run: &RunId) {
         for _ in 0..500 {
             if !self.ending.lock().expect("not poisoned").contains(run)
                 || !self.is_running(run)
             {
                 return;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }
 
@@ -548,20 +558,22 @@ impl Host {
     }
 
     /// The workspace `run` works in, if it started in this session.
-    pub fn workspace(&self, run: &RunId) -> Option<PathBuf> {
+    pub async fn workspace(&self, run: &RunId) -> Option<PathBuf> {
         let name = self.session_of(run).workspace?;
         Some(
             self.slot_of_run(run)
+                .await
                 .ok()?
                 .project
-                .wait()?
+                .wait()
+                .await?
                 .workspace_dir(&name),
         )
     }
 
     /// What the workspace shows beyond runs: the agent's plugins and the
     /// store.
-    pub fn catalog(&self) -> Catalog {
+    pub async fn catalog(&self) -> Catalog {
         let mut plugins = vec![PluginInfo {
             name: "workspace".into(),
             description: "A jj workspace per run, and a commit per \
@@ -593,41 +605,45 @@ impl Host {
             (None, None, None) => ProjectStatus::Unknown,
         };
         // In the list's order, which adding a repository again keeps.
-        let repos: Vec<Repo> = list
-            .repos
-            .iter()
-            .filter(|listed| !listed.hidden)
-            .filter_map(|listed| {
-                let slot =
-                    slots.iter().find(|slot| slot.name == listed.name)?;
-                let mut repo =
-                    Repo::new(&listed.name, listed.path.display().to_string());
-                repo.main =
-                    listed.main.as_deref().map(|main| RunId(main.into()));
-                // What the main chat would push, for a repository from
-                // GitHub (ADR 0023).
-                if listed.github.is_some()
-                    && let ProjectState::Ready(project) = slot.project.peek()
-                {
-                    repo.unpushed = project
-                        .blocking()
-                        .unpushed()
-                        .map_or(0, |changes| changes.len() as u32);
-                    repo.trunk = project.blocking().trunk_name().ok();
-                }
-                repo.plugins =
-                    self.runtime.block_on(self.registered_repo_data(slot));
-                Some(repo)
-            })
-            .collect();
+        let mut repos: Vec<Repo> = Vec::new();
+        for listed in list.repos.iter().filter(|listed| !listed.hidden) {
+            let Some(slot) = slots.iter().find(|slot| slot.name == listed.name)
+            else {
+                continue;
+            };
+            let mut repo =
+                Repo::new(&listed.name, listed.path.display().to_string());
+            repo.main = listed.main.as_deref().map(|main| RunId(main.into()));
+            // What the main chat would push, for a repository from
+            // GitHub (ADR 0023).
+            if listed.github.is_some()
+                && let ProjectState::Ready(project) = slot.project.peek()
+            {
+                let (unpushed, trunk) = project
+                    .run(|project| {
+                        (
+                            project
+                                .unpushed()
+                                .map_or(0, |changes| changes.len() as u32),
+                            project.trunk_name().ok(),
+                        )
+                    })
+                    .await;
+                repo.unpushed = unpushed;
+                repo.trunk = trunk;
+            }
+            repo.plugins = self.registered_repo_data(slot).await;
+            repos.push(repo);
+        }
         // The plugins with their UI, with their data and settings.
         let (registered, plugin_data, plugin_settings) =
-            self.runtime.block_on(self.registered_catalog());
+            self.registered_catalog().await;
         plugins.extend(registered);
         // What each plugin cost over the runs of the last 30 days.
         let spend = self
-            .runtime
-            .block_on(self.store.plugin_spend(&days_ago(SPEND_DAYS)))
+            .store
+            .plugin_spend(&days_ago(SPEND_DAYS))
+            .await
             .unwrap_or_default();
         for plugin in &mut plugins {
             plugin.spend = spend
@@ -651,7 +667,8 @@ impl Host {
                 .collect(),
             store: StoreInfo {
                 path: self.config.store.display().to_string(),
-                size: std::fs::metadata(&self.config.store)
+                size: tokio::fs::metadata(&self.config.store)
+                    .await
                     .map(|meta| format!("{:.1} MB", meta.len() as f64 / 1e6))
                     .unwrap_or_default(),
                 sample_query:
@@ -672,7 +689,7 @@ impl Host {
     /// `main`: the run is its repository's main chat, which commits on
     /// trunk and alone gets `spawn` and `wait`, as runs nest one level (ADR
     /// 0016).
-    fn agent_for_run(
+    async fn agent_for_run(
         &self,
         choice: &ModelChoice,
         repo: &RepoSlot,
@@ -706,10 +723,10 @@ impl Host {
         // The plugins with their UI, after the rest: the repository's
         // rules check what the tools do, tau-goal's hold of a stop comes
         // after theirs, and context compaction goes by the run's model.
-        let registered = self.runtime.block_on(self.registered(repo));
-        let project = repo.project()?;
+        let registered = self.registered(repo).await;
+        let project = repo.project().await?;
         // What the plugins give the run's commands: an environment.
-        let launcher = self.runtime.block_on(self.launcher_of(repo));
+        let launcher = self.launcher_of(repo).await;
         let artifacts =
             Bytes::new(project.root().join("artifacts"), Quotas::default())?;
         // A run and its sub-agents work the same way, each in its own
@@ -762,7 +779,8 @@ impl Host {
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
         // A main chat commits on trunk: it has nothing to land.
         let workspace = if main {
-            workspace.commits_to(project.blocking().trunk_name()?)
+            workspace
+                .commits_to(project.run(|project| project.trunk_name()).await?)
         } else {
             workspace
         };
@@ -831,9 +849,7 @@ impl Host {
         } else {
             tau_ui_plugin::RunKind::Chat
         };
-        let agent = self
-            .runtime
-            .block_on(registered(agent, kind, choice, services))?;
+        let agent = registered(agent, kind, choice, services).await?;
         Ok((agent, name))
     }
 
@@ -873,7 +889,7 @@ impl Host {
     /// repository's main chat at its latest turn, on that turn's code,
     /// or at its start when it has none. Returns the chat's view, ready
     /// to be pushed into the workspace before its first event arrives.
-    pub fn start(
+    pub async fn start(
         &self,
         prompt: &str,
         choice: &ModelChoice,
@@ -882,27 +898,27 @@ impl Host {
         let repo = self
             .slot(repo)
             .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
-        let main = self.main_of(&repo.name)?;
+        let main = self.main_of(&repo.name).await?;
         // A chat started now would fork conflicted code.
-        self.refuse_fork_of(&main)?;
-        let (source, seq, turn) = match self.fork_point(&main, None)? {
+        self.refuse_fork_of(&main).await?;
+        let (source, seq, turn) = match self.fork_point(&main, None).await? {
             Some((source, seq, link)) => (source, seq, link.turn),
             None => (main, -1, 0),
         };
-        self.fork_at(&repo, source, seq, turn, prompt, choice)
+        self.fork_at(&repo, source, seq, turn, prompt, choice).await
     }
 
     /// Forks `run` after `turn` (its latest turn when `None`): a new run
     /// on `prompt` that has the run's conversation up to that turn and
     /// works on that turn's code, in a workspace of its own.
-    pub fn fork(
+    pub async fn fork(
         &self,
         run: &RunId,
         turn: Option<u32>,
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
-        let repo = self.slot_of_run(run)?;
+        let repo = self.slot_of_run(run).await?;
         // Runs nest one level (ADR 0016): only a main chat has runs
         // under it.
         if !self.is_main(run) {
@@ -911,9 +927,11 @@ impl Host {
                  it, like a sub-agent, has nothing under it"
             );
         }
-        self.refuse_fork_of(run)?;
-        let (source, seq, link) =
-            self.fork_point(run, turn)?.ok_or_else(|| match turn {
+        self.refuse_fork_of(run).await?;
+        let (source, seq, link) = self
+            .fork_point(run, turn)
+            .await?
+            .ok_or_else(|| match turn {
                 Some(turn) => {
                     anyhow::anyhow!("Turn {turn} has no commit to fork from")
                 }
@@ -922,11 +940,12 @@ impl Host {
                 ),
             })?;
         self.fork_at(&repo, source, seq, link.turn, prompt, choice)
+            .await
     }
 
     /// Starts a run on `prompt` that continues `source` from its entry
     /// `seq`, after its turn `turn`, in a workspace of its own in `repo`.
-    fn fork_at(
+    async fn fork_at(
         &self,
         repo: &RepoSlot,
         source: RunId,
@@ -935,7 +954,7 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
-        let _starting = self.starting.lock().expect("not poisoned");
+        let _starting = self.starting.lock().await;
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         // Named after what it was asked, so the workspace says what it is
@@ -943,8 +962,7 @@ impl Host {
         let name = workspace_name(&branch_slug(prompt));
         // A fork is a chat under the main chat: it spawns none.
         let (agent, workspace) =
-            self.agent_for_run(choice, repo, name, false, false)?;
-        let _guard = self.runtime.enter();
+            self.agent_for_run(choice, repo, name, false, false).await?;
         let forked = agent
             .fork(&Checkpoint::at(source.clone(), seq))
             .after_turn(turn)
@@ -953,28 +971,24 @@ impl Host {
         // What each plugin's state is as the fork inherits it: a goal set
         // in the main chat, which tau-goal goes on checking; then what it
         // says as the fork starts.
-        let starting = self.runtime.block_on(self.starting(&self.run_ctx(
-            tau_ui_plugin::RunKind::Chat,
-            repo,
-            choice,
-        )));
-        let inherited: Vec<(String, Vec<serde_json::Value>)> = self
-            .hosted
-            .iter()
-            .map(|hosted| {
-                let name = hosted.plugin.name();
-                let mut records = self.plugin_records_at(&source, seq, name);
-                records.extend(
-                    starting
-                        .iter()
-                        .filter(|(plugin, _)| plugin == name)
-                        .map(|(_, body)| body.clone()),
-                );
-                (name.to_owned(), records)
-            })
-            .collect();
+        let starting = self
+            .starting(&self.run_ctx(tau_ui_plugin::RunKind::Chat, repo, choice))
+            .await;
+        let mut inherited: Vec<(String, Vec<serde_json::Value>)> = Vec::new();
+        for hosted in &self.hosted {
+            let name = hosted.plugin.name();
+            let mut records = self.plugin_records_at(&source, seq, name).await;
+            records.extend(
+                starting
+                    .iter()
+                    .filter(|(plugin, _)| plugin == name)
+                    .map(|(_, body)| body.clone()),
+            );
+            inherited.push((name.to_owned(), records));
+        }
         let mut view = self
             .view(id, prompt, repo)
+            .await
             .with_origin(Origin::Fork { from: source, turn });
         for (plugin, records) in inherited {
             view.restate(&plugin, &records);
@@ -984,16 +998,17 @@ impl Host {
 
     /// `plugin`'s records a fork of `source` at `seq` inherits: along
     /// `source`'s chain, without what `source` stored after `seq`.
-    fn plugin_records_at(
+    async fn plugin_records_at(
         &self,
         source: &RunId,
         seq: i64,
         plugin: &str,
     ) -> Vec<serde_json::Value> {
-        let all = self.plugin_records(source, plugin);
+        let all = self.plugin_records(source, plugin).await;
         let after = self
-            .runtime
-            .block_on(self.store.plugin_entries(&source.0, plugin))
+            .store
+            .plugin_entries(&source.0, plugin)
+            .await
             .unwrap_or_default()
             .iter()
             .filter(|(at, _)| *at > seq)
@@ -1005,20 +1020,20 @@ impl Host {
     /// Where forking `run` after `turn` starts: the run that took the
     /// turn, which for a turn a fork inherited is an ancestor, with the
     /// `seq` and link of that turn.
-    fn fork_point(
+    async fn fork_point(
         &self,
         run: &RunId,
         turn: Option<u32>,
     ) -> anyhow::Result<Option<(RunId, i64, Link)>> {
         let mut run = run.clone();
         loop {
-            if let Some((seq, link)) = self.link(&run, turn)? {
+            if let Some((seq, link)) = self.link(&run, turn).await? {
                 return Ok(Some((run, seq, link)));
             }
             if turn.is_none() {
                 return Ok(None);
             }
-            let record = self.runtime.block_on(self.store.run(&run.0))?;
+            let record = self.store.run(&run.0).await?;
             match record.map(|record| record.kind) {
                 Some(RunKind::Fork { parent, .. }) => {
                     run = RunId(parent.into());
@@ -1031,19 +1046,19 @@ impl Host {
     /// Goes on with `run`, a finished chat, on `prompt`: the same run,
     /// in the same workspace, on `choice`. Its events carry on in the
     /// view the workspace already has.
-    pub fn resume(
+    pub async fn resume(
         &self,
         run: &RunId,
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<()> {
-        self.resume_as(run, prompt, choice, false)
+        self.resume_as(run, prompt, choice, false).await
     }
 
     /// [`Host::resume`]; `resolving` for tau's turn resolving what a
     /// landing left in conflict on a main chat, whose stop is held once
     /// while conflicts remain.
-    fn resume_as(
+    async fn resume_as(
         &self,
         run: &RunId,
         prompt: &str,
@@ -1053,9 +1068,9 @@ impl Host {
         if self.is_running(run) {
             anyhow::bail!("The run is still going; steer it instead");
         }
-        self.refuse_ended(run)?;
-        let _starting = self.starting.lock().expect("not poisoned");
-        let repo = self.slot_of_run(run)?;
+        self.refuse_ended(run).await?;
+        let _starting = self.starting.lock().await;
+        let repo = self.slot_of_run(run).await?;
         // The workspace its last turn worked in, which still has its
         // files.
         let known = self.session_of(run).workspace;
@@ -1067,15 +1082,15 @@ impl Host {
         let workspace = match known {
             _ if main => Some(DEFAULT_WORKSPACE.to_owned()),
             Some(name) => Some(name),
-            None => match self.link(run, None)? {
+            None => match self.link(run, None).await? {
                 Some((_, link)) => Some(link.workspace),
-                None => self.started_in(run),
+                None => self.started_in(run).await,
             },
         };
         // A main chat catches up with trunk first: its commits move
         // trunk, which may have moved without it.
         if main && let Some(name) = &workspace {
-            self.catch_up(&repo.project()?, name)?;
+            self.catch_up(&repo.project().await?, name).await?;
         }
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
@@ -1083,25 +1098,22 @@ impl Host {
         // message.
         let workspace =
             workspace.unwrap_or_else(|| workspace_name(&branch_slug(prompt)));
-        let (agent, workspace) =
-            self.agent_for_run(choice, &repo, workspace, main, resolving)?;
-        let _guard = self.runtime.enter();
+        let (agent, workspace) = self
+            .agent_for_run(choice, &repo, workspace, main, resolving)
+            .await?;
         let resumed = agent.resume(run).start(prompt, &self.store);
         self.track(resumed, workspace, choice, &repo.name);
         // Nothing lands on a main chat while it works.
         if main {
-            self.main_started(run);
+            self.main_started(run).await;
         }
         Ok(())
     }
 
     /// The name of the workspace `run` recorded as it started, if it
     /// did and it is still there.
-    fn started_in(&self, run: &RunId) -> Option<String> {
-        let dir = self
-            .runtime
-            .block_on(stored_start(&self.store, &run.0))?
-            .workspace?;
+    async fn started_in(&self, run: &RunId) -> Option<String> {
+        let dir = stored_start(&self.store, &run.0).await?.workspace?;
         let dir = Path::new(&dir);
         dir.join(".jj")
             .is_dir()
@@ -1112,14 +1124,13 @@ impl Host {
 
     /// The link of `turn` in `run` (the latest when `None`), with the
     /// `seq` to fork at.
-    fn link(
+    async fn link(
         &self,
         run: &RunId,
         turn: Option<u32>,
     ) -> anyhow::Result<Option<(i64, Link)>> {
-        let entries = self
-            .runtime
-            .block_on(self.store.plugin_entries(&run.0, WORKSPACE_PLUGIN))?;
+        let entries =
+            self.store.plugin_entries(&run.0, WORKSPACE_PLUGIN).await?;
         let mut links = entries.iter().filter_map(|(seq, body)| {
             Link::parse(body).map(|link| (*seq, link))
         });
@@ -1131,25 +1142,69 @@ impl Host {
 
     /// `run`'s title: the one a model wrote, or until then the
     /// placeholder for the words it started with.
-    pub(crate) fn title_of(&self, run: &RunId) -> anyhow::Result<String> {
+    pub(crate) async fn title_of(&self, run: &RunId) -> anyhow::Result<String> {
         let written = self
-            .runtime
-            .block_on(self.store.run(&run.0))?
+            .store
+            .run(&run.0)
+            .await?
             .and_then(|record| record.title);
         match written {
             Some(title) => Ok(title),
-            None => Ok(crate::titles::placeholder(&self.stored_prompt(run)?)),
+            None => {
+                Ok(crate::titles::placeholder(&self.stored_prompt(run).await?))
+            }
         }
     }
 
     /// The words `run` was started with, from the store.
-    fn stored_prompt(&self, run: &RunId) -> anyhow::Result<String> {
-        self.runtime.block_on(first_prompt(&self.store, &run.0))
+    async fn stored_prompt(&self, run: &RunId) -> anyhow::Result<String> {
+        first_prompt(&self.store, &run.0).await
     }
 
-    /// Runs `future` on the host's runtime and waits for it, for callers
-    /// outside the runtime.
+    /// Runs `future` on the host's runtime and waits for it: for tests,
+    /// which are synchronous. `clippy.toml` keeps everything else from
+    /// calling it (ADR 0028).
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the tests' way onto the host's runtime (ADR 0028)"
+    )]
     pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+
+    /// The catalog now, for the process's entry point to open its window
+    /// with, before the interface runs.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the process's entry point, before the interface runs (ADR 0028)"
+    )]
+    pub fn catalog_now(&self) -> Catalog {
+        self.runtime.block_on(self.catalog())
+    }
+
+    /// Runs `job`'s future on the host's runtime (ADR 0028): what the
+    /// interface asks of the host, which it awaits without blocking.
+    pub fn spawn<T, F>(
+        self: &Arc<Self>,
+        job: impl FnOnce(Arc<Host>) -> F,
+    ) -> tokio::task::JoinHandle<T>
+    where
+        T: Send + 'static,
+        F: std::future::Future<Output = T> + Send + 'static,
+    {
+        self.runtime.spawn(job(self.clone()))
+    }
+
+    /// Waits for `future` while the host is being built, before anything
+    /// runs on its runtime.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "building the host: nothing runs on its runtime yet (ADR 0028)"
+    )]
+    pub(super) fn setting_up<F: std::future::Future>(
+        &self,
+        future: F,
+    ) -> F::Output {
         self.runtime.block_on(future)
     }
 
@@ -1204,7 +1259,7 @@ impl Host {
         id
     }
 
-    fn view(&self, id: RunId, prompt: &str, repo: &RepoSlot) -> RunView {
+    async fn view(&self, id: RunId, prompt: &str, repo: &RepoSlot) -> RunView {
         let choice = self.session_of(&id).choice.unwrap_or_else(|| {
             ModelChoice::new(self.config.default_model(), Effort::Auto)
         });
@@ -1219,7 +1274,7 @@ impl Host {
         view.push_user(prompt);
         // What plugins say as it starts.
         let run = self.run_ctx(tau_ui_plugin::RunKind::Chat, repo, &choice);
-        for (plugin, body) in self.runtime.block_on(self.starting(&run)) {
+        for (plugin, body) in self.starting(&run).await {
             view.fold(&plugin, &body);
         }
         view.context = ContextWindow {
@@ -1227,7 +1282,7 @@ impl Host {
             ..ContextWindow::default()
         };
         let workspace = self.session_of(&view.id).workspace;
-        let dir = match (repo.project.wait(), &workspace) {
+        let dir = match (repo.project.ready(), &workspace) {
             (Some(project), Some(name)) => {
                 Some(project.workspace_dir(name).display().to_string())
             }
@@ -1247,10 +1302,10 @@ impl Host {
     /// next turn. Returns whether it was going; one that is not goes on
     /// with the message instead ([`Host::resume`]). A chat that landed
     /// or was dropped is refused: it takes no more messages.
-    pub fn steer(&self, run: &RunId, text: &str) -> anyhow::Result<bool> {
-        self.refuse_ended(run)?;
+    pub async fn steer(&self, run: &RunId, text: &str) -> anyhow::Result<bool> {
+        self.refuse_ended(run).await?;
         // A run whose end went by reads nothing more.
-        self.settle(run);
+        self.settle(run).await;
         let control = self.runs.lock().expect("not poisoned").get(run).cloned();
         let Some(control) = control.or_else(|| self.sub_agent_control(run))
         else {
@@ -1294,18 +1349,21 @@ impl Host {
 
     /// How `run` ended for good, if it did: landed on its parent, or
     /// dropped. Such a chat takes no more messages.
-    pub fn ending_of(&self, run: &RunId) -> anyhow::Result<Option<Ending>> {
-        self.runtime.block_on(stored_ending(&self.store, &run.0))
+    pub async fn ending_of(
+        &self,
+        run: &RunId,
+    ) -> anyhow::Result<Option<Ending>> {
+        stored_ending(&self.store, &run.0).await
     }
 
     /// Fails, saying why, when `run` landed or was dropped: going on
     /// would rebuild its workspace and a new `tau/<run>` bookmark, a
     /// branch nothing lands.
-    fn refuse_ended(&self, run: &RunId) -> anyhow::Result<()> {
-        match self.ending_of(run)? {
+    async fn refuse_ended(&self, run: &RunId) -> anyhow::Result<()> {
+        match self.ending_of(run).await? {
             None => Ok(()),
             Some(Ending::Landed { on, .. }) => {
-                let on = self.title_of(&on)?;
+                let on = self.title_of(&on).await?;
                 anyhow::bail!(
                     "This chat landed on {on}, so it no longer takes \
                      messages. Its work is on {on}: start a new chat from it."

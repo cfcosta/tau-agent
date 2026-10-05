@@ -9,6 +9,7 @@ use tau_artifacts::{Artifact, Bytes, PruneReport, Quotas};
 use tau_store::{RunKind, RunRecord, Store};
 use tau_tools::artifact_grant::{ArtifactRecord, fold_grants};
 use tau_ui_plugin::{HOST_RECORD, HostRecord};
+use tau_vcs::Project;
 
 use super::Host;
 
@@ -175,15 +176,41 @@ async fn retained_roots(
 impl Host {
     /// Explicit trusted maintenance. The host inventories the complete store
     /// while holding the publication lock through marking and sweeping.
-    pub fn prune_artifacts(&self, repo: &str) -> anyhow::Result<PruneReport> {
-        let project =
-            self.project_of(repo).context("repository is unavailable")?;
-        let bytes =
-            Bytes::new(project.root().join("artifacts"), Quotas::default())?;
-        let lease = bytes.lock_publication()?;
-        let roots = self.runtime.block_on(retained_roots(&self.store, repo))?;
-        Ok(bytes.prune_with_roots(roots, &lease)?)
+    pub async fn prune_artifacts(
+        &self,
+        repo: &str,
+    ) -> anyhow::Result<PruneReport> {
+        let project = self
+            .project_of(repo)
+            .await
+            .context("repository is unavailable")?;
+        let (store, repo) = (self.store.clone(), repo.to_owned());
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            prune(&project, &store, &repo, &runtime)
+        })
+        .await?
     }
+}
+
+/// Prunes `repo`'s artifacts under the publication lock, which it holds
+/// across its read of the store: a file lock, so it runs in
+/// `spawn_blocking` (ADR 0028).
+#[allow(
+    clippy::disallowed_methods,
+    reason = "runs in spawn_blocking, holding a file lock across its store read (ADR 0028)"
+)]
+fn prune(
+    project: &Project,
+    store: &Store,
+    repo: &str,
+    runtime: &tokio::runtime::Handle,
+) -> anyhow::Result<PruneReport> {
+    let bytes =
+        Bytes::new(project.root().join("artifacts"), Quotas::default())?;
+    let lease = bytes.lock_publication()?;
+    let roots = runtime.block_on(retained_roots(store, repo))?;
+    Ok(bytes.prune_with_roots(roots, &lease)?)
 }
 
 #[cfg(test)]

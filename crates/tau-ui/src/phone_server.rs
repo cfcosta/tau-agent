@@ -78,6 +78,9 @@ struct Bridge {
     listening: Option<Task<()>>,
     /// Counts down the pairing code on screen.
     countdown: Option<Task<()>>,
+    /// Bumped by every start and stop: a server that finishes starting
+    /// after a later one asked for is stopped, not kept.
+    generation: u64,
 }
 
 /// Serves phones for `workspace` from `dir` (usually
@@ -104,6 +107,7 @@ pub fn serve(
         server: None,
         listening: None,
         countdown: None,
+        generation: 0,
     }));
     if bridge.borrow().settings.allow {
         start(&bridge, workspace, cx);
@@ -252,7 +256,69 @@ fn start(
         dir: state.dir.clone(),
         host: state.host.clone(),
     };
-    let started = state.runtime.block_on(Server::start(config));
+    state.generation += 1;
+    let generation = state.generation;
+    // On the host's runtime: binding the port and the certificate take
+    // their time, which the interface does not wait on (ADR 0028).
+    let starting = state.runtime.spawn(Server::start(config));
+    drop(state);
+    let (bridge, workspace) = (bridge.clone(), workspace.downgrade());
+    cx.spawn(async move |cx| {
+        let started = match starting.await {
+            Ok(started) => started.map_err(|error| error.to_string()),
+            Err(error) => Err(error.to_string()),
+        };
+        let Some(workspace) = workspace.upgrade() else {
+            return;
+        };
+        cx.update(|cx| listening(&bridge, generation, started, &workspace, cx));
+    })
+    .detach();
+}
+
+/// The server `start` asked for is up, or could not start: it serves
+/// phones, unless a later start or stop asked for something else. The
+/// workspace shows how it went.
+fn listening(
+    bridge: &Rc<RefCell<Bridge>>,
+    generation: u64,
+    started: Result<
+        (
+            ServerHandle,
+            tokio::sync::mpsc::UnboundedReceiver<ServerEvent>,
+        ),
+        String,
+    >,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    take_up(bridge, generation, started, workspace, cx);
+    show(bridge, workspace, cx);
+}
+
+fn take_up(
+    bridge: &Rc<RefCell<Bridge>>,
+    generation: u64,
+    started: Result<
+        (
+            ServerHandle,
+            tokio::sync::mpsc::UnboundedReceiver<ServerEvent>,
+        ),
+        String,
+    >,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let mut state = bridge.borrow_mut();
+    if state.generation != generation {
+        if let Ok((server, _)) = started {
+            server.stop();
+        }
+        return;
+    }
+    let Some(ip) = listen_ip(&state) else {
+        return;
+    };
     let (server, mut events) = match started {
         Ok(started) => started,
         Err(error) => {
@@ -291,6 +357,7 @@ fn stop(
     cx: &mut App,
 ) {
     let mut state = bridge.borrow_mut();
+    state.generation += 1;
     if let Some(server) = state.server.take() {
         server.stop();
     }

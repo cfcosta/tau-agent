@@ -116,6 +116,10 @@ fn setup(cx: &mut TestAppContext, llm: ScriptedModel) -> Setup {
         .with_repo("hello", project.clone())
         .on_conflicts_on_main(hook);
     vcx.update(|_, cx| host.attach(&workspace, events, cx));
+    // The host builds its catalog on its runtime, a moment after.
+    until(&mut vcx, "the repository's main chat", |cx| {
+        workspace.read_with(cx, |ws, _| !ws.catalog().repos.is_empty())
+    });
     let main = workspace.read_with(&vcx, |ws, _| {
         ws.catalog().repos[0].main.clone().expect("a main chat")
     });

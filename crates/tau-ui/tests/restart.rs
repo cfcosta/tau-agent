@@ -129,7 +129,9 @@ fn chat(
     events: &mut UnboundedReceiver<RunEvent>,
     prompt: &str,
 ) -> RunId {
-    let view = host.start(prompt, &ModelChoice::default(), REPO).unwrap();
+    let view = host
+        .block_on(host.start(prompt, &ModelChoice::default(), REPO))
+        .unwrap();
     until_end(events);
     wait_until_done(host, &view.id);
     view.id
@@ -155,8 +157,8 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
     let (host, mut events) = disk.start(llm);
     let kept = chat(&host, &mut events, "keep this");
     let cut = chat(&host, &mut events, "drop this");
-    let kept_dir = host.workspace(&kept).unwrap();
-    let cut_dir = host.workspace(&cut).unwrap();
+    let kept_dir = host.block_on(host.workspace(&kept)).unwrap();
+    let cut_dir = host.block_on(host.workspace(&cut)).unwrap();
     drop(host);
     // tau closed as it dropped `cut`: its record is stored, nothing else.
     disk.store(
@@ -180,7 +182,7 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
 
     let llm = ScriptedModel::new().turn(|t| t.text("still here"));
     let (host, mut events) = disk.start(llm.clone());
-    host.recover().unwrap();
+    host.block_on(host.recover()).unwrap();
     let project = &disk.project;
     let workspaces = project.blocking().workspaces().unwrap();
     let kept_name = kept_dir.file_name().unwrap().to_str().unwrap();
@@ -203,15 +205,19 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
             .unwrap()
             .is_none()
     );
-    host.recover().unwrap();
+    host.block_on(host.recover()).unwrap();
     assert_eq!(project.blocking().workspaces().unwrap(), [kept_name]);
 
     // The open chat goes on where it was.
-    host.resume(&kept, "anything else?", &ModelChoice::default())
-        .unwrap();
+    host.block_on(host.resume(
+        &kept,
+        "anything else?",
+        &ModelChoice::default(),
+    ))
+    .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &kept);
-    assert_eq!(host.workspace(&kept).unwrap(), kept_dir);
+    assert_eq!(host.block_on(host.workspace(&kept)).unwrap(), kept_dir);
     llm.assert_exhausted();
 }
 
@@ -245,7 +251,7 @@ fn a_run_cut_off_by_a_restart_is_interrupted_and_resumes() {
     let disk = Disk::new();
     let (host, mut events) = disk.start(writes(ScriptedModel::new(), "a.txt"));
     let run = chat(&host, &mut events, "write a");
-    let dir = host.workspace(&run).unwrap();
+    let dir = host.block_on(host.workspace(&run)).unwrap();
     drop(host);
     disk.leave_running(&run);
     std::fs::write(dir.join("half.txt"), "the cut-off turn's\n").unwrap();
@@ -258,33 +264,36 @@ fn a_run_cut_off_by_a_restart_is_interrupted_and_resumes() {
     let (host, mut events) = disk.start(llm.clone());
     assert_eq!(disk.record(&run).status, tau_store::Status::Interrupted);
     let view = host
-        .history()
+        .block_on(host.history())
         .unwrap()
         .into_iter()
         .find(|view| view.id == run)
         .unwrap();
     assert_eq!(view.status, RunStatus::Interrupted);
     assert!(!view.status.is_live());
-    host.recover().unwrap();
+    host.block_on(host.recover()).unwrap();
     assert!(
         dir.join("half.txt").exists(),
         "an open chat keeps its files"
     );
 
     // Only a run tau cut off resumes so.
-    let main = host.main_of(REPO).unwrap();
-    assert!(host.resume_cut_off(&main).is_err());
-    host.resume_cut_off(&run).unwrap();
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    assert!(host.block_on(host.resume_cut_off(&main)).is_err());
+    host.block_on(host.resume_cut_off(&run)).unwrap();
     until_end(&mut events);
     wait_until_done(&host, &run);
-    assert_eq!(host.workspace(&run).unwrap(), dir);
+    assert_eq!(host.block_on(host.workspace(&run)).unwrap(), dir);
     // The first request after the restart ends on tau's message.
     let asked = llm.requests();
     let told = asked[0].transcript.last().unwrap();
     let told = serde_json::to_string(told).unwrap();
     assert!(told.contains("tau closed while you were working"), "{told}");
     assert_eq!(disk.record(&run).status, tau_store::Status::Done);
-    assert!(host.resume_cut_off(&run).is_err(), "not cut off any more");
+    assert!(
+        host.block_on(host.resume_cut_off(&run)).is_err(),
+        "not cut off any more"
+    );
 }
 
 /// A landed change as `ChangeInfo` says it, less its ids: description,
@@ -313,8 +322,8 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
     use tau_ui_remote::view::{Ending, Item};
     let project = &disk.project;
     let trunk = project.blocking().trunk().unwrap();
-    let main = host.main_of(REPO).unwrap();
-    let history = host.history().unwrap();
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    let history = host.block_on(host.history()).unwrap();
     let main_view = history.iter().find(|view| view.id == main).unwrap();
     let records = tokio::runtime::Runtime::new().unwrap().block_on(async {
         let store = Store::open(disk.db()).await.unwrap();
@@ -368,7 +377,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
             .filter_map(|(_, body)| tau_vcs::Link::parse(body))
             .filter(|link| link.from.as_deref() == Some(&*chat.0))
             .count(),
-        ending: match host.ending_of(chat).unwrap() {
+        ending: match host.block_on(host.ending_of(chat)).unwrap() {
             Some(Ending::Landed { changes, .. }) => Some(changes),
             _ => None,
         },
@@ -383,12 +392,12 @@ fn land_cut_off(cut: Option<tau_ui::host::LandingStep>) -> Landed {
     let (host, mut events) = disk.start(writes(ScriptedModel::new(), "a.txt"));
     let chat = chat(&host, &mut events, "write a");
     host.cut_landing_after(cut);
-    let landed = host.land(&chat);
+    let landed = host.block_on(host.land(&chat));
     assert_eq!(landed.is_ok(), cut.is_none(), "{landed:?}");
     drop(host);
 
     let (host, _events) = disk.start(ScriptedModel::new());
-    let finished = host.recover().unwrap();
+    let finished = host.block_on(host.recover()).unwrap();
     use tau_ui::host::LandingStep;
     match cut {
         // Once its record is stored, a landing is done but for tidying,
@@ -401,8 +410,8 @@ fn land_cut_off(cut: Option<tau_ui::host::LandingStep>) -> Landed {
             assert!(finished[0].recovered);
             assert_eq!(finished[0].title, "write a");
             // Its card in main says tau finished it.
-            let main = host.main_of(REPO).unwrap();
-            let history = host.history().unwrap();
+            let main = host.block_on(host.main_of(REPO)).unwrap();
+            let history = host.block_on(host.history()).unwrap();
             let view = history.iter().find(|view| view.id == main).unwrap();
             assert!(view.items.iter().any(|item| matches!(
                 item,
@@ -411,9 +420,12 @@ fn land_cut_off(cut: Option<tau_ui::host::LandingStep>) -> Landed {
         }
     }
     // A landed chat takes no more messages, whatever cut it off.
-    assert!(host.resume(&chat, "more", &ModelChoice::default()).is_err());
+    assert!(
+        host.block_on(host.resume(&chat, "more", &ModelChoice::default()))
+            .is_err()
+    );
     // Starting again finds nothing left to finish.
-    assert!(host.recover().unwrap().is_empty());
+    assert!(host.block_on(host.recover()).unwrap().is_empty());
     landed_state(&disk, &host, &chat)
 }
 
