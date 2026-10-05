@@ -742,6 +742,75 @@ fn a_fork_whose_parent_was_undone_stays_apart() {
     });
 }
 
+/// Two commits, both undone: the second's change is abandoned, and the
+/// first's is the run's `@` again. A fork at the second commit's turn
+/// stands on neither: a hidden commit would bring the first back beside
+/// the run's `@`, and the run's next snapshot would leave the fork
+/// stale. Found by `turns_and_forks_follow_the_model`.
+#[test]
+fn a_fork_whose_parents_were_both_undone_stays_apart() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let store = Store::memory().await.unwrap();
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("vcs_commit", json!({ "message": "feat: a" }))
+            })
+            .turn(|t| {
+                t.tool_call("vcs_commit", json!({ "message": "feat: b" }))
+            })
+            .turn(|t| t.tool_call("vcs_undo", json!({})))
+            .turn(|t| t.tool_call("vcs_undo", json!({})))
+            .turn(|t| t.text("done"));
+        let outcome = coder(llm.clone(), &first, true)
+            .run("commit twice, then undo both", &store)
+            .await
+            .unwrap();
+        llm.assert_exhausted();
+        let linked =
+            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
+        let fork = RunWorkspace::new(
+            project.clone().into(),
+            "fork",
+            Identity::default(),
+        )
+        .unwrap();
+        let fork_llm = ScriptedModel::new().turn(|t| t.text("forked"));
+        coder(fork_llm, &fork, true)
+            .fork(&Checkpoint::at(outcome.run.clone(), linked[1].0))
+            .start("go on", &store)
+            .outcome()
+            .await
+            .unwrap();
+
+        let wc = project.workspace_head("fork").unwrap().unwrap();
+        assert_eq!(
+            project.parent_of(&wc).unwrap(),
+            Some(project.trunk().unwrap()),
+            "the fork starts on trunk"
+        );
+        std::fs::write(first.dir().join("a.txt"), "two\n").unwrap();
+        first.vcs().working_copy().await.unwrap();
+        fork.vcs().working_copy().await.unwrap();
+        assert_eq!(
+            files(&fork.dir()),
+            trunk_tree(),
+            "the run's edit reached the fork"
+        );
+    });
+}
+
 /// A turn that undoes the commit the turn before made, edits, and commits
 /// again changed the file it edited: the run rewriting its own commit is
 /// the turn's work, not a catch-up's.

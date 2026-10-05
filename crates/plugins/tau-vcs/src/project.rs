@@ -640,20 +640,24 @@ impl ProjectRepo {
         let turn = commit(&repo, snapshot)?;
         let then = turn.parent_ids().first().ok_or(VcsError::NoParent)?;
         let mut then = repo.store().get_commit(then)?;
-        let mut now =
-            visible(repo.as_ref(), &then)?.unwrap_or_else(|| then.clone());
-        // An undo can take the parent's change back into a run's `@`. The
-        // fork must not stand on another workspace's working copy, so it
-        // starts on that parent's parent, with the turn's files: the
+        // An undo can take the parent's change back into a run's `@`, or
+        // abandon it. The fork must stand neither on another workspace's
+        // working copy nor on a hidden commit, which would bring its
+        // ancestors back beside their own changes; so it starts on the
+        // nearest ancestor that is neither, with the turn's files: an
         // undone commit's description is not the fork's.
         let working_copies: Vec<&CommitId> =
             repo.view().wc_commit_ids().values().collect();
-        if working_copies.contains(&now.id()) {
-            let up = then.parent_ids().first().ok_or(VcsError::NoParent)?;
-            then = repo.store().get_commit(up)?;
-            let up = now.parent_ids().first().ok_or(VcsError::NoParent)?;
-            now = repo.store().get_commit(up)?;
-        }
+        let now = loop {
+            match visible(repo.as_ref(), &then)? {
+                Some(now) if !working_copies.contains(&now.id()) => break now,
+                _ => {
+                    let up =
+                        then.parent_ids().first().ok_or(VcsError::NoParent)?;
+                    then = repo.store().get_commit(up)?;
+                }
+            }
+        };
         let tree = if now.id() == then.id() {
             turn.tree()
         } else {
