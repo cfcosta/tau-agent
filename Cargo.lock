@@ -9592,6 +9592,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-luau-plugins"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tau-ai",
+ "tau-codemode",
+ "tau-jev",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "tau-mcp"
 version = "0.1.0"
 dependencies = [

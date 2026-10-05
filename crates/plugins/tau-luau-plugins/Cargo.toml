@@ -1,0 +1,33 @@
+[package]
+name = "tau-luau-plugins"
+description = "Plugins written in Luau, run in codemode's sandbox, as one tau plugin (ADR 0027)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The agent half: loading plugins and running their hooks in Luau. The
+# declarations, the view pieces and their drawing build without it, as
+# on a phone.
+host = ["dep:async-trait", "dep:tau-codemode", "dep:tokio-util", "dep:sha2"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = { workspace = true, optional = true }
+tau-ai.workspace = true
+tau-codemode = { workspace = true, optional = true }
+tau-jev.workspace = true
+tokio-util = { workspace = true, optional = true }
+
+[dev-dependencies]
+async-trait.workspace = true
+hegeltest.workspace = true
+tau-codemode.workspace = true
+tokio-util.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
