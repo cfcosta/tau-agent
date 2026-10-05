@@ -33,7 +33,7 @@ pub(super) fn repo_data(
     Servers::default()
 }
 
-pub(super) fn act(
+pub(super) async fn act(
     _host: &Host,
     _action: Value,
     _cx: &HostCx,
