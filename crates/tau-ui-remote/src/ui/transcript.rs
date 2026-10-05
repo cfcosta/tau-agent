@@ -707,20 +707,17 @@ fn tool(
                     })
             });
 
-    // A call with nothing under it is one line in the transcript; one
-    // with a body, or that wants attention, is a panel.
-    let panel = body.is_some() || cut.is_some() || !extras.is_empty() || edged;
+    // Every call is a panel, folded or open, so a card keeps its look
+    // when it opens; one that wants attention has an edge too.
     div()
         .flex()
         .flex_col()
         .when(dropped, |card| card.opacity(0.7))
-        .when(panel, |card| {
-            card.rounded(radius::LARGE)
-                .bg(t.card)
-                .overflow_hidden()
-                .when(edged, |card| card.border_1().border_color(border))
-        })
-        .child(header.px(sp(if panel { 3.5 } else { 0. })))
+        .rounded(radius::LARGE)
+        .bg(t.card)
+        .overflow_hidden()
+        .when(edged, |card| card.border_1().border_color(border))
+        .child(header.px(sp(3.5)))
         .children(body)
         .children(cut)
         .children(extras)
