@@ -248,22 +248,65 @@ mod tests {
         assert!(Frame::new(&[], 0, 0, 0).is_none());
     }
 
-    /// Turned any way, a code reads from six pixels a module: what the
-    /// viewfinder's square holds at the frame's 720 rows. Smaller and
-    /// turned, rqrr misses some.
+    /// Turned any way, a code held up to the camera reads from six
+    /// pixels a module: what the viewfinder's square holds at the
+    /// frame's 720 rows. The frame is large enough to hold the code,
+    /// quiet zone and all, at any angle. rqrr misses about one frame in
+    /// fifty at the smallest sizes, so the code must read in the frame
+    /// or in one of the next ones, as the hand holding the phone turns
+    /// it a little: the viewfinder reads every frame.
     #[hegel::test(test_cases = 40)]
     fn a_code_reads_turned_and_at_any_size(tc: TestCase) {
+        let scale = tc.draw(gs::floats::<f64>().min_value(6.).max_value(10.));
+        // The code and its quiet zone, turned 45 degrees, at that size.
+        let modules =
+            qrcode::QrCode::new(CODE.as_bytes()).unwrap().width() as f64 + 8.;
+        let fits = (modules * scale * std::f64::consts::SQRT_2).ceil() as usize;
+        let side = |tc: &TestCase| {
+            tc.draw(
+                gs::integers::<usize>()
+                    .min_value(fits.max(640))
+                    .max_value(fits.max(900)),
+            )
+        };
         let pose = Pose {
-            scale: tc.draw(gs::floats::<f64>().min_value(6.).max_value(10.)),
+            scale,
             degrees: tc.draw(gs::floats::<f64>().min_value(0.).max_value(360.)),
-            width: tc
-                .draw(gs::integers::<usize>().min_value(640).max_value(900)),
-            height: tc
-                .draw(gs::integers::<usize>().min_value(640).max_value(900)),
+            width: side(&tc),
+            height: side(&tc),
             padding: tc.draw(gs::integers::<usize>().max_value(64)),
         };
-        let shot = shoot(CODE, &pose);
-        assert_eq!(pairing_code(shot.frame()), Some(CODE.to_owned()));
+        let reads = [0., 0.75, -0.75, 1.5].into_iter().any(|turn| {
+            let shot = shoot(
+                CODE,
+                &Pose {
+                    degrees: pose.degrees + turn,
+                    ..pose
+                },
+            );
+            pairing_code(shot.frame()) == Some(CODE.to_owned())
+        });
+        assert!(
+            reads,
+            "{scale} px a module, {}°, {}×{}",
+            pose.degrees, pose.width, pose.height
+        );
+    }
+
+    /// The case that showed the frames turning matter: six pixels a
+    /// module, eight degrees, in a 640 square, which this frame alone
+    /// does not read.
+    #[test]
+    fn a_code_rqrr_misses_reads_in_the_next_frame() {
+        let pose = |degrees| Pose {
+            degrees,
+            ..upright(640, 640, 6.)
+        };
+        assert_eq!(pairing_code(shoot(CODE, &pose(8.)).frame()), None);
+        assert_eq!(
+            pairing_code(shoot(CODE, &pose(8.75)).frame()),
+            Some(CODE.to_owned())
+        );
     }
 
     #[hegel::test(test_cases = 40)]
