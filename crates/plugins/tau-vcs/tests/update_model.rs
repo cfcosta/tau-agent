@@ -1054,3 +1054,34 @@ fn refs_and_ancestry_read_as_git_does() {
         assert!(!is_ancestor(&git_dir, &"1".repeat(40), &second));
     }
 }
+
+/// Upstream moves trunk's branch to a commit the main chat's own commit
+/// now stands on. jj would keep the main chat's side, a fast-forward of
+/// upstream's; the update takes upstream's, as for any bookmark upstream
+/// moved. Found by `updates_follow_the_source`.
+#[test]
+fn a_bookmark_upstream_moved_under_the_main_chats_commit_takes_upstreams_side()
+{
+    let (_home, work, project, main) = caught_up();
+    let name = project.trunk_name().unwrap();
+    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
+    block_on(main.commit_all("ours", name.clone())).unwrap();
+
+    // Upstream commits on a branch of its own, and the main chat's
+    // commit moves onto it.
+    git(&work, &["checkout", "--quiet", "-b", "side"]);
+    std::fs::write(work.join("f.txt"), "1\n").unwrap();
+    git(&work, &["commit", "--quiet", "-am", "side"]);
+    let side = git(&work, &["rev-parse", "HEAD"]);
+    project.update(UpdateFrom::Checkout(&work)).unwrap();
+    let moved =
+        block_on(main.move_onto(side.clone(), name.clone(), true)).unwrap();
+    assert_eq!(project.parent_of(&moved.head).unwrap(), Some(side.clone()));
+    assert_eq!(project.bookmark(&name).unwrap(), Some(moved.head.clone()));
+
+    // Upstream moves trunk's branch there too.
+    git(&work, &["branch", "--quiet", "-f", &name, "side"]);
+    project.update(UpdateFrom::Checkout(&work)).unwrap();
+    assert_eq!(project.bookmark(&name).unwrap(), Some(side));
+}

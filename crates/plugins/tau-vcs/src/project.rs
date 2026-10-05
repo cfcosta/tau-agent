@@ -461,7 +461,7 @@ impl ProjectRepo {
         }
         let repo = self.load()?;
         let mut tx = repo.start_transaction();
-        let upstream = upstream_names(tx.repo().view());
+        let upstream = upstream_targets(tx.repo().view());
         let options = GitImportOptions {
             abandon_unreachable_commits: false,
             record_synthetic_predecessors: false,
@@ -1139,38 +1139,41 @@ fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
         .collect()
 }
 
-/// The bookmarks the source has, as the last import left them.
-fn upstream_names(view: &jj_lib::view::View) -> HashSet<String> {
+/// The bookmarks the source has, as the last import left them, with
+/// where each points.
+fn upstream_targets(
+    view: &jj_lib::view::View,
+) -> HashMap<String, jj_lib::op_store::RefTarget> {
     view.remote_bookmarks(REMOTE_NAME_FOR_LOCAL_GIT_REPO)
-        .map(|(name, _)| name.as_str().to_owned())
+        .map(|(name, remote)| (name.as_str().to_owned(), remote.target.clone()))
         .collect()
 }
 
-/// Points every bookmark of the source's that an update left with two
-/// targets where the source has it now, and deletes it when the source
-/// deleted it. The main chat moves trunk here (ADR 0015) while upstream
-/// moves it there, or renames or deletes the branch. The main chat's
-/// commits stay on its `@`, and go onto trunk when it catches up
-/// (`Vcs::move_onto`). `before` is the source's bookmarks before the
-/// import.
+/// Points every bookmark the source moved, made or deleted since the
+/// last import where the source has it now, and any the import left
+/// with two targets. The main chat moves trunk here (ADR 0015) while
+/// upstream moves it there, or renames or deletes the branch: once
+/// upstream moves it too, it takes upstream's side, even when the main
+/// chat's commits sit on top of upstream's new commit, where jj would
+/// keep the main chat's. The main chat's commits stay on its `@`, and go
+/// onto trunk when it catches up (`Vcs::move_onto`). `before` is the
+/// source's bookmarks before the import.
 fn take_upstream(
     tx: &mut jj_lib::transaction::Transaction,
-    before: HashSet<String>,
+    before: HashMap<String, jj_lib::op_store::RefTarget>,
 ) {
-    let names = before.into_iter().chain(upstream_names(tx.repo().view()));
-    for name in names.collect::<HashSet<_>>() {
-        let name = RefName::new(&name);
-        let view = tx.repo().view();
-        if !view.get_local_bookmark(name).has_conflict() {
-            continue;
+    let after = upstream_targets(tx.repo().view());
+    let names: HashSet<&String> = before.keys().chain(after.keys()).collect();
+    let absent = jj_lib::op_store::RefTarget::absent();
+    for name in names {
+        let then = before.get(name).unwrap_or(&absent);
+        let now = after.get(name).unwrap_or(&absent);
+        let ref_name = RefName::new(name);
+        let local = tx.repo().view().get_local_bookmark(ref_name);
+        if then != now || local.has_conflict() {
+            tx.repo_mut()
+                .set_local_bookmark_target(ref_name, now.clone());
         }
-        let upstream = view
-            .get_remote_bookmark(
-                name.to_remote_symbol(REMOTE_NAME_FOR_LOCAL_GIT_REPO),
-            )
-            .target
-            .clone();
-        tx.repo_mut().set_local_bookmark_target(name, upstream);
     }
 }
 
