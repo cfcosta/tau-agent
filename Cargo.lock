@@ -8655,6 +8655,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "similar"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f66ca1f7aca2474dc10c942eb22feffc897735f54cd1db90138c2fddb490987"
+dependencies = [
+ "bstr",
+]
+
+[[package]]
 name = "simplecss"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9074,7 +9083,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "similar",
+ "similar 2.7.0",
  "thiserror 1.0.69",
  "threadpool",
  "toml 0.8.23",
@@ -9980,7 +9989,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "similar",
+ "similar 3.2.0",
  "tau-agent",
  "tau-ai",
  "tau-artifacts",
@@ -10060,7 +10069,7 @@ dependencies = [
  "pulldown-cmark",
  "qrcode",
  "serde",
- "similar",
+ "similar 3.2.0",
  "tau-terminal",
  "tree-sitter-bash",
  "tree-sitter-go",
@@ -10157,7 +10166,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "similar",
+ "similar 3.2.0",
  "tau-agent",
  "tau-ai",
  "tau-store",
