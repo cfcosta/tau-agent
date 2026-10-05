@@ -51,8 +51,8 @@ jobs:
 
       # A plugin's own database: its queries are checked against tau's
       # schema and its own, since its tests compile tau-store-sqlite's too.
-      - name: sqlx offline metadata is current (tau-constitution)
-        working-directory: crates/plugins/tau-constitution
+      - name: sqlx offline metadata is current (tau-constitution-host)
+        working-directory: crates/plugins/tau-constitution-host
         run: |
           export DATABASE_URL="sqlite://$RUNNER_TEMP/tau-constitution-ci.db"
           nix develop -c sqlx database setup --source ../../tau-store-sqlite/migrations

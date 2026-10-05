@@ -242,7 +242,7 @@ impl Host {
                 Project::open_or_init(
                     dir,
                     identity(),
-                    tau_luau_plugins::registry::first_files(),
+                    tau_luau_plugins_host::registry::first_files(),
                 )
                 .await
             } else {
@@ -408,7 +408,8 @@ impl Host {
             return Ok(());
         }
         let vcs =
-            tau_vcs::Vcs::open(project.workspace_dir(name), identity()).await?;
+            tau_vcs_host::Vcs::open(project.workspace_dir(name), identity())
+                .await?;
         vcs.move_onto(trunk, trunk_name, true).await?;
         Ok(())
     }
@@ -526,7 +527,7 @@ impl Host {
             let (url, into) = (self.github.clone_url(full_name), dir.clone());
             // A clone over the network, through git: it blocks.
             tokio::task::spawn_blocking(move || {
-                tau_vcs::clone_bare(&url, Some(&token.token), &into)
+                tau_vcs_host::clone_bare(&url, Some(&token.token), &into)
             })
             .await??;
         }
@@ -538,7 +539,7 @@ impl Host {
     pub async fn update_repo(
         &self,
         name: &str,
-    ) -> anyhow::Result<tau_vcs::Updated> {
+    ) -> anyhow::Result<tau_vcs_host::Updated> {
         let slot = self
             .slot(name)
             .ok_or_else(|| anyhow::anyhow!("No repository {name}"))?;
@@ -550,7 +551,7 @@ impl Host {
         let url = self.github.clone_url(&full_name);
         Ok(project
             .run(move |project| {
-                project.update(tau_vcs::UpdateFrom::Remote {
+                project.update(tau_vcs_host::UpdateFrom::Remote {
                     url: &url,
                     token: token.as_ref().map(|token| token.token.as_str()),
                 })
@@ -572,7 +573,7 @@ impl Host {
                 return;
             }
             list.repos.push(Listed {
-                name: tau_luau_plugins::registry::REPO.to_owned(),
+                name: tau_luau_plugins_host::registry::REPO.to_owned(),
                 path,
                 hidden: false,
                 github: None,

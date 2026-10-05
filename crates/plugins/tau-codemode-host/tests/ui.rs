@@ -1,0 +1,1157 @@
+//! tau-codemode's UI: a card's calls read the same live and from
+//! history, its output and failure read back from the result, the store
+//! folds as the plugin folds it, and it keeps to the design language.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+use std::{
+    collections::BTreeMap,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
+
+use async_trait::async_trait;
+use gpui::{App, AppContext as _, TestAppContext};
+use hegel::generators as gs;
+use serde_json::{Value, json};
+use tau_agent::tool::{RunId, ToolOutput};
+use tau_ai::message::{Usage, UsageCost};
+use tau_codemode::{
+    inference_trace::{
+        Attempt,
+        AttemptOutcome,
+        Record as TraceRecord,
+        UsageProvenance,
+    },
+    modules::{self, Definition, ModuleTest, TestReport},
+    outline::{self, Shown},
+    store,
+    ui::{self, Action, CodemodeUi, InspectorUi, Row, State},
+};
+use tau_codemode_host::{
+    CallStatus,
+    CancellationToken,
+    CodemodeHost,
+    Host,
+    Item,
+    Outcome,
+    PLUGIN,
+    Request,
+    ToolCall,
+    ToolEntry,
+    ToolReply,
+    options,
+    run,
+};
+use tau_jev::{Jev, fake::FakeJev};
+use tau_store::{Entry, NewRun, RunKind, TurnUsage};
+use tau_testing::block_on_io;
+use tau_ui_plugin::{
+    CallData,
+    CallResult,
+    CardMark,
+    Fold,
+    Handle,
+    HostCx,
+    HostHalf as _,
+    PluginUi as _,
+    Request as UiRequest,
+    RunInfo,
+    Services,
+    UiPlugin as _,
+    ViewCx,
+    points::AtCard,
+};
+
+fn module_record(record: modules::Record) -> Value {
+    serde_json::to_value(store::Record::Module(record)).unwrap()
+}
+
+fn module_definition(name: &str, source: &str) -> Definition {
+    Definition::new(
+        name.into(),
+        source.into(),
+        json!({"run": "() -> number"}),
+        BTreeMap::new(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn repository_pin_fold_keeps_source_for_hostless_inspection() {
+    let dependency = module_definition("base", "return { n = 40 }");
+    let definition = Definition::new(
+        "alpha".into(),
+        "return { n = require('base').n + 2 }".into(),
+        json!({"run":"() -> number"}),
+        BTreeMap::from([("base".into(), dependency.version().into())]),
+    )
+    .unwrap();
+    let pin = modules::RepositoryPin {
+        owner: "run-1".into(),
+        selected: BTreeMap::from([(
+            "alpha".into(),
+            definition.version().into(),
+        )]),
+        versions: BTreeMap::from([
+            (definition.version().into(), definition.clone()),
+            (dependency.version().into(), dependency.clone()),
+        ]),
+    };
+    let mut state = State::default();
+    state.apply(
+        store::Record::RepositoryPin(pin),
+        &mut tau_ui_plugin::testing::FakeRun::default(),
+    );
+    let reloaded: State =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    let saved = &reloaded.repository_pins["run-1"];
+    assert_eq!(saved, &state.repository_pins["run-1"]);
+    assert_eq!(
+        saved.resolve("alpha", None).unwrap().source(),
+        definition.source()
+    );
+    assert_eq!(
+        saved.resolve("alpha", None).unwrap().signatures(),
+        definition.signatures()
+    );
+    assert_eq!(saved.selected["alpha"], definition.version());
+    assert_eq!(
+        saved.resolve("alpha", None).unwrap().dependencies(),
+        definition.dependencies()
+    );
+    assert_eq!(
+        saved
+            .resolve("base", Some(dependency.version()))
+            .unwrap()
+            .source(),
+        dependency.source()
+    );
+}
+
+// Property inventory: generated define/select/test sequences have the same
+// module library in the live UI fold, a reloaded UI fold, and the separate
+// persisted-record library oracle at every prefix. hegel.toml sets counts.
+#[hegel::test]
+fn module_records_match_live_and_reloaded_ui(tc: hegel::TestCase) {
+    let steps: Vec<(u8, u8)> = tc.draw(
+        gs::vecs(hegel::tuples!(gs::integers::<u8>(), gs::integers::<u8>()))
+            .max_size(20),
+    );
+    let registry = tau_ui_plugin::Registry::new().with(CodemodeUi);
+    let plugin = registry.get(PLUGIN).unwrap();
+    let mut state = tau_ui_plugin::PluginValue::default();
+    let mut records = Vec::new();
+    let mut known = Vec::<Definition>::new();
+    for (kind, n) in steps {
+        let record = if kind % 3 == 0 || known.is_empty() {
+            let definition = module_definition(
+                if n % 2 == 0 { "alpha" } else { "beta" },
+                &format!("return {n}"),
+            );
+            known.push(definition.clone());
+            modules::Record::Define { definition }
+        } else {
+            let definition = &known[n as usize % known.len()];
+            if kind % 3 == 1 {
+                modules::Record::Select {
+                    name: definition.name().into(),
+                    version: definition.version().into(),
+                }
+            } else {
+                let report = TestReport {
+                    name: definition.name().into(),
+                    version: definition.version().into(),
+                    passed: n % 2 == 0,
+                    output: format!("case {n}"),
+                    output_truncated: false,
+                    calls: vec![],
+                    error: None,
+                    error_truncated: false,
+                };
+                modules::Record::Test {
+                    test: ModuleTest::new(
+                        definition.name().into(),
+                        definition.version().into(),
+                        format!("assert({n} == {n})"),
+                        vec![],
+                        report,
+                    )
+                    .unwrap(),
+                }
+            }
+        };
+        let body = module_record(record);
+        records.push(body.clone());
+        plugin.apply(
+            &mut state,
+            &body,
+            &mut tau_ui_plugin::testing::FakeRun::default(),
+        );
+        let oracle = modules::fold(&records);
+        assert_eq!(state.get::<State>().modules, oracle);
+        let mut reloaded = tau_ui_plugin::PluginValue::default();
+        for body in &records {
+            plugin.apply(
+                &mut reloaded,
+                body,
+                &mut tau_ui_plugin::testing::FakeRun::default(),
+            );
+        }
+        assert_eq!(reloaded.get::<State>().modules, oracle);
+    }
+}
+
+#[test]
+fn selection_validation_rejects_missing_mismatched_and_corrupt_versions() {
+    let definition = module_definition("alpha", "return 1");
+    let version = definition.version().to_owned();
+    let record = module_record(modules::Record::Define { definition });
+    assert_eq!(
+        ui::validate_selection(
+            std::slice::from_ref(&record),
+            "alpha",
+            &version
+        )
+        .unwrap(),
+        modules::Record::Select {
+            name: "alpha".into(),
+            version: version.clone()
+        }
+    );
+    assert!(
+        ui::validate_selection(&[], "alpha", &version)
+            .unwrap_err()
+            .contains("missing")
+    );
+    assert!(
+        ui::validate_selection(std::slice::from_ref(&record), "beta", &version)
+            .unwrap_err()
+            .contains("another")
+    );
+    let mut corrupt = record;
+    corrupt["definition"]["source"] = json!("return 2");
+    assert!(
+        ui::validate_selection(&[corrupt], "alpha", &version)
+            .unwrap_err()
+            .contains("corrupt")
+    );
+}
+
+#[gpui::test]
+fn selection_button_sends_only_the_exact_version(cx: &mut TestAppContext) {
+    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let received = requests.clone();
+    let handle = Handle::new(
+        PLUGIN,
+        Rc::new(move |_, request, _: &mut App| {
+            received.borrow_mut().push(request)
+        }),
+    );
+    let run = RunId("run-7".into());
+    let version = "a".repeat(64);
+    cx.update(|cx| ui::select_version(&run, "alpha", &version, &handle, cx));
+    assert_eq!(
+        *requests.borrow(),
+        vec![UiRequest::Act(
+            serde_json::to_value(Action::Select {
+                run,
+                name: "alpha".into(),
+                version,
+            })
+            .unwrap()
+        )]
+    );
+}
+
+#[gpui::test]
+fn promotion_button_sends_only_request_identity_and_decision(
+    cx: &mut TestAppContext,
+) {
+    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let received = requests.clone();
+    let handle = Handle::new(
+        PLUGIN,
+        Rc::new(move |_, request, _: &mut App| {
+            received.borrow_mut().push(request)
+        }),
+    );
+    let run = RunId("run-7".into());
+    let request_id = "opaque-id";
+    cx.update(|cx| {
+        ui::decide_promotion(
+            &run,
+            request_id,
+            tau_codemode::promotion::Decision::Approved,
+            &handle,
+            cx,
+        )
+    });
+    assert_eq!(
+        *requests.borrow(),
+        vec![UiRequest::Act(
+            json!({"action":"promote","run":"run-7","request_id":"opaque-id","decision":"approved"})
+        )]
+    );
+}
+
+#[gpui::test]
+fn rejected_selection_requests_a_visible_alert(cx: &mut TestAppContext) {
+    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let received = requests.clone();
+    let handle = Handle::new(
+        PLUGIN,
+        Rc::new(move |_, request, _: &mut App| {
+            received.borrow_mut().push(request)
+        }),
+    );
+    cx.update(|cx| {
+        let ui = cx.new(|cx| InspectorUi::new(handle, cx));
+        ui.update(cx, |ui, cx| {
+            CodemodeUi.reply(
+                ui,
+                json!({"error": "That module version is missing"}),
+                cx,
+            )
+        });
+    });
+    assert_eq!(
+        *requests.borrow(),
+        vec![UiRequest::Alert {
+            title: "Module selection failed".into(),
+            message: "That module version is missing".into(),
+        }]
+    );
+}
+
+#[test]
+fn host_action_revalidates_persisted_records_and_publishes_selection() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let run = RunId("module-run".into());
+    runtime
+        .block_on(store.create_run(&NewRun {
+            id: &run.0,
+            workflow_id: None,
+            agent: "test",
+            kind: RunKind::Root,
+            model: "test",
+            turns: 0,
+        }))
+        .unwrap();
+    let first = module_definition("alpha", "return 1");
+    let second = module_definition("alpha", "return 2");
+    for definition in [&first, &second] {
+        runtime
+            .block_on(
+                store.append_turn(
+                    &run.0,
+                    &[Entry::Plugin {
+                        plugin: PLUGIN.into(),
+                        body: module_record(modules::Record::Define {
+                            definition: definition.clone(),
+                        })
+                        .to_string(),
+                    }],
+                    TurnUsage::default(),
+                ),
+            )
+            .unwrap();
+    }
+    let cx = HostCx::new(
+        store,
+        runtime.handle().clone(),
+        Services::default(),
+        std::path::PathBuf::from("/tmp/tau-codemode-ui-test"),
+        vec![],
+        Arc::new(|_| {}),
+    );
+    let action = |name: &str, version: &str| {
+        serde_json::to_value(Action::Select {
+            run: run.clone(),
+            name: name.into(),
+            version: version.into(),
+        })
+        .unwrap()
+    };
+    assert!(
+        cx.runtime
+            .block_on(CodemodeHost.act(
+                &(),
+                action("alpha", first.version()),
+                &cx
+            ))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        modules::fold(&cx.runtime.block_on(cx.records(&run, PLUGIN)).unwrap())
+            .selected()["alpha"],
+        first.version()
+    );
+    let count = cx.runtime.block_on(cx.records(&run, PLUGIN)).unwrap().len();
+    for bad in [
+        action("alpha", &"f".repeat(64)),
+        action("beta", first.version()),
+    ] {
+        let reply = cx
+            .runtime
+            .block_on(CodemodeHost.act(&(), bad, &cx))
+            .unwrap()
+            .unwrap();
+        assert!(reply["error"].is_string());
+        assert_eq!(
+            cx.runtime.block_on(cx.records(&run, PLUGIN)).unwrap().len(),
+            count
+        );
+    }
+}
+
+#[test]
+fn large_fake_fixture_json_is_bounded_before_display() {
+    let value = json!({"fake": "x".repeat(1024 * 1024)});
+    let preview = ui::compact_json_preview(&value, 2048);
+    assert!(preview.len() <= 2051);
+    assert!(preview.ends_with('…'));
+}
+
+const CALL: &str = "call_1";
+
+/// What tau-ui folds into a card while its script runs, in the order
+/// the script made it: a nested call's start or end, from run events,
+/// or one of the call's own updates.
+#[derive(Debug, Clone)]
+enum Folded {
+    Start(ToolCall),
+    End(String, ToolOutput, bool),
+    Update(Value),
+}
+
+impl Folded {
+    /// Folds it into `data` as tau-ui's run view does.
+    fn apply(&self, data: &mut CallData) {
+        match self {
+            Self::Start(call) => {
+                data.nested_start(&call.id, CALL, &call.name, &call.args)
+            }
+            Self::End(id, output, error) => data.nested_end(id, output, *error),
+            Self::Update(details) => data.updates.push(details.clone()),
+        }
+    }
+}
+
+/// A host that keeps what tau-ui would fold for its calls: each call's
+/// start, then its end with the output the loop reports; and the
+/// script's updates, its Jev rows.
+///
+/// - `echo` returns its arguments;
+/// - `fail` fails with its `msg`;
+/// - `jev.noul` answers 0.5, and a question `bad` gets 1.5, which is out
+///   of range.
+struct CardHost {
+    folded: Mutex<Vec<Folded>>,
+    jev: Arc<dyn Jev>,
+}
+
+impl Default for CardHost {
+    fn default() -> Self {
+        Self {
+            folded: Mutex::default(),
+            jev: Arc::new(FakeJev::new(|request| {
+                // nouls() receives question IDs, not instruction text.
+                let answers = request.questions.iter().map(|(id, question)| {
+                    let bad = matches!(question, tau_jev::Question::Noul { instructions, .. } if instructions == &json!("bad"));
+                    (id.clone(), tau_jev::Answer::Noul { noul: if bad { 1.5 } else { 0.5 } })
+                }).collect();
+                Ok(tau_jev::fake::response(answers, request))
+            })),
+        }
+    }
+}
+
+impl CardHost {
+    /// The card's data with everything folded in the order it came.
+    fn data(&self) -> CallData {
+        let mut data = CallData::default();
+        for folded in self.folded.lock().unwrap().iter() {
+            folded.apply(&mut data);
+        }
+        data
+    }
+}
+
+fn tool(name: &str) -> ToolEntry {
+    ToolEntry {
+        name: name.into(),
+        description: String::new(),
+        input_schema: json!({ "type": "object", "properties": {} }),
+        output_schema: None,
+        namespace: None,
+        sequential: false,
+    }
+}
+
+#[async_trait]
+impl Host for CardHost {
+    fn tools(&self) -> Vec<ToolEntry> {
+        let mut typed = tool("typed");
+        typed.output_schema = Some(json!({"type": "object"}));
+        let mut infer = tool("infer");
+        infer.output_schema = Some(json!({"type": "object"}));
+        vec![tool("echo"), tool("fail"), typed, infer]
+    }
+
+    async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String> {
+        self.folded
+            .lock()
+            .unwrap()
+            .push(Folded::Start(call.clone()));
+        let (output, result) = match call.name.as_str() {
+            "fail" => {
+                let msg = call.args["msg"].as_str().unwrap_or("").to_owned();
+                (ToolOutput::text(msg.clone()), Err(msg))
+            }
+            "typed" => {
+                let msg = call.args["msg"].as_str().unwrap_or("").to_owned();
+                let value = json!({"echo": msg});
+                let output = ToolOutput {
+                    structured: Some(value.clone()),
+                    ..ToolOutput::text(msg.clone())
+                };
+                (
+                    output,
+                    Ok(ToolReply {
+                        value,
+                        error: Some(msg),
+                        usage: None,
+                        usage_complete: None,
+                    }),
+                )
+            }
+            "infer" => {
+                let fails = call.args["fails"].as_bool().unwrap_or(false);
+                let cost = if fails { 0.4 } else { 0.25 };
+                let value = json!({"ok": !fails});
+                let output = ToolOutput {
+                    structured: Some(value.clone()),
+                    ..ToolOutput::text(value.to_string())
+                };
+                (
+                    output,
+                    Ok(ToolReply {
+                        value,
+                        error: fails.then(|| "inference failed".into()),
+                        usage: Some(Usage {
+                            input: 2,
+                            total_tokens: 2,
+                            cost: UsageCost {
+                                total: cost,
+                                ..UsageCost::default()
+                            },
+                            ..Usage::default()
+                        }),
+                        usage_complete: Some(true),
+                    }),
+                )
+            }
+            _ => (
+                ToolOutput::text(call.args.to_string()),
+                Ok(ToolReply::success(call.args.clone())),
+            ),
+        };
+        let failed = match &result {
+            Ok(reply) => reply.error.is_some(),
+            Err(_) => true,
+        };
+        self.folded.lock().unwrap().push(Folded::End(
+            call.id.clone(),
+            output,
+            failed,
+        ));
+        result
+    }
+
+    fn jev(&self) -> Option<Arc<dyn Jev>> {
+        Some(self.jev.clone())
+    }
+
+    fn update(&self, details: Value) {
+        self.folded.lock().unwrap().push(Folded::Update(details));
+    }
+}
+
+async fn script(host: &Arc<CardHost>, code: &str) -> Outcome {
+    run(
+        host.clone(),
+        Request {
+            call_id: CALL.into(),
+            source: options::parse(code).expect("the source parses"),
+            store: store::Snapshot::new(),
+            cancel: CancellationToken::new(),
+        },
+    )
+    .await
+}
+
+/// A row as both sources know it: how long it took is known only once
+/// the script ended.
+fn timeless(rows: &[Row]) -> Vec<Row> {
+    rows.iter()
+        .map(|row| Row {
+            ms: None,
+            ..row.clone()
+        })
+        .collect()
+}
+
+/// The result as tau-ui keeps it: its text blocks joined by newlines.
+fn result_text(outcome: &Outcome) -> (String, Value) {
+    let rendered = outcome.render(10_000);
+    let text = rendered
+        .content
+        .iter()
+        .filter_map(Item::text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    (text, rendered.details)
+}
+
+/// One call a generated script makes.
+#[derive(Debug, Clone, hegel::DefaultGenerator)]
+enum Call {
+    /// `echo`, with its argument.
+    Echo(String),
+    /// `fail`, with its message.
+    Fail(String),
+    /// A readable structured error, still failed in the call row.
+    Typed(String),
+    /// `jev.noul`; a bad one gets an answer out of range and raises.
+    Jev(bool),
+    /// An inference with two reported attempts in the real integration.
+    Infer(bool),
+}
+
+impl Call {
+    fn luau(&self) -> String {
+        match self {
+            Self::Echo(text) => {
+                format!(
+                    "function() return tools.echo({{ s = \"{text}\" }}) end"
+                )
+            }
+            Self::Fail(text) => {
+                format!(
+                    "function() return tools.fail({{ msg = \"{text}\" }}) end"
+                )
+            }
+            Self::Typed(text) => format!(
+                "function() return tools.typed({{ msg = \"{text}\" }}) end"
+            ),
+            Self::Jev(bad) => format!(
+                "function() return jev.noul({{ state = 1, question = \"{}\" }}) end",
+                if *bad { "bad" } else { "ok" }
+            ),
+            Self::Infer(fails) => format!(
+                "function() return tools.infer({{ fails = {} }}) end",
+                fails
+            ),
+        }
+    }
+}
+
+/// Property inventory: mixed tools, Jev, and infer retain independently
+/// expected statuses and infer costs through live and stored row folds.
+/// Generator plan: the Call enum constructs valid scripts; short vectors
+/// shrink by removing whole calls, while short strings shrink arguments.
+/// CI uses the workspace hegel.toml profile.
+/// Whatever calls a script makes, tools and Jev, in turn or at once,
+/// failing or not, the rows its card draws while it runs are the rows
+/// its result's details list once it ends, which is all a stored run
+/// has; and the card reads the script's output and failure back from
+/// the result.
+///
+/// The nested calls' events and the call's own updates reach tau-ui on
+/// two channels, so they may interleave any way: each keeps its own
+/// order, and the rows are the same for every interleaving.
+#[hegel::test(test_cases = 80)]
+fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
+    let text = || gs::text().alphabet("abc xyz").max_size(700);
+    let calls: Vec<Call> = tc.draw(
+        gs::vecs(
+            gs::default::<Call>()
+                .echo(text())
+                .fail(text())
+                .typed(text())
+                .infer(gs::booleans()),
+        )
+        .max_size(8),
+    );
+    let at_once: bool = tc.draw(gs::booleans());
+    let output: String = tc.draw(gs::text().alphabet("abc").max_size(20));
+    let raise: bool = tc.draw(gs::booleans());
+    let mut code = String::new();
+    if at_once && !calls.is_empty() {
+        let fs: Vec<String> = calls.iter().map(Call::luau).collect();
+        code.push_str(&format!("parallel_settled({})\n", fs.join(", ")));
+    } else {
+        for call in &calls {
+            code.push_str(&format!("pcall({})\n", call.luau()));
+        }
+    }
+    code.push_str(&format!("text(\"{output}\")\n"));
+    if raise {
+        code.push_str("error(\"boom\")\n");
+    }
+    let host = Arc::new(CardHost::default());
+    let outcome = block_on_io(script(&host, &code));
+    let (text, details) = result_text(&outcome);
+    let stored = ui::stored_rows(&details).unwrap();
+    assert_eq!(stored.rows.len(), calls.len());
+
+    // The two channels, each in its order, merged as drawn.
+    let folded = host.folded.lock().unwrap().clone();
+    let (mut updates, mut events): (Vec<Folded>, Vec<Folded>) = folded
+        .into_iter()
+        .partition(|folded| matches!(folded, Folded::Update(_)));
+    let picks: Vec<bool> = tc.draw(
+        gs::vecs(gs::booleans())
+            .min_size(updates.len() + events.len())
+            .max_size(updates.len() + events.len()),
+    );
+    updates.reverse();
+    events.reverse();
+    let mut data = CallData {
+        args: json!({ "code": code }),
+        ..CallData::default()
+    };
+    for pick in picks {
+        let next = match pick {
+            true => updates.pop().or_else(|| events.pop()),
+            false => events.pop().or_else(|| updates.pop()),
+        };
+        next.expect("one per pick").apply(&mut data);
+    }
+    let live = ui::calls(CALL, &data);
+    assert!(
+        live.rows
+            .iter()
+            .all(|row| row.status != CallStatus::Running)
+    );
+    assert_eq!(timeless(&live.rows), timeless(&stored.rows));
+    let mut expected_statuses: Vec<(&str, &str)> = calls
+        .iter()
+        .map(|call| match call {
+            Call::Echo(_) => ("echo", "ok"),
+            Call::Fail(_) => ("fail", "error"),
+            Call::Typed(_) => ("typed", "error"),
+            Call::Jev(bad) => ("jev.noul", if *bad { "error" } else { "ok" }),
+            Call::Infer(fails) => {
+                ("infer", if *fails { "error" } else { "ok" })
+            }
+        })
+        .collect();
+    let mut actual_statuses: Vec<(&str, &str)> = live
+        .rows
+        .iter()
+        .map(|row| (row.name.as_str(), row.status.as_str()))
+        .collect();
+    expected_statuses.sort_unstable();
+    actual_statuses.sort_unstable();
+    assert_eq!(actual_statuses, expected_statuses);
+    let mut expected_infer: Vec<(CallStatus, f64)> = calls
+        .iter()
+        .filter_map(|call| match call {
+            Call::Infer(fails) => Some((
+                if *fails {
+                    CallStatus::Error
+                } else {
+                    CallStatus::Ok
+                },
+                if *fails { 0.4 } else { 0.25 },
+            )),
+            _ => None,
+        })
+        .collect();
+    let mut actual_infer: Vec<(CallStatus, f64)> = live
+        .rows
+        .iter()
+        .filter(|row| row.name == "infer")
+        .map(|row| (row.status, row.cost.expect("reported infer cost")))
+        .collect();
+    expected_infer.sort_by(|a, b| a.1.total_cmp(&b.1));
+    actual_infer.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert_eq!(actual_infer, expected_infer);
+    // In the order they came, too.
+    let mut in_order = host.data();
+    in_order.args = data.args.clone();
+    assert_eq!(
+        timeless(&ui::calls(CALL, &in_order).rows),
+        timeless(&stored.rows)
+    );
+    // Jev's cost shows while it runs, as it will once it ended.
+    let jev_cost: f64 = live.rows.iter().filter_map(|row| row.cost).sum();
+    assert_eq!(jev_cost > 0.0, ui::label(&live, None).contains('$'));
+
+    // The call ends: the card draws from its result, as from history.
+    data.result = Some(CallResult {
+        text: text.clone(),
+        details: Some(details.clone()),
+        error: outcome.is_error(),
+    });
+    data.end();
+    assert_eq!(ui::calls(CALL, &data), stored);
+    assert_eq!(outline::items(&details), [Shown::Text(output)]);
+    let failure = ui::failure(&text, outcome.is_error());
+    assert_eq!(
+        failure,
+        outcome.failure.as_ref().map(|failure| failure.head())
+    );
+    assert_eq!(failure.is_some(), raise);
+}
+
+/// A Jev request shows on the card as soon as it starts, before any
+/// tool call the script makes after it, and its row updates in place
+/// when it ends.
+#[test]
+fn a_jev_request_shows_while_it_runs() {
+    let host = Arc::new(CardHost::default());
+    let code = "pcall(function() return jev.noul({ state = 1, question = 'ok' }) end)\n\
+                tools.echo({ s = 'a' })\n\
+                jev.noul({ state = 2, question = 'ok' })";
+    block_on_io(script(&host, code));
+    let folded = host.folded.lock().unwrap().clone();
+    // Only the first update: the request has started, nothing else.
+    let mut data = CallData::default();
+    folded[0].apply(&mut data);
+    let rows = ui::calls(CALL, &data).rows;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].id.as_str(), rows[0].name.as_str(), rows[0].status),
+        ("call_1/jev/1", "jev.noul", CallStatus::Running)
+    );
+    // Everything: the rows in the order the script made the calls.
+    let data = host.data();
+    let rows = ui::calls(CALL, &data).rows;
+    let names: Vec<(&str, CallStatus)> = rows
+        .iter()
+        .map(|row| (row.id.as_str(), row.status))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("call_1/jev/1", CallStatus::Ok),
+            ("call_1/1", CallStatus::Ok),
+            ("call_1/jev/2", CallStatus::Ok),
+        ]
+    );
+    assert!(rows[0].cost.is_some_and(|cost| cost > 0.0));
+    assert_eq!(data.updates.len(), 4, "a start and an end for each");
+}
+
+/// A call that fails before its script runs says only why.
+#[test]
+fn a_call_that_never_ran_says_why() {
+    assert_eq!(
+        ui::failure("@options must be a JSON object.", true).as_deref(),
+        Some("@options must be a JSON object.")
+    );
+    assert_eq!(ui::stored_rows(&Value::Null), None);
+}
+
+/// A plugin's verdict on a call shows on its row, live and once the
+/// script ended.
+#[test]
+fn verdicts_mark_their_rows() {
+    let mut data = CallData::default();
+    data.nested_start("call_1/1", CALL, "bash", &json!({ "command": "rm" }));
+    data.mark_nested(
+        "call_1/1",
+        "tau-constitution",
+        CardMark::Blocked {
+            reason: "rule R1".into(),
+        },
+    );
+    data.nested_end("call_1/1", &ToolOutput::text("blocked"), true);
+    // A call another call made is that call's to show.
+    data.nested_start("call_1/1/1", "call_1/1", "read", &json!({}));
+    let live = ui::calls(CALL, &data);
+    assert_eq!(live.rows.len(), 1);
+    assert_eq!(live.rows[0].marks.len(), 1);
+    data.result = Some(CallResult {
+        text: "Script completed\nWall time 0.0 seconds\nOutput:\n".into(),
+        details: Some(json!({
+            "calls": [{ "id": "call_1/1", "name": "bash", "args": "{}",
+                        "status": "error", "ms": 3, "error": "blocked",
+                        "cost": null }],
+            "complete": true, "store": null, "usage": {}, "wall_ms": 12,
+        })),
+        error: false,
+    });
+    data.end();
+    let stored = ui::calls(CALL, &data);
+    assert_eq!(stored.rows[0].marks, live.rows[0].marks);
+    assert_eq!(
+        ui::label(&stored, data.result.as_ref().unwrap().details.as_ref()),
+        "1 call · 0.0 s"
+    );
+}
+
+/// Source and restored folds expose the same exact private sections only
+/// after opening, while pending and uncertain traces never read as success.
+#[test]
+fn inference_trace_disclosure_survives_history_fold() {
+    let owner = RunId("r".into());
+    let start = TraceRecord::Started {
+        trace_id: "complete".into(),
+        owner: owner.clone(),
+        task: "exact task\nwith second line".into(),
+        context: json!({"private": [1, 2]}),
+        schema: Some(json!({"type": "string"})),
+        model: "model-a".into(),
+        effort: Some("high".into()),
+    };
+    let reserve = TraceRecord::Attempt {
+        trace_id: "complete".into(),
+        owner: owner.clone(),
+        number: 1,
+    };
+    let reported = Usage {
+        input: 3,
+        total_tokens: 3,
+        cost: UsageCost {
+            total: 0.3,
+            ..UsageCost::default()
+        },
+        ..Usage::default()
+    };
+    let finish = TraceRecord::Finished {
+        trace_id: "complete".into(),
+        owner: owner.clone(),
+        complete: true,
+        selected: Some(json!("selected")),
+        raw_output: Some("raw answer\nverbatim".into()),
+        raw_output_truncated: false,
+        error: None,
+        attempts: vec![Attempt {
+            number: 1,
+            outcome: AttemptOutcome::Finished,
+            reported_usage: reported.clone(),
+            usage_provenance: UsageProvenance::SdkReported,
+        }],
+        total_usage: reported,
+    };
+    let pending = TraceRecord::Started {
+        trace_id: "pending".into(),
+        owner: owner.clone(),
+        task: "unfinished".into(),
+        context: Value::Null,
+        schema: None,
+        model: "model-a".into(),
+        effort: None,
+    };
+    let records = vec![
+        start,
+        reserve,
+        finish,
+        pending,
+        TraceRecord::Attempt {
+            trace_id: "pending".into(),
+            owner,
+            number: 1,
+        },
+    ];
+    let live = State {
+        inference: records.clone(),
+        ..State::default()
+    };
+    let registry = tau_ui_plugin::Registry::new().with(CodemodeUi);
+    let plugin = registry.get(PLUGIN).unwrap();
+    let mut restored = tau_ui_plugin::PluginValue::default();
+    for record in records {
+        plugin.apply(
+            &mut restored,
+            &serde_json::to_value(store::Record::Inference(record)).unwrap(),
+            &mut tau_ui_plugin::testing::FakeRun::default(),
+        );
+    }
+    let history = restored.get::<State>();
+    assert_eq!(history.inference_statuses(), live.inference_statuses());
+    let live_traces = ui::inference_traces(&live);
+    let history_traces = ui::inference_traces(history);
+    assert_eq!(history_traces["complete"].status(), "finished");
+    assert_eq!(
+        history_traces["pending"].status(),
+        "interrupted / incomplete"
+    );
+    assert!(ui::trace_sections(&history_traces["complete"], false).is_empty());
+    let visible = ui::trace_sections(&history_traces["complete"], true);
+    assert_eq!(visible, ui::trace_sections(&live_traces["complete"], true));
+    assert!(visible.contains(&("Task", "exact task\nwith second line".into())));
+    assert!(visible.contains(&("Raw answer", "raw answer\nverbatim".into())));
+    assert!(visible.iter().any(
+        |(name, text)| *name == "Attempts" && text.contains("sdk_reported")
+    ));
+    assert!(
+        ui::trace_sections(&history_traces["pending"], true)
+            .iter()
+            .any(|(_, text)| text.contains("no terminal trace"))
+    );
+}
+
+#[test]
+fn infer_progress_and_partial_cost_survive_channel_interleaving() {
+    let id = "call_1/1";
+    let mut data = CallData::default();
+    // Codemode's update may fold before the nested ToolStart and ToolEnd.
+    data.updates.push(
+        json!({"infer": {"id": id, "name": "infer", "args": "{}",
+        "status": "running", "ms": 0, "error": null, "cost": null,
+        "usage_uncertain": false}}),
+    );
+    data.nested_start(id, CALL, "infer", &json!({"task": "a"}));
+    data.nested_update(id, &ToolOutput::text("attempt 2 started"));
+    assert_eq!(
+        ui::calls(CALL, &data).rows[0].progress.as_deref(),
+        Some("attempt 2 started")
+    );
+    let final_row = json!({"id": id, "name": "infer", "args": "{}",
+        "status": "error", "ms": 7, "error": "unknown final usage",
+        "cost": 0.7, "usage_uncertain": true});
+    data.updates.push(json!({"infer": final_row}));
+    data.nested_end(id, &ToolOutput::text(""), true);
+    let live = ui::calls(CALL, &data);
+    assert_eq!(live.rows[0].status, CallStatus::Error);
+    assert_eq!(live.rows[0].cost, Some(0.7));
+    assert!(live.rows[0].usage_uncertain);
+    assert_eq!(live.rows[0].progress, None);
+    assert!(ui::label(&live, None).contains("final usage unknown"));
+    let details = json!({"calls": [final_row], "complete": true,
+        "usage": {"cost": {"total": 0.7}}, "wall_ms": 7});
+    data.result = Some(CallResult {
+        text: "".into(),
+        details: Some(details),
+        error: false,
+    });
+    data.end();
+    assert_eq!(ui::calls(CALL, &data).rows[0].cost, Some(0.7));
+    assert!(
+        ui::label(
+            &ui::calls(CALL, &data),
+            data.result.as_ref().unwrap().details.as_ref()
+        )
+        .contains("final usage unknown")
+    );
+}
+
+/// Jev is optional: the catalog says what it adds, with a key or not.
+#[test]
+fn the_catalog_entry_says_jev_is_optional() {
+    assert_eq!(
+        ui::description(true),
+        "Runs Luau scripts that call tools, with Jev"
+    );
+    assert!(
+        ui::description(false).starts_with("Runs Luau scripts that call tools")
+    );
+    assert_eq!(CodemodeUi.name(), PLUGIN);
+}
+
+fn info() -> RunInfo {
+    RunInfo {
+        id: RunId("r".into()),
+        repo: "tau-agent".into(),
+        live: true,
+        title: "run".into(),
+        answer: None,
+        context: 0,
+        window: None,
+    }
+}
+
+fn at_card(tool: &str, data: CallData) -> AtCard {
+    AtCard {
+        run: info(),
+        call_id: CALL.into(),
+        tool: tool.into(),
+        keys: Vec::new(),
+        data: Arc::new(data),
+        summary: String::new(),
+        cut: None,
+    }
+}
+
+/// Draws the card for `at` in a test window, and reads what it says.
+fn draw(
+    cx: &mut TestAppContext,
+    at: &AtCard,
+) -> Option<(Option<String>, Option<String>, bool, bool)> {
+    let params = BTreeMap::new();
+    let repos = BTreeMap::new();
+    let list = Vec::new;
+    let cards = |_: &RunId| Vec::new();
+    let handle = Handle::new(PLUGIN, Rc::new(|_, _, _: &mut App| {}));
+    cx.update(|cx| {
+        cx.set_global(tau_ui_kit::theme::Theme::graphite());
+        let ui = cx.new(|cx| InspectorUi::new(handle.clone(), cx));
+        let mut view = ViewCx::new(
+            &CodemodeUi,
+            ui,
+            None,
+            &(),
+            &(),
+            &repos,
+            Some(&at.run),
+            &params,
+            false,
+            false,
+            1400.,
+            handle,
+            &list,
+            &cards,
+            cx,
+        );
+        ui::card(at, &mut view).map(|card| {
+            (card.label, card.failed, card.folds, card.body.is_some())
+        })
+    })
+}
+
+/// The card is codemode's only: open with its calls while the script
+/// runs, folded to its header once it ended, and red when it failed.
+#[gpui::test]
+fn the_card_shows_the_script_as_it_goes(cx: &mut TestAppContext) {
+    assert!(draw(cx, &at_card("bash", CallData::default())).is_none());
+    let mut data = CallData {
+        args: json!({ "code": "-- @options: {}\nreturn tools.read({ path = 'a' })" }),
+        ..CallData::default()
+    };
+    data.nested_start("call_1/1", CALL, "read", &json!({ "path": "a" }));
+    let (label, failed, folds, body) =
+        draw(cx, &at_card("codemode", data.clone())).unwrap();
+    assert_eq!(label.as_deref(), Some("1 call"));
+    assert_eq!(failed, None);
+    assert!(!folds && body);
+    data.result = Some(CallResult {
+        text: "Script failed\nWall time 1.5 seconds\nOutput:\n\n\
+               Script error:\ncodemode:2: boom\n\nNo tool calls were made."
+            .into(),
+        details: Some(json!({
+            "calls": [], "complete": true, "store": null,
+            "usage": { "cost": { "total": 0.0004 } }, "wall_ms": 1500,
+        })),
+        error: true,
+    });
+    data.end();
+    let (label, failed, folds, _) =
+        draw(cx, &at_card("codemode", data)).unwrap();
+    assert_eq!(label.as_deref(), Some("0 calls · 1.5 s · $0.0004"));
+    assert_eq!(failed.as_deref(), Some("codemode:2: boom"));
+    assert!(folds);
+}

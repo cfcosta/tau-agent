@@ -32,11 +32,11 @@ The truncation helpers:
   **Deliberate difference from pi:** pi keeps the end without a mark.
 
 A tool that fails returns `Err`, and the loop marks the result
-`is_error`. Every tool takes a root directory (`tau_tools::path::Root`)
+`is_error`. Every tool takes a root directory (`tau_tools_host::path::Root`)
 at construction, and all paths resolve against it.
-`tau_tools::plugin::CodingTools::new(root)` adds all seven to an agent
+`tau_tools_host::plugin::CodingTools::new(root)` adds all seven to an agent
 as a plugin (`Agent::plugin`); `only` and `without` pick a subset, which
-keeps pi's order. `tau_tools::coding_tools(&root)` returns the same
+keeps pi's order. `tau_tools_host::coding_tools(&root)` returns the same
 seven, for `Agent::tools`. `bash`, and so both, is unix-only.
 
 ## read: `{ path, offset?, limit? }`

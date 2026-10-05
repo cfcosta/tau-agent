@@ -12,10 +12,11 @@ hegeltest.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
 
-# The plugins come without their host halves (each one's `host`
-# feature): what runs agents is tau-ui's, and a phone runs none. Cargo
-# cannot turn a workspace dependency's defaults off, so these name
-# their paths.
+# The plugins come without their host halves: those are crates of
+# their own (`tau-*-host`, ADR 0030), or the `host` feature of the
+# plugins that keep theirs in the same crate. What runs agents is
+# tau-ui's, and a phone runs none. Cargo cannot turn a workspace
+# dependency's defaults off, so those name their paths.
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 base64.workspace = true
@@ -23,15 +24,15 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-codemode = { path = "../plugins/tau-codemode", default-features = false }
+tau-codemode.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true
 tau-ask = { path = "../plugins/tau-ask", default-features = false }
 tau-direnv = { path = "../plugins/tau-direnv", default-features = false }
 tau-goal.workspace = true
-tau-luau-plugins = { path = "../plugins/tau-luau-plugins", default-features = false }
+tau-luau-plugins.workspace = true
 tau-skills = { path = "../plugins/tau-skills", default-features = false }
-tau-mcp = { path = "../plugins/tau-mcp", default-features = false }
+tau-mcp.workspace = true
 tau-memory.workspace = true
 tau-reasoning.workspace = true
 tau-remote.workspace = true
@@ -39,12 +40,10 @@ tau-fast-compaction.workspace = true
 tau-store.workspace = true
 # `bash` cards draw their output as a terminal
 # (docs/decisions/0010-terminal-rendering.md).
-tau-tools = { path = "../plugins/tau-tools", default-features = false, features = [
-  "terminal",
-] }
+tau-tools = { workspace = true, features = ["terminal"] }
 # Draws those commands' terminals.
 tau-terminal.workspace = true
-tau-vcs = { path = "../plugins/tau-vcs", default-features = false }
+tau-vcs.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 futures-util.workspace = true

@@ -1,0 +1,40 @@
+[package]
+name = "tau-luau-plugins-host"
+description = "tau-luau-plugins' host half: loading plugins written in Luau and running their hooks in codemode's sandbox."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+tau-codemode.workspace = true
+tau-codemode-host.workspace = true
+tau-jev.workspace = true
+tau-luau-plugins.workspace = true
+# Where the skill tau ships is installed.
+tau-skills = { path = "../tau-skills", default-features = false }
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
+tau-vcs-host.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tau-store-sqlite.workspace = true
+async-trait.workspace = true
+tau-ui-plugin = { workspace = true, features = ["testing"] }
+futures-util.workspace = true
+tau-agent.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true
+hegeltest.workspace = true
+tokio-util.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

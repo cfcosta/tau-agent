@@ -1,39 +1,18 @@
 [package]
 name = "tau-constitution"
-description = "Checks a tau agent's tool calls and final answers against rules with Jev, as a plugin."
+description = "tau-constitution's interface half: a repository's rules, the checks' records, and how they are drawn."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[features]
-# The rules tau-ui's demo shows.
-demo = []
-
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 serde.workspace = true
 serde_json.workspace = true
 tau-agent.workspace = true
-tau-ai.workspace = true
-tau-jev.workspace = true
-sqlx.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
-
-[dev-dependencies]
-tau-store.workspace = true
-tau-ui-plugin = { workspace = true, features = ["testing"] }
-gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
-tau-store-sqlite.workspace = true
-futures-util.workspace = true
-hegeltest.workspace = true
-schemars.workspace = true
-tau-testing.workspace = true
-tempfile.workspace = true
-tokio = { workspace = true, features = ["net", "rt", "time"] }

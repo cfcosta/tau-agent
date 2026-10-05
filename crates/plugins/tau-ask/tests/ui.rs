@@ -12,13 +12,13 @@
 #[test]
 fn every_run_gets_ask_and_a_sub_agent_s_refuses() {
     use tau_agent::tool::ToolCtx;
-    use tau_ui_plugin::{RunKind, UiPlugin, testing::run_ctx};
+    use tau_ui_plugin::{HostHalf as _, RunKind, testing::run_ctx};
     let waiting = tau_ask::host::Waiting::default();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     for kind in [RunKind::Main, RunKind::Chat, RunKind::SubAgent] {
-        let plugins = tau_testing::block_on(tau_ask::AskUi.agent_plugins(
+        let plugins = tau_testing::block_on(tau_ask::AskHost.agent_plugins(
             &waiting,
             &run_ctx(kind),
             &(),

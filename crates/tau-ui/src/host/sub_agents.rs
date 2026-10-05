@@ -4,7 +4,7 @@
 //! after the drain reports it.
 
 use tau_ui_remote::queue::{SubAgentEnd, Waiting};
-use tau_vcs::sub_agents::{Ending, Taken, limit_name};
+use tau_vcs_host::sub_agents::{Ending, Taken, limit_name};
 
 use super::{landing::Reading, lanes::DrainReport, queue::Lane, *};
 
@@ -17,19 +17,19 @@ const REPORT_END: &str = "This message is from tau, not the person: \
 
 impl Host {
     /// The sub-agents of `repo`'s main chat, made the first time.
-    pub(super) fn sub_agents_of(&self, repo: &str) -> tau_vcs::SubAgents {
+    pub(super) fn sub_agents_of(&self, repo: &str) -> tau_vcs_host::SubAgents {
         self.sub_agents
             .lock()
             .expect("not poisoned")
             .entry(repo.to_owned())
             .or_insert_with(|| {
-                tau_vcs::SubAgents::new(Some(self.events.clone()), None)
+                tau_vcs_host::SubAgents::new(Some(self.events.clone()), None)
             })
             .clone()
     }
 
     /// Every main chat's sub-agents.
-    fn all_sub_agents(&self) -> Vec<tau_vcs::SubAgents> {
+    fn all_sub_agents(&self) -> Vec<tau_vcs_host::SubAgents> {
         let agents = self.sub_agents.lock().expect("not poisoned");
         agents.values().cloned().collect()
     }
@@ -177,7 +177,7 @@ impl Host {
                 .iter()
                 .find(|(landed, _)| *landed == run)
                 .map(|(_, landing)| {
-                    tau_vcs::sub_agents::landing_note(
+                    tau_vcs_host::sub_agents::landing_note(
                         landing,
                         &landing.conflicts,
                         end.limit.as_deref().and_then(limit_of),

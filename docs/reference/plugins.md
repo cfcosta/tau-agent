@@ -397,21 +397,26 @@ production uses the HTTP client, `tau_jev::TypeSafe`.
 
 ## A plugin's UI
 
-`tau-agent`'s `Plugin` has no UI. In this repository, each crate in
-`crates/plugins` also exports a `UiPlugin` (`tau-ui-plugin`), which
-builds its agent plugin for a run, folds what it publishes
+`tau-agent`'s `Plugin` has no UI. In this repository, each plugin has
+two halves (`tau-ui-plugin`). Its `UiPlugin` folds what it publishes
 (`PluginCtx::publish`) into its state for the run, live and from
 history alike, and adds its pages and contributions to the interface
-at extension points. `tau-ui-remote` registers them in `plugins.rs`,
-and `tau-ui`'s host builds a run's plugins only through that registry.
+at extension points. Its `HostHalf` builds its agent plugin for a run,
+and keeps what the plugin needs on the host. `tau-ui-remote` lists the
+plugins in `plugins.rs`; `tau-ui` gives each its host half
+(`Registry::host`) and builds a run's plugins only through that
+registry ([0030](../decisions/0030-host-halves-are-crates.md)).
 
-- **The host half.** A plugin whose agent half brings native code or a
-  network client puts it behind a default `host` feature: tau-codemode
-  (Luau), tau-vcs (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools)
-  and tau-ask. Off, the crate keeps its records, their fold, its views
-  and the shapes they read (`details` modules, tau-mcp's `info`), and
-  its `UiPlugin` builds no agent plugin. `tau-ui-remote` takes them
-  that way, so a phone links none of it; `tau-ui` turns `host` on.
+- **The host half.** A plugin whose host half brings what the
+  interface does not need keeps it in a crate of its own,
+  `tau-<plugin>-host`: tau-codemode (Luau), tau-luau-plugins, tau-vcs
+  (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools), tau-memory
+  (candle) and tau-constitution (its database). The plugin's crate
+  keeps its records, their fold, its views and the shapes they read
+  (`details` modules, tau-mcp's `info`). tau-ask, tau-direnv and
+  tau-skills keep theirs behind a default `host` feature; the rest,
+  which are light, beside their `UiPlugin`. `tau-ui-remote` depends on
+  none of it, so neither it nor a phone links it.
 
 - **The fold.** `UiPlugin::State` implements `Fold`: its `Record` is
   the plugin's record enum, `apply(&mut self, record, run)` folds one,
@@ -419,12 +424,12 @@ and `tau-ui`'s host builds a run's plugins only through that registry.
   context rewrite a run's history starts at (`REWRITE`). The registry
   decodes each body; one that does not decode is skipped, and said
   once per plugin. `()` folds nothing.
-- **Host and window state.** `type Host: PluginHost` is made once with
-  `new(cx: &HostCx)`, and `type Ui: PluginUi` once per window with
-  `new(handle, cx)`. Any `Default` type is both.
+- **Host and window state.** `HostHalf::Host: PluginHost` is made once
+  with `new(cx: &HostCx)`, and `UiPlugin::Ui: PluginUi` once per window
+  with `new(handle, cx)`. Any `Default` type is both.
 - **Values.** The interface keeps a plugin's state, data and settings
   as `PluginValue`: its own type once read, JSON only on the wire.
-- **Agent commands' environment.** `UiPlugin::launcher(host, repo,
+- **Agent commands' environment.** `HostHalf::launcher(host, repo,
 settings)` gives what commands in a repository start through: a
   `tau_agent::launch::Launcher`, which answers, for a directory, the
   words to put before the program and the variables to set (`Launch`),
@@ -640,7 +645,7 @@ Research and the reasons behind these choices:
   - Retrieval and interference run today: `cargo run --release -p
 tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
     for BM25 alone, `--json PATH` for the rows). The corpus is
-    `crates/plugins/tau-memory/eval/harbor.toml`, synthetic facts about a
+    `crates/plugins/tau-memory-host/eval/harbor.toml`, synthetic facts about a
     made-up service. Every level holds the same number of notes, so only
     the near-duplicates per answer change.
   - The end-to-end tasks run with `cargo run --release -p tau-memory-e2e`

@@ -29,7 +29,7 @@ use tau_memory_e2e::{
     scenario::Variant,
 };
 use tau_testing::{block_on_io, scripted::ScriptedModel};
-use tau_tools::{path::Root, plugin::CodingTools};
+use tau_tools_host::{path::Root, plugin::CodingTools};
 
 /// Turns of tool calls then a last answer: a run's figures are its
 /// responses, its calls, and the usage and cost the model reported.

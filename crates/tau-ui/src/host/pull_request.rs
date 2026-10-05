@@ -22,7 +22,7 @@ pub(super) struct OpenPr {
 /// onto, the run's commits, oldest first, and their copies.
 pub(super) struct Replayed {
     pub(super) onto: String,
-    pub(super) changes: Vec<tau_vcs::StackChange>,
+    pub(super) changes: Vec<tau_vcs_host::StackChange>,
     pub(super) copies: Vec<String>,
 }
 
@@ -31,7 +31,7 @@ pub(super) struct Replayed {
 pub(super) fn stack(
     run: &RunId,
     project: &ProjectRepo,
-) -> anyhow::Result<Vec<tau_vcs::StackChange>> {
+) -> anyhow::Result<Vec<tau_vcs_host::StackChange>> {
     let Some(head) = project.bookmark(&bookmark(run))? else {
         return Ok(Vec::new());
     };
@@ -76,7 +76,7 @@ pub(super) fn replayed(
         .map(|change| change.commit_id.clone())
         .collect();
     let copies = project.replay(&ids, &onto).map_err(|error| match error {
-        tau_vcs::VcsError::WouldConflict(paths) => anyhow::anyhow!(
+        tau_vcs_host::VcsError::WouldConflict(paths) => anyhow::anyhow!(
             "would conflict on origin/{trunk}: {}",
             paths.join(", ")
         ),
@@ -122,7 +122,7 @@ impl Host {
             .run(move |project| {
                 // What GitHub's default branch is now, for the replay to
                 // go on.
-                let _ = project.update(tau_vcs::UpdateFrom::Remote {
+                let _ = project.update(tau_vcs_host::UpdateFrom::Remote {
                     url: &url,
                     token: Some(&token),
                 });
@@ -247,7 +247,7 @@ impl Host {
                     .last()
                     .map(|change| change.change_id.clone())
                     .unwrap_or_default();
-                let remote = tau_vcs::Remote {
+                let remote = tau_vcs_host::Remote {
                     url: &url,
                     token: Some(&push_token),
                 };
@@ -316,7 +316,7 @@ impl Host {
                 else {
                     return anyhow::Ok(None);
                 };
-                let remote = tau_vcs::Remote {
+                let remote = tau_vcs_host::Remote {
                     url: &url,
                     token: Some(&token),
                 };

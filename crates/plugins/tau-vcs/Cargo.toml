@@ -1,65 +1,24 @@
 [package]
 name = "tau-vcs"
-description = "Version-control tools for tau agents, backed by jj-lib."
+description = "tau-vcs's interface half: the cards of its version-control tools, and the shapes they read."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[features]
-default = ["host"]
-# The agent half: the tools, on jj-lib and gix. The cards, and the
-# shapes they read, build without it, as on a phone.
-host = [
-  "dep:async-trait",
-  "dep:futures-util",
-  "dep:gix",
-  "dep:reqwest",
-  "dep:tokio-rustls",
-  "dep:jj-lib",
-  "dep:pollster",
-  "dep:schemars",
-  "dep:similar",
-  "dep:tokio",
-  "dep:uuid",
-]
-
 [dependencies]
 anyhow.workspace = true
-async-trait = { workspace = true, optional = true }
 gpui = { package = "gpui-pre", version = "=0.3.7" }
-futures-util = { workspace = true, optional = true }
-# Clones over HTTPS without the git binary. reqwest brings rustls,
-# with the ring provider tokio-rustls already builds.
-gix = { workspace = true, optional = true, features = [
-  "blocking-http-transport-reqwest",
-  "blocking-network-client",
-] }
-reqwest = { workspace = true, optional = true }
-tokio-rustls = { workspace = true, optional = true }
-jj-lib = { workspace = true, optional = true }
-pollster = { workspace = true, optional = true }
-schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
-similar = { workspace = true, optional = true }
 tau-agent.workspace = true
 thiserror.workspace = true
 tau-ai.workspace = true
-tokio = { workspace = true, optional = true, features = ["rt", "sync"] }
-uuid = { workspace = true, optional = true }
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 
 [dev-dependencies]
-tau-store-sqlite.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 hegeltest.workspace = true
-tau-tools.workspace = true
 serde_json.workspace = true
-tau-store.workspace = true
-tau-testing.workspace = true
-tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-tokio-util.workspace = true

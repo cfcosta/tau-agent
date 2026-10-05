@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::tool::{AgentTool, ToolCtx};
 use tau_ai::message::InputBlock;
-use tau_codemode::{
+use tau_codemode::store::Snapshot;
+use tau_codemode_host::{
     CancellationToken,
     Host,
     Request,
@@ -26,9 +27,8 @@ use tau_codemode::{
     inference::InferRequest,
     options,
     run,
-    store::Snapshot,
 };
-use tau_tools::{grep::Grep, path::Root, read::Read};
+use tau_tools_host::{grep::Grep, path::Root, read::Read};
 
 use crate::fixtures::{self, Fixture};
 

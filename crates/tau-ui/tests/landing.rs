@@ -26,7 +26,7 @@ use tau_ui_remote::{
     view::Item,
     workspace::LandingState,
 };
-use tau_vcs::{Identity, Project};
+use tau_vcs_host::{Identity, Project};
 
 /// Runs GPUI until `done` holds, while runs work on the host's threads.
 fn until(
@@ -89,7 +89,7 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),

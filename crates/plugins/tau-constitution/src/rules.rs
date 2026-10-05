@@ -1,6 +1,6 @@
 //! A constitution: rules, where each applies, and how sure Jev must be
-//! that one is broken to review or block. It lives in tau's store, one per
-//! repository ([`Constitution::load`], [`Constitution::save`]), and is
+//! that one is broken to review or block. It lives in the plugin's own
+//! database, one per repository (`tau_constitution_host::db`), and is
 //! edited only through tau's UI. Every rule is checked when it is added,
 //! replaced or read back.
 //!
@@ -14,8 +14,6 @@
 //!   on the final answer.
 
 use serde_json::{Map, Value};
-
-use crate::db::{Db, DbError, StoredConstitution, StoredRule};
 
 /// A rule, or part of one, that does not check out. The UI shows the
 /// message as it is.
@@ -50,17 +48,25 @@ pub enum RuleError {
     Unknown(String),
 }
 
-/// A constitution that could not be loaded or saved.
-#[derive(Debug, thiserror::Error)]
-pub enum ConstitutionError {
-    #[error(transparent)]
-    Db(#[from] DbError),
-    #[error("The constitution stored for {repo} is not valid: {rule}")]
-    Invalid {
-        repo: String,
-        #[source]
-        rule: RuleError,
-    },
+/// A repository's constitution as the database keeps it: plain values,
+/// checked when [`Constitution`] reads them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredConstitution {
+    /// `allow` or `block`.
+    pub on_error: String,
+    pub max_holds: u32,
+    /// In order.
+    pub rules: Vec<StoredRule>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredRule {
+    pub id: String,
+    pub text: String,
+    /// Where it applies: `tool.field`, or `final answer`.
+    pub targets: Vec<String>,
+    pub review: f64,
+    pub block: f64,
 }
 
 /// Where a rule applies.
@@ -201,29 +207,6 @@ impl Constitution {
                 })
                 .collect(),
         }
-    }
-
-    /// Repository `repo`'s constitution; none saved is no rules.
-    pub async fn load(db: &Db, repo: &str) -> Result<Self, ConstitutionError> {
-        match db.constitution(repo).await? {
-            Some(stored) => Self::from_stored(stored).map_err(|rule| {
-                ConstitutionError::Invalid {
-                    repo: repo.to_owned(),
-                    rule,
-                }
-            }),
-            None => Ok(Self::default()),
-        }
-    }
-
-    /// Saves this as repository `repo`'s constitution, replacing the one
-    /// before it.
-    pub async fn save(
-        &self,
-        db: &Db,
-        repo: &str,
-    ) -> Result<(), ConstitutionError> {
-        Ok(db.save_constitution(repo, &self.to_stored()).await?)
     }
 
     /// Adds a rule, checked, under the next free id (`R1`, `R2`…).

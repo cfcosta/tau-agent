@@ -38,11 +38,11 @@ pub enum E2eError {
     #[error("the check stopped: {0}")]
     Stopped(#[from] tokio::task::JoinError),
     #[error(transparent)]
-    Memory(#[from] tau_memory::memory::OpenError),
+    Memory(#[from] tau_memory_host::memory::OpenError),
     #[error(transparent)]
-    Index(#[from] tau_memory::index::IndexError),
+    Index(#[from] tau_memory_host::index::IndexError),
     #[error(transparent)]
-    Notes(#[from] tau_memory::store::StoreError),
+    Notes(#[from] tau_memory_host::store::StoreError),
     #[error(transparent)]
     Store(#[from] tau_store::StoreError),
     #[error(transparent)]

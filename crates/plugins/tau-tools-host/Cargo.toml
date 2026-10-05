@@ -1,0 +1,61 @@
+[package]
+name = "tau-tools-host"
+description = "Optional coding tools for tau agents: read, bash, edit, write, grep, find and ls; tau-tools' host half."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# `bash` runs commands under a pseudo-terminal, with tau-terminal
+# (libghostty-vt) turning the output into the model's text, and streams
+# the raw bytes in its details for a terminal view
+# (docs/decisions/0010-terminal-rendering.md). Off, `bash` uses pipes
+# and pulls in neither.
+terminal = ["dep:tau-terminal"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+globset.workspace = true
+grep-matcher.workspace = true
+grep-regex.workspace = true
+grep-searcher.workspace = true
+ignore.workspace = true
+image.workspace = true
+libc.workspace = true
+regex.workspace = true
+schemars.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+tau-agent.workspace = true
+tau-artifacts.workspace = true
+uuid.workspace = true
+tau-ai.workspace = true
+tau-terminal = { workspace = true, optional = true }
+tau-tools.workspace = true
+tau-ui-plugin.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process"] }
+tokio-util.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+tau-store-sqlite.workspace = true
+tau-ui-plugin = { workspace = true, features = ["testing"] }
+base64.workspace = true
+serde_json.workspace = true
+tau-store.workspace = true
+hegeltest.workspace = true
+image.workspace = true
+unicode-normalization.workspace = true
+tau-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util"] }
+
+[[bench]]
+name = "grep"
+harness = false

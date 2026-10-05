@@ -4,7 +4,7 @@
 //! sub-agents landed), and the pieces tau's landings draw changes with.
 //!
 //! The host builds the plugin's tools with the run's workspace, which
-//! they act on; this UI draws what they return.
+//! they act on (`tau-vcs-host`); this UI draws what they return.
 
 pub mod change_diff;
 pub mod change_log;
@@ -28,16 +28,12 @@ use gpui::{
     prelude::*,
 };
 use serde_json::Value;
-use tau_agent::{plugin::Plugin, tool::RunId};
+use tau_agent::tool::RunId;
 use tau_ui_kit::{components::link, theme::sp};
 use tau_ui_plugin::{
     CallData,
     Handle,
-    HostCx,
     Manifest,
-    PluginInfo,
-    RunCtx,
-    Seam,
     UiPlugin,
     ViewCx,
     points::{self, AtCard, CardView},
@@ -186,38 +182,10 @@ impl UiPlugin for VcsUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Host = ();
     type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    /// None here: the host builds the tools with the run's workspace,
-    /// which they act on.
-    async fn agent_plugins(
-        &self,
-        _host: &(),
-        _run: &RunCtx,
-        _settings: &(),
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        Ok(Vec::new())
-    }
-
-    async fn catalog(
-        &self,
-        _host: &(),
-        _cx: &HostCx,
-        _settings: &(),
-    ) -> PluginInfo {
-        PluginInfo {
-            description: "status diff log show describe commit new restore \
-                          resolve undo, on the run's workspace"
-                .into(),
-            seams: vec![Seam::Tools],
-            page: None,
-            ..Default::default()
-        }
     }
 
     fn manifest(&self) -> Manifest<Self> {

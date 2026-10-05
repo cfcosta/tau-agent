@@ -16,10 +16,14 @@
 
 pub mod ask;
 #[cfg(feature = "host")]
+mod half;
+#[cfg(feature = "host")]
 pub mod host;
 pub mod ui;
 
 pub use ask::{Answer, Ask, Choice, Question, Reply};
+#[cfg(feature = "host")]
+pub use half::AskHost;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use ui::AskUi;

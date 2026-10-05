@@ -31,6 +31,7 @@ use tau_ui_kit::{
 use tau_ui_plugin::{
     Fold,
     HostCx,
+    HostHalf,
     Link,
     Manifest,
     NO_KEY,
@@ -279,12 +280,60 @@ impl UiPlugin for ReasoningPlugin {
     type Data = ();
     type RepoData = ();
     type Settings = Settings;
-    type Host = ();
     type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
     }
+
+    fn manifest(&self) -> Manifest<Self> {
+        Manifest::new()
+            .page(
+                Page::new("choices", choices_page)
+                    .title(|_| "Reasoning effort".to_owned()),
+            )
+            .contribute(points::TRANSCRIPT, transcript_note)
+            .contribute_at(points::STATUS, -10, |_: &AtRun, view| {
+                let state = view.state?;
+                Some(PluginStatus {
+                    name: NAME.into(),
+                    state: state.status.clone().or(state.starting.clone())?,
+                    tone: Tone::Quiet,
+                })
+            })
+            .contribute(points::PLAN, |_: &AtRun, view| {
+                Some(PlanField {
+                    name: "reasoning".into(),
+                    value: view.state?.plan.clone()?,
+                    set_by: Some(NAME.into()),
+                })
+            })
+            .contribute(points::PLAN_STEPS, |_: &AtRun, view| {
+                let choice = view.state?.starting_choice()?.clone();
+                let t = view.theme().clone();
+                Some(
+                    step(&choice, &t, view.compact)
+                        .into_any_element(),
+                )
+            })
+            .settings(settings_pane)
+            .contribute(points::PICKER_AUTO, |_: &AtApp, view| {
+                Some(if view.jev {
+                    "Auto lets tau-reasoning pick the effort for each message, with Jev.".into()
+                } else {
+                    "Auto leaves the effort to the model: tau-reasoning needs a TypeSafe key (Models).".into()
+                })
+            })
+    }
+}
+
+/// tau-reasoning on the host.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReasoningHost;
+
+impl HostHalf for ReasoningHost {
+    type Plugin = ReasoningPlugin;
+    type Host = ();
 
     /// On auto, with Jev: an effort picked by hand stands.
     async fn agent_plugins(
@@ -340,46 +389,6 @@ impl UiPlugin for ReasoningPlugin {
             page: Some(Link::page("choices").param("run", "")),
             ..Default::default()
         }
-    }
-
-    fn manifest(&self) -> Manifest<Self> {
-        Manifest::new()
-            .page(
-                Page::new("choices", choices_page)
-                    .title(|_| "Reasoning effort".to_owned()),
-            )
-            .contribute(points::TRANSCRIPT, transcript_note)
-            .contribute_at(points::STATUS, -10, |_: &AtRun, view| {
-                let state = view.state?;
-                Some(PluginStatus {
-                    name: NAME.into(),
-                    state: state.status.clone().or(state.starting.clone())?,
-                    tone: Tone::Quiet,
-                })
-            })
-            .contribute(points::PLAN, |_: &AtRun, view| {
-                Some(PlanField {
-                    name: "reasoning".into(),
-                    value: view.state?.plan.clone()?,
-                    set_by: Some(NAME.into()),
-                })
-            })
-            .contribute(points::PLAN_STEPS, |_: &AtRun, view| {
-                let choice = view.state?.starting_choice()?.clone();
-                let t = view.theme().clone();
-                Some(
-                    step(&choice, &t, view.compact)
-                        .into_any_element(),
-                )
-            })
-            .settings(settings_pane)
-            .contribute(points::PICKER_AUTO, |_: &AtApp, view| {
-                Some(if view.jev {
-                    "Auto lets tau-reasoning pick the effort for each message, with Jev.".into()
-                } else {
-                    "Auto leaves the effort to the model: tau-reasoning needs a TypeSafe key (Models).".into()
-                })
-            })
     }
 }
 

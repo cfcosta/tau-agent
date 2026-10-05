@@ -36,8 +36,8 @@ impl Agent {
     pub fn instructions(self, text: impl Into<String>) -> Self;
     pub fn reasoning(self, effort: ReasoningEffort) -> Self;
     pub fn tool(self, t: impl AgentTool) -> Self;
-    pub fn tools(self, ts: impl IntoIterator<Item = Arc<dyn AgentTool>>) -> Self;  // e.g. tau_tools::coding_tools(&root)
-    pub fn plugin(self, p: impl Plugin) -> Self;      // e.g. tau_compaction::Compaction, tau_tools::plugin::CodingTools
+    pub fn tools(self, ts: impl IntoIterator<Item = Arc<dyn AgentTool>>) -> Self;  // e.g. tau_tools_host::coding_tools(&root)
+    pub fn plugin(self, p: impl Plugin) -> Self;      // e.g. tau_compaction::Compaction, tau_tools_host::plugin::CodingTools
     pub fn limits(self, l: Limits) -> Self;
     pub fn retry(self, p: RetryPolicy) -> Self;       // 3 attempts, 2 s base
     pub fn warmup(self, on: bool) -> Self;            // generate:false on first use

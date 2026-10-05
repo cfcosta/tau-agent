@@ -31,7 +31,7 @@ use tau_fast_compaction::{
 };
 use tau_jev::{Jev, JevError, Request, Response};
 use tau_testing::scripted::ScriptedModel;
-use tau_tools::truncate::{MAX_BYTES, MAX_LINES, truncate_tail};
+use tau_tools_host::truncate::{MAX_BYTES, MAX_LINES, truncate_tail};
 
 use crate::{
     metrics::{Summary, Trial, summarize},

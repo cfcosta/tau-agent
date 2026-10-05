@@ -95,6 +95,8 @@ fn args() -> Args {
 }
 
 fn main() {
+    // The plugins' host halves, before the interface reads the plugins.
+    tau_ui::hosted::install();
     let args = args();
     let credentials = Credentials::default_dir();
     let account = if args.demo {

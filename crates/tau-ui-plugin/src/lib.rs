@@ -1,15 +1,20 @@
 //! The interface a tau plugin brings its UI through (ADR 0017).
 //!
-//! A plugin is a [`UiPlugin`]: the agent plugin it builds for a run, the
-//! fold that turns what it publishes into state, and the UI it adds to
-//! the interface. There is no plugin without a UI: `tau-ui` builds a
-//! run's plugins only through its [`Registry`].
+//! A plugin has two halves. Its [`UiPlugin`] is the fold that turns what
+//! it publishes into state, and the UI it adds to the interface: every
+//! interface has it, a phone's too. Its [`HostHalf`] is what it does on
+//! the machine that runs agents: only the host has it, and
+//! [`Registry::host`] gives it to the plugin. A host half lives in a
+//! crate of its own when it brings what the interface does not need (a
+//! Luau engine, jj, an MCP client), so the interface builds without it
+//! (ADR 0030). There is no plugin without a UI: `tau-ui` builds a run's
+//! plugins only through its [`Registry`].
 //!
-//! - **On the host**, a plugin keeps its own state ([`UiPlugin::Host`]),
-//!   builds its agent plugin for each run ([`UiPlugin::agent_plugins`]),
-//!   describes itself ([`UiPlugin::catalog`]), sends the interface its
-//!   data ([`UiPlugin::data`], [`UiPlugin::repo_data`]), and carries out
-//!   what its UI asks ([`UiPlugin::act`]).
+//! - **On the host**, a plugin keeps its own state ([`HostHalf::Host`]),
+//!   builds its agent plugin for each run ([`HostHalf::agent_plugins`]),
+//!   describes itself ([`HostHalf::catalog`]), sends the interface its
+//!   data ([`HostHalf::data`], [`HostHalf::repo_data`]), and carries out
+//!   what its UI asks ([`HostHalf::act`]).
 //! - **Wherever a run is shown**, live or stored, on a computer or a
 //!   phone, the plugin's state folds each record it published
 //!   ([`Fold::apply`]), and places anchors in the transcript and on tool
@@ -53,7 +58,7 @@ pub use manifest::{
     PointCx,
     SlashCommand,
 };
-pub use registry::{CommandsAt, Env, ErasedPlugin, Registry};
+pub use registry::{CommandsAt, Env, ErasedPlugin, NoHost, Registry};
 pub use run::{
     CallData,
     CallResult,
@@ -314,7 +319,7 @@ pub struct PluginInfo {
     pub settings: bool,
 }
 
-/// A plugin, with its UI.
+/// A plugin's UI half: what it draws, wherever a run is shown.
 pub trait UiPlugin: Sized + Send + Sync + 'static {
     /// What the plugin knows of one run, folded from what it publishes.
     type State: Fold;
@@ -342,92 +347,13 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         + Send
         + Sync
         + 'static;
-    /// What the plugin keeps on the host, made once.
-    type Host: PluginHost;
     /// What it keeps per window: drafts, open tabs, a pending answer.
     type Ui: PluginUi;
 
     fn name(&self) -> &'static str;
 
-    // On the machine that runs agents.
-
-    /// The agent plugins for one run or sub-agent; none when the plugin
-    /// is off for it. An error fails the run: what the plugin needs to
-    /// check it could not be read.
-    fn agent_plugins(
-        &self,
-        host: &Self::Host,
-        run: &RunCtx,
-        settings: &Self::Settings,
-    ) -> impl Future<Output = anyhow::Result<Vec<Box<dyn Plugin>>>> + Send;
-
-    /// Records to fold into a run's state as it starts or goes on, before
-    /// anything is published: whether the plugin is on, and why not.
-    fn starting(
-        &self,
-        _host: &Self::Host,
-        _run: &RunCtx,
-        _settings: &Self::Settings,
-    ) -> impl Future<Output = Vec<RecordOf<Self>>> + Send {
-        std::future::ready(Vec::new())
-    }
-
-    /// What agent commands in `repo` start through, when the plugin
-    /// gives them an environment: `bash`'s commands, and the
-    /// repository's MCP servers. None leaves them as they are; the host
-    /// joins every plugin's in the registry's order
-    /// ([`tau_agent::launch::Launchers`]).
-    fn launcher(
-        &self,
-        _host: &Self::Host,
-        _repo: &RepoCtx,
-        _settings: &Self::Settings,
-    ) -> impl Future<
-        Output = Option<std::sync::Arc<dyn tau_agent::launch::Launcher>>,
-    > + Send {
-        std::future::ready(None)
-    }
-
-    /// Its entry on the Plugins screen. The registry sets its name.
-    fn catalog(
-        &self,
-        host: &Self::Host,
-        cx: &HostCx,
-        settings: &Self::Settings,
-    ) -> impl Future<Output = PluginInfo> + Send;
-
-    fn data(
-        &self,
-        _host: &Self::Host,
-        _cx: &HostCx,
-    ) -> impl Future<Output = Self::Data> + Send {
-        std::future::ready(Self::Data::default())
-    }
-
-    fn repo_data(
-        &self,
-        _host: &Self::Host,
-        _repo: &RepoCtx,
-        _cx: &HostCx,
-    ) -> impl Future<Output = Self::RepoData> + Send {
-        std::future::ready(Self::RepoData::default())
-    }
-
-    /// Carries out what the plugin's UI asked; a reply goes back to its
-    /// [`Self::reply`].
-    fn act(
-        &self,
-        _host: &Self::Host,
-        _action: Value,
-        _cx: &HostCx,
-    ) -> impl Future<Output = anyhow::Result<Option<Value>>> + Send {
-        std::future::ready(Ok(None))
-    }
-
-    // In the interface.
-
-    /// What [`Self::act`] answered, in the window's UI state, which may
-    /// ask the interface for more through its [`Handle`].
+    /// What [`HostHalf::act`] answered, in the window's UI state, which
+    /// may ask the interface for more through its [`Handle`].
     fn reply(
         &self,
         _ui: &mut Self::Ui,
@@ -450,4 +376,89 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
     }
 
     fn manifest(&self) -> Manifest<Self>;
+}
+
+/// The settings of the plugin `H` is the host half of.
+pub type SettingsOf<H> = <<H as HostHalf>::Plugin as UiPlugin>::Settings;
+
+/// A plugin's host half: what it does on the machine that runs agents.
+/// [`Registry::host`] gives it to its plugin.
+pub trait HostHalf: Send + Sync + 'static {
+    /// The plugin this is the host half of.
+    type Plugin: UiPlugin;
+    /// What the plugin keeps on the host, made once.
+    type Host: PluginHost;
+
+    /// The agent plugins for one run or sub-agent; none when the plugin
+    /// is off for it. An error fails the run: what the plugin needs to
+    /// check it could not be read.
+    fn agent_plugins(
+        &self,
+        host: &Self::Host,
+        run: &RunCtx,
+        settings: &SettingsOf<Self>,
+    ) -> impl Future<Output = anyhow::Result<Vec<Box<dyn Plugin>>>> + Send;
+
+    /// Records to fold into a run's state as it starts or goes on, before
+    /// anything is published: whether the plugin is on, and why not.
+    fn starting(
+        &self,
+        _host: &Self::Host,
+        _run: &RunCtx,
+        _settings: &SettingsOf<Self>,
+    ) -> impl Future<Output = Vec<RecordOf<Self::Plugin>>> + Send {
+        std::future::ready(Vec::new())
+    }
+
+    /// What agent commands in `repo` start through, when the plugin
+    /// gives them an environment: `bash`'s commands, and the
+    /// repository's MCP servers. None leaves them as they are; the host
+    /// joins every plugin's in the registry's order
+    /// ([`tau_agent::launch::Launchers`]).
+    fn launcher(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _settings: &SettingsOf<Self>,
+    ) -> impl Future<
+        Output = Option<std::sync::Arc<dyn tau_agent::launch::Launcher>>,
+    > + Send {
+        std::future::ready(None)
+    }
+
+    /// Its entry on the Plugins screen. The registry sets its name.
+    fn catalog(
+        &self,
+        host: &Self::Host,
+        cx: &HostCx,
+        settings: &SettingsOf<Self>,
+    ) -> impl Future<Output = PluginInfo> + Send;
+
+    fn data(
+        &self,
+        _host: &Self::Host,
+        _cx: &HostCx,
+    ) -> impl Future<Output = <Self::Plugin as UiPlugin>::Data> + Send {
+        std::future::ready(Default::default())
+    }
+
+    fn repo_data(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _cx: &HostCx,
+    ) -> impl Future<Output = <Self::Plugin as UiPlugin>::RepoData> + Send {
+        std::future::ready(Default::default())
+    }
+
+    /// Carries out what the plugin's UI asked; a reply goes back to its
+    /// [`UiPlugin::reply`].
+    fn act(
+        &self,
+        _host: &Self::Host,
+        _action: Value,
+        _cx: &HostCx,
+    ) -> impl Future<Output = anyhow::Result<Option<Value>>> + Send {
+        std::future::ready(Ok(None))
+    }
 }

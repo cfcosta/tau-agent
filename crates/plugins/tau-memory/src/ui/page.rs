@@ -52,7 +52,7 @@ use tau_ui_plugin::{Handle, Link, ViewCx, points::AtAnchor};
 use super::{Mark, MemoryUi, NoteView, Notebook, USER, notes_link};
 use crate::{
     note::NoteType,
-    plugin::{NAME, USER as USER_ID},
+    record::{NAME, USER as USER_ID},
 };
 
 /// The widest the list's column gets.

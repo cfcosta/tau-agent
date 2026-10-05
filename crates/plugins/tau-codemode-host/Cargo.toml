@@ -1,0 +1,39 @@
+[package]
+name = "tau-codemode-host"
+description = "The codemode tool: a Luau sandbox that calls tau's tools and Jev, as a plugin; codemode's host half."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+jsonschema.workspace = true
+libc.workspace = true
+mlua.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent = { workspace = true, features = ["serde"] }
+tau-ai.workspace = true
+tau-codemode.workspace = true
+tau-jev.workspace = true
+tau-ui-plugin.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tau-ui-plugin = { workspace = true, features = ["testing"] }
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+tau-store-sqlite.workspace = true
+hegeltest.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true
+tau-ui-kit.workspace = true
+tokio = { workspace = true, features = [
+  "rt-multi-thread",
+  "time",
+  "test-util",
+] }

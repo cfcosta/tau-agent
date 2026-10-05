@@ -29,7 +29,7 @@ use tau_ui::{
     host::{Host, HostConfig},
 };
 use tau_ui_remote::{models::ModelChoice, view::Item};
-use tau_vcs::{Identity, Project};
+use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const REPO: &str = "repo";
@@ -84,7 +84,7 @@ fn host(
     git(&checkout, &["add", ".envrc"]);
     git(&checkout, &["commit", "--quiet", "-m", "first"]);
     let data = tempfile::tempdir().unwrap().keep();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         checkout.to_str().unwrap(),
         data.join("repos/repo"),
         Identity::default(),

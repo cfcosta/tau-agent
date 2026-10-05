@@ -10,7 +10,7 @@ publish.workspace = true
 default = []
 # Memory and transcript search with docbert's ColBERT model, as the app
 # searches; without it, BM25.
-docbert = ["tau-memory/docbert"]
+docbert = ["tau-memory-host/docbert"]
 
 [dependencies]
 tau-store-sqlite.workspace = true
@@ -23,8 +23,9 @@ tau-agent.workspace = true
 tau-ai.workspace = true
 tau-compaction.workspace = true
 tau-memory.workspace = true
+tau-memory-host.workspace = true
 tau-store.workspace = true
-tau-tools.workspace = true
+tau-tools-host.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }

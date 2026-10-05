@@ -6,6 +6,7 @@ use tau_agent::plugin::Plugin;
 use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
     HostCx,
+    HostHalf,
     Manifest,
     PluginInfo,
     PluginStatus,
@@ -26,12 +27,30 @@ impl UiPlugin for CompactionUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Host = ();
     type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME
     }
+
+    fn manifest(&self) -> Manifest<Self> {
+        Manifest::new().contribute(points::STATUS, |_: &AtRun, _| {
+            Some(PluginStatus {
+                name: NAME.into(),
+                state: "watching the window".into(),
+                tone: Tone::Quiet,
+            })
+        })
+    }
+}
+
+/// tau-compaction on the host.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompactionHost;
+
+impl HostHalf for CompactionHost {
+    type Plugin = CompactionUi;
+    type Host = ();
 
     /// Summarizing by the window of the run's own model.
     async fn agent_plugins(
@@ -61,15 +80,5 @@ impl UiPlugin for CompactionUi {
             page: None,
             ..Default::default()
         }
-    }
-
-    fn manifest(&self) -> Manifest<Self> {
-        Manifest::new().contribute(points::STATUS, |_: &AtRun, _| {
-            Some(PluginStatus {
-                name: NAME.into(),
-                state: "watching the window".into(),
-                tone: Tone::Quiet,
-            })
-        })
     }
 }

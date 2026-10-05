@@ -387,7 +387,7 @@ impl Workspace {
     pub fn open_memory(&mut self, repo: &str, cx: &mut Context<Self>) {
         self.navigate(
             Route::Plugin {
-                plugin: tau_memory::plugin::NAME.into(),
+                plugin: tau_memory::NAME.into(),
                 page: "notes".into(),
                 params: [("repo".to_owned(), repo.to_owned())].into(),
             },

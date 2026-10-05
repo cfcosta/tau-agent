@@ -28,8 +28,8 @@ use tau_ai::{
     responses::request::Settings,
 };
 use tau_compaction::Compaction;
-use tau_memory::{Memory, MemoryPlugin, Scopes, index::Index};
-use tau_tools::{path::Root, plugin::CodingTools};
+use tau_memory_host::{Memory, MemoryPlugin, Scopes, index::Index};
+use tau_tools_host::{path::Root, plugin::CodingTools};
 
 use crate::E2eError;
 
@@ -181,14 +181,14 @@ pub type IndexFactory =
 
 /// BM25, what memory searches with when there is no model.
 pub fn keyword_index() -> IndexFactory {
-    Arc::new(|_| Box::new(tau_memory::index::Bm25::new()))
+    Arc::new(|_| Box::new(tau_memory_host::index::Bm25::new()))
 }
 
 /// ColBERT with docbert's model, as the app searches; the model loads
 /// once, on first use, and is shared by every index.
 #[cfg(feature = "docbert")]
 pub fn semantic_index() -> IndexFactory {
-    use tau_memory::{
+    use tau_memory_host::{
         colbert::{Colbert, Shared},
         docbert::Docbert,
     };
@@ -234,7 +234,7 @@ pub const TRANSCRIPT_HITS: usize = 3;
 /// in order into chunks of at most [`CHUNK_CHARS`]; a longer entry is
 /// cut.
 pub fn chunks(transcript: &[Message]) -> Vec<String> {
-    let text = tau_memory::plugin::serialize(transcript);
+    let text = tau_memory_host::plugin::serialize(transcript);
     let mut entries: Vec<String> = Vec::new();
     for part in text.split("\n\n[") {
         let entry = if entries.is_empty() {

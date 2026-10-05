@@ -33,8 +33,8 @@ Selection does not modify any definition or move its tests to another version.
 
 The inspector uses the same `State.modules` record fold for live updates and
 reloaded runs. `State.modules` defaults to an empty library when deserializing
-older state. The view, fold, and action request types compile without the
-Codemode host feature; the host action itself needs the normal host context.
+older state. The view, fold, and action request types are `tau-codemode`'s; the host
+action itself is `tau-codemode-host`'s, with the normal host context.
 The inspector also shows [repository promotion requests](codemode-module-promotion.md)
 with exact content and evidence behind closed disclosures. Approve and Decline
 are trusted host actions; only `module_promote` is available to scripts.

@@ -2,17 +2,50 @@
 //! host, and what the host asks of it. The host and the demo both hold
 //! them.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Once},
+};
 
 use serde_json::Value;
 use tau_ui_plugin::{
     ErasedPlugin,
     HostCx,
     PluginValue,
+    Registry,
     RepoCtx,
     registry::HostState,
 };
-use tau_ui_remote::{catalog::PluginInfo, plugins::registry};
+use tau_ui_remote::{
+    catalog::PluginInfo,
+    plugins::{self, registry},
+};
+
+/// The plugins tau-ui-remote lists, each given its host half (ADR 0030).
+pub fn halves(plugins: Registry) -> Registry {
+    plugins
+        .host(tau_tools_host::ToolsHost)
+        .host(tau_vcs_host::VcsHost)
+        .host(tau_reasoning::ReasoningHost)
+        .host(tau_fast_compaction::ui::FastCompactionHost)
+        .host(tau_compaction::ui::CompactionHost)
+        .host(tau_memory_host::MemoryHost)
+        .host(tau_constitution_host::ConstitutionHost)
+        .host(tau_goal::GoalHost)
+        .host(tau_luau_plugins_host::LuauPluginsHost)
+        .host(tau_ask::AskHost)
+        .host(tau_direnv::DirenvHost)
+        .host(tau_mcp_host::McpHost)
+        .host(tau_skills::SkillsHost)
+        .host(tau_codemode_host::CodemodeHost)
+}
+
+/// Gives the plugins their host halves, once: what a host does before
+/// anything reads them (`tau_ui_remote::plugins::install`).
+pub fn install() {
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| plugins::install(halves(plugins::plugins())));
+}
 
 /// A plugin with its UI, and its state on this host.
 #[derive(Clone)]
@@ -24,6 +57,7 @@ pub struct Hosted {
 /// Each plugin's host state; a plugin whose state cannot be made is left
 /// out, and says why.
 pub async fn host_all(cx: &HostCx) -> Vec<Hosted> {
+    install();
     let mut hosted = Vec::new();
     for plugin in registry().plugins() {
         match plugin.host(cx).await {

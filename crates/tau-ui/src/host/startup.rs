@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use tau_vcs::sweep::{Keep, Owner, Standing};
+use tau_vcs_host::sweep::{Keep, Owner, Standing};
 
 use super::*;
 
@@ -39,7 +39,7 @@ async fn runs(store: &Store) -> anyhow::Result<Runs> {
     })
 }
 
-/// Where a run stands for a sweep (see `tau_vcs::sweep`):
+/// Where a run stands for a sweep (see `tau_vcs_host::sweep`):
 ///
 /// - a run going on in this process, or under one that is, keeps what
 ///   it has;
@@ -121,7 +121,7 @@ impl Host {
     }
 
     /// Sweeps every listed repository's project of the workspaces and
-    /// bookmarks no open run owns (`tau_vcs::sweep`): those of runs
+    /// bookmarks no open run owns (`tau_vcs_host::sweep`): those of runs
     /// gone, landed, dropped, or of sub-agents that failed or were cut
     /// off, whose commits go too. A main chat's checkout, the default
     /// workspace, and the workspaces of open chats stay.
@@ -148,7 +148,7 @@ impl Host {
                             anyhow::Ok((
                                 project.workspaces()?,
                                 project.bookmarks(
-                                    tau_vcs::sweep::RUN_BOOKMARK_PREFIX,
+                                    tau_vcs_host::sweep::RUN_BOOKMARK_PREFIX,
                                 )?,
                             ))
                         })
@@ -200,7 +200,8 @@ impl Host {
                         .any(|live| name.starts_with(&format!("{live}-sub-")))
                 })
                 .collect();
-            let sweep = tau_vcs::sweep::plan(&owners, &workspaces, &bookmarks);
+            let sweep =
+                tau_vcs_host::sweep::plan(&owners, &workspaces, &bookmarks);
             if !sweep.is_empty() {
                 project.run(move |project| project.sweep(&sweep)).await?;
             }

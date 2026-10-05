@@ -19,6 +19,8 @@
 #[cfg(feature = "host")]
 pub mod config;
 #[cfg(feature = "host")]
+mod half;
+#[cfg(feature = "host")]
 pub mod host;
 #[cfg(feature = "host")]
 pub mod launch;
@@ -26,6 +28,8 @@ pub mod ui;
 
 use std::collections::BTreeMap;
 
+#[cfg(feature = "host")]
+pub use half::DirenvHost;
 use serde::{Deserialize, Serialize};
 pub use ui::DirenvUi;
 

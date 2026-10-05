@@ -70,12 +70,12 @@ updates.
 ## Rust Code
 
 The complete implementations are in
-[`sub_agent_finalization.rs`](../../crates/plugins/tau-vcs/tests/sub_agent_finalization.rs),
-[`conflict_snapshots.rs`](../../crates/plugins/tau-vcs/tests/conflict_snapshots.rs),
-[`runs_model.rs`](../../crates/plugins/tau-vcs/tests/runs_model.rs), and
-[`diff.rs`](../../crates/plugins/tau-vcs/src/diff.rs).
+[`sub_agent_finalization.rs`](../../crates/plugins/tau-vcs-host/tests/sub_agent_finalization.rs),
+[`conflict_snapshots.rs`](../../crates/plugins/tau-vcs-host/tests/conflict_snapshots.rs),
+[`runs_model.rs`](../../crates/plugins/tau-vcs-host/tests/runs_model.rs), and
+[`diff.rs`](../../crates/plugins/tau-vcs-host/src/diff.rs).
 The independent history algebra is in
-[`common/merge.rs`](../../crates/plugins/tau-vcs/tests/common/merge.rs).
+[`common/merge.rs`](../../crates/plugins/tau-vcs-host/tests/common/merge.rs).
 
 ### Native implementation boundary
 

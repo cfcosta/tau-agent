@@ -72,7 +72,7 @@ persist the terminal record.
 
 The public Rust repository API stages and reads versions and snapshots pins.
 Receipt checks and activation are host-internal operations reached through the
-persisted-record validation in `UiPlugin::act`; a caller-built `Request` is not
+persisted-record validation in `HostHalf::act` (`tau-codemode-host`); a caller-built `Request` is not
 an approval grant.
 
 A running or resumed run retains its original immutable repository pin. A fresh

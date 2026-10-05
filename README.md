@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Embedded storage.** Runs, messages, forks and costs go to a SQLite
   file through `sqlx`.
 - **Coding tools are optional.** `read`, `bash`, `edit`, `write`, `grep`,
-  `find` and `ls` live in the separate `tau-tools` crate.
+  `find` and `ls` live in the separate `tau-tools-host` crate.
 
 The agent loop, event model, tool validation, compaction and WebSocket
 continuation logic are ported from [pi](https://github.com/earendil-works/pi)
@@ -53,7 +53,7 @@ tau-agent = { git = "https://github.com/cfcosta/tau-agent" }
 tau-ai    = { git = "https://github.com/cfcosta/tau-agent" }
 tau-store = { git = "https://github.com/cfcosta/tau-agent" }
 tau-store-sqlite = { git = "https://github.com/cfcosta/tau-agent" }
-tau-tools = { git = "https://github.com/cfcosta/tau-agent" } # optional
+tau-tools-host = { git = "https://github.com/cfcosta/tau-agent" } # optional
 
 # For tests:
 [dev-dependencies]
@@ -72,8 +72,8 @@ database is needed at build time: the sqlx query metadata is committed.
 | `tau-ai`           | The `OpenAi` client, messages, models and pricing, the `Llm` trait                |
 | `tau-store`        | `Store`: storage for runs, transcripts and costs, behind a `Backend`              |
 | `tau-store-sqlite` | The SQLite `Backend`: `open` a database file, or `memory` for tests               |
-| `tau-tools`        | Optional coding tools, all rooted at one directory                                |
-| `tau-vcs`          | Optional version-control tools on one jj workspace, backed by jj-lib              |
+| `tau-tools-host`   | Optional coding tools, all rooted at one directory                                |
+| `tau-vcs-host`     | Optional version-control tools on one jj workspace, backed by jj-lib              |
 | `tau-testing`      | `ScriptedModel` and `block_on` for deterministic tests                            |
 
 ## Core concepts
@@ -366,11 +366,11 @@ or cuts the rest, keeping every text verbatim. Add it before
 
 ### Coding tools
 
-`tau-tools` provides the seven coding tools from pi. Each is rooted at a
+`tau-tools-host` provides the seven coding tools from pi. Each is rooted at a
 directory, and relative paths resolve against it.
 
 ```rust
-use tau_tools::{path::Root, plugin::{CodingTools, Tool}};
+use tau_tools_host::{path::Root, plugin::{CodingTools, Tool}};
 
 let coder = Agent::new(llm.clone())
     .name("coder")
@@ -379,7 +379,7 @@ let coder = Agent::new(llm.clone())
 // Or a subset: `.only(&[Tool::Read, Tool::Grep])`, `.without(Tool::Bash)`.
 ```
 
-`CodingTools` is a plugin that only adds tools; `tau_tools::coding_tools`
+`CodingTools` is a plugin that only adds tools; `tau_tools_host::coding_tools`
 returns the same seven for `Agent::tools`. `bash`, and so both, is
 Unix-only. The search tools run in-process: no `rg` or `fd` binary is
 needed.
@@ -437,7 +437,7 @@ a fork fan-out.
 
 ## Status
 
-The core crates and `tau-tools` are implemented and tested against a
+The core crates and `tau-tools-host` are implemented and tested against a
 scripted model and a simulated OpenAI server. Live tests against the real
 endpoint are still pending (see [`docs/plan.md`](docs/plan.md)). The API
 may change before a first release, and no license has been chosen yet.

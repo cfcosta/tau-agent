@@ -84,7 +84,7 @@ impl HostConfig {
         self.repos
             .parent()
             .unwrap_or(&self.repos)
-            .join(tau_luau_plugins::registry::ROOT)
+            .join(tau_luau_plugins_host::registry::ROOT)
     }
 
     /// The project directory for the clone at `path`: its name and a

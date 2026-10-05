@@ -4,7 +4,7 @@
 - Date: 2026-09-28
 
 tau makes diffs in two places today. The `edit` tool
-(`crates/plugins/tau-tools/src/edit.rs`, `generate_diff`) uses `similar` to
+(`crates/plugins/tau-tools-host/src/edit.rs`, `generate_diff`) uses `similar` to
 build a unified diff with 4 lines of context, and returns it to the
 model. The GPUI app reads that text back (`parse_diff` in
 `crates/tau-ui-remote/src/view.rs`) and draws it line by line in

@@ -36,6 +36,7 @@ use tau_ui_plugin::{
     Fold,
     Handle,
     HostCx,
+    HostHalf,
     Manifest,
     PluginInfo,
     PluginUi,
@@ -278,56 +279,10 @@ impl UiPlugin for GoalUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Host = ();
     type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    /// A run's goal, checked with Jev; a sub-agent has none.
-    async fn agent_plugins(
-        &self,
-        _host: &(),
-        run: &RunCtx,
-        _settings: &(),
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        Ok(match run.services.get::<Arc<dyn Jev>>() {
-            Some(jev) if run.kind != RunKind::SubAgent => {
-                vec![Box::new(GoalPlugin::new(jev.clone()))]
-            }
-            _ => Vec::new(),
-        })
-    }
-
-    async fn starting(
-        &self,
-        _host: &(),
-        run: &RunCtx,
-        _settings: &(),
-    ) -> Vec<Record> {
-        let checks = run.services.get::<Arc<dyn Jev>>().is_some()
-            && run.kind != RunKind::SubAgent;
-        vec![Record::Starting { checks }]
-    }
-
-    async fn catalog(
-        &self,
-        _host: &(),
-        cx: &HostCx,
-        _settings: &(),
-    ) -> PluginInfo {
-        let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
-        PluginInfo {
-            group: tau_ui_plugin::Group::Rules,
-            description: needs_jev(
-                jev,
-                "Keeps a conversation going until its /goal holds",
-            ),
-            seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
-            page: None,
-            ..Default::default()
-        }
     }
 
     fn read_prompt(&self, prompt: &str) -> Option<String> {
@@ -397,6 +352,60 @@ impl UiPlugin for GoalUi {
                 .icon(Icon::Target)
                 .popover(|_, view| popover(view)),
             )
+    }
+}
+
+/// tau-goal on the host.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GoalHost;
+
+impl HostHalf for GoalHost {
+    type Plugin = GoalUi;
+    type Host = ();
+
+    /// A run's goal, checked with Jev; a sub-agent has none.
+    async fn agent_plugins(
+        &self,
+        _host: &(),
+        run: &RunCtx,
+        _settings: &(),
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
+        Ok(match run.services.get::<Arc<dyn Jev>>() {
+            Some(jev) if run.kind != RunKind::SubAgent => {
+                vec![Box::new(GoalPlugin::new(jev.clone()))]
+            }
+            _ => Vec::new(),
+        })
+    }
+
+    async fn starting(
+        &self,
+        _host: &(),
+        run: &RunCtx,
+        _settings: &(),
+    ) -> Vec<Record> {
+        let checks = run.services.get::<Arc<dyn Jev>>().is_some()
+            && run.kind != RunKind::SubAgent;
+        vec![Record::Starting { checks }]
+    }
+
+    async fn catalog(
+        &self,
+        _host: &(),
+        cx: &HostCx,
+        _settings: &(),
+    ) -> PluginInfo {
+        let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
+        PluginInfo {
+            group: tau_ui_plugin::Group::Rules,
+            description: needs_jev(
+                jev,
+                "Keeps a conversation going until its /goal holds",
+            ),
+            seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
+            page: None,
+            ..Default::default()
+        }
     }
 }
 

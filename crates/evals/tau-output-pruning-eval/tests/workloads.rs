@@ -7,7 +7,7 @@ use tau_output_pruning_eval::{
     runner::bash_result,
     workload::{Kind, generate},
 };
-use tau_tools::truncate::MAX_LINES;
+use tau_tools_host::truncate::MAX_LINES;
 
 /// The same kind and seed make the same workload; another seed, another.
 #[hegel::test(test_cases = 20)]

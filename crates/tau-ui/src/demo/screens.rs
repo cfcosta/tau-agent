@@ -24,13 +24,13 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.navigate(Route::Compare { main, fork }, cx)
     }),
     ("memory", |ws, _, cx| {
-        plugin_page(ws, tau_memory::plugin::NAME, "notes", "repo", cx)
+        plugin_page(ws, tau_memory_host::NAME, "notes", "repo", cx)
     }),
     ("constitution", |ws, _, cx| {
-        plugin_page(ws, tau_constitution::NAME, "rules", "repo", cx)
+        plugin_page(ws, tau_constitution_host::NAME, "rules", "repo", cx)
     }),
     ("mcp", |ws, _, cx| {
-        plugin_page(ws, tau_mcp::NAME, "servers", "repo", cx)
+        plugin_page(ws, tau_mcp_host::NAME, "servers", "repo", cx)
     }),
     ("ledger", |ws, _, cx| {
         let run = run_id().0.to_string();
@@ -364,8 +364,8 @@ pub static SCREENS: &[(&str, Screen)] = &[
         let mut catalog = ws.catalog().clone();
         if let Some(repo) = catalog.repo_mut("tau-agent") {
             repo.plugins.insert(
-                tau_constitution::NAME.into(),
-                PluginValue::typed(tau_constitution::demo::broken()),
+                tau_constitution_host::NAME.into(),
+                PluginValue::typed(tau_constitution_host::demo::broken()),
             );
         }
         ws.apply(HostUpdate::catalog(catalog), cx);
@@ -376,7 +376,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
             repo: "tau-agent".into(),
         };
         let reset = serde_json::to_value(reset).expect("an act serializes");
-        if let Err(error) = host.act(tau_constitution::NAME, reset) {
+        if let Err(error) = host.act(tau_constitution_host::NAME, reset) {
             eprintln!("tau-ui: the demo's rules stay: {error:#}");
         }
         let mut catalog = host.catalog(ws.catalog().clone());
@@ -588,10 +588,10 @@ fn rules_at(
     name: &str,
     cx: &mut Context<Workspace>,
 ) {
-    plugin_page(workspace, tau_constitution::NAME, "rules", "repo", cx);
-    let Some(ui) = workspace
-        .plugin_ui::<tau_constitution::ui::page::Ui>(tau_constitution::NAME)
-    else {
+    plugin_page(workspace, tau_constitution_host::NAME, "rules", "repo", cx);
+    let Some(ui) = workspace.plugin_ui::<tau_constitution::ui::page::Ui>(
+        tau_constitution_host::NAME,
+    ) else {
         return;
     };
     let calls = workspace
@@ -602,7 +602,7 @@ fn rules_at(
         .filter(|card| card.tool == "bash")
         .map(|card| (card.tool, card.args))
         .collect();
-    tau_constitution::demo::open(name, &ui, "tau-agent", calls, cx);
+    tau_constitution_host::demo::open(name, &ui, "tau-agent", calls, cx);
 }
 
 /// The demo run working on [`GOAL`], with the records tau-goal
@@ -878,7 +878,7 @@ fn codemode(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     );
     workspace.toggle_card(&run, &call, cx);
     if let Some(ui) = workspace
-        .plugin_ui::<tau_codemode::ui::InspectorUi>(tau_codemode::PLUGIN)
+        .plugin_ui::<tau_codemode::ui::InspectorUi>(tau_codemode_host::PLUGIN)
     {
         ui.update(cx, |ui, _| {
             ui.toggle(tau_codemode::outline::key(&call, 0));

@@ -373,10 +373,10 @@ fn rotation_jitter() -> RunView {
 
 /// What landing the `backoff` fork would do:
 /// two changes, and with `conflict`, one of them in conflict.
-pub fn landing_preview(conflict: bool) -> tau_vcs::Landing {
+pub fn landing_preview(conflict: bool) -> tau_vcs_host::Landing {
     let change =
         |change_id: &str, commit_id: &str, description: &str, conflict| {
-            tau_vcs::ChangeInfo {
+            tau_vcs_host::ChangeInfo {
                 change_id: change_id.into(),
                 commit_id: commit_id.into(),
                 description: description.into(),
@@ -388,7 +388,7 @@ pub fn landing_preview(conflict: bool) -> tau_vcs::Landing {
                 bookmarks: Vec::new(),
             }
         };
-    tau_vcs::Landing {
+    tau_vcs_host::Landing {
         changes: vec![
             change(
                 "tnrlwzvoqkmxpulsyvrnzotqwmkpxsly",
@@ -2401,7 +2401,7 @@ pub fn script() -> Vec<Step> {
     );
     // tau-memory found notes for the task as the run started.
     s.report(
-        tau_memory::plugin::NAME,
+        tau_memory_host::NAME,
         json!({
             "kind": "recalled",
             "notes": [
@@ -2839,7 +2839,7 @@ pub fn script() -> Vec<Step> {
 
     // tau-memory distills in `finish`, after the run is stored.
     s.report(
-        tau_memory::plugin::NAME,
+        tau_memory_host::NAME,
         json!({
             "kind": "saved",
             "calls": [
@@ -2900,7 +2900,7 @@ mod tests {
         assert_eq!(show.parents.len(), 1);
         let diff = ChangeDiff::parse(&details(DIFF_CALL)).expect("a diff");
         assert_eq!(diff.files[0].path, DIFF_FILE);
-        assert_eq!(diff.files[0].kind, tau_vcs::ChangeKind::Added);
+        assert_eq!(diff.files[0].kind, tau_vcs_host::ChangeKind::Added);
         assert_eq!(diff.files[0].added, 21);
         let status =
             ChangeStatus::parse(&details(STATUS_CALL)).expect("a status");
@@ -2951,7 +2951,7 @@ mod tests {
         let catalog = host.catalog(catalog());
         let notes = |repo: &Repo| -> tau_memory::ui::Notebook {
             serde_json::from_value(
-                repo.plugins[tau_memory::plugin::NAME].json().clone(),
+                repo.plugins[tau_memory_host::NAME].json().clone(),
             )
             .unwrap()
         };
@@ -3001,7 +3001,7 @@ mod tests {
                 .any(|item| matches!(item, Item::Rewrite { .. }))
         );
         assert!(
-            matches!(view.items.last(), Some(Item::Anchor { plugin, .. }) if plugin == tau_memory::plugin::NAME)
+            matches!(view.items.last(), Some(Item::Anchor { plugin, .. }) if plugin == tau_memory_host::NAME)
         );
         // The ledger lists every call before the rewrite, which it
         // names, and marks the cards it pruned.
@@ -3051,14 +3051,14 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(anchored, [tau_reasoning::NAME, tau_memory::plugin::NAME]);
+        assert_eq!(anchored, [tau_reasoning::NAME, tau_memory_host::NAME]);
         let reasoning: tau_reasoning::ui::State = serde_json::from_value(
             view.plugin_states[tau_reasoning::NAME].json().clone(),
         )
         .unwrap();
         assert_eq!(reasoning.plan.as_deref(), Some("high"));
         let memory: tau_memory::ui::State = serde_json::from_value(
-            view.plugin_states[tau_memory::plugin::NAME].json().clone(),
+            view.plugin_states[tau_memory_host::NAME].json().clone(),
         )
         .unwrap();
         assert!(

@@ -11,19 +11,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use gpui::{App, AppContext as _, Context, Entity, FocusHandle};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tau_agent::plugin::Plugin;
 use tau_ui_kit::{input::TextInput, theme::Tone};
 use tau_ui_plugin::{
     Fold,
     Handle,
-    HostCx,
     Manifest,
-    PluginInfo,
     PluginStatus,
     PluginUi,
-    RunCtx,
     RunCx,
-    Seam,
     UiPlugin,
     points::{self, AtRun},
 };
@@ -193,95 +188,15 @@ impl Ui {
     }
 }
 
-/// The host half: the calls waiting, shared by every run.
-#[cfg(feature = "host")]
-pub type Host = crate::host::Waiting;
-#[cfg(not(feature = "host"))]
-pub type Host = ();
-
 impl UiPlugin for AskUi {
     type State = State;
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Host = Host;
     type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    /// The `ask` tool. A sub-agent has no one to ask: its `ask` refuses,
-    /// and is there so its tools match its caller's.
-    async fn agent_plugins(
-        &self,
-        host: &Host,
-        run: &RunCtx,
-        _settings: &(),
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        #[cfg(feature = "host")]
-        {
-            let plugin = crate::host::AskPlugin::new(host.clone());
-            Ok(vec![Box::new(
-                if run.kind == tau_ui_plugin::RunKind::SubAgent {
-                    plugin.refusing()
-                } else {
-                    plugin
-                },
-            )])
-        }
-        #[cfg(not(feature = "host"))]
-        {
-            let _ = (host, run);
-            Ok(Vec::new())
-        }
-    }
-
-    async fn catalog(
-        &self,
-        _host: &Host,
-        _cx: &HostCx,
-        _settings: &(),
-    ) -> PluginInfo {
-        PluginInfo {
-            description:
-                "Lets the agent ask you questions and waits for your answers"
-                    .into(),
-            seams: vec![Seam::Start, Seam::Tools],
-            page: None,
-            ..Default::default()
-        }
-    }
-
-    async fn act(
-        &self,
-        host: &Host,
-        action: Value,
-        _cx: &HostCx,
-    ) -> anyhow::Result<Option<Value>> {
-        let act: Act = serde_json::from_value(action)?;
-        // Refused, the panel says why and takes answers again.
-        #[cfg(feature = "host")]
-        {
-            Ok(host
-                .answer(&act.run, &act.call, act.reply)
-                .err()
-                .map(|error| {
-                    serde_json::to_value(Refused {
-                        run: act.run,
-                        call: act.call,
-                        message: format!("{error:#}"),
-                    })
-                    .expect("a refusal serializes")
-                }))
-        }
-        #[cfg(not(feature = "host"))]
-        {
-            let _ = (host, act);
-            anyhow::bail!(
-                "tau-ask's answers go to the computer that runs the agent"
-            )
-        }
     }
 
     fn reply(&self, ui: &mut Ui, reply: Value, cx: &mut Context<Ui>) {

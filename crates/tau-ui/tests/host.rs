@@ -25,7 +25,7 @@ use tau_ui_remote::{
     models::{AccountState, Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
 };
-use tau_vcs::{Identity, Project};
+use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// The repository a host under test lists, made from the checkout it
@@ -46,7 +46,7 @@ fn project_of(checkout: &Path) -> Project {
             &["commit", "--quiet", "--allow-empty", "-m", "first"],
         );
     }
-    tau_vcs::ProjectRepo::import(
+    tau_vcs_host::ProjectRepo::import(
         checkout.to_str().unwrap(),
         tempfile::tempdir().unwrap().keep().join("p"),
         Identity::default(),
@@ -380,7 +380,7 @@ fn every_jev_plugin_is_listed() {
     let jev_plugins = [
         tau_reasoning::NAME,
         tau_fast_compaction::NAME,
-        tau_constitution::NAME,
+        tau_constitution_host::NAME,
         tau_goal::NAME,
     ];
     let (host, _events) = host(ScriptedModel::new());
@@ -549,7 +549,7 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -681,7 +681,7 @@ fn a_fork_lands_on_its_parent_and_closes() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -800,7 +800,7 @@ fn a_chat_after_an_update() -> AfterUpdate {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -836,7 +836,7 @@ fn a_chat_after_an_update() -> AfterUpdate {
     git(src.path(), &["commit", "--quiet", "-m", "second"]);
     project
         .blocking()
-        .update(tau_vcs::UpdateFrom::Checkout(src.path()))
+        .update(tau_vcs_host::UpdateFrom::Checkout(src.path()))
         .unwrap();
     AfterUpdate {
         host,
@@ -895,7 +895,7 @@ fn a_chat_under_main_is_not_forked() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -950,7 +950,7 @@ fn main_waits_for_its_sub_agent_and_it_lands() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -988,7 +988,7 @@ fn main_waits_for_its_sub_agent_and_it_lands() {
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
     // The main chat works in the repository's own checkout, the default
     // workspace.
-    assert_eq!(dir, project.workspace_dir(tau_vcs::DEFAULT_WORKSPACE));
+    assert_eq!(dir, project.workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE));
     // The sub-agent is closed: no run workspace, and no run bookmark, as
     // the main chat commits on trunk.
     assert!(project.blocking().workspaces().unwrap().is_empty());
@@ -1163,7 +1163,7 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -1275,7 +1275,7 @@ fn a_failed_sub_agent_comes_back_from_history() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -1454,7 +1454,9 @@ fn repositories_are_listed_and_remembered() {
     let catalog = host.block_on(host.catalog());
     assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
     let reviewed: tau_constitution::ui::Data = serde_json::from_value(
-        catalog.plugin_data[tau_constitution::NAME].json().clone(),
+        catalog.plugin_data[tau_constitution_host::NAME]
+            .json()
+            .clone(),
     )
     .unwrap();
     assert_eq!(reviewed.reviewed, [("a".to_owned(), "call-1".to_owned())]);
@@ -1656,7 +1658,7 @@ fn a_finished_run_goes_on_in_its_workspace() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -1728,12 +1730,10 @@ fn a_finished_run_goes_on_in_its_workspace() {
 /// Asks tau-constitution's host half to carry out `act`, as its page
 /// does; what it answers, if anything.
 fn rules_act(host: &Host, act: Act) -> Option<serde_json::Value> {
-    host.block_on(
-        host.plugin_act(
-            tau_constitution::NAME,
-            serde_json::to_value(act).unwrap(),
-        ),
-    )
+    host.block_on(host.plugin_act(
+        tau_constitution_host::NAME,
+        serde_json::to_value(act).unwrap(),
+    ))
     .unwrap()
 }
 
@@ -1741,8 +1741,10 @@ fn rules_act(host: &Host, act: Act) -> Option<serde_json::Value> {
 fn rules_of(
     repo: &tau_ui_remote::catalog::Repo,
 ) -> tau_constitution::ui::Rules {
-    serde_json::from_value(repo.plugins[tau_constitution::NAME].json().clone())
-        .unwrap()
+    serde_json::from_value(
+        repo.plugins[tau_constitution_host::NAME].json().clone(),
+    )
+    .unwrap()
 }
 
 /// What the checks did in `view`, as tau-constitution's fold leaves it.
@@ -1750,7 +1752,7 @@ fn checks_of(
     view: &tau_ui_remote::view::RunView,
 ) -> tau_constitution::ui::State {
     view.plugin_states
-        .get(tau_constitution::NAME)
+        .get(tau_constitution_host::NAME)
         .map(|state| serde_json::from_value(state.json().clone()).unwrap())
         .unwrap_or_default()
 }
@@ -1774,7 +1776,7 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
         .display()
         .to_string();
     let rules_db = host
-        .plugin_dir(tau_constitution::NAME)
+        .plugin_dir(tau_constitution_host::NAME)
         .join("constitution.db");
     let open = || {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1782,7 +1784,7 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
             .build()
             .unwrap();
         let db = runtime
-            .block_on(tau_constitution::db::Db::open(&rules_db))
+            .block_on(tau_constitution_host::db::Db::open(&rules_db))
             .unwrap();
         (runtime, db)
     };
@@ -1791,10 +1793,10 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
     runtime
         .block_on(written.save_constitution(
             &key,
-            &tau_constitution::db::StoredConstitution {
+            &tau_constitution_host::StoredConstitution {
                 on_error: "allow".into(),
                 max_holds: 3,
-                rules: vec![tau_constitution::db::StoredRule {
+                rules: vec![tau_constitution_host::StoredRule {
                     id: "R1".into(),
                     text: "Name the tests.".into(),
                     targets: vec!["final answer".into()],
@@ -1843,9 +1845,9 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
     assert_eq!(saved.max_holds, 5);
     let (runtime, read) = open();
     let stored = runtime
-        .block_on(tau_constitution::Constitution::load(&read, &key))
+        .block_on(tau_constitution_host::db::load(&read, &key))
         .unwrap();
-    assert_eq!(stored.on_error, tau_constitution::OnError::Block);
+    assert_eq!(stored.on_error, tau_constitution_host::OnError::Block);
     assert_eq!((stored.max_holds, stored.rules.len()), (5, 1));
 }
 
@@ -1872,7 +1874,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
         .root()
         .to_owned();
     let rules_db = host
-        .plugin_dir(tau_constitution::NAME)
+        .plugin_dir(tau_constitution_host::NAME)
         .join("constitution.db");
     let stored = || {
         let key = root.canonicalize().unwrap().display().to_string();
@@ -1881,9 +1883,10 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             .build()
             .unwrap()
             .block_on(async {
-                let db =
-                    tau_constitution::db::Db::open(&rules_db).await.unwrap();
-                tau_constitution::Constitution::load(&db, &key).await
+                let db = tau_constitution_host::db::Db::open(&rules_db)
+                    .await
+                    .unwrap();
+                tau_constitution_host::db::load(&db, &key).await
             })
             .unwrap()
     };
@@ -2508,7 +2511,7 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     git(src.path(), &["add", "a.txt"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -2539,7 +2542,7 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
             .expect("the repository is listed")
             .clone();
         serde_json::from_value::<tau_memory::ui::Notebook>(
-            repo.plugins[tau_memory::plugin::NAME].json().clone(),
+            repo.plugins[tau_memory_host::NAME].json().clone(),
         )
         .unwrap()
     };
@@ -2688,7 +2691,7 @@ fn only_the_main_chat_spawns() {
         refused.content.iter().any(|block| matches!(
             block,
             tau_ai::message::InputBlock::Text(text)
-                if text.text.contains(tau_vcs::ONLY_MAIN_SPAWNS)
+                if text.text.contains(tau_vcs_host::ONLY_MAIN_SPAWNS)
         )),
         "{:?}",
         refused.content

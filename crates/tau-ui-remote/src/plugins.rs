@@ -2,7 +2,11 @@
 //! workspace draws them: what they contribute at its points, their
 //! pages, and what their handles ask.
 
-use std::{collections::BTreeMap, rc::Rc, sync::LazyLock};
+use std::{
+    collections::BTreeMap,
+    rc::Rc,
+    sync::{LazyLock, OnceLock},
+};
 
 use gpui::{AnyElement, App, Context};
 use serde_json::Value;
@@ -24,47 +28,69 @@ use crate::{
     workspace::{Workspace, WorkspaceEvent},
 };
 
-/// Every plugin, in the order the host adds them to a run's agent.
+/// The plugins this process has: a host's, with their host halves, once
+/// it has [`install`]ed them; until then, an interface's, as [`plugins`]
+/// lists them. Both draw the same: only a host asks a plugin for what
+/// its host half does, after installing them.
 pub fn registry() -> &'static Registry {
-    static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
-        Registry::new()
-            // The tools' cards: the host builds the tools themselves on
-            // each run's workspace.
-            .with(tau_tools::ui::ToolsUi)
-            .with(tau_vcs::ui::VcsUi)
-            .with(tau_reasoning::ReasoningPlugin)
-            // Pruning first: it is cheaper than a summary, and summarizing
-            // follows when pruning cannot help.
-            .with(tau_fast_compaction::ui::FastCompactionUi)
-            .with(tau_compaction::ui::CompactionUi)
-            // The repository's rules check what the tools do; a goal's
-            // hold of a stop comes after theirs.
-            // Notes for what the tools do, and the repository's rules to
-            // check it.
-            .with(tau_memory::ui::MemoryUi)
-            .with(tau_constitution::ui::ConstitutionUi)
-            .with(tau_goal::GoalUi)
-            // Plugins the person wrote in Luau: after the rules and the
-            // goal, so theirs hold first.
-            .with(tau_luau_plugins::LuauPluginsUi)
-            // Questions the agent asks the person, answered in the
-            // composer's place.
-            .with(tau_ask::AskUi)
-            // Agent commands in the repository's direnv environment, once
-            // the person allows it.
-            .with(tau_direnv::DirenvUi)
-            // MCP servers' tools: their direct ones are added to the run's
-            // plan in tau-mcp's `start`, so it comes before Codemode.
-            .with(tau_mcp::McpUi)
-            // Skills the model loads when a task calls for them.
-            .with(tau_skills::SkillsUi)
-            // Codemode's `start` lists the Luau signatures of the tools in
-            // the run's plan when it runs. A plugin that adds tools in its
-            // own `start` (tau-mcp, for its servers' direct tools) must be
-            // registered before it, or scripts' signatures miss them.
-            .with(tau_codemode::CodemodeUi)
-    });
-    &REGISTRY
+    static INTERFACE: LazyLock<Registry> = LazyLock::new(plugins);
+    INSTALLED.get().unwrap_or(&INTERFACE)
+}
+
+static INSTALLED: OnceLock<Registry> = OnceLock::new();
+
+/// Makes `registry` the plugins this process has: a host gives the ones
+/// [`plugins`] lists their host halves (`Registry::host`) and installs
+/// them before it asks any for its host state.
+///
+/// # Panics
+///
+/// When a registry was installed already: a process has one host.
+pub fn install(registry: Registry) {
+    if INSTALLED.set(registry).is_err() {
+        panic!("the plugins were installed already");
+    }
+}
+
+/// Every plugin, in the order the host adds them to a run's agent, with
+/// its UI and without its host half (ADR 0030).
+pub fn plugins() -> Registry {
+    Registry::new()
+        // The tools' cards: the host builds the tools themselves on
+        // each run's workspace.
+        .with(tau_tools::ui::ToolsUi)
+        .with(tau_vcs::ui::VcsUi)
+        .with(tau_reasoning::ReasoningPlugin)
+        // Pruning first: it is cheaper than a summary, and summarizing
+        // follows when pruning cannot help.
+        .with(tau_fast_compaction::ui::FastCompactionUi)
+        .with(tau_compaction::ui::CompactionUi)
+        // The repository's rules check what the tools do; a goal's
+        // hold of a stop comes after theirs.
+        // Notes for what the tools do, and the repository's rules to
+        // check it.
+        .with(tau_memory::ui::MemoryUi)
+        .with(tau_constitution::ui::ConstitutionUi)
+        .with(tau_goal::GoalUi)
+        // Plugins the person wrote in Luau: after the rules and the
+        // goal, so theirs hold first.
+        .with(tau_luau_plugins::LuauPluginsUi)
+        // Questions the agent asks the person, answered in the
+        // composer's place.
+        .with(tau_ask::AskUi)
+        // Agent commands in the repository's direnv environment, once
+        // the person allows it.
+        .with(tau_direnv::DirenvUi)
+        // MCP servers' tools: their direct ones are added to the run's
+        // plan in tau-mcp's `start`, so it comes before Codemode.
+        .with(tau_mcp::McpUi)
+        // Skills the model loads when a task calls for them.
+        .with(tau_skills::SkillsUi)
+        // Codemode's `start` lists the Luau signatures of the tools in
+        // the run's plan when it runs. A plugin that adds tools in its
+        // own `start` (tau-mcp, for its servers' direct tools) must be
+        // registered before it, or scripts' signatures miss them.
+        .with(tau_codemode::CodemodeUi)
 }
 
 /// What a run on `prompt` is about, as the first plugin that reads it as

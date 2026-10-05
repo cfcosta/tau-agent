@@ -9423,29 +9423,17 @@ dependencies = [
 name = "tau-codemode"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
  "base64 0.23.1",
- "futures-util",
  "gpui-pre",
  "hegeltest",
- "jsonschema",
- "libc",
- "mlua",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "stylua",
  "tau-agent",
  "tau-ai",
- "tau-jev",
- "tau-store",
- "tau-store-sqlite",
- "tau-testing",
  "tau-ui-kit",
  "tau-ui-plugin",
- "tokio",
- "tokio-util",
  "uuid",
 ]
 
@@ -9462,12 +9450,41 @@ dependencies = [
  "tau-ai",
  "tau-artifacts",
  "tau-codemode",
+ "tau-codemode-host",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
- "tau-tools",
+ "tau-tools-host",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "tau-codemode-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "gpui-pre",
+ "hegeltest",
+ "jsonschema",
+ "libc",
+ "mlua",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-codemode",
+ "tau-jev",
+ "tau-store",
+ "tau-store-sqlite",
+ "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]
@@ -9498,6 +9515,20 @@ name = "tau-constitution"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "gpui-pre",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "tau-constitution-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
  "gpui-pre",
@@ -9508,11 +9539,11 @@ dependencies = [
  "sqlx",
  "tau-agent",
  "tau-ai",
+ "tau-constitution",
  "tau-jev",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
- "tau-ui-kit",
  "tau-ui-plugin",
  "tempfile",
  "thiserror 2.0.21",
@@ -9604,10 +9635,22 @@ dependencies = [
 name = "tau-luau-plugins"
 version = "0.1.0"
 dependencies = [
+ "gpui-pre",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+]
+
+[[package]]
+name = "tau-luau-plugins-host"
+version = "0.1.0"
+dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
- "gpui-pre",
  "hegeltest",
  "serde",
  "serde_json",
@@ -9615,14 +9658,16 @@ dependencies = [
  "tau-agent",
  "tau-ai",
  "tau-codemode",
+ "tau-codemode-host",
  "tau-jev",
+ "tau-luau-plugins",
  "tau-skills",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
  "tau-ui-kit",
  "tau-ui-plugin",
- "tau-vcs",
+ "tau-vcs-host",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -9630,6 +9675,25 @@ dependencies = [
 
 [[package]]
 name = "tau-mcp"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gpui-pre",
+ "hegeltest",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tau-agent",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "tau-mcp-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -9651,7 +9715,8 @@ dependencies = [
  "sse-stream",
  "tau-agent",
  "tau-ai",
- "tau-codemode",
+ "tau-codemode-host",
+ "tau-mcp",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
@@ -9671,27 +9736,13 @@ name = "tau-memory"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
- "candle-core",
- "docbert-pylate",
- "futures-util",
  "gpui-pre",
- "hegeltest",
- "regex",
- "schemars",
  "serde",
  "serde_json",
  "tau-agent",
- "tau-ai",
- "tau-store",
- "tau-store-sqlite",
- "tau-testing",
  "tau-ui-kit",
  "tau-ui-plugin",
- "tempfile",
  "thiserror 2.0.21",
- "tokio",
- "tokio-util",
  "toml 1.1.6+spec-1.1.0",
 ]
 
@@ -9709,13 +9760,42 @@ dependencies = [
  "tau-ai",
  "tau-compaction",
  "tau-memory",
+ "tau-memory-host",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
- "tau-tools",
+ "tau-tools-host",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "tau-memory-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "candle-core",
+ "docbert-pylate",
+ "futures-util",
+ "hegeltest",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-memory",
+ "tau-store",
+ "tau-store-sqlite",
+ "tau-testing",
+ "tau-ui-plugin",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -9734,7 +9814,7 @@ dependencies = [
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
- "tau-tools",
+ "tau-tools-host",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -9884,10 +9964,28 @@ name = "tau-tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.23.1",
+ "gpui-pre",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-terminal",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
+name = "tau-tools-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.23.1",
  "globset",
- "gpui-pre",
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
@@ -9908,7 +10006,7 @@ dependencies = [
  "tau-store-sqlite",
  "tau-terminal",
  "tau-testing",
- "tau-ui-kit",
+ "tau-tools",
  "tau-ui-plugin",
  "tempfile",
  "thiserror 2.0.21",
@@ -9941,15 +10039,20 @@ dependencies = [
  "tau-artifacts",
  "tau-ask",
  "tau-codemode",
+ "tau-codemode-host",
  "tau-compaction",
  "tau-constitution",
+ "tau-constitution-host",
  "tau-direnv",
  "tau-fast-compaction",
  "tau-goal",
  "tau-jev",
  "tau-luau-plugins",
+ "tau-luau-plugins-host",
  "tau-mcp",
+ "tau-mcp-host",
  "tau-memory",
+ "tau-memory-host",
  "tau-reasoning",
  "tau-remote",
  "tau-skills",
@@ -9957,10 +10060,12 @@ dependencies = [
  "tau-store-sqlite",
  "tau-testing",
  "tau-tools",
+ "tau-tools-host",
  "tau-ui-kit",
  "tau-ui-plugin",
  "tau-ui-remote",
  "tau-vcs",
+ "tau-vcs-host",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -10053,10 +10158,25 @@ name = "tau-vcs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "gpui-pre",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "tau-vcs-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
  "gix",
- "gpui-pre",
  "hegeltest",
  "jj-lib",
  "pollster 1.0.1",
@@ -10070,9 +10190,9 @@ dependencies = [
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
- "tau-tools",
- "tau-ui-kit",
+ "tau-tools-host",
  "tau-ui-plugin",
+ "tau-vcs",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

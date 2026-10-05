@@ -258,7 +258,7 @@ repository as a change of their own.
   the Skills screen. The worked plugins are files of their own, inlined
   into `SKILL.md` as it is installed and run as tests of the host, so
   the skill cannot drift from the interface. The skill
-  (`crates/plugins/tau-luau-plugins/skill/`) is the interface's
+  (`crates/plugins/tau-luau-plugins-host/skill/`) is the interface's
   reference.
 - **`/plugin <what it should do>`** in any chat starts a chat in the
   plugins repository whose first message is `/tau-plugins <what it

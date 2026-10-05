@@ -553,7 +553,7 @@ How it plugs into the existing seams:
    `$HOME`), `--unshare-net` for `Network::None`, and a seccomp filter
    built with `seccompiler`. Probe at `open`: if user namespaces are
    blocked (Ubuntu's AppArmor rule), fail with a message that names the
-   fix. Tests: the `bash` tests in `crates/plugins/tau-tools/tests/bash.rs`
+   fix. Tests: the `bash` tests in `crates/plugins/tau-tools-host/tests/bash.rs`
    run under both providers, plus escape tests (write outside the
    project, `connect` to a socket in `/run`, a `setsid` child that must
    die on timeout).

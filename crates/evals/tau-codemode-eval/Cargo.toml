@@ -15,10 +15,11 @@ tau-agent = { path = "../../tau-agent" }
 tau-ai = { path = "../../tau-ai" }
 tau-artifacts.workspace = true
 tau-codemode = { path = "../../plugins/tau-codemode" }
+tau-codemode-host = { path = "../../plugins/tau-codemode-host" }
 tau-store-sqlite.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true
-tau-tools = { path = "../../plugins/tau-tools" }
+tau-tools-host = { path = "../../plugins/tau-tools-host" }
 tempfile.workspace = true
 tokio.workspace = true
 

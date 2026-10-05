@@ -14,7 +14,8 @@ tau-agent/
 │   ├── tau-testing/  # ScriptedModel, recorded-stream replay
 │   ├── tau-ui-kit/   # the design language: theme tokens, icons, fonts, components,
 │   │                 # text field, marked-up text (ADR 0017)
-│   ├── tau-ui-plugin/ # UiPlugin, its Fold, the registry, extension points (ADR 0017)
+│   ├── tau-ui-plugin/ # UiPlugin, HostHalf, its Fold, the registry, extension
+│   │                 # points (ADR 0017, 0030)
 │   ├── tau-ui-remote/ # the interface: workspace, screens, plugins' views, and the
 │   │                 # phone's remote that drives it from a computer (ADR 0013)
 │   ├── tau-ui/       # the desktop app: the host that runs agents, the phone
@@ -22,7 +23,9 @@ tau-agent/
 │   ├── tau-phone/    # tau-ui-remote on Android
 │   ├── tau-terminal/ # libghostty-vt terminal, PTY command runner,
 │   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
-│   └── plugins/
+│   └── plugins/                # each plugin's interface half, and its
+│       │                         # host half: `tau-<plugin>-host` when heavy
+│       │                         # (ADR 0030)
 │       ├── tau-ask/              # the agent asks the person; the panel in the
 │       │                         # composer's place (ADR 0019)
 │       ├── tau-codemode/         # Luau scripts that call tools and Jev
@@ -54,9 +57,11 @@ Dependency direction:
   `bash` only with its `terminal` feature, which `tau-ui` turns on
   ([0010](decisions/0010-terminal-rendering.md)).
 - `tau-ui-remote` draws runs and starts none: it depends on the
-  plugins' views, not on their host halves. `tau-ui` brings those
-  (each plugin's default `host` feature) and drives it; `tau-phone`
-  depends on `tau-ui-remote` alone.
+  plugins' crates, not on their host halves, and lists the plugins
+  without them. `tau-ui` brings the host halves (the `tau-*-host`
+  crates, and the `host` feature of the plugins that keep theirs),
+  gives each plugin its own, and drives it; `tau-phone` depends on
+  `tau-ui-remote` alone ([0030](decisions/0030-host-halves-are-crates.md)).
 - Plugins, under `crates/plugins/`, depend on `tau-agent` (and
   `tau-ai` for message types). Core crates never depend on a plugin
   ([0006](decisions/0006-plugin-crates.md)). Each plugin brings its own

@@ -92,7 +92,7 @@ impl Definition {
         &self.dependencies
     }
 
-    pub(crate) fn verify(&self) -> Result<(), String> {
+    pub fn verify(&self) -> Result<(), String> {
         let rebuilt = Self::new(
             self.name.clone(),
             self.source.clone(),
@@ -106,7 +106,7 @@ impl Definition {
     }
 }
 
-pub(crate) fn validate_name(name: &str) -> Result<(), String> {
+pub fn validate_name(name: &str) -> Result<(), String> {
     let mut chars = name.chars();
     let valid_start = chars
         .next()
@@ -120,7 +120,7 @@ pub(crate) fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn valid_version(version: &str) -> bool {
+pub fn valid_version(version: &str) -> bool {
     version.len() == 64
         && version
             .bytes()
@@ -265,7 +265,7 @@ impl ModuleTest {
         &self.tools
     }
 
-    fn verify(&self) -> Result<(), String> {
+    pub fn verify(&self) -> Result<(), String> {
         Self::new(
             self.name.clone(),
             self.version.clone(),

@@ -7,9 +7,9 @@ use anyhow::{Context as _, bail};
 use serde_json::Value;
 use tau_artifacts::{Artifact, Bytes, PruneReport, Quotas};
 use tau_store::{RunKind, RunRecord, Store};
-use tau_tools::artifact_grant::{ArtifactRecord, fold_grants};
+use tau_tools_host::artifact_grant::{ArtifactRecord, fold_grants};
 use tau_ui_plugin::{HOST_RECORD, HostRecord};
-use tau_vcs::Project;
+use tau_vcs_host::Project;
 
 use super::Host;
 

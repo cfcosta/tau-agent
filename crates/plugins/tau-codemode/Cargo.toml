@@ -1,56 +1,26 @@
 [package]
 name = "tau-codemode"
-description = "The codemode tool: a Luau sandbox that calls tau's tools and Jev, as a plugin."
+description = "Codemode's interface half: the cards of its Luau scripts, and the records they fold."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[features]
-default = ["host"]
-# The agent half: the `codemode` tool, which runs Luau. The records, their
-# fold and the card build without it, as on a phone.
-host = [
-  "dep:async-trait",
-  "dep:futures-util",
-  "dep:jsonschema",
-  "dep:libc",
-  "dep:mlua",
-  "dep:tokio",
-  "dep:tokio-util",
-]
-
 [dependencies]
-anyhow.workspace = true
-async-trait = { workspace = true, optional = true }
 base64.workspace = true
-futures-util = { workspace = true, optional = true }
-jsonschema = { workspace = true, optional = true }
-libc = { workspace = true, optional = true }
 gpui = { package = "gpui-pre", version = "=0.3.7" }
-mlua = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# The cards show scripts formatted.
 stylua.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-jev.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
-tokio = { workspace = true, features = ["rt", "sync", "time"], optional = true }
-tokio-util = { workspace = true, optional = true }
 uuid.workspace = true
 
 [dev-dependencies]
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
-tau-store-sqlite.workspace = true
 hegeltest.workspace = true
-tau-store.workspace = true
-tau-testing.workspace = true
-tokio = { workspace = true, features = [
-  "rt-multi-thread",
-  "time",
-  "test-util",
-] }

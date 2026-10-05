@@ -20,6 +20,7 @@ use tau_ui_plugin::{
     Dropped,
     Fold,
     HostCx,
+    HostHalf,
     Link,
     Manifest,
     NO_KEY,
@@ -317,12 +318,39 @@ impl UiPlugin for FastCompactionUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Host = ();
     type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME
     }
+
+    fn rewrites_keep_transcript(&self) -> bool {
+        true
+    }
+
+    fn manifest(&self) -> Manifest<Self> {
+        Manifest::new()
+            .page(
+                Page::new("ledger", ledger_page)
+                    .title(|_| "Context ledger".to_owned()),
+            )
+            .status(State::status)
+            .contribute(points::CONTEXT_TRIGGER, |_: &AtRun, view| {
+                view.state?.on?.then(trigger)
+            })
+            .contribute(points::CONTEXT, context)
+            .contribute(points::CARD_BADGE, badge)
+            .contribute(points::REWRITE, rewrite)
+    }
+}
+
+/// tau-fast-compaction on the host.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FastCompactionHost;
+
+impl HostHalf for FastCompactionHost {
+    type Plugin = FastCompactionUi;
+    type Host = ();
 
     /// Pruning with Jev, when there is a key, on the run's model's
     /// window, archiving to the repository's directory in tau's.
@@ -379,25 +407,6 @@ impl UiPlugin for FastCompactionUi {
             page: Some(ledger_link()),
             ..Default::default()
         }
-    }
-
-    fn rewrites_keep_transcript(&self) -> bool {
-        true
-    }
-
-    fn manifest(&self) -> Manifest<Self> {
-        Manifest::new()
-            .page(
-                Page::new("ledger", ledger_page)
-                    .title(|_| "Context ledger".to_owned()),
-            )
-            .status(State::status)
-            .contribute(points::CONTEXT_TRIGGER, |_: &AtRun, view| {
-                view.state?.on?.then(trigger)
-            })
-            .contribute(points::CONTEXT, context)
-            .contribute(points::CARD_BADGE, badge)
-            .contribute(points::REWRITE, rewrite)
     }
 }
 

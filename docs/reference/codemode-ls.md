@@ -49,7 +49,7 @@ and from the text sent to the model.
 
 ## Verification
 
-crates/plugins/tau-tools/tests/ls.rs checks the output schema with tau-agent's
+crates/plugins/tau-tools-host/tests/ls.rs checks the output schema with tau-agent's
 ArgumentSchema, and compares generated safe filenames against an independent
 sorted read of each temporary directory. The property uses 100 cases; the
 workspace hegel.toml supplies the fixed-seed CI profile.

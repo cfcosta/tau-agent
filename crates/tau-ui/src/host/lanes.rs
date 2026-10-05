@@ -201,7 +201,7 @@ impl Host {
     ) -> anyhow::Result<Vec<String>> {
         let project = self.slot_of_run(main).await?.project().await?;
         self.catch_up(&project, DEFAULT_WORKSPACE).await?;
-        let vcs = tau_vcs::Vcs::open(
+        let vcs = tau_vcs_host::Vcs::open(
             project.workspace_dir(DEFAULT_WORKSPACE),
             identity(),
         )
@@ -500,7 +500,7 @@ impl Host {
 /// Holds a resolving turn's stop once while conflicts remain on main:
 /// "Conflicts remain in a.rs, b.rs. Resolve them and commit."
 pub(super) struct ResolveHold {
-    pub(super) vcs: tau_vcs::Vcs,
+    pub(super) vcs: tau_vcs_host::Vcs,
 }
 
 #[async_trait]
@@ -522,7 +522,7 @@ impl Plugin for ResolveHold {
 }
 
 struct HoldOnce {
-    vcs: tau_vcs::Vcs,
+    vcs: tau_vcs_host::Vcs,
     held: bool,
 }
 

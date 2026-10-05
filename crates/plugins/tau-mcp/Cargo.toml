@@ -1,102 +1,29 @@
 [package]
 name = "tau-mcp"
-description = "Connects tau agents to MCP servers and adds their tools, as a plugin."
+description = "tau-mcp's interface half: the Servers page, MCP tools' cards, and what they read."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
 [features]
-default = ["host"]
-# The agent half: connecting to servers (rmcp) and signing in to them.
-# The page, the cards and what they read build without it, as on a
-# phone.
-host = [
-  "dep:async-trait",
-  "dep:getrandom",
-  "dep:http",
-  "dep:libc",
-  "dep:reqwest",
-  "dep:rmcp",
-  "dep:sse-stream",
-  "dep:tokio-util",
-  "dep:tracing",
-  "dep:tracing-subscriber",
-]
 # The servers tau-ui's demo shows.
 demo = []
 
 [dependencies]
-anyhow.workspace = true
-async-trait = { workspace = true, optional = true }
-base64.workspace = true
-futures-util.workspace = true
-getrandom = { workspace = true, optional = true }
 gpui = { package = "gpui-pre", version = "=0.3.7" }
-http = { version = "1", optional = true }
-libc = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
-# The MCP client (docs/research/codemode-libraries.md). Its API moves
-# between majors, so only `src/client.rs` touches it. No default
-# features; reqwest's TLS is the workspace's `rustls-no-provider`.
-rmcp = { version = "3.5.0", optional = true, default-features = false, features = [
-  # OAuth sign-in (docs/reference/mcp.md, "Signing in"). Not
-  # `auth-client-credentials-jwt`: it pulls aws-lc-rs.
-  "auth",
-  "client",
-  "reqwest-tls-no-provider",
-  "transport-child-process",
-  "transport-streamable-http-client-reqwest",
-] }
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-# The SSE event type in rmcp's `StreamableHttpClient`, which rmcp does
-# not re-export; the version rmcp uses.
-sse-stream = { version = "0.2.6", optional = true }
 tau-agent.workspace = true
-tau-ai.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
-thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
-tokio-util = { workspace = true, optional = true }
-tracing = { version = "0.1", optional = true }
-# `filter::Targets`, for the filter that keeps rmcp's sign-in debug logs
-# out of every subscriber (`auth::secrets_filter`).
-tracing-subscriber = { version = "0.3.23", optional = true, default-features = false, features = [
-  "registry",
-  "std",
-] }
 url = "2.5.8"
 
 [dev-dependencies]
 tau-ui-plugin = { workspace = true, features = ["testing"] }
-gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
-mlua.workspace = true
 regex.workspace = true
 tempfile.workspace = true
-rmcp = { version = "3.5.0", default-features = false, features = [
-  "client",
-  "macros",
-  "server",
-  "transport-io",
-] }
-tau-codemode.workspace = true
-tau-store.workspace = true
-tau-store-sqlite.workspace = true
-tau-testing.workspace = true
-tokio = { workspace = true, features = [
-  "rt",
-  "rt-multi-thread",
-  "time",
-  "test-util",
-  "net",
-] }
-
-# Runs itself as a stdio MCP server in a child process; libtest's output
-# would corrupt the server's stdout, so it has its own `main`.
-[[test]]
-name = "stdio"
-harness = false

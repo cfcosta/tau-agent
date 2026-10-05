@@ -25,7 +25,7 @@ use tau_ui_remote::{
     catalog::Catalog,
     route::Route,
 };
-use tau_vcs::{Identity, Project};
+use tau_vcs_host::{Identity, Project};
 
 /// Runs GPUI until `done` holds, while runs work on the host's threads.
 fn until(
@@ -76,7 +76,7 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),

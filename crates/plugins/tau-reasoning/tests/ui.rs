@@ -7,15 +7,16 @@ use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_reasoning::{
     NAME,
+    ReasoningHost,
     Record,
-    ui::{Note, ReasoningPlugin, State},
+    ui::{Note, State},
 };
 use tau_ui_plugin::{
     Fold as _,
+    HostHalf as _,
     RunCtx,
     RunKind,
     Services,
-    UiPlugin,
     testing::{FakeRun, run_ctx},
 };
 
@@ -216,7 +217,7 @@ fn startup_status_and_plugin_presence_follow_key_and_effort() {
             let run = run(effort, jev);
             let mut state = State::default();
             let mut anchors = FakeRun::default();
-            for body in tau_testing::block_on(ReasoningPlugin.starting(
+            for body in tau_testing::block_on(ReasoningHost.starting(
                 &(),
                 &run,
                 &settings,
@@ -234,7 +235,7 @@ fn startup_status_and_plugin_presence_follow_key_and_effort() {
             }
 
             let should_auto_pick = jev && effort.is_none();
-            let plugins = tau_testing::block_on(ReasoningPlugin.agent_plugins(
+            let plugins = tau_testing::block_on(ReasoningHost.agent_plugins(
                 &(),
                 &run,
                 &settings,

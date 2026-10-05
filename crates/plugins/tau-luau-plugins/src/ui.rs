@@ -20,7 +20,6 @@ use gpui::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tau_agent::plugin::Plugin;
 use tau_ui_kit::{
     assets::Icon,
     components::{
@@ -39,15 +38,10 @@ use tau_ui_kit::{
 };
 use tau_ui_plugin::{
     Fold,
-    HostCx,
-    Link,
     Manifest,
     Page,
-    PluginInfo,
-    RunCtx,
     RunCx,
     RunInfo,
-    Seam,
     SlashCommand,
     UiPlugin,
     ViewCx,
@@ -372,163 +366,10 @@ impl UiPlugin for LuauPluginsUi {
     type Data = Overview;
     type RepoData = ();
     type Settings = LuauSettings;
-    #[cfg(feature = "host")]
-    type Host = crate::registry::Registry;
-    #[cfg(not(feature = "host"))]
-    type Host = ();
     type Ui = SettingsUi;
 
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    async fn agent_plugins(
-        &self,
-        host: &Self::Host,
-        run: &RunCtx,
-        settings: &LuauSettings,
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        #[cfg(feature = "host")]
-        {
-            let mut plugins: Vec<Box<dyn Plugin>> = Vec::new();
-            // A run in the plugins repository tests the plugins it writes.
-            if run.repo.name == crate::REPO
-                && let Some(dir) =
-                    run.services.get::<tau_ui_plugin::WorkspaceDir>()
-            {
-                plugins.push(Box::new(crate::testing::PluginTesting::new(
-                    dir.0.clone(),
-                )));
-            }
-            // Each plugin takes what the person set, over its defaults.
-            let active: Vec<crate::agent::Active> = host
-                .active()
-                .await
-                .into_iter()
-                .map(|mut active| {
-                    let name = &active.loaded.declaration.name;
-                    active.settings = crate::settings::effective(
-                        &active.loaded.declaration,
-                        settings.plugins.get(name),
-                    )
-                    .0;
-                    active
-                })
-                .collect();
-            if active.is_empty() {
-                return Ok(plugins);
-            }
-            let kind = match run.kind {
-                tau_ui_plugin::RunKind::Main => "main",
-                tau_ui_plugin::RunKind::Chat => "chat",
-                tau_ui_plugin::RunKind::SubAgent => "sub_agent",
-            };
-            let info = serde_json::json!({
-                "kind": kind,
-                "repo": run.repo.name,
-                "model": run.model,
-            });
-            let jev = run
-                .services
-                .get::<std::sync::Arc<dyn tau_jev::Jev>>()
-                .cloned();
-            plugins.push(Box::new(crate::agent::LuauPlugins::new(
-                active, info, jev,
-            )));
-            Ok(plugins)
-        }
-        #[cfg(not(feature = "host"))]
-        {
-            let _ = (host, run, settings);
-            Ok(Vec::new())
-        }
-    }
-
-    async fn catalog(
-        &self,
-        host: &Self::Host,
-        _cx: &HostCx,
-        _settings: &LuauSettings,
-    ) -> PluginInfo {
-        #[cfg(feature = "host")]
-        let description = {
-            let overview = host.overview().await;
-            let waiting = overview
-                .plugins
-                .iter()
-                .filter(|entry| !matches!(entry.standing, Standing::Active))
-                .count();
-            match (overview.plugins.len(), waiting) {
-                (0, _) => "Plugins written in Luau: none yet".to_owned(),
-                (all, 0) => format!("Plugins written in Luau: {all} active"),
-                (all, waiting) => {
-                    format!(
-                        "Plugins written in Luau: {all}, {waiting} need a look"
-                    )
-                }
-            }
-        };
-        #[cfg(not(feature = "host"))]
-        let description = {
-            let _ = host;
-            "Plugins written in Luau".to_owned()
-        };
-        // Each plugin of the repository is a row of its own.
-        #[cfg(feature = "host")]
-        let entries: Vec<tau_ui_plugin::CatalogEntry> = host
-            .overview()
-            .await
-            .plugins
-            .iter()
-            .map(entry_row)
-            .collect();
-        #[cfg(not(feature = "host"))]
-        let entries = Vec::new();
-        PluginInfo {
-            group: tau_ui_plugin::Group::Yours,
-            description,
-            seams: vec![
-                Seam::Tools,
-                Seam::BeforeTool,
-                Seam::BeforeStop,
-                Seam::Finish,
-            ],
-            page: Some(Link::page(PAGE)),
-            entries,
-            ..Default::default()
-        }
-    }
-
-    async fn data(&self, host: &Self::Host, _cx: &HostCx) -> Overview {
-        #[cfg(feature = "host")]
-        {
-            host.overview().await
-        }
-        #[cfg(not(feature = "host"))]
-        {
-            let _ = host;
-            Overview::default()
-        }
-    }
-
-    async fn act(
-        &self,
-        host: &Self::Host,
-        action: Value,
-        _cx: &HostCx,
-    ) -> anyhow::Result<Option<Value>> {
-        let action: Act = serde_json::from_value(action)?;
-        #[cfg(feature = "host")]
-        match action {
-            Act::Allow { plugin } => host.allow(&plugin).await?,
-            Act::SettingsView { plugin, settings } => {
-                let page = host.settings_page(&plugin, settings).await;
-                return Ok(Some(serde_json::to_value(page)?));
-            }
-        }
-        #[cfg(not(feature = "host"))]
-        let _ = (host, action);
-        Ok(None)
     }
 
     /// A settings page the host drew.
@@ -593,46 +434,6 @@ impl UiPlugin for LuauPluginsUi {
                     .into_any_element(),
                 )
             })
-    }
-}
-
-/// A plugin of the repository as a row of the Plugins screen: where it
-/// steps in, and a word when it needs the person.
-#[cfg(feature = "host")]
-fn entry_row(entry: &crate::Entry) -> tau_ui_plugin::CatalogEntry {
-    use tau_ui_plugin::{CatalogEntry, Note};
-
-    let mut seams = Vec::new();
-    if let Some(declaration) = &entry.declaration {
-        if !declaration.tools.is_empty() {
-            seams.push(Seam::Tools);
-        }
-        if declaration.hooks.before_tool {
-            seams.push(Seam::BeforeTool);
-        }
-        if declaration.hooks.before_stop {
-            seams.push(Seam::BeforeStop);
-        }
-        if declaration.hooks.run_end {
-            seams.push(Seam::Finish);
-        }
-    }
-    let note = match &entry.standing {
-        Standing::Active => None,
-        Standing::Waiting { .. } => {
-            Some(Note::new("waits for you", Tone::Warn))
-        }
-        Standing::Failing => Some(Note::new("tests fail", Tone::Danger)),
-        Standing::Broken { .. } => {
-            Some(Note::new("does not load", Tone::Danger))
-        }
-    };
-    CatalogEntry {
-        name: entry.name.clone(),
-        description: entry.description.clone(),
-        group: tau_ui_plugin::Group::Yours,
-        seams,
-        note,
     }
 }
 

@@ -17,7 +17,7 @@ there is no staging area, and file edits made with `write`, `edit` or
 ## Setup
 
 ```rust
-use tau_vcs::{Identity, Vcs, VcsPlugin};
+use tau_vcs_host::{Identity, Vcs, VcsPlugin};
 
 // An existing jj workspace:
 let vcs = Vcs::open("/path/to/workspace", Identity::default())?;
@@ -605,7 +605,7 @@ tau closed in the middle of, a workspace whose run never reached the
 store. Left there, they take disk space, and the main chat's catch-ups
 restack their commits every time.
 
-`tau_vcs::sweep::plan(owners, workspaces, bookmarks)` is the rule, a
+`tau_vcs_host::sweep::plan(owners, workspaces, bookmarks)` is the rule, a
 pure function. Each `Owner` is a run with the workspaces it worked in
 and its `Standing`:
 

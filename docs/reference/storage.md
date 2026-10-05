@@ -226,15 +226,16 @@ cargo sqlx prepare --check -- -p tau-store-sqlite # CI
 ```
 
 A plugin with its own database, such as tau-constitution, keeps its
-migrations and `.sqlx/` in its crate, with a dated migration version so
-it never clashes with tau-store's. Its metadata is prepared against a
+migrations and `.sqlx/` in its host crate (`tau-constitution-host`),
+with a dated migration version so it never clashes with
+tau-store-sqlite's. Its metadata is prepared against a
 database with both schemas, since its tests compile
 tau-store-sqlite's queries too:
 
 ```sh
 sqlx database setup --source crates/tau-store-sqlite/migrations
-sqlx migrate run --ignore-missing --source crates/plugins/tau-constitution/migrations
-(cd crates/plugins/tau-constitution && cargo sqlx prepare)
+sqlx migrate run --ignore-missing --source crates/plugins/tau-constitution-host/migrations
+(cd crates/plugins/tau-constitution-host && cargo sqlx prepare)
 ```
 
 - **Commit `.sqlx/`.** Crates that depend on `tau-store-sqlite` don't

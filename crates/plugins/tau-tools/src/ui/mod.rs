@@ -3,7 +3,7 @@
 //! output; `edit` and `write`, the diff they made; `ls`, the directory.
 //!
 //! The host builds the plugin's tools on the run's workspace, where they
-//! act; this UI draws what they return.
+//! act (`tau-tools-host`); this UI draws what they return.
 
 pub mod listing;
 pub mod listing_card;
@@ -19,7 +19,6 @@ use std::{
 use gpui::{Div, div, prelude::*, rems};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tau_agent::plugin::Plugin;
 use tau_ui_kit::{
     diff,
     syntax,
@@ -28,21 +27,15 @@ use tau_ui_kit::{
 use tau_ui_plugin::{
     CallData,
     Fold,
-    HostCx,
     Manifest,
-    PluginInfo,
     PluginStatus,
-    RunCtx,
     RunCx,
-    Seam,
     UiPlugin,
     ViewCx,
     points::{self, AtCard, AtRun, CardView},
 };
 
 use self::listing::DirListing;
-#[cfg(feature = "host")]
-use crate::artifact_grant::fold_grants;
 use crate::artifact_grant::{ArtifactGrant, ArtifactMetadata, ArtifactRecord};
 
 /// The name tau-tools goes by in the interface.
@@ -89,9 +82,11 @@ impl Fold for State {
     }
 }
 
+/// What a card asks the host half: a range of an artifact the run was
+/// granted, to preview it.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
-enum Action {
+pub enum Action {
     Read {
         run: tau_agent::tool::RunId,
         id: String,
@@ -100,11 +95,13 @@ enum Action {
     },
 }
 
+/// What the host half answers an [`Action::Read`]: the range read, or
+/// why it could not be.
 #[derive(Debug, Serialize, Deserialize)]
-struct ActionReply {
-    id: String,
-    range: Option<Value>,
-    error: Option<String>,
+pub struct ActionReply {
+    pub id: String,
+    pub range: Option<Value>,
+    pub error: Option<String>,
 }
 
 /// Metadata or an explicit absence reason from a finished tool result.
@@ -401,123 +398,10 @@ impl UiPlugin for ToolsUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Host = ();
     type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    /// None here: the host builds the tools on the run's workspace,
-    /// where they act.
-    async fn agent_plugins(
-        &self,
-        _host: &(),
-        _run: &RunCtx,
-        _settings: &(),
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        Ok(Vec::new())
-    }
-
-    async fn catalog(
-        &self,
-        _host: &(),
-        _cx: &HostCx,
-        _settings: &(),
-    ) -> PluginInfo {
-        PluginInfo {
-            description: "read, bash, edit, write, grep, find and ls on the \
-                          run's workspace"
-                .into(),
-            seams: vec![Seam::Tools],
-            page: None,
-            ..Default::default()
-        }
-    }
-
-    async fn act(
-        &self,
-        _host: &(),
-        action: Value,
-        cx: &HostCx,
-    ) -> anyhow::Result<Option<Value>> {
-        #[cfg(feature = "host")]
-        {
-            use anyhow::Context as _;
-            use tau_artifacts::{Artifact, Bytes, Encoding, Quotas};
-            let Action::Read {
-                run,
-                id,
-                offset,
-                encoding,
-            } = serde_json::from_value(action)?;
-            let read = async {
-                let encoding = match encoding.as_str() {
-                    "utf8" => Encoding::Utf8,
-                    "base64" => Encoding::Base64,
-                    _ => anyhow::bail!("unsupported encoding"),
-                };
-                let starts = cx
-                    .store
-                    .plugin_entries(&run.0, tau_ui_plugin::HOST_RECORD)
-                    .await?;
-                let (_, start) =
-                    starts.first().context("run has no repository")?;
-                if starts.len() != 1 {
-                    anyhow::bail!("ambiguous repository");
-                }
-                let start: tau_ui_plugin::HostRecord =
-                    serde_json::from_str(start)?;
-                let repo =
-                    cx.repo(&start.repo).context("repository unavailable")?;
-                let records: Vec<Value> = cx
-                    .store
-                    .records(&run.0, NAME)
-                    .await?
-                    .into_iter()
-                    .map(|body| serde_json::from_str(&body))
-                    .collect::<Result<_, _>>()?;
-                let grants =
-                    fold_grants(&records).map_err(anyhow::Error::msg)?;
-                let grant = grants
-                    .get(&id)
-                    .context("artifact is not granted to this run")?;
-                let artifact: Artifact = serde_json::from_value(
-                    serde_json::to_value(&grant.artifact)?,
-                )?;
-                // Files: read off the async workers (ADR 0028).
-                let dir = repo.dir.join("artifacts");
-                let range = tokio::task::spawn_blocking(move || {
-                    Bytes::new(dir, Quotas::default())?.read_range(
-                        &artifact,
-                        offset,
-                        1024,
-                        encoding,
-                        &tokio_util::sync::CancellationToken::new(),
-                    )
-                })
-                .await??;
-                Ok::<_, anyhow::Error>(serde_json::to_value(range)?)
-            }
-            .await;
-            Ok(Some(serde_json::to_value(match read {
-                Ok(range) => ActionReply {
-                    id,
-                    range: Some(range),
-                    error: None,
-                },
-                Err(error) => ActionReply {
-                    id,
-                    range: None,
-                    error: Some(error.to_string()),
-                },
-            })?))
-        }
-        #[cfg(not(feature = "host"))]
-        {
-            let _ = (action, cx);
-            Ok(None)
-        }
     }
 
     fn reply(

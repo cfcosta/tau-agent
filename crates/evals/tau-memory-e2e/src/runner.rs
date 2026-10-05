@@ -13,7 +13,7 @@ use regex::Regex;
 use serde::Serialize;
 use tau_agent::limits::Limits;
 use tau_ai::llm::Llm;
-use tau_memory::{MemoryPlugin, plugin::START_HITS};
+use tau_memory_host::{MemoryPlugin, plugin::START_HITS};
 use tau_store::Store;
 
 use crate::{

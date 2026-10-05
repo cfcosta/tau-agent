@@ -11,14 +11,14 @@ use tau_goal::{
     Goal,
     NAME,
     Record,
-    ui::{GoalUi, State},
+    ui::{GoalHost, State},
 };
 use tau_ui_plugin::{
     Fold as _,
+    HostHalf,
     RunCtx,
     RunKind,
     Services,
-    UiPlugin,
     testing::{FakeRun, run_ctx},
 };
 
@@ -143,14 +143,15 @@ fn starting_checks_and_plugin_presence_follow_key_and_run_kind() {
             let should_check = jev && kind != RunKind::SubAgent;
             let mut state = State::default();
             let mut anchors = FakeRun::default();
-            for record in tau_testing::block_on(GoalUi.starting(&(), &run, &()))
+            for record in
+                tau_testing::block_on(GoalHost.starting(&(), &run, &()))
             {
                 state.apply(record, &mut anchors);
             }
             assert_eq!(state.checks, should_check);
 
             let plugins =
-                tau_testing::block_on(GoalUi.agent_plugins(&(), &run, &()))
+                tau_testing::block_on(GoalHost.agent_plugins(&(), &run, &()))
                     .unwrap();
             assert_eq!(plugins.len(), usize::from(should_check));
             assert!(plugins.iter().all(|plugin| plugin.name() == NAME));

@@ -13,10 +13,13 @@ use tau_agent::plugin::Plugin;
 
 use crate::{
     Fold,
+    HostHalf,
     PluginHost,
     PluginInfo,
     PluginUi,
     PluginValue,
+    RecordOf,
+    SettingsOf,
     UiPlugin,
     host::{HostCx, RepoCtx, RunCtx},
     manifest::Manifest,
@@ -83,9 +86,12 @@ pub type HostState = Box<dyn Any + Send + Sync>;
 pub type HostFuture<'a, T> =
     std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// [`UiPlugin`] with its types erased.
+/// [`UiPlugin`] and its [`HostHalf`], with their types erased.
 pub trait ErasedPlugin: Send + Sync {
     fn name(&self) -> &'static str;
+
+    /// Itself, to take back its typed form ([`Registry::host`]).
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 
     fn host<'a>(
         &'a self,
@@ -181,13 +187,57 @@ pub trait ErasedPlugin: Send + Sync {
     fn rewrites_keep_transcript(&self) -> bool;
 }
 
-struct Typed<P: UiPlugin> {
+/// The host half of a plugin whose own is not here: an interface's,
+/// which runs no agents. Asked for anything only a host does, it fails.
+pub struct NoHost<P>(std::marker::PhantomData<fn() -> P>);
+
+impl<P> Default for NoHost<P> {
+    fn default() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<P: UiPlugin> HostHalf for NoHost<P> {
+    type Plugin = P;
+    type Host = Missing;
+
+    async fn agent_plugins(
+        &self,
+        _: &Missing,
+        _: &RunCtx,
+        _: &SettingsOf<Self>,
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
+        unreachable!("a plugin without its host half has no host state")
+    }
+
+    async fn catalog(
+        &self,
+        _: &Missing,
+        _: &HostCx,
+        _: &SettingsOf<Self>,
+    ) -> PluginInfo {
+        unreachable!("a plugin without its host half has no host state")
+    }
+}
+
+/// The host state of a plugin without its host half, which cannot be
+/// made: a host that reaches such a plugin fails as it starts, naming it.
+pub struct Missing;
+
+impl PluginHost for Missing {
+    async fn new(_: &HostCx) -> anyhow::Result<Self> {
+        anyhow::bail!("its host half is not in this registry (Registry::host)")
+    }
+}
+
+struct Typed<P: UiPlugin, H: HostHalf<Plugin = P>> {
     plugin: P,
+    half: H,
     manifest: Manifest<P>,
 }
 
-impl<P: UiPlugin> Typed<P> {
-    fn host_of<'h>(&self, host: &'h HostState) -> &'h P::Host {
+impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
+    fn host_of<'h>(&self, host: &'h HostState) -> &'h H::Host {
         host.downcast_ref()
             .expect("a host state is made by its own plugin")
     }
@@ -220,9 +270,13 @@ impl<P: UiPlugin> Typed<P> {
     }
 }
 
-impl<P: UiPlugin> ErasedPlugin for Typed<P> {
+impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
     fn name(&self) -> &'static str {
         self.plugin.name()
+    }
+
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self
     }
 
     fn host<'a>(
@@ -230,7 +284,11 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         cx: &'a HostCx,
     ) -> HostFuture<'a, anyhow::Result<HostState>> {
         Box::pin(async move {
-            Ok(Box::new(<P::Host as PluginHost>::new(cx).await?) as HostState)
+            let host =
+                <H::Host as PluginHost>::new(cx).await.map_err(|error| {
+                    error.context(format!("plugin {}", self.plugin.name()))
+                })?;
+            Ok(Box::new(host) as HostState)
         })
     }
 
@@ -244,7 +302,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         run: &'a RunCtx,
         settings: &'a PluginValue,
     ) -> HostFuture<'a, anyhow::Result<Vec<Box<dyn Plugin>>>> {
-        Box::pin(self.plugin.agent_plugins(
+        Box::pin(self.half.agent_plugins(
             self.host_of(host),
             run,
             settings.get(),
@@ -258,9 +316,11 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         settings: &'a PluginValue,
     ) -> HostFuture<'a, Vec<Value>> {
         Box::pin(async move {
-            self.plugin
+            let records: Vec<RecordOf<P>> = self
+                .half
                 .starting(self.host_of(host), run, settings.get())
-                .await
+                .await;
+            records
                 .iter()
                 .map(|record| {
                     serde_json::to_value(record)
@@ -281,7 +341,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
                 name: self.plugin.name().to_owned(),
                 settings: self.manifest.settings.is_some(),
                 ..self
-                    .plugin
+                    .half
                     .catalog(self.host_of(host), cx, settings.get())
                     .await
             }
@@ -294,7 +354,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         cx: &'a HostCx,
     ) -> HostFuture<'a, PluginValue> {
         Box::pin(async move {
-            PluginValue::typed(self.plugin.data(self.host_of(host), cx).await)
+            PluginValue::typed(self.half.data(self.host_of(host), cx).await)
         })
     }
 
@@ -305,10 +365,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         settings: &'a PluginValue,
     ) -> HostFuture<'a, Option<std::sync::Arc<dyn tau_agent::launch::Launcher>>>
     {
-        Box::pin(
-            self.plugin
-                .launcher(self.host_of(host), repo, settings.get()),
-        )
+        Box::pin(self.half.launcher(self.host_of(host), repo, settings.get()))
     }
 
     fn repo_data<'a>(
@@ -319,7 +376,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
     ) -> HostFuture<'a, PluginValue> {
         Box::pin(async move {
             PluginValue::typed(
-                self.plugin.repo_data(self.host_of(host), repo, cx).await,
+                self.half.repo_data(self.host_of(host), repo, cx).await,
             )
         })
     }
@@ -330,7 +387,7 @@ impl<P: UiPlugin> ErasedPlugin for Typed<P> {
         action: Value,
         cx: &'a HostCx,
     ) -> HostFuture<'a, anyhow::Result<Option<Value>>> {
-        Box::pin(self.plugin.act(self.host_of(host), action, cx))
+        Box::pin(self.half.act(self.host_of(host), action, cx))
     }
 
     fn apply(
@@ -518,10 +575,52 @@ impl Registry {
         Self::default()
     }
 
-    /// Adds `plugin`, with its UI.
+    /// Adds `plugin`, with its UI and without its host half: what an
+    /// interface has. A host gives it its half with [`Self::host`].
     pub fn with<P: UiPlugin>(mut self, plugin: P) -> Self {
         let manifest = plugin.manifest();
-        self.plugins.push(Arc::new(Typed { plugin, manifest }));
+        self.plugins.push(Arc::new(Typed {
+            plugin,
+            half: NoHost::<P>::default(),
+            manifest,
+        }));
+        self
+    }
+
+    /// Gives `half` to the plugin it is the host half of, in its place.
+    ///
+    /// # Panics
+    ///
+    /// When that plugin is not here yet, or already has a host half: the
+    /// list of plugins and the host halves given them are both tau's own.
+    pub fn host<H: HostHalf>(mut self, half: H) -> Self {
+        let slot = self.plugins.iter().position(|plugin| {
+            Arc::clone(plugin)
+                .into_any()
+                .is::<Typed<H::Plugin, NoHost<H::Plugin>>>()
+        });
+        let Some(slot) = slot else {
+            panic!(
+                "no plugin without a host half for {}",
+                std::any::type_name::<H>()
+            )
+        };
+        let erased = Arc::clone(&self.plugins[slot]).into_any();
+        // Two references: the slot's and `erased`; the slot's goes now.
+        self.plugins.remove(slot);
+        let typed = erased
+            .downcast::<Typed<H::Plugin, NoHost<H::Plugin>>>()
+            .ok()
+            .and_then(|typed| Arc::try_unwrap(typed).ok())
+            .expect("the registry holds the only reference while it is built");
+        self.plugins.insert(
+            slot,
+            Arc::new(Typed {
+                plugin: typed.plugin,
+                half,
+                manifest: typed.manifest,
+            }),
+        );
         self
     }
 
@@ -622,24 +721,10 @@ mod tests {
         type Data = ();
         type RepoData = ();
         type Settings = ();
-        type Host = ();
         type Ui = ();
 
         fn name(&self) -> &'static str {
             "counter"
-        }
-
-        async fn agent_plugins(
-            &self,
-            _: &(),
-            _: &RunCtx,
-            _: &(),
-        ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-            Ok(Vec::new())
-        }
-
-        async fn catalog(&self, _: &(), _: &HostCx, _: &()) -> PluginInfo {
-            unreachable!()
         }
 
         fn manifest(&self) -> Manifest<Self> {
@@ -681,6 +766,89 @@ mod tests {
         assert_eq!(state.get::<Counted>().0, kept);
         let keys: Vec<String> = kept.iter().map(|n| format!("n-{n}")).collect();
         assert_eq!(anchors.anchors, keys);
+    }
+
+    /// Counts on the host too: its host state is made from the host's
+    /// context.
+    struct CounterHost;
+
+    impl HostHalf for CounterHost {
+        type Plugin = Counter;
+        type Host = ();
+
+        async fn agent_plugins(
+            &self,
+            _: &(),
+            _: &RunCtx,
+            _: &(),
+        ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
+            Ok(Vec::new())
+        }
+
+        async fn catalog(&self, _: &(), _: &HostCx, _: &()) -> PluginInfo {
+            PluginInfo::default()
+        }
+    }
+
+    /// Another plugin, so the registry has an order to keep.
+    struct Other;
+
+    impl UiPlugin for Other {
+        type State = ();
+        type Data = ();
+        type RepoData = ();
+        type Settings = ();
+        type Ui = ();
+
+        fn name(&self) -> &'static str {
+            "other"
+        }
+
+        fn manifest(&self) -> Manifest<Self> {
+            Manifest::new()
+        }
+    }
+
+    /// A host half takes its plugin's place: the order stays, the plugin
+    /// makes its host state, and one still without its half fails to,
+    /// naming itself.
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a test is a synchronous entry point (ADR 0028)"
+    )]
+    fn a_host_half_goes_to_its_plugin_in_place() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+        let cx = HostCx::new(
+            store,
+            runtime.handle().clone(),
+            crate::Services::default(),
+            std::path::PathBuf::from("/data/tau"),
+            Vec::new(),
+            Arc::new(|_| {}),
+        );
+        let registry =
+            Registry::new().with(Other).with(Counter).host(CounterHost);
+        let names: Vec<&str> =
+            registry.plugins().map(|plugin| plugin.name()).collect();
+        assert_eq!(names, ["other", "counter"]);
+        let counter = registry.get("counter").unwrap();
+        assert!(runtime.block_on(counter.host(&cx)).is_ok());
+        let other = registry.get("other").unwrap();
+        let error = runtime.block_on(other.host(&cx)).err().unwrap();
+        assert!(format!("{error:#}").contains("plugin other"), "{error:#}");
+    }
+
+    /// A host half for a plugin the registry does not list is a mistake
+    /// in tau's own list.
+    #[test]
+    #[should_panic(expected = "no plugin without a host half")]
+    fn a_host_half_without_its_plugin_panics() {
+        let _ = Registry::new().with(Other).host(CounterHost);
     }
 
     /// A contribution to a point nobody declares is reported; one to the

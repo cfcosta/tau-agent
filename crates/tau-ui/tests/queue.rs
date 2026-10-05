@@ -29,7 +29,7 @@ use tau_ui_remote::{
     view::Item,
     workspace::LandingState,
 };
-use tau_vcs::{Identity, Project};
+use tau_vcs_host::{Identity, Project};
 
 /// Runs GPUI until `done` holds, while runs work on the host's threads.
 fn until(
@@ -68,7 +68,7 @@ fn setup(cx: &mut TestAppContext, llm: ScriptedModel) -> Setup {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs::ProjectRepo::import(
+    let project = tau_vcs_host::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
@@ -185,7 +185,7 @@ impl Setup {
     }
 
     /// Previews `run`'s landing, as the person opens its card.
-    fn preview(&mut self, run: &RunId) -> tau_vcs::Landing {
+    fn preview(&mut self, run: &RunId) -> tau_vcs_host::Landing {
         self.workspace
             .update(&mut self.cx, |ws, cx| ws.preview_landing(run, cx));
         let workspace = self.workspace.clone();

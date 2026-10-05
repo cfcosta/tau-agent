@@ -67,7 +67,7 @@ pub(super) struct LandingPlan {
     /// The child's newest commit, from its bookmark.
     pub(super) child_head: String,
     /// The parent's workspace, where the landing runs.
-    pub(super) parent_vcs: tau_vcs::Vcs,
+    pub(super) parent_vcs: tau_vcs_host::Vcs,
 }
 
 /// The latest link in `entries`, up to `seq` when given.
@@ -619,7 +619,7 @@ impl Host {
         // A completed run may have failed its final commit. Do not land
         // only its earlier commits and then delete the remaining edits.
         // Open the existing workspace, never recreate a missing one.
-        let child_vcs = tau_vcs::Vcs::open(
+        let child_vcs = tau_vcs_host::Vcs::open(
             project.workspace_dir(&child_workspace),
             identity(),
         )
@@ -639,7 +639,7 @@ impl Host {
                 anyhow::anyhow!("{} has no changes to land", child.0)
             })?;
         let parent_vcs = if parent_busy || !writes {
-            tau_vcs::Vcs::open(
+            tau_vcs_host::Vcs::open(
                 project.workspace_dir(&parent_workspace),
                 identity(),
             )

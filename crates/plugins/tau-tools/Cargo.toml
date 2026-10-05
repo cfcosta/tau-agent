@@ -1,88 +1,33 @@
 [package]
 name = "tau-tools"
-description = "Optional coding tools for tau agents: read, bash, edit, write, grep, find and ls."
+description = "tau-tools' interface half: the cards of its coding tools, and the shapes they read."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 publish.workspace = true
 
 [features]
-default = ["host"]
-# The agent half: the tools themselves. The cards build without it, as
-# on a phone.
-host = [
-  "dep:async-trait",
-  "dep:tau-artifacts",
-  "dep:globset",
-  "dep:grep-matcher",
-  "dep:grep-regex",
-  "dep:grep-searcher",
-  "dep:ignore",
-  "dep:image",
-  "dep:libc",
-  "dep:regex",
-  "dep:schemars",
-  "dep:sha2",
-  "dep:similar",
-  "dep:tokio",
-  "dep:tokio-util",
-  "dep:unicode-normalization",
-]
-# `bash` runs commands under a pseudo-terminal, with tau-terminal
-# (libghostty-vt) turning the output into the model's text, and streams
-# the raw bytes in its details for a terminal view
-# (docs/decisions/0010-terminal-rendering.md). Off, `bash` uses pipes
-# and pulls in neither.
+# `bash` cards draw their output as a terminal, with tau-terminal
+# (libghostty-vt) (docs/decisions/0010-terminal-rendering.md). Off, they
+# show its last lines, and neither is pulled in.
 terminal = ["dep:tau-terminal"]
 
 [dependencies]
 anyhow.workspace = true
-async-trait = { workspace = true, optional = true }
 base64.workspace = true
-globset = { workspace = true, optional = true }
-grep-matcher = { workspace = true, optional = true }
-grep-regex = { workspace = true, optional = true }
-grep-searcher = { workspace = true, optional = true }
-ignore = { workspace = true, optional = true }
-image = { workspace = true, optional = true }
-libc = { workspace = true, optional = true }
-regex = { workspace = true, optional = true }
-schemars = { workspace = true, optional = true }
-sha2 = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
-similar = { workspace = true, optional = true }
 tau-agent.workspace = true
-tau-artifacts = { workspace = true, optional = true }
 uuid.workspace = true
 tau-ai.workspace = true
 tau-terminal = { workspace = true, optional = true }
 thiserror.workspace = true
-tokio = { workspace = true, optional = true, features = [
-  "fs",
-  "io-util",
-  "process",
-] }
-tokio-util = { workspace = true, optional = true }
-unicode-normalization = { workspace = true, optional = true }
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 
 [dev-dependencies]
-tau-store-sqlite.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
-base64.workspace = true
 serde_json.workspace = true
-tau-store.workspace = true
 hegeltest.workspace = true
-image.workspace = true
-unicode-normalization.workspace = true
-tau-testing.workspace = true
-tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "test-util"] }
-
-[[bench]]
-name = "grep"
-harness = false

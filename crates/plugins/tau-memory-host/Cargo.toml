@@ -1,0 +1,46 @@
+[package]
+name = "tau-memory-host"
+description = "Long-term memory for tau agents: a Zettelkasten of typed, linked Markdown notes; tau-memory's host half."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# docbert's ColBERT model as the encoder.
+docbert = ["dep:docbert-pylate", "dep:candle-core"]
+# The notes tau-ui's demo shows.
+demo = []
+
+[[bin]]
+name = "tau-memory-eval"
+required-features = ["docbert"]
+
+[dependencies]
+anyhow.workspace = true
+candle-core = { workspace = true, optional = true }
+docbert-pylate = { workspace = true, optional = true }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+tau-memory.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+schemars.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+tokio-util.workspace = true
+toml.workspace = true
+tau-ui-plugin.workspace = true
+
+[dev-dependencies]
+tau-store-sqlite.workspace = true
+tau-ui-plugin = { workspace = true, features = ["testing"] }
+hegeltest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
+futures-util.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true

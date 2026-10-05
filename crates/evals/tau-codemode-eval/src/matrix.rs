@@ -8,10 +8,11 @@ use sha2::{Digest, Sha256};
 use tau_agent::agent::{Agent, Checkpoint};
 use tau_ai::message::{InputBlock, Message, ToolResultMessage, Usage};
 use tau_artifacts::{Bytes, Quotas};
-use tau_codemode::{Codemode, modules::Definition};
+use tau_codemode::modules::Definition;
+use tau_codemode_host::Codemode;
 use tau_store::{Entry, Store};
 use tau_testing::{block_on_io, scripted::ScriptedModel};
-use tau_tools::{
+use tau_tools_host::{
     path::Root,
     plugin::{CodingTools, Tool},
 };

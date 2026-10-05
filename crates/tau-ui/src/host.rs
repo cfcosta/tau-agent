@@ -42,9 +42,9 @@ use tau_ai::{
 use tau_artifacts::{Bytes, Quotas};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
-use tau_tools::{path::Root, plugin::CodingTools};
+use tau_tools_host::{path::Root, plugin::CodingTools};
 use tau_ui_plugin::{HOST_RECORD, HostRecord, Services, TurnCommit, TurnHooks};
-use tau_vcs::{
+use tau_vcs_host::{
     ChangeKind,
     DEFAULT_WORKSPACE,
     FileDiff,
@@ -202,7 +202,7 @@ pub struct Host {
     jev_meter: Arc<Mutex<crate::metered::Meter>>,
     /// How tau-memory searches notes: by meaning in the app, by keywords
     /// in tests, where no model is loaded.
-    memory_search: tau_memory::ui::Search,
+    memory_search: tau_memory_host::Search,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -226,7 +226,7 @@ pub struct Host {
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
     /// Each repository's main chat's sub-agents, which run beside it
     /// and outlive its turns (ADR 0026), by repository.
-    sub_agents: Mutex<HashMap<String, tau_vcs::SubAgents>>,
+    sub_agents: Mutex<HashMap<String, tau_vcs_host::SubAgents>>,
     /// What each run going on was steered with and has not read yet.
     unread: Arc<Mutex<HashMap<RunId, Vec<String>>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
@@ -420,7 +420,7 @@ impl Host {
         host.client = Mutex::new(Some(client));
         // The app searches memory with docbert's model; hosts built
         // elsewhere, as in tests, by keywords alone.
-        host.memory_search = tau_memory::ui::Search::Semantic;
+        host.memory_search = tau_memory_host::Search::Semantic;
         host.host_plugins();
         host.runtime.block_on(host.list_plugins_repo());
         // Importing clones can take a while; the window opens first.
@@ -486,7 +486,7 @@ impl Host {
             github: github::Api::default(),
             jev: None,
             jev_meter: Arc::default(),
-            memory_search: tau_memory::ui::Search::Keywords,
+            memory_search: tau_memory_host::Search::Keywords,
             store,
             settings: Arc::new(Mutex::new(settings)),
             config,

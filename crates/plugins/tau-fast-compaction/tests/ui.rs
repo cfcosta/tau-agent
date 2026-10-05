@@ -8,12 +8,13 @@ use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_fast_compaction::{
     NAME,
-    ui::{Decision, FastCompactionUi, State},
+    ui::{Decision, FastCompactionHost, FastCompactionUi, State},
 };
 use tau_ui_plugin::{
     CardInfo,
     Dropped,
     Fold as _,
+    HostHalf,
     REWRITE,
     RunCtx,
     RunKind,
@@ -176,14 +177,14 @@ fn it_says_whether_it_is_on() {
         let run = run(jev);
         let mut state = State::default();
         for body in
-            tau_testing::block_on(FastCompactionUi.starting(&(), &run, &()))
+            tau_testing::block_on(FastCompactionHost.starting(&(), &run, &()))
         {
             state.apply(body, &mut FakeRun::default());
         }
         assert_eq!(state.on, Some(jev));
         let status = state.status().unwrap();
         assert_eq!(status == tau_ui_plugin::NO_KEY, !jev, "{status}");
-        let plugins = tau_testing::block_on(FastCompactionUi.agent_plugins(
+        let plugins = tau_testing::block_on(FastCompactionHost.agent_plugins(
             &(),
             &run,
             &(),

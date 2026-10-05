@@ -62,7 +62,7 @@ use tau_ui_remote::{
     view::{Item, Origin, RunView},
     workspace::Synced,
 };
-use tau_vcs::{Identity, Project};
+use tau_vcs_host::{Identity, Project};
 use tokio::sync::oneshot;
 
 /// The models people show, hide and pick: the plan's.
@@ -926,7 +926,7 @@ fn project(checkout: &Path) -> Project {
         checkout,
         &["commit", "--quiet", "--allow-empty", "-m", "first"],
     );
-    tau_vcs::ProjectRepo::import(
+    tau_vcs_host::ProjectRepo::import(
         checkout.to_str().unwrap(),
         checkout.with_file_name("project"),
         Identity::default(),

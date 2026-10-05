@@ -60,7 +60,7 @@ use tau_ai::{
     responses::request::ReasoningEffort,
 };
 use tau_jev::{Answer, Jev, Question, Request};
-pub use ui::ReasoningPlugin;
+pub use ui::{ReasoningHost, ReasoningPlugin};
 
 /// The name the plugin goes by in events, reports and records.
 pub const NAME: &str = "tau-reasoning";

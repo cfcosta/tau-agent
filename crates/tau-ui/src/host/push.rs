@@ -53,14 +53,14 @@ impl Host {
         // The push and, when GitHub moved, what main has that it lacks.
         let (pushed, ahead) = project
             .run(move |project| {
-                let remote = tau_vcs::Remote {
+                let remote = tau_vcs_host::Remote {
                     url: &url,
                     token: Some(&token),
                 };
                 let pushed = project.push_trunk(remote);
                 let ahead = matches!(
                     pushed,
-                    Err(tau_vcs::VcsError::PushRejected { .. })
+                    Err(tau_vcs_host::VcsError::PushRejected { .. })
                 )
                 .then(|| {
                     project.unpushed().map_or(0, |changes| changes.len() as u32)
@@ -82,7 +82,7 @@ impl Host {
                     })
                     .collect(),
             }),
-            Err(tau_vcs::VcsError::PushRejected { branch }) => {
+            Err(tau_vcs_host::VcsError::PushRejected { branch }) => {
                 Err(PushFailure::Moved {
                     branch,
                     ahead: ahead.unwrap_or_default(),

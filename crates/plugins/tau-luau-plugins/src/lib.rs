@@ -1,29 +1,20 @@
 //! tau-luau-plugins: plugins written in Luau, run in codemode's sandbox,
 //! as one tau plugin
-//! ([ADR 0027](../../../docs/decisions/0027-luau-plugins.md)).
+//! ([ADR 0027](../../../docs/decisions/0027-luau-plugins.md)). This is
+//! its interface half: what every interface shows of a plugin. Loading
+//! plugins and running their hooks is `tau-luau-plugins-host`'s
+//! (ADR 0030).
 //!
 //! A Luau plugin is a folder: `plugin.luau`, which returns
 //! `tau.plugin { ... }`, modules under `lib/`, tests under `tests/` and
 //! a README. The host reads what it declares ([`Declaration`]) and runs
-//! each of its hooks in a fresh codemode VM (`runtime`, feature `host`).
+//! each of its hooks in a fresh codemode VM.
 //!
 //! - [`Declaration`], [`Uses`], [`ToolSpec`], [`Hooks`]: what a plugin
 //!   says it is, as every interface shows it.
-//! - `runtime` (feature `host`): reading a folder, loading it, calling
-//!   its hooks.
 
-#[cfg(feature = "host")]
-pub mod agent;
 pub mod pane;
-#[cfg(feature = "host")]
-pub mod registry;
-#[cfg(feature = "host")]
-pub mod runtime;
 pub mod settings;
-#[cfg(feature = "host")]
-pub mod skill;
-#[cfg(feature = "host")]
-pub mod testing;
 pub mod ui;
 
 use std::collections::BTreeMap;

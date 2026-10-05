@@ -44,7 +44,7 @@ use tau_jev::{Jev, NoulCriteria, Question, Request};
 /// The name the plugin goes by in events, reports and records.
 pub const NAME: &str = "tau-goal";
 
-pub use ui::GoalUi;
+pub use ui::{GoalHost, GoalUi};
 
 /// Continuations a goal allows when `/goal` does not say.
 pub const DEFAULT_CONTINUATIONS: u32 = 10;

@@ -17,7 +17,7 @@ use tau_ui::{
     host::{Host, HostConfig},
 };
 use tau_ui_remote::models::ModelChoice;
-use tau_vcs::{Identity, Project};
+use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const REPO: &str = "repo";
@@ -38,7 +38,7 @@ impl Disk {
         git(src.path(), &["add", "README.md"]);
         git(src.path(), &["commit", "--quiet", "-m", "first"]);
         let dir = tempfile::tempdir().unwrap();
-        let project = tau_vcs::ProjectRepo::import(
+        let project = tau_vcs_host::ProjectRepo::import(
             src.path().to_str().unwrap(),
             dir.path().join("p"),
             Identity::default(),
@@ -191,7 +191,11 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
     assert!(kept_dir.join("kept.txt").exists());
     assert!(!cut_dir.exists());
     assert!(!project.workspace_dir("stray-1").exists());
-    assert!(project.workspace_dir(tau_vcs::DEFAULT_WORKSPACE).exists());
+    assert!(
+        project
+            .workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE)
+            .exists()
+    );
     assert_eq!(
         project.blocking().bookmarks("tau/").unwrap(),
         [format!("tau/{}", kept.0)]
@@ -329,7 +333,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
     let records = tokio::runtime::Runtime::new().unwrap().block_on(async {
         let store = tau_store_sqlite::open(disk.db()).await.unwrap();
         store
-            .plugin_entries(&main.0, tau_vcs::run_workspace::PLUGIN)
+            .plugin_entries(&main.0, tau_vcs_host::run_workspace::PLUGIN)
             .await
             .unwrap()
     });
@@ -340,7 +344,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
             .unwrap()
             .map(|(bytes, _)| bytes),
         in_checkout: project
-            .workspace_dir(tau_vcs::DEFAULT_WORKSPACE)
+            .workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE)
             .join("a.txt")
             .exists(),
         workspaces: project.blocking().workspaces().unwrap().len(),
@@ -375,7 +379,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
             .collect(),
         landed_links: records
             .iter()
-            .filter_map(|(_, body)| tau_vcs::Link::parse(body))
+            .filter_map(|(_, body)| tau_vcs_host::Link::parse(body))
             .filter(|link| link.from.as_deref() == Some(&*chat.0))
             .count(),
         ending: match host.block_on(host.ending_of(chat)).unwrap() {

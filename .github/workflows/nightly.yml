@@ -56,8 +56,8 @@ jobs:
             --file crates/plugins/tau-fast-compaction/src/ledger.rs \
             --file crates/plugins/tau-fast-compaction/src/lib.rs \
             --file crates/plugins/tau-jev/src/lib.rs \
-            --file crates/plugins/tau-tools/src/edit.rs \
-            --file crates/plugins/tau-tools/src/truncate.rs \
+            --file crates/plugins/tau-tools-host/src/edit.rs \
+            --file crates/plugins/tau-tools-host/src/truncate.rs \
             --file crates/tau-store-sqlite/src/lib.rs
       - uses: actions/upload-artifact@v4
         if: always()

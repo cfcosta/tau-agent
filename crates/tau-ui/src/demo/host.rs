@@ -40,12 +40,12 @@ use crate::{
 /// store would add it up.
 const SPEND: [(&str, f64); 7] = [
     (tau_reasoning::NAME, 0.004),
-    (tau_memory::plugin::NAME, 0.212),
-    (tau_constitution::NAME, 0.031),
+    (tau_memory_host::NAME, 0.212),
+    (tau_constitution_host::NAME, 0.031),
     (tau_fast_compaction::NAME, 0.046),
     (tau_compaction::NAME, 0.061),
     (tau_goal::NAME, 0.009),
-    (tau_codemode::PLUGIN, 0.002),
+    (tau_codemode_host::PLUGIN, 0.002),
 ];
 
 /// Jev's scores as the demo scripts them: one per question, in the
@@ -108,7 +108,7 @@ impl DemoHost {
         let skills = dir.path().join("skills");
         tau_skills::demo::seed(&skills)?;
         let services = Services::default()
-            .with(tau_memory::ui::Search::Keywords)
+            .with(tau_memory_host::Search::Keywords)
             .with(saved)
             .with(ConfigDir(dir.path().join("config")))
             .with(tau_skills::SkillsDir(skills))
@@ -124,12 +124,12 @@ impl DemoHost {
                 let _ = pushes.send(push);
             }),
         );
-        tau_memory::demo::seed(&cx)?;
+        tau_memory_host::demo::seed(&cx)?;
         let hosted = runtime.block_on(hosted::host_all(&cx));
-        for act in tau_constitution::demo::acts() {
+        for act in tau_constitution_host::demo::acts() {
             runtime.block_on(hosted::act(
                 &hosted,
-                tau_constitution::NAME,
+                tau_constitution_host::NAME,
                 serde_json::to_value(act)?,
                 &cx,
             ))?;
@@ -189,7 +189,7 @@ impl DemoHost {
             // that started them would see them.
             if repo.name == "tau-agent" {
                 repo.plugins.insert(
-                    tau_mcp::NAME.to_owned(),
+                    tau_mcp_host::NAME.to_owned(),
                     PluginValue::typed(tau_mcp::demo::servers()),
                 );
                 // It has an `.envrc`, as the real one does, and direnv

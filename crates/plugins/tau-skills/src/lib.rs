@@ -18,6 +18,8 @@
 #[cfg(feature = "demo")]
 pub mod demo;
 #[cfg(feature = "host")]
+mod half;
+#[cfg(feature = "host")]
 pub mod host;
 #[cfg(feature = "host")]
 pub mod scan;
@@ -25,6 +27,8 @@ pub mod ui;
 
 use std::path::PathBuf;
 
+#[cfg(feature = "host")]
+pub use half::SkillsHost;
 use serde::{Deserialize, Serialize};
 pub use ui::SkillsUi;
 

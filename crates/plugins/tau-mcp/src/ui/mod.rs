@@ -4,47 +4,9 @@
 //! repository in the sidebar; its line in a run's plugin list; and the
 //! servers' prompts as composer commands, `/mcp__<server>__<prompt>
 //! key=value ...`, whose messages the host fetches into the composer.
-//!
-//! ## On the host
-//!
-//! Connections outlive runs ([`McpPlugin`]). The user's servers (the
-//! user's file, the settings, and the host's own) run once for every
-//! repository, in a shared [`Pool`]; a repository's servers, and a user
-//! server whose `cwd` is relative ([`ServerConfig::per_repo`]), run in
-//! the repository's own pool. The host keeps one plugin per **scope**
-//! (a repository, or the user's servers alone) over the connections it
-//! uses, built the first time something needs them: a run in the
-//! repository, or Connect on the page. Until then the page shows the
-//! servers as configured, and a shared server as another scope started
-//! it.
-//!
-//! Each time a scope is used (a run starts, the catalog is drawn, an
-//! action runs) its servers are read again, from the user's file, the
-//! plugin's settings and the repository's file. When they differ from
-//! what its plugin was built from, the plugin is built again over the
-//! pools, which keep every connection whose entry did not change: only
-//! new and changed servers connect, and removed, changed or disabled
-//! ones close once the runs going on that use them end. Files are not
-//! watched: an edit by hand shows the next time the scope is used.
-//!
-//! Every run gets a wrapper ([`RunServers`]) around its scope's plugin:
-//! its `start` and tool source. When the host is dropped, every
-//! connection is closed.
-//!
-//! ## Actions
-//!
-//! The page asks through [`Act`]. The host half reads the plugin's
-//! settings, changes them ([`apply`]), and saves them, so an approval
-//! or a new server holds for the next run. It refuses what the page
-//! should not do: a name the user's file has, an entry that does not
-//! parse, approving an entry other than the one the page showed.
+//! The connections behind them are `tau-mcp-host`'s (ADR 0030).
 
 pub mod card;
-#[cfg(feature = "host")]
-mod host;
-#[cfg(not(feature = "host"))]
-#[path = "no_host.rs"]
-mod host;
 pub mod page;
 
 use std::collections::BTreeSet;
@@ -52,27 +14,21 @@ use std::collections::BTreeSet;
 use gpui::{AppContext as _, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tau_agent::plugin::Plugin;
 use tau_ui_kit::{assets::Icon, input::TextInput, theme::Tone};
 use tau_ui_plugin::{
     Handle,
-    HostCx,
     Link,
     ListedCommand,
     Manifest,
     NavEntry,
     Page,
-    PluginInfo,
     PluginStatus,
     PluginUi,
-    RepoCtx,
-    RunCtx,
     UiPlugin,
     ViewCx,
     points::{self, AtRepo, AtRun},
 };
 
-pub use self::host::*;
 use crate::{
     NAME,
     config::{McpConfig, Off, ServerConfig, Settings, valid_name},
@@ -100,6 +56,15 @@ pub enum Defined {
 }
 
 impl Defined {
+    /// Where an entry of `origin` is defined.
+    pub fn of(origin: crate::config::Origin) -> Self {
+        match origin {
+            crate::config::Origin::User => Self::User,
+            crate::config::Origin::Settings => Self::Settings,
+            crate::config::Origin::Repo => Self::Repo,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::User => "user file",
@@ -451,53 +416,10 @@ impl UiPlugin for McpUi {
     type Data = Servers;
     type RepoData = Servers;
     type Settings = Settings;
-    type Host = Host;
     type Ui = page::Ui;
 
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    /// The repository's servers, started on its first run, when it has
-    /// any that would connect.
-    async fn agent_plugins(
-        &self,
-        host: &Host,
-        run: &RunCtx,
-        settings: &Settings,
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        host::agent_plugins(host, run, settings)
-    }
-
-    async fn catalog(
-        &self,
-        host: &Host,
-        cx: &HostCx,
-        settings: &Settings,
-    ) -> PluginInfo {
-        host::catalog(host, cx, settings)
-    }
-
-    async fn data(&self, host: &Host, cx: &HostCx) -> Servers {
-        host::data(host, cx)
-    }
-
-    async fn repo_data(
-        &self,
-        host: &Host,
-        repo: &RepoCtx,
-        cx: &HostCx,
-    ) -> Servers {
-        host::repo_data(host, repo, cx)
-    }
-
-    async fn act(
-        &self,
-        host: &Host,
-        action: Value,
-        cx: &HostCx,
-    ) -> anyhow::Result<Option<Value>> {
-        host::act(host, action, cx).await
     }
 
     /// A prompt goes to the composer; one that failed says why and puts

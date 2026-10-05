@@ -5,18 +5,13 @@
 pub mod card;
 pub mod page;
 
-use tau_agent::plugin::Plugin;
 use tau_ui_kit::{assets::Icon, theme::Tone};
 use tau_ui_plugin::{
-    HostCx,
     Link,
     ListedCommand,
     Manifest,
     NavEntry,
     Page,
-    PluginInfo,
-    RunCtx,
-    Seam,
     UiPlugin,
     ViewCx,
     points::{self, AtApp},
@@ -27,115 +22,16 @@ use crate::{NAME, Skills};
 /// The plugin, as the registry holds it.
 pub struct SkillsUi;
 
-/// What the plugin keeps on the host: where the skills are.
-#[cfg(feature = "host")]
-#[derive(Debug, Clone)]
-pub struct Host {
-    /// The person's skills.
-    pub dir: Option<std::path::PathBuf>,
-    /// The skills tau ships.
-    pub builtin: std::path::PathBuf,
-}
-
-#[cfg(feature = "host")]
-impl tau_ui_plugin::PluginHost for Host {
-    async fn new(cx: &HostCx) -> anyhow::Result<Self> {
-        Ok(Self {
-            dir: cx
-                .services
-                .get::<crate::SkillsDir>()
-                .map(|dir| dir.0.clone()),
-            builtin: cx.dir.join(crate::BUILTIN_DIR),
-        })
-    }
-}
-
-#[cfg(not(feature = "host"))]
-pub type Host = ();
-
-impl SkillsUi {
-    #[cfg(feature = "host")]
-    fn skills(host: &Host) -> Skills {
-        crate::scan::scan_all(host.dir.as_deref(), &host.builtin)
-    }
-}
-
 impl UiPlugin for SkillsUi {
     type State = ();
     /// The skills, as the folder holds them now.
     type Data = Skills;
     type RepoData = ();
     type Settings = ();
-    type Host = Host;
     type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    /// Reads the folder as the run starts; with no skills, the run gets
-    /// neither the list nor the tool.
-    async fn agent_plugins(
-        &self,
-        host: &Host,
-        _run: &RunCtx,
-        _settings: &(),
-    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        #[cfg(feature = "host")]
-        {
-            let skills = Self::skills(host);
-            if skills.found.is_empty() {
-                return Ok(Vec::new());
-            }
-            Ok(vec![Box::new(crate::host::SkillsPlugin::new(skills))])
-        }
-        #[cfg(not(feature = "host"))]
-        {
-            let _ = host;
-            Ok(Vec::new())
-        }
-    }
-
-    async fn catalog(
-        &self,
-        host: &Host,
-        cx: &HostCx,
-        _settings: &(),
-    ) -> PluginInfo {
-        let found = self.data(host, cx).await.found.len();
-        PluginInfo {
-            description: match found {
-                1 => "Instructions the agent loads when a task calls for \
-                      them: 1 skill"
-                    .into(),
-                n => format!(
-                    "Instructions the agent loads when a task calls for \
-                     them: {n} skills"
-                ),
-            },
-            seams: vec![Seam::Start, Seam::Tools],
-            page: Some(link()),
-            note: Some(tau_ui_plugin::Note::new(
-                match found {
-                    1 => "1 skill".to_owned(),
-                    n => format!("{n} skills"),
-                },
-                tau_ui_kit::theme::Tone::Quiet,
-            )),
-            ..PluginInfo::default()
-        }
-    }
-
-    async fn data(&self, host: &Host, _cx: &HostCx) -> Skills {
-        #[cfg(feature = "host")]
-        {
-            Self::skills(host)
-        }
-        #[cfg(not(feature = "host"))]
-        {
-            let _ = host;
-            Skills::default()
-        }
     }
 
     fn manifest(&self) -> Manifest<Self> {

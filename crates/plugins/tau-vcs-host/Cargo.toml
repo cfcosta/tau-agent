@@ -1,0 +1,45 @@
+[package]
+name = "tau-vcs-host"
+description = "Version-control tools for tau agents, backed by jj-lib: tau-vcs's host half."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+# Clones over HTTPS without the git binary. reqwest brings rustls,
+# with the ring provider tokio-rustls already builds.
+gix = { workspace = true, features = [
+  "blocking-http-transport-reqwest",
+  "blocking-network-client",
+] }
+reqwest.workspace = true
+tokio-rustls.workspace = true
+jj-lib.workspace = true
+pollster.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+tau-agent.workspace = true
+thiserror.workspace = true
+tau-ai.workspace = true
+tau-ui-plugin.workspace = true
+tau-vcs.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+uuid.workspace = true
+
+[dev-dependencies]
+tau-store-sqlite.workspace = true
+tau-ui-plugin = { workspace = true, features = ["testing"] }
+hegeltest.workspace = true
+tau-tools-host.workspace = true
+serde_json.workspace = true
+tau-store.workspace = true
+tau-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+tokio-util.workspace = true

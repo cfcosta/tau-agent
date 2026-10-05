@@ -758,7 +758,7 @@ fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
         assert_eq!(
             ws.route(),
             &Route::Plugin {
-                plugin: tau_memory::plugin::NAME.into(),
+                plugin: tau_memory_host::NAME.into(),
                 page: "notes".into(),
                 params: [("repo".to_owned(), "docbert".to_owned())].into(),
             }
@@ -767,7 +767,7 @@ fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
         let notes = |ws: &Workspace, repo: &str| {
             ws.repo_named(repo)
                 .plugins
-                .get(tau_memory::plugin::NAME)
+                .get(tau_memory_host::NAME)
                 .map_or(0, |book| {
                     book.json()["notes"].as_array().map_or(0, Vec::len)
                 })
@@ -775,7 +775,7 @@ fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
         assert_eq!(notes(ws, "docbert"), 3);
         assert_eq!(notes(ws, "tau-agent"), 8);
         let rules: tau_constitution::ui::Rules = serde_json::from_value(
-            ws.repo_named("homelab.nix").plugins[tau_constitution::NAME]
+            ws.repo_named("homelab.nix").plugins[tau_constitution_host::NAME]
                 .json()
                 .clone(),
         )
@@ -1883,7 +1883,7 @@ fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     let fork = demo::fork_id();
     let parent = demo::run_id();
-    let change = serde_json::from_value::<tau_vcs::ChangeInfo>(serde_json::json!({
+    let change = serde_json::from_value::<tau_vcs_host::ChangeInfo>(serde_json::json!({
         "change_id": "qlmxnpvoqlmxnpvoqlmxnpvoqlmxnpvo",
         "commit_id": "0123456789abcdef0123456789abcdef01234567",
         "description": "feat(tau-ai): cap the backoff at the policy's max\n",
@@ -1891,7 +1891,7 @@ fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
         "working_copy": false, "divergent": false, "bookmarks": [],
     }))
     .unwrap();
-    let landing = tau_vcs::Landing {
+    let landing = tau_vcs_host::Landing {
         changes: vec![change],
         conflicts: Vec::new(),
         head: "0123456789abcdef0123456789abcdef01234567".into(),
@@ -3164,7 +3164,7 @@ fn the_demo_keeps_rules_in_the_constitution(cx: &mut TestAppContext) {
     let rules = |ws: &Workspace| {
         ws.catalog()
             .repo("tau-agent")
-            .and_then(|repo| repo.plugins.get(tau_constitution::NAME))
+            .and_then(|repo| repo.plugins.get(tau_constitution_host::NAME))
             .map(|rules| rules.get::<tau_constitution::ui::Rules>().clone())
             .unwrap_or_default()
     };
@@ -3179,7 +3179,7 @@ fn the_demo_keeps_rules_in_the_constitution(cx: &mut TestAppContext) {
     };
     workspace.update(&mut cx, |_, cx| {
         cx.emit(WorkspaceEvent::PluginAct {
-            plugin: tau_constitution::NAME.into(),
+            plugin: tau_constitution_host::NAME.into(),
             action: serde_json::to_value(add).unwrap(),
         })
     });
