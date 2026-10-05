@@ -95,7 +95,7 @@ settings = {
 - **With `view`**, the plugin draws its own page from `tau.ui`, plus
   three pieces bound to a key of its settings: `ui.toggle(key, label)`,
   `ui.choice(key, options, { multi })` and `ui.field(key, { kind,
-  placeholder })`. Changing one changes that key; the host checks the
+placeholder })`. Changing one changes that key; the host checks the
   value against `schema` before saving it, and the page says why when
   it does not hold. `view` runs on the host in its own VM within 200
   ms, again after each change, and its tree is sent to the interface,

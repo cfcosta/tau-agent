@@ -655,8 +655,10 @@ or, without a repository, the user's and the settings' alone.
 - **Commands:** each prompt of a server that is on, as
   `Manifest::listed_commands` gives the composer ("Prompts").
 - **The sidebar:** under each repository, "MCP", with its servers
-  counted and a badge for the approvals waiting. The Plugins screen
-  links to the page.
+  counted and a badge for the approvals waiting.
+- **The settings pane** (ADR 0029): the page's servers, inside the
+  plugin's pane on the Plugins screen and in the inspector, everywhere
+  or for the repository the pane is scoped to.
 
 ### Elsewhere
 
