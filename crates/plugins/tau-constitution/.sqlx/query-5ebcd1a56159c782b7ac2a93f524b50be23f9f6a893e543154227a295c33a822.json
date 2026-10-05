@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT seq AS \"seq!: i64\", body AS \"body!: String\"\n               FROM messages\n               WHERE run_id = ?1 AND kind = 'plugin' AND plugin = ?2\n               ORDER BY seq",
+  "describe": {
+    "columns": [
+      {
+        "name": "seq!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "body!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "messages",
+            "name": "body"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "5ebcd1a56159c782b7ac2a93f524b50be23f9f6a893e543154227a295c33a822"
+}
