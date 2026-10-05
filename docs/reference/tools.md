@@ -240,6 +240,9 @@ tau-ui draws these as the card's terminal screen
 
 Creates parent directories, then writes the file. Returns
 `Successfully wrote to <path>`. Holds the same per-path mutex as `edit`.
+Its details, for the card, are `diff` (a unified diff from what the
+file held, or from nothing for a new file or one that was not text),
+`firstChangedLine` and `created`. The card shows the diff folded.
 
 ## grep: `{ pattern, path?, glob?, ignoreCase?, literal?, context?, limit? }`
 

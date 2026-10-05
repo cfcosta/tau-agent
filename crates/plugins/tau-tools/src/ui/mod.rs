@@ -756,6 +756,9 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                     )
                     .into_any_element(),
                 ),
+                // A whole file can be long: a write's diff opens on a
+                // click, an edit's few lines show at once.
+                folds: at.tool == "write",
                 ..CardView::default()
             })
         }

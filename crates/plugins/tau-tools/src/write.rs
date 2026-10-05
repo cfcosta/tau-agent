@@ -4,11 +4,12 @@
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tau_agent::{
     error::ToolError,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
+use tau_ai::message::{InputBlock, TextContent};
 
 use crate::{ABORTED, lock, path::Root};
 
@@ -72,14 +73,35 @@ impl AgentTool for Write {
             return Err(ToolError::from(ABORTED));
         }
 
+        // What the file held, for the diff its card shows: nothing for a
+        // new file, or one that is not text.
+        let before = match tokio::fs::read(&resolved).await {
+            Ok(bytes) => String::from_utf8(bytes).ok(),
+            Err(_) => None,
+        };
+        let created = !tokio::fs::try_exists(&resolved).await.unwrap_or(false);
+
         tokio::fs::write(&resolved, args.content.as_bytes()).await?;
         if ctx.cancel.is_cancelled() {
             return Err(ToolError::from(ABORTED));
         }
 
-        Ok(ToolOutput::text(format!(
-            "Successfully wrote to {}",
-            args.path
-        )))
+        let (diff, first_changed_line) = crate::edit::generate_diff(
+            &args.path,
+            before.as_deref().unwrap_or_default(),
+            &args.content,
+        );
+        Ok(ToolOutput {
+            content: vec![InputBlock::Text(TextContent {
+                text: format!("Successfully wrote to {}", args.path),
+                text_signature: None,
+            })],
+            details: Some(json!({
+                "diff": diff,
+                "firstChangedLine": first_changed_line,
+                "created": created,
+            })),
+            structured: None,
+        })
     }
 }

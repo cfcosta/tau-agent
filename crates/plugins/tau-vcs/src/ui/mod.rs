@@ -9,6 +9,7 @@
 pub mod change_diff;
 pub mod change_log;
 pub mod change_status;
+pub mod commit_card;
 pub mod diff_card;
 pub mod landed;
 pub mod log_card;
@@ -266,6 +267,27 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
                     n => format!("{n} changes landed"),
                 }),
                 body: Some(body.into_any_element()),
+                ..CardView::default()
+            })
+        }
+        details::COMMIT => {
+            let details = details(data)?;
+            let committed: crate::ChangeInfo =
+                serde_json::from_value(details.get("committed")?.clone())
+                    .ok()?;
+            let left: Vec<String> = details
+                .get("left")
+                .and_then(|left| serde_json::from_value(left.clone()).ok())
+                .unwrap_or_default();
+            Some(CardView {
+                label: Some(match left.len() {
+                    0 => committed.change_id.chars().take(8).collect(),
+                    n => format!("{n} left uncommitted"),
+                }),
+                body: Some(
+                    commit_card::body(&committed, &left, &t).into_any_element(),
+                ),
+                folds: true,
                 ..CardView::default()
             })
         }

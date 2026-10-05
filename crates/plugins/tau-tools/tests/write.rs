@@ -20,7 +20,8 @@ fn new_write(dir: &std::path::Path) -> Write {
 
 /// `write` returns exactly `Successfully wrote to <path>` and the file
 /// holds exactly the given content, for any generated text
-/// (`tools.md`, "write"; round trip).
+/// (`tools.md`, "write"; round trip). Its details say it created the
+/// file, with a diff that adds every line of it, for its card.
 #[hegel::test(test_cases = 50)]
 fn write_round_trips_the_content(tc: TestCase) {
     let content: String = tc.draw(gs::text().max_size(200));
@@ -38,7 +39,15 @@ fn write_round_trips_the_content(tc: TestCase) {
         tau_agent::tool::ToolOutput::text("Successfully wrote to f.txt")
             .content
     );
-    assert_eq!(output.details, None);
+    let details = output.details.expect("details for the card");
+    assert_eq!(details["created"], json!(true));
+    let diff = details["diff"].as_str().unwrap();
+    let added: Vec<&str> = diff
+        .lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .map(|line| &line[1..])
+        .collect();
+    assert_eq!(added, content.lines().collect::<Vec<_>>(), "{diff}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
         content
@@ -70,12 +79,21 @@ fn write_overwrites_existing_content() {
     let file = dir.path().join("f.txt");
     std::fs::write(&file, "old content, much longer than the new one").unwrap();
     let write = new_write(dir.path());
-    tau_testing::block_on(write.call(
+    let output = tau_testing::block_on(write.call(
         json!({"path": "f.txt", "content": "new"}),
         ToolCtx::detached(),
     ))
     .unwrap();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+    // Its diff takes the old content out and puts the new in.
+    let details = output.details.unwrap();
+    assert_eq!(details["created"], json!(false));
+    let diff = details["diff"].as_str().unwrap();
+    assert!(
+        diff.contains("-old content, much longer than the new one"),
+        "{diff}"
+    );
+    assert!(diff.contains("+new"), "{diff}");
 }
 
 /// Cancelled (`tools.md`, "Error strings", "all"): nothing is written.

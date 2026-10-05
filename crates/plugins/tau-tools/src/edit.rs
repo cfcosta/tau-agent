@@ -657,7 +657,11 @@ fn apply_replacements_preserving_unchanged_lines(
 
 /// A unified diff (`similar`) of the change, and the first changed line
 /// number in `new` (`tools.md`, "edit", "Result details").
-fn generate_diff(path: &str, old: &str, new: &str) -> (String, usize) {
+pub(crate) fn generate_diff(
+    path: &str,
+    old: &str,
+    new: &str,
+) -> (String, usize) {
     let diff = TextDiff::from_lines(old, new);
     let text = diff
         .unified_diff()
