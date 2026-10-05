@@ -68,6 +68,18 @@ pub enum Icon {
     Braces,
     /// Plain text: three lines.
     Text,
+    /// A branch: main, trunk.
+    Branch,
+    /// A run at work: a pull request still being written.
+    Draft,
+    /// A run that landed: merged into its parent.
+    Merge,
+    /// A run that was dropped: a pull request closed unmerged.
+    Closed,
+    /// A run waiting its turn.
+    Clock,
+    /// A run that stopped with an error.
+    Failed,
 }
 
 impl Icon {
@@ -120,6 +132,12 @@ impl Icon {
             Self::File => "icons/file.svg",
             Self::Braces => "icons/braces.svg",
             Self::Text => "icons/text.svg",
+            Self::Branch => "icons/branch.svg",
+            Self::Draft => "icons/draft.svg",
+            Self::Merge => "icons/merge.svg",
+            Self::Closed => "icons/closed.svg",
+            Self::Clock => "icons/clock.svg",
+            Self::Failed => "icons/failed.svg",
         }
     }
 
@@ -230,10 +248,28 @@ impl Icon {
                 r#"<path d="M8 4H7a2 2 0 00-2 2v4a2 2 0 01-2 2 2 2 0 012 2v4a2 2 0 002 2h1M16 4h1a2 2 0 012 2v4a2 2 0 002 2 2 2 0 00-2 2v4a2 2 0 01-2 2h-1"/>"#
             }
             Self::Text => r#"<path d="M4 6h16M4 12h16M4 18h10"/>"#,
+            Self::Branch => {
+                r#"<circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M6 3v12.5M18 8.5a9 9 0 01-9 9"/>"#
+            }
+            Self::Draft => {
+                r#"<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v13M18 5v1M18 11v1.5"/>"#
+            }
+            Self::Merge => {
+                r#"<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 21V8.5a9 9 0 009 9h.5"/>"#
+            }
+            Self::Closed => {
+                r#"<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5V21M15 4l6 6M21 4l-6 6M18 13v2.5"/>"#
+            }
+            Self::Clock => {
+                r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#
+            }
+            Self::Failed => {
+                r#"<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>"#
+            }
         }
     }
 
-    const ALL: [Self; 47] = [
+    const ALL: [Self; 53] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -281,6 +317,12 @@ impl Icon {
         Self::File,
         Self::Braces,
         Self::Text,
+        Self::Branch,
+        Self::Draft,
+        Self::Merge,
+        Self::Closed,
+        Self::Clock,
+        Self::Failed,
     ];
 
     fn svg(self) -> String {
