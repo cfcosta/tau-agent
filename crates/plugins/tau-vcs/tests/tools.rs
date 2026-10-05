@@ -209,6 +209,60 @@ fn commit_creates_a_described_change_that_log_lists() {
     assert_eq!(details["changes"], json!([]));
 }
 
+/// `vcs_commit` with `paths` commits only those, and leaves the rest
+/// of the work in the new working copy, files untouched.
+#[test]
+fn commit_takes_only_the_paths_it_names() {
+    let repo = Repo::new();
+    repo.write("a.txt", "a\n");
+    repo.write("dir/b.txt", "b\n");
+    repo.write("c.txt", "c\n");
+    let (text, details) = repo.ok(
+        "vcs_commit",
+        json!({"message": "Add a and dir", "paths": ["a.txt", "dir"]}),
+    );
+    assert!(
+        text.contains("Left uncommitted in the working copy: c.txt"),
+        "{text}"
+    );
+    assert_eq!(details["left"], json!(["c.txt"]));
+    let committed = details["committed"]["change_id"].as_str().unwrap();
+    let (_, shown) = repo.ok("vcs_show", json!({"change": committed}));
+    let diff = shown["diff"].as_str().unwrap();
+    assert!(diff.contains("diff --git a/a.txt b/a.txt"), "{diff}");
+    assert!(
+        diff.contains("diff --git a/dir/b.txt b/dir/b.txt"),
+        "{diff}"
+    );
+    assert!(!diff.contains("c.txt"), "{diff}");
+    let (_, status) = repo.ok("vcs_status", json!({}));
+    assert_eq!(
+        status["changes"],
+        json!([{"path": "c.txt", "kind": "added"}])
+    );
+    for (file, content) in
+        [("a.txt", "a\n"), ("dir/b.txt", "b\n"), ("c.txt", "c\n")]
+    {
+        assert_eq!(repo.read(file).as_deref(), Some(content), "{file}");
+    }
+
+    // Paths `@` does not change are refused, naming what it does change.
+    let err = repo
+        .call(
+            "vcs_commit",
+            json!({"message": "Nothing", "paths": ["a.txt"]}),
+        )
+        .unwrap_err();
+    assert_eq!(
+        err,
+        "The working copy changes none of a.txt. It changes: c.txt"
+    );
+    let err = repo
+        .call("vcs_commit", json!({"message": "Nothing", "paths": []}))
+        .unwrap_err();
+    assert!(err.starts_with("Name at least one path"), "{err}");
+}
+
 /// An empty message is refused.
 #[test]
 fn commit_needs_a_message() {

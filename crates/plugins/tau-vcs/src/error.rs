@@ -21,6 +21,8 @@ pub enum VcsError {
     NoParent,
     #[error("Name at least one path (\".\" matches everything)")]
     NoPaths,
+    #[error("The working copy changes none of {0}. It changes: {1}")]
+    NothingToCommit(String, String),
     #[error(
         "{0} has markers or a non-file conflict. Edit it or use vcs_restore to select a committed side; vcs_resolve accepts only markerless file contents."
     )]

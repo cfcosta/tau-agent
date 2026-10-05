@@ -208,13 +208,22 @@ A changed path is a `FileChange`:
 - Trailing whitespace is trimmed and one newline is added, as jj
   stores descriptions. An empty message clears the description.
 
-### vcs_commit: `{ message }`
+### vcs_commit: `{ message, paths? }`
 
 - Does what `jj commit -m` does: describes the working-copy change, and
   then starts a new empty change on top of it as the new `@`. Files do
   not change.
-- An empty message is refused: `The description must not be empty`.
-- Details: `committed` and `working_copy`.
+- With `paths` (files or directories, relative to the repository root,
+  `.` for everything), it does what `jj commit -m <message> <paths>`
+  does: the described change keeps `@`'s change id but only what `@`
+  changes under those paths, its parent's version of the rest; the new
+  `@` on top holds the rest of the work, so files still do not change.
+  This lets the model commit unrelated edits apart.
+- An empty message is refused: `The description must not be empty`. So
+  are empty `paths` (`Name at least one path …`), and paths `@` does
+  not change, naming what it does change.
+- Details: `committed`, `working_copy`, and `left`: the paths still
+  changed in the new `@`, in path order (empty without `paths`).
 - Nothing is committed for the model (ADR 0014): its commits are how a
   run's work is reviewed, landed and pushed, so the description asks
   for a Conventional Commits message at each boundary a reviewer would
@@ -319,6 +328,7 @@ model gave it, and the real message puts it in backquotes.
 | paths           | `..` or not a valid path           | `<path> is not a path inside the repository`                                                                                                           |
 | write tools     | `@` is immutable                   | `The working-copy commit <id> is immutable`                                                                                                            |
 | `vcs_commit`    | empty message                      | `The description must not be empty`                                                                                                                    |
+| `vcs_commit`    | `paths` that `@` does not change   | `The working copy changes none of <paths>. It changes: <paths, or nothing>`                                                                            |
 | restore/resolve | no paths                           | `Name at least one path ("." matches everything)`                                                                                                      |
 | `vcs_resolve`   | marked or non-file conflict        | `<path> has markers or a non-file conflict. Edit it or use vcs_restore to select a committed side; vcs_resolve accepts only markerless file contents.` |
 | `vcs_undo`      | newest operation is not the tools' | `The last operation was not made by the vcs tools in this workspace ("<description>"); ...`                                                            |

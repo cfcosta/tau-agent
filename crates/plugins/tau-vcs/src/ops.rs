@@ -413,29 +413,97 @@ pub(crate) fn describe(
     })
 }
 
+/// Describes `@` as `message` and starts a new change on top. With
+/// `paths`, only those go into the commit: `@` keeps its parent's
+/// version of everything else, and the new change on top holds the rest
+/// of the work, so the files on disk do not move.
 pub(crate) fn commit(
     worker: &mut Worker,
     message: String,
+    paths: Option<Vec<String>>,
 ) -> Result<Report, VcsError> {
     if message.trim().is_empty() {
         return Err(VcsError::EmptyDescription);
     }
+    let matcher = match &paths {
+        None => None,
+        Some(paths) if paths.is_empty() => return Err(VcsError::NoPaths),
+        Some(paths) => Some(session::matcher(repo_paths(worker, paths)?)),
+    };
     let name = workspace_name(worker)?;
-    let (snapshot, committed) = session::mutate(worker, "commit", |tx, wc| {
-        let committed = session::write_commit(tx, |repo| {
-            repo.rewrite_commit(wc)
-                .set_description(description(&message))
+    let (snapshot, (committed, left)) =
+        session::mutate(worker, "commit", |tx, wc| {
+            let Some(matcher) = &matcher else {
+                let committed = session::write_commit(tx, |repo| {
+                    repo.rewrite_commit(wc)
+                        .set_description(description(&message))
+                })?;
+                block_on(tx.repo_mut().rebase_descendants())?;
+                block_on(tx.repo_mut().check_out(name, &committed))?;
+                return Ok((committed, Vec::new()));
+            };
+            let parent = block_on(wc.parent_tree(tx.repo()))?;
+            let all =
+                diff::changed_paths(&parent, &wc.tree(), &EverythingMatcher)?;
+            // The parent's tree, with the chosen paths as `@` has them.
+            let chosen = block_on(restore_tree(
+                &wc.tree(),
+                &parent,
+                "working copy".to_owned(),
+                "parent".to_owned(),
+                matcher.as_ref(),
+            ))?;
+            let picked =
+                diff::changed_paths(&parent, &chosen, matcher.as_ref())?;
+            if picked.is_empty() {
+                let changed: Vec<&str> =
+                    all.iter().map(|file| file.path.as_str()).collect();
+                return Err(VcsError::NothingToCommit(
+                    paths.clone().unwrap_or_default().join(", "),
+                    if changed.is_empty() {
+                        "nothing".to_owned()
+                    } else {
+                        changed.join(", ")
+                    },
+                ));
+            }
+            let committed = session::write_commit(tx, |repo| {
+                repo.rewrite_commit(wc)
+                    .set_tree(chosen.clone())
+                    .set_description(description(&message))
+            })?;
+            block_on(tx.repo_mut().rebase_descendants())?;
+            // The rest of the work, on top: `@`'s files as they were.
+            let rest = block_on(
+                tx.repo_mut()
+                    .new_commit(vec![committed.id().clone()], wc.tree())
+                    .write(),
+            )?;
+            block_on(tx.repo_mut().edit(name, &rest))?;
+            let left: Vec<String> = all
+                .into_iter()
+                .filter(|file| !picked.iter().any(|p| p.path == file.path))
+                .map(|file| file.path)
+                .collect();
+            Ok((committed, left))
         })?;
-        block_on(tx.repo_mut().rebase_descendants())?;
-        block_on(tx.repo_mut().check_out(name, &committed))?;
-        Ok(committed)
-    })?;
     let repo = snapshot.repo.as_ref();
     let committed = ChangeInfo::of(repo, &committed, snapshot.wc.id())?;
     let (line, info) = wc_line(&snapshot)?;
+    let mut text = format!("Committed change {}", committed.line());
+    if !left.is_empty() {
+        text.push_str(&format!(
+            "\nLeft uncommitted in the working copy: {}",
+            left.join(", ")
+        ));
+    }
     Ok(Report {
-        text: format!("Committed change {}\n{line}", committed.line()),
-        details: json!({ "committed": committed, "working_copy": info }),
+        text: format!("{text}\n{line}"),
+        details: json!({
+            "committed": committed,
+            "working_copy": info,
+            "left": left,
+        }),
     })
 }
 

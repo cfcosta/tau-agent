@@ -9,6 +9,9 @@
 //! - `describe` rewrites `@`'s description and keeps its change id;
 //!   `commit` describes `@` and starts an empty change on top; `new`
 //!   starts one without describing; files never move;
+//! - `commit` with `paths` commits only what `@` changes under them, on
+//!   `@`'s change id, and leaves the rest of `@`'s work in the new
+//!   change on top; naming nothing `@` changes is refused;
 //! - `restore` makes the named paths (and everything under them) match
 //!   the source, deleting what the source lacks;
 //! - `undo` reverts the tools' newest operation in this workspace, keeps
@@ -360,6 +363,63 @@ impl Machine {
         let files = self.disk();
         let committed = std::mem::replace(&mut self.wc, Change::empty(files));
         self.stack.push(committed);
+        let id = change_id(&details["working_copy"]);
+        assert_ne!(Some(&id), self.stack.last().unwrap().change_id.as_ref());
+        self.wc.change_id = Some(id);
+        self.after_tool(before);
+    }
+
+    #[rule(weight = 2)]
+    fn commit_some(&mut self, tc: TestCase) {
+        let paths: Vec<&str> = tc.draw(
+            gs::vecs(gs::sampled_from(RESTORE_PATHS.to_vec()))
+                .min_size(1)
+                .max_size(2),
+        );
+        let message = format!("Commit {}", paths.join(" and "));
+        let files = self.disk();
+        let parent = self.parent_tree();
+        // The parent's files, with the chosen paths as `@` has them.
+        let mut chosen = parent.clone();
+        chosen.retain(|path, _| !paths.iter().any(|name| under(path, name)));
+        for (path, bytes) in &files {
+            if paths.iter().any(|name| under(path, name)) {
+                chosen.insert(path.clone(), bytes.clone());
+            }
+        }
+        let args = json!({ "message": message, "paths": paths });
+        if chosen == parent {
+            let err = self.call("vcs_commit", args).unwrap_err();
+            assert!(
+                err.starts_with("The working copy changes none of"),
+                "{err}"
+            );
+            return;
+        }
+        let before = self.before_tool();
+        let (_, details) = self.ok("vcs_commit", args);
+        assert_eq!(
+            change_id(&details["committed"]),
+            self.wc.change_id.clone().unwrap(),
+            "commit gave @ a new change id"
+        );
+        // What stays in the new `@`: the rest of the work.
+        let left: Vec<String> = changes(&chosen, &files)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        let got: Vec<String> = details["left"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(got, left, "what the commit left");
+        self.wc.description = stored(&message);
+        self.wc.tree = chosen;
+        let committed = std::mem::replace(&mut self.wc, Change::empty(files));
+        self.stack.push(committed);
+        assert_eq!(self.disk(), self.wc.tree, "the files moved");
         let id = change_id(&details["working_copy"]);
         assert_ne!(Some(&id), self.stack.last().unwrap().change_id.as_ref());
         self.wc.change_id = Some(id);

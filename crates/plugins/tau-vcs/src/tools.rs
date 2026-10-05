@@ -180,6 +180,11 @@ impl TypedTool for Describe {
 pub struct CommitArgs {
     /// The description of the finished change
     pub message: String,
+    /// Files or directories to commit, relative to the repository root
+    /// (default: everything the working copy changes). The rest stays
+    /// in the new working-copy change.
+    #[serde(default)]
+    pub paths: Option<Vec<String>>,
 }
 
 /// Describes the working-copy change and starts a new one on top.
@@ -189,7 +194,7 @@ pub struct Commit(pub Vcs);
 impl TypedTool for Commit {
     type Args = CommitArgs;
     const NAME: &'static str = "vcs_commit";
-    const DESCRIPTION: &'static str = "Commit the working-copy change (@): set its description to message, then start a new empty change on top of it for further work. Nothing is committed for you: commit where a reviewer would want a boundary, with a Conventional Commits message (`type(scope): summary`, then a body saying what changed and why), and commit everything before you finish.";
+    const DESCRIPTION: &'static str = "Commit the working-copy change (@): set its description to message, then start a new change on top of it for further work. With paths, only those files or directories are committed, and the rest of the working copy's changes stay in the new change: commit unrelated edits apart, one change each. Nothing is committed for you: commit where a reviewer would want a boundary, with a Conventional Commits message (`type(scope): summary`, then a body saying what changed and why), and commit everything before you finish.";
 
     async fn call(
         &self,
@@ -197,7 +202,7 @@ impl TypedTool for Commit {
         ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
         run(&self.0, &ctx, move |worker| {
-            ops::commit(worker, args.message)
+            ops::commit(worker, args.message, args.paths)
         })
         .await
     }
