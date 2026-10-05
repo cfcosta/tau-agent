@@ -7,6 +7,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     rc::Rc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -52,17 +53,45 @@ impl Settings {
         dir.join("settings.json")
     }
 
-    fn load(dir: &Path) -> Self {
-        std::fs::read_to_string(Self::path(dir))
+    async fn load(dir: &Path) -> Self {
+        tokio::fs::read_to_string(Self::path(dir))
+            .await
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default()
     }
 
-    fn save(&self, dir: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(dir)?;
+    async fn save(&self, dir: &Path) -> std::io::Result<()> {
+        tokio::fs::create_dir_all(dir).await?;
         let text = serde_json::to_string_pretty(self)?;
-        std::fs::write(Self::path(dir), text)
+        tokio::fs::write(Self::path(dir), text).await
+    }
+}
+
+/// Writes the settings on the host's runtime (ADR 0028), one save at a
+/// time, so an older one never lands after a newer one.
+#[derive(Clone, Default)]
+struct Keeper {
+    /// The settings not yet written: each save puts its own here, over
+    /// any older ones, and whichever save runs next writes them.
+    latest: Arc<Mutex<Option<Settings>>>,
+    turn: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl Keeper {
+    async fn save(
+        self,
+        dir: PathBuf,
+        settings: Settings,
+    ) -> std::io::Result<()> {
+        *self.latest.lock().expect("not poisoned") = Some(settings);
+        let _turn = self.turn.lock().await;
+        let latest = self.latest.lock().expect("not poisoned").take();
+        match latest {
+            Some(settings) => settings.save(&dir).await,
+            // A later save wrote them already.
+            None => Ok(()),
+        }
     }
 }
 
@@ -72,6 +101,7 @@ struct Bridge {
     dir: PathBuf,
     host: String,
     settings: Settings,
+    keeper: Keeper,
     server: Option<ServerHandle>,
     phones: Phones,
     /// Reads the server's events while it runs.
@@ -84,14 +114,38 @@ struct Bridge {
 }
 
 /// Serves phones for `workspace` from `dir` (usually
-/// `~/.config/tau/phones`), starting now if phones were allowed.
+/// `~/.config/tau/phones`), starting as soon as the settings are read
+/// if phones were allowed.
 pub fn serve(
     runtime: Handle,
     dir: PathBuf,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
-    let settings = Settings::load(&dir);
+    // Read on the host's runtime: the interface does not wait on files
+    // (ADR 0028).
+    let reading = runtime.spawn({
+        let dir = dir.clone();
+        async move { Settings::load(&dir).await }
+    });
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let settings = reading.await.unwrap_or_default();
+        let Some(workspace) = workspace.upgrade() else {
+            return;
+        };
+        cx.update(|cx| serving(runtime, dir, settings, &workspace, cx));
+    })
+    .detach();
+}
+
+fn serving(
+    runtime: Handle,
+    dir: PathBuf,
+    settings: Settings,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
     let bridge = Rc::new(RefCell::new(Bridge {
         runtime,
         dir,
@@ -104,6 +158,7 @@ pub fn serve(
             ..Phones::default()
         },
         settings,
+        keeper: Keeper::default(),
         server: None,
         listening: None,
         countdown: None,
@@ -173,7 +228,7 @@ fn handle(
     match request {
         PhonesRequest::Allow(allow) => {
             bridge.borrow_mut().settings.allow = allow;
-            save(bridge);
+            save(bridge, workspace, cx);
             if allow {
                 start(bridge, workspace, cx);
             } else {
@@ -182,7 +237,7 @@ fn handle(
         }
         PhonesRequest::ListenOn(ip) => {
             bridge.borrow_mut().settings.listen = Some(ip);
-            save(bridge);
+            save(bridge, workspace, cx);
             if bridge.borrow().server.is_some() {
                 stop(bridge, workspace, cx);
                 start(bridge, workspace, cx);
@@ -191,25 +246,66 @@ fn handle(
         PhonesRequest::ShowCode => show_code(bridge, workspace, cx),
         PhonesRequest::HideCode => hide_code(bridge),
         PhonesRequest::Revoke(id) => {
-            let revoked = bridge
-                .borrow()
-                .server
-                .as_ref()
-                .map(|server| server.revoke(&id));
-            if let Some(Err(error)) = revoked {
-                bridge.borrow_mut().phones.error =
-                    Some(format!("Could not revoke the phone: {error}"));
+            let state = bridge.borrow();
+            if let Some(server) = state.server.clone() {
+                let revoking = state
+                    .runtime
+                    .spawn(async move { server.revoke(&id).await });
+                drop(state);
+                report(
+                    bridge,
+                    revoking,
+                    "Could not revoke the phone",
+                    workspace,
+                    cx,
+                );
             }
         }
     }
     show(bridge, workspace, cx);
 }
 
-fn save(bridge: &Rc<RefCell<Bridge>>) {
-    let mut bridge = bridge.borrow_mut();
-    if let Err(error) = bridge.settings.save(&bridge.dir) {
-        bridge.phones.error = Some(format!("Could not save: {error}"));
-    }
+/// Saves the settings as they are now, off the interface's thread.
+fn save(
+    bridge: &Rc<RefCell<Bridge>>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let state = bridge.borrow();
+    let saving = state.runtime.spawn(
+        state
+            .keeper
+            .clone()
+            .save(state.dir.clone(), state.settings.clone()),
+    );
+    drop(state);
+    report(bridge, saving, "Could not save", workspace, cx);
+}
+
+/// Shows `failed` and the error, if `job` fails.
+fn report<T, E: std::fmt::Display + Send + 'static>(
+    bridge: &Rc<RefCell<Bridge>>,
+    job: tokio::task::JoinHandle<Result<T, E>>,
+    failed: &'static str,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) where
+    T: Send + 'static,
+{
+    let (bridge, workspace) = (bridge.clone(), workspace.downgrade());
+    cx.spawn(async move |cx| {
+        let error = match job.await {
+            Ok(Ok(_)) => return,
+            Ok(Err(error)) => error.to_string(),
+            Err(error) => error.to_string(),
+        };
+        let Some(workspace) = workspace.upgrade() else {
+            return;
+        };
+        bridge.borrow_mut().phones.error = Some(format!("{failed}: {error}"));
+        cx.update(|cx| show(&bridge, &workspace, cx));
+    })
+    .detach();
 }
 
 /// The IP to listen on: the one picked if the computer still has it,
@@ -385,9 +481,12 @@ fn on_event(
                 workspace.update(cx, |_, cx| cx.emit(event));
             }
             Some(PhoneUp::Name(name)) => {
-                if let Err(error) = server.rename(&device.id, &name) {
-                    eprintln!("tau-ui: cannot rename a phone: {error}");
-                }
+                let server = server.clone();
+                bridge.borrow().runtime.spawn(async move {
+                    if let Err(error) = server.rename(&device.id, &name).await {
+                        eprintln!("tau-ui: cannot rename a phone: {error}");
+                    }
+                });
             }
             None => {}
         },
@@ -520,7 +619,10 @@ mod tests {
             listen: Some("100.84.12.7".into()),
             port: 7443,
         };
-        picked.save(dir.path()).unwrap();
-        assert_eq!(Settings::load(dir.path()), picked);
+        tau_testing::block_on_io(picked.save(dir.path())).unwrap();
+        assert_eq!(
+            tau_testing::block_on_io(Settings::load(dir.path())),
+            picked
+        );
     }
 }

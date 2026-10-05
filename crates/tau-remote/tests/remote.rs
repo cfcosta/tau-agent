@@ -223,7 +223,7 @@ async fn a_revoked_phone_is_cut_off() {
     let mut host = host().await;
     let (mut phone, credentials) = host.pair().await;
     recv(&mut phone).await;
-    assert!(host.handle.revoke(&credentials.device).unwrap());
+    assert!(host.handle.revoke(&credentials.device).await.unwrap());
     assert!(matches!(phone.recv().await, Ok(None) | Err(_)));
     let refused = client::resume(&credentials, None).await;
     assert!(matches!(

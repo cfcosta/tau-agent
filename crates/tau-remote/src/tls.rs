@@ -2,7 +2,6 @@
 //! fingerprint alone, never by a certificate authority.
 
 use std::{
-    fs,
     io,
     path::Path,
     sync::{Arc, Mutex},
@@ -57,16 +56,37 @@ pub struct Identity {
 
 impl Identity {
     /// Reads the certificate kept in `dir`, or makes one, once, named
-    /// after `host`.
-    pub fn load_or_create(dir: &Path, host: &str) -> Result<Self, TlsError> {
+    /// after `host`, through tokio's files (ADR 0028).
+    pub async fn load_or_create(
+        dir: &Path,
+        host: &str,
+    ) -> Result<Self, TlsError> {
         let (cert, key) = (dir.join(CERT), dir.join(KEY));
-        if cert.exists() && key.exists() {
+        if tokio::fs::try_exists(&cert).await?
+            && tokio::fs::try_exists(&key).await?
+        {
             return Ok(Self {
-                cert: CertificateDer::from(fs::read(cert)?),
-                key: PrivatePkcs8KeyDer::from(fs::read(key)?),
+                cert: CertificateDer::from(tokio::fs::read(cert).await?),
+                key: PrivatePkcs8KeyDer::from(tokio::fs::read(key).await?),
             });
         }
-        fs::create_dir_all(dir)?;
+        tokio::fs::create_dir_all(dir).await?;
+        // Making a key is work for the processor: off the async workers.
+        let host = host.to_owned();
+        let identity = tokio::task::spawn_blocking(move || Self::made(&host))
+            .await
+            .map_err(std::io::Error::other)??;
+        tau_ai::files::write_private_async(
+            &key,
+            identity.key.secret_pkcs8_der(),
+        )
+        .await?;
+        tokio::fs::write(cert, identity.cert.as_ref()).await?;
+        Ok(identity)
+    }
+
+    /// A new self-signed certificate named after `host`, and its key.
+    fn made(host: &str) -> Result<Self, TlsError> {
         let pair = rcgen::KeyPair::generate()?;
         let mut params =
             rcgen::CertificateParams::new(vec![SERVER_NAME.into()])?;
@@ -74,13 +94,10 @@ impl Identity {
             .distinguished_name
             .push(rcgen::DnType::CommonName, host);
         let made = params.self_signed(&pair)?;
-        let identity = Self {
+        Ok(Self {
             cert: made.der().clone(),
             key: PrivatePkcs8KeyDer::from(pair.serialize_der()),
-        };
-        tau_ai::files::write_private(&key, identity.key.secret_pkcs8_der())?;
-        fs::write(cert, identity.cert.as_ref())?;
-        Ok(identity)
+        })
     }
 
     pub fn fingerprint(&self) -> Fingerprint {
@@ -211,14 +228,28 @@ impl ServerCertVerifier for Pinned {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
     fn the_certificate_is_made_once_and_kept() {
         let dir = tempfile::tempdir().unwrap();
-        let made = Identity::load_or_create(dir.path(), "desk").unwrap();
-        let read = Identity::load_or_create(dir.path(), "other").unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let made = runtime
+            .block_on(Identity::load_or_create(dir.path(), "desk"))
+            .unwrap();
+        let read = runtime
+            .block_on(Identity::load_or_create(dir.path(), "other"))
+            .unwrap();
         assert_eq!(made.fingerprint(), read.fingerprint());
         assert!(made.server_config().is_ok());
         #[cfg(unix)]

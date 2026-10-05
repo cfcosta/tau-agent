@@ -15,7 +15,6 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -33,7 +32,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 pub use crate::feed::REPLAY;
 use crate::{
-    devices::{Device, Devices, DevicesError},
+    devices::{Device, Devices, DevicesError, DevicesFile},
     feed::{Feed, Joined},
     pairing::{Address, Fingerprint, PairingCode},
     tls::{Identity, TlsError},
@@ -92,9 +91,10 @@ impl Server {
         config: ServerConfig,
     ) -> Result<(ServerHandle, UnboundedReceiver<ServerEvent>), ServerError>
     {
-        let identity = Identity::load_or_create(&config.dir, &config.host)?;
+        let identity =
+            Identity::load_or_create(&config.dir, &config.host).await?;
         let acceptor = TlsAcceptor::from(identity.server_config()?);
-        let devices = Arc::new(Mutex::new(Devices::load(&config.dir)?));
+        let devices = Arc::new(DevicesFile::load(&config.dir).await?);
         let listener = TcpListener::bind(config.listen).await?;
         let local_addr = listener.local_addr()?;
         let (commands, receiver) = mpsc::unbounded_channel();
@@ -140,7 +140,7 @@ pub struct ServerHandle {
 struct Inner {
     commands: UnboundedSender<Command>,
     events: UnboundedSender<ServerEvent>,
-    devices: Arc<Mutex<Devices>>,
+    devices: Arc<DevicesFile>,
     fingerprint: Fingerprint,
     host: String,
     local_addr: SocketAddr,
@@ -179,18 +179,24 @@ impl ServerHandle {
     }
 
     /// Forgets a phone: its token is refused, and its connections close.
-    pub fn revoke(&self, id: &str) -> Result<bool, DevicesError> {
-        let removed = self.devices().revoke(id)?;
+    pub async fn revoke(&self, id: &str) -> Result<bool, DevicesError> {
+        let removed = self.devices().revoke(id);
         if removed {
+            self.inner.devices.save().await?;
             self.command(Command::Revoked(id.to_owned()));
             self.changed();
         }
         Ok(removed)
     }
 
-    pub fn rename(&self, id: &str, name: &str) -> Result<bool, DevicesError> {
-        let renamed = self.devices().rename(id, name)?;
+    pub async fn rename(
+        &self,
+        id: &str,
+        name: &str,
+    ) -> Result<bool, DevicesError> {
+        let renamed = self.devices().rename(id, name);
         if renamed {
+            self.inner.devices.save().await?;
             self.changed();
         }
         Ok(renamed)
@@ -210,7 +216,7 @@ impl ServerHandle {
     }
 
     fn devices(&self) -> std::sync::MutexGuard<'_, Devices> {
-        self.inner.devices.lock().expect("not poisoned")
+        self.inner.devices.lock()
     }
 
     fn changed(&self) {
@@ -257,7 +263,7 @@ struct State {
     /// The messages sent, and which connections take new ones.
     feed: Feed<ConnId>,
     conns: HashMap<ConnId, Conn>,
-    devices: Arc<Mutex<Devices>>,
+    devices: Arc<DevicesFile>,
     host: String,
     events: UnboundedSender<ServerEvent>,
 }
@@ -281,9 +287,9 @@ impl State {
                 }
                 Command::Stop => break,
                 Command::Hello { conn, hello, out } => {
-                    self.hello(conn, hello, out)
+                    self.hello(conn, hello, out).await
                 }
-                Command::Up { conn, id, body } => self.up(conn, id, body),
+                Command::Up { conn, id, body } => self.up(conn, id, body).await,
                 Command::Closed(conn) => {
                     self.conns.remove(&conn);
                     self.feed.leave(conn);
@@ -311,29 +317,24 @@ impl State {
         let _ = conn.out.send(Out::Frame(to_frame(&down)));
     }
 
-    fn hello(&mut self, id: ConnId, hello: Hello, out: UnboundedSender<Out>) {
+    /// A phone pairs or resumes. Its device is saved before it is
+    /// welcomed.
+    async fn hello(
+        &mut self,
+        id: ConnId,
+        hello: Hello,
+        out: UnboundedSender<Out>,
+    ) {
         if hello.version() != VERSION {
             return refuse(&out, Refusal::Version { speaks: VERSION });
         }
-        let mut devices = self.devices.lock().expect("not poisoned");
-        let (device, token, last_seq) = match hello {
-            Hello::Pair { secret, name, .. } => {
-                match devices.pair(&secret, &name) {
-                    Ok(Ok((device, token))) => (device, Some(token), None),
-                    Ok(Err(refusal)) => return refuse(&out, refusal),
-                    Err(_) => return close(&out),
-                }
-            }
-            Hello::Resume {
-                token, last_seq, ..
-            } => match devices.resume(&token) {
-                Ok(Some(device)) => (device, None, last_seq),
-                Ok(None) => return refuse(&out, Refusal::UnknownToken),
-                Err(_) => return close(&out),
-            },
+        let (device, token, last_seq, list) = match self.admit(hello) {
+            Ok(admitted) => admitted,
+            Err(refusal) => return refuse(&out, refusal),
         };
-        let list = devices.list();
-        drop(devices);
+        if self.devices.save().await.is_err() {
+            return close(&out);
+        }
         let joined = self.feed.join(id, last_seq);
         let _ = out.send(Out::Frame(to_frame(&Answer::Welcome {
             version: VERSION,
@@ -362,19 +363,53 @@ impl State {
         }
     }
 
+    /// The device `hello` pairs or resumes, its new token if it paired,
+    /// the last message it saw, and every device after it.
+    #[allow(
+        clippy::type_complexity,
+        reason = "taken apart right away by its one caller"
+    )]
+    fn admit(
+        &self,
+        hello: Hello,
+    ) -> Result<(Device, Option<String>, Option<u64>, Vec<Device>), Refusal>
+    {
+        let mut devices = self.devices.lock();
+        let (device, token, last_seq) = match hello {
+            Hello::Pair { secret, name, .. } => {
+                let (device, token) = devices.pair(&secret, &name)?;
+                (device, Some(token), None)
+            }
+            Hello::Resume {
+                token, last_seq, ..
+            } => (
+                devices.resume(&token).ok_or(Refusal::UnknownToken)?,
+                None,
+                last_seq,
+            ),
+        };
+        Ok((device, token, last_seq, devices.list()))
+    }
+
     /// A phone's request: taken once, however often it comes, and
-    /// answered each time, so the phone stops sending it.
-    fn up(&self, conn: ConnId, up: u64, body: Value) {
+    /// answered each time, so the phone stops sending it. Taking it is
+    /// saved before it is answered.
+    async fn up(&self, conn: ConnId, up: u64, body: Value) {
         let Some(Conn { device: id, out }) = self.conns.get(&conn) else {
             return;
         };
-        let mut devices = self.devices.lock().expect("not poisoned");
-        let Ok(taken) = devices.take(id, up) else {
-            // Not saved: not taken, so the phone sends it again.
-            return;
+        let (taken, device) = {
+            let mut devices = self.devices.lock();
+            let taken = devices.take(id, up);
+            (
+                taken,
+                devices.list().into_iter().find(|device| &device.id == id),
+            )
         };
-        let device = devices.list().into_iter().find(|device| &device.id == id);
-        drop(devices);
+        if taken && self.devices.save().await.is_err() {
+            // Not saved: not answered, so the phone sends it again.
+            return;
+        }
         if let (true, Some(device)) = (taken, device) {
             let _ = self.events.send(ServerEvent::Up { conn, device, body });
         }

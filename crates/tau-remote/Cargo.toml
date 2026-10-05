@@ -16,7 +16,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["fs", "net", "rt"] }
 tokio-rustls.workspace = true
 tokio-tungstenite.workspace = true
 
