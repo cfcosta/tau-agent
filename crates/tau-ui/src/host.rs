@@ -224,7 +224,8 @@ pub struct Host {
     /// Held while a run starts, and while a sweep reads what the
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
-    starting: tokio::sync::Mutex<()>,
+    /// Each repository's own locks, by name (ADR 0028).
+    repo_states: Mutex<HashMap<String, Arc<RepoState>>>,
     /// The step after which landings stop, as if tau closed there: for
     /// tests ([`Host::cut_landing_after`]).
     cut_landing: Mutex<Option<LandingStep>>,
@@ -232,7 +233,6 @@ pub struct Host {
     /// first time it is asked for (ADR 0024).
     lanes: Mutex<HashMap<RunId, queue::Lane>>,
     /// Held while a landing queue changes or drains: one at a time.
-    draining: tokio::sync::Mutex<()>,
     /// What each chat's last landing preview found: what the person
     /// confirms when they land it.
     previews: Mutex<HashMap<RunId, queue::Preview>>,
@@ -468,10 +468,9 @@ impl Host {
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
-            starting: tokio::sync::Mutex::new(()),
+            repo_states: Mutex::default(),
             cut_landing: Mutex::new(None),
             lanes: Mutex::default(),
-            draining: tokio::sync::Mutex::new(()),
             previews: Mutex::default(),
             conflicts_hook: None,
             pushes,
@@ -954,7 +953,8 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
-        let _starting = self.starting.lock().await;
+        let state = self.repo_state(&repo.name);
+        let _starting = state.starting.lock().await;
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         // Named after what it was asked, so the workspace says what it is
@@ -1069,8 +1069,9 @@ impl Host {
             anyhow::bail!("The run is still going; steer it instead");
         }
         self.refuse_ended(run).await?;
-        let _starting = self.starting.lock().await;
         let repo = self.slot_of_run(run).await?;
+        let state = self.repo_state(&repo.name);
+        let _starting = state.starting.lock().await;
         // The workspace its last turn worked in, which still has its
         // files.
         let known = self.session_of(run).workspace;

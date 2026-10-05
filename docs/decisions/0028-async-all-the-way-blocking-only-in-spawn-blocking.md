@@ -91,15 +91,20 @@ and send it.
 
 ### A repository serializes its own work
 
-Each repository has a `RepoState`:
+Each repository has a `RepoState` with two async locks
+(`tokio::sync::Mutex`):
 
-- an async lock (`tokio::sync::Mutex`) held for multi-step work on it:
-  a landing, a queue drain, a forecast, catching up with trunk;
-- a `watch` channel with what the interface shows of it (the queue,
-  conflicts on main), published when it changes.
+- `starting`, held while a run starts, a landing rewrites the stack, or
+  a sweep reads who owns what;
+- `draining`, held while the main chat's landing queue changes or
+  drains.
 
-Host-wide maps of locks (`draining`, `lanes`, `previews`, `forecasts`)
-go. A std `MutexGuard` held across `.await` makes a spawned future not
+They replace the host-wide `starting` and `draining`, so work in one
+repository never waits on another's. What the interface shows of a
+repository's queue and the conflicts on its main chat is published as
+it changes: each queue operation ends by sending `LandingQueue`, which
+phones get too. A watch channel would carry the same, so there is none.
+A std `MutexGuard` held across `.await` makes a spawned future not
 `Send`, so the compiler finds each place a lock is held across waiting.
 
 ### Enforced by clippy
@@ -142,6 +147,6 @@ Each step lands on its own, with the tests passing:
 4. `Host` to async: store reads and history, landing and the queue,
    repositories and updates, pull requests and pushes. Callers move to
    `on_host`; `off_thread` goes.
-5. `RepoState`: the per-repository lock and published state.
+5. `RepoState`: the per-repository locks.
 6. The catalog and spend pushed instead of read.
 7. GitHub and sign-in as tokio tasks; the last crate-wide allow goes.

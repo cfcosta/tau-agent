@@ -90,7 +90,8 @@ impl Host {
         let repo = self.slot_of_run(&main).await?.name;
         let agents = self.sub_agents_of(&repo);
         let ending = agents.ended(child).await;
-        let _draining = self.draining.lock().await;
+        let state = self.repo_state(&repo);
+        let _draining = state.draining.lock().await;
         let end = match ending {
             // Not this session's, or the person stopped it: nothing to
             // land or report.

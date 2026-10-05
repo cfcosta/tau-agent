@@ -213,7 +213,8 @@ impl Host {
     ) -> anyhow::Result<Landing> {
         // No run starts while it lands: a main chat's turn would start
         // on the stack the landing rewrites.
-        let _starting = self.starting.lock().await;
+        let state = self.repo_state_of(child).await?;
+        let _starting = state.starting.lock().await;
         let plan = self.landing(child, Reading::Land).await?;
         let into = self.bookmark_of(&plan.parent, &plan.project).await?;
         let intent = Intent {

@@ -119,6 +119,18 @@ impl ProjectSlot {
     }
 }
 
+/// What one repository serializes (ADR 0028): its own multi-step work,
+/// so work in another repository never waits on it.
+#[derive(Default)]
+pub(super) struct RepoState {
+    /// Held while a run starts, a landing rewrites the stack, or a sweep
+    /// reads who owns what: a main chat's turn must not start on a
+    /// stack a landing is rewriting.
+    pub(super) starting: tokio::sync::Mutex<()>,
+    /// Held while a main chat's landing queue changes or drains.
+    pub(super) draining: tokio::sync::Mutex<()>,
+}
+
 /// A listed repository: its clone, and the project runs in it work in.
 #[derive(Clone)]
 pub(super) struct RepoSlot {
@@ -422,6 +434,24 @@ impl Host {
             tau_vcs::Vcs::open(project.workspace_dir(name), identity()).await?;
         vcs.move_onto(trunk, trunk_name, true).await?;
         Ok(())
+    }
+
+    /// The locks of the repository `name`, made the first time.
+    pub(super) fn repo_state(&self, name: &str) -> Arc<RepoState> {
+        self.repo_states
+            .lock()
+            .expect("not poisoned")
+            .entry(name.to_owned())
+            .or_default()
+            .clone()
+    }
+
+    /// The locks of the repository `run` works in.
+    pub(super) async fn repo_state_of(
+        &self,
+        run: &RunId,
+    ) -> anyhow::Result<Arc<RepoState>> {
+        Ok(self.repo_state(&self.slot_of_run(run).await?.name))
     }
 
     pub(super) fn slot(&self, name: &str) -> Option<RepoSlot> {

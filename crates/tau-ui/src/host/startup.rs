@@ -127,9 +127,16 @@ impl Host {
     /// workspace, and the workspaces of open chats stay.
     pub async fn sweep(&self) -> anyhow::Result<()> {
         // No run starts while the sweep reads what the projects hold and
-        // who owns it.
-        let _starting = self.starting.lock().await;
+        // who owns it: every repository's, taken in the list's order.
         let slots = self.repos.lock().expect("not poisoned").clone();
+        let states: Vec<Arc<RepoState>> = slots
+            .iter()
+            .map(|slot| self.repo_state(&slot.name))
+            .collect();
+        let mut _starting = Vec::with_capacity(states.len());
+        for state in &states {
+            _starting.push(state.starting.lock().await);
+        }
         // What the projects hold, before what the store says: a run that
         // starts after is in neither.
         let mut held = Vec::new();

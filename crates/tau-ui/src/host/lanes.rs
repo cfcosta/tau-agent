@@ -249,8 +249,9 @@ impl Host {
         &self,
         child: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().await;
         let main = self.parent_of(child).await?;
+        let state = self.repo_state_of(&main).await?;
+        let _draining = state.draining.lock().await;
         if !self.is_main(&main) {
             anyhow::bail!(
                 "Only a chat under a repository's main chat lands by queue"
@@ -311,8 +312,9 @@ impl Host {
     /// Takes `child` out of its main chat's queue; what may land now
     /// lands.
     pub async fn unqueue(&self, child: &RunId) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().await;
         let main = self.parent_of(child).await?;
+        let state = self.repo_state_of(&main).await?;
+        let _draining = state.draining.lock().await;
         let actions =
             self.with_lane(&main, |lane| lane.unqueue(&child.0)).await?;
         self.perform(&main, actions).await?;
@@ -325,7 +327,8 @@ impl Host {
         &self,
         main: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().await;
+        let state = self.repo_state_of(main).await?;
+        let _draining = state.draining.lock().await;
         let actions = self.with_lane(main, Lane::dismiss).await?;
         self.perform(main, actions).await?;
         self.report(main, Drained::default(), Vec::new()).await
@@ -353,7 +356,8 @@ impl Host {
         &self,
         main: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().await;
+        let state = self.repo_state_of(main).await?;
+        let _draining = state.draining.lock().await;
         self.settle(main).await;
         if self.is_running(main) {
             return self.report(main, Drained::default(), Vec::new()).await;
@@ -378,7 +382,8 @@ impl Host {
         &self,
         main: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().await;
+        let state = self.repo_state_of(main).await?;
+        let _draining = state.draining.lock().await;
         self.settle(main).await;
         if self.is_running(main) {
             return self.report(main, Drained::default(), Vec::new()).await;
@@ -395,7 +400,8 @@ impl Host {
         &self,
         main: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().await;
+        let state = self.repo_state_of(main).await?;
+        let _draining = state.draining.lock().await;
         let files = self.main_conflicts(main).await?;
         let actions = self
             .with_lane(main, |lane| lane.not_resolving(files))
@@ -409,7 +415,8 @@ impl Host {
         &self,
         main: &RunId,
     ) -> anyhow::Result<DrainReport> {
-        let _draining = self.draining.lock().await;
+        let state = self.repo_state_of(main).await?;
+        let _draining = state.draining.lock().await;
         let (drained, landings) = self.drain_locked(main).await?;
         self.report(main, drained, landings).await
     }
