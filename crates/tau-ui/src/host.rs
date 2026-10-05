@@ -103,15 +103,37 @@ use crate::{
 mod artifacts;
 
 /// Writes `settings` to `path`, making its directory.
-pub(crate) fn write_settings(
+pub(crate) async fn write_settings(
     path: &Path,
     settings: &ModelSettings,
 ) -> anyhow::Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        tokio::fs::create_dir_all(dir).await?;
     }
-    std::fs::write(path, serde_json::to_string_pretty(settings)?)?;
+    tokio::fs::write(path, serde_json::to_string_pretty(settings)?).await?;
     Ok(())
+}
+
+/// One file's saves, one at a time, each writing what is kept in memory
+/// when its turn comes: a save that waited writes the newest state, so
+/// saves never land out of order.
+#[derive(Clone, Default)]
+pub(crate) struct Saving(Arc<tokio::sync::Mutex<()>>);
+
+impl Saving {
+    /// Waits for the saves before it, then writes `latest()` with
+    /// `write`.
+    pub(crate) async fn save<T, F>(
+        &self,
+        latest: impl FnOnce() -> T,
+        write: impl FnOnce(T) -> F,
+    ) -> anyhow::Result<()>
+    where
+        F: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        let _turn = self.0.lock().await;
+        write(latest()).await
+    }
 }
 
 /// A repository's main chat's title.
@@ -224,6 +246,9 @@ pub struct Host {
     /// Held while a run starts, and while a sweep reads what the
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
+    /// The saves of `repos.json`, and of the model settings, in order.
+    list_saving: Saving,
+    settings_saving: Saving,
     /// Each repository's own locks, by name (ADR 0028).
     repo_states: Mutex<HashMap<String, Arc<RepoState>>>,
     /// Asks the catalog's builder for a new one ([`Host::catalog_changed`]).
@@ -394,7 +419,7 @@ impl Host {
         // elsewhere, as in tests, by keywords alone.
         host.memory_search = tau_memory::ui::Search::Semantic;
         host.host_plugins();
-        host.list_plugins_repo();
+        host.runtime.block_on(host.list_plugins_repo());
         // Importing clones can take a while; the window opens first.
         let listed: Vec<Listed> = host
             .list
@@ -442,8 +467,12 @@ impl Host {
         if let Err(error) = runtime.block_on(store.interrupt_running()) {
             eprintln!("tau-ui: cannot mark interrupted runs: {error:#}");
         }
-        let settings = load_settings(&config.settings, &config.default_model());
-        let list = RepoList::load(&config.repo_list);
+        let (settings, list) = runtime.block_on(async {
+            (
+                load_settings(&config.settings, &config.default_model()).await,
+                RepoList::load(&config.repo_list).await,
+            )
+        });
         let mut host = Self {
             runtime,
             base: Mutex::new(agent),
@@ -473,6 +502,8 @@ impl Host {
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
+            list_saving: Saving::default(),
+            settings_saving: Saving::default(),
             repo_states: Mutex::default(),
             catalog_wanted: Arc::default(),
             catalog_feed: tokio::sync::watch::Sender::new(None),
@@ -505,16 +536,44 @@ impl Host {
     }
 
     /// Closes a conversation, or opens it again, for the sidebar.
-    pub fn set_closed(&self, run: &RunId, closed: bool) -> anyhow::Result<()> {
+    pub async fn set_closed(
+        &self,
+        run: &RunId,
+        closed: bool,
+    ) -> anyhow::Result<()> {
         if closed && self.is_main(run) {
             anyhow::bail!("A repository's main chat stays open");
         }
-        let mut list = self.list.lock().expect("not poisoned");
-        list.closed.retain(|id| **id != *run.0);
-        if closed {
-            list.closed.push(run.0.to_string());
+        {
+            let mut list = self.list.lock().expect("not poisoned");
+            list.closed.retain(|id| **id != *run.0);
+            if closed {
+                list.closed.push(run.0.to_string());
+            }
         }
-        list.save(&self.config.repo_list)
+        self.save_list().await
+    }
+
+    /// Writes `repos.json` as the list is kept now (ADR 0028).
+    pub(super) async fn save_list(&self) -> anyhow::Result<()> {
+        let path = self.config.repo_list.clone();
+        self.list_saving
+            .save(
+                || self.list.lock().expect("not poisoned").clone(),
+                async move |list| list.save(&path).await,
+            )
+            .await
+    }
+
+    /// Writes the model settings as they are kept now (ADR 0028).
+    pub(super) async fn persist_settings(&self) -> anyhow::Result<()> {
+        let path = self.config.settings.clone();
+        self.settings_saving
+            .save(
+                || self.settings.lock().expect("not poisoned").clone(),
+                async move |settings| write_settings(&path, &settings).await,
+            )
+            .await
     }
 
     /// `plugin`'s records for `run`, along its fork chain, as stored.
@@ -1472,7 +1531,7 @@ mod tests {
             main: None,
             own,
         };
-        RepoList {
+        let saved = RepoList {
             repos: vec![
                 listed("tau-agent", None, false),
                 listed("ascend", Some("cfcosta/ascend"), false),
@@ -1484,10 +1543,9 @@ mod tests {
                 "tau-plugins".into(),
             ],
             ..RepoList::default()
-        }
-        .save(&path)
-        .unwrap();
-        let list = RepoList::load(&path);
+        };
+        tau_testing::block_on_io(saved.save(&path)).unwrap();
+        let list = tau_testing::block_on_io(RepoList::load(&path));
         let names: Vec<&str> = list
             .repos
             .iter()

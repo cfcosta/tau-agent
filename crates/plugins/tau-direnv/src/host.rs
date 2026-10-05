@@ -161,13 +161,13 @@ impl Host {
 
     /// The person decided whether `repo`'s `.envrc` loads: kept, tau's
     /// configuration written again, and its workspaces load or stop.
-    pub fn decide(&self, repo: &str, load: bool) -> anyhow::Result<()> {
+    pub async fn decide(&self, repo: &str, load: bool) -> anyhow::Result<()> {
         let repos = {
             let mut allowed = self.0.allowed.lock().expect("not poisoned");
             allowed.insert(repo.to_owned(), load);
             allowed.clone()
         };
-        self.0.cx.save_settings(NAME, &Settings { repos })?;
+        self.0.cx.save_settings(NAME, &Settings { repos }).await?;
         self.0.write_config();
         let dirs: Vec<PathBuf> = self
             .0

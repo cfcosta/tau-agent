@@ -497,7 +497,7 @@ impl UiPlugin for McpUi {
         action: Value,
         cx: &HostCx,
     ) -> anyhow::Result<Option<Value>> {
-        host::act(host, action, cx)
+        host::act(host, action, cx).await
     }
 
     /// A prompt goes to the composer; one that failed says why and puts

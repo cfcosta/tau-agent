@@ -995,7 +995,7 @@ pub(super) fn repo_data(host: &Host, repo: &RepoCtx, cx: &HostCx) -> Servers {
     host.servers(Some(&repo.checkout), &cx.settings(NAME))
 }
 
-pub(super) fn act(
+pub(super) async fn act(
     host: &Host,
     action: Value,
     cx: &HostCx,
@@ -1098,7 +1098,7 @@ pub(super) fn act(
                 act,
             )
             .map_err(anyhow::Error::msg)?;
-            cx.save_settings(NAME, &next)?;
+            cx.save_settings(NAME, &next).await?;
         }
     }
     cx.refresh();

@@ -149,8 +149,9 @@ impl RepoList {
     /// The list `path` keeps, without the local checkouts listed before
     /// repositories came from GitHub alone: they stay out, open or not.
     /// tau's own repositories stay.
-    pub(super) fn load(path: &Path) -> Self {
-        let list: Self = std::fs::read_to_string(path)
+    pub(super) async fn load(path: &Path) -> Self {
+        let list: Self = tokio::fs::read_to_string(path)
+            .await
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
@@ -171,18 +172,19 @@ impl RepoList {
         self
     }
 
-    pub(super) fn save(&self, path: &Path) -> anyhow::Result<()> {
+    pub(super) async fn save(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            tokio::fs::create_dir_all(dir).await?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
+        tokio::fs::write(path, serde_json::to_string_pretty(self)?).await?;
         Ok(())
     }
 
-    /// Lists the clone at `path`, or lists it again if it was removed,
-    /// and returns its name: the directory's, made unique.
+    /// Lists the clone at `path`, a canonical path, or lists it again if
+    /// it was removed, and returns its name: the directory's, made
+    /// unique.
     pub(super) fn list(&mut self, path: &Path) -> String {
-        let path = canonical(path);
+        let path = path.to_owned();
         if let Some(listed) =
             self.repos.iter_mut().find(|listed| listed.path == path)
         {
@@ -215,11 +217,12 @@ impl RepoList {
 
 /// The saved model choices at `path`, or the defaults with `model` for
 /// coder when there are none (or the file does not read).
-pub(super) fn load_settings(
+pub(super) async fn load_settings(
     path: &std::path::Path,
     model: &str,
 ) -> ModelSettings {
-    std::fs::read_to_string(path)
+    tokio::fs::read_to_string(path)
+        .await
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_else(|| {

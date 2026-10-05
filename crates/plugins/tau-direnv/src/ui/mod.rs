@@ -159,7 +159,7 @@ impl UiPlugin for DirenvUi {
         #[cfg(feature = "host")]
         {
             match act {
-                Act::Decide { repo, load } => host.decide(&repo, load)?,
+                Act::Decide { repo, load } => host.decide(&repo, load).await?,
                 Act::Reload { run } => host.reload(&run)?,
             }
             Ok(None)

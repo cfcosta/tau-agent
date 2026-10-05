@@ -341,13 +341,15 @@ impl Host {
             self.store.finish_run(&id, Status::Done, None, None).await
         }
         .await?;
-        let mut list = self.list.lock().expect("not poisoned");
-        if let Some(listed) =
-            list.repos.iter_mut().find(|listed| listed.name == repo)
         {
-            listed.main = Some(id.clone());
+            let mut list = self.list.lock().expect("not poisoned");
+            if let Some(listed) =
+                list.repos.iter_mut().find(|listed| listed.name == repo)
+            {
+                listed.main = Some(id.clone());
+            }
         }
-        list.save(&self.config.repo_list)?;
+        self.save_list().await?;
         Ok(RunId(id.into()))
     }
 
@@ -474,27 +476,30 @@ impl Host {
         dir: &Path,
         full_name: &str,
     ) -> anyhow::Result<Repo> {
+        let dir = tokio::fs::canonicalize(dir)
+            .await
+            .unwrap_or_else(|_| dir.to_owned());
         let name = {
             let mut list = self.list.lock().expect("not poisoned");
-            let name = list.list(dir);
+            let name = list.list(&dir);
             if let Some(listed) =
                 list.repos.iter_mut().find(|listed| listed.name == name)
             {
                 listed.github = Some(full_name.to_owned());
             }
-            list.save(&self.config.repo_list)?;
             name
         };
+        self.save_list().await?;
         if self.slot(&name).is_none() {
             let slot = RepoSlot {
                 name: name.clone(),
-                path: canonical(dir),
+                path: dir.clone(),
                 project: ProjectSlot::new(ProjectState::Importing),
             };
             self.spawn_import(&slot);
             self.repos.lock().expect("not poisoned").push(slot);
         }
-        let mut repo = Repo::new(&name, canonical(dir).display().to_string());
+        let mut repo = Repo::new(&name, dir.display().to_string());
         repo.main = Some(self.main_of(&name).await?);
         Ok(repo)
     }
@@ -554,25 +559,27 @@ impl Host {
 
     /// Lists tau's own plugins repository (ADR 0027), the first time
     /// tau starts: it is made when it is opened.
-    pub(super) fn list_plugins_repo(&self) {
-        let mut list = self.list.lock().expect("not poisoned");
-        let path = self.config.plugins_repo();
-        if list
-            .repos
-            .iter()
-            .any(|listed| listed.own && listed.path == path)
+    pub(super) async fn list_plugins_repo(&self) {
         {
-            return;
+            let mut list = self.list.lock().expect("not poisoned");
+            let path = self.config.plugins_repo();
+            if list
+                .repos
+                .iter()
+                .any(|listed| listed.own && listed.path == path)
+            {
+                return;
+            }
+            list.repos.push(Listed {
+                name: tau_luau_plugins::registry::REPO.to_owned(),
+                path,
+                hidden: false,
+                github: None,
+                main: None,
+                own: true,
+            });
         }
-        list.repos.push(Listed {
-            name: tau_luau_plugins::registry::REPO.to_owned(),
-            path,
-            hidden: false,
-            github: None,
-            main: None,
-            own: true,
-        });
-        if let Err(error) = list.save(&self.config.repo_list) {
+        if let Err(error) = self.save_list().await {
             eprintln!("tau-ui: cannot list the plugins repository: {error:#}");
         }
     }
@@ -590,21 +597,25 @@ impl Host {
     }
 
     /// Stops listing a repository. Its project and runs stay.
-    pub fn hide_repo(&self, name: &str) -> anyhow::Result<()> {
-        let mut list = self.list.lock().expect("not poisoned");
-        for listed in &mut list.repos {
-            if listed.name == name {
-                listed.hidden = true;
+    pub async fn hide_repo(&self, name: &str) -> anyhow::Result<()> {
+        {
+            let mut list = self.list.lock().expect("not poisoned");
+            for listed in &mut list.repos {
+                if listed.name == name {
+                    listed.hidden = true;
+                }
             }
+            list.open.retain(|open| open != name);
         }
-        list.open.retain(|open| open != name);
-        list.save(&self.config.repo_list)
+        self.save_list().await
     }
 
     /// Remembers which repositories the sidebar shows open.
-    pub fn set_open_repos(&self, open: Vec<String>) -> anyhow::Result<()> {
-        let mut list = self.list.lock().expect("not poisoned");
-        list.open = open;
-        list.save(&self.config.repo_list)
+    pub async fn set_open_repos(
+        &self,
+        open: Vec<String>,
+    ) -> anyhow::Result<()> {
+        self.list.lock().expect("not poisoned").open = open;
+        self.save_list().await
     }
 }

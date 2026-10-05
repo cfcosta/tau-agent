@@ -166,7 +166,7 @@ fn the_person_is_asked_once_then_commands_run_in_the_environment() {
     std::thread::sleep(Duration::from_millis(100));
     assert!(!waiting.is_finished(), "the command waits for the answer");
 
-    host.decide("repo", true).unwrap();
+    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     let launch = fixture.runtime.block_on(waiting).unwrap();
     assert_eq!(
         launch.prefix[1..3],
@@ -203,7 +203,10 @@ fn without_the_persons_leave_commands_run_as_they_are() {
     ));
     let launcher = host.launcher(&fixture.repo).unwrap();
     let dir = fixture.workspace("a", Some(PROBE));
-    host.decide("repo", false).unwrap();
+    fixture
+        .runtime
+        .block_on(host.decide("repo", false))
+        .unwrap();
     let launch = fixture.launch(&launcher, &dir);
     assert_eq!(launch, Launch::default());
     assert_eq!(run(&launch, &dir, "echo ${TAU_PROBE:-none}"), "none");
@@ -211,7 +214,7 @@ fn without_the_persons_leave_commands_run_as_they_are() {
     assert!(!log.exists(), "direnv never ran");
 
     // Allowed later from the menu: it loads.
-    host.decide("repo", true).unwrap();
+    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     wait_for(&host, &dir, &Status::Ready);
     let launch = fixture.launch(&launcher, &dir);
     assert_eq!(run(&launch, &dir, "echo $TAU_PROBE"), "1");
@@ -223,7 +226,7 @@ fn a_command_waits_while_the_environment_loads() {
     let fixture = Fixture::new();
     let host =
         fixture.host(Some(fixture.direnv(&[("FAKE_DIRENV_DELAY", "1")])));
-    host.decide("repo", true).unwrap();
+    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     let launcher = host.launcher(&fixture.repo).unwrap();
     let dir = fixture.workspace("slow", Some(PROBE));
     let started = Instant::now();
@@ -245,7 +248,7 @@ fn a_command_waits_while_the_environment_loads() {
 fn a_failed_load_runs_commands_without_it() {
     let fixture = Fixture::new();
     let host = fixture.host(Some(fixture.direnv(&[])));
-    host.decide("repo", true).unwrap();
+    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     let launcher = host.launcher(&fixture.repo).unwrap();
     let dir =
         fixture.workspace("broken", Some("echo 'no flake here' >&2\nexit 3\n"));
@@ -266,7 +269,7 @@ fn a_failed_load_runs_commands_without_it() {
 fn a_denied_envrc_is_not_loaded() {
     let fixture = Fixture::new();
     let host = fixture.host(Some(fixture.direnv(&[])));
-    host.decide("repo", true).unwrap();
+    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     let dir = fixture.workspace("denied", Some(PROBE));
     let record = dir.join(".envrc");
     let hash = {
@@ -327,7 +330,7 @@ fn the_configuration_mirrors_the_persons_and_allows_the_repositories() {
         user.join("lib")
     );
 
-    host.decide("repo", true).unwrap();
+    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     let prefixes = read()["whitelist"]["prefix"].clone();
     assert_eq!(
         prefixes,
@@ -335,6 +338,9 @@ fn the_configuration_mirrors_the_persons_and_allows_the_repositories() {
             fixture.repo.workspaces.display().to_string().into()
         ])
     );
-    host.decide("repo", false).unwrap();
+    fixture
+        .runtime
+        .block_on(host.decide("repo", false))
+        .unwrap();
     assert_eq!(read()["whitelist"]["prefix"].as_array().unwrap().len(), 0);
 }

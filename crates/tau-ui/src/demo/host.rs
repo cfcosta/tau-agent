@@ -100,7 +100,7 @@ impl DemoHost {
                 save.lock()
                     .expect("not poisoned")
                     .insert(plugin.to_owned(), value);
-                Ok(())
+                Box::pin(std::future::ready(Ok(())))
             },
         );
         let jev: Arc<dyn Jev> = Arc::new(scripted_jev());

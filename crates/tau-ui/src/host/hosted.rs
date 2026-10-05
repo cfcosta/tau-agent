@@ -30,8 +30,11 @@ impl Host {
 
     /// What every plugin reaches of this host now.
     pub(super) fn host_cx(&self) -> HostCx {
-        let (settings, path) =
-            (self.settings.clone(), self.config.settings.clone());
+        let (settings, path, saving) = (
+            self.settings.clone(),
+            self.config.settings.clone(),
+            self.settings_saving.clone(),
+        );
         let read = settings.clone();
         let saved = SavedSettings::new(
             move |plugin| {
@@ -42,9 +45,23 @@ impl Host {
                     .cloned()
             },
             move |plugin, value| {
-                let mut settings = settings.lock().expect("not poisoned");
-                settings.plugins.insert(plugin.to_owned(), value);
-                write_settings(&path, &settings)
+                settings
+                    .lock()
+                    .expect("not poisoned")
+                    .plugins
+                    .insert(plugin.to_owned(), value);
+                let (settings, path, saving) =
+                    (settings.clone(), path.clone(), saving.clone());
+                Box::pin(async move {
+                    saving
+                        .save(
+                            || settings.lock().expect("not poisoned").clone(),
+                            async move |settings| {
+                                write_settings(&path, &settings).await
+                            },
+                        )
+                        .await
+                })
             },
         );
         let mut services = Services::default()
@@ -280,14 +297,16 @@ impl Host {
 
     /// Saves `plugin`'s settings with the model settings; runs started
     /// from now on take them.
-    pub fn save_plugin_settings(
+    pub async fn save_plugin_settings(
         &self,
         plugin: &str,
         value: Value,
     ) -> anyhow::Result<()> {
-        let mut settings = self.settings.lock().expect("not poisoned").clone();
-        settings.plugins.insert(plugin.to_owned(), value);
-        self.save_settings(settings)
+        let plugin = plugin.to_owned();
+        self.change_settings(move |settings| {
+            settings.plugins.insert(plugin, value);
+        })
+        .await
     }
 
     /// Stores `body` as `plugin`'s record with `run`: a change the

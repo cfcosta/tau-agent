@@ -119,8 +119,14 @@ impl std::fmt::Debug for TurnHooks {
 pub struct ConfigDir(pub PathBuf);
 
 type ReadSettings = Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>;
-type SaveSettings =
-    Arc<dyn Fn(&str, Value) -> anyhow::Result<()> + Send + Sync>;
+type SaveSettings = Arc<
+    dyn Fn(
+            &str,
+            Value,
+        ) -> crate::registry::HostFuture<'static, anyhow::Result<()>>
+        + Send
+        + Sync,
+>;
 
 /// The plugins' saved settings, as the host keeps them: what a plugin's
 /// host half reads and saves its own settings through, when an action
@@ -137,7 +143,14 @@ impl SavedSettings {
     /// replaces them, by plugin name.
     pub fn new(
         read: impl Fn(&str) -> Option<Value> + Send + Sync + 'static,
-        save: impl Fn(&str, Value) -> anyhow::Result<()> + Send + Sync + 'static,
+        save: impl Fn(
+            &str,
+            Value,
+        )
+            -> crate::registry::HostFuture<'static, anyhow::Result<()>>
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         Self {
             read: Arc::new(read),
@@ -161,7 +174,7 @@ impl SavedSettings {
                     .lock()
                     .expect("not poisoned")
                     .insert(plugin.to_owned(), value);
-                Ok(())
+                Box::pin(std::future::ready(Ok(())))
             },
         )
     }
@@ -170,8 +183,9 @@ impl SavedSettings {
         (self.read)(plugin)
     }
 
-    pub fn save(&self, plugin: &str, value: Value) -> anyhow::Result<()> {
-        (self.save)(plugin, value)
+    /// Saves `plugin`'s settings; the host writes them on its runtime.
+    pub async fn save(&self, plugin: &str, value: Value) -> anyhow::Result<()> {
+        (self.save)(plugin, value).await
     }
 }
 
@@ -354,7 +368,7 @@ impl HostCx {
     /// Saves `settings` as `plugin`'s, as its page would, and asks the
     /// interface to draw the catalog again, which carries them. Runs
     /// started from now on take them.
-    pub fn save_settings(
+    pub async fn save_settings(
         &self,
         plugin: &str,
         settings: &impl Serialize,
@@ -363,7 +377,7 @@ impl HostCx {
             .services
             .get::<SavedSettings>()
             .ok_or_else(|| anyhow::anyhow!("This host saves no settings"))?;
-        saved.save(plugin, serde_json::to_value(settings)?)?;
+        saved.save(plugin, serde_json::to_value(settings)?).await?;
         self.refresh();
         Ok(())
     }
@@ -455,14 +469,16 @@ mod tests {
         let mut expected: [Vec<u32>; 2] = Default::default();
         for (second, value) in &saves {
             let plugin = if *second { "b" } else { "a" };
-            cx.save_settings(plugin, value).unwrap();
+            cx.runtime
+                .block_on(cx.save_settings(plugin, value))
+                .unwrap();
             expected[usize::from(*second)] = value.clone();
         }
         assert_eq!(cx.settings::<Vec<u32>>("a"), expected[0]);
         assert_eq!(cx.settings::<Vec<u32>>("b"), expected[1]);
         assert_eq!(cx.settings::<Vec<u32>>("c"), Vec::<u32>::new());
         // Another shape is the default, not an error.
-        cx.save_settings("c", &"text").unwrap();
+        cx.runtime.block_on(cx.save_settings("c", &"text")).unwrap();
         assert_eq!(cx.settings::<Vec<u32>>("c"), Vec::<u32>::new());
         assert_eq!(pushes.lock().unwrap().len(), saves.len() + 1);
         assert_eq!(cx.config_dir(), Some(Path::new("/config/tau")));

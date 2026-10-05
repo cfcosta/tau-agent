@@ -221,7 +221,10 @@ fn new_chats_fork_the_repository_main_chat() {
     assert_eq!((view.title.as_str(), &view.origin), ("main", &Origin::Root));
     assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
     assert_eq!(view.repo, REPO);
-    assert!(host.set_closed(&main, true).is_err(), "main stays open");
+    assert!(
+        host.block_on(host.set_closed(&main, true)).is_err(),
+        "main stays open"
+    );
     assert_eq!(
         host.block_on(host.catalog()).repos[0].main.as_ref(),
         Some(&main),
@@ -1411,7 +1414,8 @@ fn repositories_are_listed_and_remembered() {
         "proj"
     );
     assert!(host.block_on(host.clone_github("c/missing")).is_err());
-    host.set_open_repos(vec!["proj-2".into()]).unwrap();
+    host.block_on(host.set_open_repos(vec!["proj-2".into()]))
+        .unwrap();
     assert_eq!(names(&host), ["tau-plugins", "proj", "proj-2"]);
     drop(host);
 
@@ -1419,16 +1423,16 @@ fn repositories_are_listed_and_remembered() {
     let host = on_github(host, remote.path());
     assert_eq!(names(&host), ["tau-plugins", "proj", "proj-2"]);
     assert_eq!(host.block_on(host.catalog()).open_repos, ["proj-2"]);
-    host.hide_repo("proj").unwrap();
+    host.block_on(host.hide_repo("proj")).unwrap();
     assert_eq!(names(&host), ["tau-plugins", "proj-2"]);
     // Closed conversations are remembered too, until opened again.
     let (first, second) = (
         tau_agent::tool::RunId("a".into()),
         tau_agent::tool::RunId("b".into()),
     );
-    host.set_closed(&first, true).unwrap();
-    host.set_closed(&second, true).unwrap();
-    host.set_closed(&second, false).unwrap();
+    host.block_on(host.set_closed(&first, true)).unwrap();
+    host.block_on(host.set_closed(&second, true)).unwrap();
+    host.block_on(host.set_closed(&second, false)).unwrap();
     // So are flagged calls someone looked at.
     for _ in 0..2 {
         rules_act(
@@ -1483,7 +1487,7 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let mut settings = models.settings.clone();
     settings.set_default("coder", ModelChoice::new("gpt-6-astra", Effort::Low));
     settings.toggle_hidden("gpt-5.6-terra");
-    host.save_settings(settings.clone()).unwrap();
+    host.block_on(host.save_settings(settings.clone())).unwrap();
     drop(host);
 
     // On a ChatGPT plan the picker offers the plan's models from the
@@ -2241,7 +2245,7 @@ fn reasoning_settings_reach_the_plugin() {
         tau_reasoning::NAME.into(),
         serde_json::json!({ "redecide": true, "threshold": 0.9 }),
     );
-    host.save_settings(settings).unwrap();
+    host.block_on(host.save_settings(settings)).unwrap();
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
     let view = host
         .block_on(host.start("track down the race", &auto, REPO))

@@ -99,7 +99,7 @@ fn go_on(
         async move |host| {
             host.resume(&job_run, &job_prompt, &job_model).await?;
             // A message opens a closed conversation again.
-            let _ = host.set_closed(&job_run, false);
+            let _ = host.set_closed(&job_run, false).await;
             Ok(host.starting_of(&job_run, &job_model).await)
         },
         move |ws, starting, cx| {
@@ -746,14 +746,20 @@ impl Host {
                     );
                 }
                 WorkspaceEvent::PluginSettings { plugin, settings } => {
-                    let saved =
-                        handler.save_plugin_settings(plugin, settings.clone());
-                    handler.catalog_changed();
-                    if let Err(error) = saved {
-                        workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::alert(format!("Could not save {plugin}'s settings"), format!("{error:#}")), cx);
-                        });
-                    }
+                    let (job_plugin, settings) = (plugin.clone(), settings.clone());
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| {
+                            let saved =
+                                host.save_plugin_settings(&job_plugin, settings).await;
+                            host.catalog_changed();
+                            saved
+                        },
+                        |_, (), _| {},
+                        alert(format!("Could not save {plugin}'s settings")),
+                        cx,
+                    );
                 }
                 WorkspaceEvent::PluginRecord { run, plugin, body } => {
                     let (job_run, job_plugin, job_body) =
@@ -775,9 +781,12 @@ impl Host {
                     );
                 }
                 WorkspaceEvent::CloseRun { run } => {
-                    if let Err(error) = handler.set_closed(run, true) {
-                        eprintln!("tau-ui: cannot save closed runs: {error:#}");
-                    }
+                    let job_run = run.clone();
+                    handler.spawn(async move |host| {
+                        if let Err(error) = host.set_closed(&job_run, true).await {
+                            eprintln!("tau-ui: cannot save closed runs: {error:#}");
+                        }
+                    });
                     workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Closed(run.clone()), cx));
                 }
                 WorkspaceEvent::Say { run, text, model } => {
@@ -852,23 +861,31 @@ impl Host {
                 WorkspaceEvent::SetDefaultModel { .. } | WorkspaceEvent::HideModel { .. } => {
                     // The change, to the settings as kept now: another
                     // interface may have changed others since.
-                    let saved = handler.change_settings(|settings| match event {
-                        WorkspaceEvent::SetDefaultModel { agent, choice } => {
-                            settings.set_default(agent, choice.clone())
-                        }
-                        WorkspaceEvent::HideModel { id, hidden } => {
-                            settings.set_hidden(id, *hidden)
-                        }
-                        _ => {}
-                    });
-                    // What is saved, for every interface; the one that
-                    // changed it showed the change already.
-                    handler.catalog_changed();
-                    if let Err(error) = saved {
-                        workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::alert("Could not save the model settings", format!("{error:#}")), cx)
-                        });
-                    }
+                    let event = event.clone();
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| {
+                            let saved = host
+                                .change_settings(|settings| match &event {
+                                    WorkspaceEvent::SetDefaultModel { agent, choice } => {
+                                        settings.set_default(agent, choice.clone())
+                                    }
+                                    WorkspaceEvent::HideModel { id, hidden } => {
+                                        settings.set_hidden(id, *hidden)
+                                    }
+                                    _ => {}
+                                })
+                                .await;
+                            // What is saved, for every interface; the one
+                            // that changed it showed the change already.
+                            host.catalog_changed();
+                            saved
+                        },
+                        |_, (), _| {},
+                        alert("Could not save the model settings"),
+                        cx,
+                    );
                 }
                 WorkspaceEvent::PreviewLanding { run } => {
                     let preview = |ws: &mut Workspace, run, preview, cx: &mut Context<Workspace>| {
@@ -979,20 +996,29 @@ impl Host {
                 WorkspaceEvent::HideRepo { repo } => {
                     // The list without it, for every interface; the one
                     // that hid it showed that already.
-                    let hidden = handler.hide_repo(repo);
-                    handler.catalog_changed();
-                    if let Err(error) = hidden {
-                        workspace.update(cx, |ws, cx| {
-                            ws.apply(HostUpdate::alert("Could not save the repository list", format!("{error:#}")), cx)
-                        });
-                    }
+                    let repo = repo.clone();
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| {
+                            let hidden = host.hide_repo(&repo).await;
+                            host.catalog_changed();
+                            hidden
+                        },
+                        |_, (), _| {},
+                        alert("Could not save the repository list"),
+                        cx,
+                    );
                 }
                 WorkspaceEvent::OpenRepos(open) => {
-                    if let Err(error) = handler.set_open_repos(open.clone()) {
-                        eprintln!(
-                            "tau-ui: cannot save the repository list: {error:#}"
-                        );
-                    }
+                    let open = open.clone();
+                    handler.spawn(async move |host| {
+                        if let Err(error) = host.set_open_repos(open).await {
+                            eprintln!(
+                                "tau-ui: cannot save the repository list: {error:#}"
+                            );
+                        }
+                    });
                 }
                 // `phone_server::serve` handles these in its own
                 // subscription.

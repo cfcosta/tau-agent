@@ -72,7 +72,7 @@ fn the_real_direnv_loads_through_taus_whitelist() {
         Arc::new(|_| {}),
     );
     let host = Host::with_direnv(&cx, Some(direnv.clone()));
-    host.decide("repo", true).unwrap();
+    runtime.block_on(host.decide("repo", true)).unwrap();
     let launcher = host.launcher(&repo).unwrap();
     let launch = runtime.block_on(launcher.launch(&workspace));
     assert_eq!(host.status(&workspace), Status::Ready);
