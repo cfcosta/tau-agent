@@ -126,6 +126,18 @@ impl Project {
             .await
     }
 
+    /// Opens the project at `root`, or makes an empty one there. See
+    /// [`ProjectRepo::open_or_init`].
+    pub async fn open_or_init(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+        files: Vec<(String, String)>,
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        Self::make(move || ProjectRepo::open_or_init(root, identity, &files))
+            .await
+    }
+
     async fn make(
         open: impl FnOnce() -> Result<ProjectRepo, VcsError> + Send + 'static,
     ) -> Result<Self, VcsError> {
@@ -218,6 +230,156 @@ impl ProjectRepo {
             return Self::open(root, identity);
         }
         Self::import(source, root, identity)
+    }
+
+    /// Opens the project at `root`, or makes an empty one there, with
+    /// `files` in its first commit on `main`: a repository of tau's own,
+    /// such as the plugins repository (ADR 0027).
+    pub fn open_or_init(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+        files: &[(String, String)],
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        if root.join(MAIN).join(".jj").is_dir() {
+            return Self::open(root, identity);
+        }
+        Self::init(root, identity, files)
+    }
+
+    /// Makes a project at `root` (which must not hold one) with a git
+    /// store of its own, and `files` in a first commit that `main`
+    /// names. The checkout holds them, with an empty working copy on
+    /// top.
+    pub fn init(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+        files: &[(String, String)],
+    ) -> Result<Self, VcsError> {
+        use jj_lib::{
+            backend::{CopyId, TreeValue},
+            merge::Merge,
+            merged_tree_builder::MergedTreeBuilder,
+            op_store::RefTarget,
+            repo_path::RepoPathBuf,
+        };
+        let root = root.into();
+        let git_dir = root.join(GIT);
+        std::fs::create_dir_all(&git_dir).map_err(|source| {
+            VcsError::Create {
+                path: git_dir.clone(),
+                source,
+            }
+        })?;
+        gix::init_bare(&git_dir).map_err(|error| VcsError::Create {
+            path: git_dir.clone(),
+            source: std::io::Error::other(error.to_string()),
+        })?;
+        let project = Self::new(root, identity)?;
+        let main = project.inner.root.join(MAIN);
+        std::fs::create_dir_all(&main)?;
+        let (mut workspace, repo) = block_on(Workspace::init_external_git(
+            &project.inner.settings,
+            &main,
+            &git_dir,
+        ))
+        .map_err(VcsError::MakeRepo)?;
+        let mut tx = repo.start_transaction();
+        let store = tx.repo().store().clone();
+        let mut tree = MergedTreeBuilder::new(store.empty_merged_tree());
+        for (path, text) in files {
+            let path =
+                RepoPathBuf::from_relative_path(path).map_err(|error| {
+                    VcsError::Create {
+                        path: path.into(),
+                        source: std::io::Error::other(error.to_string()),
+                    }
+                })?;
+            let id = block_on(store.write_file(&path, &mut text.as_bytes()))?;
+            tree.set_or_remove(
+                path,
+                Merge::normal(TreeValue::File {
+                    id,
+                    executable: false,
+                    copy_id: CopyId::placeholder(),
+                }),
+            );
+        }
+        let tree = block_on(tree.write_tree())?;
+        let first = block_on(
+            tx.repo_mut()
+                .new_commit(vec![store.root_commit_id().clone()], tree)
+                .set_description("tau: start the repository")
+                .write(),
+        )?;
+        tx.repo_mut().set_local_bookmark_target(
+            RefName::new("main"),
+            RefTarget::normal(first.id().clone()),
+        );
+        let wc = block_on(
+            tx.repo_mut()
+                .check_out(WorkspaceNameBuf::from(DEFAULT_WORKSPACE), &first),
+        )?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+        let repo = block_on(tx.commit("tau: make the repository"))?;
+        block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
+            .map_err(VcsError::CheckOut)?;
+        Ok(project)
+    }
+
+    /// Every file under the folder `prefix` at `commit` (a full id in
+    /// hex), by its path from the repository's root, with its content.
+    /// Empty when the commit has no such folder.
+    pub fn files_under(
+        &self,
+        commit: &str,
+        prefix: &str,
+    ) -> Result<Vec<(String, Vec<u8>)>, VcsError> {
+        let repo = self.git()?;
+        let id =
+            gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
+                VcsError::BadCommitHex {
+                    commit: commit.to_owned(),
+                    source,
+                }
+            })?;
+        let commit = repo.find_object(id)?.try_into_commit()?;
+        let mut tree = commit.tree()?;
+        let prefix = prefix.trim_matches('/');
+        let start = if prefix.is_empty() {
+            tree
+        } else {
+            let Some(entry) = tree.peel_to_entry_by_path(prefix)? else {
+                return Ok(Vec::new());
+            };
+            if !entry.mode().is_tree() {
+                return Ok(Vec::new());
+            }
+            entry.object()?.try_into_tree()?
+        };
+        let mut found = Vec::new();
+        let mut folders = vec![(prefix.to_owned(), start)];
+        while let Some((at, folder)) = folders.pop() {
+            for entry in folder.iter() {
+                let entry = entry.map_err(|error| {
+                    VcsError::GitTree(at.clone(), error.to_string())
+                })?;
+                let name = entry.filename().to_string();
+                let path = if at.is_empty() {
+                    name
+                } else {
+                    format!("{at}/{name}")
+                };
+                let object = entry.object()?;
+                if entry.mode().is_tree() {
+                    folders.push((path, object.try_into_tree()?));
+                } else if entry.mode().is_blob() {
+                    found.push((path, object.detach().data));
+                }
+            }
+        }
+        found.sort();
+        Ok(found)
     }
 
     /// Opens the project at `root`.

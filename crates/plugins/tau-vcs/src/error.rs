@@ -15,6 +15,8 @@ use crate::clone::CloneError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VcsError {
+    #[error("The folder {0:?} could not be read: {1}")]
+    GitTree(String, String),
     #[error("The description must not be empty")]
     EmptyDescription,
     #[error("The working copy has no parent")]
