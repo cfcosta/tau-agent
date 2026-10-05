@@ -6,7 +6,7 @@
 use std::path::Path;
 
 /// The skill's name, and its folder's.
-pub const NAME: &str = "tau-plugins";
+pub const NAME: &str = crate::SKILL;
 
 const TEMPLATE: &str = include_str!("../skill/SKILL.md");
 

@@ -1430,6 +1430,7 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
         names(composer_slash(&workspace, &mut cx, "/")),
         [
             "/goal",
+            "/plugin",
             "/code-review",
             "/release-notes",
             "/tau-plugins",
@@ -1444,7 +1445,7 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     assert_eq!(names(composer_slash(&workspace, &mut cx, "/fo")), ["/fork"]);
     workspace
         .update(&mut cx, |ws, cx| ws.navigate(Route::Run(done.clone()), cx));
-    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 8);
+    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 9);
     assert!(names(composer_slash(&workspace, &mut cx, "/fo")).is_empty());
     // Not a command: a message.
     assert_eq!(
@@ -1526,6 +1527,37 @@ fn goal_checks(
         plugin: tau_goal::NAME.into(),
         body: serde_json::json!({ "kind": "starting", "checks": checks }),
     }
+}
+
+/// `/plugin` starts a chat in tau's plugins repository that loads the
+/// skill for writing one, wherever it is written; alone, it waits to be
+/// written.
+#[gpui::test]
+fn slash_plugin_starts_a_chat_in_the_plugins_repository(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    let done = tau_agent::tool::RunId("plugin-docs".into());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(done.clone()), cx);
+        ws.submit_prompt("/plugin".into(), cx);
+    });
+    workspace.update(&mut cx, |ws, cx| {
+        assert_eq!(ws.composer_text(cx), "/plugin ");
+        ws.set_composer("", cx);
+        ws.submit_prompt("/plugin block deploys on Fridays".into(), cx);
+    });
+    cx.run_until_parked();
+    assert!(
+        matches!(
+            events.borrow().last(),
+            Some(WorkspaceEvent::NewRun { repo, prompt, .. })
+                if repo == "tau-plugins"
+                    && prompt == "/tau-plugins block deploys on Fridays"
+        ),
+        "{:?}",
+        events.borrow().last()
+    );
 }
 
 #[gpui::test]

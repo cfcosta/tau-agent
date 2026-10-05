@@ -167,6 +167,12 @@ pub enum Request {
         run: Option<RunId>,
         text: String,
     },
+    /// Starts a run in the repository named `repo` with `text` as its
+    /// first message, and opens it.
+    Start {
+        repo: String,
+        text: String,
+    },
     /// Puts `text` in the composer.
     Composer(String),
     /// Shows the run's details: the inspector, or a phone's sheet.
@@ -272,6 +278,21 @@ impl Handle {
         self.request(
             Request::Send {
                 run: run.cloned(),
+                text: text.into(),
+            },
+            cx,
+        );
+    }
+
+    pub fn start(
+        &self,
+        repo: impl Into<String>,
+        text: impl Into<String>,
+        cx: &mut App,
+    ) {
+        self.request(
+            Request::Start {
+                repo: repo.into(),
                 text: text.into(),
             },
             cx,

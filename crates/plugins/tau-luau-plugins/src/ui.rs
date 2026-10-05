@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
 use tau_ui_kit::{
+    assets::Icon,
     components::{
         ButtonKind,
         badge,
@@ -46,6 +47,7 @@ use tau_ui_plugin::{
     RunCtx,
     RunCx,
     Seam,
+    SlashCommand,
     UiPlugin,
     ViewCx,
     points::{self, AtCard, CardView},
@@ -362,7 +364,7 @@ impl UiPlugin for LuauPluginsUi {
         {
             let mut plugins: Vec<Box<dyn Plugin>> = Vec::new();
             // A run in the plugins repository tests the plugins it writes.
-            if run.repo.name == crate::registry::REPO
+            if run.repo.name == crate::REPO
                 && let Some(dir) =
                     run.services.get::<tau_ui_plugin::WorkspaceDir>()
             {
@@ -475,6 +477,15 @@ impl UiPlugin for LuauPluginsUi {
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(Page::new(PAGE, page).title(|_| "Luau plugins".to_owned()))
+            .command(
+                SlashCommand::new(
+                    "plugin",
+                    "Write or change a plugin, in a chat of its own",
+                    start_plugin_chat,
+                )
+                .args("<what it should do>")
+                .icon(Icon::Plug),
+            )
             .status(State::status)
             .contribute(points::CARD, |at: &AtCard, view| {
                 let details = at.data.result.as_ref()?.details.as_ref()?;
@@ -648,6 +659,20 @@ fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
         column = column.child(card(&t).p(sp(4.)).child(body));
     }
     column.into_any_element()
+}
+
+/// `/plugin <what>`: a chat in the plugins repository, with the skill
+/// loaded and the person's words as its task.
+fn start_plugin_chat(args: &str, view: &mut ViewCx<'_, LuauPluginsUi>) {
+    if args.is_empty() {
+        view.handle.composer("/plugin ", view.cx);
+        return;
+    }
+    view.handle.start(
+        crate::REPO,
+        format!("/{} {args}", crate::SKILL),
+        view.cx,
+    );
 }
 
 #[cfg(test)]

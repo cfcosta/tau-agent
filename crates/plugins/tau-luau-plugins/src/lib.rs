@@ -31,6 +31,12 @@ pub use ui::LuauPluginsUi;
 /// The host plugin's name, for both its halves.
 pub const NAME: &str = "tau-luau-plugins";
 
+/// The name the host lists the plugins repository by.
+pub const REPO: &str = "tau-plugins";
+
+/// The skill tau ships for writing plugins.
+pub const SKILL: &str = "tau-plugins";
+
 /// The `tau` module every plugin requires: the declaration, the
 /// answers hooks give, the view pieces.
 pub const TAU_MODULE: &str = include_str!("tau.luau");

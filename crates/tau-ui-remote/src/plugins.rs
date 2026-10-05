@@ -167,6 +167,13 @@ impl Workspace {
                 Some(run) => self.say(&run, text, cx),
                 None => self.send(text, cx),
             },
+            Request::Start { repo, text } => {
+                cx.emit(WorkspaceEvent::NewRun {
+                    prompt: text,
+                    model: self.next_model.clone(),
+                    repo,
+                });
+            }
             Request::Composer(text) => {
                 self.composer
                     .update(cx, |input, cx| input.set_text(text, cx));

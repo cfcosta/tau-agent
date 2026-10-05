@@ -33,8 +33,7 @@ use crate::{
 /// The plugins repository's directory under tau's data directory.
 pub const ROOT: &str = "luau-plugins";
 
-/// The name the host lists the plugins repository by.
-pub const REPO: &str = "tau-plugins";
+pub use crate::REPO;
 
 /// How often trunk is read for a change.
 const POLL: Duration = Duration::from_secs(2);
