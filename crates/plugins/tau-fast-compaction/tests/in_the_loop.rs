@@ -135,6 +135,9 @@ fn a_stale_result_is_cut() {
         let rewritten = rewrites(&events);
         assert_eq!(rewritten.len(), 1, "{rewritten:?}");
         assert_eq!(rewritten[0].0, NAME);
+        // The cut result's size is gone from the context, though the
+        // last call's usage still counts it.
+        assert!(rewritten[0].2 + 500 < rewritten[0].1, "{rewritten:?}");
 
         // The ledger is reported, before the rewrite it explains.
         let report = events

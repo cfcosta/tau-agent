@@ -51,7 +51,7 @@ use tau_ai::{
     model,
     retry::{Class, RetryPolicy},
 };
-use tau_store::{Entry, Status, Store, StoreError, TurnUsage};
+use tau_store::{Entry, RewriteStats, Status, Store, StoreError, TurnUsage};
 use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
@@ -59,7 +59,11 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    context::{estimate_context_tokens, is_context_overflow},
+    context::{
+        estimate_context_tokens,
+        estimate_message_tokens,
+        is_context_overflow,
+    },
     error::describe,
     event::{RunEvent, StopReason},
     limits::Limits,

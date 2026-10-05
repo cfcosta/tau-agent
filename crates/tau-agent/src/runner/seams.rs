@@ -58,6 +58,18 @@ pub(super) fn check_rewrite(
     }
 }
 
+/// The context's size after a rewrite from `before` to `after`, from
+/// its size `tokens` before: less what the rewrite removed, by the
+/// characters' estimate. Not [`estimate_context_tokens`] of `after`:
+/// that anchors on the last kept assistant message's usage, which still
+/// counts everything the rewrite removed before it.
+fn tokens_after(tokens: u64, before: &[Message], after: &[Message]) -> u64 {
+    let size = |messages: &[Message]| -> u64 {
+        messages.iter().map(estimate_message_tokens).sum()
+    };
+    (tokens + size(after)).saturating_sub(size(before))
+}
+
 /// Where each message of `after` comes from: `Some(i)` for one equal to
 /// `before[i]`, matched in order, `None` for one a rewrite made or
 /// changed.
@@ -161,10 +173,16 @@ impl Runner {
         // The messages it kept are stored once already: the rewrite
         // points at them, and stores only the ones it made or changed.
         let layout = layout(transcript, &rewrite.messages);
+        let tokens_after = tokens_after(tokens, transcript, &rewrite.messages);
         let mut entries = vec![Entry::Context {
             plugin: plugin.to_string(),
             body: rewrite.details.to_string(),
             layout: layout.clone(),
+            stats: Some(RewriteStats {
+                tokens_before: tokens,
+                tokens_after,
+                trigger: trigger.name().to_owned(),
+            }),
         }];
         entries.extend(
             rewrite
@@ -190,7 +208,7 @@ impl Runner {
             run: self.run.clone(),
             plugin,
             tokens_before: tokens,
-            tokens_after: estimate_context_tokens(transcript),
+            tokens_after,
         })
         .await;
         Ok(Ok(()))

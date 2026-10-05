@@ -137,6 +137,9 @@ pub enum Entry {
         plugin: String,
         body: String,
         layout: Vec<Option<usize>>,
+        /// What the rewrite did to the context. Every rewrite the loop
+        /// stores has it; `None` only for a row from before it was kept.
+        stats: Option<RewriteStats>,
     },
     /// A record `plugin` keeps with the run. It is never part of the
     /// transcript; [`Store::records`] reads it back, and
@@ -145,6 +148,16 @@ pub enum Entry {
         plugin: String,
         body: String,
     },
+}
+
+/// What a context rewrite did, for measuring it: the loop's token
+/// estimate of the context before and after, and what triggered it
+/// (`turn_end`, `start` or `overflow`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewriteStats {
+    pub tokens_before: u64,
+    pub tokens_after: u64,
+    pub trigger: String,
 }
 
 /// Token and cost totals added by one turn.
@@ -478,11 +491,12 @@ impl Store {
                     plugin,
                     body,
                     layout,
+                    stats,
                 } => (
                     "context",
                     None,
                     Some(plugin.as_str()),
-                    Cow::Owned(context_row(body, layout)?),
+                    Cow::Owned(context_row(body, layout, stats.as_ref())?),
                 ),
                 Entry::Plugin { plugin, body } => (
                     "plugin",
@@ -618,12 +632,13 @@ impl Store {
 
         let entries = rows.into_iter().map(|row| match row.kind.as_str() {
             "context" => {
-                let (body, layout) = read_context(&row.body)?;
+                let (body, layout, stats) = read_context(&row.body)?;
                 Ok(Entry::Context {
                     // The loop sets a plugin on every context row.
                     plugin: row.plugin.unwrap_or_default(),
                     body,
                     layout,
+                    stats,
                 })
             }
             "plugin" => Ok(Entry::Plugin {
@@ -992,31 +1007,39 @@ fn run_kind(
     }
 }
 
-/// A context row's body: the rewrite's details, and the layout of the
-/// transcript it leaves.
+/// A context row's body: the rewrite's details, the layout of the
+/// transcript it leaves, and what it did.
 #[derive(Serialize, Deserialize)]
 struct ContextRow<'a> {
     #[serde(borrow, default)]
     details: Option<&'a RawValue>,
     #[serde(default)]
     layout: Vec<Option<usize>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stats: Option<RewriteStats>,
 }
 
-/// The body of the row that stores a rewrite with `details` and
-/// `layout`.
-fn context_row(details: &str, layout: &[Option<usize>]) -> Result<String> {
+/// The body of the row that stores a rewrite.
+fn context_row(
+    details: &str,
+    layout: &[Option<usize>],
+    stats: Option<&RewriteStats>,
+) -> Result<String> {
     let details: &RawValue = serde_json::from_str(details)?;
     Ok(serde_json::to_string(&ContextRow {
         details: Some(details),
         layout: layout.to_vec(),
+        stats: stats.cloned(),
     })?)
 }
 
-/// A context row's details and layout, from its body.
-fn read_context(body: &str) -> Result<(String, Vec<Option<usize>>)> {
+/// A context row's details, layout and stats, from its body.
+fn read_context(
+    body: &str,
+) -> Result<(String, Vec<Option<usize>>, Option<RewriteStats>)> {
     let row: ContextRow = serde_json::from_str(body)?;
     let details = row.details.map_or("null", RawValue::get).to_owned();
-    Ok((details, row.layout))
+    Ok((details, row.layout, row.stats))
 }
 
 /// The transcript `entries` leave, with the latest rewrite first: each

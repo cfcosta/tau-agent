@@ -950,10 +950,20 @@ fn a_rewrite_replaces_the_transcript() {
             plugin,
             body,
             layout,
+            stats: Some(stats),
         } = &entries[0]
         else {
             panic!("{entries:?}");
         };
+        // What it did is stored, as the event said it.
+        assert_eq!(
+            (
+                stats.tokens_before,
+                stats.tokens_after,
+                stats.trigger.as_str()
+            ),
+            (rewritten[0].1, rewritten[0].2, "turn_end")
+        );
         assert_eq!(plugin, "pruner");
         assert_eq!(body, &json!({"pruned_at": 4}).to_string());
         assert_eq!(entries.len(), 3, "context, kept message, answer");

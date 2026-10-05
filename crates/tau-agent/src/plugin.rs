@@ -284,6 +284,17 @@ pub enum Trigger {
     Overflow,
 }
 
+impl Trigger {
+    /// The trigger's name, as a stored rewrite records it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::TurnEnd => "turn_end",
+            Self::Start => "start",
+            Self::Overflow => "overflow",
+        }
+    }
+}
+
 /// A new working transcript, from [`PluginRun::rewrite_context`].
 ///
 /// The loop rejects a rewrite, as a `PluginError`, unless it is not

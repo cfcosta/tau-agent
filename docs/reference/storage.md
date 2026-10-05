@@ -32,8 +32,10 @@ own `constitution.db` ([constitution.md](constitution.md)).
   any run that has a `fork_seq`, whatever its kind.
 - **A context rewrite** is a row in `messages` with `kind = 'context'`,
   naming the plugin that made it (compaction is one). Its body is
-  `{"details": …, "layout": […]}`: the plugin's details, and the
-  transcript the rewrite leaves, one slot per message. A number keeps
+  `{"details": …, "layout": […], "stats": {…}}`: the plugin's details,
+  the transcript the rewrite leaves, one slot per message, and what it
+  did: `tokens_before` and `tokens_after`, the loop's estimate of the
+  context, and the `trigger` (`turn_end`, `start` or `overflow`). A number keeps
   the message at that index of the transcript before the rewrite, by
   reference. `null` takes the next message stored after the row: one
   the rewrite made or changed. Only those are stored again, so a

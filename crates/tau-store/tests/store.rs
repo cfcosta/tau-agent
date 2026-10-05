@@ -19,6 +19,7 @@ use tau_store::{
     Entry,
     NewRun,
     PluginCost,
+    RewriteStats,
     RunKind,
     Status,
     Store,
@@ -198,6 +199,11 @@ fn entry_unprinted(tc: &TestCase) -> Entry {
                 gs::vecs(gs::optional(gs::integers::<usize>().max_value(5)))
                     .max_size(5),
             ),
+            stats: tc.draw(gs::booleans()).then(|| RewriteStats {
+                tokens_before: tc.draw(gs::integers::<u64>()),
+                tokens_after: tc.draw(gs::integers::<u64>()),
+                trigger: text.clone(),
+            }),
         },
         1 => Entry::Plugin {
             plugin: plugin(),

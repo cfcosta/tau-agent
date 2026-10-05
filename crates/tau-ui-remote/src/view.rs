@@ -655,11 +655,12 @@ pub enum Stored {
         plugin: String,
         body: Value,
     },
-    /// A context rewrite: what the stored transcript starts with after
-    /// one, and the details the plugin gave it.
+    /// A context rewrite, in place: the details the plugin gave it, and
+    /// the context's tokens before and after, when stored.
     Rewrite {
         plugin: String,
         body: Value,
+        tokens: Option<(u64, u64)>,
     },
 }
 
@@ -743,10 +744,14 @@ impl RunView {
         };
         for entry in timeline {
             match entry {
-                Stored::Rewrite { plugin, body } => {
+                Stored::Rewrite {
+                    plugin,
+                    body,
+                    tokens,
+                } => {
                     view.items.push(Item::Rewrite {
                         plugin: plugin.clone(),
-                        tokens: None,
+                        tokens: *tokens,
                         key: None,
                     });
                     rewrites.push((plugin, body));
@@ -2823,6 +2828,7 @@ mod tests {
                 Stored::Rewrite {
                     plugin: tau_fast_compaction::NAME.into(),
                     body: ledger,
+                    tokens: None,
                 },
                 Stored::Message(call("t2")),
                 Stored::Message(result("t2")),

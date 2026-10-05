@@ -319,8 +319,11 @@ pub struct Rewrite {
   fails the check is dropped and reported as an event, and the run goes
   on with the old transcript.
 - **Storage.** A rewrite is stored in one write, as a `context` entry
-  `{ plugin, details }` followed by the new transcript's messages.
-  Loading a transcript starts at the latest `context` entry.
+  with the plugin's details, a layout that points at the messages it
+  kept, and what it did (tokens before and after, and its trigger),
+  followed by only the messages it made or changed
+  ([storage.md](storage.md)). Loading a transcript replays the
+  rewrites.
   Compaction's rewrite is a `context` entry from the `tau-compaction` plugin
   whose first message is the summary.
 - **Resuming.** A fork gets the details of the latest rewrite it
