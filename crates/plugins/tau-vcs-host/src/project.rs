@@ -4,8 +4,11 @@
 //! A project lives in a directory of its own, usually under
 //! `$XDG_DATA_HOME/tau/repos/`:
 //!
-//! - `git/`: a bare copy of the source's Git store, which jj writes to;
-//! - `main/`: the jj repository, whose own working copy stays empty;
+//! - `main/`: the jj repository, colocated with its Git store as
+//!   `jj git init --colocate` makes one (`main/.git` beside `main/.jj`),
+//!   so `jj` and `git` both work in it. Upstream's branches are
+//!   remote-tracking branches there (`<branch>@origin` to jj), and the
+//!   bookmarks go out as Git's branches (`crate::colocate`);
 //! - `runs/<name>/`: one jj workspace per run, each on its own commit.
 //!
 //! Runs never touch the user's own checkout. [`ProjectRepo`]'s functions
@@ -31,10 +34,10 @@ use jj_lib::{
         default_working_copy_factories,
         default_working_copy_factory,
     },
-    git::{GitImportOptions, REMOTE_NAME_FOR_LOCAL_GIT_REPO, import_refs},
+    git::{GitImportOptions, import_refs},
     matchers::EverythingMatcher,
     object_id::ObjectId as _,
-    ref_name::{RefName, WorkspaceNameBuf},
+    ref_name::{RefName, RemoteName, WorkspaceNameBuf},
     repo::{ReadonlyRepo, Repo as _},
     settings::UserSettings,
     workspace::Workspace,
@@ -44,6 +47,7 @@ use pollster::block_on;
 use crate::{
     ChangeKind,
     FileChange,
+    clone::{CloneError, Head, ORIGIN_HEAD, TRACKING},
     error::VcsError,
     run_workspace::Link,
     vcs::{Identity, Vcs, settings},
@@ -53,7 +57,6 @@ mod push;
 
 pub use push::{Pushed, REMOTE, Remote};
 
-const GIT: &str = "git";
 const MAIN: &str = "main";
 
 /// How many operations back [`ProjectRepo::landed`] looks for a landing.
@@ -112,6 +115,20 @@ impl Project {
     ) -> Result<Self, VcsError> {
         let (source, root) = (source.into(), root.into());
         Self::make(move || ProjectRepo::import(&source, root, identity)).await
+    }
+
+    /// Makes a project by cloning a remote. See [`ProjectRepo::clone`].
+    pub async fn clone(
+        url: impl Into<String>,
+        token: Option<String>,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let (url, root) = (url.into(), root.into());
+        Self::make(move || {
+            ProjectRepo::clone(&url, token.as_deref(), root, identity)
+        })
+        .await
     }
 
     /// Opens the project at `root`, or makes it there. See
@@ -218,6 +235,11 @@ impl std::fmt::Debug for ProjectRepo {
 }
 
 impl ProjectRepo {
+    /// Whether `root` holds a project.
+    pub fn exists(root: &Path) -> bool {
+        root.join(MAIN).join(".jj").is_dir()
+    }
+
     /// Opens the project at `root`, or makes it there from the local
     /// repository at `source` when there is none.
     pub fn open_or_import(
@@ -226,7 +248,7 @@ impl ProjectRepo {
         identity: Identity,
     ) -> Result<Self, VcsError> {
         let root = root.into();
-        if root.join(MAIN).join(".jj").is_dir() {
+        if Self::exists(&root) {
             return Self::open(root, identity);
         }
         Self::import(source, root, identity)
@@ -241,16 +263,16 @@ impl ProjectRepo {
         files: &[(String, String)],
     ) -> Result<Self, VcsError> {
         let root = root.into();
-        if root.join(MAIN).join(".jj").is_dir() {
+        if Self::exists(&root) {
             return Self::open(root, identity);
         }
         Self::init(root, identity, files)
     }
 
-    /// Makes a project at `root` (which must not hold one) with a git
-    /// store of its own, and `files` in a first commit that `main`
-    /// names. The checkout holds them, with an empty working copy on
-    /// top.
+    /// Makes a project at `root` (which must not hold one) with a
+    /// colocated Git store of its own, and `files` in a first commit
+    /// that `main` names. The checkout holds them, with an empty working
+    /// copy on top.
     pub fn init(
         root: impl Into<PathBuf>,
         identity: Identity,
@@ -263,25 +285,17 @@ impl ProjectRepo {
             op_store::RefTarget,
             repo_path::RepoPathBuf,
         };
-        let root = root.into();
-        let git_dir = root.join(GIT);
-        std::fs::create_dir_all(&git_dir).map_err(|source| {
-            VcsError::Create {
-                path: git_dir.clone(),
-                source,
-            }
-        })?;
-        gix::init_bare(&git_dir).map_err(|error| VcsError::Create {
-            path: git_dir.clone(),
-            source: std::io::Error::other(error.to_string()),
-        })?;
-        let project = Self::new(root, identity)?;
+        let project = Self::new(root.into(), identity)?;
         let main = project.inner.root.join(MAIN);
-        std::fs::create_dir_all(&main)?;
-        let (mut workspace, repo) = block_on(Workspace::init_external_git(
+        std::fs::create_dir_all(&main).map_err(|source| VcsError::Create {
+            path: main.clone(),
+            source,
+        })?;
+        let (mut workspace, repo) = block_on(Workspace::init_colocated_git(
             &project.inner.settings,
             &main,
-            &git_dir,
+            // jj-lib's gix's kind, SHA-1 by default.
+            Default::default(),
         ))
         .map_err(VcsError::MakeRepo)?;
         let mut tx = repo.start_transaction();
@@ -321,7 +335,7 @@ impl ProjectRepo {
                 .check_out(WorkspaceNameBuf::from(DEFAULT_WORKSPACE), &first),
         )?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        let repo = block_on(tx.commit("tau: make the repository"))?;
+        let repo = crate::colocate::commit(tx, "tau: make the repository")?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         Ok(project)
@@ -388,48 +402,128 @@ impl ProjectRepo {
         identity: Identity,
     ) -> Result<Self, VcsError> {
         let root = root.into();
-        if !root.join(MAIN).join(".jj").is_dir() {
+        if !Self::exists(&root) {
             return Err(VcsError::NoProject(root));
         }
         Self::new(root, identity)
     }
 
     /// Makes a project at `root` (which must not hold one) from a copy of
-    /// the local repository at `source`, with every branch imported as a
-    /// bookmark. Needs no `git`: the object files are shared, not
-    /// cloned. Cloning from a URL is not supported yet.
+    /// the local repository at `source`, as if cloned from it: its
+    /// branches become remote-tracking branches, imported as bookmarks
+    /// that track them, and `origin` names the source. Needs no `git`:
+    /// the object files are shared, not cloned.
     pub fn import(
         source: &str,
         root: impl Into<PathBuf>,
         identity: Identity,
     ) -> Result<Self, VcsError> {
+        let source = Path::new(source);
+        let from = source_git_dir(source)
+            .ok_or_else(|| VcsError::NotGitRepo(source.to_owned()))?;
+        let origin =
+            std::fs::canonicalize(source).unwrap_or_else(|_| source.to_owned());
+        Self::make_with(root.into(), identity, |git_dir| {
+            copy_git_store(&from, git_dir).map_err(|error| {
+                VcsError::CopyGitStore {
+                    path: source.to_owned(),
+                    source: error,
+                }
+            })?;
+            Ok(origin.to_string_lossy().into_owned())
+        })
+    }
+
+    /// Makes a project at `root` (which must not hold one) by fetching
+    /// every branch and tag of `url`, as `jj git clone --colocate` does:
+    /// the branches become remote-tracking branches, imported as
+    /// bookmarks that track them. A `token` answers the server's request
+    /// for credentials, and is not written into the repository. Blocks
+    /// until the fetch is over. On failure `root` is removed.
+    pub fn clone(
+        url: &str,
+        token: Option<&str>,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
         let root = root.into();
-        std::fs::create_dir_all(&root).map_err(|source| VcsError::Create {
-            path: root.clone(),
-            source,
-        })?;
-        let git_dir = root.join(GIT);
-        if !git_dir.is_dir() {
-            copy_git_store(Path::new(source), &git_dir)?;
+        let made = Self::make_with(root.clone(), identity, |git_dir| {
+            let repo = crate::clone::open(git_dir).map_err(|source| {
+                CloneError::Open {
+                    path: git_dir.to_owned(),
+                    source: Box::new(source),
+                }
+            })?;
+            crate::clone::fetch(&repo, url, token).map_err(|source| {
+                CloneError::Clone {
+                    url: url.to_owned(),
+                    source: Box::new(source),
+                }
+            })?;
+            Ok(url.to_owned())
+        });
+        if made.is_err() {
+            let _ = std::fs::remove_dir_all(&root);
         }
+        made
+    }
+
+    /// Makes a project at `root`, which holds none: a Git repository in
+    /// `main/`, which `fill` fills with upstream's objects and refs and
+    /// whose `origin` it names, then the jj repository on it, with
+    /// upstream's branches imported. On failure `main/` is removed.
+    fn make_with(
+        root: PathBuf,
+        identity: Identity,
+        fill: impl FnOnce(&Path) -> Result<String, VcsError>,
+    ) -> Result<Self, VcsError> {
         let project = Self::new(root, identity)?;
         let main = project.inner.root.join(MAIN);
-        std::fs::create_dir_all(&main)?;
-        let (_workspace, repo) = block_on(Workspace::init_external_git(
-            &project.inner.settings,
-            &main,
-            &git_dir,
-        ))
-        .map_err(VcsError::MakeRepo)?;
-        let mut tx = repo.start_transaction();
-        let options = GitImportOptions {
-            abandon_unreachable_commits: true,
-            record_synthetic_predecessors: false,
-            remote_auto_track_bookmarks: HashMap::new(),
-        };
-        block_on(import_refs(tx.repo_mut(), &options))
-            .map_err(VcsError::ImportBranches)?;
-        block_on(tx.commit("tau: import"))?;
+        let made = (|| {
+            // A `main/` with no jj repository is what a make that died
+            // part way left.
+            if main.exists() {
+                std::fs::remove_dir_all(&main).map_err(|source| {
+                    VcsError::Delete {
+                        path: main.clone(),
+                        source,
+                    }
+                })?;
+            }
+            std::fs::create_dir_all(&main).map_err(|source| {
+                VcsError::Create {
+                    path: main.clone(),
+                    source,
+                }
+            })?;
+            gix::init(&main).map_err(|error| VcsError::Create {
+                path: main.clone(),
+                source: std::io::Error::other(error.to_string()),
+            })?;
+            let git_dir = project.git_dir();
+            let origin = fill(&git_dir)?;
+            crate::clone::set_remote(&git_dir, &origin).map_err(|error| {
+                VcsError::Create {
+                    path: git_dir.clone(),
+                    source: std::io::Error::other(error.to_string()),
+                }
+            })?;
+            let (_workspace, repo) = block_on(Workspace::init_external_git(
+                &project.inner.settings,
+                &main,
+                &git_dir,
+            ))
+            .map_err(VcsError::MakeRepo)?;
+            let mut tx = repo.start_transaction();
+            block_on(import_refs(tx.repo_mut(), &import_options(true)))
+                .map_err(VcsError::ImportBranches)?;
+            crate::colocate::commit(tx, "tau: import")?;
+            Ok(())
+        })();
+        if let Err(error) = made {
+            let _ = std::fs::remove_dir_all(&main);
+            return Err(error);
+        }
         Ok(project)
     }
 
@@ -452,7 +546,7 @@ impl ProjectRepo {
     pub fn update(&self, from: UpdateFrom<'_>) -> Result<Updated, VcsError> {
         let _repo = self.lock()?;
         let before = self.trunk()?;
-        let git_dir = self.inner.root.join(GIT);
+        let git_dir = self.git_dir();
         match from {
             UpdateFrom::Checkout(source) => update_git_store(source, &git_dir)?,
             UpdateFrom::Remote { url, token } => {
@@ -462,15 +556,10 @@ impl ProjectRepo {
         let repo = self.load()?;
         let mut tx = repo.start_transaction();
         let upstream = upstream_targets(tx.repo().view());
-        let options = GitImportOptions {
-            abandon_unreachable_commits: false,
-            record_synthetic_predecessors: false,
-            remote_auto_track_bookmarks: HashMap::new(),
-        };
-        block_on(import_refs(tx.repo_mut(), &options))
+        block_on(import_refs(tx.repo_mut(), &import_options(false)))
             .map_err(VcsError::ImportBranches)?;
         take_upstream(&mut tx, upstream);
-        block_on(tx.commit("tau: update"))?;
+        crate::colocate::commit(tx, "tau: update")?;
         Ok(Updated {
             before,
             after: self.trunk()?,
@@ -519,17 +608,21 @@ impl ProjectRepo {
         Ok(commit.parent_ids().next().map(|id| id.to_string()))
     }
 
-    /// The source's default branch, as the copy's `HEAD` names it.
+    /// The source's default branch, as `origin/HEAD` names it.
     pub fn default_branch(&self) -> Option<String> {
-        std::fs::read_to_string(self.inner.root.join(GIT).join("HEAD"))
-            .ok()?
-            .trim()
-            .strip_prefix("ref: refs/heads/")
-            .map(str::to_owned)
+        let repo = self.git().ok()?;
+        let head = repo.try_find_reference(ORIGIN_HEAD).ok()??;
+        let target = head.target().try_name()?.as_bstr().to_string();
+        target.strip_prefix(TRACKING).map(str::to_owned)
+    }
+
+    /// The Git store, colocated with the main workspace.
+    pub(crate) fn git_dir(&self) -> PathBuf {
+        self.inner.root.join(MAIN).join(".git")
     }
 
     fn git(&self) -> Result<gix::Repository, VcsError> {
-        gix::open(self.inner.root.join(GIT)).map_err(|source| {
+        crate::clone::open(&self.git_dir()).map_err(|source| {
             VcsError::NoGitStore {
                 root: self.inner.root.clone(),
                 source: Box::new(source),
@@ -691,7 +784,8 @@ impl ProjectRepo {
         )?;
         block_on(tx.repo_mut().edit(WorkspaceNameBuf::from(name), &wc))?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        let repo = block_on(tx.commit(format!("tau: add workspace {name}")))?;
+        let repo =
+            crate::colocate::commit(tx, format!("tau: add workspace {name}"))?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         drop(lock);
@@ -833,7 +927,10 @@ impl ProjectRepo {
             tx.repo_mut().record_abandoned_commit(&commit);
         }
         block_on(tx.repo_mut().rebase_descendants())?;
-        block_on(tx.commit(format!("tau: abandon {} changes", ids.len())))?;
+        crate::colocate::commit(
+            tx,
+            format!("tau: abandon {} changes", ids.len()),
+        )?;
         Ok(ids.len())
     }
 
@@ -911,7 +1008,10 @@ impl ProjectRepo {
             name,
             jj_lib::op_store::RefTarget::absent(),
         );
-        block_on(tx.commit(format!("tau: remove bookmark {}", name.as_str())))?;
+        crate::colocate::commit(
+            tx,
+            format!("tau: remove bookmark {}", name.as_str()),
+        )?;
         Ok(())
     }
 
@@ -956,7 +1056,8 @@ impl ProjectRepo {
         )?;
         // Checking out abandons the empty commit the workspace began on.
         block_on(tx.repo_mut().rebase_descendants())?;
-        let repo = block_on(tx.commit(format!("tau: add workspace {name}")))?;
+        let repo =
+            crate::colocate::commit(tx, format!("tau: add workspace {name}"))?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         drop(lock);
@@ -977,7 +1078,10 @@ impl ProjectRepo {
             let mut tx = repo.start_transaction();
             block_on(tx.repo_mut().remove_workspace(&name_buf))?;
             block_on(tx.repo_mut().rebase_descendants())?;
-            block_on(tx.commit(format!("tau: forget workspace {name}")))?;
+            crate::colocate::commit(
+                tx,
+                format!("tau: forget workspace {name}"),
+            )?;
         }
         drop(lock);
         let dir = self.workspace_dir(name);
@@ -1139,12 +1243,26 @@ fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
         .collect()
 }
 
-/// The bookmarks the source has, as the last import left them, with
+/// How a project imports upstream's refs: each remote-tracking branch
+/// tracked, so its bookmark follows it, and, at the first import,
+/// commits no ref reaches abandoned.
+fn import_options(abandon_unreachable_commits: bool) -> GitImportOptions {
+    GitImportOptions {
+        abandon_unreachable_commits,
+        record_synthetic_predecessors: false,
+        remote_auto_track_bookmarks: HashMap::from([(
+            RemoteName::new(REMOTE).to_owned(),
+            jj_lib::str_util::StringMatcher::all(),
+        )]),
+    }
+}
+
+/// The branches the source has, as the last import left them, with
 /// where each points.
 fn upstream_targets(
     view: &jj_lib::view::View,
 ) -> HashMap<String, jj_lib::op_store::RefTarget> {
-    view.remote_bookmarks(REMOTE_NAME_FOR_LOCAL_GIT_REPO)
+    view.remote_bookmarks(RemoteName::new(REMOTE))
         .map(|(name, remote)| (name.as_str().to_owned(), remote.target.clone()))
         .collect()
 }
@@ -1255,58 +1373,27 @@ fn commit(repo: &Arc<ReadonlyRepo>, hex: &str) -> Result<Commit, VcsError> {
         })
 }
 
-/// Makes `into` a bare copy of the Git repository at `source`, without
-/// `git`: the object files are hard-linked (copied across file systems),
-/// the refs, `HEAD` and config copied, and the config marked bare.
-/// Objects never change once written, so sharing them is safe.
-fn copy_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
-    let git_dir = git_dir(source)
-        .ok_or_else(|| VcsError::NotGitRepo(source.to_owned()))?;
-    let copied = (|| -> std::io::Result<()> {
-        std::fs::create_dir_all(into)?;
-        copy_tree(&git_dir.join("objects"), &into.join("objects"), true)?;
-        copy_tree(&git_dir.join("refs"), &into.join("refs"), false)?;
-        copy_files(&git_dir, into)?;
-        copy_head(&git_dir, into)?;
-        let config =
-            std::fs::read_to_string(git_dir.join("config")).unwrap_or_default();
-        std::fs::write(into.join("config"), bare_config(&config))?;
-        Ok(())
-    })();
-    if copied.is_err() {
-        let _ = std::fs::remove_dir_all(into);
-    }
-    copied.map_err(|error| VcsError::CopyGitStore {
-        path: source.to_owned(),
-        source: error,
-    })
+/// Fills the new Git store at `into` from the Git directory `from`:
+/// the object files hard-linked (copied across file systems), and the
+/// branches, tags, `HEAD` and `shallow` as [`copy_upstream_refs`] takes
+/// them. Objects never change once written, so sharing them is safe.
+fn copy_git_store(from: &Path, into: &Path) -> std::io::Result<()> {
+    copy_tree(&from.join("objects"), &into.join("objects"), true)?;
+    copy_upstream_refs(from, into, true)
 }
 
-/// Brings a copy made by [`copy_git_store`] up to date with its source:
-/// the objects it lacks (object files never change, so the ones it has
-/// are kept), and the source's branches and tags. A checkout's `HEAD`
-/// names the branch checked out in it, not its default one, so the
-/// copy keeps the `HEAD` it had from the import; a bare repository's is
-/// its default branch, and comes along.
+/// Brings a store filled by [`copy_git_store`] up to date with its
+/// source: the objects it lacks (object files never change, so the ones
+/// it has are kept), and the source's branches and tags. A checkout's
+/// `HEAD` names the branch checked out in it, not its default one, so
+/// the store keeps the `origin/HEAD` it had from the import; a bare
+/// repository's is its default branch, and comes along.
 fn update_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
-    let git_dir = git_dir(source)
+    let git_dir = source_git_dir(source)
         .ok_or_else(|| VcsError::NoLongerGitRepo(source.to_owned()))?;
     (|| -> std::io::Result<()> {
         add_missing(&git_dir.join("objects"), &into.join("objects"))?;
-        // The source's branches and tags as they are: a loose ref left
-        // from before would win over the source's packed one.
-        for refs in ["heads", "tags"] {
-            let target = into.join("refs").join(refs);
-            if target.is_dir() {
-                std::fs::remove_dir_all(&target)?;
-            }
-            copy_tree(&git_dir.join("refs").join(refs), &target, false)?;
-        }
-        copy_files(&git_dir, into)?;
-        if git_dir == source {
-            copy_head(&git_dir, into)?;
-        }
-        Ok(())
+        copy_upstream_refs(&git_dir, into, git_dir == source)
     })()
     .map_err(|error| VcsError::UpdateGitStore {
         path: source.to_owned(),
@@ -1314,26 +1401,81 @@ fn update_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
     })
 }
 
-/// Copies the files beside the refs that say what the refs are: the
-/// packed refs, and `shallow`, the commits of a shallow clone whose
-/// parents it lacks. One the source does not have goes from the copy:
-/// a stale `shallow` would cut history short, and stale packed refs
-/// bring back branches.
-fn copy_files(git_dir: &Path, into: &Path) -> std::io::Result<()> {
-    for file in ["packed-refs", "shallow"] {
-        let from = git_dir.join(file);
-        if from.is_file() {
-            std::fs::copy(&from, into.join(file))?;
-        } else if into.join(file).is_file() {
-            std::fs::remove_file(into.join(file))?;
+/// Makes the remote-tracking branches and tags of the store at `into`
+/// the branches and tags of the Git directory `from`, as a fetch from
+/// it would: those `from` lacks go. With `head`, `origin/HEAD` names the
+/// branch `from`'s `HEAD` does. `shallow`, the commits of a shallow
+/// clone whose parents it lacks, comes too; a stale one would cut
+/// history short, so it goes when `from` has none.
+fn copy_upstream_refs(
+    from: &Path,
+    into: &Path,
+    head: bool,
+) -> std::io::Result<()> {
+    use gix::{
+        bstr::BString,
+        refs::{
+            Target,
+            transaction::{Change, LogChange, PreviousValue, RefEdit},
+        },
+    };
+    let other = |error: &dyn std::fmt::Display| {
+        std::io::Error::other(error.to_string())
+    };
+    let source = gix::open(from).map_err(|error| other(&error))?;
+    let target = crate::clone::open(into).map_err(|error| other(&error))?;
+    let mut edits = Vec::new();
+    let mut upstream = |prefix: &str,
+                        into_prefix: &str|
+     -> std::io::Result<HashSet<BString>> {
+        let mut names = HashSet::new();
+        let references = source.references().map_err(|error| other(&error))?;
+        for reference in
+            references.prefixed(prefix).map_err(|error| other(&error))?
+        {
+            let reference = reference.map_err(|error| other(&*error))?;
+            let Some(id) = reference.target().try_id().map(ToOwned::to_owned)
+            else {
+                continue;
+            };
+            let short = &reference.name().as_bstr()[prefix.len()..];
+            let mut name = BString::from(into_prefix);
+            name.extend_from_slice(short);
+            edits.push(RefEdit {
+                change: Change::Update {
+                    log: LogChange::default(),
+                    expected: PreviousValue::Any,
+                    new: Target::Object(id),
+                },
+                name: name.try_into().map_err(|error| other(&error))?,
+                deref: false,
+            });
+            names.insert(short.into());
         }
+        Ok(names)
+    };
+    let branches = upstream("refs/heads/", TRACKING)?;
+    let tags = upstream("refs/tags/", "refs/tags/")?;
+    target
+        .edit_references(edits)
+        .map_err(|error| other(&error))?;
+    let head = if head {
+        match source.head_name().map_err(|error| other(&error))? {
+            Some(name) => Head::of(name.as_bstr()),
+            None => Head::Detached,
+        }
+    } else {
+        Head::Keep
+    };
+    crate::clone::mirror(&target, &branches, &tags, head)
+        .map_err(|error| other(&error))?;
+    let shallow = from.join("shallow");
+    if shallow.is_file() {
+        std::fs::copy(&shallow, into.join("shallow"))?;
+    } else if into.join("shallow").is_file() {
+        std::fs::remove_file(into.join("shallow"))?;
     }
     Ok(())
-}
-
-/// Copies the source's `HEAD`: the branch trunk follows.
-fn copy_head(git_dir: &Path, into: &Path) -> std::io::Result<()> {
-    std::fs::copy(git_dir.join("HEAD"), into.join("HEAD")).map(drop)
 }
 
 /// Links (or copies) the files under `from` that `into` lacks.
@@ -1357,7 +1499,7 @@ fn add_missing(from: &Path, into: &Path) -> std::io::Result<()> {
 /// The directory holding a repository's objects and refs: `.git` of a
 /// checkout, the common directory of a linked worktree, or the
 /// repository itself when it is bare.
-fn git_dir(source: &Path) -> Option<PathBuf> {
+fn source_git_dir(source: &Path) -> Option<PathBuf> {
     let dot_git = source.join(".git");
     let dir = if dot_git.is_dir() {
         dot_git
@@ -1380,29 +1522,6 @@ fn git_dir(source: &Path) -> Option<PathBuf> {
         source.to_owned()
     };
     (dir.join("objects").is_dir() && dir.join("HEAD").is_file()).then_some(dir)
-}
-
-/// `config` for a bare copy: `bare = true`, and no worktree of its own.
-fn bare_config(config: &str) -> String {
-    let mut lines: Vec<String> = config
-        .lines()
-        .filter(|line| {
-            let key = line.trim().split('=').next().unwrap_or("").trim();
-            !key.eq_ignore_ascii_case("bare")
-                && !key.eq_ignore_ascii_case("worktree")
-        })
-        .map(str::to_owned)
-        .collect();
-    match lines
-        .iter()
-        .position(|line| line.trim().eq_ignore_ascii_case("[core]"))
-    {
-        Some(core) => lines.insert(core + 1, "\tbare = true".to_owned()),
-        None => lines
-            .splice(0..0, ["[core]".to_owned(), "\tbare = true".to_owned()])
-            .for_each(drop),
-    }
-    lines.join("\n") + "\n"
 }
 
 /// Copies the files under `from` to `into`, hard-linking them when
@@ -1522,15 +1641,5 @@ mod tests {
         let entry = std::fs::read_dir(&from).unwrap().next().unwrap().unwrap();
         link_or_copy(&entry, &target).unwrap();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "object");
-    }
-
-    #[test]
-    fn bare_config_sets_bare_and_drops_the_worktree() {
-        let config = "[core]\n\tbare = false\n\tworktree = ../x\n\tfilemode = true\n[remote \"origin\"]\n\turl = u\n";
-        assert_eq!(
-            bare_config(config),
-            "[core]\n\tbare = true\n\tfilemode = true\n[remote \"origin\"]\n\turl = u\n"
-        );
-        assert_eq!(bare_config(""), "[core]\n\tbare = true\n");
     }
 }

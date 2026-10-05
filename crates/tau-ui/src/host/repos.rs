@@ -234,17 +234,21 @@ impl Host {
         let project = slot.project.clone();
         let source = slot.path.to_string_lossy().into_owned();
         let dir = self.config.project_dir_of(&slot.path);
-        let own = slot.path == self.config.plugins_repo();
+        let plugins = slot.path == self.config.plugins_repo();
+        let cloned = dir == slot.path;
         let catalog = self.catalog_wanted.clone();
         self.runtime.spawn(async move {
-            // tau's own plugins repository is made here the first time.
-            let opened = if own {
+            // tau's own plugins repository is made here the first time;
+            // a clone is a project from the start.
+            let opened = if plugins {
                 Project::open_or_init(
                     dir,
                     identity(),
                     tau_luau_plugins::repository::first_files(),
                 )
                 .await
+            } else if cloned {
+                Project::open(dir, identity()).await
             } else {
                 Project::open_or_import(source.clone(), dir, identity()).await
             };
@@ -522,14 +526,20 @@ impl Host {
                 })
             })
             .ok_or_else(|| anyhow::anyhow!("{full_name} is not owner/name"))?;
-        let dir = self.config.repos.join("github").join(owner).join(name);
-        if !dir.exists() {
-            let (url, into) = (self.github.clone_url(full_name), dir.clone());
-            // A clone over the network, through git: it blocks.
-            tokio::task::spawn_blocking(move || {
-                tau_vcs_host::clone_bare(&url, Some(&token.token), &into)
-            })
-            .await??;
+        let dir = self.config.github_dir().join(owner).join(name);
+        if !tau_vcs_host::ProjectRepo::exists(&dir) {
+            // What is there without a project is a clone that never
+            // finished, and tau's own.
+            if tokio::fs::try_exists(&dir).await? {
+                tokio::fs::remove_dir_all(&dir).await?;
+            }
+            Project::clone(
+                self.github.clone_url(full_name),
+                Some(token.token),
+                &dir,
+                identity(),
+            )
+            .await?;
         }
         self.list_clone(&dir, full_name).await
     }

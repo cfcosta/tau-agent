@@ -176,6 +176,10 @@ pub enum VcsError {
     MakeRepo(#[source] WorkspaceInitError),
     #[error("Cannot add the workspace: {0}")]
     AddWorkspace(#[source] WorkspaceInitError),
+    #[error("Cannot export the bookmarks to Git: {0}")]
+    ExportRefs(#[source] jj_lib::git::GitExportError),
+    #[error("Cannot point Git's HEAD at the working copy: {0}")]
+    ResetHead(#[source] jj_lib::git::GitResetHeadError),
     #[error("Cannot import the Git branches: {0}")]
     ImportBranches(#[source] GitImportError),
     #[error("Cannot check out the workspace's files: {0}")]

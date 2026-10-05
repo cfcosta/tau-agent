@@ -87,11 +87,21 @@ impl HostConfig {
             .join(tau_luau_plugins::repository::ROOT)
     }
 
+    /// Where clones from GitHub live, each a project of its own, under
+    /// `<owner>/<name>`.
+    pub fn github_dir(&self) -> PathBuf {
+        self.repos.join("github")
+    }
+
     /// The project directory for the clone at `path`: its name and a
     /// hash of its full path, so two clones with one name get two
-    /// projects. A repository of tau's own is its project.
+    /// projects. A repository of tau's own, and a clone from GitHub, is
+    /// its project.
     pub fn project_dir_of(&self, path: &Path) -> PathBuf {
-        if path == self.plugins_repo() {
+        if path == self.plugins_repo()
+            || path.starts_with(self.github_dir())
+            || path.starts_with(canonical(&self.github_dir()))
+        {
             return path.to_owned();
         }
         let full = canonical(path);

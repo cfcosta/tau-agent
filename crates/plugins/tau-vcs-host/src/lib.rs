@@ -22,11 +22,12 @@
 //! The tools take change ids and commit ids, never revsets. Every tool
 //! snapshots the working copy first, so edits made with other tools are
 //! never lost, and the writing tools refuse immutable commits. Fetch and
-//! push are left to the host: [`clone_bare`] brings a remote repository
-//! in, over HTTPS, for [`ProjectRepo::import`], and [`ProjectRepo::push_trunk`]
+//! push are left to the host: [`ProjectRepo::clone`] brings a remote
+//! repository in over HTTPS, and [`ProjectRepo::push_trunk`]
 //! and [`ProjectRepo::push_branch`] push through jj-lib, which runs `git`.
 
 mod clone;
+mod colocate;
 mod diff;
 pub mod error;
 mod half;
@@ -42,7 +43,7 @@ pub mod sweep;
 pub mod tools;
 mod vcs;
 
-pub use clone::{CloneError, TransferError, clone_bare};
+pub use clone::{CloneError, TransferError};
 pub use diff::MAX_DIFF_BYTES;
 pub use error::VcsError;
 pub use half::VcsHost;

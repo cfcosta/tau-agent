@@ -20,10 +20,9 @@ use futures_util::StreamExt as _;
 use jj_lib::{
     backend::CommitId,
     commit::Commit,
-    git::REMOTE_NAME_FOR_LOCAL_GIT_REPO,
     object_id::ObjectId as _,
     op_store::RefTarget,
-    ref_name::RefName,
+    ref_name::{RefName, RemoteName},
     repo::Repo,
     revset::ResolvedRevsetExpression,
     rewrite::rebase_commit,
@@ -118,7 +117,7 @@ pub(crate) fn follow_bookmark(
 }
 
 /// `bookmark`'s commit when an update put it there: the source's branch
-/// of that name, as `<bookmark>@git` names it. Only an update moves a
+/// of that name, as `<bookmark>@origin` names it. Only an update moves a
 /// bookmark to upstream's commit; a run's bookmarks (`tau/<run>`) have
 /// no such branch, and a bookmark a run moved names its own commit.
 fn upstream(tx: &Transaction, bookmark: &str) -> Option<CommitId> {
@@ -127,7 +126,7 @@ fn upstream(tx: &Transaction, bookmark: &str) -> Option<CommitId> {
     let local = view.get_local_bookmark(name).as_normal()?;
     let remote = view
         .get_remote_bookmark(
-            name.to_remote_symbol(REMOTE_NAME_FOR_LOCAL_GIT_REPO),
+            name.to_remote_symbol(RemoteName::new(crate::project::REMOTE)),
         )
         .target
         .as_normal()?;

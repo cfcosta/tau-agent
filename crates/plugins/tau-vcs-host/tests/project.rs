@@ -27,7 +27,6 @@ use tau_vcs_host::{
     RunWorkspace,
     UpdateFrom,
     VcsPlugin,
-    clone_bare,
     run_workspace::{PLUGIN, bookmark},
 };
 
@@ -81,23 +80,79 @@ fn a_clone_imports_like_a_checkout() {
     let src = tempfile::tempdir().unwrap();
     let head = source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let bare = home.path().join("owner/clone.git");
     let url = format!("file://{}", src.path().display());
-    clone_bare(&url, Some("unused"), &bare).unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        bare.to_str().unwrap(),
-        home.path().join("project"),
+    let project = tau_vcs_host::ProjectRepo::clone(
+        &url,
+        Some("unused"),
+        home.path().join("owner/clone"),
         Identity::default(),
     )
     .unwrap();
     assert_eq!(project.trunk().unwrap(), head);
 
     // A failed clone leaves nothing behind.
-    let missing = home.path().join("missing.git");
-    let error =
-        clone_bare("file:///no/such/repository", None, &missing).unwrap_err();
+    let missing = home.path().join("missing");
+    let error = tau_vcs_host::ProjectRepo::clone(
+        "file:///no/such/repository",
+        None,
+        &missing,
+        Identity::default(),
+    )
+    .unwrap_err();
     assert!(format!("{error:#}").contains("Cannot clone"), "{error:#}");
     assert!(!missing.exists());
+}
+
+/// A clone's main workspace is colocated with its Git store, as
+/// `jj git clone --colocate` makes one: `git` in `main/` sees upstream's
+/// branches as `origin/*`, the bookmarks as its branches, and `HEAD` on
+/// the parent of the main workspace's working copy, with nothing to
+/// commit when the working copy is empty.
+#[test]
+fn a_clone_is_colocated_with_its_main_workspace() {
+    let src = tempfile::tempdir().unwrap();
+    let head = source(src.path());
+    git(src.path(), &["branch", "feature"]);
+    let home = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", src.path().display());
+    let project = tau_vcs_host::ProjectRepo::clone(
+        &url,
+        None,
+        home.path().join("project"),
+        Identity::default(),
+    )
+    .unwrap();
+    let main = project.workspace_dir(DEFAULT_WORKSPACE);
+    assert!(main.join(".git").is_dir());
+    assert!(main.join(".jj").is_dir());
+    let branches = |prefix: &str| {
+        git(
+            &main,
+            &["for-each-ref", "--format=%(refname:short)", prefix],
+        )
+    };
+    assert_eq!(branches("refs/heads/"), "feature\nmain");
+    assert_eq!(
+        branches("refs/remotes/origin/"),
+        "origin\norigin/feature\norigin/main"
+    );
+    assert_eq!(
+        git(&main, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+        "refs/remotes/origin/main"
+    );
+    assert_eq!(git(&main, &["remote", "get-url", "origin"]), url);
+
+    // The main chat catches up with trunk: `HEAD` follows.
+    let vcs =
+        block_on(tau_vcs_host::Vcs::open(&main, Identity::default())).unwrap();
+    block_on(vcs.move_onto(head.clone(), "main", true)).unwrap();
+    assert_eq!(git(&main, &["rev-parse", "HEAD"]), head);
+    std::fs::write(main.join("b.txt"), "b\n").unwrap();
+    let ours = block_on(vcs.commit_all("ours", "main")).unwrap();
+    assert_eq!(git(&main, &["rev-parse", "HEAD"]), ours.commit_id);
+    assert_eq!(git(&main, &["rev-parse", "main"]), ours.commit_id);
+    assert_eq!(git(&main, &["rev-parse", "origin/main"]), head);
+    assert_eq!(git(&main, &["status", "--porcelain"]), "");
 }
 
 /// Clones a small public repository from GitHub over HTTPS. Needs the
@@ -106,11 +161,9 @@ fn a_clone_imports_like_a_checkout() {
 #[ignore = "needs the network"]
 fn clones_over_https() {
     let home = tempfile::tempdir().unwrap();
-    let bare = home.path().join("hello.git");
-    clone_bare("https://github.com/octocat/Hello-World.git", None, &bare)
-        .unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        bare.to_str().unwrap(),
+    let project = tau_vcs_host::ProjectRepo::clone(
+        "https://github.com/octocat/Hello-World.git",
+        None,
         home.path().join("project"),
         Identity::default(),
     )
@@ -319,11 +372,10 @@ fn a_clone_updates_from_its_remote() {
     let src = tempfile::tempdir().unwrap();
     source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let bare = home.path().join("owner/repo");
     let url = format!("file://{}", src.path().display());
-    clone_bare(&url, None, &bare).unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        bare.to_str().unwrap(),
+    let project = tau_vcs_host::ProjectRepo::clone(
+        &url,
+        None,
         home.path().join("project"),
         Identity::default(),
     )
@@ -347,11 +399,10 @@ fn a_clone_imports_every_branch() {
     let head = source(src.path());
     git(src.path(), &["branch", "feature"]);
     let home = tempfile::tempdir().unwrap();
-    let bare = home.path().join("owner/repo");
     let url = format!("file://{}", src.path().display());
-    clone_bare(&url, None, &bare).unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        bare.to_str().unwrap(),
+    let project = tau_vcs_host::ProjectRepo::clone(
+        &url,
+        None,
         home.path().join("project"),
         Identity::default(),
     )
@@ -370,11 +421,10 @@ fn an_update_from_a_remote_follows_its_refs_and_head() {
     git(src.path(), &["branch", "feature"]);
     git(src.path(), &["tag", "v1"]);
     let home = tempfile::tempdir().unwrap();
-    let bare = home.path().join("owner/repo");
     let url = format!("file://{}", src.path().display());
-    clone_bare(&url, None, &bare).unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        bare.to_str().unwrap(),
+    let project = tau_vcs_host::ProjectRepo::clone(
+        &url,
+        None,
         home.path().join("project"),
         Identity::default(),
     )
@@ -394,7 +444,7 @@ fn an_update_from_a_remote_follows_its_refs_and_head() {
     assert_eq!(project.bookmarks("").unwrap(), ["trunk"]);
     assert_eq!(project.default_branch().as_deref(), Some("trunk"));
     assert_eq!(project.trunk_name().unwrap(), "trunk");
-    let store = project.root().join("git");
+    let store = project.workspace_dir(DEFAULT_WORKSPACE);
     assert_eq!(git(&store, &["tag", "--list"]), "");
 }
 

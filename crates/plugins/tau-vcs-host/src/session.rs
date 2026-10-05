@@ -108,7 +108,7 @@ pub(crate) fn mutate<T>(
             block_on(tx.repo_mut().rebase_descendants())?;
         }
         let repo = if tx.repo().has_changes() {
-            block_on(tx.commit(format!("tau vcs: {tool}")))?
+            crate::colocate::commit(tx, format!("tau vcs: {tool}"))?
         } else {
             before.repo.clone()
         };
@@ -193,7 +193,7 @@ fn snapshot_locked(
                 tx.repo_mut()
                     .set_wc_commit(name.to_owned(), edited.id().clone())?;
                 block_on(tx.repo_mut().rebase_descendants())?;
-                repo = block_on(tx.commit("snapshot working copy"))?;
+                repo = crate::colocate::commit(tx, "snapshot working copy")?;
                 wc = edited;
             }
             block_on(locked.locked_wc().check_out(&wc))?;
@@ -230,7 +230,7 @@ fn snapshot_locked(
         tx.repo_mut()
             .set_wc_commit(name.to_owned(), new_wc.id().clone())?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        repo = block_on(tx.commit("snapshot working copy"))?;
+        repo = crate::colocate::commit(tx, "snapshot working copy")?;
         wc = new_wc;
     }
     Ok(Snapshot {

@@ -34,7 +34,6 @@ use tau_vcs_host::{
     ProjectRepo,
     UpdateFrom,
     Vcs,
-    clone_bare,
 };
 
 const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
@@ -52,17 +51,16 @@ fn refs(dir: &Path, prefix: &str) -> BTreeMap<String, String> {
     references
         .prefixed(prefix)
         .unwrap()
-        .map(|reference| {
+        .filter_map(|reference| {
             let reference = reference.unwrap();
             let name = reference.name().as_bstr().to_string();
-            let id = match reference.target().try_id() {
-                Some(id) => id.to_owned(),
-                None => reference.into_fully_peeled_id().unwrap().detach(),
-            };
-            (
+            // A symbolic ref, as `origin/HEAD`, names a branch, not a
+            // commit; it may dangle once upstream deletes that branch.
+            let id = reference.target().try_id()?.to_owned();
+            Some((
                 name.strip_prefix(prefix).unwrap().to_owned(),
                 id.to_string(),
-            )
+            ))
         })
         .collect()
 }
@@ -256,19 +254,19 @@ impl Machine {
             }
         };
         publish(kind, &work, &home.path().join("bare.git"));
-        let from = match kind {
-            Kind::Remote => {
-                let clone = home.path().join("clone.git");
-                clone_bare(&url(home.path()), None, &clone).unwrap();
-                clone
-            }
-            _ => source,
-        };
-        let project = tau_vcs_host::ProjectRepo::import(
-            from.to_str().unwrap(),
-            home.path().join("p"),
-            Identity::default(),
-        )
+        let project = match kind {
+            Kind::Remote => tau_vcs_host::ProjectRepo::clone(
+                &url(home.path()),
+                None,
+                home.path().join("p"),
+                Identity::default(),
+            ),
+            _ => tau_vcs_host::ProjectRepo::import(
+                source.to_str().unwrap(),
+                home.path().join("p"),
+                Identity::default(),
+            ),
+        }
         .unwrap();
         let dir = project.workspace_dir(DEFAULT_WORKSPACE);
         let main = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
@@ -359,17 +357,18 @@ impl Machine {
             })
     }
 
-    /// The project's Git store has the source's branches, tags and
-    /// `HEAD`, and the project its bookmarks and trunk.
+    /// The project's Git store has the source's branches as
+    /// remote-tracking branches, its tags and its `HEAD`, and the
+    /// project its bookmarks and trunk.
     fn check_mirror(&self) {
-        let store = self.project.root().join("git");
+        let store = self.store();
         let source = self.source_git();
         // Read once: every check below is against the same branches.
         let branches = self.branches();
         assert_eq!(
-            refs(&store, "refs/heads/"),
+            refs(&store, "refs/remotes/origin/"),
             branches,
-            "the Git store's branches"
+            "the Git store's upstream branches"
         );
         assert_eq!(
             refs(&store, "refs/tags/"),
@@ -430,7 +429,12 @@ impl Machine {
         if of == ROOT {
             return false;
         }
-        is_ancestor(&self.project.root().join("git"), ancestor, of)
+        is_ancestor(&self.store(), ancestor, of)
+    }
+
+    /// The project's Git store, colocated with its main workspace.
+    fn store(&self) -> PathBuf {
+        self.project.workspace_dir(DEFAULT_WORKSPACE).join(".git")
     }
 
     /// Whether upstream dropped what the main chat stands on: the trunk

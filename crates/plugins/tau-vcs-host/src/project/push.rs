@@ -20,14 +20,12 @@ use std::{collections::HashMap, ffi::OsString};
 use jj_lib::{
     backend::CommitId,
     git::{
-        GitImportOptions,
         GitProgress,
         GitPushOptions,
         GitRefUpdate,
         GitSidebandLineTerminator,
         GitSubprocessCallback,
         GitSubprocessOptions,
-        REMOTE_NAME_FOR_LOCAL_GIT_REPO,
         import_refs,
         push_updates,
     },
@@ -39,13 +37,14 @@ use jj_lib::{
 };
 use pollster::block_on;
 
-use super::{GIT, ProjectRepo, StackChange, commit, range};
+use super::{ProjectRepo, StackChange, commit, import_options, range};
 use crate::error::VcsError;
 
-/// The remote tau pushes to, in the Git store's config: only its URL,
-/// with no fetch refspec, so a push never writes remote-tracking refs
-/// that jj would import as `<branch>@origin`, which would make the
-/// pushed commits immutable.
+/// The remote a project comes from and pushes to. Its branches are the
+/// Git store's remote-tracking branches, `<branch>@origin` to jj; its
+/// config holds only its URL, with no fetch refspec, so a push never
+/// writes remote-tracking refs on its own: a pull request's branch
+/// stays out until a fetch brings it.
 pub const REMOTE: &str = "origin";
 
 /// What `git` runs as the credential helper: it answers a request for
@@ -76,7 +75,7 @@ pub struct Pushed {
 
 impl ProjectRepo {
     /// The remote's trunk as the last fetch or push left it: what
-    /// `<trunk>@git` names, a full commit id in hex. `None` when the
+    /// `<trunk>@origin` names, a full commit id in hex. `None` when the
     /// remote has no such branch.
     pub fn upstream(&self) -> Result<Option<String>, VcsError> {
         let repo = self.load()?;
@@ -133,26 +132,22 @@ impl ProjectRepo {
             return Err(VcsError::ConflictedTrunk(conflicts.join(", ")));
         }
         self.push_ref(&repo, remote, &name, before.as_ref(), &local)?;
-        // The remote has trunk now: so does the Git store's branch, as a
-        // fetch would leave it, and jj's record of it.
+        // The remote has trunk now: so does the Git store's
+        // remote-tracking branch, as a fetch would leave it, and jj's
+        // record of it.
         let store = self.git()?;
         store
             .reference(
-                format!("refs/heads/{name}"),
+                format!("{}{name}", crate::clone::TRACKING),
                 gix::ObjectId::from_bytes_or_panic(local.as_bytes()),
                 gix::refs::transaction::PreviousValue::Any,
                 format!("tau: push {name}"),
             )
             .map_err(|error| VcsError::PushRemote(error.to_string()))?;
         let mut tx = repo.start_transaction();
-        let options = GitImportOptions {
-            abandon_unreachable_commits: false,
-            record_synthetic_predecessors: false,
-            remote_auto_track_bookmarks: HashMap::new(),
-        };
-        block_on(import_refs(tx.repo_mut(), &options))
+        block_on(import_refs(tx.repo_mut(), &import_options(false)))
             .map_err(VcsError::ImportBranches)?;
-        block_on(tx.commit(format!("tau: push {name}")))?;
+        crate::colocate::commit(tx, format!("tau: push {name}"))?;
         Ok(pushed)
     }
 
@@ -239,7 +234,8 @@ impl ProjectRepo {
         before: Option<&CommitId>,
         after: &CommitId,
     ) -> Result<(), VcsError> {
-        set_remote(&self.inner.root.join(GIT), remote.url)?;
+        crate::clone::set_remote(&self.git_dir(), remote.url)
+            .map_err(|error| VcsError::PushRemote(error.to_string()))?;
         let oid =
             |id: &CommitId| gix::ObjectId::from_bytes_or_panic(id.as_bytes());
         let qualified = format!("refs/heads/{branch}");
@@ -285,31 +281,11 @@ impl ProjectRepo {
 fn upstream(repo: &ReadonlyRepo, branch: &str) -> Option<CommitId> {
     repo.view()
         .get_remote_bookmark(
-            RefName::new(branch)
-                .to_remote_symbol(REMOTE_NAME_FOR_LOCAL_GIT_REPO),
+            RefName::new(branch).to_remote_symbol(RemoteName::new(REMOTE)),
         )
         .target
         .as_normal()
         .cloned()
-}
-
-/// Makes [`REMOTE`] in the Git store at `git_dir` point at `url`, with
-/// nothing else: a section left from a clone, with its refspecs, goes.
-fn set_remote(git_dir: &std::path::Path, url: &str) -> Result<(), VcsError> {
-    let failed =
-        |error: &dyn std::fmt::Display| VcsError::PushRemote(error.to_string());
-    let repo = gix::open(git_dir).map_err(|error| failed(&error))?;
-    let mut config = repo.config_snapshot().clone();
-    while config
-        .remove_section("remote", Some(REMOTE.into()))
-        .is_some()
-    {}
-    config
-        .new_section("remote", Some(REMOTE.into()))
-        .map_err(|error| failed(&error))?
-        .push("url", Some(url.into()))
-        .map_err(|error| failed(&error))?;
-    jj_lib::git::save_git_config(&config).map_err(|error| failed(&error))
 }
 
 /// How jj-lib runs `git push`: never asking on a terminal, and with the

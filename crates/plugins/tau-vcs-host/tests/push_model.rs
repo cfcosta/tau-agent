@@ -33,7 +33,6 @@ use tau_vcs_host::{
     UpdateFrom,
     Vcs,
     VcsError,
-    clone_bare,
 };
 
 /// A bare repository standing for GitHub, a checkout that pushes to it
@@ -70,10 +69,9 @@ impl Origin {
         git(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
         git(&work, &["push", "--quiet", "origin", "main"]);
         let url = format!("file://{}", bare.display());
-        let clone = home.path().join("clone.git");
-        clone_bare(&url, None, &clone).unwrap();
-        let project = tau_vcs_host::ProjectRepo::import(
-            clone.to_str().unwrap(),
+        let project = tau_vcs_host::ProjectRepo::clone(
+            &url,
+            None,
             home.path().join("p"),
             Identity::default(),
         )
@@ -504,7 +502,8 @@ fn a_replay_is_the_three_way_merge_of_each_commit(tc: TestCase) {
         (Ok(copies), None) => {
             tc.event_value("copies", copies.len() as f64);
             assert_eq!(copies.len(), want.len());
-            let store = origin.project.root().join("git");
+            let store =
+                origin.project.workspace_dir(DEFAULT_WORKSPACE).join(".git");
             let mut previous = onto.clone();
             for ((copy, files), change) in copies.iter().zip(&want).zip(&stack)
             {
