@@ -102,6 +102,7 @@ similar = "3.2.0"
 serde_json = { version = "1.0.151", features = [
   "float_roundtrip",
   "preserve_order",
+  "raw_value",
 ] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"

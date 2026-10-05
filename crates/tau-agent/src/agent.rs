@@ -1183,7 +1183,7 @@ fn messages(
             Entry::Message { body, .. } => {
                 messages.push(serde_json::from_str(&body)?);
             }
-            Entry::Context { plugin, body } => {
+            Entry::Context { plugin, body, .. } => {
                 rewrite = Some((plugin, serde_json::from_str(&body)?));
             }
             // `Store::transcript` leaves plugin records out.

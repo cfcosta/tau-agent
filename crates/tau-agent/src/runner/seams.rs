@@ -58,6 +58,27 @@ pub(super) fn check_rewrite(
     }
 }
 
+/// Where each message of `after` comes from: `Some(i)` for one equal to
+/// `before[i]`, matched in order, `None` for one a rewrite made or
+/// changed.
+pub(super) fn layout(
+    before: &[Message],
+    after: &[Message],
+) -> Vec<Option<usize>> {
+    let mut from = 0;
+    after
+        .iter()
+        .map(|message| {
+            let index = before[from..]
+                .iter()
+                .position(|kept| kept == message)
+                .map(|offset| from + offset)?;
+            from = index + 1;
+            Some(index)
+        })
+        .collect()
+}
+
 impl Runner {
     /// Asks each plugin, in order, for the effort of the turn's request,
     /// until one picks it, and sets it on the session.
@@ -137,11 +158,22 @@ impl Runner {
         let Some((plugin, rewrite)) = chosen else {
             return Ok(Err(failures));
         };
+        // The messages it kept are stored once already: the rewrite
+        // points at them, and stores only the ones it made or changed.
+        let layout = layout(transcript, &rewrite.messages);
         let mut entries = vec![Entry::Context {
             plugin: plugin.to_string(),
             body: rewrite.details.to_string(),
+            layout: layout.clone(),
         }];
-        entries.extend(rewrite.messages.iter().map(entry));
+        entries.extend(
+            rewrite
+                .messages
+                .iter()
+                .zip(&layout)
+                .filter(|(_, slot)| slot.is_none())
+                .map(|(message, _)| entry(message)),
+        );
         self.persist_entries(entries, &Usage::default(), 0).await?;
         // Every plugin sees what the rewrite dropped before it is gone.
         let mut failures = Vec::new();

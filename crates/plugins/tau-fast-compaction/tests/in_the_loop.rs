@@ -201,7 +201,7 @@ fn a_stale_result_is_cut() {
         assert!(state.contains("a.rs"));
 
         let entries = store.transcript(&outcome.run.0).await.unwrap();
-        let Entry::Context { plugin, body } = &entries[0] else {
+        let Entry::Context { plugin, body, .. } = &entries[0] else {
             panic!("{entries:?}");
         };
         assert_eq!(plugin, NAME);

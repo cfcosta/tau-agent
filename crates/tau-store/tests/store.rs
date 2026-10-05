@@ -84,30 +84,68 @@ impl Model {
         entries
     }
 
-    /// The transcript: the chain from its latest context
-    /// entry onward, without plugin records.
-    fn transcript(&self, run: &str) -> Vec<Entry> {
+    /// The transcript, with the latest rewrite first, or `None` when a
+    /// rewrite keeps a message the transcript before it lacks. Each
+    /// rewrite's layout takes the messages it keeps from the transcript
+    /// before it, and the ones it made from the messages stored after it,
+    /// up to the next rewrite.
+    fn transcript(&self, run: &str) -> Option<Vec<Entry>> {
         let chain: Vec<Entry> = self
             .chain(run)
             .into_iter()
             .filter(|e| !matches!(e, Entry::Plugin { .. }))
             .collect();
-        let start = chain
-            .iter()
-            .rposition(|e| matches!(e, Entry::Context { .. }))
-            .unwrap_or(0);
-        chain[start..].to_vec()
+        let mut latest = None;
+        let mut current: Vec<Entry> = Vec::new();
+        let mut at = 0;
+        while at < chain.len() {
+            let entry = &chain[at];
+            at += 1;
+            let Entry::Context { layout, .. } = entry else {
+                current.push(entry.clone());
+                continue;
+            };
+            let wanted = layout.iter().filter(|slot| slot.is_none()).count();
+            let made: Vec<Entry> = chain[at..]
+                .iter()
+                .take_while(|e| matches!(e, Entry::Message { .. }))
+                .take(wanted)
+                .cloned()
+                .collect();
+            at += made.len();
+            let mut made = made.into_iter();
+            let mut next = Vec::new();
+            for slot in layout {
+                match slot {
+                    Some(index) => next.push(current.get(*index)?.clone()),
+                    None => next.extend(made.next()),
+                }
+            }
+            current = next;
+            latest = Some(entry.clone());
+        }
+        Some(latest.into_iter().chain(current).collect())
     }
 
-    /// The transcript with the records in place: the chain from its
-    /// latest context entry.
+    /// Everything the chain holds, with the records, less the messages
+    /// each rewrite made.
     fn timeline(&self, run: &str) -> Vec<Entry> {
-        let chain = self.chain(run);
-        let start = chain
-            .iter()
-            .rposition(|e| matches!(e, Entry::Context { .. }))
-            .unwrap_or(0);
-        chain[start..].to_vec()
+        let mut made = 0;
+        let mut timeline = Vec::new();
+        for entry in self.chain(run) {
+            match &entry {
+                Entry::Context { layout, .. } => {
+                    made = layout.iter().filter(|slot| slot.is_none()).count();
+                }
+                Entry::Message { .. } if made > 0 => {
+                    made -= 1;
+                    continue;
+                }
+                _ => {}
+            }
+            timeline.push(entry);
+        }
+        timeline
     }
 
     /// `plugin`'s records along the chain, oldest first.
@@ -156,6 +194,10 @@ fn entry_unprinted(tc: &TestCase) -> Entry {
         0 => Entry::Context {
             plugin: plugin(),
             body: json!({ "ledger": text }).to_string(),
+            layout: tc.draw(
+                gs::vecs(gs::optional(gs::integers::<usize>().max_value(5)))
+                    .max_size(5),
+            ),
         },
         1 => Entry::Plugin {
             plugin: plugin(),
@@ -471,7 +513,7 @@ impl StoreMachine {
         let (store, model) = (&self.store, &self.model);
         for (id, m) in &model.runs {
             assert_eq!(
-                store.transcript(id).await.unwrap(),
+                store.transcript(id).await.ok(),
                 model.transcript(id),
                 "transcript of {id}"
             );

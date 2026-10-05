@@ -27,7 +27,7 @@ pub(super) async fn stored_view(
                     .map(|body| Stored::Record { plugin, body })
             }
             // A rewrite carries its plugin's details.
-            Entry::Context { plugin, body } => serde_json::from_str(&body)
+            Entry::Context { plugin, body, .. } => serde_json::from_str(&body)
                 .ok()
                 .map(|body| Stored::Rewrite { plugin, body }),
             _ => None,

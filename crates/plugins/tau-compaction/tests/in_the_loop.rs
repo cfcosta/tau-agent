@@ -93,8 +93,8 @@ async fn run(
 /// messages in a request of its own, then goes on from the summary. The
 /// summary request carries pi's system prompt, the output budget and the
 /// serialized conversation; the next turn starts from the summary and
-/// the kept message; the store holds the compaction record followed by
-/// the kept message; a `ContextRewritten` event from the compaction
+/// the kept message; the store holds the compaction record, pointing at
+/// the kept message, and the summary; a `ContextRewritten` event from the compaction
 /// plugin reports the size before; the summary's usage counts toward the
 /// run.
 #[test]
@@ -117,10 +117,10 @@ fn threshold_compaction_summarizes_older_messages() {
         assert_eq!(outcome.stop, StopReason::Stop);
         assert_eq!(outcome.text, "done");
         assert_eq!(outcome.usage.cost.total, 0.75);
-        // Eight rows: the input, the call and its result, the steered
-        // message, the context entry, the summary and the kept message
-        // again, the answer.
-        assert_eq!(outcome.checkpoint().seq(), 7);
+        // Seven rows: the input, the call and its result, the steered
+        // message, the context entry, the summary, the answer. The
+        // context entry keeps the steered message by reference.
+        assert_eq!(outcome.checkpoint().seq(), 6);
         let compacted: Vec<u64> = events
             .iter()
             .filter_map(|e| match e {
@@ -166,7 +166,7 @@ fn threshold_compaction_summarizes_older_messages() {
         assert_eq!(text(&next[1]), "and then this");
 
         let entries = store.transcript(&outcome.run.0).await.unwrap();
-        let Entry::Context { plugin, body } = &entries[0] else {
+        let Entry::Context { plugin, body, .. } = &entries[0] else {
             panic!("{entries:?}")
         };
         assert_eq!(plugin, tau_compaction::NAME);

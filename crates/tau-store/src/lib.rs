@@ -9,12 +9,16 @@
 //! column that queries may filter on.
 
 use std::{
+    borrow::Cow,
+    mem,
     path::Path,
     str::FromStr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use sqlx::{
     Column as _,
     Connection,
@@ -124,12 +128,15 @@ pub enum Entry {
         role: String,
         body: String,
     },
-    /// A context rewrite by `plugin`: the transcript restarts after it,
-    /// with the messages that follow. Loading a transcript drops
-    /// everything before the latest one.
+    /// A context rewrite by `plugin`, with its details in `body`. The
+    /// transcript it leaves is `layout`, in order: `Some(i)` keeps the
+    /// message at index `i` of the transcript before it, by reference;
+    /// `None` takes the next message stored after the rewrite, one it
+    /// made or changed. Messages stored after those come after them.
     Context {
         plugin: String,
         body: String,
+        layout: Vec<Option<usize>>,
     },
     /// A record `plugin` keeps with the run. It is never part of the
     /// transcript; [`Store::records`] reads it back, and
@@ -461,16 +468,30 @@ impl Store {
         for (offset, entry) in entries.iter().enumerate() {
             let seq = next + offset as i64;
             let (kind, role, plugin, body) = match entry {
-                Entry::Message { role, body } => {
-                    ("message", Some(role.as_str()), None, body.as_str())
-                }
-                Entry::Context { plugin, body } => {
-                    ("context", None, Some(plugin.as_str()), body.as_str())
-                }
-                Entry::Plugin { plugin, body } => {
-                    ("plugin", None, Some(plugin.as_str()), body.as_str())
-                }
+                Entry::Message { role, body } => (
+                    "message",
+                    Some(role.as_str()),
+                    None,
+                    Cow::Borrowed(body.as_str()),
+                ),
+                Entry::Context {
+                    plugin,
+                    body,
+                    layout,
+                } => (
+                    "context",
+                    None,
+                    Some(plugin.as_str()),
+                    Cow::Owned(context_row(body, layout)?),
+                ),
+                Entry::Plugin { plugin, body } => (
+                    "plugin",
+                    None,
+                    Some(plugin.as_str()),
+                    Cow::Borrowed(body.as_str()),
+                ),
             };
+            let body: &str = &body;
             sqlx::query!(
                 "INSERT INTO messages (run_id, seq, kind, role, plugin, body, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
@@ -544,8 +565,10 @@ impl Store {
     }
 
     /// The run's transcript: the inherited messages of its fork chain,
-    /// then its own, from the latest context entry onward.
-    /// Plugin records are not part of it.
+    /// then its own, as its context rewrites left them. It starts with
+    /// the latest rewrite, if any, then the messages that rewrite kept
+    /// or made, then the ones stored after. Plugin records are not part
+    /// of it.
     pub async fn transcript(&self, run: &str) -> Result<Vec<Entry>> {
         self.entries(run, false).await
     }
@@ -564,9 +587,10 @@ impl Store {
         Ok(row)
     }
 
-    /// [`Store::transcript`] with the plugin records in place among the
-    /// messages, in the order they were written: what an interface needs
-    /// to show a stored run as it happened.
+    /// Everything the run's fork chain holds, in the order it was
+    /// written, plugin records included: what an interface needs to show
+    /// a stored run as it happened. Each context rewrite is in place,
+    /// without the messages it made or changed, which nobody saw happen.
     pub async fn timeline(&self, run: &str) -> Result<Vec<Entry>> {
         self.entries(run, true).await
     }
@@ -592,31 +616,33 @@ impl Store {
         .fetch_all(&self.reader)
         .await?;
 
-        let start = rows
-            .iter()
-            .rposition(|row| row.kind == "context")
-            .unwrap_or(0);
-        Ok(rows
-            .into_iter()
-            .skip(start)
-            .map(|row| match row.kind.as_str() {
-                "context" => Entry::Context {
+        let entries = rows.into_iter().map(|row| match row.kind.as_str() {
+            "context" => {
+                let (body, layout) = read_context(&row.body)?;
+                Ok(Entry::Context {
                     // The loop sets a plugin on every context row.
                     plugin: row.plugin.unwrap_or_default(),
-                    body: row.body,
-                },
-                "plugin" => Entry::Plugin {
-                    // The schema sets a plugin on every plugin row.
-                    plugin: row.plugin.unwrap_or_default(),
-                    body: row.body,
-                },
-                _ => Entry::Message {
-                    // The schema sets a role on every message row.
-                    role: row.role.unwrap_or_default(),
-                    body: row.body,
-                },
-            })
-            .collect())
+                    body,
+                    layout,
+                })
+            }
+            "plugin" => Ok(Entry::Plugin {
+                // The schema sets a plugin on every plugin row.
+                plugin: row.plugin.unwrap_or_default(),
+                body: row.body,
+            }),
+            _ => Ok(Entry::Message {
+                // The schema sets a role on every message row.
+                role: row.role.unwrap_or_default(),
+                body: row.body,
+            }),
+        });
+        let entries = entries.collect::<Result<Vec<_>>>()?;
+        if records {
+            Ok(happened(entries))
+        } else {
+            rewritten(entries)
+        }
     }
 
     /// The bodies of `plugin`'s records along the run's fork chain, oldest
@@ -964,4 +990,106 @@ fn run_kind(
         }
         _ => RunKind::Root,
     }
+}
+
+/// A context row's body: the rewrite's details, and the layout of the
+/// transcript it leaves.
+#[derive(Serialize, Deserialize)]
+struct ContextRow<'a> {
+    #[serde(borrow, default)]
+    details: Option<&'a RawValue>,
+    #[serde(default)]
+    layout: Vec<Option<usize>>,
+}
+
+/// The body of the row that stores a rewrite with `details` and
+/// `layout`.
+fn context_row(details: &str, layout: &[Option<usize>]) -> Result<String> {
+    let details: &RawValue = serde_json::from_str(details)?;
+    Ok(serde_json::to_string(&ContextRow {
+        details: Some(details),
+        layout: layout.to_vec(),
+    })?)
+}
+
+/// A context row's details and layout, from its body.
+fn read_context(body: &str) -> Result<(String, Vec<Option<usize>>)> {
+    let row: ContextRow = serde_json::from_str(body)?;
+    let details = row.details.map_or("null", RawValue::get).to_owned();
+    Ok((details, row.layout))
+}
+
+/// The transcript `entries` leave, with the latest rewrite first: each
+/// rewrite replaces the transcript before it with its layout, taking the
+/// messages it kept from that transcript and the ones it made from the
+/// messages stored after it.
+fn rewritten(entries: Vec<Entry>) -> Result<Vec<Entry>> {
+    let mut latest = None;
+    let mut transcript: Vec<Entry> = Vec::new();
+    // The latest rewrite's layout while messages stored after it still
+    // fill its open slots, and how many are open.
+    let mut filling: Vec<Option<Entry>> = Vec::new();
+    let mut open = 0;
+    for entry in entries {
+        match entry {
+            Entry::Context { ref layout, .. } => {
+                transcript
+                    .extend(mem::take(&mut filling).into_iter().flatten());
+                let before = mem::take(&mut transcript);
+                filling = layout
+                    .iter()
+                    .map(|slot| match slot {
+                        Some(index) => {
+                            before.get(*index).cloned().map(Some).ok_or_else(
+                                || {
+                                    StoreError::CorruptHistory(format!(
+                                        "a rewrite keeps message {index} of {}",
+                                        before.len()
+                                    ))
+                                },
+                            )
+                        }
+                        None => Ok(None),
+                    })
+                    .collect::<Result<_>>()?;
+                open = layout.iter().filter(|slot| slot.is_none()).count();
+                latest = Some(entry);
+            }
+            message if open > 0 => {
+                let slot = filling
+                    .iter_mut()
+                    .find(|slot| slot.is_none())
+                    .expect("an open slot is left");
+                *slot = Some(message);
+                open -= 1;
+            }
+            message => {
+                transcript
+                    .extend(mem::take(&mut filling).into_iter().flatten());
+                transcript.push(message);
+            }
+        }
+    }
+    transcript.extend(filling.into_iter().flatten());
+    Ok(latest.into_iter().chain(transcript).collect())
+}
+
+/// `entries` as they happened: each rewrite stays in place, and the
+/// messages it made, stored right after it, are left out.
+fn happened(entries: Vec<Entry>) -> Vec<Entry> {
+    let mut made = 0;
+    entries
+        .into_iter()
+        .filter(|entry| match entry {
+            Entry::Context { layout, .. } => {
+                made = layout.iter().filter(|slot| slot.is_none()).count();
+                true
+            }
+            Entry::Message { .. } if made > 0 => {
+                made -= 1;
+                false
+            }
+            _ => true,
+        })
+        .collect()
 }

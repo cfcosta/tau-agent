@@ -903,8 +903,8 @@ async fn run_to_end(
 
 /// A rewrite between turns replaces the working transcript: the next
 /// request sends it, the store keeps a context entry naming the plugin
-/// followed by the new messages, an event reports it, and a fork starts
-/// from it, with the plugin's details handed back.
+/// and pointing at the messages it kept, an event reports it, and a fork
+/// starts from it, with the plugin's details handed back.
 #[test]
 fn a_rewrite_replaces_the_transcript() {
     block_on(async {
@@ -946,12 +946,29 @@ fn a_rewrite_replaces_the_transcript() {
         assert!(rewritten[0].2 < rewritten[0].1, "{rewritten:?}");
 
         let entries = store.transcript(&outcome.run.0).await.unwrap();
-        let tau_store::Entry::Context { plugin, body } = &entries[0] else {
+        let tau_store::Entry::Context {
+            plugin,
+            body,
+            layout,
+        } = &entries[0]
+        else {
             panic!("{entries:?}");
         };
         assert_eq!(plugin, "pruner");
         assert_eq!(body, &json!({"pruned_at": 4}).to_string());
         assert_eq!(entries.len(), 3, "context, kept message, answer");
+        // It keeps the steered message by reference, not by a copy: the
+        // run stores it once.
+        assert_eq!(layout, &[Some(3)]);
+        let timeline = store.timeline(&outcome.run.0).await.unwrap();
+        let steered = timeline
+            .iter()
+            .filter(|entry| {
+                matches!(entry, tau_store::Entry::Message { body, .. }
+                    if body.contains("then this"))
+            })
+            .count();
+        assert_eq!(steered, 1, "{timeline:?}");
 
         let fork = agent
             .fork(&outcome.checkpoint())
