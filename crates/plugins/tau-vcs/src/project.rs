@@ -641,20 +641,34 @@ impl ProjectRepo {
         let then = turn.parent_ids().first().ok_or(VcsError::NoParent)?;
         let mut then = repo.store().get_commit(then)?;
         // An undo can take the parent's change back into a run's `@`, or
-        // abandon it. The fork must stand neither on another workspace's
-        // working copy nor on a hidden commit, which would bring its
-        // ancestors back beside their own changes; so it starts on the
-        // nearest ancestor that is neither, with the turn's files: an
-        // undone commit's description is not the fork's.
+        // abandon it. The fork must not stand on another workspace's
+        // working copy, so it starts on the nearest ancestor that is not
+        // one, with the turn's files: an undone commit's description is
+        // not the fork's. An abandoned parent is stood on as it was,
+        // unless its own parent's change is a working copy: the hidden
+        // commit would bring that change back beside the working copy,
+        // and the next snapshot would leave the fork stale.
         let working_copies: Vec<&CommitId> =
             repo.view().wc_commit_ids().values().collect();
+        let is_wc = |commit: &Commit| -> Result<bool, VcsError> {
+            Ok(visible(repo.as_ref(), commit)?
+                .is_some_and(|now| working_copies.contains(&now.id())))
+        };
         let now = loop {
+            let up = |then: &Commit| -> Result<Commit, VcsError> {
+                let up = then.parent_ids().first().ok_or(VcsError::NoParent)?;
+                Ok(repo.store().get_commit(up)?)
+            };
             match visible(repo.as_ref(), &then)? {
                 Some(now) if !working_copies.contains(&now.id()) => break now,
-                _ => {
-                    let up =
-                        then.parent_ids().first().ok_or(VcsError::NoParent)?;
-                    then = repo.store().get_commit(up)?;
+                Some(_) => then = up(&then)?,
+                None => {
+                    let parent = up(&then)?;
+                    if is_wc(&parent)? {
+                        then = parent;
+                    } else {
+                        break then.clone();
+                    }
                 }
             }
         };

@@ -811,6 +811,68 @@ fn a_fork_whose_parents_were_both_undone_stays_apart() {
     });
 }
 
+/// As above, with a file written before the undos: the undos carry the
+/// edit into the first commit's change, which the run then commits as
+/// its leftover. The second commit's change is abandoned and the first's
+/// is no working copy: the fork stands on the second commit as it was,
+/// with its turn's files, not on the edit made after it.
+#[test]
+fn a_fork_keeps_its_turns_files_when_later_edits_are_carried_back() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project(home.path());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let store = Store::memory().await.unwrap();
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("vcs_commit", json!({ "message": "feat: a" }))
+            })
+            .turn(|t| {
+                t.tool_call("vcs_commit", json!({ "message": "feat: b" }))
+            })
+            .turn(|t| {
+                t.tool_call("write", json!({ "path": "a.txt", "content": "" }))
+                    .tool_call("vcs_undo", json!({}))
+                    .tool_call("vcs_undo", json!({}))
+            })
+            .turn(|t| t.text("done"))
+            // The edit is left in `@`: the run is asked to finish it, then
+            // commits it.
+            .turn(|t| t.text("still done"))
+            .turn(|t| t.text("feat: leftover"));
+        let outcome = coder(llm.clone(), &first, true)
+            .run("commit twice, write, undo both", &store)
+            .await
+            .unwrap();
+        llm.assert_exhausted();
+        let linked =
+            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
+        let fork = RunWorkspace::new(
+            project.clone().into(),
+            "fork",
+            Identity::default(),
+        )
+        .unwrap();
+        let fork_llm = ScriptedModel::new().turn(|t| t.text("forked"));
+        coder(fork_llm, &fork, true)
+            .fork(&Checkpoint::at(outcome.run.clone(), linked[1].0))
+            .start("go on", &store)
+            .outcome()
+            .await
+            .unwrap();
+        assert_eq!(files(&fork.dir()), trunk_tree(), "the fork's files");
+    });
+}
+
 /// A turn that undoes the commit the turn before made, edits, and commits
 /// again changed the file it edited: the run rewriting its own commit is
 /// the turn's work, not a catch-up's.
