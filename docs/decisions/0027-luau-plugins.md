@@ -42,11 +42,16 @@ Three things stand in the way:
 
 ### Plugins are files in tau's plugins repository
 
-- tau keeps a local jj repository of its own, listed as `tau-plugins`,
+- tau keeps a local jj repository of its own, named `tau-plugins`,
   under `$XDG_DATA_HOME/tau/luau-plugins` (`plugins/` there holds Rust
-  plugins' own data), in the sidebar like a repository from GitHub, with a main chat and chats under it. Nothing new is
-  needed to edit it: runs there use the usual tools, commit, land and
-  show their diffs.
+  plugins' own data), with a main chat and chats under it like a
+  repository from GitHub. Nothing new is needed to edit it: runs there
+  use the usual tools, commit, land and show their diffs.
+- **The person never sees it as a repository.** It is how plugins are
+  kept, not something they work on, so the sidebar, search, History's
+  chips, settings scopes and new runs leave it out, even while one of
+  its chats is open. Its chats are listed on the Plugins page, and
+  `/plugin` is the way in.
 - One plugin is one folder:
 
   ```text

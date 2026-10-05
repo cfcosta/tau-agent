@@ -46,6 +46,7 @@ use tau_ui_plugin::{
     PluginInfo,
     RunCtx,
     RunCx,
+    RunInfo,
     Seam,
     SlashCommand,
     UiPlugin,
@@ -458,9 +459,7 @@ impl UiPlugin for LuauPluginsUi {
                 .filter(|entry| !matches!(entry.standing, Standing::Active))
                 .count();
             match (overview.plugins.len(), waiting) {
-                (0, _) => "Plugins written in Luau, in the tau-plugins \
-                           repository: none yet"
-                    .to_owned(),
+                (0, _) => "Plugins written in Luau: none yet".to_owned(),
                 (all, 0) => format!("Plugins written in Luau: {all} active"),
                 (all, waiting) => {
                     format!(
@@ -645,12 +644,17 @@ fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
     let handle = view.handle.clone();
     let mut column = div().flex().flex_col().gap(sp(4.)).p(sp(6.));
     column = column.child(div().typeset(Type::SMALL).child(rich(
-        "Plugins live in the `tau-plugins` repository, a folder each. Ask tau \
-         there to write or change one; a version is active once its commit \
-         is on `main` and its tests pass.",
+        "Type `/plugin` and what it should do in any chat, and tau writes \
+         one. A version is active once it lands and its tests pass.",
         t.muted,
         &t,
     )));
+    // Where tau writes them: the chats of the plugins repository, which
+    // the sidebar does not list.
+    let only = view.entry().map(str::to_owned);
+    if only.is_none() {
+        column = column.child(chats(view, &t));
+    }
     if let Some(error) = &overview.error {
         column = column.child(
             div()
@@ -665,7 +669,6 @@ fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
             .into_any_element();
     }
     // Opened from one plugin's row, the page is that plugin's.
-    let only = view.entry().map(str::to_owned);
     for entry in overview
         .plugins
         .iter()
@@ -776,6 +779,54 @@ fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
         column = column.child(card(&t).p(sp(4.)).child(body));
     }
     column.into_any_element()
+}
+
+/// The chats writing plugins, newest first, each opening its run.
+fn chats(view: &ViewCx<'_, LuauPluginsUi>, t: &Theme) -> AnyElement {
+    let runs: Vec<RunInfo> = view
+        .runs()
+        .into_iter()
+        .map(|(run, _)| run)
+        .filter(|run| run.repo == crate::REPO && !run.title.is_empty())
+        .collect();
+    let mut list = div().flex().flex_col().child(heading("Chats", t));
+    if runs.is_empty() {
+        return list
+            .child(
+                div()
+                    .typeset(Type::SMALL)
+                    .text_color(t.dim)
+                    .child("None yet."),
+            )
+            .into_any_element();
+    }
+    for run in runs {
+        let handle = view.handle.clone();
+        let color = if run.live { t.tone(Tone::Good) } else { t.dim };
+        list = list.child(
+            div()
+                .id(gpui::SharedString::from(format!("chat-{}", run.id.0)))
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .px(sp(2.))
+                .py(sp(1.5))
+                .rounded(radius::SMALL)
+                .cursor_pointer()
+                .hover(|row| row.bg(t.selected))
+                .child(dot(color, 7.))
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .typeset(Type::SMALL)
+                        .text_color(t.text)
+                        .child(run.title.clone()),
+                )
+                .on_click(move |_, _, cx| handle.open_run(&run.id, cx)),
+        );
+    }
+    list.into_any_element()
 }
 
 /// `/plugin <what>`: a chat in the plugins repository, with the skill

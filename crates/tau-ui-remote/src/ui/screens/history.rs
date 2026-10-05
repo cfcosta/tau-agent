@@ -144,7 +144,7 @@ pub fn render(
             }
         }
         let names: Vec<Option<String>> = std::iter::once(None)
-            .chain(ws.catalog.repos.iter().map(|repo| Some(repo.name.clone())))
+            .chain(ws.catalog.listed().map(|repo| Some(repo.name.clone())))
             .collect();
         let mut chips = div().flex().flex_wrap().gap(sp(1.5));
         for name in names {

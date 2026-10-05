@@ -80,7 +80,7 @@ impl Workspace {
     /// the host did not say.
     pub fn repo_of<'a>(&'a self, run: &'a RunView) -> &'a str {
         if run.repo.is_empty() {
-            self.catalog.repos.first().map_or("", |repo| &repo.name)
+            self.catalog.listed().next().map_or("", |repo| &repo.name)
         } else {
             &run.repo
         }
@@ -91,8 +91,8 @@ impl Workspace {
     pub fn selected_repo(&self) -> Option<&str> {
         self.repo
             .as_deref()
-            .filter(|name| self.catalog.repo(name).is_some())
-            .or_else(|| self.catalog.repos.first().map(|repo| &*repo.name))
+            .filter(|name| self.catalog.is_listed(name))
+            .or_else(|| self.catalog.listed().next().map(|repo| &*repo.name))
     }
 
     /// A repository by name, or an empty one when it is not listed.
@@ -221,8 +221,7 @@ impl Workspace {
     pub fn repo_rows(&self, filter: &str) -> Vec<RepoRows<'_>> {
         let filter = filter.trim().to_lowercase();
         self.catalog
-            .repos
-            .iter()
+            .listed()
             .filter_map(|repo| {
                 let all: Vec<&RunView> = self.root_runs(&repo.name).collect();
                 let live = self
@@ -302,7 +301,7 @@ impl Workspace {
     /// Opens the repositories the sidebar had open last time, or the
     /// selected one on a first start, and forgets any no longer listed.
     pub(crate) fn restore_repos(&mut self) {
-        let listed = |name: &String| self.catalog.repo(name).is_some();
+        let listed = |name: &String| self.catalog.is_listed(name);
         let mut open: std::collections::HashSet<String> = self
             .open_repos
             .iter()
@@ -324,7 +323,7 @@ impl Workspace {
                 .map(|run| self.repo_of(run).to_owned())
                 .filter(|name| listed(name))
                 .or_else(|| {
-                    self.catalog.repos.first().map(|repo| repo.name.clone())
+                    self.catalog.listed().next().map(|repo| repo.name.clone())
                 });
         }
         if open.is_empty() {
@@ -337,8 +336,7 @@ impl Workspace {
         // In the sidebar's order, so what is saved reads well.
         let open = self
             .catalog
-            .repos
-            .iter()
+            .listed()
             .filter(|repo| self.open_repos.contains(&repo.name))
             .map(|repo| repo.name.clone())
             .collect();

@@ -16,7 +16,8 @@ pub struct Catalog {
     pub plugins: Vec<PluginInfo>,
     pub jev: Option<JevStats>,
     /// The repositories runs work on, in the sidebar's order. Each has
-    /// its own notes and rules.
+    /// its own notes and rules. tau's own are among them, but only
+    /// [`Catalog::listed`] are the person's.
     pub repos: Vec<Repo>,
     /// The repositories the sidebar had open when the user last left it.
     pub open_repos: Vec<String>,
@@ -78,6 +79,17 @@ impl Catalog {
     pub fn repo_mut(&mut self, name: &str) -> Option<&mut Repo> {
         self.repos.iter_mut().find(|repo| repo.name == name)
     }
+
+    /// The person's repositories, in the sidebar's order: tau's own are
+    /// left out.
+    pub fn listed(&self) -> impl Iterator<Item = &Repo> {
+        self.repos.iter().filter(|repo| !repo.own)
+    }
+
+    /// Whether `name` is one of the person's repositories.
+    pub fn is_listed(&self, name: &str) -> bool {
+        self.repo(name).is_some_and(|repo| !repo.own)
+    }
 }
 
 /// A repository runs work on: its memory and its plugins' data belong
@@ -104,6 +116,10 @@ pub struct Repo {
     /// Trunk's branch, which `origin/<trunk>` names on GitHub.
     #[serde(default)]
     pub trunk: Option<String>,
+    /// tau's own, like its plugins repository (ADR 0027): runs work in
+    /// it, but the sidebar, search and pickers do not list it.
+    #[serde(default)]
+    pub own: bool,
 }
 
 impl Repo {

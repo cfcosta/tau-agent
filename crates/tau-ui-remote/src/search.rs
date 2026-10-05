@@ -87,7 +87,7 @@ impl Workspace {
                 });
             }
         }
-        for repo in &self.catalog.repos {
+        for repo in self.catalog.listed() {
             if words.is_empty() || matches(&repo.name) {
                 hits.push(Hit {
                     label: repo.name.clone(),
@@ -99,8 +99,7 @@ impl Workspace {
         }
         let mut actions: Vec<Hit> = self
             .catalog
-            .repos
-            .iter()
+            .listed()
             .flat_map(|repo| {
                 let name = repo.name.clone();
                 [Hit {
@@ -113,7 +112,7 @@ impl Workspace {
             .collect();
         // Where plugins lead: under each repository, everywhere, and
         // what they add to search.
-        for repo in &self.catalog.repos {
+        for repo in self.catalog.listed() {
             let entries = self.contributions(
                 tau_ui_plugin::points::SIDEBAR_REPO,
                 &tau_ui_plugin::points::AtRepo {

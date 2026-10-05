@@ -1362,9 +1362,7 @@ impl Workspace {
             }
             _ => None,
         };
-        if let Some(repo) =
-            repo.filter(|repo| self.catalog.repo(repo).is_some())
-        {
+        if let Some(repo) = repo.filter(|repo| self.catalog.is_listed(repo)) {
             if self.open_repos.insert(repo.clone()) {
                 self.emit_open_repos(cx);
             }

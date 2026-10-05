@@ -61,7 +61,7 @@ pub fn sidebar(
 ) -> gpui::Stateful<Div> {
     let filter = ws.sidebar_filter.read(cx).text().to_owned();
     let rows = ws.repo_rows(&filter);
-    let many = ws.catalog.repos.len() > 3;
+    let many = ws.catalog.listed().count() > 3;
 
     let new_run = div()
         .id("new-run")
@@ -169,7 +169,7 @@ pub fn sidebar(
                 .collect();
             groups
         })
-        .when(ws.catalog.repos.is_empty(), |bar| {
+        .when(ws.catalog.listed().next().is_none(), |bar| {
             bar.child(
                 div()
                     .px(sp(2.5))
@@ -998,7 +998,7 @@ pub fn phone_run_list(
         .flex()
         .flex_col()
         .children(groups)
-        .when(ws.catalog.repos.is_empty(), |list| {
+        .when(ws.catalog.listed().next().is_none(), |list| {
             list.child(super::empty(
                 "No repositories yet. Add one to start runs in it.",
                 t,

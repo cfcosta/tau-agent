@@ -511,7 +511,7 @@ pub fn scope_switch(
     + 'static,
 ) -> AnyElement {
     let options = std::iter::once(None)
-        .chain(ws.catalog.repos.iter().map(|repo| Some(repo.name.clone())));
+        .chain(ws.catalog.listed().map(|repo| Some(repo.name.clone())));
     div()
         .flex()
         .flex_wrap()

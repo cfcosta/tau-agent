@@ -1398,6 +1398,8 @@ fn repositories_are_listed_and_remembered() {
     // Nothing is listed until it is cloned but tau's own plugins: not
     // even the directory tau started in.
     assert_eq!(names(&host), ["tau-plugins"]);
+    // tau's own, which the sidebar leaves out.
+    assert!(host.block_on(host.catalog()).repos[0].own);
     // Two repositories with one name get two names.
     assert_eq!(
         host.block_on(host.clone_github("a/proj")).unwrap().name,

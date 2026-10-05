@@ -688,6 +688,7 @@ impl Host {
             let mut repo =
                 Repo::new(&listed.name, listed.path.display().to_string());
             repo.main = listed.main.as_deref().map(|main| RunId(main.into()));
+            repo.own = listed.own;
             // What the main chat would push, for a repository from
             // GitHub (ADR 0023).
             if listed.github.is_some()
