@@ -27,6 +27,7 @@ tau-ask.workspace = true
 tau-skills = { workspace = true, features = ["demo"] }
 tau-direnv.workspace = true
 tau-goal = { workspace = true, features = ["demo"] }
+tau-luau-plugins.workspace = true
 tau-jev.workspace = true
 tau-mcp = { workspace = true, features = ["demo"] }
 tau-memory = { workspace = true, features = ["docbert", "demo"] }

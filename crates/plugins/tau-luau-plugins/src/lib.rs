@@ -15,10 +15,14 @@
 #[cfg(feature = "host")]
 pub mod agent;
 #[cfg(feature = "host")]
+pub mod registry;
+#[cfg(feature = "host")]
 pub mod runtime;
+pub mod ui;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use ui::LuauPluginsUi;
 
 /// The host plugin's name, for both its halves.
 pub const NAME: &str = "tau-luau-plugins";

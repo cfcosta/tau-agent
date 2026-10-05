@@ -44,6 +44,9 @@ pub fn registry() -> &'static Registry {
             .with(tau_memory::ui::MemoryUi)
             .with(tau_constitution::ui::ConstitutionUi)
             .with(tau_goal::GoalUi)
+            // Plugins the person wrote in Luau: after the rules and the
+            // goal, so theirs hold first.
+            .with(tau_luau_plugins::LuauPluginsUi)
             // Questions the agent asks the person, answered in the
             // composer's place.
             .with(tau_ask::AskUi)
