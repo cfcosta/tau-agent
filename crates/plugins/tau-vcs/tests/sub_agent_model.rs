@@ -59,7 +59,7 @@ use tau_vcs::{
     DEFAULT_WORKSPACE,
     Identity,
     Link,
-    Project,
+    ProjectRepo,
     RunWorkspace,
     Spawn,
     SubAgents,
@@ -314,7 +314,7 @@ impl AgentTool for Gates {
 /// many went. Returns the order they went in.
 async fn conduct(
     gates: Gates,
-    project: Project,
+    project: ProjectRepo,
     names: Arc<Mutex<HashMap<usize, String>>>,
     rank: Vec<usize>,
     cancel: Option<(usize, RunControl)>,
@@ -457,14 +457,14 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
         let caller = if main_chat {
             tc.event("the caller is the main chat");
             RunWorkspace::new(
-                project.clone(),
+                project.clone().into(),
                 DEFAULT_WORKSPACE,
                 Identity::default(),
             )
             .unwrap()
             .commits_to(project.trunk_name().unwrap())
         } else {
-            RunWorkspace::new(project.clone(), "caller", Identity::default())
+            RunWorkspace::new(project.clone().into(), "caller", Identity::default())
                 .unwrap()
         };
 

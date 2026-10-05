@@ -126,7 +126,7 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
         runtime.block_on(async {
             let store = Store::memory().await.unwrap();
             let parent = RunWorkspace::new(
-                project.clone(),
+                project.clone().into(),
                 "parent",
                 Identity::default(),
             )
@@ -331,7 +331,7 @@ fn oversized_untracked_child_files_are_not_discarded() {
         runtime.block_on(async {
             let store = Store::memory().await.unwrap();
             let parent = RunWorkspace::new(
-                project.clone(),
+                project.clone().into(),
                 "parent",
                 Identity::default(),
             )

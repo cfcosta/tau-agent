@@ -207,13 +207,13 @@ fn main_pushes_and_a_moved_main_fetches_first() {
     assert_eq!(pushed.branch, "main");
     assert_eq!(pushed.changes.len(), 1);
     assert_eq!(pushed.changes[0].title, "feat: add m");
-    assert_eq!(github.branch("main"), project.trunk().unwrap());
-    assert_eq!(pushed.to, project.trunk().unwrap());
+    assert_eq!(github.branch("main"), project.blocking().trunk().unwrap());
+    assert_eq!(pushed.to, project.blocking().trunk().unwrap());
     assert!(github.has(&pushed.to, "m.txt"));
     assert_eq!(listed(&host, &repo.name).unpushed, 0);
 
     go_on(&host, &mut events, &main, "write n");
-    let waiting = project.unpushed().unwrap();
+    let waiting = project.blocking().unpushed().unwrap();
     assert_eq!(waiting.len(), 1);
     github.push_upstream("u.txt");
     let before = github.branch("main");
@@ -232,11 +232,11 @@ fn main_pushes_and_a_moved_main_fetches_first() {
     assert_eq!(pushed.changes.len(), 1);
     assert_eq!(pushed.changes[0].change_id, waiting[0].change_id);
     let head = github.branch("main");
-    assert_eq!(head, project.trunk().unwrap());
+    assert_eq!(head, project.blocking().trunk().unwrap());
     for path in ["m.txt", "n.txt", "u.txt"] {
         assert!(github.has(&head, path), "{path}");
     }
-    assert!(project.unpushed().unwrap().is_empty());
+    assert!(project.blocking().unpushed().unwrap().is_empty());
 }
 
 /// GitHub's API, answering the calls opening a pull request makes, and
@@ -288,7 +288,7 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
     let project = host.project_of(&repo.name).unwrap();
     let main = host.main_of(&repo.name).unwrap();
     go_on(&host, &mut events, &main, "write m");
-    let mains = project.trunk().unwrap();
+    let mains = project.blocking().trunk().unwrap();
     let origin = github.branch("main");
 
     let chat = host

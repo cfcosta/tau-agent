@@ -76,11 +76,12 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
 
     let readme = |text: &str| json!({ "path": "README.md", "content": text });
@@ -180,9 +181,14 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
         assert_eq!(ws.need_you("hello", cx), 1);
     });
     // Forecasting changed nothing: main has the second chat's line.
-    let trunk = project.trunk().unwrap();
+    let trunk = project.blocking().trunk().unwrap();
     assert_eq!(
-        project.file_at(&trunk, "README.md").unwrap().unwrap().0,
+        project
+            .blocking()
+            .file_at(&trunk, "README.md")
+            .unwrap()
+            .unwrap()
+            .0,
         b"two\n"
     );
     llm.assert_exhausted();

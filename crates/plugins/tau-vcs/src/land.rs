@@ -9,6 +9,11 @@
 //! onto trunk's head ([`move_onto`]), in the run's workspace, as the
 //! main chat does when an update moved trunk without it.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+)]
+
 use std::collections::HashSet;
 
 use futures_util::StreamExt as _;

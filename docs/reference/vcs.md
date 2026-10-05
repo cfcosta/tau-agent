@@ -43,26 +43,33 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 ## Threading
 
 - jj-lib's futures are not `Send`. Much of their work is blocking file
-  and object I/O. So each `Vcs` has one thread that owns the workspace
-  and runs every job in order. The thread drives jj-lib's futures with
-  `pollster`.
-- A tool future only sends a job and awaits the reply on a oneshot
-  channel. It never holds jj-lib types across an await.
-- A panic in jj-lib is caught on the thread. The tool returns
-  `jj-lib panicked: <message>` as its error, and the thread loads the
-  workspace again before the next job.
-- Clones of a `Vcs` share the thread. The thread stops when the last
-  clone is dropped.
+  and object I/O. So each `Vcs` keeps its workspace behind an async
+  lock, and each job takes the lock and runs on tokio's
+  `spawn_blocking`, which drives jj-lib's futures with `pollster`
+  ([ADR 0027](../decisions/0027-async-all-the-way-blocking-only-in-spawn-blocking.md)).
+  Jobs on one workspace run one at a time, in the order they asked, and
+  no thread waits between them.
+- A tool future only awaits its job. It never holds jj-lib types across
+  an await.
+- A panic in jj-lib is caught in the job. The tool returns
+  `jj-lib panicked: <message>` as its error, and the next job loads the
+  workspace again.
+- Clones of a `Vcs` share the workspace and its lock.
+- A `Project` is the repository's handle for async code: `run` takes
+  the repository's turn, which every handle on it shares, and runs the
+  job on `ProjectRepo`, the blocking API, in `spawn_blocking`.
+  `ProjectRepo` is reached only there, and in tests.
 - All tools are `ExecutionMode::Sequential`. A batch of calls runs in
   order, so `vcs_commit` and then `vcs_log` in one turn see each other.
 - Every operation that writes to a repository takes the repository's
   lock first, and holds it until the operation is written and the
   files are checked out: each tool's snapshot and transaction, and
-  each `Project` write (`update`, `add_workspace`,
+  each `ProjectRepo` write (`update`, `add_workspace`,
   `add_workspace_from_snapshot`, `forget_workspace`, `abandon_between`,
-  `remove_bookmark`, `push_trunk`, `push_branch`). Runs work in workspaces of one repository from
-  threads of their own, and two operations that started from the same
-  one would fork jj's operation log: a commit two of them rewrote
+  `remove_bookmark`, `push_trunk`, `push_branch`). Runs work in
+  workspaces of one repository at the same time, and two operations
+  that started from the same one would fork jj's operation log: a
+  commit two of them rewrote
   would be divergent, and a bookmark two of them moved conflicted.
   Under the lock they happen one after another. The lock is
   `.jj/repo/tau.lock`, held with `flock`, so it holds between threads

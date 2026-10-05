@@ -20,10 +20,10 @@ use jj_lib::{
     repo::Repo as _,
     workspace::Workspace,
 };
-use pollster::block_on;
+use tau_testing::block_on_io as block_on;
 use tau_vcs::{
     DEFAULT_WORKSPACE,
-    Project,
+    ProjectRepo,
     Vcs,
     sweep::{Keep, Owner, RUN_BOOKMARK_PREFIX, Standing},
 };
@@ -31,7 +31,7 @@ use tau_vcs::{
 /// A run's workspace `name` on trunk, with `file` committed under the
 /// run's bookmark, `tau/<run>`. Returns the commit's change id.
 fn run_with_commit(
-    project: &Project,
+    project: &ProjectRepo,
     run: &str,
     name: &str,
     file: &str,
@@ -47,7 +47,7 @@ fn run_with_commit(
 }
 
 /// Whether a visible commit holds the change `change` (reverse hex).
-fn visible(project: &Project, change: &str) -> bool {
+fn visible(project: &ProjectRepo, change: &str) -> bool {
     let settings = jj_lib::settings::UserSettings::from_config(
         jj_lib::config::StackedConfig::with_defaults(),
     )

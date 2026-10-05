@@ -109,9 +109,12 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
             .turn(|t| t.tool_call("vcs_commit", commit("feat: child")))
             .turn(|t| t.text("child.txt is written"))
             .turn(|t| t.text("done"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let child_llm = llm.clone();
         let outcome = delegating(llm.clone(), &parent, move |workspace| {
             Ok(coder(child_llm.clone(), &workspace, true))
@@ -208,9 +211,12 @@ fn a_sub_agents_leftover_is_described_from_its_task() {
             .turn(|t| t.text("written"))
             .turn(|t| t.text("still written"))
             .turn(|t| t.text("feat: child"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let script = child_llm.clone();
         let outcome = delegating(llm.clone(), &parent, move |workspace| {
             Ok(coder(script.clone(), &workspace, true))
@@ -247,9 +253,12 @@ fn a_failed_sub_agent_is_dropped() {
         let llm = ScriptedModel::new()
             .turn(|t| delegate(t, &[json!({ "task": "anything" })]))
             .turn(|t| t.text("gave up"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let outcome = delegating(llm.clone(), &parent, |_| {
             Err("no model for sub-agents".into())
         })
@@ -276,9 +285,12 @@ fn a_sub_agent_that_fails_leaves_no_changes() {
             .turn(|t| t.tool_call("write", write("child.txt")))
             .turn(|t| t.dropped())
             .turn(|t| t.text("it failed"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let child_llm = llm.clone();
         let outcome = delegating(llm.clone(), &parent, move |workspace| {
             Ok(coder(child_llm.clone(), &workspace, true))
@@ -318,9 +330,12 @@ fn delegating_needs_a_clean_working_copy() {
             .turn(|t| delegate(t, &[json!({ "task": "anything" })]))
             .turn(|t| t.tool_call("vcs_commit", commit("feat: parent")))
             .turn(|t| t.text("done"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let outcome = delegating(llm.clone(), &parent, |_| {
             panic!("no sub-agent starts before the caller commits")
         })
@@ -383,9 +398,12 @@ fn sub_agents_in_one_batch_both_land() {
                 )
             })
             .turn(|t| t.text("done"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let outcome =
             delegating_to(llm.clone(), &parent, writers(&["a.txt", "b.txt"]))
                 .run("split the work", &store)
@@ -421,9 +439,12 @@ fn a_clashing_sub_agent_lands_its_conflict() {
                 )
             })
             .turn(|t| t.text("done"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let scripts = ["one\n", "two\n"]
             .into_iter()
             .map(|content| {
@@ -473,9 +494,12 @@ fn a_landing_names_only_the_conflicts_it_brought() {
             })
             .turn(|t| delegate(t, &[json!({ "task": "other" })]))
             .turn(|t| t.text("done"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let scripts = [
             ("shared.txt", "one\n"),
             ("shared.txt", "two\n"),
@@ -576,9 +600,12 @@ fn at_most_four_sub_agents_run_at_once() {
                 t
             })
             .turn(|t| t.text("done"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let gauge = Gauge::default();
         let child_gauge = gauge.clone();
         let outcome = delegating(llm.clone(), &parent, move |workspace| {
@@ -620,7 +647,7 @@ fn a_call_can_pick_its_model_and_effort() {
             .turn(|t| delegate(t, &[json!({ "task": "b" })]))
             .turn(|t| t.text("done"));
         let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
+            RunWorkspace::new(project.clone().into(), "parent", Identity::default())
                 .unwrap();
         let asked = Arc::new(Mutex::new(Vec::new()));
         let seen = asked.clone();
@@ -665,9 +692,12 @@ fn a_sub_agent_at_a_limit_lands_its_work() {
         let llm = ScriptedModel::new()
             .turn(|t| delegate(t, &[json!({ "task": "write" })]))
             .turn(|t| t.text("done"));
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let outcome = delegating(llm.clone(), &parent, |workspace| {
             let script = ScriptedModel::new()
                 .turn(|t| {
@@ -712,7 +742,7 @@ fn a_sub_agent_outlives_its_callers_turn() {
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
+            RunWorkspace::new(project.clone().into(), "parent", Identity::default())
                 .unwrap();
         let agents = SubAgents::default();
         // The sub-agent holds until the caller's first run has ended.
@@ -774,9 +804,12 @@ fn a_stopped_sub_agent_is_dropped() {
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
-        let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
-                .unwrap();
+        let parent = RunWorkspace::new(
+            project.clone().into(),
+            "parent",
+            Identity::default(),
+        )
+        .unwrap();
         let agents = SubAgents::default();
         let gate = Arc::new(tokio::sync::Notify::new());
         let child_gate = gate.clone();

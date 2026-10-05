@@ -31,7 +31,7 @@
 //!   to a merged run and never sideways;
 //! - dropping abandons the child's own changes; whatever descended from
 //!   a rewritten or abandoned commit follows it, as jj rebases it;
-//! - `Project::current` moves each link to its change's commit now, and
+//! - `ProjectRepo::current` moves each link to its change's commit now, and
 //!   leaves a link to an abandoned change, or to a snapshot, where it
 //!   was;
 //! - `forget_workspace` deletes the directory and keeps the commits and
@@ -39,6 +39,11 @@
 //!
 //! File contents are one line or empty, so jj's line merge of a file
 //! resolves exactly when its trivial merge of whole files does.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 
 mod common;
 
@@ -50,7 +55,14 @@ use std::{
 use common::merge::*;
 use hegel::{TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
-use tau_vcs::{DEFAULT_WORKSPACE, Identity, Link, Project, UpdateFrom, Vcs};
+use tau_vcs::{
+    DEFAULT_WORKSPACE,
+    Identity,
+    Link,
+    ProjectRepo,
+    UpdateFrom,
+    Vcs,
+};
 
 const PATHS: [&str; 3] = ["a.txt", "c.txt", "dir/b.txt"];
 const VALUES: [&str; 4] = ["", "one\n", "two\n", "three\n"];
@@ -117,7 +129,7 @@ struct Run {
 
 struct Machine {
     home: tempfile::TempDir,
-    project: Project,
+    project: ProjectRepo,
     commits: Vec<Commit>,
     /// The main chat first, then its chats.
     runs: Vec<Run>,
@@ -140,7 +152,7 @@ impl Machine {
         std::fs::write(src.join("dir/b.txt"), "two\n").unwrap();
         git(&src, &["add", "."]);
         git(&src, &["commit", "--quiet", "-m", "first"]);
-        let project = Project::import(
+        let project = tau_vcs::ProjectRepo::import(
             src.to_str().unwrap(),
             home.path().join("p"),
             Identity::default(),
@@ -169,7 +181,11 @@ impl Machine {
         // commit: the host's catch-up before its first turn moves it onto
         // trunk.
         let dir = machine.project.workspace_dir(DEFAULT_WORKSPACE);
-        let vcs = Vcs::open(&dir, Identity::default()).unwrap();
+        let vcs = tau_testing::block_on_io(tau_vcs::Vcs::open(
+            &dir,
+            Identity::default(),
+        ))
+        .unwrap();
         let trunk = machine.commits[0].commit_id.clone();
         let name = machine.project.trunk_name().unwrap();
         let moved = block_on(vcs.move_onto(trunk.clone(), name, true)).unwrap();
@@ -1098,7 +1114,7 @@ impl Machine {
     }
 
     /// The source moves on: `edits` committed in the user's checkout,
-    /// then brought in with `Project::update`. Trunk takes the source's
+    /// then brought in with `ProjectRepo::update`. Trunk takes the source's
     /// branch, even when the main chat has moved it too.
     fn do_upstream(&mut self, tc: &TestCase, edits: &[(&'static str, Val)]) {
         let src = self.src();

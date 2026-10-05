@@ -1,6 +1,11 @@
 //! Tree diffs as the tools show them: a list of changed paths, and
 //! Git-style unified diff text (`docs/reference/vcs.md`, "vcs_diff").
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+)]
+
 use futures_util::StreamExt as _;
 use jj_lib::{
     backend::MergedTreeValue,

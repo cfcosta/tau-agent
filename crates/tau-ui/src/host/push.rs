@@ -51,7 +51,7 @@ impl Host {
             url: &url,
             token: Some(&token),
         };
-        match project.push_trunk(remote) {
+        match project.blocking().push_trunk(remote) {
             Ok(pushed) => Ok(Pushed {
                 branch: pushed.branch,
                 from: pushed.from,
@@ -69,6 +69,7 @@ impl Host {
                 Err(PushFailure::Moved {
                     branch,
                     ahead: project
+                        .blocking()
                         .unpushed()
                         .map_or(0, |changes| changes.len() as u32),
                 })

@@ -1,18 +1,25 @@
-//! [`Vcs`]: a handle on one jj workspace, and the thread that owns it
-//! (`docs/reference/vcs.md`, "Threading").
+//! [`Vcs`]: a handle on one jj workspace (`docs/reference/vcs.md`,
+//! "Threading"; ADR 0027).
 //!
 //! jj-lib's futures are not `Send`, and much of their work is blocking
-//! file and object I/O. So one thread per [`Vcs`] owns the workspace and
-//! runs every job, in order, driving jj-lib's futures with `pollster`.
-//! A job that panics is caught there: its caller gets an error, and the
-//! workspace is loaded again for the next job, since jj-lib's state
-//! after a panic cannot be trusted.
+//! file and object I/O. So the workspace sits behind an async lock, and
+//! each job takes the lock, then runs on tokio's `spawn_blocking`,
+//! driving jj-lib's futures with `pollster`: jobs run one at a time, in
+//! the order they asked, and no thread waits between them. A job that
+//! panics is caught there: its caller gets an error, and the workspace
+//! is loaded again for the next job, since jj-lib's state after a panic
+//! cannot be trusted.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+)]
 
 use std::{
     any::Any,
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
-    sync::{Arc, mpsc},
+    sync::Arc,
 };
 
 use jj_lib::{
@@ -25,7 +32,7 @@ use jj_lib::{
     workspace::Workspace,
 };
 use pollster::block_on;
-use tokio::sync::oneshot;
+use tokio::sync::Mutex;
 
 use crate::error::VcsError;
 
@@ -45,8 +52,8 @@ impl Default for Identity {
     }
 }
 
-/// A handle on one jj workspace. Cheap to clone: every clone sends its
-/// jobs to the same thread, which stops when the last clone is dropped.
+/// A handle on one jj workspace. Cheap to clone: every clone runs its
+/// jobs on the same workspace, one at a time.
 #[derive(Clone)]
 pub struct Vcs {
     inner: Arc<Inner>,
@@ -54,10 +61,8 @@ pub struct Vcs {
 
 struct Inner {
     root: PathBuf,
-    jobs: mpsc::Sender<Job>,
+    worker: Arc<Mutex<Worker>>,
 }
-
-type Job = Box<dyn FnOnce(&mut Worker) + Send>;
 
 impl std::fmt::Debug for Vcs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -68,31 +73,31 @@ impl std::fmt::Debug for Vcs {
 }
 
 impl Vcs {
-    /// Opens the jj workspace at `dir`, which must exist. Blocks while
-    /// the workspace loads.
-    pub fn open(
+    /// Opens the jj workspace at `dir`, which must exist.
+    pub async fn open(
         dir: impl Into<PathBuf>,
         identity: Identity,
     ) -> Result<Self, VcsError> {
-        let vcs = Self::spawn(dir.into(), identity)?;
-        vcs.call_blocking(|worker| worker.workspace().map(|_| ()))?;
+        let vcs = Self::lazy(dir, identity)?;
+        vcs.call(|worker| worker.workspace().map(|_| ())).await?;
         Ok(vcs)
     }
 
     /// Makes `dir` (created if missing) a new jj repository with an
     /// internal Git store, as `jj git init` does without `--colocate`,
-    /// and opens it. Blocks while the repository is written.
-    pub fn init(
+    /// and opens it.
+    pub async fn init(
         dir: impl Into<PathBuf>,
         identity: Identity,
     ) -> Result<Self, VcsError> {
-        let dir = dir.into();
-        std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
-            path: dir.clone(),
-            source,
-        })?;
-        let vcs = Self::spawn(dir, identity)?;
-        vcs.call_blocking(|worker| {
+        let vcs = Self::lazy(dir, identity)?;
+        vcs.call(|worker| {
+            std::fs::create_dir_all(&worker.root).map_err(|source| {
+                VcsError::Create {
+                    path: worker.root.clone(),
+                    source,
+                }
+            })?;
             let (workspace, _repo) = block_on(Workspace::init_internal_git(
                 &worker.settings,
                 &worker.root,
@@ -102,7 +107,8 @@ impl Vcs {
             ))?;
             worker.workspace = Some(workspace);
             Ok(())
-        })?;
+        })
+        .await?;
         Ok(vcs)
     }
 
@@ -113,7 +119,27 @@ impl Vcs {
         dir: impl Into<PathBuf>,
         identity: Identity,
     ) -> Result<Self, VcsError> {
-        Self::spawn(dir.into(), identity)
+        Self::with(dir.into(), identity, None)
+    }
+
+    /// A handle on `workspace`, loaded already at `dir` by a job.
+    pub(crate) fn loaded(
+        dir: PathBuf,
+        identity: Identity,
+        workspace: Workspace,
+    ) -> Result<Self, VcsError> {
+        Self::with(dir, identity, Some(workspace))
+    }
+
+    /// Opens the jj workspace at `dir` from inside a job, which may
+    /// block.
+    pub(crate) fn open_in_job(
+        dir: PathBuf,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let settings = settings(&identity)?;
+        let workspace = load(&settings, &dir)?;
+        Self::loaded(dir, identity, workspace)
     }
 
     /// Commits whatever `@` holds, starts an empty working copy on top,
@@ -219,64 +245,45 @@ impl Vcs {
         &self.inner.root
     }
 
-    fn spawn(root: PathBuf, identity: Identity) -> Result<Self, VcsError> {
-        let settings = settings(&identity)?;
-        let (jobs, receiver) = mpsc::channel::<Job>();
-        let thread_root = root.clone();
-        std::thread::Builder::new()
-            .name("tau-vcs".to_owned())
-            .spawn(move || {
-                let mut worker = Worker {
-                    root: thread_root,
-                    settings,
-                    workspace: None,
-                };
-                while let Ok(job) = receiver.recv() {
-                    job(&mut worker);
-                }
-            })
-            .map_err(VcsError::Thread)?;
+    fn with(
+        root: PathBuf,
+        identity: Identity,
+        workspace: Option<Workspace>,
+    ) -> Result<Self, VcsError> {
+        let worker = Worker {
+            root: root.clone(),
+            settings: settings(&identity)?,
+            workspace,
+        };
         Ok(Self {
-            inner: Arc::new(Inner { root, jobs }),
+            inner: Arc::new(Inner {
+                root,
+                worker: Arc::new(Mutex::new(worker)),
+            }),
         })
     }
 
-    fn submit<T: Send + 'static>(
-        &self,
-        job: impl FnOnce(&mut Worker) -> Result<T, VcsError> + Send + 'static,
-    ) -> Result<oneshot::Receiver<Result<T, VcsError>>, VcsError> {
-        let (reply, receiver) = oneshot::channel();
-        let job: Job = Box::new(move |worker| {
-            let result = panic::catch_unwind(AssertUnwindSafe(|| job(worker)))
-                .unwrap_or_else(|payload| {
-                    worker.workspace = None;
-                    Err(VcsError::Panicked(panic_text(&*payload)))
-                });
-            let _ = reply.send(result);
-        });
-        self.inner.jobs.send(job).map_err(|_| VcsError::Stopped)?;
-        Ok(receiver)
-    }
-
-    /// Runs `job` on the workspace's thread and waits for its result.
+    /// Runs `job` on the workspace once the jobs before it are done, on
+    /// tokio's blocking pool, and waits for its result.
     pub(crate) async fn call<T: Send + 'static>(
         &self,
         job: impl FnOnce(&mut Worker) -> Result<T, VcsError> + Send + 'static,
     ) -> Result<T, VcsError> {
-        self.submit(job)?.await.map_err(|_| VcsError::Stopped)?
-    }
-
-    fn call_blocking<T: Send + 'static>(
-        &self,
-        job: impl FnOnce(&mut Worker) -> Result<T, VcsError> + Send + 'static,
-    ) -> Result<T, VcsError> {
-        self.submit(job)?
-            .blocking_recv()
-            .map_err(|_| VcsError::Stopped)?
+        let mut worker = self.inner.worker.clone().lock_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let worker = &mut *worker;
+            panic::catch_unwind(AssertUnwindSafe(|| job(worker)))
+                .unwrap_or_else(|payload| {
+                    worker.workspace = None;
+                    Err(VcsError::Panicked(panic_text(&*payload)))
+                })
+        })
+        .await
+        .map_err(|_| VcsError::Stopped)?
     }
 }
 
-/// What the workspace's thread owns.
+/// What a job on the workspace gets.
 pub(crate) struct Worker {
     root: PathBuf,
     settings: UserSettings,
@@ -288,17 +295,7 @@ impl Worker {
     /// The workspace, loaded if needed.
     pub(crate) fn workspace(&mut self) -> Result<&mut Workspace, VcsError> {
         if self.workspace.is_none() {
-            let workspace = Workspace::load(
-                &self.settings,
-                &self.root,
-                &default_backend_factories(),
-                &default_working_copy_factories(),
-            )
-            .map_err(|source| VcsError::NoWorkspace {
-                root: self.root.clone(),
-                source,
-            })?;
-            self.workspace = Some(workspace);
+            self.workspace = Some(load(&self.settings, &self.root)?);
         }
         Ok(self.workspace.as_mut().expect("loaded above"))
     }
@@ -307,6 +304,20 @@ impl Worker {
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
+}
+
+/// Loads the jj workspace at `root`. Blocks.
+fn load(settings: &UserSettings, root: &Path) -> Result<Workspace, VcsError> {
+    Workspace::load(
+        settings,
+        root,
+        &default_backend_factories(),
+        &default_working_copy_factories(),
+    )
+    .map_err(|source| VcsError::NoWorkspace {
+        root: root.to_path_buf(),
+        source,
+    })
 }
 
 /// jj's defaults, with `identity` as the user.
@@ -330,32 +341,32 @@ fn panic_text(payload: &(dyn Any + Send)) -> String {
 }
 
 #[cfg(test)]
-impl Vcs {
-    /// Panics on the workspace's thread, to test that the panic is
-    /// caught and the workspace reloaded.
-    pub(crate) fn panic_for_tests(&self) -> Result<(), VcsError> {
-        self.call_blocking(|_worker| -> Result<(), VcsError> { panic!("boom") })
-    }
-}
-
-#[cfg(test)]
 mod tests {
+    use tau_testing::block_on_io;
+
     use super::*;
 
     #[test]
     fn a_panic_becomes_an_error_and_the_workspace_reloads() {
         let dir = tempfile::tempdir().unwrap();
-        let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
-        let err = vcs.panic_for_tests().unwrap_err();
-        assert_eq!(err.to_string(), "jj-lib panicked: boom");
-        vcs.call_blocking(|worker| worker.workspace().map(|_| ()))
-            .unwrap();
+        block_on_io(async {
+            let vcs = Vcs::init(dir.path(), Identity::default()).await.unwrap();
+            let err = vcs
+                .call(|_worker| -> Result<(), VcsError> { panic!("boom") })
+                .await
+                .unwrap_err();
+            assert_eq!(err.to_string(), "jj-lib panicked: boom");
+            vcs.call(|worker| worker.workspace().map(|_| ()))
+                .await
+                .unwrap();
+        });
     }
 
     #[test]
     fn open_fails_without_a_workspace() {
         let dir = tempfile::tempdir().unwrap();
-        let err = Vcs::open(dir.path(), Identity::default()).unwrap_err();
+        let err = block_on_io(Vcs::open(dir.path(), Identity::default()))
+            .unwrap_err();
         assert!(err.to_string().starts_with("No jj workspace at"));
     }
 }

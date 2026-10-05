@@ -34,10 +34,10 @@ impl Host {
         run: &RunId,
         project: &Project,
     ) -> anyhow::Result<Vec<tau_vcs::StackChange>> {
-        let Some(head) = project.bookmark(&bookmark(run))? else {
+        let Some(head) = project.blocking().bookmark(&bookmark(run))? else {
             return Ok(Vec::new());
         };
-        Ok(project.stack(&head)?)
+        Ok(project.blocking().stack(&head)?)
     }
 
     /// `run`'s commits replayed onto GitHub's trunk as the last fetch
@@ -58,9 +58,9 @@ impl Host {
                 "The run has no commits, so there is nothing to propose"
             );
         }
-        let trunk = project.trunk_name()?;
+        let trunk = project.blocking().trunk_name()?;
         let upstream = || {
-            project.upstream()?.ok_or_else(|| {
+            project.blocking().upstream()?.ok_or_else(|| {
                 anyhow::anyhow!(
                     "GitHub has no {trunk} for the pull request to go on"
                 )
@@ -80,14 +80,15 @@ impl Host {
             .iter()
             .map(|change| change.commit_id.clone())
             .collect();
-        let copies =
-            project.replay(&ids, &onto).map_err(|error| match error {
+        let copies = project.blocking().replay(&ids, &onto).map_err(
+            |error| match error {
                 tau_vcs::VcsError::WouldConflict(paths) => anyhow::anyhow!(
                     "would conflict on origin/{trunk}: {}",
                     paths.join(", ")
                 ),
                 error => error.into(),
-            })?;
+            },
+        )?;
         Ok(Replayed {
             onto,
             changes,
@@ -123,17 +124,17 @@ impl Host {
             .wait()
             .ok_or_else(|| anyhow::anyhow!("{} has no project", slot.name))?;
         // What GitHub's default branch is now, for the replay to go on.
-        let _ = project.update(tau_vcs::UpdateFrom::Remote {
+        let _ = project.blocking().update(tau_vcs::UpdateFrom::Remote {
             url: &url,
             token: Some(&token),
         });
         let replayed = self.replayed(run, &project, None)?;
         let last = replayed.copies.last().expect("a replay of some commits");
-        let changed = project.diff(&replayed.onto, last)?.len();
+        let changed = project.blocking().diff(&replayed.onto, last)?.len();
         let mut commits = Vec::new();
         let mut previous = replayed.onto.clone();
         for (change, copy) in replayed.changes.iter().zip(&replayed.copies) {
-            let files = project.diff(&previous, copy)?;
+            let files = project.blocking().diff(&previous, copy)?;
             commits.push(PrCommit {
                 title: change
                     .description
@@ -176,7 +177,7 @@ impl Host {
         let draft = PullRequest {
             repo: repo.clone(),
             head,
-            base: project.trunk_name()?,
+            base: project.blocking().trunk_name()?,
             // The replay went through: the commits apply on GitHub's
             // branch as it was fetched.
             mergeable: true,
@@ -235,7 +236,9 @@ impl Host {
             url: &url,
             token: Some(&token),
         };
-        project.push_branch(remote, &draft.head, None, &head)?;
+        project
+            .blocking()
+            .push_branch(remote, &draft.head, None, &head)?;
         let opened = self
             .runtime
             .block_on(self.github.open_pull(
@@ -295,7 +298,12 @@ impl Host {
             url: &url,
             token: Some(&token),
         };
-        project.push_branch(remote, &open.branch, Some(&open.head), head)?;
+        project.blocking().push_branch(
+            remote,
+            &open.branch,
+            Some(&open.head),
+            head,
+        )?;
         if let Some(open) = self.prs.lock().expect("not poisoned").get_mut(run)
         {
             open.head = head.clone();

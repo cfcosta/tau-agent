@@ -68,11 +68,12 @@ fn setup(cx: &mut TestAppContext, llm: ScriptedModel) -> Setup {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
@@ -221,9 +222,10 @@ impl Setup {
     }
 
     fn readme(&self) -> String {
-        let trunk = self.project.trunk().unwrap();
+        let trunk = self.project.blocking().trunk().unwrap();
         String::from_utf8(
             self.project
+                .blocking()
                 .file_at(&trunk, "README.md")
                 .unwrap()
                 .unwrap()
@@ -275,16 +277,28 @@ fn a_chat_landed_while_main_works_lands_after_its_turn(
     assert_eq!(s.queued(), [one.0.to_string()]);
     assert!(s.live(&s.main.clone()), "main still works");
     assert!(!s.is_closed(&one), "it waits for main");
-    let trunk = s.project.trunk().unwrap();
-    assert!(s.project.file_at(&trunk, "one.txt").unwrap().is_none());
+    let trunk = s.project.blocking().trunk().unwrap();
+    assert!(
+        s.project
+            .blocking()
+            .file_at(&trunk, "one.txt")
+            .unwrap()
+            .is_none()
+    );
 
     let workspace = s.workspace.clone();
     until(&mut s.cx, "the chat to land", |cx| {
         workspace.read_with(cx, |ws, _| ws.is_closed(&one))
     });
     assert!(s.queued().is_empty());
-    let trunk = s.project.trunk().unwrap();
-    assert!(s.project.file_at(&trunk, "one.txt").unwrap().is_some());
+    let trunk = s.project.blocking().trunk().unwrap();
+    assert!(
+        s.project
+            .blocking()
+            .file_at(&trunk, "one.txt")
+            .unwrap()
+            .is_some()
+    );
     llm.assert_exhausted();
 }
 
@@ -355,7 +369,8 @@ fn a_queued_chat_with_new_conflicts_waits_for_confirmation(
     until(&mut s.cx, "b to land and main to resolve", |cx| {
         workspace.read_with(cx, |ws, _| ws.is_closed(&b))
             && project
-                .file_at(&project.trunk().unwrap(), "README.md")
+                .blocking()
+                .file_at(&project.blocking().trunk().unwrap(), "README.md")
                 .unwrap()
                 .is_some_and(|(bytes, _)| bytes == b"main and b\n")
     });

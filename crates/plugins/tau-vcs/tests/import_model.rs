@@ -6,11 +6,16 @@
 //! source's branches and `HEAD` as `git` reports them, with trunk on
 //! the branch `HEAD` named at the import.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::collections::BTreeMap;
 
 use hegel::{Generator as _, TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
-use tau_vcs::{Identity, Project, UpdateFrom};
+use tau_vcs::{Identity, ProjectRepo, UpdateFrom};
 
 const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
 /// jj's root commit, in a Git-backed repository.
@@ -163,7 +168,7 @@ impl Source {
 /// The project holds the source's branches as bookmarks, on the same
 /// commits, and its trunk is the one the reference promises, on the
 /// branch `head` names.
-fn check(project: &Project, source: &Source, head: Option<String>) {
+fn check(project: &ProjectRepo, source: &Source, head: Option<String>) {
     let branches = source.branches();
     let bookmarks: BTreeMap<String, String> = project
         .bookmarks("")
@@ -230,7 +235,7 @@ fn a_project_mirrors_its_source(tc: TestCase) {
         tc.event("HEAD names a branch that is gone");
     }
 
-    let project = Project::open_or_import(
+    let project = tau_vcs::ProjectRepo::open_or_import(
         source.dir.to_str().unwrap(),
         home.path().join("p"),
         Identity::default(),
@@ -296,7 +301,7 @@ fn a_project_mirrors_its_source(tc: TestCase) {
     );
 
     // Opening again finds the same project, updated.
-    let again = Project::open_or_import(
+    let again = tau_vcs::ProjectRepo::open_or_import(
         "unused",
         home.path().join("p"),
         Identity::default(),

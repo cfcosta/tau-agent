@@ -45,7 +45,7 @@ use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
     Identity,
     Link,
-    Project,
+    ProjectRepo,
     RunWorkspace,
     run_workspace::{PLUGIN, bookmark},
 };
@@ -78,7 +78,7 @@ fn files(dir: &Path) -> Tree {
         .collect()
 }
 
-fn at_commit(project: &Project, commit: &str) -> Tree {
+fn at_commit(project: &ProjectRepo, commit: &str) -> Tree {
     PATHS
         .iter()
         .filter_map(|path| {
@@ -471,13 +471,16 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first =
-            RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap()
-                .on_turn({
-                    let heard = heard.clone();
-                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
-                });
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap()
+        .on_turn({
+            let heard = heard.clone();
+            move |turn| heard.lock().unwrap().push(turn.paths.clone())
+        });
         let mut runner = coder(llm.clone(), &first, true);
         if end == End::Limit {
             runner = runner.limits(Limits {
@@ -611,9 +614,12 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
                 .turn(|t| t.text("still done"))
                 .turn(|t| t.text("feat: fork"));
         }
-        let fork =
-            RunWorkspace::new(project.clone(), "fork", Identity::default())
-                .unwrap();
+        let fork = RunWorkspace::new(
+            project.clone().into(),
+            "fork",
+            Identity::default(),
+        )
+        .unwrap();
         let forked = coder(fork_llm, &fork, true)
             .fork(&Checkpoint::at(outcome.run.clone(), seq))
             .start("go on", &store)
@@ -686,9 +692,12 @@ fn a_fork_whose_parent_was_undone_stays_apart() {
         .unwrap();
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
-        let first =
-            RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap();
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
                 t.tool_call("vcs_commit", json!({ "message": "feat: empty" }))
@@ -702,9 +711,12 @@ fn a_fork_whose_parent_was_undone_stays_apart() {
         llm.assert_exhausted();
         let linked =
             links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
-        let fork =
-            RunWorkspace::new(project.clone(), "fork", Identity::default())
-                .unwrap();
+        let fork = RunWorkspace::new(
+            project.clone().into(),
+            "fork",
+            Identity::default(),
+        )
+        .unwrap();
         let fork_llm = ScriptedModel::new().turn(|t| t.text("forked"));
         coder(fork_llm, &fork, true)
             .fork(&Checkpoint::at(outcome.run.clone(), linked[0].0))
@@ -744,13 +756,16 @@ fn a_turn_that_recommits_an_undone_commit_keeps_its_paths() {
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first =
-            RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap()
-                .on_turn({
-                    let heard = heard.clone();
-                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
-                });
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap()
+        .on_turn({
+            let heard = heard.clone();
+            move |turn| heard.lock().unwrap().push(turn.paths.clone())
+        });
         let llm = ScriptedModel::new()
             .turn(|t| {
                 t.tool_call("vcs_commit", json!({ "message": "feat: x" }))

@@ -21,7 +21,7 @@
 //!   chat committed it, and no other chat's;
 //! - trunk's bookmark names one commit, never the root, and holds
 //!   upstream's newest commit;
-//! - `Project::current` resolves every change a run committed to one
+//! - `ProjectRepo::current` resolves every change a run committed to one
 //!   commit, and once the main chat has caught up, trunk holds the main
 //!   chat's commits and every landed chat's;
 //! - an open chat's bookmark names its newest commit.
@@ -49,7 +49,14 @@ use std::{
 
 use hegel::{TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
-use tau_vcs::{DEFAULT_WORKSPACE, Identity, Link, Project, UpdateFrom, Vcs};
+use tau_vcs::{
+    DEFAULT_WORKSPACE,
+    Identity,
+    Link,
+    ProjectRepo,
+    UpdateFrom,
+    Vcs,
+};
 
 /// A file's contents; `None` is no file.
 type Val = Option<&'static str>;
@@ -96,7 +103,7 @@ fn change_link(change_id: &str, commit_id: &str) -> Link {
 /// chat's first turn.
 struct Repo {
     home: tempfile::TempDir,
-    project: Project,
+    project: ProjectRepo,
     trunk_name: String,
     /// The main chat's own `Vcs`, as its `RunWorkspace` has it.
     main: Vcs,
@@ -111,7 +118,7 @@ impl Repo {
         std::fs::write(src.join("a.txt"), "one\n").unwrap();
         git(&src, &["add", "."]);
         git(&src, &["commit", "--quiet", "-m", "first"]);
-        let project = Project::import(
+        let project = tau_vcs::ProjectRepo::import(
             src.to_str().unwrap(),
             home.path().join("p"),
             Identity::default(),
@@ -119,10 +126,10 @@ impl Repo {
         .unwrap();
         let trunk_name = project.trunk_name().unwrap();
         catch_up(&project).unwrap();
-        let main = Vcs::open(
+        let main = tau_testing::block_on_io(tau_vcs::Vcs::open(
             project.workspace_dir(DEFAULT_WORKSPACE),
             Identity::default(),
-        )
+        ))
         .unwrap();
         Self {
             home,
@@ -141,7 +148,7 @@ impl Repo {
     }
 
     /// Commits `value` as `up.txt` in the source checkout. Returns the
-    /// new commit, for `Project::update` to bring in.
+    /// new commit, for `ProjectRepo::update` to bring in.
     fn push_upstream(&self, value: Val) -> String {
         let src = self.src();
         write(&src, "up.txt", value);
@@ -156,11 +163,11 @@ impl Repo {
 
 /// The main chat's catch-up as `Host::catch_up` runs it: a `Vcs` of its
 /// own on the default workspace, moving it onto trunk.
-fn catch_up(project: &Project) -> Result<(), String> {
-    let vcs = Vcs::open(
+fn catch_up(project: &ProjectRepo) -> Result<(), String> {
+    let vcs = tau_testing::block_on_io(tau_vcs::Vcs::open(
         project.workspace_dir(DEFAULT_WORKSPACE),
         Identity::default(),
-    )
+    ))
     .map_err(|e| format!("open: {e}"))?;
     let trunk = project.trunk().map_err(|e| format!("trunk: {e}"))?;
     let name = project.trunk_name().map_err(|e| format!("name: {e}"))?;
@@ -190,7 +197,7 @@ enum MainAct {
 enum HostAct {
     Idle,
     /// Upstream commits `up.txt` before the round, and
-    /// `Project::update` brings it in during the round.
+    /// `ProjectRepo::update` brings it in during the round.
     Update(Val),
     /// `Host::start`: a new chat forks the main chat at its latest link.
     Fork,
@@ -952,7 +959,7 @@ fn race(a: (&str, Job), b: (&str, Job)) {
 /// Without the repository's lock, both operations started from the same
 /// one: the update set trunk to upstream's commit, the commit set it to
 /// the main chat's, and jj's merge of the two kept both targets.
-/// `Project::trunk` then fell back to the root commit, and the next
+/// `ProjectRepo::trunk` then fell back to the root commit, and the next
 /// catch-up dropped upstream's commits from trunk. Under the lock one
 /// goes after the other.
 #[test]
@@ -1270,10 +1277,10 @@ fn the_repository_lock_never_deadlocks() {
 /// the change stays one commit.
 ///
 /// `Host::start` reads the main chat's latest link, resolves it with
-/// `Project::current`, then makes the chat's workspace on that commit.
+/// `ProjectRepo::current`, then makes the chat's workspace on that commit.
 /// A catch-up in between restacked it. Checking out the old commit
 /// brought it back, visible beside its rewrite: the main chat's change
-/// was divergent, and `Project::current` failed on its links.
+/// was divergent, and `ProjectRepo::current` failed on its links.
 #[test]
 fn a_chat_started_on_a_rewritten_commit_starts_where_it_is_now() {
     let repo = Repo::new();

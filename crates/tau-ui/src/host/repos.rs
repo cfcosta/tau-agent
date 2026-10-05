@@ -246,8 +246,12 @@ impl Host {
             .name("tau-import".into())
             .spawn(move || {
                 project.set(
-                    match Project::open_or_import(&source, dir, identity()) {
-                        Ok(project) => ProjectState::Ready(project),
+                    match tau_vcs::ProjectRepo::open_or_import(
+                        &source,
+                        dir,
+                        identity(),
+                    ) {
+                        Ok(project) => ProjectState::Ready(project.into()),
                         Err(error) => {
                             eprintln!(
                                 "tau-ui: cannot import {source}: {error:#}"
@@ -380,7 +384,7 @@ impl Host {
         project: &Project,
     ) -> anyhow::Result<String> {
         if self.is_main(run) {
-            return Ok(project.trunk_name()?);
+            return Ok(project.blocking().trunk_name()?);
         }
         Ok(bookmark(run))
     }
@@ -394,14 +398,21 @@ impl Host {
         name: &str,
     ) -> anyhow::Result<()> {
         let exists = name == DEFAULT_WORKSPACE
-            || project.workspaces()?.iter().any(|known| known == name);
+            || project
+                .blocking()
+                .workspaces()?
+                .iter()
+                .any(|known| known == name);
         if !exists {
             return Ok(());
         }
-        let vcs = tau_vcs::Vcs::open(project.workspace_dir(name), identity())?;
+        let vcs = self.runtime.block_on(tau_vcs::Vcs::open(
+            project.workspace_dir(name),
+            identity(),
+        ))?;
         self.runtime.block_on(vcs.move_onto(
-            project.trunk()?,
-            project.trunk_name()?,
+            project.blocking().trunk()?,
+            project.blocking().trunk_name()?,
             true,
         ))?;
         Ok(())
@@ -513,7 +524,7 @@ impl Host {
             anyhow::anyhow!("{name} was not cloned from GitHub")
         })?;
         let token = github::Token::load(&self.config.credentials);
-        Ok(project.update(tau_vcs::UpdateFrom::Remote {
+        Ok(project.blocking().update(tau_vcs::UpdateFrom::Remote {
             url: &self.github.clone_url(&full_name),
             token: token.as_ref().map(|token| token.token.as_str()),
         })?)

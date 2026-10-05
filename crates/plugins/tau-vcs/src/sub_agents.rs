@@ -42,7 +42,6 @@ use crate::{
     Landing,
     details::{SPAWN, WAIT},
     error::VcsError,
-    project::Project,
     run_workspace::{Pending, RunWorkspace, bookmark},
     vcs::Identity,
 };
@@ -416,24 +415,17 @@ async fn drop_work(
 ) -> Result<(), VcsError> {
     let (base, name, bookmark) =
         (base.to_owned(), workspace.name().to_owned(), bookmark(run));
-    blocking(workspace.project(), move |p| {
-        if let Some(wc) = p.workspace_head(&name)? {
-            p.abandon_between(&base, &wc)?;
-        }
-        p.forget_workspace(&name)?;
-        p.remove_bookmark(&bookmark)?;
-        Ok(())
-    })
-    .await
-}
-
-/// Runs blocking project work off the async executor.
-async fn blocking<T: Send + 'static>(
-    project: &Project,
-    work: impl FnOnce(&Project) -> Result<T, VcsError> + Send + 'static,
-) -> Result<T, VcsError> {
-    let project = project.clone();
-    tokio::task::spawn_blocking(move || work(&project)).await?
+    workspace
+        .project()
+        .run(move |p| {
+            if let Some(wc) = p.workspace_head(&name)? {
+                p.abandon_between(&base, &wc)?;
+            }
+            p.forget_workspace(&name)?;
+            p.remove_bookmark(&bookmark)?;
+            Ok(())
+        })
+        .await
 }
 
 /// What an ending that dropped the work says.
@@ -720,10 +712,10 @@ impl Wait {
         // only what this landing brought.
         let before = self.parent.vcs().working_copy().await?.head;
         let held = before.clone();
-        let held = blocking(&project, move |p| p.conflicts(&held)).await?;
+        let held = project.run(move |p| p.conflicts(&held)).await?;
         let child_head = {
             let name = child_bookmark.clone();
-            blocking(&project, move |p| p.bookmark(&name)).await?
+            project.run(move |p| p.bookmark(&name)).await?
         };
         let landing = match child_head {
             Some(child_head) => {
@@ -753,12 +745,13 @@ impl Wait {
             }));
         // Landed: its workspace and bookmark go.
         let name = workspace.name().to_owned();
-        blocking(&project, move |p| {
-            p.forget_workspace(&name)?;
-            p.remove_bookmark(&child_bookmark)?;
-            Ok(())
-        })
-        .await?;
+        project
+            .run(move |p| {
+                p.forget_workspace(&name)?;
+                p.remove_bookmark(&child_bookmark)?;
+                Ok::<_, VcsError>(())
+            })
+            .await?;
         let text =
             format!("{text}\n\n{}", landing_note(&landing, &brought, limit));
         let details = json!({

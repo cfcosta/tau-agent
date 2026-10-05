@@ -40,7 +40,7 @@ impl Host {
         child: &RunId,
     ) -> anyhow::Result<Option<Forecast>> {
         let project = self.slot_of_run(child)?.project()?;
-        if project.bookmark(&bookmark(child))?.is_none() {
+        if project.blocking().bookmark(&bookmark(child))?.is_none() {
             return Ok(None);
         }
         let landing = self.land_dry(child, Reading::Forecast)?;

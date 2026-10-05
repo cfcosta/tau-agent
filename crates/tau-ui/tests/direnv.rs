@@ -85,11 +85,12 @@ fn host(
     git(&checkout, &["add", ".envrc"]);
     git(&checkout, &["commit", "--quiet", "-m", "first"]);
     let data = tempfile::tempdir().unwrap().keep();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         checkout.to_str().unwrap(),
         data.join("repos/repo"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

@@ -10,6 +10,11 @@
 //! It is never written to a file, and never in a command line, which
 //! other users can read.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+)]
+
 use std::{collections::HashMap, ffi::OsString};
 
 use jj_lib::{
@@ -34,7 +39,7 @@ use jj_lib::{
 };
 use pollster::block_on;
 
-use super::{GIT, Project, StackChange, commit, range};
+use super::{GIT, ProjectRepo, StackChange, commit, range};
 use crate::error::VcsError;
 
 /// The remote tau pushes to, in the Git store's config: only its URL,
@@ -58,7 +63,7 @@ pub struct Remote<'a> {
     pub token: Option<&'a str>,
 }
 
-/// What [`Project::push_trunk`] pushed: trunk's branch, the remote's
+/// What [`ProjectRepo::push_trunk`] pushed: trunk's branch, the remote's
 /// commit before and after (full hex ids), and the changes it took,
 /// oldest first. Nothing was pushed when `changes` is empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,7 +74,7 @@ pub struct Pushed {
     pub changes: Vec<StackChange>,
 }
 
-impl Project {
+impl ProjectRepo {
     /// The remote's trunk as the last fetch or push left it: what
     /// `<trunk>@git` names, a full commit id in hex. `None` when the
     /// remote has no such branch.

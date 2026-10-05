@@ -15,6 +15,11 @@
 //! upstream's.
 //!
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -26,7 +31,7 @@ use tau_vcs::{
     DEFAULT_WORKSPACE,
     Identity,
     Link,
-    Project,
+    ProjectRepo,
     UpdateFrom,
     Vcs,
     clone_bare,
@@ -172,7 +177,7 @@ struct Machine {
     kind: Kind,
     /// The checkout the drawn commands change.
     work: PathBuf,
-    project: Project,
+    project: ProjectRepo,
     main: Vcs,
     /// Commits made in the checkout, for distinct contents.
     commits: usize,
@@ -259,14 +264,18 @@ impl Machine {
             }
             _ => source,
         };
-        let project = Project::import(
+        let project = tau_vcs::ProjectRepo::import(
             from.to_str().unwrap(),
             home.path().join("p"),
             Identity::default(),
         )
         .unwrap();
         let dir = project.workspace_dir(DEFAULT_WORKSPACE);
-        let main = Vcs::open(&dir, Identity::default()).unwrap();
+        let main = tau_testing::block_on_io(tau_vcs::Vcs::open(
+            &dir,
+            Identity::default(),
+        ))
+        .unwrap();
         let mut machine = Self {
             home,
             kind,
@@ -541,7 +550,7 @@ impl Machine {
         self.dirty = true;
     }
 
-    /// `Project::update`, against the model.
+    /// `ProjectRepo::update`, against the model.
     fn do_update(&mut self, tc: &TestCase) {
         publish(self.kind, &self.work, &self.home.path().join("bare.git"));
         let from = match self.kind {
@@ -858,7 +867,7 @@ fn updates_follow_the_source_nightly(tc: TestCase) {
 
 /// A checkout with one commit on `main`, writing `f.txt`, and a
 /// project made from it whose main chat has caught up with trunk.
-fn caught_up() -> (tempfile::TempDir, PathBuf, Project, Vcs) {
+fn caught_up() -> (tempfile::TempDir, PathBuf, ProjectRepo, Vcs) {
     let home = tempfile::tempdir().unwrap();
     let work = home.path().join("work");
     std::fs::create_dir_all(&work).unwrap();
@@ -866,14 +875,16 @@ fn caught_up() -> (tempfile::TempDir, PathBuf, Project, Vcs) {
     std::fs::write(work.join("f.txt"), "0\n").unwrap();
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "--quiet", "-m", "first"]);
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         work.to_str().unwrap(),
         home.path().join("p"),
         Identity::default(),
     )
     .unwrap();
     let dir = project.workspace_dir(DEFAULT_WORKSPACE);
-    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let main =
+        tau_testing::block_on_io(tau_vcs::Vcs::open(&dir, Identity::default()))
+            .unwrap();
     let trunk = project.trunk().unwrap();
     block_on(main.move_onto(trunk, project.trunk_name().unwrap(), true))
         .unwrap();

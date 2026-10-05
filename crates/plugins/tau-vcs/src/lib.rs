@@ -12,7 +12,7 @@
 //!   `vcs_resolve`, `vcs_undo`.
 //! - Landing, when asked for ([`VcsPlugin::landing`]): `vcs_land`.
 //!
-//! A [`Project`] is a repository tau owns, cloned from the user's, with
+//! A [`ProjectRepo`] is a repository tau owns, cloned from the user's, with
 //! a workspace per run; [`RunWorkspace`] makes a run's workspace when
 //! the run starts and snapshots it after each turn, so forks start from
 //! a turn's code. The model makes the commits, with `vcs_commit`
@@ -22,13 +22,8 @@
 //! snapshots the working copy first, so edits made with other tools are
 //! never lost, and the writing tools refuse immutable commits. Fetch and
 //! push are left to the host: [`clone_bare`] brings a remote repository
-//! in, over HTTPS, for [`Project::import`], and [`Project::push_trunk`]
-//! and [`Project::push_branch`] push through jj-lib, which runs `git`.
-
-#![expect(
-    clippy::disallowed_methods,
-    reason = "not migrated to async yet (ADR 0027)"
-)]
+//! in, over HTTPS, for [`ProjectRepo::import`], and [`ProjectRepo::push_trunk`]
+//! and [`ProjectRepo::push_branch`] push through jj-lib, which runs `git`.
 
 #[cfg(feature = "host")]
 mod clone;
@@ -83,6 +78,7 @@ pub use project::{
     DEFAULT_WORKSPACE,
     FileDiff,
     Project,
+    ProjectRepo,
     Pushed,
     REMOTE,
     Remote,

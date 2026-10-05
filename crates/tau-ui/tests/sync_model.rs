@@ -926,11 +926,12 @@ fn project(checkout: &Path) -> Project {
         checkout,
         &["commit", "--quiet", "--allow-empty", "-m", "first"],
     );
-    Project::import(
+    tau_vcs::ProjectRepo::import(
         checkout.to_str().unwrap(),
         checkout.with_file_name("project"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap()
 }
 

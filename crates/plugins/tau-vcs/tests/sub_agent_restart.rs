@@ -65,7 +65,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
             })
             .turn(|t| t.text("done"));
         let parent =
-            RunWorkspace::new(project.clone(), "parent", Identity::default())
+            RunWorkspace::new(project.clone().into(), "parent", Identity::default())
                 .unwrap();
         let named = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = named.clone();

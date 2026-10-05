@@ -610,9 +610,10 @@ impl Host {
                     && let ProjectState::Ready(project) = slot.project.peek()
                 {
                     repo.unpushed = project
+                        .blocking()
                         .unpushed()
                         .map_or(0, |changes| changes.len() as u32);
-                    repo.trunk = project.trunk_name().ok();
+                    repo.trunk = project.blocking().trunk_name().ok();
                 }
                 repo.plugins = self.registered_repo_data(slot);
                 Some(repo)
@@ -760,7 +761,7 @@ impl Host {
         let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
         // A main chat commits on trunk: it has nothing to land.
         let workspace = if main {
-            workspace.commits_to(project.trunk_name()?)
+            workspace.commits_to(project.blocking().trunk_name()?)
         } else {
             workspace
         };

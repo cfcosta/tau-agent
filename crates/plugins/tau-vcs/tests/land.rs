@@ -10,17 +10,17 @@ mod common;
 
 use std::path::Path;
 
-use tau_vcs::{DEFAULT_WORKSPACE, Identity, Project, Vcs, VcsError};
+use tau_vcs::{DEFAULT_WORKSPACE, Identity, ProjectRepo, Vcs, VcsError};
 
 /// A project with one commit on `main`: `a.txt` holding `a`.
-fn project(home: &Path) -> (Project, String) {
+fn project(home: &Path) -> (ProjectRepo, String) {
     let project = common::project_with(home, &[("a.txt", "a\n")]);
     let trunk = project.trunk().unwrap();
     (project, trunk)
 }
 
 struct Run<'a> {
-    project: &'a Project,
+    project: &'a ProjectRepo,
     name: &'static str,
     vcs: Vcs,
 }
@@ -63,7 +63,11 @@ fn block<T>(
         .unwrap()
 }
 
-fn run<'a>(project: &'a Project, name: &'static str, base: &str) -> Run<'a> {
+fn run<'a>(
+    project: &'a ProjectRepo,
+    name: &'static str,
+    base: &str,
+) -> Run<'a> {
     let vcs = project.add_workspace(name, base).unwrap();
     Run { project, name, vcs }
 }
@@ -209,9 +213,11 @@ fn the_parents_uncommitted_work_moves_on_top() {
 
 /// The main chat's commits move trunk (ADR 0015). It catches up with
 /// trunk first, as the host has it: its workspace starts on jj's root.
-fn commit_on_trunk(project: &Project, path: &str, text: &str) -> String {
+fn commit_on_trunk(project: &ProjectRepo, path: &str, text: &str) -> String {
     let dir = project.workspace_dir(DEFAULT_WORKSPACE);
-    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let main =
+        tau_testing::block_on_io(tau_vcs::Vcs::open(&dir, Identity::default()))
+            .unwrap();
     let trunk = project.trunk_name().unwrap();
     block(main.move_onto(project.trunk().unwrap(), trunk.clone(), true));
     std::fs::write(dir.join(path), text).unwrap();

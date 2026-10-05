@@ -184,10 +184,10 @@ impl Host {
     pub fn main_conflicts(&self, main: &RunId) -> anyhow::Result<Vec<String>> {
         let project = self.slot_of_run(main)?.project()?;
         self.catch_up(&project, DEFAULT_WORKSPACE)?;
-        let vcs = tau_vcs::Vcs::open(
+        let vcs = self.runtime.block_on(tau_vcs::Vcs::open(
             project.workspace_dir(DEFAULT_WORKSPACE),
             identity(),
-        )?;
+        ))?;
         Ok(self.runtime.block_on(vcs.conflicts())?)
     }
 

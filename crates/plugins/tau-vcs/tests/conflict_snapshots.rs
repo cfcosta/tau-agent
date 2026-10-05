@@ -13,10 +13,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use common::project_with;
 use hegel::{TestCase, generators as gs};
-use pollster::block_on;
 use serde_json::json;
 use tau_agent::{plugin::Plugin as _, tool::ToolCtx};
-use tau_vcs::{Identity, Vcs, VcsPlugin};
+use tau_testing::block_on_io as block_on;
+use tau_vcs::{Identity, VcsPlugin};
 
 #[derive(Debug, Clone, hegel::DefaultGenerator)]
 enum Kind {
@@ -278,7 +278,11 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
                 block_on(parent.working_copy()).unwrap();
             }
             Step::Reopen => {
-                parent = Vcs::open(&dir, Identity::default()).unwrap();
+                parent = tau_testing::block_on_io(tau_vcs::Vcs::open(
+                    &dir,
+                    Identity::default(),
+                ))
+                .unwrap();
             }
             Step::Describe => {
                 let tool = VcsPlugin::new(parent.clone())

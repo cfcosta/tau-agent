@@ -4,11 +4,11 @@
 //! (`docs/reference/vcs.md`, "Sweeping at start").
 //!
 //! [`plan`] is the rule, a pure function of the runs' standings and
-//! what the project holds; [`Project::sweep`] carries a plan out.
+//! what the project holds; [`ProjectRepo::sweep`] carries a plan out.
 
 use std::collections::BTreeSet;
 
-use crate::{DEFAULT_WORKSPACE, Project, error::VcsError, run_workspace};
+use crate::{DEFAULT_WORKSPACE, ProjectRepo, error::VcsError, run_workspace};
 
 /// Where a run stands, as far as its workspaces and bookmark go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,7 +154,7 @@ fn bookmark_of(run: &str) -> String {
     run_workspace::bookmark(&tau_agent::tool::RunId(run.into()))
 }
 
-impl Project {
+impl ProjectRepo {
     /// What [`plan`] says to sweep, given `owners`, from what the
     /// project holds now.
     pub fn plan_sweep(&self, owners: &[Owner]) -> Result<Sweep, VcsError> {

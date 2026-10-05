@@ -22,10 +22,10 @@ use jj_lib::{
     settings::UserSettings,
     workspace::Workspace,
 };
-use pollster::block_on;
 use serde_json::{Value, json};
 use tau_agent::{plugin::Plugin, tool::ToolCtx};
-use tau_vcs::{Identity, Vcs, VcsPlugin};
+use tau_testing::block_on_io as block_on;
+use tau_vcs::{Identity, VcsPlugin};
 
 /// Puts `main` on the commit `hex`, and writes a second commit with the
 /// same change id on the root commit, so the change is divergent.
@@ -65,7 +65,11 @@ fn bookmark_and_diverge(dir: &Path, hex: &str) {
 fn a_change_carries_its_bookmarks_and_divergence() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
-    let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
+    let vcs = tau_testing::block_on_io(tau_vcs::Vcs::init(
+        dir.path(),
+        Identity::default(),
+    ))
+    .unwrap();
     let tools = VcsPlugin::new(vcs).tools();
     let call = |name: &str, args: Value| {
         let tool = tools.iter().find(|tool| tool.name() == name).unwrap();

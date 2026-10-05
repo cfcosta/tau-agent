@@ -191,7 +191,11 @@ fn message(tc: &TestCase) -> String {
 impl Machine {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
+        let vcs = tau_testing::block_on_io(tau_vcs::Vcs::init(
+            dir.path(),
+            Identity::default(),
+        ))
+        .unwrap();
         let tools = VcsPlugin::new(vcs.clone()).tools();
         let mut machine = Self {
             dir,

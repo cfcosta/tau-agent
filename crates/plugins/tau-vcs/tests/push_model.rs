@@ -12,6 +12,11 @@
 //!   conflicts included; a chat that keeps off the files the main chat
 //!   has not pushed never conflicts, and its copies push as a branch.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -23,7 +28,7 @@ use tau_vcs::{
     DEFAULT_WORKSPACE,
     Identity,
     Link,
-    Project,
+    ProjectRepo,
     Remote,
     UpdateFrom,
     Vcs,
@@ -39,7 +44,7 @@ struct Origin {
     work: PathBuf,
     bare: PathBuf,
     url: String,
-    project: Project,
+    project: ProjectRepo,
     main: Vcs,
 }
 
@@ -67,16 +72,16 @@ impl Origin {
         let url = format!("file://{}", bare.display());
         let clone = home.path().join("clone.git");
         clone_bare(&url, None, &clone).unwrap();
-        let project = Project::import(
+        let project = tau_vcs::ProjectRepo::import(
             clone.to_str().unwrap(),
             home.path().join("p"),
             Identity::default(),
         )
         .unwrap();
-        let main = Vcs::open(
+        let main = tau_testing::block_on_io(tau_vcs::Vcs::open(
             project.workspace_dir(DEFAULT_WORKSPACE),
             Identity::default(),
-        )
+        ))
         .unwrap();
         let origin = Self {
             home,
@@ -134,7 +139,7 @@ impl Origin {
     }
 
     /// Where the change `change_id` is now in `project`.
-    fn now(project: &Project, change_id: &str) -> String {
+    fn now(project: &ProjectRepo, change_id: &str) -> String {
         let link = Link {
             turn: 0,
             workspace: String::new(),
@@ -173,7 +178,7 @@ fn edit(dir: &Path, edits: &Files, removed: &[String]) {
 }
 
 /// The files `commit` holds among `paths`, from the project's Git store.
-fn files_at(project: &Project, commit: &str, paths: &[String]) -> Files {
+fn files_at(project: &ProjectRepo, commit: &str, paths: &[String]) -> Files {
     paths
         .iter()
         .filter_map(|path| {
@@ -286,7 +291,7 @@ impl Machine {
         }
         // A project made from the remote reads the same change ids, at
         // the same commits.
-        let fresh = Project::import(
+        let fresh = tau_vcs::ProjectRepo::import(
             origin.bare.to_str().unwrap(),
             origin.home.path().join(format!("fresh-{}", self.files)),
             Identity::default(),

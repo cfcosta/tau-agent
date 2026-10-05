@@ -89,11 +89,12 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
 
     let readme = |text: &str| json!({ "path": "README.md", "content": text });
@@ -179,9 +180,14 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
             "{items:?}"
         );
     });
-    let trunk = project.trunk().unwrap();
+    let trunk = project.blocking().trunk().unwrap();
     assert_eq!(
-        project.file_at(&trunk, "README.md").unwrap().unwrap().0,
+        project
+            .blocking()
+            .file_at(&trunk, "README.md")
+            .unwrap()
+            .unwrap()
+            .0,
         b"two\n"
     );
 
@@ -203,7 +209,8 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| ws.land(&one, cx));
     until(&mut cx, "the main chat to resolve", |cx| {
         project
-            .file_at(&project.trunk().unwrap(), "README.md")
+            .blocking()
+            .file_at(&project.blocking().trunk().unwrap(), "README.md")
             .unwrap()
             .is_some_and(|(bytes, _)| bytes == b"one and two\n")
             && workspace.read_with(cx, |ws, _| {
@@ -221,12 +228,18 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
         assert!(tau.contains("`README.md`"), "{tau}");
     });
     llm.assert_exhausted();
-    let trunk = project.trunk().unwrap();
+    let trunk = project.blocking().trunk().unwrap();
     assert_eq!(
-        project.file_at(&trunk, "README.md").unwrap().unwrap().0,
+        project
+            .blocking()
+            .file_at(&trunk, "README.md")
+            .unwrap()
+            .unwrap()
+            .0,
         b"one and two\n"
     );
     let log: Vec<String> = project
+        .blocking()
         .stack(&trunk)
         .unwrap()
         .into_iter()

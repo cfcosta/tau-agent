@@ -38,11 +38,12 @@ impl Disk {
         git(src.path(), &["add", "README.md"]);
         git(src.path(), &["commit", "--quiet", "-m", "first"]);
         let dir = tempfile::tempdir().unwrap();
-        let project = Project::import(
+        let project = tau_vcs::ProjectRepo::import(
             src.path().to_str().unwrap(),
             dir.path().join("p"),
             Identity::default(),
         )
+        .map(Project::from)
         .unwrap();
         Self {
             dir,
@@ -165,16 +166,23 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
             body: "{}".into(),
         },
     );
-    let trunk = disk.project.trunk().unwrap();
-    disk.project.add_workspace("stray-1", &trunk).unwrap();
-    let cut_head = disk.project.bookmark(&format!("tau/{}", cut.0)).unwrap();
+    let trunk = disk.project.blocking().trunk().unwrap();
+    disk.project
+        .blocking()
+        .add_workspace("stray-1", &trunk)
+        .unwrap();
+    let cut_head = disk
+        .project
+        .blocking()
+        .bookmark(&format!("tau/{}", cut.0))
+        .unwrap();
     assert!(cut_head.is_some());
 
     let llm = ScriptedModel::new().turn(|t| t.text("still here"));
     let (host, mut events) = disk.start(llm.clone());
     host.recover().unwrap();
     let project = &disk.project;
-    let workspaces = project.workspaces().unwrap();
+    let workspaces = project.blocking().workspaces().unwrap();
     let kept_name = kept_dir.file_name().unwrap().to_str().unwrap();
     assert_eq!(workspaces, [kept_name]);
     assert!(kept_dir.join("kept.txt").exists());
@@ -182,15 +190,21 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
     assert!(!project.workspace_dir("stray-1").exists());
     assert!(project.workspace_dir(tau_vcs::DEFAULT_WORKSPACE).exists());
     assert_eq!(
-        project.bookmarks("tau/").unwrap(),
+        project.blocking().bookmarks("tau/").unwrap(),
         [format!("tau/{}", kept.0)]
     );
     // The cut chat's commit is no longer on any stack: trunk's has not
     // got it, and sweeping again finds nothing.
-    let trunk = project.trunk().unwrap();
-    assert!(project.file_at(&trunk, "cut.txt").unwrap().is_none());
+    let trunk = project.blocking().trunk().unwrap();
+    assert!(
+        project
+            .blocking()
+            .file_at(&trunk, "cut.txt")
+            .unwrap()
+            .is_none()
+    );
     host.recover().unwrap();
-    assert_eq!(project.workspaces().unwrap(), [kept_name]);
+    assert_eq!(project.blocking().workspaces().unwrap(), [kept_name]);
 
     // The open chat goes on where it was.
     host.resume(&kept, "anything else?", &ModelChoice::default())
@@ -298,7 +312,7 @@ struct Landed {
 fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
     use tau_ui_remote::view::{Ending, Item};
     let project = &disk.project;
-    let trunk = project.trunk().unwrap();
+    let trunk = project.blocking().trunk().unwrap();
     let main = host.main_of(REPO).unwrap();
     let history = host.history().unwrap();
     let main_view = history.iter().find(|view| view.id == main).unwrap();
@@ -311,6 +325,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
     });
     Landed {
         on_trunk: project
+            .blocking()
             .file_at(&trunk, "a.txt")
             .unwrap()
             .map(|(bytes, _)| bytes),
@@ -318,8 +333,8 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
             .workspace_dir(tau_vcs::DEFAULT_WORKSPACE)
             .join("a.txt")
             .exists(),
-        workspaces: project.workspaces().unwrap().len(),
-        run_bookmarks: project.bookmarks("tau/").unwrap().len(),
+        workspaces: project.blocking().workspaces().unwrap().len(),
+        run_bookmarks: project.blocking().bookmarks("tau/").unwrap().len(),
         cards: main_view
             .items
             .iter()

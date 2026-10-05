@@ -10,7 +10,7 @@ use tau_agent::{
 };
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
-use tau_vcs::{Identity, Vcs, VcsPlugin};
+use tau_vcs::{Identity, VcsPlugin};
 
 struct Repo {
     dir: tempfile::TempDir,
@@ -20,7 +20,11 @@ struct Repo {
 impl Repo {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
+        let vcs = tau_testing::block_on_io(tau_vcs::Vcs::init(
+            dir.path(),
+            Identity::default(),
+        ))
+        .unwrap();
         let tools = VcsPlugin::new(vcs).tools();
         Self { dir, tools }
     }
@@ -68,7 +72,11 @@ impl Repo {
 #[test]
 fn the_plugin_offers_every_tool() {
     let dir = tempfile::tempdir().unwrap();
-    let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
+    let vcs = tau_testing::block_on_io(tau_vcs::Vcs::init(
+        dir.path(),
+        Identity::default(),
+    ))
+    .unwrap();
     let plugin = VcsPlugin::new(vcs);
     assert_eq!(plugin.name(), tau_vcs::ui::NAME);
     let tools = plugin.tools();
@@ -625,7 +633,11 @@ fn open_an_existing_repository() {
     let repo = Repo::new();
     repo.write("a.txt", "a\n");
     repo.ok("vcs_commit", json!({"message": "Add a"}));
-    let vcs = Vcs::open(repo.path(), Identity::default()).unwrap();
+    let vcs = tau_testing::block_on_io(tau_vcs::Vcs::open(
+        repo.path(),
+        Identity::default(),
+    ))
+    .unwrap();
     let tools = VcsPlugin::new(vcs).tools();
     let log = tools.iter().find(|tool| tool.name() == "vcs_log").unwrap();
     let output = block_on(log.call(json!({}), ToolCtx::detached())).unwrap();

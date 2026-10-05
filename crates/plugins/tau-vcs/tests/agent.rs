@@ -12,12 +12,16 @@ use tau_agent::agent::Agent;
 use tau_ai::message::{InputBlock, Message};
 use tau_store::{Entry, Store};
 use tau_testing::scripted::ScriptedModel;
-use tau_vcs::{Identity, Vcs, VcsPlugin};
+use tau_vcs::{Identity, VcsPlugin};
 
 #[test]
 fn a_run_commits_through_the_tools() {
     let dir = tempfile::tempdir().unwrap();
-    let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
+    let vcs = tau_testing::block_on_io(tau_vcs::Vcs::init(
+        dir.path(),
+        Identity::default(),
+    ))
+    .unwrap();
     std::fs::write(dir.path().join("notes.txt"), "hello\n").unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("vcs_status", json!({})))

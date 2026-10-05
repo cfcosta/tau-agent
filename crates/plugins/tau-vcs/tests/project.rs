@@ -24,10 +24,9 @@ use tau_vcs::{
     DEFAULT_WORKSPACE,
     Identity,
     Link,
-    Project,
+    ProjectRepo,
     RunWorkspace,
     UpdateFrom,
-    Vcs,
     VcsPlugin,
     clone_bare,
     run_workspace::{PLUGIN, bookmark},
@@ -48,7 +47,7 @@ fn a_project_gives_each_run_a_workspace_on_trunk() {
     let head = source(src.path());
     let home = tempfile::tempdir().unwrap();
     let root = home.path().join("project");
-    let project = Project::open_or_import(
+    let project = tau_vcs::ProjectRepo::open_or_import(
         src.path().to_str().unwrap(),
         &root,
         Identity::default(),
@@ -65,8 +64,12 @@ fn a_project_gives_each_run_a_workspace_on_trunk() {
     );
 
     // Opening again finds the same project.
-    let again =
-        Project::open_or_import("unused", &root, Identity::default()).unwrap();
+    let again = tau_vcs::ProjectRepo::open_or_import(
+        "unused",
+        &root,
+        Identity::default(),
+    )
+    .unwrap();
     assert_eq!(again.workspaces().unwrap(), ["one"]);
 
     project.forget_workspace("one").unwrap();
@@ -82,7 +85,7 @@ fn a_clone_imports_like_a_checkout() {
     let bare = home.path().join("owner/clone.git");
     let url = format!("file://{}", src.path().display());
     clone_bare(&url, Some("unused"), &bare).unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         bare.to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -107,7 +110,7 @@ fn clones_over_https() {
     let bare = home.path().join("hello.git");
     clone_bare("https://github.com/octocat/Hello-World.git", None, &bare)
         .unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         bare.to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -136,7 +139,7 @@ fn a_project_updates_from_its_checkout() {
     let src = tempfile::tempdir().unwrap();
     let first = source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -170,14 +173,16 @@ fn an_update_under_the_main_chats_commits_takes_upstreams_trunk() {
     let src = tempfile::tempdir().unwrap();
     let first = source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
     )
     .unwrap();
     let dir = project.workspace_dir(DEFAULT_WORKSPACE);
-    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let main =
+        tau_testing::block_on_io(tau_vcs::Vcs::open(&dir, Identity::default()))
+            .unwrap();
     std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
     let ours = block_on(main.commit_all("ours", project.trunk_name().unwrap()))
         .unwrap();
@@ -223,14 +228,16 @@ fn a_chat_follows_the_main_chat_onto_upstream() {
     let src = tempfile::tempdir().unwrap();
     source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
     )
     .unwrap();
     let dir = project.workspace_dir(DEFAULT_WORKSPACE);
-    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let main =
+        tau_testing::block_on_io(tau_vcs::Vcs::open(&dir, Identity::default()))
+            .unwrap();
     let trunk = project.trunk_name().unwrap();
     std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
     let ours = block_on(main.commit_all("ours", trunk.clone())).unwrap();
@@ -263,14 +270,16 @@ fn edits_on_a_stale_chat_merge_onto_the_rewrite() {
     let src = tempfile::tempdir().unwrap();
     source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
     )
     .unwrap();
     let dir = project.workspace_dir(DEFAULT_WORKSPACE);
-    let main = Vcs::open(&dir, Identity::default()).unwrap();
+    let main =
+        tau_testing::block_on_io(tau_vcs::Vcs::open(&dir, Identity::default()))
+            .unwrap();
     let trunk = project.trunk_name().unwrap();
     block_on(main.move_onto(project.trunk().unwrap(), trunk.clone(), true))
         .unwrap();
@@ -308,7 +317,7 @@ fn a_clone_updates_from_its_remote() {
     let bare = home.path().join("owner/repo");
     let url = format!("file://{}", src.path().display());
     clone_bare(&url, None, &bare).unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         bare.to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -336,7 +345,7 @@ fn a_clone_imports_every_branch() {
     let bare = home.path().join("owner/repo");
     let url = format!("file://{}", src.path().display());
     clone_bare(&url, None, &bare).unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         bare.to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -359,7 +368,7 @@ fn an_update_from_a_remote_follows_its_refs_and_head() {
     let bare = home.path().join("owner/repo");
     let url = format!("file://{}", src.path().display());
     clone_bare(&url, None, &bare).unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         bare.to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -400,7 +409,7 @@ fn a_shallow_checkout_imports_and_updates() {
     );
     let shallow = home.path().join("shallow");
     let head = git(&shallow, &["rev-parse", "HEAD"]);
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         shallow.to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -427,7 +436,7 @@ fn an_update_from_a_checkout_keeps_trunks_branch() {
     let src = tempfile::tempdir().unwrap();
     let first = source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -454,7 +463,7 @@ fn files_and_parents_are_read_at_a_commit() {
     git(src.path(), &["commit", "--quiet", "-m", "script"]);
     let second = git(src.path(), &["rev-parse", "HEAD"]);
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("project"),
         Identity::default(),
@@ -477,7 +486,7 @@ fn files_and_parents_are_read_at_a_commit() {
 fn a_bad_source_fails_to_import() {
     let home = tempfile::tempdir().unwrap();
     let missing = home.path().join("nothing-here");
-    let err = Project::import(
+    let err = tau_vcs::ProjectRepo::import(
         missing.to_str().unwrap(),
         home.path().join("p"),
         Identity::default(),
@@ -498,7 +507,7 @@ fn a_first_turn_that_commits_still_changed_files() {
     let src = tempfile::tempdir().unwrap();
     source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("p"),
         Identity::default(),
@@ -511,13 +520,16 @@ fn a_first_turn_that_commits_still_changed_files() {
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first =
-            RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap()
-                .on_turn({
-                    let heard = heard.clone();
-                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
-                });
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap()
+        .on_turn({
+            let heard = heard.clone();
+            move |turn| heard.lock().unwrap().push(turn.paths.clone())
+        });
         let llm = ScriptedModel::new()
             .turn(|t| {
                 t.tool_call("write", write("b.txt", "one\n"))
@@ -548,7 +560,7 @@ fn a_turn_that_undoes_a_commit_keeps_its_paths() {
     let src = tempfile::tempdir().unwrap();
     source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("p"),
         Identity::default(),
@@ -561,13 +573,16 @@ fn a_turn_that_undoes_a_commit_keeps_its_paths() {
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first =
-            RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap()
-                .on_turn({
-                    let heard = heard.clone();
-                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
-                });
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap()
+        .on_turn({
+            let heard = heard.clone();
+            move |turn| heard.lock().unwrap().push(turn.paths.clone())
+        });
         let llm = ScriptedModel::new()
             .turn(|t| {
                 t.tool_call("vcs_commit", json!({ "message": "feat: x" }))
@@ -606,7 +621,7 @@ fn a_forks_first_turn_is_told_from_its_start() {
     let src = tempfile::tempdir().unwrap();
     source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("p"),
         Identity::default(),
@@ -618,9 +633,12 @@ fn a_forks_first_turn_is_told_from_its_start() {
         .unwrap();
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
-        let first =
-            RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap();
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap();
         // Turn 1 commits an empty change; turn 2 takes it back into `@`
         // and writes, and the run commits that at its end.
         let llm = ScriptedModel::new()
@@ -643,9 +661,12 @@ fn a_forks_first_turn_is_told_from_its_start() {
         let turns =
             links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
 
-        let fork =
-            RunWorkspace::new(project.clone(), "fork", Identity::default())
-                .unwrap();
+        let fork = RunWorkspace::new(
+            project.clone().into(),
+            "fork",
+            Identity::default(),
+        )
+        .unwrap();
         let fork_llm = ScriptedModel::new()
             .turn(|t| t.tool_call("read", json!({ "path": "README.md" })))
             .turn(|t| t.text("forked"));
@@ -679,7 +700,7 @@ fn turns_are_snapshots_and_forks_start_from_one() {
     let src = tempfile::tempdir().unwrap();
     source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("p"),
         Identity::default(),
@@ -697,13 +718,16 @@ fn turns_are_snapshots_and_forks_start_from_one() {
         // Two turns that each write a file, and a turn that only talks;
         // an observer hears what each turn changed.
         let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first =
-            RunWorkspace::new(project.clone(), "first", Identity::default())
-                .unwrap()
-                .on_turn({
-                    let heard = heard.clone();
-                    move |turn| heard.lock().unwrap().push(turn.paths.clone())
-                });
+        let first = RunWorkspace::new(
+            project.clone().into(),
+            "first",
+            Identity::default(),
+        )
+        .unwrap()
+        .on_turn({
+            let heard = heard.clone();
+            move |turn| heard.lock().unwrap().push(turn.paths.clone())
+        });
         let llm = ScriptedModel::new()
             .turn(|t| t.tool_call("write", write("a.txt", "one\n")))
             .turn(|t| t.tool_call("write", write("a.txt", "two\n")))
@@ -769,9 +793,12 @@ fn turns_are_snapshots_and_forks_start_from_one() {
         // A fork at turn 1 starts from turn 1's files, uncommitted, in a
         // workspace of its own, and leaves the first run's alone.
         let (seq, _) = turns[0].clone();
-        let fork =
-            RunWorkspace::new(project.clone(), "fork", Identity::default())
-                .unwrap();
+        let fork = RunWorkspace::new(
+            project.clone().into(),
+            "fork",
+            Identity::default(),
+        )
+        .unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| t.tool_call("read", json!({"path": "a.txt"})))
             .turn(|t| t.text("forked"))
@@ -814,7 +841,7 @@ fn diffs_between_commits_count_lines_per_file() {
     let src = tempfile::tempdir().unwrap();
     let head = source(src.path());
     let home = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         home.path().join("p"),
         Identity::default(),
@@ -940,7 +967,7 @@ fn diff_line_counts_match_a_minimal_edit(tc: TestCase) {
 struct DiffFixture {
     _src: tempfile::TempDir,
     _home: tempfile::TempDir,
-    project: Project,
+    project: ProjectRepo,
     vcs: tau_vcs::Vcs,
     runtime: tokio::runtime::Runtime,
 }
@@ -950,7 +977,7 @@ thread_local! {
         let src = tempfile::tempdir().unwrap();
         let head = source(src.path());
         let home = tempfile::tempdir().unwrap();
-        let project = Project::import(
+        let project = tau_vcs::ProjectRepo::import(
             src.path().to_str().unwrap(),
             home.path().join("p"),
             Identity::default(),
@@ -1062,7 +1089,7 @@ fn links_follow_their_change() {
     let head = source(src.path());
     let home = tempfile::tempdir().unwrap();
     let root = home.path().join("p");
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         &root,
         Identity::default(),
@@ -1130,7 +1157,7 @@ fn the_default_workspace_is_the_repositorys_own() {
     let head = source(src.path());
     let home = tempfile::tempdir().unwrap();
     let root = home.path().join("project");
-    let project = Project::open_or_import(
+    let project = tau_vcs::ProjectRepo::open_or_import(
         src.path().to_str().unwrap(),
         &root,
         Identity::default(),

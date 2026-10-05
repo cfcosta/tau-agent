@@ -11,7 +11,7 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx},
 };
 use tau_testing::block_on;
-use tau_vcs::{Identity, Vcs, VcsPlugin};
+use tau_vcs::{Identity, VcsPlugin};
 
 struct Repo {
     dir: tempfile::TempDir,
@@ -21,7 +21,11 @@ struct Repo {
 impl Repo {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
+        let vcs = tau_testing::block_on_io(tau_vcs::Vcs::init(
+            dir.path(),
+            Identity::default(),
+        ))
+        .unwrap();
         let tools = VcsPlugin::new(vcs).tools();
         Self { dir, tools }
     }

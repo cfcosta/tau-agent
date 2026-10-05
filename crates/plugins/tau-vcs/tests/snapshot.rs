@@ -11,7 +11,7 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx},
 };
 use tau_testing::block_on;
-use tau_vcs::{Identity, MAX_NEW_FILE_SIZE, Vcs, VcsPlugin};
+use tau_vcs::{Identity, MAX_NEW_FILE_SIZE, VcsPlugin};
 
 fn status(tools: &[Arc<dyn AgentTool>]) -> Value {
     let ctx = ToolCtx::detached();
@@ -31,9 +31,14 @@ fn only_new_files_over_the_limit_are_left_out(tc: TestCase) {
     let tracked_first = tc.draw(gs::booleans());
     let size = (MAX_NEW_FILE_SIZE as i64 + offset) as usize;
     let dir = tempfile::tempdir().unwrap();
-    let tools =
-        VcsPlugin::new(Vcs::init(dir.path(), Identity::default()).unwrap())
-            .tools();
+    let tools = VcsPlugin::new(
+        tau_testing::block_on_io(tau_vcs::Vcs::init(
+            dir.path(),
+            Identity::default(),
+        ))
+        .unwrap(),
+    )
+    .tools();
     let file = dir.path().join("big.bin");
     if tracked_first {
         std::fs::write(&file, b"small").unwrap();

@@ -1,6 +1,11 @@
-//! What each tool does, on the workspace's thread
+//! What each tool does, in a job on the workspace
 //! (`docs/reference/vcs.md`, "Tools"). Each returns the text the model
 //! sees and the `details` value callers get.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+)]
 
 use std::collections::HashSet;
 

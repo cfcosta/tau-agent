@@ -46,11 +46,12 @@ fn project_of(checkout: &Path) -> Project {
             &["commit", "--quiet", "--allow-empty", "-m", "first"],
         );
     }
-    Project::import(
+    tau_vcs::ProjectRepo::import(
         checkout.to_str().unwrap(),
         tempfile::tempdir().unwrap().keep().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap()
 }
 
@@ -269,7 +270,8 @@ fn new_chats_fork_the_repository_main_chat() {
     let project = host.project_of(REPO).unwrap();
     let on_trunk = |path: &str| {
         project
-            .file_at(&project.trunk().unwrap(), path)
+            .blocking()
+            .file_at(&project.blocking().trunk().unwrap(), path)
             .unwrap()
             .map(|(bytes, _)| bytes)
     };
@@ -521,11 +523,12 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
 
     let write = |content: &str| serde_json::json!({ "path": "a.txt", "content": content });
@@ -647,11 +650,12 @@ fn a_fork_lands_on_its_parent_and_closes() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
 
     let write =
@@ -713,9 +717,9 @@ fn a_fork_lands_on_its_parent_and_closes() {
     // The fork is closed: no workspace, no bookmark.
     assert!(!fork_dir.exists());
     let fork_bookmark = format!("tau/{}", fork.id.0);
-    assert_eq!(project.bookmark(&fork_bookmark).unwrap(), None);
+    assert_eq!(project.blocking().bookmark(&fork_bookmark).unwrap(), None);
     // The main chat commits on trunk: landing on it moves main.
-    assert_eq!(project.trunk().unwrap(), landed.head);
+    assert_eq!(project.blocking().trunk().unwrap(), landed.head);
     // Landing again finds nothing to land.
     assert!(host.land(&fork.id).is_err());
 
@@ -757,11 +761,12 @@ fn a_chat_after_an_update() -> AfterUpdate {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
 
     let write =
@@ -791,6 +796,7 @@ fn a_chat_after_an_update() -> AfterUpdate {
     git(src.path(), &["add", "NEW.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "second"]);
     project
+        .blocking()
         .update(tau_vcs::UpdateFrom::Checkout(src.path()))
         .unwrap();
     AfterUpdate {
@@ -810,10 +816,10 @@ fn a_chat_lands_after_an_update() {
     let after = a_chat_after_an_update();
     let landed = after.host.land(&after.chat).unwrap();
     assert_eq!(landed.changes.len(), 1);
-    let trunk = after.project.trunk().unwrap();
+    let trunk = after.project.blocking().trunk().unwrap();
     assert_eq!(trunk, landed.head);
     for file in ["README.md", "NEW.md", "a.txt", "c.txt"] {
-        let at = after.project.file_at(&trunk, file).unwrap();
+        let at = after.project.blocking().file_at(&trunk, file).unwrap();
         assert!(at.is_some(), "{file}");
     }
 }
@@ -830,9 +836,9 @@ fn a_chat_drops_after_an_update() {
         assert!(after.main_dir.join(file).exists(), "{file}");
     }
     assert!(!after.main_dir.join("c.txt").exists());
-    let trunk = after.project.trunk().unwrap();
+    let trunk = after.project.blocking().trunk().unwrap();
     for file in ["NEW.md", "a.txt"] {
-        let at = after.project.file_at(&trunk, file).unwrap();
+        let at = after.project.blocking().file_at(&trunk, file).unwrap();
         assert!(at.is_some(), "{file} on trunk");
     }
 }
@@ -847,11 +853,12 @@ fn a_chat_under_main_is_not_forked() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
 
     let write =
@@ -899,11 +906,12 @@ fn main_waits_for_its_sub_agent_and_it_lands() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
 
     let llm = ScriptedModel::new()
@@ -939,8 +947,8 @@ fn main_waits_for_its_sub_agent_and_it_lands() {
     assert_eq!(dir, project.workspace_dir(tau_vcs::DEFAULT_WORKSPACE));
     // The sub-agent is closed: no run workspace, and no run bookmark, as
     // the main chat commits on trunk.
-    assert!(project.workspaces().unwrap().is_empty());
-    assert!(project.bookmarks("tau/").unwrap().is_empty());
+    assert!(project.blocking().workspaces().unwrap().is_empty());
+    assert!(project.blocking().bookmarks("tau/").unwrap().is_empty());
 
     // From history, main's `wait` card says what landed, and the
     // sub-agent's chat comes back under it.
@@ -1111,11 +1119,12 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
     let main_llm = ScriptedModel::new()
         .turn(|t| {
@@ -1196,8 +1205,8 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
         "{prompt}"
     );
     // The sub-agent is closed, landed on main.
-    assert!(project.workspaces().unwrap().is_empty());
-    assert!(project.bookmarks("tau/").unwrap().is_empty());
+    assert!(project.blocking().workspaces().unwrap().is_empty());
+    assert!(project.blocking().bookmarks("tau/").unwrap().is_empty());
     assert!(matches!(
         host.ending_of(&child).unwrap(),
         Some(tau_ui_remote::view::Ending::Landed { .. })
@@ -1220,11 +1229,12 @@ fn a_failed_sub_agent_comes_back_from_history() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| {
@@ -1549,7 +1559,7 @@ fn github_repositories_clone_into_tau() {
     // Waiting for the project is what blocks, not cloning.
     let project = host.project_of("hello").expect("the clone imports");
     assert!(project.root().starts_with(data.path().join("repos")));
-    assert!(!project.trunk().unwrap().is_empty());
+    assert!(!project.blocking().trunk().unwrap().is_empty());
     assert!(!host.is_importing());
     assert_eq!(
         host.catalog().project,
@@ -1564,7 +1574,7 @@ fn github_repositories_clone_into_tau() {
     git(&src, &["commit", "--quiet", "-m", "second"]);
     let updated = host.update_repo("hello").unwrap();
     assert!(updated.changed());
-    assert_eq!(project.trunk().unwrap(), updated.after);
+    assert_eq!(project.blocking().trunk().unwrap(), updated.after);
     assert!(!host.update_repo("hello").unwrap().changed());
 }
 
@@ -1576,11 +1586,12 @@ fn a_finished_run_goes_on_in_its_workspace() {
     git(src.path(), &["add", "README.md"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
     let write =
         |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
@@ -2394,11 +2405,12 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     git(src.path(), &["add", "a.txt"]);
     git(src.path(), &["commit", "--quiet", "-m", "first"]);
     let repos = tempfile::tempdir().unwrap();
-    let project = Project::import(
+    let project = tau_vcs::ProjectRepo::import(
         src.path().to_str().unwrap(),
         repos.path().join("p"),
         Identity::default(),
     )
+    .map(Project::from)
     .unwrap();
     let note = serde_json::json!({
         "type": "fact",
@@ -2506,12 +2518,12 @@ fn landing_keeps_a_chat_whose_final_commit_failed() {
     wait_until_done(&host, &chat.id);
     let dir = host.workspace(&chat.id).unwrap();
     let project = host.project_of(REPO).unwrap();
-    let trunk = project.trunk().unwrap();
+    let trunk = project.blocking().trunk().unwrap();
     for action in [host.preview_landing(&chat.id), host.land(&chat.id)] {
         let error = action.unwrap_err().to_string();
         assert!(error.contains("workspace is retained"), "{error}");
     }
-    assert_eq!(project.trunk().unwrap(), trunk);
+    assert_eq!(project.blocking().trunk().unwrap(), trunk);
     assert_eq!(
         std::fs::read(dir.join("pending.txt")).unwrap(),
         b"pending\n"
@@ -2522,6 +2534,7 @@ fn landing_keeps_a_chat_whose_final_commit_failed() {
     );
     assert!(
         project
+            .blocking()
             .bookmark(&format!("tau/{}", chat.id.0))
             .unwrap()
             .is_some()
@@ -2718,7 +2731,7 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
     );
     assert_eq!(host.ending_of(&dropped).unwrap(), Some(Ending::Dropped));
 
-    let workspaces = project.workspaces().unwrap();
+    let workspaces = project.blocking().workspaces().unwrap();
     for (run, why) in [(&landed, "landed on main"), (&dropped, "was dropped")] {
         let refused = host
             .resume(run, "one more thing", &ModelChoice::default())
@@ -2730,12 +2743,22 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
             host.steer(run, "one more thing").unwrap_err().to_string();
         assert!(refused.contains(why), "{refused}");
         assert!(!host.is_running(run));
-        assert_eq!(project.bookmark(&format!("tau/{}", run.0)).unwrap(), None);
+        assert_eq!(
+            project
+                .blocking()
+                .bookmark(&format!("tau/{}", run.0))
+                .unwrap(),
+            None
+        );
         // A dropped chat cannot land, nor a landed one be dropped.
         assert!(host.land(run).is_err());
     }
     assert!(host.drop_child(&landed).is_err());
-    assert_eq!(project.workspaces().unwrap(), workspaces, "none made");
+    assert_eq!(
+        project.blocking().workspaces().unwrap(),
+        workspaces,
+        "none made"
+    );
     llm.assert_exhausted();
 
     let history = host.history().unwrap();

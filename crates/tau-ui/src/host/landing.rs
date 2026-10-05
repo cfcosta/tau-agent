@@ -117,18 +117,25 @@ pub(super) async fn branch_code(
     tokio::task::spawn_blocking(move || {
         // Each at the commit its change has now.
         let [base, main_head, fork_head]: [Link; 3] = project
+            .blocking()
             .current([base, main_head, fork_head])?
             .try_into()
             .map_err(|_| anyhow::anyhow!("Three links went in"))?;
         let (base, main_head, fork_head) =
             (base.commit_id, main_head.commit_id, fork_head.commit_id);
         let stats = |from: &str, to: &str| -> anyhow::Result<Vec<FileStat>> {
-            Ok(project.diff(from, to)?.iter().map(file_stat).collect())
+            Ok(project
+                .blocking()
+                .diff(from, to)?
+                .iter()
+                .map(file_stat)
+                .collect())
         };
         Ok(BranchCode {
             main: stats(&base, &main_head)?,
             fork: stats(&base, &fork_head)?,
             between: project
+                .blocking()
                 .diff(&main_head, &fork_head)?
                 .iter()
                 .map(|file| FileChange {
@@ -312,9 +319,11 @@ impl Host {
         }
         self.cut(LandingStep::Record)?;
         // The child's changes live on the parent's stack now.
-        project.forget_workspace(&intent.child_workspace)?;
+        project
+            .blocking()
+            .forget_workspace(&intent.child_workspace)?;
         self.cut(LandingStep::Workspace)?;
-        project.remove_bookmark(&bookmark(&child))?;
+        project.blocking().remove_bookmark(&bookmark(&child))?;
         self.session(&child, |run| run.workspace.take());
         Ok(record)
     }
@@ -395,7 +404,7 @@ impl Host {
             }
             let finish = || -> anyhow::Result<LandingRecord> {
                 let project = self.slot_of_run(&child)?.project()?;
-                match project.landed(&intent.child_head)? {
+                match project.blocking().landed(&intent.child_head)? {
                     Some(landing) => self.finish_landing(
                         &project, &parent, &intent, &landing, true,
                     ),
@@ -472,29 +481,31 @@ impl Host {
         if main {
             self.catch_up(&project, DEFAULT_WORKSPACE)?;
         }
-        if let Some(head) = project.bookmark(&bookmark(child))? {
-            let stands_on = match project.workspace_head(DEFAULT_WORKSPACE)? {
-                Some(wc) if main => project.parent_of(&wc)?,
-                _ => None,
-            };
+        if let Some(head) = project.blocking().bookmark(&bookmark(child))? {
+            let stands_on =
+                match project.blocking().workspace_head(DEFAULT_WORKSPACE)? {
+                    Some(wc) if main => project.blocking().parent_of(&wc)?,
+                    _ => None,
+                };
             let keep = match stands_on {
                 Some(keep) => keep,
                 None => match project
+                    .blocking()
                     .bookmark(&self.bookmark_of(&parent, &project)?)?
                 {
                     Some(keep) => keep,
-                    None => project.trunk()?,
+                    None => project.blocking().trunk()?,
                 },
             };
-            project.abandon_between(&keep, &head)?;
+            project.blocking().abandon_between(&keep, &head)?;
         }
         let workspace = self
             .session(child, |run| run.workspace.take())
             .or(self.link(child, None)?.map(|(_, link)| link.workspace));
         if let Some(name) = workspace {
-            project.forget_workspace(&name)?;
+            project.blocking().forget_workspace(&name)?;
         }
-        project.remove_bookmark(&bookmark(child))?;
+        project.blocking().remove_bookmark(&bookmark(child))?;
         Ok(())
     }
 
@@ -568,7 +579,7 @@ impl Host {
             Ok(name) => {
                 // Opening a workspace that is gone would make a new one
                 // on trunk; landing there would lose the parent's work.
-                if !project.workspaces()?.contains(&name) {
+                if !project.blocking().workspaces()?.contains(&name) {
                     anyhow::bail!("The parent's workspace is gone");
                 }
                 name
@@ -584,10 +595,10 @@ impl Host {
         // A completed run may have failed its final commit. Do not land
         // only its earlier commits and then delete the remaining edits.
         // Open the existing workspace, never recreate a missing one.
-        let child_vcs = tau_vcs::Vcs::open(
+        let child_vcs = self.runtime.block_on(tau_vcs::Vcs::open(
             project.workspace_dir(&child_workspace),
             identity(),
-        )?;
+        ))?;
         let copy = self.runtime.block_on(child_vcs.working_copy())?;
         if !copy.is_committed() {
             anyhow::bail!(
@@ -596,16 +607,19 @@ impl Host {
             );
         }
         let child_head =
-            project.bookmark(&bookmark(child))?.ok_or_else(|| {
-                anyhow::anyhow!("{} has no changes to land", child.0)
-            })?;
+            project.blocking().bookmark(&bookmark(child))?.ok_or_else(
+                || anyhow::anyhow!("{} has no changes to land", child.0),
+            )?;
         let parent_vcs = if parent_busy || !writes {
-            tau_vcs::Vcs::open(
+            self.runtime.block_on(tau_vcs::Vcs::open(
                 project.workspace_dir(&parent_workspace),
                 identity(),
-            )?
+            ))?
         } else {
-            project.add_workspace(&parent_workspace, &project.trunk()?)?
+            project.blocking().add_workspace(
+                &parent_workspace,
+                &project.blocking().trunk()?,
+            )?
         };
         Ok(LandingPlan {
             parent,
@@ -660,7 +674,7 @@ impl Host {
                     .collect();
                 let project = project.clone();
                 tokio::task::spawn_blocking(move || {
-                    names.iter().try_for_each(|name| project.forget_workspace(name))
+                    names.iter().try_for_each(|name| project.blocking().forget_workspace(name))
                 })
                 .await??;
             }

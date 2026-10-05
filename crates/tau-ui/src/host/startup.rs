@@ -136,8 +136,9 @@ impl Host {
         for slot in slots {
             match slot.project() {
                 Ok(project) => {
-                    let workspaces = project.workspaces()?;
+                    let workspaces = project.blocking().workspaces()?;
                     let bookmarks = project
+                        .blocking()
                         .bookmarks(tau_vcs::sweep::RUN_BOOKMARK_PREFIX)?;
                     held.push((
                         slot.name.clone(),
@@ -188,7 +189,7 @@ impl Host {
                 .collect();
             let sweep = tau_vcs::sweep::plan(&owners, &workspaces, &bookmarks);
             if !sweep.is_empty() {
-                project.sweep(&sweep)?;
+                project.blocking().sweep(&sweep)?;
             }
         }
         Ok(())

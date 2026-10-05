@@ -1,4 +1,4 @@
-//! [`RunWorkspace`]: a run's own jj workspace in a [`Project`]
+//! [`RunWorkspace`]: a run's own jj workspace in a [`ProjectRepo`]
 //! (`docs/reference/vcs.md`, "Runs and turns").
 //!
 //! When the run starts, the plugin makes its workspace: on the project's
@@ -253,27 +253,28 @@ impl Plugin for RunWorkspace {
         // `@` as the run starts: what its first turn changed is told
         // from it. A fork's `@` holds its turn's files, merged onto the
         // parent as it is now, which the fork's own turn did not change.
-        let start = tokio::task::spawn_blocking(move || {
-            match (inherited, base) {
-                (Some(link), _) if link.snapshot => project
-                    .add_workspace_from_snapshot(&name, &link.commit_id)
-                    .map(|_| ())?,
-                // The change may have been restacked since.
-                (Some(link), _) => {
-                    let base = project.current([link])?.remove(0).commit_id;
-                    project.add_workspace(&name, &base).map(|_| ())?
+        let start = project
+            .run(move |project| {
+                match (inherited, base) {
+                    (Some(link), _) if link.snapshot => project
+                        .add_workspace_from_snapshot(&name, &link.commit_id)
+                        .map(|_| ())?,
+                    // The change may have been restacked since.
+                    (Some(link), _) => {
+                        let base = project.current([link])?.remove(0).commit_id;
+                        project.add_workspace(&name, &base).map(|_| ())?
+                    }
+                    (None, Some(base)) => {
+                        project.add_workspace(&name, &base).map(|_| ())?
+                    }
+                    (None, None) => {
+                        let trunk = project.trunk()?;
+                        project.add_workspace(&name, &trunk).map(|_| ())?
+                    }
                 }
-                (None, Some(base)) => {
-                    project.add_workspace(&name, &base).map(|_| ())?
-                }
-                (None, None) => {
-                    let trunk = project.trunk()?;
-                    project.add_workspace(&name, &trunk).map(|_| ())?
-                }
-            }
-            project.workspace_head(&name)
-        })
-        .await??;
+                project.workspace_head(&name)
+            })
+            .await?;
         let since = start.or(inherited_snapshot);
         Ok(Box::new(Turns {
             vcs: self.vcs.clone(),

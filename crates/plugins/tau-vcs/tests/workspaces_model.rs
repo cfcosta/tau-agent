@@ -6,7 +6,7 @@
 //! started on one of the main chat's commits. Random sequences of the
 //! chat's file edits and tool calls run on it, and between them the
 //! other workspaces act: upstream moves and the main chat catches up
-//! (`Project::update`, `Vcs::move_onto`), restacking the commits the
+//! (`ProjectRepo::update`, `Vcs::move_onto`), restacking the commits the
 //! chat stands on; the main chat commits; other chats come, land on the
 //! main chat or are dropped, and go; an idle chat snapshots, ends turns
 //! and describes. Checked after every step against a model of the chat:
@@ -60,7 +60,7 @@ use tau_testing::{block_on, git::git};
 use tau_vcs::{
     DEFAULT_WORKSPACE,
     Identity,
-    Project,
+    ProjectRepo,
     UpdateFrom,
     Vcs,
     VcsPlugin,
@@ -105,11 +105,13 @@ impl Workspace {
 
 /// A project imported from a checkout holding `a.txt`, and its main
 /// chat, caught up with trunk as the host has it before its first turn.
-fn project() -> (tempfile::TempDir, Project, Workspace) {
+fn project() -> (tempfile::TempDir, ProjectRepo, Workspace) {
     let home = tempfile::tempdir().unwrap();
     let project = common::project(home.path());
     let dir = project.workspace_dir(DEFAULT_WORKSPACE);
-    let vcs = Vcs::open(&dir, Identity::default()).unwrap();
+    let vcs =
+        tau_testing::block_on_io(tau_vcs::Vcs::open(&dir, Identity::default()))
+            .unwrap();
     let trunk = project.trunk().unwrap();
     let name = project.trunk_name().unwrap();
     block_on(vcs.move_onto(trunk, name, true)).unwrap();
@@ -322,7 +324,7 @@ struct Seen {
 
 struct Machine {
     home: tempfile::TempDir,
-    project: Project,
+    project: ProjectRepo,
     main: Workspace,
     chat: Workspace,
     /// A chat that only snapshots, ends turns and describes.
@@ -1345,8 +1347,13 @@ fn undo_refuses_a_landing() {
 
 /// A project, its main chat with a commit of its own on trunk, and a
 /// chat started on that commit, with the chat's directory.
-fn a_chat_on_main()
--> (tempfile::TempDir, Project, Workspace, Workspace, PathBuf) {
+fn a_chat_on_main() -> (
+    tempfile::TempDir,
+    ProjectRepo,
+    Workspace,
+    Workspace,
+    PathBuf,
+) {
     let (home, project, main) = project();
     let name = project.trunk_name().unwrap();
     std::fs::write(
@@ -1364,7 +1371,7 @@ fn a_chat_on_main()
 
 /// Upstream writes `a.txt`, an update brings it in, and the main chat
 /// catches up, restacking the commit the chat stands on.
-fn upstream_writes_a(home: &Path, project: &Project, main: &Workspace) {
+fn upstream_writes_a(home: &Path, project: &ProjectRepo, main: &Workspace) {
     let src = home.join("src");
     std::fs::write(src.join("a.txt"), "three\n").unwrap();
     git(&src, &["commit", "--quiet", "-am", "upstream"]);
@@ -1376,7 +1383,8 @@ fn upstream_writes_a(home: &Path, project: &Project, main: &Workspace) {
 
 /// A chat whose `@` holds a conflict in `a.txt`: upstream changed it,
 /// and the chat changed it too before its next tool.
-fn a_chat_in_conflict() -> (tempfile::TempDir, Project, Workspace, PathBuf) {
+fn a_chat_in_conflict() -> (tempfile::TempDir, ProjectRepo, Workspace, PathBuf)
+{
     let (home, project, main, chat, dir) = a_chat_on_main();
     upstream_writes_a(home.path(), &project, &main);
     std::fs::write(dir.join("a.txt"), "two\n").unwrap();

@@ -1,4 +1,4 @@
-//! [`Project`]: a repository tau owns, with a jj workspace per run
+//! [`ProjectRepo`]: a repository tau owns, with a jj workspace per run
 //! (`docs/reference/vcs.md`, "Projects").
 //!
 //! A project lives in a directory of its own, usually under
@@ -8,8 +8,14 @@
 //! - `main/`: the jj repository, whose own working copy stays empty;
 //! - `runs/<name>/`: one jj workspace per run, each on its own commit.
 //!
-//! Runs never touch the user's own checkout. The functions here block;
-//! call them off the async executor.
+//! Runs never touch the user's own checkout. [`ProjectRepo`]'s functions
+//! block; async code reaches them through [`Project`], which runs each
+//! job in `spawn_blocking`, one at a time per repository (ADR 0027).
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+)]
 
 use std::{
     collections::{HashMap, HashSet},
@@ -50,7 +56,7 @@ pub use push::{Pushed, REMOTE, Remote};
 const GIT: &str = "git";
 const MAIN: &str = "main";
 
-/// How many operations back [`Project::landed`] looks for a landing.
+/// How many operations back [`ProjectRepo::landed`] looks for a landing.
 pub const LANDING_LOOKBACK: usize = 1000;
 
 /// jj's own workspace: the repository's checkout, under `main/`. A
@@ -60,8 +66,129 @@ const RUNS: &str = "runs";
 
 /// A repository tau owns. Cheap to clone.
 #[derive(Clone)]
-pub struct Project {
+pub struct ProjectRepo {
     inner: Arc<Inner>,
+}
+
+/// A project, for async code: each job on it runs in tokio's
+/// `spawn_blocking`, after the jobs on the same repository that asked
+/// before it (ADR 0027). Cheap to clone; every handle on one repository,
+/// however it was made, shares its turn.
+#[derive(Clone)]
+pub struct Project {
+    repo: ProjectRepo,
+    turn: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl std::fmt::Debug for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.repo.fmt(f)
+    }
+}
+
+impl From<ProjectRepo> for Project {
+    fn from(repo: ProjectRepo) -> Self {
+        let turn = turn_of(repo.root());
+        Self { repo, turn }
+    }
+}
+
+impl Project {
+    /// Opens the project at `root`. See [`ProjectRepo::open`].
+    pub async fn open(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        Self::make(move || ProjectRepo::open(root, identity)).await
+    }
+
+    /// Makes a project from a local repository. See
+    /// [`ProjectRepo::import`].
+    pub async fn import(
+        source: impl Into<String>,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let (source, root) = (source.into(), root.into());
+        Self::make(move || ProjectRepo::import(&source, root, identity)).await
+    }
+
+    /// Opens the project at `root`, or makes it there. See
+    /// [`ProjectRepo::open_or_import`].
+    pub async fn open_or_import(
+        source: impl Into<String>,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let (source, root) = (source.into(), root.into());
+        Self::make(move || ProjectRepo::open_or_import(&source, root, identity))
+            .await
+    }
+
+    async fn make(
+        open: impl FnOnce() -> Result<ProjectRepo, VcsError> + Send + 'static,
+    ) -> Result<Self, VcsError> {
+        tokio::task::spawn_blocking(open)
+            .await
+            .unwrap_or_else(|error| {
+                std::panic::resume_unwind(error.into_panic())
+            })
+            .map(Self::from)
+    }
+
+    /// Runs `job` on the repository once the jobs before it are done, on
+    /// tokio's blocking pool, and gives back what it returned. A job that
+    /// panics panics here too.
+    pub async fn run<T: Send + 'static>(
+        &self,
+        job: impl FnOnce(&ProjectRepo) -> T + Send + 'static,
+    ) -> T {
+        let turn = self.turn.clone().lock_owned().await;
+        let repo = self.repo.clone();
+        tokio::task::spawn_blocking(move || {
+            let _turn = turn;
+            job(&repo)
+        })
+        .await
+        .unwrap_or_else(|error| std::panic::resume_unwind(error.into_panic()))
+    }
+
+    /// The repository, to call synchronously, without waiting for the
+    /// jobs on it: for tests, which are synchronous, and disallowed
+    /// elsewhere by `clippy.toml`.
+    pub fn blocking(&self) -> &ProjectRepo {
+        &self.repo
+    }
+
+    /// The project's directory.
+    pub fn root(&self) -> &Path {
+        self.repo.root()
+    }
+
+    /// Where run `name`'s workspace lives, whether or not it exists.
+    pub fn workspace_dir(&self, name: &str) -> PathBuf {
+        self.repo.workspace_dir(name)
+    }
+}
+
+/// The turn every handle on the repository at `root` shares.
+fn turn_of(root: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    static TURNS: std::sync::LazyLock<
+        std::sync::Mutex<
+            HashMap<PathBuf, std::sync::Weak<tokio::sync::Mutex<()>>>,
+        >,
+    > = std::sync::LazyLock::new(Default::default);
+    let root =
+        std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut turns = TURNS.lock().expect("not poisoned");
+    turns.retain(|_, turn| turn.strong_count() > 0);
+    if let Some(turn) = turns.get(&root).and_then(std::sync::Weak::upgrade) {
+        return turn;
+    }
+    let turn = Arc::new(tokio::sync::Mutex::new(()));
+    turns.insert(root, Arc::downgrade(&turn));
+    turn
 }
 
 struct Inner {
@@ -70,15 +197,15 @@ struct Inner {
     settings: UserSettings,
 }
 
-impl std::fmt::Debug for Project {
+impl std::fmt::Debug for ProjectRepo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Project")
+        f.debug_struct("ProjectRepo")
             .field("root", &self.inner.root)
             .finish()
     }
 }
 
-impl Project {
+impl ProjectRepo {
     /// Opens the project at `root`, or makes it there from the local
     /// repository at `source` when there is none.
     pub fn open_or_import(
@@ -330,7 +457,7 @@ impl Project {
     ) -> Result<Vcs, VcsError> {
         let dir = self.workspace_dir(name);
         if dir.join(".jj").is_dir() {
-            return Vcs::open(dir, self.inner.identity.clone());
+            return Vcs::open_in_job(dir, self.inner.identity.clone());
         }
         std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
             path: dir.clone(),
@@ -388,7 +515,7 @@ impl Project {
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         drop(lock);
-        Vcs::open(dir, self.inner.identity.clone())
+        Vcs::loaded(dir, self.inner.identity.clone(), workspace)
     }
 
     /// `links` with each `commit_id` moved to where its change is now.
@@ -620,7 +747,7 @@ impl Project {
     ) -> Result<Vcs, VcsError> {
         let dir = self.workspace_dir(name);
         if dir.join(".jj").is_dir() {
-            return Vcs::open(dir, self.inner.identity.clone());
+            return Vcs::open_in_job(dir, self.inner.identity.clone());
         }
         std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
             path: dir.clone(),
@@ -653,7 +780,7 @@ impl Project {
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         drop(lock);
-        Vcs::open(dir, self.inner.identity.clone())
+        Vcs::loaded(dir, self.inner.identity.clone(), workspace)
     }
 
     /// Removes run `name`'s workspace: jj forgets it, and its directory
@@ -748,7 +875,7 @@ impl Project {
     }
 }
 
-/// Where [`Project::update`] brings changes from.
+/// Where [`ProjectRepo::update`] brings changes from.
 #[derive(Debug, Clone, Copy)]
 pub enum UpdateFrom<'a> {
     /// The local repository the project was imported from.
@@ -887,7 +1014,7 @@ fn visible(
     }
 }
 
-/// One change on a run's stack, for [`Project::stack`].
+/// One change on a run's stack, for [`ProjectRepo::stack`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StackChange {
     pub commit_id: String,

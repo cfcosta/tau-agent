@@ -20,10 +20,10 @@ use jj_lib::{
     settings::UserSettings,
     workspace::Workspace,
 };
-use pollster::block_on;
 use serde_json::json;
 use tau_agent::{plugin::Plugin, tool::ToolCtx};
-use tau_vcs::{Identity, Vcs, VcsPlugin};
+use tau_testing::block_on_io as block_on;
+use tau_vcs::{Identity, VcsPlugin};
 
 /// Tags the working-copy commit of the workspace at `dir`.
 fn tag_working_copy(dir: &Path) {
@@ -55,7 +55,11 @@ fn tag_working_copy(dir: &Path) {
 #[test]
 fn writes_refuse_an_immutable_working_copy() {
     let dir = tempfile::tempdir().unwrap();
-    let vcs = Vcs::init(dir.path(), Identity::default()).unwrap();
+    let vcs = tau_testing::block_on_io(tau_vcs::Vcs::init(
+        dir.path(),
+        Identity::default(),
+    ))
+    .unwrap();
     let tools = VcsPlugin::new(vcs).tools();
     let find = |name: &str| {
         tools

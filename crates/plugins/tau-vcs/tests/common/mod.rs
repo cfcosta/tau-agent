@@ -2,6 +2,10 @@
 //! repository, a coding agent on a run's workspace, and the merge model
 //! (`merge`).
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0027)"
+)]
 // Each test crate uses only some of these.
 #![allow(dead_code)]
 
@@ -12,11 +16,11 @@ use std::path::Path;
 use tau_agent::agent::Agent;
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_tools::{path::Root, plugin::CodingTools};
-use tau_vcs::{Identity, Link, Project, RunWorkspace, VcsPlugin};
+use tau_vcs::{Identity, Link, ProjectRepo, RunWorkspace, VcsPlugin};
 
 /// A project imported from a git repository whose one commit,
 /// `first`, holds `files`.
-pub fn project_with(home: &Path, files: &[(&str, &str)]) -> Project {
+pub fn project_with(home: &Path, files: &[(&str, &str)]) -> ProjectRepo {
     let src = home.join("src");
     std::fs::create_dir_all(&src).unwrap();
     git(&src, &["init", "--quiet"]);
@@ -27,12 +31,16 @@ pub fn project_with(home: &Path, files: &[(&str, &str)]) -> Project {
     }
     git(&src, &["add", "."]);
     git(&src, &["commit", "--quiet", "-m", "first"]);
-    Project::import(src.to_str().unwrap(), home.join("p"), Identity::default())
-        .unwrap()
+    tau_vcs::ProjectRepo::import(
+        src.to_str().unwrap(),
+        home.join("p"),
+        Identity::default(),
+    )
+    .unwrap()
 }
 
 /// A project whose trunk holds `a.txt`, `one`.
-pub fn project(home: &Path) -> Project {
+pub fn project(home: &Path) -> ProjectRepo {
     project_with(home, &[("a.txt", "one\n")])
 }
 

@@ -1,6 +1,11 @@
 //! What every tool does around its own work: snapshot the working copy,
 //! run a transaction, check out the result (`docs/reference/vcs.md`,
-//! "Scoping rules"). Runs on the workspace's thread only.
+//! "Scoping rules"). Runs inside a job on the workspace only.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+)]
 
 use std::{
     path::{Component, Path, PathBuf},
@@ -41,7 +46,7 @@ pub(crate) const LANDED_ATTRIBUTE: &str = "tau.vcs.landed";
 /// The operation attribute of a confirmed landing that says what it
 /// did: `{ "child_head": <hex>, "landing": Landing }`, so a host that
 /// closed before recording the landing can read it back
-/// (`Project::landed`).
+/// (`ProjectRepo::landed`).
 pub(crate) const LANDING_ATTRIBUTE: &str = "tau.vcs.landing";
 /// The operation attribute of a catch-up: the commit, in hex, a run moved
 /// onto (`move_onto`, or a step that follows an update). A turn's paths
