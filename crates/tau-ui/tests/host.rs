@@ -1393,9 +1393,9 @@ fn repositories_are_listed_and_remembered() {
 
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
     let host = on_github(host, remote.path());
-    // Nothing is listed until it is cloned: not even the directory tau
-    // started in.
-    assert!(names(&host).is_empty());
+    // Nothing is listed until it is cloned but tau's own plugins: not
+    // even the directory tau started in.
+    assert_eq!(names(&host), ["tau-plugins"]);
     // Two repositories with one name get two names.
     assert_eq!(
         host.block_on(host.clone_github("a/proj")).unwrap().name,
@@ -1412,15 +1412,15 @@ fn repositories_are_listed_and_remembered() {
     );
     assert!(host.block_on(host.clone_github("c/missing")).is_err());
     host.set_open_repos(vec!["proj-2".into()]).unwrap();
-    assert_eq!(names(&host), ["proj", "proj-2"]);
+    assert_eq!(names(&host), ["tau-plugins", "proj", "proj-2"]);
     drop(host);
 
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
     let host = on_github(host, remote.path());
-    assert_eq!(names(&host), ["proj", "proj-2"]);
+    assert_eq!(names(&host), ["tau-plugins", "proj", "proj-2"]);
     assert_eq!(host.block_on(host.catalog()).open_repos, ["proj-2"]);
     host.hide_repo("proj").unwrap();
-    assert_eq!(names(&host), ["proj-2"]);
+    assert_eq!(names(&host), ["tau-plugins", "proj-2"]);
     // Closed conversations are remembered too, until opened again.
     let (first, second) = (
         tau_agent::tool::RunId("a".into()),
@@ -1443,7 +1443,7 @@ fn repositories_are_listed_and_remembered() {
 
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
     let host = on_github(host, remote.path());
-    assert_eq!(names(&host), ["proj-2"]);
+    assert_eq!(names(&host), ["tau-plugins", "proj-2"]);
     let catalog = host.block_on(host.catalog());
     assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
     let reviewed: tau_constitution::ui::Data = serde_json::from_value(
@@ -1456,7 +1456,7 @@ fn repositories_are_listed_and_remembered() {
         host.block_on(host.clone_github("a/proj")).unwrap().name,
         "proj"
     );
-    assert_eq!(names(&host), ["proj", "proj-2"]);
+    assert_eq!(names(&host), ["tau-plugins", "proj", "proj-2"]);
 }
 
 fn config_on(data: &Path) -> HostConfig {

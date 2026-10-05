@@ -22,23 +22,39 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
 use tau_ui_kit::{
-    components::{badge, code_block, dot, mono},
+    components::{
+        ButtonKind,
+        badge,
+        button,
+        card,
+        code_block,
+        dot,
+        empty,
+        heading,
+        mono,
+    },
     prose::rich,
     theme::{Design as _, Theme, Tone, Type, radius, sp},
 };
 use tau_ui_plugin::{
     Fold,
     HostCx,
+    Link,
     Manifest,
+    Page,
     PluginInfo,
     RunCtx,
     RunCx,
     Seam,
     UiPlugin,
+    ViewCx,
     points::{self, AtCard, CardView},
 };
 
-use crate::{NAME, Record};
+use crate::{Act, NAME, Overview, Record, Standing};
+
+/// The page that lists the plugins repository's plugins.
+pub const PAGE: &str = "luau-plugins";
 
 /// How deep a view tree may nest, and how many pieces a list or a row
 /// may hold, before the rest is left out.
@@ -323,7 +339,7 @@ fn draw_at(piece: &Value, t: &Theme, depth: usize) -> AnyElement {
 
 impl UiPlugin for LuauPluginsUi {
     type State = State;
-    type Data = ();
+    type Data = Overview;
     type RepoData = ();
     type Settings = ();
     #[cfg(feature = "host")]
@@ -381,16 +397,22 @@ impl UiPlugin for LuauPluginsUi {
     ) -> PluginInfo {
         #[cfg(feature = "host")]
         let description = {
-            let names: Vec<String> = host
-                .active()
-                .await
+            let overview = host.overview().await;
+            let waiting = overview
+                .plugins
                 .iter()
-                .map(|active| active.loaded.declaration.name.clone())
-                .collect();
-            if names.is_empty() {
-                "Plugins written in Luau: none yet".to_owned()
-            } else {
-                format!("Plugins written in Luau: {}", names.join(", "))
+                .filter(|entry| !matches!(entry.standing, Standing::Active))
+                .count();
+            match (overview.plugins.len(), waiting) {
+                (0, _) => "Plugins written in Luau, in the tau-plugins \
+                           repository: none yet"
+                    .to_owned(),
+                (all, 0) => format!("Plugins written in Luau: {all} active"),
+                (all, waiting) => {
+                    format!(
+                        "Plugins written in Luau: {all}, {waiting} need a look"
+                    )
+                }
             }
         };
         #[cfg(not(feature = "host"))]
@@ -406,13 +428,42 @@ impl UiPlugin for LuauPluginsUi {
                 Seam::BeforeStop,
                 Seam::Finish,
             ],
-            page: None,
+            page: Some(Link::page(PAGE)),
             ..Default::default()
         }
     }
 
+    async fn data(&self, host: &Self::Host, _cx: &HostCx) -> Overview {
+        #[cfg(feature = "host")]
+        {
+            host.overview().await
+        }
+        #[cfg(not(feature = "host"))]
+        {
+            let _ = host;
+            Overview::default()
+        }
+    }
+
+    async fn act(
+        &self,
+        host: &Self::Host,
+        action: Value,
+        _cx: &HostCx,
+    ) -> anyhow::Result<Option<Value>> {
+        let action: Act = serde_json::from_value(action)?;
+        #[cfg(feature = "host")]
+        match action {
+            Act::Allow { plugin } => host.allow(&plugin).await?,
+        }
+        #[cfg(not(feature = "host"))]
+        let _ = (host, action);
+        Ok(None)
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
+            .page(Page::new(PAGE, page).title(|_| "Luau plugins".to_owned()))
             .status(State::status)
             .contribute(points::CARD, |at: &AtCard, view| {
                 let details = at.data.result.as_ref()?.details.as_ref()?;
@@ -451,6 +502,141 @@ impl UiPlugin for LuauPluginsUi {
                 )
             })
     }
+}
+
+/// The plugins page: each plugin of the plugins repository, where it
+/// stands, its tests, and Allow for a version waiting for the person.
+fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
+    let t = view.theme().clone();
+    let overview = view.data.clone();
+    let handle = view.handle.clone();
+    let mut column = div().flex().flex_col().gap(sp(4.)).p(sp(6.));
+    column = column.child(div().typeset(Type::SMALL).child(rich(
+        "Plugins live in the `tau-plugins` repository, a folder each. Ask tau \
+         there to write or change one; a version is active once its commit \
+         is on `main` and its tests pass.",
+        t.muted,
+        &t,
+    )));
+    if let Some(error) = &overview.error {
+        column = column.child(
+            div()
+                .typeset(Type::SMALL)
+                .text_color(t.red)
+                .child(error.clone()),
+        );
+    }
+    if overview.plugins.is_empty() {
+        return column
+            .child(empty("No plugins yet.", &t))
+            .into_any_element();
+    }
+    for entry in &overview.plugins {
+        let (label, tone_of) = match &entry.standing {
+            Standing::Active => ("active", Tone::Good),
+            Standing::Waiting { .. } => ("waiting for you", Tone::Warn),
+            Standing::Failing => ("tests failing", Tone::Danger),
+            Standing::Broken { .. } => ("does not load", Tone::Danger),
+        };
+        let color = t.tone(tone_of);
+        let passed = entry.tests.iter().filter(|test| test.passed).count();
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap(sp(2.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(2.))
+                    .child(mono(entry.name.clone(), Type::SMALL, t.text))
+                    .child(badge(label, color, color.opacity(0.4)))
+                    .when(!entry.tests.is_empty(), |row| {
+                        row.child(mono(
+                            format!(
+                                "{passed} of {} tests pass",
+                                entry.tests.len()
+                            ),
+                            Type::CAPTION,
+                            t.dim,
+                        ))
+                    }),
+            )
+            .when(!entry.description.is_empty(), |body| {
+                body.child(
+                    div()
+                        .typeset(Type::SMALL)
+                        .text_color(t.text_soft)
+                        .child(entry.description.clone()),
+                )
+            });
+        if entry.keeps_earlier {
+            body = body.child(
+                div().typeset(Type::CAPTION).text_color(t.dim).child(
+                    "Runs keep the version before until this one is fixed \
+                     or allowed.",
+                ),
+            );
+        }
+        match &entry.standing {
+            Standing::Waiting { grown } => {
+                let plugin = entry.name.clone();
+                let handle = handle.clone();
+                body = body.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(sp(3.))
+                        .child(div().flex_1().typeset(Type::SMALL).child(rich(
+                            &format!("It wants to use {}.", grown.join(", ")),
+                            t.text_soft,
+                            &t,
+                        )))
+                        .child(
+                            button("Allow", ButtonKind::Primary, &t)
+                                .id(gpui::SharedString::from(format!(
+                                    "allow-{plugin}"
+                                )))
+                                .on_click(move |_, _, cx| {
+                                    handle.act(
+                                        Act::Allow {
+                                            plugin: plugin.clone(),
+                                        },
+                                        cx,
+                                    )
+                                }),
+                        ),
+                );
+            }
+            Standing::Broken { error } => {
+                body = body.child(code_block(None, error, &t));
+            }
+            _ => {}
+        }
+        let failing: Vec<_> =
+            entry.tests.iter().filter(|test| !test.passed).collect();
+        if !failing.is_empty() {
+            body = body.child(heading("Failing tests", &t));
+            for test in failing {
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(sp(1.))
+                        .child(mono(
+                            format!("{} · {}", test.file, test.name),
+                            Type::CAPTION,
+                            t.text_soft,
+                        ))
+                        .when_some(test.error.clone(), |column, error| {
+                            column.child(mono(error, Type::CAPTION, t.red))
+                        }),
+                );
+            }
+        }
+        column = column.child(card(&t).p(sp(4.)).child(body));
+    }
+    column.into_any_element()
 }
 
 #[cfg(test)]

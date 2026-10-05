@@ -234,10 +234,20 @@ impl Host {
         let project = slot.project.clone();
         let source = slot.path.to_string_lossy().into_owned();
         let dir = self.config.project_dir_of(&slot.path);
+        let own = slot.path == self.config.plugins_repo();
         let catalog = self.catalog_wanted.clone();
         self.runtime.spawn(async move {
-            let opened =
-                Project::open_or_import(source.clone(), dir, identity()).await;
+            // tau's own plugins repository is made here the first time.
+            let opened = if own {
+                Project::open_or_init(
+                    dir,
+                    identity(),
+                    tau_luau_plugins::registry::first_files(),
+                )
+                .await
+            } else {
+                Project::open_or_import(source.clone(), dir, identity()).await
+            };
             project.set(match opened {
                 Ok(project) => ProjectState::Ready(project),
                 Err(error) => {
@@ -268,6 +278,7 @@ impl Host {
                 hidden: false,
                 github: None,
                 main,
+                own: false,
             });
         }
         let mut repos = self.repos.lock().expect("not poisoned");
@@ -539,6 +550,31 @@ impl Host {
                 })
             })
             .await?)
+    }
+
+    /// Lists tau's own plugins repository (ADR 0027), the first time
+    /// tau starts: it is made when it is opened.
+    pub(super) fn list_plugins_repo(&self) {
+        let mut list = self.list.lock().expect("not poisoned");
+        let path = self.config.plugins_repo();
+        if list
+            .repos
+            .iter()
+            .any(|listed| listed.own && listed.path == path)
+        {
+            return;
+        }
+        list.repos.push(Listed {
+            name: tau_luau_plugins::registry::REPO.to_owned(),
+            path,
+            hidden: false,
+            github: None,
+            main: None,
+            own: true,
+        });
+        if let Err(error) = list.save(&self.config.repo_list) {
+            eprintln!("tau-ui: cannot list the plugins repository: {error:#}");
+        }
     }
 
     /// The `owner/name` a repository was cloned from, if it came from

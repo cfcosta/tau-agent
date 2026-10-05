@@ -78,10 +78,22 @@ impl HostConfig {
         Credentials::default_dir().dir.join("interface.json")
     }
 
+    /// Where tau's own plugins repository lives (ADR 0027): beside the
+    /// projects, under the directory every plugin's data shares.
+    pub fn plugins_repo(&self) -> PathBuf {
+        self.repos
+            .parent()
+            .unwrap_or(&self.repos)
+            .join(tau_luau_plugins::registry::ROOT)
+    }
+
     /// The project directory for the clone at `path`: its name and a
     /// hash of its full path, so two clones with one name get two
-    /// projects.
+    /// projects. A repository of tau's own is its project.
     pub fn project_dir_of(&self, path: &Path) -> PathBuf {
+        if path == self.plugins_repo() {
+            return path.to_owned();
+        }
         let full = canonical(path);
         self.repos.join(format!(
             "{}-{:08x}",
@@ -126,11 +138,17 @@ pub(super) struct Listed {
     /// The id of its main chat, once made; see [`Host::main_of`].
     #[serde(default)]
     pub(super) main: Option<String>,
+    /// A repository of tau's own, such as the plugins repository (ADR
+    /// 0027): made here, not cloned, and listed though it is not from
+    /// GitHub.
+    #[serde(default)]
+    pub(super) own: bool,
 }
 
 impl RepoList {
     /// The list `path` keeps, without the local checkouts listed before
     /// repositories came from GitHub alone: they stay out, open or not.
+    /// tau's own repositories stay.
     pub(super) fn load(path: &Path) -> Self {
         let list: Self = std::fs::read_to_string(path)
             .ok()
@@ -139,10 +157,11 @@ impl RepoList {
         list.github_only()
     }
 
-    /// The list without repositories that did not come from GitHub, and
-    /// with only the listed ones open.
+    /// The list without repositories that did not come from GitHub,
+    /// tau's own excepted, and with only the listed ones open.
     pub(super) fn github_only(mut self) -> Self {
-        self.repos.retain(|listed| listed.github.is_some());
+        self.repos
+            .retain(|listed| listed.github.is_some() || listed.own);
         let listed: Vec<String> = self
             .repos
             .iter()
@@ -188,6 +207,7 @@ impl RepoList {
             hidden: false,
             github: None,
             main: None,
+            own: false,
         });
         name
     }

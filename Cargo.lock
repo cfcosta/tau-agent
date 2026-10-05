@@ -9611,6 +9611,7 @@ dependencies = [
  "tau-testing",
  "tau-ui-kit",
  "tau-ui-plugin",
+ "tau-vcs",
  "tempfile",
  "tokio",
  "tokio-util",

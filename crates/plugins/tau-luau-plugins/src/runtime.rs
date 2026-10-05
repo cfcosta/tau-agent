@@ -27,7 +27,7 @@ use tau_codemode::{
 use tau_jev::Jev;
 use tokio_util::sync::CancellationToken;
 
-use crate::{Declaration, TAU_MODULE};
+use crate::{Declaration, TAU_MODULE, TestResult};
 
 /// The file a plugin's folder starts from.
 pub const PLUGIN_FILE: &str = "plugin.luau";
@@ -82,6 +82,39 @@ impl Files {
             tests: luau_files("tests")?,
             readme: std::fs::read_to_string(dir.join("README.md")).ok(),
         })
+    }
+
+    /// A plugin's folder from its files at a commit, by their paths in
+    /// the folder (`plugin.luau`, `lib/x.luau`): what trunk holds.
+    pub fn from_paths(paths: &[(String, Vec<u8>)]) -> Result<Self, String> {
+        let text = |path: &str, bytes: &[u8]| {
+            String::from_utf8(bytes.to_vec())
+                .map_err(|_| format!("{path} is not UTF-8"))
+        };
+        let mut files = Self::default();
+        let mut has_plugin = false;
+        for (path, bytes) in paths {
+            let luau = |sub: &str| {
+                path.strip_prefix(sub)
+                    .and_then(|rest| rest.strip_suffix(".luau"))
+                    .filter(|stem| !stem.contains('/'))
+                    .map(str::to_owned)
+            };
+            if path == PLUGIN_FILE {
+                files.plugin = text(path, bytes)?;
+                has_plugin = true;
+            } else if path == "README.md" {
+                files.readme = Some(text(path, bytes)?);
+            } else if let Some(stem) = luau("lib/") {
+                files.libs.insert(stem, text(path, bytes)?);
+            } else if let Some(stem) = luau("tests/") {
+                files.tests.insert(stem, text(path, bytes)?);
+            }
+        }
+        if !has_plugin {
+            return Err(format!("the folder has no {PLUGIN_FILE}"));
+        }
+        Ok(files)
     }
 
     /// The digest of everything in the folder: what names a version.
@@ -425,17 +458,6 @@ impl Loaded {
 
 /// How long a test file may run.
 const TEST_LIMIT: Duration = Duration::from_secs(10);
-
-/// One case of a plugin's tests, as it came out.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
-pub struct TestResult {
-    /// Its file under `tests/`, without `.luau`.
-    pub file: String,
-    pub name: String,
-    pub passed: bool,
-    #[serde(default)]
-    pub error: Option<String>,
-}
 
 impl Loaded {
     /// Runs the plugin's tests, each file in a fresh VM against fake

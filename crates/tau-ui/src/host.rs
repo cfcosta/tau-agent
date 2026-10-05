@@ -394,6 +394,7 @@ impl Host {
         // elsewhere, as in tests, by keywords alone.
         host.memory_search = tau_memory::ui::Search::Semantic;
         host.host_plugins();
+        host.list_plugins_repo();
         // Importing clones can take a while; the window opens first.
         let listed: Vec<Listed> = host
             .list
@@ -1456,25 +1457,32 @@ impl Drop for Job {
 mod tests {
     use super::*;
 
-    /// A saved list keeps only repositories from GitHub, and opens only
-    /// those it keeps: a local checkout listed before is dropped.
+    /// A saved list keeps only repositories from GitHub, and tau's own,
+    /// and opens only those it keeps: a local checkout listed before is
+    /// dropped, the plugins repository stays (ADR 0027).
     #[test]
-    fn a_saved_list_keeps_only_repositories_from_github() {
+    fn a_saved_list_keeps_only_repositories_from_github_and_taus_own() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("repos.json");
-        let listed = |name: &str, github: Option<&str>| Listed {
+        let listed = |name: &str, github: Option<&str>, own: bool| Listed {
             name: name.to_owned(),
             path: dir.path().join(name),
             hidden: false,
             github: github.map(str::to_owned),
             main: None,
+            own,
         };
         RepoList {
             repos: vec![
-                listed("tau-agent", None),
-                listed("ascend", Some("cfcosta/ascend")),
+                listed("tau-agent", None, false),
+                listed("ascend", Some("cfcosta/ascend"), false),
+                listed("tau-plugins", None, true),
             ],
-            open: vec!["tau-agent".into(), "ascend".into()],
+            open: vec![
+                "tau-agent".into(),
+                "ascend".into(),
+                "tau-plugins".into(),
+            ],
             ..RepoList::default()
         }
         .save(&path)
@@ -1485,8 +1493,8 @@ mod tests {
             .iter()
             .map(|listed| listed.name.as_str())
             .collect();
-        assert_eq!(names, ["ascend"]);
-        assert_eq!(list.open, ["ascend"]);
+        assert_eq!(names, ["ascend", "tau-plugins"]);
+        assert_eq!(list.open, ["ascend", "tau-plugins"]);
     }
 
     /// A sub-agent runs on the model its call asked for, else its

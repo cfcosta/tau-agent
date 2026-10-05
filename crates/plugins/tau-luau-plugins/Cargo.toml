@@ -15,6 +15,7 @@ host = [
   "dep:async-trait",
   "dep:sha2",
   "dep:tau-codemode",
+  "dep:tau-vcs",
   "dep:tokio",
   "dep:tokio-util",
 ]
@@ -33,11 +34,13 @@ tau-jev.workspace = true
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
+tau-vcs = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-trait.workspace = true
+tau-vcs.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 futures-util.workspace = true
 tau-agent.workspace = true

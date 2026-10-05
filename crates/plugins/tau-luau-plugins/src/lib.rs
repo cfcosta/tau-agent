@@ -146,6 +146,65 @@ impl Declaration {
     }
 }
 
+/// One case of a plugin's tests, as it came out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestResult {
+    /// Its file under `tests/`, without `.luau`.
+    pub file: String,
+    pub name: String,
+    pub passed: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Where a plugin of the plugins repository stands (ADR 0027).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Standing {
+    /// Its version at trunk is the one runs get.
+    Active,
+    /// It reaches further than the version the person allowed: it waits
+    /// for them, and the version before stays active, if there is one.
+    Waiting { grown: Vec<String> },
+    /// Its tests fail at trunk: the version before stays active.
+    Failing,
+    /// It does not load at trunk: the version before stays active.
+    Broken { error: String },
+}
+
+/// A plugin of the plugins repository, as the Plugins screen shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Entry {
+    /// Its folder.
+    pub name: String,
+    pub description: String,
+    pub standing: Standing,
+    /// What it declares at trunk, when it loads.
+    pub declaration: Option<Declaration>,
+    pub tests: Vec<TestResult>,
+    /// An earlier version is active while this one is not.
+    pub keeps_earlier: bool,
+}
+
+/// The plugins repository as the host last read it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Overview {
+    /// Trunk's commit, once read.
+    pub commit: Option<String>,
+    pub plugins: Vec<Entry>,
+    /// Why the repository could not be read, if it could not.
+    pub error: Option<String>,
+}
+
+/// What the plugins page asks the host.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "act", rename_all = "snake_case")]
+pub enum Act {
+    /// Lets `plugin`'s waiting version reach what it asks, and activates
+    /// it.
+    Allow { plugin: String },
+}
+
 /// What the host publishes about a run's Luau plugins, as tau-luau-plugins'
 /// records: live and stored runs, on the computer and the phone, fold
 /// them the same way.
