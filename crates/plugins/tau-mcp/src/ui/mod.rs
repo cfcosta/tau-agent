@@ -515,6 +515,7 @@ impl UiPlugin for McpUi {
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
+            .settings(page::settings_pane)
             .page(
                 Page::new("servers", page::render)
                     .title(|_| "MCP servers".to_owned()),

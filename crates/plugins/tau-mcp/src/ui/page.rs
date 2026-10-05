@@ -347,8 +347,10 @@ fn action(
 pub fn servers_of<'a>(
     view: &'a ViewCx<'_, McpUi>,
 ) -> (Option<String>, &'a Servers) {
+    // A settings pane names the repository as its scope (ADR 0029).
     match view
         .param("repo")
+        .or_else(|| view.scope())
         .filter(|repo| !repo.is_empty())
         .and_then(|repo| Some((repo.to_owned(), view.repo(repo)?)))
     {
@@ -372,6 +374,17 @@ const INDENT: f32 = 17.;
 /// repository servers waiting for approval, entries that were skipped,
 /// and each server with its tools.
 pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
+    draw(view, true)
+}
+
+/// Its settings pane: the servers, everywhere or in the repository in
+/// scope, as the page has them, inside the host's pane.
+pub fn settings_pane(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
+    draw(view, false)
+}
+
+/// The page's content, on a screen of its own when `screen`.
+fn draw(view: &mut ViewCx<'_, McpUi>, screen: bool) -> AnyElement {
     let t = view.theme().clone();
     let compact = view.compact;
     let (repo, servers) = servers_of(view);
@@ -422,13 +435,17 @@ pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
         .editor
         .clone()
         .map(|editor| editor_modal(view, &editor, &servers.user_names, &t));
+    let content = if screen {
+        ui::screen("mcp-servers", compact, content).into_any_element()
+    } else {
+        content.into_any_element()
+    };
     div()
         .relative()
-        .flex_1()
-        .min_h(rems(0.))
+        .when(screen, |page| page.flex_1().min_h(rems(0.)))
         .flex()
         .flex_col()
-        .child(ui::screen("mcp-servers", compact, content))
+        .child(content)
         .when_some(editor, |page, editor| page.child(editor))
         .into_any_element()
 }

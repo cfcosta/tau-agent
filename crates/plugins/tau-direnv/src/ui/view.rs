@@ -348,3 +348,73 @@ pub fn menu_entry(
             .into_any_element(),
     )
 }
+
+/// Its settings pane (ADR 0029): whether each repository's `.envrc`
+/// loads for agent commands. The choice is a repository's own, so the
+/// pane shows the repository in scope, or every one with an `.envrc`.
+pub fn settings_pane(view: &mut ViewCx<'_, DirenvUi>) -> AnyElement {
+    let t = view.theme().clone();
+    let scope = view.scope().map(str::to_owned);
+    let repos: Vec<(String, crate::RepoData)> = view
+        .repos()
+        .filter(|(name, _)| scope.as_deref().is_none_or(|scope| scope == *name))
+        .map(|(name, data)| (name.to_owned(), data.clone()))
+        .collect();
+    let rows: Vec<AnyElement> = repos
+        .iter()
+        .filter(|(_, data)| data.envrc || scope.is_some())
+        .map(|(repo, data)| {
+            let on = view.settings.repos.get(repo) == Some(&true);
+            let why = if !data.envrc {
+                Some("No .envrc in this repository.")
+            } else if !data.direnv {
+                Some("direnv is not installed.")
+            } else {
+                None
+            };
+            let (handle, name) = (view.handle.clone(), repo.clone());
+            div()
+                .id(SharedString::from(format!("envrc-setting-{repo}")))
+                .flex()
+                .items_center()
+                .gap(sp(4.))
+                .px(sp(4.))
+                .py(sp(3.))
+                .border_b_1()
+                .border_color(t.border)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .flex()
+                        .flex_col()
+                        .gap(sp(0.75))
+                        .child(mono(repo.clone(), Type::SMALL, t.text))
+                        .child(ui::text(
+                            why.unwrap_or("Agent commands run in its .envrc's environment."),
+                            Type::CAPTION,
+                            t.muted,
+                        )),
+                )
+                .when(why.is_none(), |row| {
+                    row.child(ui::switch(on, &t)).cursor_pointer().on_click(
+                        move |_, _, cx| {
+                            handle.act(
+                                Act::Decide {
+                                    repo: name.clone(),
+                                    load: !on,
+                                },
+                                cx,
+                            )
+                        },
+                    )
+                })
+                .into_any_element()
+        })
+        .collect();
+    if rows.is_empty() {
+        return ui::empty("No repository has an .envrc.", &t)
+            .into_any_element();
+    }
+    ui::card(&t).children(rows).into_any_element()
+}

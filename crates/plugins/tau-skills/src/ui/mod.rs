@@ -115,6 +115,13 @@ impl UiPlugin for SkillsUi {
             },
             seams: vec![Seam::Start, Seam::Tools],
             page: Some(link()),
+            note: Some(tau_ui_plugin::Note::new(
+                match found {
+                    1 => "1 skill".to_owned(),
+                    n => format!("{n} skills"),
+                },
+                tau_ui_kit::theme::Tone::Quiet,
+            )),
             ..PluginInfo::default()
         }
     }

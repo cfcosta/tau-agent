@@ -120,10 +120,17 @@ impl UiPlugin for DirenvUi {
         &self,
         _host: &Host,
         _cx: &HostCx,
-        _settings: &Settings,
+        settings: &Settings,
     ) -> PluginInfo {
+        let on = settings.repos.values().filter(|on| **on).count();
         PluginInfo {
             group: tau_ui_plugin::Group::Environment,
+            note: (on > 0).then(|| {
+                tau_ui_plugin::Note::new(
+                    format!("on in {on}"),
+                    tau_ui_kit::theme::Tone::Quiet,
+                )
+            }),
             description: "Runs agent commands in the repository's direnv \
                           environment, once you allow it"
                 .into(),
@@ -177,5 +184,6 @@ impl UiPlugin for DirenvUi {
             .contribute(points::COMPOSER, view::question)
             .contribute(points::RUN_BANNER, view::card)
             .contribute(points::REPO_MENU, view::menu_entry)
+            .settings(view::settings_pane)
     }
 }
