@@ -740,8 +740,8 @@ effort the model does not take.
      caller's lands its conflicts, and the note names the files this
      landing left in conflict, not those the caller's head held already.
      Each sub-agent's section is its answer and a line on what landed,
-     which starts by saying which limit stopped it, if one did (`It
-     stopped at its turn limit.`). Its details list each landing in
+     which starts by saying which limit stopped it, if one did
+     (`It stopped at its turn limit.`). Its details list each landing in
      `landed`: `run`, `task`, the `landing`, the `conflicts` it brought,
      and the `limit`. After landing, the sub-agent's workspace and
      bookmark go.
