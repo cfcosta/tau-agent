@@ -267,20 +267,14 @@ pub fn outline(
             .min_h(rems(2.))
             .when(index > 0, |row| row.border_t_1().border_color(t.border))
             .when(is_open, |row| row.bg(t.raised))
-            .child(
-                div().w(rems(0.75)).flex_none().children(opens.then(|| {
-                    icon(
-                        if is_open { Icon::Down } else { Icon::Chevron },
-                        IconSize::SMALL,
-                        t.dim,
-                    )
-                })),
-            )
-            .child(mono(
-                format!("{}", index + 1),
-                Type::MICRO,
-                t.dim,
-            ))
+            .child(div().w(rems(0.75)).flex_none().children(opens.then(|| {
+                icon(
+                    if is_open { Icon::Down } else { Icon::Chevron },
+                    IconSize::SMALL,
+                    t.dim,
+                )
+            })))
+            .child(mono(format!("{}", index + 1), Type::MICRO, t.dim))
             .child(icon(line.icon, IconSize::SMALL, t.dim))
             .child(
                 div()
@@ -397,10 +391,14 @@ fn object(fields: &Map<String, Value>, t: &Theme) -> Div {
                 .flex()
                 .gap(sp(3.))
                 .child(
-                    mono(key.clone(), Type::CAPTION, t.syntax.color(Kind::Property))
-                        .w(rems(9.))
-                        .flex_none()
-                        .truncate(),
+                    mono(
+                        key.clone(),
+                        Type::CAPTION,
+                        t.syntax.color(Kind::Property),
+                    )
+                    .w(rems(9.))
+                    .flex_none()
+                    .truncate(),
                 )
                 .child(value(v, t).flex_1().min_w(rems(0.)).truncate())
         }))
@@ -439,7 +437,11 @@ fn text_block(text: &str, t: &Theme) -> Div {
             t.text_soft,
         ))
         .when(more > 0, |block| {
-            block.child(mono(format!("… {more} more lines"), Type::MICRO, t.dim))
+            block.child(mono(
+                format!("… {more} more lines"),
+                Type::MICRO,
+                t.dim,
+            ))
         })
 }
 

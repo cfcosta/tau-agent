@@ -40,7 +40,8 @@ async fn the_details_keep_each_item_as_made() {
 /// The model reads a JSON item as text, as before.
 #[tokio::test]
 async fn the_model_reads_json_as_text() {
-    let outcome = script(&Arc::new(FakeHost::default()), "return { n = 1 }").await;
+    let outcome =
+        script(&Arc::new(FakeHost::default()), "return { n = 1 }").await;
     let rendered = outcome.render(10_000);
     assert!(
         rendered
@@ -59,8 +60,10 @@ fn the_details_are_bounded(tc: hegel::TestCase) {
         gs::vecs(gs::integers::<usize>().max_value(MAX_OUTPUT_DETAIL_BYTES))
             .max_size(6),
     );
-    let items: Vec<Item> =
-        sizes.iter().map(|&n| Item::Text("é".repeat(n / 2))).collect();
+    let items: Vec<Item> = sizes
+        .iter()
+        .map(|&n| Item::Text("é".repeat(n / 2)))
+        .collect();
     let details = output_details(&items);
     assert_eq!(details.len(), items.len());
     let kept: usize = details
