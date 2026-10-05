@@ -271,21 +271,15 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
             })
         }
         details::COMMIT => {
-            let details = details(data)?;
-            let committed: crate::ChangeInfo =
-                serde_json::from_value(details.get("committed")?.clone())
-                    .ok()?;
-            let left: Vec<String> = details
-                .get("left")
-                .and_then(|left| serde_json::from_value(left.clone()).ok())
-                .unwrap_or_default();
+            let commit = details(data).and_then(commit_card::Commit::parse)?;
             Some(CardView {
-                label: Some(match left.len() {
-                    0 => committed.change_id.chars().take(8).collect(),
-                    n => format!("{n} left uncommitted"),
-                }),
+                head: Some(
+                    commit_card::summary(&commit, &t).into_any_element(),
+                ),
+                label: Some(commit.label()),
                 body: Some(
-                    commit_card::body(&committed, &left, &t).into_any_element(),
+                    commit_card::body(&card, &commit, &t, compact)
+                        .into_any_element(),
                 ),
                 folds: true,
                 ..CardView::default()

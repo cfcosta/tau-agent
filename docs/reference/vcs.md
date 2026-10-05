@@ -224,6 +224,13 @@ A changed path is a `FileChange`:
   not change, naming what it does change.
 - Details: `committed`, `working_copy`, and `left`: the paths still
   changed in the new `@`, in path order (empty without `paths`).
+  For the card, also the committed change's `parent`, its `files`,
+  `diff` and `truncated` against that parent (as `vcs_show` has them),
+  and `left_files`, `left_diff` and `left_truncated`: what the new `@`
+  holds on top of it.
+- The card draws the stack the commit made: closed, a small graph and
+  the subject; open, `@` with what stayed in it, the new change with its
+  message and files, and the parent below.
 - Nothing is committed for the model (ADR 0014): its commits are how a
   run's work is reviewed, landed and pushed, so the description asks
   for a Conventional Commits message at each boundary a reviewer would

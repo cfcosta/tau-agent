@@ -2016,6 +2016,9 @@ fn change_log() -> ToolOutput {
 pub const SHOW_CALL: &str = "c13";
 /// The session's `vcs_diff` call, on the commit that adds the tests.
 pub const DIFF_CALL: &str = "c14";
+/// The session's `vcs_commit` call: the change that honors the header,
+/// with the tests left in `@`.
+pub const COMMIT_CALL: &str = "c16";
 /// The files `--open status`, `--open show` and `--open diff` open in
 /// their cards.
 pub const SHOW_FILE: &str = "crates/tau-ai/src/retry.rs";
@@ -2202,6 +2205,61 @@ fn change_show() -> ToolOutput {
             "author": { "name": "tau", "email": "tau@localhost" },
         }),
     )
+}
+
+/// What the tests add, left in `@` by the selective commit.
+const RETRY_TESTS: &str = "\
+diff --git a/crates/tau-ai/tests/retry_after.rs b/crates/tau-ai/tests/retry_after.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/tau-ai/tests/retry_after.rs
+@@ -0,0 +1,4 @@
++//! A 429 or 503 with `retry-after` waits as long as the server says,
++//! up to the policy's `max_delay`.
++
++use std::time::Duration;
+";
+
+/// The selective commit of the change that honors the header: its
+/// source goes into the change, its tests stay in `@`.
+fn change_commit() -> ToolOutput {
+    let description = "feat(tau-ai): honor retry-after on 429 and 503\n\n\
+                       The server's hint wins over our backoff, capped at the \
+                       policy's max_delay.\n";
+    let mut output = vcs_output(
+        &format!(
+            "Committed change {} 28b5b7a767c7 feat(tau-ai): honor retry-after on 429 and 503\n\
+             Left uncommitted in the working copy: crates/tau-ai/tests/retry_after.rs\n",
+            &LOG_PICKED[..12]
+        ),
+        "",
+        json!({
+            "committed": vcs_change(
+                LOG_PICKED,
+                "28b5b7a767c76fb008f86bebb2737f6a6f0fb23c",
+                description,
+            ),
+            "working_copy": vcs_change(
+                "wmtpklqoyxrnvuzslmkxwopqtrnvyuzk",
+                "4c1f0a9e2b7d6c5a3e8f1b0d9c7a6e5f4d3c2b1a",
+                "",
+            ),
+            "parent": vcs_change(
+                "qzpxumwywmppokoyozvookknoxqqksqt",
+                "7a8d41bed440e50454f31af3176813e02ea68ef7",
+                "refactor(tau-ai): the policy takes the parsed hint\n",
+            ),
+            "left": ["crates/tau-ai/tests/retry_after.rs"],
+            "left_files": diff_files(RETRY_TESTS),
+            "left_diff": RETRY_TESTS,
+            "left_truncated": false,
+        }),
+    );
+    let details = output.details.as_mut().unwrap();
+    details["working_copy"]["working_copy"] = json!(true);
+    details["files"] = json!(diff_files(HONOR_RETRY_AFTER));
+    details["diff"] = json!(HONOR_RETRY_AFTER);
+    output
 }
 
 fn change_diff() -> ToolOutput {
@@ -2684,6 +2742,16 @@ pub fn script() -> Vec<Step> {
         json!({ "change": "szmltytw" }),
         change_diff(),
     );
+    s.tool(
+        200,
+        COMMIT_CALL,
+        "vcs_commit",
+        json!({
+            "message": "feat(tau-ai): honor retry-after on 429 and 503",
+            "paths": ["crates/tau-ai/src"],
+        }),
+        change_commit(),
+    );
     s.end_turn(81_000, 1_300, 0.052);
 
     s.turn();
@@ -2811,6 +2879,13 @@ mod tests {
         assert_eq!(status.working_copy.info.change_id, LOG_PICKED);
         assert_eq!(status.files.len(), show.files.len());
         assert!(status.files.iter().all(|file| !file.hunks.is_empty()));
+        let commit =
+            tau_vcs::ui::commit_card::Commit::parse(&details(COMMIT_CALL))
+                .expect("a commit");
+        assert_eq!(commit.files.len(), show.files.len());
+        assert_eq!(commit.left[0].path, DIFF_FILE);
+        assert!(commit.parent.is_some());
+        assert_eq!(commit.label(), "4 of 5 files committed");
     }
 
     #[test]

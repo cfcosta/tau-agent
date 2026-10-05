@@ -267,7 +267,7 @@ fn subject(change: &Change) -> String {
     }
 }
 
-fn kind_badge(change: &Change, t: &Theme) -> Div {
+pub(super) fn kind_badge(change: &Change, t: &Theme) -> Div {
     let (color, bg) = log_card::kind_colors(change.kind.as_deref(), t);
     mono(change.kind.clone().unwrap_or_default(), Type::MICRO, color)
         .flex_shrink_0()

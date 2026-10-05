@@ -226,6 +226,22 @@ fn commit_takes_only_the_paths_it_names() {
         "{text}"
     );
     assert_eq!(details["left"], json!(["c.txt"]));
+    // For the card: the change's files and diff, its parent, and what
+    // stays in `@`, as a diff of its own.
+    assert_eq!(
+        details["files"],
+        json!([
+            {"path": "a.txt", "kind": "added"},
+            {"path": "dir/b.txt", "kind": "added"},
+        ])
+    );
+    assert!(details["diff"].as_str().unwrap().contains("+a"));
+    assert!(details["parent"]["change_id"].is_string());
+    assert_eq!(
+        details["left_files"],
+        json!([{"path": "c.txt", "kind": "added"}])
+    );
+    assert!(details["left_diff"].as_str().unwrap().contains("+c"));
     let committed = details["committed"]["change_id"].as_str().unwrap();
     let (_, shown) = repo.ok("vcs_show", json!({"change": committed}));
     let diff = shown["diff"].as_str().unwrap();

@@ -343,6 +343,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
     }),
     ("show", |ws, _, cx| vcs_card(ws, SHOW_CALL, SHOW_FILE, cx)),
     ("diff", |ws, _, cx| vcs_card(ws, DIFF_CALL, DIFF_FILE, cx)),
+    ("commit", |ws, _, cx| {
+        vcs_card(ws, COMMIT_CALL, DIFF_FILE, cx)
+    }),
     // The repository tree's states.
     ("repo-open", |ws, _, cx| ws.toggle_repo_open("docbert", cx)),
     // Every chat state a row can show, at once, under tau-agent's main.

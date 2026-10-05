@@ -431,6 +431,7 @@ pub(crate) fn commit(
         Some(paths) => Some(session::matcher(repo_paths(worker, paths)?)),
     };
     let name = workspace_name(worker)?;
+    let settings = worker.workspace()?.settings().clone();
     let (snapshot, (committed, left)) =
         session::mutate(worker, "commit", |tx, wc| {
             let Some(matcher) = &matcher else {
@@ -488,7 +489,30 @@ pub(crate) fn commit(
             Ok((committed, left))
         })?;
     let repo = snapshot.repo.as_ref();
-    let committed = ChangeInfo::of(repo, &committed, snapshot.wc.id())?;
+    let commit = repo.store().get_commit(committed.id())?;
+    // What the card draws: the change on its parent with its diff, and
+    // what stays in the new `@` on top of it.
+    let parent = match block_on(commit.parents())?.first() {
+        Some(parent) => Some(ChangeInfo::of(repo, parent, snapshot.wc.id())?),
+        None => None,
+    };
+    let (diff_text, files) = diff::unified(
+        repo,
+        &settings,
+        &block_on(commit.parent_tree(repo))?,
+        &commit.tree(),
+        &EverythingMatcher,
+    )?;
+    let (diff_text, truncated) = diff::cut(diff_text);
+    let (left_text, left_files) = diff::unified(
+        repo,
+        &settings,
+        &commit.tree(),
+        &snapshot.wc.tree(),
+        &EverythingMatcher,
+    )?;
+    let (left_text, left_truncated) = diff::cut(left_text);
+    let committed = ChangeInfo::of(repo, &commit, snapshot.wc.id())?;
     let (line, info) = wc_line(&snapshot)?;
     let mut text = format!("Committed change {}", committed.line());
     if !left.is_empty() {
@@ -503,6 +527,13 @@ pub(crate) fn commit(
             "committed": committed,
             "working_copy": info,
             "left": left,
+            "parent": parent,
+            "files": files,
+            "diff": diff_text,
+            "truncated": truncated,
+            "left_files": left_files,
+            "left_diff": left_text,
+            "left_truncated": left_truncated,
         }),
     })
 }
