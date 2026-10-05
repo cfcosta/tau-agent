@@ -46,21 +46,27 @@ fn alert(
     move |ws, error, cx| ws.apply(HostUpdate::alert(title, error), cx)
 }
 
-/// Builds the catalog on the host's runtime and shows it: after
-/// anything that changes what it lists.
-pub(super) fn refresh_catalog(
+/// Shows each catalog the host pushes, for as long as the workspace
+/// lives (ADR 0028).
+fn show_catalogs(
     host: &Arc<Host>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
-    let catalog = host.spawn(async move |host| host.catalog().await);
+    let mut catalogs = host.follow_catalog();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
-        let Ok(catalog) = catalog.await else {
-            return;
-        };
-        let _ = workspace
-            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
+        while catalogs.changed().await.is_ok() {
+            let Some(catalog) = catalogs.borrow_and_update().clone() else {
+                continue;
+            };
+            let shown = workspace.update(cx, |ws, cx| {
+                ws.apply(HostUpdate::catalog(catalog), cx)
+            });
+            if shown.is_err() {
+                return;
+            }
+        }
     })
     .detach();
 }
@@ -216,7 +222,7 @@ pub(super) fn show_drain(
     // Landing on a main chat moves trunk: what it would push to GitHub
     // changes too.
     if has_landed {
-        refresh_catalog(host, workspace, cx);
+        host.catalog_changed();
     }
     if let (Some(files), Some(hook)) = (notify, host.conflicts_hook.clone()) {
         hook(&main, &repo, &files, cx);
@@ -343,7 +349,7 @@ pub(super) fn update_in_background(
         }
         updating.push(name.to_owned());
     }
-    refresh_catalog(host, workspace, cx);
+    host.catalog_changed();
     let counted = host.job();
     let job = {
         let name = name.to_owned();
@@ -363,18 +369,18 @@ pub(super) fn update_in_background(
                 Err(_) => format!("{name} was not updated"),
             };
             *updater.last_update.lock().expect("not poisoned") = Some(summary);
-            (result.map(drop), updater.catalog().await)
+            updater.catalog_changed();
+            result.map(drop)
         })
     };
     let name = name.to_owned();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
         let _counted = counted;
-        let Ok((result, catalog)) = job.await else {
+        let Ok(result) = job.await else {
             return;
         };
         let _ = workspace.update(cx, |ws, cx| {
-            ws.apply(HostUpdate::catalog(catalog), cx);
             if let (true, Err(error)) = (asked, result) {
                 ws.apply(
                     HostUpdate::alert(
@@ -425,7 +431,7 @@ fn recover_in_background(
 ) {
     // The repositories as they are, before recovery and updates.
     if !slots.is_empty() {
-        refresh_catalog(host, workspace, cx);
+        host.catalog_changed();
     }
     let counted = host.job();
     let job = host.spawn(async move |recoverer| recoverer.recover().await);
@@ -505,7 +511,7 @@ impl Host {
     ) -> Arc<Host> {
         let host = Arc::new(self);
         let attached = host.clone();
-        refresh_catalog(&host, workspace, cx);
+        show_catalogs(&host, workspace, cx);
         {
             let history = host.spawn(async move |host| host.history().await);
             let workspace = workspace.downgrade();
@@ -534,11 +540,8 @@ impl Host {
             cx,
         );
         // Once a repository is imported, the plugins and the status bar
-        // change.
+        // change: the host pushes its catalog then.
         let slots = host.repos.lock().expect("not poisoned").clone();
-        for slot in &slots {
-            refresh_when_imported(&host, slot, workspace, cx);
-        }
         recover_in_background(&host, slots, workspace, cx);
         github::restore(workspace, &host.config.credentials, &host.github, cx);
         let handler = host.clone();
@@ -552,7 +555,7 @@ impl Host {
                     return;
                 };
                 check_eligibility(&host, &workspace, cx);
-                refresh_catalog(&host, &workspace, cx);
+                host.catalog_changed();
                 if let Err(error) = applied {
                     workspace.update(cx, |ws, cx| {
                         ws.apply(
@@ -689,21 +692,15 @@ impl Host {
                         let result = host.push_main(&job_repo, fetch).await;
                         // The count ahead of GitHub, and trunk after a
                         // fetch, change with it.
-                        (result, host.catalog().await)
+                        host.catalog_changed();
+                        result
                     });
                     let (repo, workspace) = (repo.clone(), workspace.downgrade());
                     cx.spawn(async move |cx| {
-                        let (result, catalog) = match job.await {
-                            Ok((result, catalog)) => (result, Some(catalog)),
-                            Err(error) => (
-                                Err(crate::push::PushFailure::Failed(error.to_string())),
-                                None,
-                            ),
-                        };
+                        let result = job.await.unwrap_or_else(|error| {
+                            Err(crate::push::PushFailure::Failed(error.to_string()))
+                        });
                         let _ = workspace.update(cx, |ws, cx| {
-                            if let Some(catalog) = catalog {
-                                ws.apply(HostUpdate::catalog(catalog), cx);
-                            }
                             ws.apply(HostUpdate::Pushed { repo, result }, cx);
                         });
                     })
@@ -723,7 +720,7 @@ impl Host {
                 WorkspaceEvent::JevKey { key } => {
                     let saved =
                         handler.config.credentials.set_jev_key(key.as_deref());
-                    refresh_catalog(&handler, &workspace, cx);
+                    handler.catalog_changed();
                     if let Err(error) = saved {
                         workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::alert("Could not save the TypeSafe key", error.to_string()), cx);
@@ -751,7 +748,7 @@ impl Host {
                 WorkspaceEvent::PluginSettings { plugin, settings } => {
                     let saved =
                         handler.save_plugin_settings(plugin, settings.clone());
-                    refresh_catalog(&handler, &workspace, cx);
+                    handler.catalog_changed();
                     if let Err(error) = saved {
                         workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::alert(format!("Could not save {plugin}'s settings"), format!("{error:#}")), cx);
@@ -866,7 +863,7 @@ impl Host {
                     });
                     // What is saved, for every interface; the one that
                     // changed it showed the change already.
-                    refresh_catalog(&handler, &workspace, cx);
+                    handler.catalog_changed();
                     if let Err(error) = saved {
                         workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::alert("Could not save the model settings", format!("{error:#}")), cx)
@@ -983,7 +980,7 @@ impl Host {
                     // The list without it, for every interface; the one
                     // that hid it showed that already.
                     let hidden = handler.hide_repo(repo);
-                    refresh_catalog(&handler, &workspace, cx);
+                    handler.catalog_changed();
                     if let Err(error) = hidden {
                         workspace.update(cx, |ws, cx| {
                             ws.apply(HostUpdate::alert("Could not save the repository list", format!("{error:#}")), cx)
@@ -1028,11 +1025,8 @@ impl Host {
             while let Some(event) = events.recv().await {
                 // The run may have asked Jev: the Plugins screen's count
                 // follows.
-                if matches!(event, RunEvent::RunEnd { .. })
-                    && let Some(entity) = workspace.upgrade()
-                {
-                    let host = host.clone();
-                    cx.update(|cx| refresh_catalog(&host, &entity, cx));
+                if matches!(event, RunEvent::RunEnd { .. }) {
+                    host.catalog_changed();
                 }
                 // A pull request that keeps pushing takes the commits the
                 // turn made.

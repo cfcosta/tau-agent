@@ -226,6 +226,10 @@ pub struct Host {
     /// run's workspace.
     /// Each repository's own locks, by name (ADR 0028).
     repo_states: Mutex<HashMap<String, Arc<RepoState>>>,
+    /// Asks the catalog's builder for a new one ([`Host::catalog_changed`]).
+    catalog_wanted: Arc<tokio::sync::Notify>,
+    /// The latest catalog the builder made, for the interface to show.
+    catalog_feed: tokio::sync::watch::Sender<Option<Catalog>>,
     /// The step after which landings stop, as if tau closed there: for
     /// tests ([`Host::cut_landing_after`]).
     cut_landing: Mutex<Option<LandingStep>>,
@@ -407,7 +411,7 @@ impl Host {
                 path: listed.path.clone(),
                 project: ProjectSlot::new(ProjectState::Importing),
             };
-            host.spawn_import(&slot)?;
+            host.spawn_import(&slot);
             slots.push(slot);
         }
         *host.repos.lock().expect("not poisoned") = slots;
@@ -469,6 +473,8 @@ impl Host {
             events,
             hosted: Vec::new(),
             repo_states: Mutex::default(),
+            catalog_wanted: Arc::default(),
+            catalog_feed: tokio::sync::watch::Sender::new(None),
             cut_landing: Mutex::new(None),
             lanes: Mutex::default(),
             previews: Mutex::default(),
@@ -1171,6 +1177,35 @@ impl Host {
     )]
     pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
         self.runtime.block_on(future)
+    }
+
+    /// What the catalog lists changed: the host builds a new one on its
+    /// runtime and pushes it to the interface (ADR 0028). Changes that
+    /// come together make one build.
+    pub fn catalog_changed(&self) {
+        self.catalog_wanted.notify_one();
+    }
+
+    /// Starts the catalog's builder, which makes one whenever it is
+    /// asked, and pushes it to the receivers it returns. It stops once
+    /// the host is gone.
+    pub(super) fn follow_catalog(
+        self: &Arc<Self>,
+    ) -> tokio::sync::watch::Receiver<Option<Catalog>> {
+        let (wanted, host) =
+            (self.catalog_wanted.clone(), Arc::downgrade(self));
+        self.runtime.spawn(async move {
+            loop {
+                wanted.notified().await;
+                let Some(host) = host.upgrade() else {
+                    return;
+                };
+                let catalog = host.catalog().await;
+                host.catalog_feed.send_replace(Some(catalog));
+            }
+        });
+        self.catalog_changed();
+        self.catalog_feed.subscribe()
     }
 
     /// The catalog now, for the process's entry point to open its window

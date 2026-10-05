@@ -337,7 +337,7 @@ pub(super) fn apply_push(
         Push::Record { run, plugin, body } => workspace.update(cx, |ws, cx| {
             ws.apply(HostUpdate::PluginRecord { run, plugin, body }, cx)
         }),
-        Push::Catalog => super::attach::refresh_catalog(host, workspace, cx),
+        Push::Catalog => host.catalog_changed(),
         Push::Alert { title, message } => workspace.update(cx, |ws, cx| {
             ws.apply(HostUpdate::alert(title, message), cx)
         }),

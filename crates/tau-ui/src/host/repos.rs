@@ -157,33 +157,6 @@ impl RepoSlot {
     }
 }
 
-/// Refreshes the workspace's catalog once `slot` is imported, if it is
-/// importing.
-pub(super) fn refresh_when_imported(
-    host: &Arc<Host>,
-    slot: &RepoSlot,
-    workspace: &Entity<Workspace>,
-    cx: &mut App,
-) {
-    if !matches!(slot.project.peek(), ProjectState::Importing) {
-        return;
-    }
-    let project = slot.project.clone();
-    let catalog = host.spawn(async move |host| {
-        project.wait().await;
-        host.catalog().await
-    });
-    let workspace = workspace.downgrade();
-    cx.spawn(async move |cx| {
-        let Ok(catalog) = catalog.await else {
-            return;
-        };
-        let _ = workspace
-            .update(cx, |ws, cx| ws.apply(HostUpdate::catalog(catalog), cx));
-    })
-    .detach();
-}
-
 /// A new workspace's name: unique, and sorting by when it was made.
 /// A name for a new workspace: `slug` (a message's first words), then
 /// the time in hex, so it says what it is for and stays unique.
@@ -225,7 +198,7 @@ pub(super) fn clone_into_tau(
             anyhow::Ok((repo, main))
         })
     };
-    let (host, name) = (host.clone(), name.to_owned());
+    let name = name.to_owned();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
         let cloned = match job.await {
@@ -238,9 +211,6 @@ pub(super) fn clone_into_tau(
         cx.update(|cx| {
             let state = match cloned {
                 Ok((repo, main)) => {
-                    if let Some(slot) = host.slot(&repo.name) {
-                        refresh_when_imported(&host, &slot, &workspace, cx);
-                    }
                     let main = main.map(Box::new);
                     workspace.update(cx, |ws, cx| {
                         ws.apply(HostUpdate::Repo { repo, main }, cx)
@@ -258,31 +228,25 @@ pub(super) fn clone_into_tau(
 }
 
 impl Host {
-    /// Opens or copies a repository's project on a thread of its own.
-    pub(super) fn spawn_import(&self, slot: &RepoSlot) -> anyhow::Result<()> {
+    /// Opens or copies a repository's project on the host's runtime;
+    /// the catalog follows once it is done.
+    pub(super) fn spawn_import(&self, slot: &RepoSlot) {
         let project = slot.project.clone();
         let source = slot.path.to_string_lossy().into_owned();
         let dir = self.config.project_dir_of(&slot.path);
-        std::thread::Builder::new()
-            .name("tau-import".into())
-            .spawn(move || {
-                project.set(
-                    match tau_vcs::ProjectRepo::open_or_import(
-                        &source,
-                        dir,
-                        identity(),
-                    ) {
-                        Ok(project) => ProjectState::Ready(project.into()),
-                        Err(error) => {
-                            eprintln!(
-                                "tau-ui: cannot import {source}: {error:#}"
-                            );
-                            ProjectState::Failed(format!("{error:#}"))
-                        }
-                    },
-                );
-            })?;
-        Ok(())
+        let catalog = self.catalog_wanted.clone();
+        self.runtime.spawn(async move {
+            let opened =
+                Project::open_or_import(source.clone(), dir, identity()).await;
+            project.set(match opened {
+                Ok(project) => ProjectState::Ready(project),
+                Err(error) => {
+                    eprintln!("tau-ui: cannot import {source}: {error:#}");
+                    ProjectState::Failed(format!("{error:#}"))
+                }
+            });
+            catalog.notify_one();
+        });
     }
 
     /// Lists `project` as the repository `name`, in place of any listed
@@ -516,7 +480,7 @@ impl Host {
                 path: canonical(dir),
                 project: ProjectSlot::new(ProjectState::Importing),
             };
-            self.spawn_import(&slot)?;
+            self.spawn_import(&slot);
             self.repos.lock().expect("not poisoned").push(slot);
         }
         let mut repo = Repo::new(&name, canonical(dir).display().to_string());
