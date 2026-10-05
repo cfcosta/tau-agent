@@ -3,7 +3,7 @@
 
 #![allow(
     clippy::disallowed_methods,
-    reason = "a test is a synchronous entry point (ADR 0027)"
+    reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
 /// Every run gets `ask`, so their tools match and share the prompt

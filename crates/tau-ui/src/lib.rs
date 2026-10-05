@@ -12,7 +12,7 @@
 
 #![expect(
     clippy::disallowed_methods,
-    reason = "not migrated to async yet (ADR 0027)"
+    reason = "not migrated to async yet (ADR 0028)"
 )]
 
 pub mod accounts;

@@ -1,5 +1,5 @@
 //! [`Vcs`]: a handle on one jj workspace (`docs/reference/vcs.md`,
-//! "Threading"; ADR 0027).
+//! "Threading"; ADR 0028).
 //!
 //! jj-lib's futures are not `Send`, and much of their work is blocking
 //! file and object I/O. So the workspace sits behind an async lock, and
@@ -12,7 +12,7 @@
 
 #![allow(
     clippy::disallowed_methods,
-    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+    reason = "runs only inside a job in spawn_blocking (ADR 0028)"
 )]
 
 use std::{

@@ -79,7 +79,7 @@ impl Launcher for Launchers {
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "a test is a synchronous entry point (ADR 0027)"
+    reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 mod tests {
     use super::*;

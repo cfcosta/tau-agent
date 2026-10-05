@@ -46,7 +46,7 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   and object I/O. So each `Vcs` keeps its workspace behind an async
   lock, and each job takes the lock and runs on tokio's
   `spawn_blocking`, which drives jj-lib's futures with `pollster`
-  ([ADR 0027](../decisions/0027-async-all-the-way-blocking-only-in-spawn-blocking.md)).
+  ([ADR 0028](../decisions/0028-async-all-the-way-blocking-only-in-spawn-blocking.md)).
   Jobs on one workspace run one at a time, in the order they asked, and
   no thread waits between them.
 - A tool future only awaits its job. It never holds jj-lib types across

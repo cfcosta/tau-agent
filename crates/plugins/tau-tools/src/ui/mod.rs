@@ -485,7 +485,7 @@ impl UiPlugin for ToolsUi {
                 let artifact: Artifact = serde_json::from_value(
                     serde_json::to_value(&grant.artifact)?,
                 )?;
-                // Files: read off the async workers (ADR 0027).
+                // Files: read off the async workers (ADR 0028).
                 let dir = repo.dir.join("artifacts");
                 let range = tokio::task::spawn_blocking(move || {
                     Bytes::new(dir, Quotas::default())?.read_range(

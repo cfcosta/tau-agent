@@ -2,7 +2,7 @@
 
 #![allow(
     clippy::disallowed_methods,
-    reason = "a test is a synchronous entry point (ADR 0027)"
+    reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
 use async_trait::async_trait;

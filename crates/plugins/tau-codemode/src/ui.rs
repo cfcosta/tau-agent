@@ -194,11 +194,11 @@ pub fn decide_promotion(
 
 /// Decides a promotion request, under the repository's manifest lock.
 /// Blocks: it holds a file lock across its reads of the store, so it
-/// runs in `spawn_blocking` (ADR 0027).
+/// runs in `spawn_blocking` (ADR 0028).
 #[cfg(feature = "host")]
 #[allow(
     clippy::disallowed_methods,
-    reason = "runs in spawn_blocking, holding a file lock across its store reads (ADR 0027)"
+    reason = "runs in spawn_blocking, holding a file lock across its store reads (ADR 0028)"
 )]
 fn approve_or_decline(
     cx: &HostCx,

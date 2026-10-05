@@ -183,7 +183,7 @@ fn main() -> ExitCode {
 
 #[allow(
     clippy::disallowed_methods,
-    reason = "the process's entry point runs its async work here (ADR 0027)"
+    reason = "the process's entry point runs its async work here (ADR 0028)"
 )]
 fn run() -> Result<(), CliError> {
     let options = parse(std::env::args().skip(1))?;

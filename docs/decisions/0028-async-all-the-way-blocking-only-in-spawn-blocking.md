@@ -1,4 +1,4 @@
-# 0027: Async all the way; blocking only in `spawn_blocking`
+# 0028: Async all the way; blocking only in `spawn_blocking`
 
 - Status: accepted.
 - Date: 2026-10-05

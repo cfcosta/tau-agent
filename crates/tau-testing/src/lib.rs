@@ -18,7 +18,7 @@ use std::future::Future;
 /// paused time jumps forward while the runtime waits on I/O.
 #[allow(
     clippy::disallowed_methods,
-    reason = "tests are synchronous entry points, and run async code through here (ADR 0027)"
+    reason = "tests are synchronous entry points, and run async code through here (ADR 0028)"
 )]
 pub fn block_on<F: Future>(future: F) -> F::Output {
     tokio::runtime::Builder::new_current_thread()
@@ -45,7 +45,7 @@ thread_local! {
 /// in the next.
 #[allow(
     clippy::disallowed_methods,
-    reason = "tests are synchronous entry points, and run async code through here (ADR 0027)"
+    reason = "tests are synchronous entry points, and run async code through here (ADR 0028)"
 )]
 pub fn block_on_io<F: Future>(future: F) -> F::Output {
     IO_RUNTIME.with(|runtime| runtime.block_on(future))

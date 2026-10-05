@@ -10,11 +10,11 @@
 //!
 //! Runs never touch the user's own checkout. [`ProjectRepo`]'s functions
 //! block; async code reaches them through [`Project`], which runs each
-//! job in `spawn_blocking`, one at a time per repository (ADR 0027).
+//! job in `spawn_blocking`, one at a time per repository (ADR 0028).
 
 #![allow(
     clippy::disallowed_methods,
-    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+    reason = "runs only inside a job in spawn_blocking (ADR 0028)"
 )]
 
 use std::{
@@ -72,7 +72,7 @@ pub struct ProjectRepo {
 
 /// A project, for async code: each job on it runs in tokio's
 /// `spawn_blocking`, after the jobs on the same repository that asked
-/// before it (ADR 0027). Cheap to clone; every handle on one repository,
+/// before it (ADR 0028). Cheap to clone; every handle on one repository,
 /// however it was made, shares its turn.
 #[derive(Clone)]
 pub struct Project {

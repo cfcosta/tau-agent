@@ -3,7 +3,7 @@
 
 #![allow(
     clippy::disallowed_methods,
-    reason = "runs only inside a job in spawn_blocking (ADR 0027)"
+    reason = "runs only inside a job in spawn_blocking (ADR 0028)"
 )]
 
 use futures_util::StreamExt as _;

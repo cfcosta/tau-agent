@@ -38,7 +38,7 @@ fn off_thread<T: Send + 'static>(
 
 /// Runs `job`'s future on the host's runtime, then hands what it gave
 /// to the workspace: `done` with its value, or `failed` with what went
-/// wrong (ADR 0027). GPUI awaits the task without blocking a thread,
+/// wrong (ADR 0028). GPUI awaits the task without blocking a thread,
 /// and nothing of it runs on the interface's thread.
 fn on_host<T, F>(
     host: &Arc<Host>,

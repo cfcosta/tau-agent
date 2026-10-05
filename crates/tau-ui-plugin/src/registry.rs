@@ -79,7 +79,7 @@ pub struct CommandInfo {
 pub type HostState = Box<dyn Any + Send + Sync>;
 
 /// What a host half's hook gives back: a future the host awaits on its
-/// runtime (ADR 0027).
+/// runtime (ADR 0028).
 pub type HostFuture<'a, T> =
     std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

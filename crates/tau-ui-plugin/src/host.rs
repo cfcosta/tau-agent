@@ -227,7 +227,7 @@ pub struct HostRecord {
 pub struct HostCx {
     pub store: Store,
     /// The host's runtime, to spawn background work on. Nothing blocks
-    /// on it (ADR 0027).
+    /// on it (ADR 0028).
     pub runtime: tokio::runtime::Handle,
     /// Host-wide services, by type.
     pub services: Services,
@@ -384,7 +384,7 @@ impl HostCx {
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
-    reason = "a test is a synchronous entry point (ADR 0027)"
+    reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 mod tests {
     use std::sync::Mutex;
