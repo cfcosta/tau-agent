@@ -71,8 +71,12 @@ A sub-agent starts blank: it sees only its input. `SubAgent::forking`
 makes each call fork the calling run instead. The sub-agent then sees
 the caller's stored transcript, the turn that made the call, an output
 for each call in that turn (its own, a sibling sub-agent's, or another
-tool's, whose result it cannot see), and then its input. `delegate`
-works this way ([0015](../decisions/0015-delegates-fork-their-caller.md)).
+tool's, whose result it cannot see), and then its input.
+`SubAgent::spawn` starts such a sub-agent without waiting for it: it
+has its own events, cancel token and usage, and the caller follows the
+returned `Run` itself. `spawn` works this way
+([0015](../decisions/0015-delegates-fork-their-caller.md),
+[0026](../decisions/0026-sub-agents-run-detached.md)).
 
 Every run's requests carry a `Lineage` in their `Settings`: the run's
 id as its path, sent as `prompt_cache_key`, and for a fork or a forking

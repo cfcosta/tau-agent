@@ -628,6 +628,44 @@ impl SubAgent {
         self
     }
 
+    /// Starts a sub-agent on `input` that outlives the call: it records
+    /// the calling run as its parent and joins its workflow, as
+    /// [`Agent::as_tool`]'s do, but it has its own events, its own cancel
+    /// token and its own usage. The caller goes on at once and follows
+    /// the returned [`Run`] itself.
+    pub fn spawn(
+        &self,
+        input: impl Into<String>,
+        ctx: &ToolCtx,
+    ) -> Result<Run, SubAgentError> {
+        let Some(scope) = &ctx.scope else {
+            return Err(SubAgentError::NotInRun);
+        };
+        let (fork_seq, prelude) = if self.fork {
+            let prelude = fork_prelude(&scope.turn, &scope.call, &self.name);
+            (Some(scope.stored), prelude)
+        } else {
+            (None, Vec::new())
+        };
+        let launch = Launch {
+            kind: RunKind::Subagent {
+                parent: ctx.run.0.to_string(),
+                fork_seq,
+            },
+            parent: Some(ctx.run.clone()),
+            workflow: scope.workflow.clone(),
+            cancel: CancellationToken::new(),
+            text_format: None,
+            inherit_workflow: false,
+            events: Events::Own,
+            resume: None,
+            turns_before: 0,
+            prelude,
+            call: Some(scope.call.clone()),
+        };
+        Ok(self.agent.launch(launch, input.into(), &scope.store))
+    }
+
     /// Runs the child to its end, and answers with its last text.
     async fn ask(
         &self,
