@@ -42,12 +42,18 @@ fn write_round_trips_the_content(tc: TestCase) {
     let details = output.details.expect("details for the card");
     assert_eq!(details["created"], json!(true));
     let diff = details["diff"].as_str().unwrap();
+    // Lines end at `\n` only, on both sides: `str::lines` would also
+    // take a `\r` before it.
     let added: Vec<&str> = diff
-        .lines()
+        .split('\n')
         .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
         .map(|line| &line[1..])
         .collect();
-    assert_eq!(added, content.lines().collect::<Vec<_>>(), "{diff}");
+    let lines: Vec<&str> = content
+        .split_inclusive('\n')
+        .map(|line| line.strip_suffix('\n').unwrap_or(line))
+        .collect();
+    assert_eq!(added, lines, "{diff}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
         content

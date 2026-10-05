@@ -656,13 +656,17 @@ fn apply_replacements_preserving_unchanged_lines(
 }
 
 /// A unified diff (`similar`) of the change, and the first changed line
-/// number in `new` (`tools.md`, "edit", "Result details").
+/// number in `new` (`tools.md`, "edit", "Result details"). Lines end at
+/// `\n` only, as `read` numbers them: `similar`'s own split also ends
+/// one at a lone `\r`.
 pub(crate) fn generate_diff(
     path: &str,
     old: &str,
     new: &str,
 ) -> (String, usize) {
-    let diff = TextDiff::from_lines(old, new);
+    let old: Vec<&str> = old.split_inclusive('\n').collect();
+    let new: Vec<&str> = new.split_inclusive('\n').collect();
+    let diff = TextDiff::from_slices(&old, &new);
     let text = diff
         .unified_diff()
         .context_radius(4)
