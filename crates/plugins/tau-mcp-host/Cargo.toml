@@ -12,7 +12,6 @@ async-trait.workspace = true
 base64.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
-gpui = { package = "gpui-pre", version = "=0.3.7" }
 http = "1"
 libc.workspace = true
 reqwest.workspace = true
@@ -37,9 +36,7 @@ sse-stream = "0.2.6"
 tau-agent.workspace = true
 tau-mcp.workspace = true
 tau-ai.workspace = true
-tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
-thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
 tokio-util.workspace = true
 tracing = "0.1"
@@ -52,11 +49,11 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 url = "2.5.8"
 
 [dev-dependencies]
+tau-ui-kit.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
 mlua.workspace = true
-regex.workspace = true
 tempfile.workspace = true
 rmcp = { version = "3.5.0", default-features = false, features = [
   "client",

@@ -29,7 +29,6 @@ base64 = "0.23.1"
 # when jj-lib does.
 gix = { version = "0.87.1", default-features = false }
 globset = "0.4.20"
-grep-matcher = "0.1.9"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
 hegeltest = { version = "0.48.1", features = ["serde_json", "static-engine"] }
@@ -37,8 +36,8 @@ hegeltest = { version = "0.48.1", features = ["serde_json", "static-engine"] }
 if-addrs = "0.15.0"
 ignore = "0.4.33"
 # Syntax highlighting of code in cards and replies (tau-ui-kit's
-# `syntax`): the parser, its highlighter and one grammar per language.
-tree-sitter = "0.27.0"
+# `syntax`): the highlighter, which brings the parser, and one grammar
+# per language.
 tree-sitter-highlight = "0.27.0"
 tree-sitter-bash = "0.25.1"
 tree-sitter-go = "0.25.0"

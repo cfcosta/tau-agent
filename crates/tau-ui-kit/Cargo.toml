@@ -15,7 +15,6 @@ unicode-segmentation = "1.12.0"
 qrcode.workspace = true
 # The theme carries the terminal palette.
 tau-terminal.workspace = true
-tree-sitter.workspace = true
 tree-sitter-highlight.workspace = true
 tree-sitter-bash.workspace = true
 tree-sitter-go.workspace = true

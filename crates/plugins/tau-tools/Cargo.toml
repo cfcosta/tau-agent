@@ -13,7 +13,6 @@ publish.workspace = true
 terminal = ["dep:tau-terminal"]
 
 [dependencies]
-anyhow.workspace = true
 base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,7 +20,6 @@ tau-agent.workspace = true
 uuid.workspace = true
 tau-ai.workspace = true
 tau-terminal = { workspace = true, optional = true }
-thiserror.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true

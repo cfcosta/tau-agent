@@ -9499,7 +9499,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
- "gpui-pre",
  "hegeltest",
  "schemars",
  "serde",
@@ -9512,14 +9511,12 @@ dependencies = [
  "tau-ui-kit",
  "tau-ui-plugin",
  "thiserror 2.0.21",
- "tokio",
 ]
 
 [[package]]
 name = "tau-constitution"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui-pre",
  "serde",
  "serde_json",
@@ -9546,11 +9543,9 @@ dependencies = [
  "tau-ai",
  "tau-constitution",
  "tau-jev",
- "tau-store",
  "tau-store-sqlite",
  "tau-testing",
  "tau-ui-plugin",
- "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -9567,7 +9562,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tau-agent",
- "tau-store",
  "tau-store-sqlite",
  "tau-ui-kit",
  "tau-ui-plugin",
@@ -9620,7 +9614,6 @@ dependencies = [
  "tau-testing",
  "tau-ui-kit",
  "tau-ui-plugin",
- "tokio",
 ]
 
 [[package]]
@@ -9628,7 +9621,6 @@ name = "tau-jev"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "hegeltest",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -9641,10 +9633,8 @@ name = "tau-luau-plugins"
 version = "0.1.0"
 dependencies = [
  "gpui-pre",
- "hegeltest",
  "serde",
  "serde_json",
- "tau-agent",
  "tau-ui-kit",
  "tau-ui-plugin",
 ]
@@ -9656,7 +9646,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
- "hegeltest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -9689,7 +9678,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "tau-agent",
  "tau-ui-kit",
  "tau-ui-plugin",
  "tempfile",
@@ -9711,7 +9699,6 @@ dependencies = [
  "http",
  "libc",
  "mlua",
- "regex",
  "reqwest 0.13.5",
  "rmcp",
  "serde",
@@ -9728,7 +9715,6 @@ dependencies = [
  "tau-ui-kit",
  "tau-ui-plugin",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",
@@ -9740,11 +9726,9 @@ dependencies = [
 name = "tau-memory"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui-pre",
  "serde",
  "serde_json",
- "tau-agent",
  "tau-ui-kit",
  "tau-ui-plugin",
  "thiserror 2.0.21",
@@ -9764,7 +9748,6 @@ dependencies = [
  "tau-agent",
  "tau-ai",
  "tau-compaction",
- "tau-memory",
  "tau-memory-host",
  "tau-store",
  "tau-store-sqlite",
@@ -9792,14 +9775,12 @@ dependencies = [
  "tau-agent",
  "tau-ai",
  "tau-memory",
- "tau-store",
  "tau-store-sqlite",
  "tau-testing",
  "tau-ui-plugin",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "tokio-util",
  "toml 1.1.6+spec-1.1.0",
 ]
 
@@ -9897,7 +9878,6 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "tau-agent",
- "tau-store",
  "tau-store-sqlite",
  "tau-testing",
  "tau-ui-kit",
@@ -9968,7 +9948,6 @@ dependencies = [
 name = "tau-tools"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "base64 0.23.1",
  "gpui-pre",
  "hegeltest",
@@ -9979,7 +9958,6 @@ dependencies = [
  "tau-terminal",
  "tau-ui-kit",
  "tau-ui-plugin",
- "thiserror 2.0.21",
  "uuid",
 ]
 
@@ -9991,7 +9969,6 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "globset",
- "grep-matcher",
  "grep-regex",
  "grep-searcher",
  "hegeltest",
@@ -10018,7 +9995,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "unicode-normalization",
- "uuid",
 ]
 
 [[package]]
@@ -10086,7 +10062,6 @@ dependencies = [
  "serde",
  "similar",
  "tau-terminal",
- "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-go",
  "tree-sitter-highlight",
@@ -10146,7 +10121,6 @@ dependencies = [
  "tau-skills",
  "tau-store",
  "tau-terminal",
- "tau-testing",
  "tau-tools",
  "tau-ui-kit",
  "tau-ui-plugin",
@@ -10159,16 +10133,13 @@ dependencies = [
 name = "tau-vcs"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui-pre",
  "hegeltest",
  "serde",
  "serde_json",
  "tau-agent",
- "tau-ai",
  "tau-ui-kit",
  "tau-ui-plugin",
- "thiserror 2.0.21",
 ]
 
 [[package]]

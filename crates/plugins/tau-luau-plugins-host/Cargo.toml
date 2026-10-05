@@ -34,7 +34,6 @@ futures-util.workspace = true
 tau-agent.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true
-hegeltest.workspace = true
 tokio-util.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

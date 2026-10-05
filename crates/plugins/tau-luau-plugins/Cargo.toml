@@ -10,11 +10,9 @@ publish.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 serde.workspace = true
 serde_json.workspace = true
-tau-agent.workspace = true
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 
 [dev-dependencies]
 tau-ui-plugin = { workspace = true, features = ["testing"] }
-hegeltest.workspace = true

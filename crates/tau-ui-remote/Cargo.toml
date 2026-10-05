@@ -7,9 +7,9 @@ repository.workspace = true
 publish.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
-tau-testing.workspace = true
 tempfile.workspace = true
 
 # The plugins come without their host halves: those are crates of
@@ -19,7 +19,6 @@ tempfile.workspace = true
 # dependency's defaults off, so those name their paths.
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }
-base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }

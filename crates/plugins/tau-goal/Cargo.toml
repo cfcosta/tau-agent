@@ -32,4 +32,3 @@ hegeltest.workspace = true
 schemars.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true
-tokio = { workspace = true, features = ["net", "rt", "time"] }
