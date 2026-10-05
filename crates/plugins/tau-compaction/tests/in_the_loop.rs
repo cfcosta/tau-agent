@@ -370,7 +370,7 @@ fn a_rejected_summary_on_overflow_fails_the_run() {
 }
 
 /// A rejected summary past the threshold writes nothing; the run goes
-/// on uncompacted and does not try again.
+/// on uncompacted, and the next turn does not try again.
 #[test]
 fn a_rejected_summary_past_the_threshold_leaves_the_run_going() {
     let llm = ScriptedModel::new()
@@ -398,6 +398,39 @@ fn a_rejected_summary_past_the_threshold_leaves_the_run_going() {
         assert_eq!(requests.len(), 4);
         // The turn after the rejected summary saw the whole transcript.
         assert_eq!(text(&requests[2].transcript[0]), "go");
+        llm.assert_exhausted();
+    });
+}
+
+/// After a rejected summary, compaction waits two turns, then tries
+/// again: a run with no turn cap is not left uncompacted for good.
+#[test]
+fn a_rejected_summary_is_tried_again_after_a_wait() {
+    let read = |path: &'static str| {
+        move |t: tau_testing::scripted::TurnBuilder| {
+            t.tool_call("read", json!({"path": path})).usage(5_000, 10)
+        }
+    };
+    let llm = ScriptedModel::new()
+        .turn(read("a.rs"))
+        // Rejected: a summary is text.
+        .turn(|t| t.tool_call("read", json!({"path": "x"})))
+        .turn(read("b.rs"))
+        .turn(read("c.rs"))
+        // The history's summary, then the split turn's prefix.
+        .turn(|t| t.text("## Goal\nship it"))
+        .turn(|t| t.text("## Original Request\nread b.rs"))
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = Store::memory().await.unwrap();
+        let (events, outcome) =
+            run(&agent(&llm), &store, "go", "then this").await;
+        assert_eq!(outcome.text, "done");
+        let rewrites = events
+            .iter()
+            .filter(|e| matches!(e, RunEvent::ContextRewritten { .. }))
+            .count();
+        assert_eq!(rewrites, 1);
         llm.assert_exhausted();
     });
 }

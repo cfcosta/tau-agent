@@ -28,9 +28,12 @@ compacts by is the loop's, in `tau_agent::context`.
   `Compaction::context_window` for a model the registry does not know.
   Without either, only an overflow triggers compaction.
 - **Failures.** A rejected summary writes nothing. Past the threshold,
-  the run goes on uncompacted and compaction is off for the rest of it,
-  so a failing summary is not paid for every turn. On overflow, the run
-  fails with the overflow error and the compaction error.
+  the run goes on uncompacted, and compaction waits before it tries
+  again: 2 turns after the first failure, then 4, 8 and so on, at most
+  32, until a summary succeeds. A failing summary is not paid for every
+  turn, and a run, which has no turn cap, is not left uncompacted for
+  good. On overflow it always tries; when that fails, the run fails
+  with the overflow error and the compaction error.
 
 ## Token estimate
 

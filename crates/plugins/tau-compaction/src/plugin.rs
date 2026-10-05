@@ -65,7 +65,8 @@ impl Plugin for Compaction {
                 .context_window
                 .or(known.map(|model| model.context_window)),
             compacted,
-            off: false,
+            failures: 0,
+            retry_at: 0,
         }))
     }
 }
@@ -79,10 +80,16 @@ struct CompactionRun {
     window: Option<u64>,
     /// The latest compaction, whose summary opens the transcript.
     compacted: Option<Record>,
-    /// A summary past the threshold failed: the run goes on without
-    /// compacting, so a failing summary is not paid for every turn.
-    off: bool,
+    /// Summaries past the threshold that failed in a row.
+    failures: u32,
+    /// After a failure, the turn from which a summary past the threshold
+    /// is tried again: a failing summary is not paid for every turn,
+    /// and a run with no turn cap is not left uncompacted for good.
+    retry_at: u32,
 }
+
+/// The most turns a failed summary waits before it is tried again.
+const MAX_BACKOFF_TURNS: u32 = 32;
 
 #[async_trait]
 impl PluginRun for CompactionRun {
@@ -93,7 +100,7 @@ impl PluginRun for CompactionRun {
     ) -> Result<Option<Rewrite>, PluginError> {
         match view.trigger {
             Trigger::TurnEnd | Trigger::Start => {
-                let due = !self.off
+                let due = view.turn >= self.retry_at
                     && self.window.is_some_and(|window| {
                         should_compact(view.tokens, window, &self.settings)
                     });
@@ -101,8 +108,16 @@ impl PluginRun for CompactionRun {
                     return Ok(None);
                 }
                 let result = self.compact(view, ctx).await;
-                if result.is_err() {
-                    self.off = true;
+                match &result {
+                    // Waits 2, 4, 8… turns after each failure in a row.
+                    Err(_) => {
+                        self.failures += 1;
+                        let wait = 2u32
+                            .saturating_pow(self.failures)
+                            .min(MAX_BACKOFF_TURNS);
+                        self.retry_at = view.turn.saturating_add(wait);
+                    }
+                    Ok(_) => self.failures = 0,
                 }
                 Ok(result?)
             }
