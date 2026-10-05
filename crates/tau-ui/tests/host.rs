@@ -1135,7 +1135,11 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
         .enable_all()
         .build()
         .unwrap();
-    let store = runtime.block_on(Store::memory()).unwrap();
+    // On disk, so the test reads the queue's records back itself.
+    let db = tempfile::tempdir().unwrap();
+    let store = runtime
+        .block_on(Store::open(db.path().join("runs.db")))
+        .unwrap();
     let agent = Agent::new(Routed {
         main: main_llm.clone(),
         child: child_llm.clone(),
@@ -1167,6 +1171,19 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     assert_eq!(report.landed[0].0, child);
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
     assert!(report.queue.is_empty(), "{:?}", report.queue);
+    // It joined the queue with the change it brings, not none.
+    let queued = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let store = Store::open(db.path().join("runs.db")).await.unwrap();
+        store
+            .plugin_entries(&main.0, tau_ui::host::QUEUE_PLUGIN)
+            .await
+            .unwrap()
+    });
+    let joined = queued
+        .iter()
+        .find(|(_, body)| body.contains("\"queued\""))
+        .expect("it queued");
+    assert!(joined.1.contains("\"changes\":1"), "{}", joined.1);
     let prompt = report.resolve.expect("tau's turn reports it");
     assert!(prompt.contains("wrote c.txt"), "{prompt}");
     assert!(

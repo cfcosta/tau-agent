@@ -6,7 +6,7 @@
 use tau_ui_remote::queue::{SubAgentEnd, Waiting};
 use tau_vcs::sub_agents::{Ending, Taken, limit_name};
 
-use super::{lanes::DrainReport, queue::Lane, *};
+use super::{landing::Reading, lanes::DrainReport, queue::Lane, *};
 
 /// What tau's turn reporting sub-agents ends with.
 const REPORT_END: &str = "This message is from tau, not the person: \
@@ -110,12 +110,23 @@ impl Host {
             && agents.taken(child) != Some(true)
         {
             let title = self.title_of(child)?;
+            // What it brings, so its place in the queue shows it before
+            // its turn to land previews it again. Read without writing:
+            // main may be in a turn. One with nothing to land, or that
+            // cannot be read, shows none.
+            let (changes, conflicts) = match end.failed {
+                Some(_) => (0, Vec::new()),
+                None => self
+                    .land_dry(child, Reading::Forecast)
+                    .map(|landing| (landing.changes.len(), landing.conflicts))
+                    .unwrap_or_default(),
+            };
             let actions = self.with_lane(&main, |lane: &mut Lane| {
                 lane.queue(Waiting {
                     run: child.0.to_string(),
                     title,
-                    changes: 0,
-                    conflicts: Vec::new(),
+                    changes,
+                    conflicts,
                     confirmed: Vec::new(),
                     sub_agent: Some(end),
                 })
