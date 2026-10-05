@@ -1053,7 +1053,7 @@ impl Workspace {
             let task = call
                 .as_deref()
                 .and_then(|call| view.call(call))
-                .filter(|(tool, _)| *tool == tau_vcs::details::DELEGATE)
+                .filter(|(tool, _)| *tool == tau_vcs::details::SPAWN)
                 .and_then(|(_, args)| args.get("task")?.as_str())
                 .map(str::to_owned)
                 .unwrap_or_default();
@@ -1091,37 +1091,60 @@ impl Workspace {
         {
             parent.fork_finished(run);
         }
-        // A sub-agent closes after landing or an intentional drop, not
-        // when a failed finalization retained its workspace for recovery.
-        // Its siblings wait for their own calls, including nested calls.
+        // A sub-agent that failed or was stopped was dropped: its chat
+        // closes. One that finished stays until its work lands.
+        if let RunEvent::RunEnd { run, stop, .. } = event
+            && matches!(stop, StopReason::Cancelled | StopReason::Error(_))
+            && self.run(run).is_some_and(|view| {
+                matches!(view.origin, Origin::SubAgent { .. })
+            })
+            && !self.closed.contains(run)
+        {
+            if let Some(view) =
+                self.runs.iter_mut().find(|view| view.id == *run)
+            {
+                view.ending = Some(Ending::Dropped);
+            }
+            self.closed.insert(run.clone());
+            cx.emit(WorkspaceEvent::CloseRun { run: run.clone() });
+        }
+        // The sub-agents a `wait` landed close: their work is main's now.
         if let RunEvent::ToolEnd {
             run,
             call_id,
             output,
             ..
         } = event
-            && !output
-                .details
-                .as_ref()
-                .is_some_and(|details| details["workspace_retained"] == true)
             && let Some(view) = self.run(run)
             && view
                 .call(call_id)
-                .is_some_and(|(tool, _)| tool == tau_vcs::details::DELEGATE)
+                .is_some_and(|(tool, _)| tool == tau_vcs::details::WAIT)
         {
-            let done: Vec<RunId> = view
-                .children
-                .iter()
-                .filter(|child| {
-                    child.kind == ChildKind::SubAgent
-                        && !child.status.is_live()
-                        && child.call.as_deref() == Some(call_id.as_str())
+            let landed: Vec<(RunId, usize)> = output
+                .details
+                .as_ref()
+                .and_then(|details| details["landed"].as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|each| {
+                    let child = each["run"].as_str()?;
+                    let changes = each["landing"]["changes"]
+                        .as_array()
+                        .map_or(0, Vec::len);
+                    Some((RunId(child.into()), changes))
                 })
-                .map(|child| child.id.clone())
-                .filter(|child| !self.closed.contains(child))
+                .filter(|(child, _)| !self.closed.contains(child))
                 .collect();
             let parent = run.clone();
-            for child in done {
+            for (child, changes) in landed {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == child)
+                {
+                    view.ending = Some(Ending::Landed {
+                        on: parent.clone(),
+                        changes,
+                    });
+                }
                 self.closed.insert(child.clone());
                 cx.emit(WorkspaceEvent::CloseRun { run: child.clone() });
                 if self.route.run() == Some(&child) {

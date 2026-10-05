@@ -21,8 +21,9 @@ pub struct DrainReport {
     pub landed: Vec<(RunId, Landing)>,
     /// The chats that could not land, and why: they left the queue.
     pub failed: Vec<(RunId, String)>,
-    /// tau's turn on main resolves what the last landing left, with
-    /// this message.
+    /// tau's turn on main, with this message: it reports the
+    /// sub-agents the drain landed or dropped (ADR 0026), and resolves
+    /// what the last landing left.
     pub resolve: Option<String>,
     /// Conflicts newly left on main, to tell the person of.
     pub notify: Option<Vec<String>>,
@@ -69,6 +70,10 @@ impl Main for OnRepo<'_> {
     fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable> {
         let child = RunId(run.into());
         self.unlandable(&child)?;
+        // `wait` may take a sub-agent first: it lands it itself.
+        if !self.host.take_sub_agent(&child) {
+            return Err(Unlandable::Gone);
+        }
         let landing =
             self.host.land(&child).map_err(|error| self.why(error))?;
         let conflicts = landing.conflicts.clone();
@@ -91,6 +96,9 @@ impl OnRepo<'_> {
     /// A chat that ended for good leaves the queue; one that is going
     /// again keeps its place.
     fn unlandable(&self, child: &RunId) -> Result<(), Unlandable> {
+        if self.host.sub_agent_taken(child) {
+            return Err(Unlandable::Gone);
+        }
         match self.host.ending_of(child) {
             Ok(Some(_)) => return Err(Unlandable::Gone),
             Ok(None) => {}
@@ -121,7 +129,7 @@ impl Host {
 
     /// Does `f` with `main`'s lane, restored from the store the first
     /// time.
-    fn with_lane<R>(
+    pub(super) fn with_lane<R>(
         &self,
         main: &RunId,
         f: impl FnOnce(&mut Lane) -> R,
@@ -156,7 +164,7 @@ impl Host {
     }
 
     /// Carries out what `main`'s lane asked for outside a drain.
-    fn perform(
+    pub(super) fn perform(
         &self,
         main: &RunId,
         actions: Vec<super::queue::Action>,
@@ -261,6 +269,7 @@ impl Host {
                     changes: seen.changes,
                     conflicts: seen.conflicts.clone(),
                     confirmed: seen.conflicts,
+                    sub_agent: None,
                 },
             };
             lane.queue(waiting)
@@ -318,9 +327,29 @@ impl Host {
         let (more, landings) = self.drain_locked(main)?;
         drained.landed.extend(more.landed);
         drained.failed.extend(more.failed);
+        drained.reported.extend(more.reported);
         drained.resolve = more.resolve;
         drained.notify = drained.notify.or(more.notify);
         self.report(main, drained, landings)
+    }
+
+    /// The person stopped `main`'s turn: what it left in conflict marks
+    /// it, or its mark goes, but nothing lands and tau starts no turn on
+    /// it. What waits lands after main's next turn, or when a sub-agent
+    /// ends.
+    pub fn main_turn_stopped(
+        &self,
+        main: &RunId,
+    ) -> anyhow::Result<DrainReport> {
+        let _draining = self.draining.lock().expect("not poisoned");
+        self.settle(main);
+        if self.is_running(main) {
+            return self.report(main, Drained::default(), Vec::new());
+        }
+        let files = self.main_conflicts(main)?;
+        let actions = self.with_lane(main, |lane| lane.ended(files))?;
+        let drained = self.perform(main, actions)?;
+        self.report(main, drained, Vec::new())
     }
 
     /// tau's resolving turn on `main` did not start: main is idle with
@@ -343,7 +372,7 @@ impl Host {
         self.report(main, drained, landings)
     }
 
-    fn drain_locked(
+    pub(super) fn drain_locked(
         &self,
         main: &RunId,
     ) -> anyhow::Result<(Drained, Vec<(RunId, Landing)>)> {
@@ -369,13 +398,15 @@ impl Host {
         Ok((drained?, landings))
     }
 
-    fn report(
+    pub(super) fn report(
         &self,
         main: &RunId,
         drained: Drained,
         landings: Vec<(RunId, Landing)>,
     ) -> anyhow::Result<DrainReport> {
         let (queue, conflicts) = self.landing_queue(main)?;
+        let resolve =
+            self.report_prompt(&drained.reported, &landings, drained.resolve);
         Ok(DrainReport {
             main: main.clone(),
             repo: self
@@ -388,7 +419,7 @@ impl Host {
                 .into_iter()
                 .map(|(run, why)| (RunId(run.as_str().into()), why))
                 .collect(),
-            resolve: drained.resolve,
+            resolve,
             notify: drained.notify,
             queue,
             conflicts,

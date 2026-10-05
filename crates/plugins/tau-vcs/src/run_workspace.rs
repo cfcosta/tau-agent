@@ -97,7 +97,7 @@ impl Link {
 }
 
 /// A change that came to the run's stack in the middle of a turn: the
-/// run's own work up to a delegated task, or a change the task landed.
+/// run's own work up to a spawned task, or a change the task landed.
 /// It is linked when the turn ends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Pending {
@@ -123,7 +123,7 @@ pub struct RunWorkspace {
     /// The bookmark the run's commits move, instead of `tau/<run>`: a
     /// main chat's, which commits on trunk.
     commits_to: Option<String>,
-    /// A failed end-of-run commit, shared with the delegating caller.
+    /// A failed end-of-run commit, shared with the caller that spawned it.
     finalization_error: Arc<Mutex<Option<String>>>,
 }
 

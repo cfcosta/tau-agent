@@ -1,7 +1,7 @@
 //! tau-vcs's UI (ADR 0017): the cards of its tools in a run's
-//! transcript (`vcs_status`, `vcs_diff`, `vcs_show`, `vcs_log`, and
-//! `delegate` with what the sub-agent landed), and the pieces tau's
-//! landings draw changes with.
+//! transcript (`vcs_status`, `vcs_diff`, `vcs_show`, `vcs_log`, `spawn`
+//! with the way to the sub-agent's chat, and `wait` with what the
+//! sub-agents landed), and the pieces tau's landings draw changes with.
 //!
 //! The host builds the plugin's tools with the run's workspace, which
 //! they act on; this UI draws what they return.
@@ -131,21 +131,53 @@ fn details(data: &CallData) -> Option<&Value> {
     result.details.as_ref()
 }
 
-/// A sub-agent's landing, from a `delegate` call.
-pub fn delegated(data: &CallData) -> Option<LandedCard> {
-    let details = details(data)?;
-    Some(LandedCard::from_record(LandingRecord {
-        from: details.get("run")?.as_str()?.to_owned(),
-        title: data
-            .args
-            .get("task")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        landing: serde_json::from_value(details.get("landing")?.clone())
-            .ok()?,
-        recovered: false,
-    }))
+/// The sub-agent a `spawn` call started.
+pub fn spawned(data: &CallData) -> Option<RunId> {
+    let run = details(data)?.get("run")?.as_str()?;
+    Some(RunId(run.into()))
+}
+
+/// The sub-agents' landings, from a `wait` call, in the order they
+/// landed.
+pub fn waited(data: &CallData) -> Vec<LandedCard> {
+    let Some(landed) = details(data)
+        .and_then(|details| details.get("landed"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    landed
+        .iter()
+        .filter_map(|each| {
+            Some(LandedCard::from_record(LandingRecord {
+                from: each.get("run")?.as_str()?.to_owned(),
+                title: each
+                    .get("task")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                landing: serde_json::from_value(each.get("landing")?.clone())
+                    .ok()?,
+                recovered: false,
+            }))
+        })
+        .collect()
+}
+
+/// A link that opens `child`'s chat.
+fn open_child(
+    child: RunId,
+    handle: Handle,
+    t: &tau_ui_kit::theme::Theme,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(format!("open-child-{}", child.0)))
+        .px(sp(3.))
+        .py(sp(2.))
+        .border_t_1()
+        .border_color(t.border)
+        .child(link("Open the sub-agent's chat", t))
+        .on_click(move |_, _, cx| handle.open_run(&child, cx))
 }
 
 impl UiPlugin for VcsUi {
@@ -202,38 +234,38 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
     };
     let data = &at.data;
     match at.tool.as_str() {
-        details::DELEGATE => {
-            let landed = delegated(data)?;
-            let child = landed.from.clone();
-            let handle = view.handle.clone();
+        details::SPAWN => {
+            let child = spawned(data)?;
             Some(CardView {
-                label: Some(match landed.changes.len() {
+                label: Some("started".into()),
+                body: Some(
+                    open_child(child, view.handle.clone(), &t)
+                        .into_any_element(),
+                ),
+                ..CardView::default()
+            })
+        }
+        details::WAIT => {
+            let landed = waited(data);
+            if landed.is_empty() {
+                return None;
+            }
+            let changes: usize =
+                landed.iter().map(|card| card.changes.len()).sum();
+            let mut body = div().flex().flex_col();
+            for card in &landed {
+                body =
+                    body.child(landed::landed_body(card, &t, compact)).child(
+                        open_child(card.from.clone(), view.handle.clone(), &t),
+                    );
+            }
+            Some(CardView {
+                label: Some(match changes {
                     0 => "no changes".into(),
                     1 => "1 change landed".into(),
                     n => format!("{n} changes landed"),
                 }),
-                body: Some(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .child(landed::landed_body(&landed, &t, compact))
-                        .child(
-                            div()
-                                .id(SharedString::from(format!(
-                                    "open-child-{}",
-                                    child.0
-                                )))
-                                .px(sp(3.))
-                                .py(sp(2.))
-                                .border_t_1()
-                                .border_color(t.border)
-                                .child(link("Open the sub-agent's chat", &t))
-                                .on_click(move |_, _, cx| {
-                                    handle.open_run(&child, cx)
-                                }),
-                        )
-                        .into_any_element(),
-                ),
+                body: Some(body.into_any_element()),
                 ..CardView::default()
             })
         }

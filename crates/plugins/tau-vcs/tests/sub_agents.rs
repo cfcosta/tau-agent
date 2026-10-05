@@ -1,5 +1,6 @@
-//! The `delegate` tool (ADR 0009): a sub-agent works on the caller's
-//! code, its changes land on the caller's stack, and it closes.
+//! The `spawn` and `wait` tools (ADR 0009, 0026): a sub-agent works on
+//! the caller's code beside it, its changes land on the caller's stack,
+//! and it closes.
 
 mod common;
 
@@ -21,12 +22,14 @@ use tau_ai::responses::request::ReasoningEffort;
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
-    Delegate,
     Identity,
     Link,
     RunWorkspace,
-    delegate::ChildModel,
+    Spawn,
+    SubAgents,
+    Wait,
     run_workspace::{PLUGIN, bookmark},
+    sub_agents::{ChildModel, Ending},
 };
 
 fn commit(message: &str) -> serde_json::Value {
@@ -37,18 +40,44 @@ fn write(path: &str) -> serde_json::Value {
     json!({ "path": path, "content": format!("{path}\n") })
 }
 
-/// A coder that can delegate, its sub-agents built the same way.
+/// A coder that can spawn sub-agents and wait for them, its sub-agents
+/// built the same way.
 fn delegating(
     llm: ScriptedModel,
     workspace: &RunWorkspace,
     child: impl Fn(RunWorkspace) -> Result<Agent, ToolError> + Send + Sync + 'static,
 ) -> Agent {
-    coder(llm, workspace, true).tool(Delegate::new(
-        workspace.clone(),
-        Identity::default(),
-        &[],
-        move |workspace, _: &ChildModel| child(workspace),
-    ))
+    spawning(llm, workspace, &SubAgents::default(), child)
+}
+
+/// A coder whose sub-agents are `agents`, which outlive its runs.
+fn spawning(
+    llm: ScriptedModel,
+    workspace: &RunWorkspace,
+    agents: &SubAgents,
+    child: impl Fn(RunWorkspace) -> Result<Agent, ToolError> + Send + Sync + 'static,
+) -> Agent {
+    coder(llm, workspace, true)
+        .tool(Spawn::new(
+            workspace.clone(),
+            Identity::default(),
+            agents.clone(),
+            &[],
+            move |workspace, _: &ChildModel| child(workspace),
+        ))
+        .tool(Wait::new(workspace.clone(), agents.clone()))
+}
+
+/// A turn that hands `tasks` to sub-agents and waits for them all, as
+/// `delegate` did.
+fn delegate(
+    t: tau_testing::scripted::TurnBuilder,
+    tasks: &[Value],
+) -> tau_testing::scripted::TurnBuilder {
+    let t = tasks
+        .iter()
+        .fold(t, |t, task| t.tool_call("spawn", task.clone()));
+    t.tool_call("wait", json!({}))
 }
 
 fn runtime() -> tokio::runtime::Runtime {
@@ -68,9 +97,7 @@ fn a_sub_agent_lands_its_changes_on_the_caller() {
             // The caller writes a file and commits it, then delegates.
             .turn(|t| t.tool_call("write", write("parent.txt")))
             .turn(|t| t.tool_call("vcs_commit", commit("feat: parent")))
-            .turn(|t| {
-                t.tool_call("delegate", json!({ "task": "write child.txt" }))
-            })
+            .turn(|t| delegate(t, &[json!({ "task": "write child.txt" })]))
             // The sub-agent sees the caller's file, and commits its own.
             .turn(|t| t.tool_call("read", json!({ "path": "parent.txt" })))
             .turn(|t| t.tool_call("write", write("child.txt")))
@@ -169,9 +196,7 @@ fn a_sub_agents_leftover_is_described_from_its_task() {
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
-            .turn(|t| {
-                t.tool_call("delegate", json!({ "task": "write child.txt" }))
-            })
+            .turn(|t| delegate(t, &[json!({ "task": "write child.txt" })]))
             .turn(|t| t.text("done"));
         let child_llm = ScriptedModel::new()
             .turn(|t| t.tool_call("write", write("child.txt")))
@@ -215,7 +240,7 @@ fn a_failed_sub_agent_is_dropped() {
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("delegate", json!({ "task": "anything" })))
+            .turn(|t| delegate(t, &[json!({ "task": "anything" })]))
             .turn(|t| t.text("gave up"));
         let parent =
             RunWorkspace::new(project.clone(), "parent", Identity::default())
@@ -242,7 +267,7 @@ fn a_sub_agent_that_fails_leaves_no_changes() {
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("delegate", json!({ "task": "write" })))
+            .turn(|t| delegate(t, &[json!({ "task": "write" })]))
             .turn(|t| t.tool_call("write", write("child.txt")))
             .turn(|t| t.dropped())
             .turn(|t| t.text("it failed"));
@@ -285,7 +310,7 @@ fn delegating_needs_a_clean_working_copy() {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| t.tool_call("write", write("parent.txt")))
-            .turn(|t| t.tool_call("delegate", json!({ "task": "anything" })))
+            .turn(|t| delegate(t, &[json!({ "task": "anything" })]))
             .turn(|t| t.tool_call("vcs_commit", commit("feat: parent")))
             .turn(|t| t.text("done"));
         let parent =
@@ -344,8 +369,13 @@ fn sub_agents_in_one_batch_both_land() {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
-                t.tool_call("delegate", json!({ "task": "write a.txt" }))
-                    .tool_call("delegate", json!({ "task": "write b.txt" }))
+                delegate(
+                    t,
+                    &[
+                        json!({ "task": "write a.txt" }),
+                        json!({ "task": "write b.txt" }),
+                    ],
+                )
             })
             .turn(|t| t.text("done"));
         let parent =
@@ -380,8 +410,10 @@ fn a_clashing_sub_agent_lands_its_conflict() {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
-                t.tool_call("delegate", json!({ "task": "one" }))
-                    .tool_call("delegate", json!({ "task": "two" }))
+                delegate(
+                    t,
+                    &[json!({ "task": "one" }), json!({ "task": "two" })],
+                )
             })
             .turn(|t| t.text("done"));
         let parent =
@@ -429,10 +461,12 @@ fn a_landing_names_only_the_conflicts_it_brought() {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
-                t.tool_call("delegate", json!({ "task": "one" }))
-                    .tool_call("delegate", json!({ "task": "two" }))
+                delegate(
+                    t,
+                    &[json!({ "task": "one" }), json!({ "task": "two" })],
+                )
             })
-            .turn(|t| t.tool_call("delegate", json!({ "task": "other" })))
+            .turn(|t| delegate(t, &[json!({ "task": "other" })]))
             .turn(|t| t.text("done"));
         let parent =
             RunWorkspace::new(project.clone(), "parent", Identity::default())
@@ -521,8 +555,8 @@ impl AgentTool for Gauge {
     }
 }
 
-/// Six sub-agents in one batch: no more than four run at once, and all
-/// of them finish.
+/// Six sub-agents in one batch: four start and finish, and the two past
+/// them are refused, told to wait for one.
 #[test]
 fn at_most_four_sub_agents_run_at_once() {
     let home = tempfile::tempdir().unwrap();
@@ -531,12 +565,9 @@ fn at_most_four_sub_agents_run_at_once() {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|mut t| {
-                for n in 0..6 {
-                    t = t.tool_call(
-                        "delegate",
-                        json!({ "task": format!("{n}") }),
-                    );
-                }
+                let tasks: Vec<Value> =
+                    (0..6).map(|n| json!({ "task": format!("{n}") })).collect();
+                t = delegate(t, &tasks);
                 t
             })
             .turn(|t| t.text("done"));
@@ -556,7 +587,12 @@ fn at_most_four_sub_agents_run_at_once() {
         .unwrap();
         assert_eq!(outcome.text, "done");
         let results = format!("{:?}", llm.requests()[1].transcript);
-        assert_eq!(results.matches("It changed no files").count(), 6);
+        assert_eq!(results.matches("It changed no files").count(), 4);
+        assert_eq!(
+            results.matches("4 sub-agents are running already").count(),
+            2,
+            "{results}"
+        );
         let (running, most) = *gauge.now.lock().unwrap();
         assert_eq!(running, 0);
         assert_eq!(most, 4);
@@ -574,28 +610,29 @@ fn a_call_can_pick_its_model_and_effort() {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
-                t.tool_call(
-                    "delegate",
-                    json!({ "task": "a", "model": "gpt-5.5-mini", "effort": "low" }),
-                )
+                delegate(t, &[json!({ "task": "a", "model": "gpt-5.5-mini", "effort": "low" })])
             })
-            .turn(|t| t.tool_call("delegate", json!({ "task": "b" })))
+            .turn(|t| delegate(t, &[json!({ "task": "b" })]))
             .turn(|t| t.text("done"));
         let parent =
             RunWorkspace::new(project.clone(), "parent", Identity::default())
                 .unwrap();
         let asked = Arc::new(Mutex::new(Vec::new()));
         let seen = asked.clone();
-        let agent = coder(llm.clone(), &parent, true).tool(Delegate::new(
-            parent.clone(),
-            Identity::default(),
-            &["gpt-5.5".to_owned(), "gpt-5.5-mini".to_owned()],
-            move |workspace, model: &ChildModel| {
-                seen.lock().unwrap().push(model.clone());
-                let script = ScriptedModel::new().turn(|t| t.text("ok"));
-                Ok(coder(script, &workspace, true))
-            },
-        ));
+        let agents = SubAgents::default();
+        let agent = coder(llm.clone(), &parent, true)
+            .tool(Spawn::new(
+                parent.clone(),
+                Identity::default(),
+                agents.clone(),
+                &["gpt-5.5".to_owned(), "gpt-5.5-mini".to_owned()],
+                move |workspace, model: &ChildModel| {
+                    seen.lock().unwrap().push(model.clone());
+                    let script = ScriptedModel::new().turn(|t| t.text("ok"));
+                    Ok(coder(script, &workspace, true))
+                },
+            ))
+            .tool(Wait::new(parent.clone(), agents));
         let outcome = agent.run("pick", &store).await.unwrap();
         assert_eq!(outcome.text, "done");
         assert_eq!(
@@ -621,7 +658,7 @@ fn a_sub_agent_at_a_limit_lands_its_work() {
     runtime().block_on(async {
         let store = Store::memory().await.unwrap();
         let llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("delegate", json!({ "task": "write" })))
+            .turn(|t| delegate(t, &[json!({ "task": "write" })]))
             .turn(|t| t.text("done"));
         let parent =
             RunWorkspace::new(project.clone(), "parent", Identity::default())
@@ -658,4 +695,146 @@ fn a_sub_agent_at_a_limit_lands_its_work() {
             [bookmark(&outcome.run)]
         );
     });
+}
+
+/// `spawn` answers at once: the caller's turn ends while its sub-agent
+/// still works, and the sub-agent outlives it. A later run of the caller
+/// on the same sub-agents `wait`s, and the work lands then.
+#[test]
+fn a_sub_agent_outlives_its_callers_turn() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let agents = SubAgents::default();
+        // The sub-agent holds until the caller's first run has ended.
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let child_gate = gate.clone();
+        let child = move |workspace: RunWorkspace| {
+            let script = ScriptedModel::new()
+                .turn(|t| t.tool_call("hold", json!({})))
+                .turn(|t| t.tool_call("write", write("child.txt")))
+                .turn(|t| t.tool_call("vcs_commit", commit("feat: child")))
+                .turn(|t| t.text("child.txt is written"));
+            Ok(coder(script, &workspace, true)
+                .tool(Hold(child_gate.clone())))
+        };
+        let first = ScriptedModel::new()
+            .turn(|t| t.tool_call("spawn", json!({ "task": "write child.txt" })))
+            .turn(|t| t.text("started"));
+        let outcome = spawning(first, &parent, &agents, child.clone())
+            .run("hand child.txt over", &store)
+            .await
+            .unwrap();
+        assert_eq!(outcome.text, "started");
+        let running = agents.running();
+        assert_eq!(running.len(), 1, "it still runs");
+        assert!(!parent.dir().join("child.txt").exists());
+        gate.notify_one();
+        let ending = agents.ended(&running[0]).await.unwrap();
+        assert!(
+            matches!(&ending, Ending::Done { text, limit: None } if text == "child.txt is written"),
+            "{ending:?}"
+        );
+        // Ended, it waits to be taken: nothing landed yet.
+        assert!(!parent.dir().join("child.txt").exists());
+        let second = ScriptedModel::new()
+            .turn(|t| t.tool_call("wait", json!({})))
+            .turn(|t| t.text("landed"));
+        let later = spawning(second.clone(), &parent, &agents, child)
+            .run("wait for it", &store)
+            .await
+            .unwrap();
+        assert_eq!(later.text, "landed");
+        let result = format!("{:?}", second.requests()[1].transcript);
+        assert!(result.contains("child.txt is written"), "{result}");
+        assert!(
+            result.contains("Its 1 change landed on top of yours"),
+            "{result}"
+        );
+        assert!(parent.dir().join("child.txt").exists());
+        assert_eq!(project.workspaces().unwrap(), ["parent"]);
+        assert_eq!(agents.taken(&running[0]), Some(true));
+    });
+}
+
+/// A sub-agent the person stops is dropped: its changes and workspace
+/// go, and a `wait` on it says it was stopped.
+#[test]
+fn a_stopped_sub_agent_is_dropped() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
+    runtime().block_on(async {
+        let store = Store::memory().await.unwrap();
+        let parent =
+            RunWorkspace::new(project.clone(), "parent", Identity::default())
+                .unwrap();
+        let agents = SubAgents::default();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let child_gate = gate.clone();
+        let child = move |workspace: RunWorkspace| {
+            let script = ScriptedModel::new()
+                .turn(|t| t.tool_call("write", write("child.txt")))
+                .turn(|t| t.tool_call("hold", json!({})))
+                .turn(|t| t.text("never"));
+            Ok(coder(script, &workspace, true).tool(Hold(child_gate.clone())))
+        };
+        let first = ScriptedModel::new()
+            .turn(|t| t.tool_call("spawn", json!({ "task": "write" })))
+            .turn(|t| t.text("started"));
+        spawning(first, &parent, &agents, child.clone())
+            .run("hand it over", &store)
+            .await
+            .unwrap();
+        let run = agents.running().pop().unwrap();
+        // Stopped while it holds.
+        while agents.control(&run).is_none() {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(agents.stop(&run));
+        assert_eq!(agents.ended(&run).await, Some(Ending::Stopped));
+        assert_eq!(project.workspaces().unwrap(), ["parent"]);
+        let second = ScriptedModel::new()
+            .turn(|t| t.tool_call("wait", json!({ "runs": [run.0.as_ref()] })))
+            .turn(|t| t.text("ok"));
+        spawning(second.clone(), &parent, &agents, child)
+            .run("wait", &store)
+            .await
+            .unwrap();
+        let result = format!("{:?}", second.requests()[1].transcript);
+        assert!(result.contains("The person stopped it"), "{result}");
+        assert!(!parent.dir().join("child.txt").exists());
+    });
+}
+
+/// Holds its call until notified, or until the run is cancelled.
+struct Hold(Arc<tokio::sync::Notify>);
+
+#[async_trait]
+impl AgentTool for Hold {
+    fn name(&self) -> &str {
+        "hold"
+    }
+    fn description(&self) -> &str {
+        "Waits."
+    }
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::LazyLock<Value> =
+            std::sync::LazyLock::new(|| json!({ "type": "object" }));
+        &SCHEMA
+    }
+    async fn call(
+        &self,
+        _args: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        tokio::select! {
+            _ = self.0.notified() => Ok(ToolOutput::text("go on")),
+            _ = ctx.cancel.cancelled() => Err("cancelled".into()),
+        }
+    }
 }

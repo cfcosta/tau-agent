@@ -1,55 +1,209 @@
-//! Stopping a sub-agent's chat on its own (ADR 0009): a chat of its own,
-//! it has a Stop like any other. A sub-agent runs inside its main chat's
-//! `delegate` call, which the host did not start, so the host learns its
-//! stop as it starts.
+//! Sub-agents on the host (ADR 0026): each repository's main chat keeps
+//! its [`SubAgents`] between its turns, as they run beside it. One that
+//! ends with nobody waiting joins main's landing queue, and tau's turn
+//! after the drain reports it.
 
-use tau_agent::plugin::FinishedRun;
-use tokio_util::sync::CancellationToken;
+use tau_ui_remote::queue::{SubAgentEnd, Waiting};
+use tau_vcs::sub_agents::{Ending, Taken, limit_name};
 
-use super::*;
+use super::{lanes::DrainReport, queue::Lane, *};
 
-/// Each sub-agent's stop while it runs, by run. Stopping one fails only
-/// its `delegate` call: its main chat goes on, and nothing of it lands.
-#[derive(Clone, Default)]
-pub(crate) struct SubAgentStops(Arc<Mutex<HashMap<RunId, CancellationToken>>>);
+/// What tau's turn reporting sub-agents ends with.
+const REPORT_END: &str = "This message is from tau, not the person: \
+    your sub-agents came back. Go on with the work their results \
+    change, or tell the person where things stand.";
 
-impl SubAgentStops {
-    /// Stops `run` if it is a sub-agent going on. Returns whether it was.
-    pub(crate) fn cancel(&self, run: &RunId) -> bool {
-        let stops = self.0.lock().expect("not poisoned");
-        let Some(stop) = stops.get(run) else {
-            return false;
-        };
-        stop.cancel();
-        true
-    }
-}
-
-#[async_trait]
-impl Plugin for SubAgentStops {
-    fn name(&self) -> &str {
-        "tau-ui-sub-agents"
-    }
-
-    async fn start(
-        &self,
-        _plan: &mut RunPlan,
-        ctx: &PluginCtx,
-    ) -> Result<Box<dyn PluginRun>, PluginError> {
-        self.0
+impl Host {
+    /// The sub-agents of `repo`'s main chat, made the first time.
+    pub(super) fn sub_agents_of(&self, repo: &str) -> tau_vcs::SubAgents {
+        self.sub_agents
             .lock()
             .expect("not poisoned")
-            .insert(ctx.run.clone(), ctx.cancel.clone());
-        Ok(Box::new(Forget(self.clone())))
+            .entry(repo.to_owned())
+            .or_insert_with(|| {
+                tau_vcs::SubAgents::new(Some(self.events.clone()), None)
+            })
+            .clone()
+    }
+
+    /// Every main chat's sub-agents.
+    fn all_sub_agents(&self) -> Vec<tau_vcs::SubAgents> {
+        let agents = self.sub_agents.lock().expect("not poisoned");
+        agents.values().cloned().collect()
+    }
+
+    /// Whether `run` is a sub-agent of a main chat this session.
+    pub fn is_sub_agent(&self, run: &RunId) -> bool {
+        self.all_sub_agents()
+            .iter()
+            .any(|agents| agents.taken(run).is_some())
+    }
+
+    /// Whether `run` is a sub-agent still running.
+    pub(super) fn sub_agent_running(&self, run: &RunId) -> bool {
+        self.all_sub_agents()
+            .iter()
+            .any(|agents| agents.is_running(run))
+    }
+
+    /// How to steer `run`, a sub-agent still running.
+    pub(super) fn sub_agent_control(
+        &self,
+        run: &RunId,
+    ) -> Option<tau_agent::agent::RunControl> {
+        self.all_sub_agents()
+            .iter()
+            .find_map(|agents| agents.control(run))
+    }
+
+    /// Stops `run`, a sub-agent still running: its changes are dropped,
+    /// and nothing reports it. Returns whether it was one.
+    pub(super) fn stop_sub_agent(&self, run: &RunId) -> bool {
+        self.all_sub_agents().iter().any(|agents| agents.stop(run))
+    }
+
+    /// Whether `wait` took `child` already: it landed, or was reported.
+    pub(super) fn sub_agent_taken(&self, child: &RunId) -> bool {
+        self.all_sub_agents()
+            .iter()
+            .any(|agents| agents.taken(child) == Some(true))
+    }
+
+    /// Takes `child` to land it from main's queue. `false` when `wait`
+    /// took it first.
+    pub(super) fn take_sub_agent(&self, child: &RunId) -> bool {
+        self.all_sub_agents().iter().all(|agents| {
+            !matches!(agents.take(child), Taken::Before(_) | Taken::Running)
+        })
+    }
+
+    /// `child`, a sub-agent of a main chat, ended: once its work is
+    /// checked, it joins main's queue (unless the person stopped it),
+    /// and what may land now lands. Blocks: call it off the interface's
+    /// thread.
+    pub fn sub_agent_ended(
+        &self,
+        child: &RunId,
+    ) -> anyhow::Result<DrainReport> {
+        let main = self.parent_of(child)?;
+        let repo = self.slot_of_run(&main)?.name;
+        let agents = self.sub_agents_of(&repo);
+        let ending = self.runtime.block_on(agents.ended(child));
+        let _draining = self.draining.lock().expect("not poisoned");
+        let end = match ending {
+            // Not this session's, or the person stopped it: nothing to
+            // land or report.
+            None | Some(Ending::Stopped) => None,
+            Some(Ending::Done { limit, .. }) => Some(SubAgentEnd {
+                limit: limit.map(|limit| limit_name(limit).to_owned()),
+                failed: None,
+            }),
+            Some(
+                ending @ (Ending::Failed { .. } | Ending::Retained { .. }),
+            ) => Some(SubAgentEnd {
+                limit: None,
+                failed: Some(ending_text(&ending)),
+            }),
+        };
+        // `wait` took it: its call says what it did.
+        if let Some(end) = end
+            && agents.taken(child) != Some(true)
+        {
+            let title = self.title_of(child)?;
+            let actions = self.with_lane(&main, |lane: &mut Lane| {
+                lane.queue(Waiting {
+                    run: child.0.to_string(),
+                    title,
+                    changes: 0,
+                    conflicts: Vec::new(),
+                    confirmed: Vec::new(),
+                    sub_agent: Some(end),
+                })
+            })?;
+            self.perform(&main, actions)?;
+        }
+        let (drained, landings) = self.drain_locked(&main)?;
+        self.report(&main, drained, landings)
+    }
+
+    /// The message of tau's turn after a drain: each sub-agent it
+    /// reports, then the conflicts to resolve, if any.
+    pub(super) fn report_prompt(
+        &self,
+        reported: &[Waiting],
+        landings: &[(RunId, Landing)],
+        resolve: Option<String>,
+    ) -> Option<String> {
+        if reported.is_empty() {
+            return resolve;
+        }
+        let mut sections: Vec<String> = reported
+            .iter()
+            .map(|waiting| {
+                let run = RunId(waiting.run.as_str().into());
+                let end = waiting.sub_agent.clone().unwrap_or_default();
+                if let Some(failed) = &end.failed {
+                    return format!(
+                        "Sub-agent `{}` ({}) came back with nothing to \
+                         land: {failed}.",
+                        waiting.title, waiting.run
+                    );
+                }
+                let answer = self
+                    .runtime
+                    .block_on(self.store.run(&run.0))
+                    .ok()
+                    .flatten()
+                    .and_then(|record| record.result)
+                    .unwrap_or_default();
+                let note = landings
+                    .iter()
+                    .find(|(landed, _)| *landed == run)
+                    .map(|(_, landing)| {
+                        tau_vcs::sub_agents::landing_note(
+                            landing,
+                            &landing.conflicts,
+                            end.limit.as_deref().and_then(limit_of),
+                        )
+                    })
+                    .unwrap_or_default();
+                format!(
+                    "Sub-agent `{}` ({}) finished.\n\n{answer}\n\n{note}",
+                    waiting.title, waiting.run
+                )
+            })
+            .collect();
+        sections.extend(resolve);
+        sections.push(REPORT_END.to_owned());
+        Some(sections.join("\n\n"))
     }
 }
 
-/// Forgets the sub-agent's stop once it ended.
-struct Forget(SubAgentStops);
+/// A limit from its name in the queue's records.
+fn limit_of(name: &str) -> Option<tau_agent::event::LimitKind> {
+    use tau_agent::event::LimitKind;
+    [
+        LimitKind::Turns,
+        LimitKind::Tokens,
+        LimitKind::Usd,
+        LimitKind::Time,
+    ]
+    .into_iter()
+    .find(|limit| limit_name(*limit) == name)
+}
 
-#[async_trait]
-impl PluginRun for Forget {
-    async fn finish(&mut self, _run: &FinishedRun<'_>, ctx: &PluginCtx) {
-        self.0.0.lock().expect("not poisoned").remove(&ctx.run);
+/// What an ending with nothing to land says, for the report.
+fn ending_text(ending: &Ending) -> String {
+    match ending {
+        Ending::Failed { error } => {
+            format!("it failed ({error}), and its changes were dropped")
+        }
+        Ending::Retained { error, workspace } => format!(
+            "it could not finalize its work ({error}); its workspace and \
+             bookmark were kept at {} for recovery",
+            workspace.display()
+        ),
+        Ending::Done { .. } => "it finished".to_owned(),
+        Ending::Stopped => "the person stopped it".to_owned(),
     }
 }

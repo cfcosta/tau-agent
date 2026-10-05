@@ -904,6 +904,7 @@ fn land_queue(ws: &mut Workspace, cx: &mut Context<Workspace>) {
             changes: 4,
             conflicts: Vec::new(),
             confirmed: Vec::new(),
+            sub_agent: None,
         },
         crate::queue::Waiting {
             run: "load-agents".into(),
@@ -911,6 +912,7 @@ fn land_queue(ws: &mut Workspace, cx: &mut Context<Workspace>) {
             changes: 2,
             conflicts: vec![host_rs.clone()],
             confirmed: vec![host_rs],
+            sub_agent: None,
         },
     ];
     ws.apply(
@@ -1025,6 +1027,7 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
                 changes: 3,
                 conflicts: Vec::new(),
                 confirmed: Vec::new(),
+                sub_agent: None,
             }],
             conflicts: None,
         },

@@ -317,6 +317,7 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
         changes: 2,
         conflicts: conflicts.iter().map(|f| f.to_string()).collect(),
         confirmed: confirmed.iter().map(|f| f.to_string()).collect(),
+        sub_agent: None,
     };
     let files = vec!["a.rs".to_owned(), "b.rs".to_owned()];
     let marked = |dismissed| MainConflicts {

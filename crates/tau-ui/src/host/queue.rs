@@ -278,10 +278,13 @@ impl Lane {
         let Some(head) = self.waiting.first().filter(|w| w.run == run) else {
             return (false, Vec::new());
         };
-        let lands = preview
-            .conflicts
-            .iter()
-            .all(|file| head.confirmed.contains(file));
+        // A sub-agent lands whatever it conflicts in: main asked for its
+        // work (ADR 0026).
+        let lands = head.sub_agent.is_some()
+            || preview
+                .conflicts
+                .iter()
+                .all(|file| head.confirmed.contains(file));
         let changed = head.changes != preview.changes
             || head.conflicts != preview.conflicts;
         let actions = if changed {
@@ -316,6 +319,12 @@ impl Lane {
             }));
         }
         actions
+    }
+
+    /// Sub-agents landed or failed, cleanly: tau's turn reporting them
+    /// starts before anything else lands.
+    pub fn reporting(&mut self) {
+        self.pending = true;
     }
 
     /// tau's resolving turn did not start: main is idle again, with
@@ -367,6 +376,9 @@ pub struct Drained {
     pub failed: Vec<(String, String)>,
     /// The message of tau's turn resolving what the last landing left.
     pub resolve: Option<String>,
+    /// The sub-agents that landed or failed, in order, for tau's turn
+    /// to report (ADR 0026).
+    pub reported: Vec<Waiting>,
     /// Conflicts newly marked on main, to tell the person of.
     pub notify: Option<Vec<String>>,
 }
@@ -407,6 +419,18 @@ pub fn drain(lane: &mut Lane, main: &mut impl Main) -> anyhow::Result<Drained> {
     drained.perform(main, actions)?;
     while let Some(head) = lane.next() {
         let run = head.run.clone();
+        // A sub-agent with nothing to land is only reported.
+        if head
+            .sub_agent
+            .as_ref()
+            .is_some_and(|end| end.failed.is_some())
+        {
+            drained.reported.push(head.clone());
+            let actions = lane.unqueue(&run);
+            drained.perform(main, actions)?;
+            continue;
+        }
+        let sub_agent = head.sub_agent.is_some().then(|| head.clone());
         let preview = match main.preview(&run) {
             Ok(preview) => preview,
             Err(Unlandable::Busy) => {
@@ -429,6 +453,7 @@ pub fn drain(lane: &mut Lane, main: &mut impl Main) -> anyhow::Result<Drained> {
                 let actions = lane.landed(&run, &conflicts, prompt.clone());
                 drained.perform(main, actions)?;
                 drained.landed.push(run);
+                drained.reported.extend(sub_agent);
                 if !conflicts.is_empty() {
                     drained.resolve = Some(prompt);
                     break;
@@ -440,6 +465,9 @@ pub fn drain(lane: &mut Lane, main: &mut impl Main) -> anyhow::Result<Drained> {
             }
             Err(why) => drained.leave(lane, main, &run, why)?,
         }
+    }
+    if !drained.reported.is_empty() && drained.resolve.is_none() {
+        lane.reporting();
     }
     Ok(drained)
 }
@@ -453,6 +481,17 @@ impl Drained {
         why: Unlandable,
     ) -> anyhow::Result<()> {
         if let Unlandable::Failed(error) = why {
+            // A sub-agent that cannot land is reported, so main hears.
+            if let Some(head) = lane
+                .waiting()
+                .iter()
+                .find(|w| w.run == run && w.sub_agent.is_some())
+            {
+                let mut head = head.clone();
+                let end = head.sub_agent.get_or_insert_default();
+                end.failed = Some(format!("its work could not land: {error}"));
+                self.reported.push(head);
+            }
             self.failed.push((run.to_owned(), error));
         }
         let actions = lane.unqueue(run);

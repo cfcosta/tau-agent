@@ -22,15 +22,35 @@ pub struct Waiting {
     pub conflicts: Vec<String>,
     /// The conflicting files the person saw and confirmed landing with.
     pub confirmed: Vec<String>,
+    /// A sub-agent that ended with nobody waiting for it (ADR 0026),
+    /// and how. It lands whatever it conflicts in, and tau's turn after
+    /// the drain reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_agent: Option<SubAgentEnd>,
+}
+
+/// How a sub-agent waiting in the queue ended.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubAgentEnd {
+    /// The limit that cut it short, as `tau_vcs` names it, if one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<String>,
+    /// Why it has nothing to land, if it has not: it failed, or its work
+    /// could not be checked. It only gets reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<String>,
 }
 
 impl Waiting {
     /// It would conflict in a file the person did not confirm: it waits
-    /// for them before it lands.
+    /// for them before it lands. A sub-agent never waits: main asked for
+    /// its work.
     pub fn needs_confirmation(&self) -> bool {
-        self.conflicts
-            .iter()
-            .any(|file| !self.confirmed.contains(file))
+        self.sub_agent.is_none()
+            && self
+                .conflicts
+                .iter()
+                .any(|file| !self.confirmed.contains(file))
     }
 }
 

@@ -17,10 +17,12 @@ use tau_ai::message::Message;
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
-    Delegate,
     Identity,
     Link,
     RunWorkspace,
+    Spawn,
+    SubAgents,
+    Wait,
     run_workspace::{PLUGIN, bookmark},
 };
 
@@ -127,9 +129,10 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
             let llm = ScriptedModel::new()
                 .turn(|t| {
                     t.tool_call(
-                        "delegate",
+                        "spawn",
                         json!({"task": "write and commit the generated files"}),
                     )
+                    .tool_call("wait", json!({}))
                 })
                 .turn(|t| t.text("caller done"));
             let mut expected = BTreeMap::from([(
@@ -184,42 +187,47 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                 _ => child.turn(|t| t.text("feat: pending files")),
             };
             let child_script = child.clone();
-            let agent = coder(llm.clone(), &parent, true).tool(Delegate::new(
-                parent.clone(),
-                Identity::default(),
-                &[],
-                move |workspace, _| {
-                    let agent = if mode == 4 {
-                        tau_agent::agent::Agent::new(child_script.clone())
-                            .plugin(TagOnFinish(workspace.vcs().clone()))
-                            .plugin(tau_tools::plugin::CodingTools::new(
-                                tau_tools::path::Root::new(workspace.dir()),
-                            ))
-                            .plugin(tau_vcs::VcsPlugin::new(
-                                workspace.vcs().clone(),
-                            ))
-                            .plugin(workspace)
-                    } else {
-                        coder(child_script.clone(), &workspace, true)
-                    };
-                    Ok(if limited {
-                        agent.limits(
-                            Limits::default().max_turns(committed as u32 + 1),
-                        )
-                    } else {
-                        agent
-                    })
-                },
-            ));
+            let agents = SubAgents::default();
+            let agent = coder(llm.clone(), &parent, true)
+                .tool(Wait::new(parent.clone(), agents.clone()))
+                .tool(Spawn::new(
+                    parent.clone(),
+                    Identity::default(),
+                    agents,
+                    &[],
+                    move |workspace, _| {
+                        let agent = if mode == 4 {
+                            tau_agent::agent::Agent::new(child_script.clone())
+                                .plugin(TagOnFinish(workspace.vcs().clone()))
+                                .plugin(tau_tools::plugin::CodingTools::new(
+                                    tau_tools::path::Root::new(workspace.dir()),
+                                ))
+                                .plugin(tau_vcs::VcsPlugin::new(
+                                    workspace.vcs().clone(),
+                                ))
+                                .plugin(workspace)
+                        } else {
+                            coder(child_script.clone(), &workspace, true)
+                        };
+                        Ok(if limited {
+                            agent.limits(
+                                Limits::default()
+                                    .max_turns(committed as u32 + 1),
+                            )
+                        } else {
+                            agent
+                        })
+                    },
+                ));
             let outcome =
-                agent.run("delegate the writes", &store).await.unwrap();
+                agent.run("hand the writes over", &store).await.unwrap();
             let requests = llm.requests();
             let result = requests[1]
                 .transcript
                 .iter()
                 .find_map(|message| match message {
                     Message::ToolResult(result)
-                        if result.tool_name == "delegate" =>
+                        if result.tool_name == "wait" =>
                     {
                         Some(result)
                     }
@@ -238,8 +246,11 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                 .unwrap();
             let child_dir = project.workspace_dir(&link.workspace);
             let successful = mode == 3;
+            assert!(!result.is_error, "mode={mode}, limited={limited}");
+            let details = result.details.as_ref().unwrap();
             assert_eq!(
-                result.is_error, !successful,
+                details["landed"].as_array().unwrap().len(),
+                usize::from(successful),
                 "mode={mode}, limited={limited}"
             );
             assert_eq!(child_dir.exists(), !successful);
@@ -276,12 +287,11 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                 .filter(|link| link.from.is_some())
                 .count();
             assert_eq!(landed, if successful { committed + 1 } else { 0 });
-            let details = result.details.as_ref().unwrap();
             if !successful {
-                assert_eq!(details["workspace_retained"], true);
-                assert_eq!(details["run"], child_run.id);
+                let retained = &details["retained"][0];
+                assert_eq!(retained["run"], child_run.id);
                 assert_eq!(
-                    details["workspace"],
+                    retained["workspace"],
                     child_dir.display().to_string()
                 );
                 assert!(records.iter().any(|(_, body)| {
@@ -324,9 +334,10 @@ fn oversized_untracked_child_files_are_not_discarded() {
             let llm = ScriptedModel::new()
                 .turn(|t| {
                     t.tool_call(
-                        "delegate",
+                        "spawn",
                         json!({"task": "write the large file"}),
                     )
+                    .tool_call("wait", json!({}))
                 })
                 .turn(|t| t.text("caller done"));
             let content = "x".repeat(1_048_576 + extra);
@@ -338,15 +349,19 @@ fn oversized_untracked_child_files_are_not_discarded() {
                 )
             });
             let script = child.clone();
-            let agent = coder(llm.clone(), &parent, true).tool(Delegate::new(
-                parent.clone(),
-                Identity::default(),
-                &[],
-                move |workspace, _| {
-                    Ok(coder(script.clone(), &workspace, true)
-                        .limits(Limits::default().max_turns(1)))
-                },
-            ));
+            let agents = SubAgents::default();
+            let agent = coder(llm.clone(), &parent, true)
+                .tool(Wait::new(parent.clone(), agents.clone()))
+                .tool(Spawn::new(
+                    parent.clone(),
+                    Identity::default(),
+                    agents,
+                    &[],
+                    move |workspace, _| {
+                        Ok(coder(script.clone(), &workspace, true)
+                            .limits(Limits::default().max_turns(1)))
+                    },
+                ));
             let outcome = agent.run("delegate", &store).await.unwrap();
             let requests = llm.requests();
             let result = requests[1]
@@ -354,16 +369,15 @@ fn oversized_untracked_child_files_are_not_discarded() {
                 .iter()
                 .find_map(|message| match message {
                     Message::ToolResult(result)
-                        if result.tool_name == "delegate" =>
+                        if result.tool_name == "wait" =>
                     {
                         Some(result)
                     }
                     _ => None,
                 })
                 .unwrap();
-            assert!(result.is_error);
-            let details = result.details.as_ref().unwrap();
-            assert_eq!(details["workspace_retained"], true);
+            assert!(!result.is_error);
+            let details = &result.details.as_ref().unwrap()["retained"][0];
             let dir =
                 std::path::Path::new(details["workspace"].as_str().unwrap());
             assert_eq!(

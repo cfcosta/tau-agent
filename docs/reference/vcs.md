@@ -602,14 +602,14 @@ off is finished by the next, and a done sweep plans nothing.
 The host sweeps each listed repository as it starts (`Host::recover`,
 off the interface's thread, before updates). A run of this session, or
 a sub-agent under one, is kept, and so is a workspace named after one
-of their workspaces with `-sub-`, which a delegate may be making; no run
+of their workspaces with `-sub-`, which a `spawn` may be making; no run
 starts while the sweep reads what the projects hold. A chat that landed
 is landed, one dropped is discarded, and any other chat is open and
 kept, whatever its status: a chat that finished but has not landed,
 failed, or was cut off can go on. A sub-agent that failed, was
-cancelled or was cut off is discarded, as its call would have done; one
-that finished keeps what it has, as a call keeps a workspace it could
-not finalize.
+cancelled or was cut off is discarded, as its end would have done; one
+that finished keeps what it has, to land, or because it could not be
+finalized.
 
 ## Moving onto trunk
 
@@ -664,75 +664,90 @@ catch-up does, in the same operation: trunk moves forward, never aside.
 And `move_onto` goes onto that commit instead of the one it was given
 when the update came after the caller read trunk.
 
-## Delegating to a sub-agent
+## Sub-agents: spawn and wait
 
-Only the main chat delegates (ADR 0016). Chats and sub-agents declare
-`delegate` all the same, as a `RefusingDelegate` with the same
-description and arguments, so their tools match main's and their first
-request reads main's prompt cache (ADR 0022); a call fails with
-`ONLY_MAIN_DELEGATES`: "Only the main chat delegates; do this work here
-or ask the person to start a chat."
+Only the main chat starts sub-agents (ADR 0016). Chats and sub-agents
+declare `spawn` and `wait` all the same, as `RefusingSpawn` and
+`RefusingWait` with the same descriptions and arguments, so their
+tools match main's and their first request reads main's prompt cache
+(ADR 0022). A call fails with `ONLY_MAIN_SPAWNS`: "Only the main chat
+starts sub-agents; do this work here or ask the person to start a
+chat."
 
-`Delegate` is the `delegate` tool (`{ task, model?, effort? }`): a run
-hands a task to a sub-agent, a child run in a chat of its own that
-forks the caller's conversation
+A sub-agent is a child run in a chat of its own that forks the
+caller's conversation and runs beside it
 ([ADR 0009](../decisions/0009-child-runs-land-on-their-parent.md),
-[ADR 0015](../decisions/0015-delegates-fork-their-caller.md)). Build it
-on the run's `RunWorkspace`, with the model ids a call may pick from,
-and a closure that builds the sub-agent's `Agent` around the
-sub-agent's own `RunWorkspace` on the `ChildModel` its call asked for.
-tau-ui builds it on the model and effort asked for, or the caller's,
-and refuses an effort the model does not take.
+[ADR 0015](../decisions/0015-delegates-fork-their-caller.md),
+[ADR 0026](../decisions/0026-sub-agents-run-detached.md)). A caller's
+sub-agents live in a `SubAgents`, which outlives the caller's turns:
+tau-ui keeps one per repository's main chat, which sends the
+sub-agents' events on with the host's own. `Spawn` and `Wait` are built
+per run on the run's `RunWorkspace` and the caller's `SubAgents`.
+`Spawn` also takes the model ids a call may pick from and a closure
+that builds the sub-agent's `Agent` around the sub-agent's own
+`RunWorkspace` on the `ChildModel` its call asked for. tau-ui builds it
+on the model and effort asked for, or the caller's, and refuses an
+effort the model does not take.
 
-1. The caller's work must be committed (ADR 0014): with changes in its
-   `@`, the tool refuses and says to commit with `vcs_commit` first.
-   The sub-agent's workspace, `<caller's workspace>-sub-<12 random hex
-digits>`, so that no process reuses one an earlier one left, starts
-   on the caller's newest commit
-   (`RunWorkspace::with_base`), so it sees the caller's work.
-2. The sub-agent runs through `Agent::as_tool(…).forking()`: a
-   `Subagent` run of the caller with a `fork_seq`, its events forwarded
-   to the caller's. It is asked on the caller's transcript, the turn
-   that made the call with an output for each call in it, and then its
-   task. It commits its work on its own stack, under its own bookmark.
-3. The tool is `ExecutionMode::Grouped`: the calls in one batch run side
-   by side, up to `MAX_RUNNING` (4) at once, and the batch's other tools
-   run before or after them, never while a landing moves the caller's
-   working copy.
-4. As each finishes, its changes land on the caller with `Vcs::land`,
-   one landing at a time, in the order they finish. The first cannot
-   conflict. A later one whose changes clash with an earlier one's
-   lands its conflicts, and its result names the files this landing
-   left in conflict, not those the caller's head held already, for the
-   caller to resolve. The tool's text is the sub-agent's answer and a
-   line on what landed; its details hold `run`, the `landing`, the
-   `conflicts` it brought, and the `limit` that cut it short, if any.
-5. A sub-agent stopped by a limit tries to commit what it left at its
-   end. Only a verified committed working copy can land. Its text is its
-   last message, and a successful landing's line starts by saying which
-   limit stopped it (`It stopped at its turn limit.`).
-6. When the run itself fails, or the caller is cancelled before it lands,
-   its changes are intentionally abandoned and the caller gets the error.
-7. After a successful handoff or intentional discard, the workspace and
-   bookmark are removed and the child closes. Failed finalization or an
-   unverifiable working copy instead returns an error with
-   `workspace_retained: true`, the run ID, and the workspace path. Nothing
-   lands; the child stays open for recovery. Saved snapshots and the
-   conversation also remain in history.
+1. `spawn` (`{ task, model?, effort? }`) needs the caller's work
+   committed (ADR 0014): with changes in its `@`, it refuses and says to
+   commit with `vcs_commit` first. With `MAX_RUNNING` (4) running
+   already, it refuses and says to `wait` for one. The sub-agent's
+   workspace, `<caller's workspace>-sub-<12 random hex digits>`, so that
+   no process reuses one an earlier one left, starts on the caller's
+   newest commit (`RunWorkspace::with_base`), so it sees the caller's
+   work.
+2. The sub-agent starts through `Agent::as_tool(…).forking().spawn(…)`:
+   a `Subagent` run of the caller with a `fork_seq`, with its own events
+   and its own cancel token. It is asked on the caller's transcript, the
+   turn that made the call with an output for each call in it, and then
+   its task. It commits its work on its own stack, under its own
+   bookmark. `spawn` answers at once with its run id (`details.run`);
+   the caller goes on, and cancelling the caller does not stop it.
+   `spawn` is `ExecutionMode::Grouped`, so a `vcs_commit` in its batch
+   runs before or after it, never while it reads the working copy.
+3. As it ends, `SubAgents` checks its work. One that finished, or that
+   a limit stopped, can land (`Ending::Done`), once a verified committed
+   working copy shows its finish hook committed everything; otherwise
+   it is `Ending::Retained`: nothing lands, and its workspace and
+   bookmark stay for recovery. One that failed (`Ending::Failed`) or
+   that the person stopped (`Ending::Stopped`) has its changes abandoned,
+   and its workspace and bookmark go.
+4. Whoever takes an ended sub-agent first (`SubAgents::take`) lands or
+   reports it; the other finds it taken.
+   - `wait` (`{ runs? }`, every sub-agent not taken yet when `runs` is
+     left out) blocks until they end, and lands each with `Vcs::land` as
+     it ends, one landing at a time. The tool is `ExecutionMode::Grouped`,
+     so the batch's other tools never run while a landing moves the
+     caller's working copy. A landing whose changes clash with the
+     caller's lands its conflicts, and the note names the files this
+     landing left in conflict, not those the caller's head held already.
+     Each sub-agent's section is its answer and a line on what landed,
+     which starts by saying which limit stopped it, if one did (`It
+     stopped at its turn limit.`). Its details list each landing in
+     `landed`: `run`, `task`, the `landing`, the `conflicts` it brought,
+     and the `limit`. After landing, the sub-agent's workspace and
+     bookmark go.
+   - Nobody waiting, tau-ui queues it on the main chat's landing queue
+     (ADR 0024) with how it ended (`Waiting::sub_agent`). It lands
+     whatever it conflicts in. A drain lands queued sub-agents one after
+     another, and reports one with nothing to land; after the drain, tau
+     starts main's turn with each sub-agent's title, answer and landing
+     note, and the conflicts to resolve, if any. A sub-agent the person
+     stopped is not reported. A main turn the person stopped drains nothing
+     (`Host::main_turn_stopped`): what waits lands after main's next
+     turn, or when another sub-agent ends.
 
 Behavioral properties and replay instructions are in
 [VCS handoff and conflict properties](vcs-hardening-tests.md).
 
 The caller's links record what came to its stack during the turn: each
-landed change with `from` naming the sub-agent, then the turn's
-snapshot. A call a tool makes through the loop, such as a codemode
-script's, is a call like the model's: in tau-ui its sub-agent gets a
-chat on its task and closes once that nested call returns, unless its
-workspace was retained for recovery (`RunView::call` finds a nested call
-while the model's call runs).
-Only a top-level run (a repository's main chat) gets
-`delegate`: runs nest one level
-([ADR 0016](../decisions/0016-runs-nest-one-level.md)).
+change a `wait` landed with `from` naming the sub-agent, then the
+turn's snapshot. A queued landing records its links as a chat's does.
+A call a tool makes through the loop, such as a codemode script's, is
+a call like the model's: in tau-ui a `spawn` it makes gets a chat on
+its task, and a `wait` it makes closes the chats of what it landed
+(`RunView::call` finds a nested call while the model's call runs).
 
 ## Pushing
 

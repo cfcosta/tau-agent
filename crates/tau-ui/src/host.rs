@@ -47,17 +47,19 @@ use tau_ui_plugin::{HOST_RECORD, HostRecord, Services, TurnCommit, TurnHooks};
 use tau_vcs::{
     ChangeKind,
     DEFAULT_WORKSPACE,
-    Delegate,
     FileDiff,
     Identity,
     Landing,
     Link,
     Project,
-    RefusingDelegate,
+    RefusingSpawn,
+    RefusingWait,
     RunWorkspace,
+    Spawn,
     VcsPlugin,
-    delegate::ChildModel,
+    Wait,
     run_workspace::{PLUGIN as WORKSPACE_PLUGIN, bookmark},
+    sub_agents::ChildModel,
 };
 use tokio::{runtime::Runtime, sync::mpsc};
 
@@ -200,9 +202,9 @@ pub struct Host {
     prs: Arc<Mutex<HashMap<RunId, OpenPr>>>,
     /// How to steer and cancel each run going on.
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
-    /// How to stop each sub-agent going on, which runs inside its main
-    /// chat's call rather than as a run of the host's.
-    sub_agents: sub_agents::SubAgentStops,
+    /// Each repository's main chat's sub-agents, which run beside it
+    /// and outlive its turns (ADR 0026), by repository.
+    sub_agents: Mutex<HashMap<String, tau_vcs::SubAgents>>,
     /// What each run going on was steered with and has not read yet.
     unread: Arc<Mutex<HashMap<RunId, Vec<String>>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
@@ -329,9 +331,9 @@ const MAIN_DOES_NOT_LAND: &str = "The main chat commits straight to \
     trunk, so it has nothing to land: commit with `vcs_commit` and you \
     are done.";
 
-/// What `vcs_land` answers on a sub-agent, which lands as it returns.
+/// What `vcs_land` answers on a sub-agent, which lands as it ends.
 const SUB_AGENTS_DO_NOT_LAND: &str = "A sub-agent's commits land on its \
-    caller when it returns, so it has nothing to propose: commit with \
+    caller when it ends, so it has nothing to propose: commit with \
     `vcs_commit`, then answer.";
 
 fn identity() -> Identity {
@@ -458,7 +460,7 @@ impl Host {
             forecast_wait: forecast::SETTLE,
             jobs: Arc::default(),
             runs: Arc::default(),
-            sub_agents: Default::default(),
+            sub_agents: Mutex::default(),
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
@@ -547,6 +549,7 @@ impl Host {
 
     pub fn is_running(&self, run: &RunId) -> bool {
         self.runs.lock().expect("not poisoned").contains_key(run)
+            || self.sub_agent_running(run)
     }
 
     /// The workspace `run` works in, if it started in this session.
@@ -670,7 +673,7 @@ impl Host {
     /// the workspace's name.
     ///
     /// `main`: the run is its repository's main chat, which commits on
-    /// trunk and alone gets `delegate`, as runs nest one level (ADR
+    /// trunk and alone gets `spawn` and `wait`, as runs nest one level (ADR
     /// 0016).
     fn agent_for_run(
         &self,
@@ -716,8 +719,8 @@ impl Host {
         // workspace: tools, then what plugins add, which hear each turn's
         // commit. Every run declares the same tools, in the same order,
         // so each reads the others' prompt cache (ADR 0022): only the
-        // main chat can delegate, so sub-agents do not nest, and the
-        // others' `delegate` refuses.
+        // main chat can spawn sub-agents, so sub-agents do not nest, and the
+        // others' `spawn` and `wait` refuse.
         // `refusal`: `None` when the run proposes its own landing with
         // `vcs_land` (ADR 0014); else why it does not, which its
         // `vcs_land` answers.
@@ -769,21 +772,24 @@ impl Host {
         let agent = for_model(choice, &workspace);
         let models: Vec<String> =
             plan_models().into_iter().map(|model| model.id).collect();
-        let delegate = {
+        // Main's sub-agents, and every other run's refusing tools, in
+        // the same place, so all declare the same tools (ADR 0022).
+        let (agent, refusal) = if main {
+            let agents = self.sub_agents_of(&repo.name);
             let child_on_workspace = on_workspace.clone();
             let registered = registered.clone();
-            let stops = self.sub_agents.clone();
             let caller = choice.clone();
-            let models = models.clone();
-            Delegate::new(
+            let refused = models.clone();
+            let spawn = Spawn::new(
                 workspace.clone(),
                 identity(),
-                &models.clone(),
+                agents.clone(),
+                &models,
                 move |child, asked| {
                     let choice = child_choice(&caller, asked)?;
                     let agent = for_model(&choice, &child)
-                        .tool(RefusingDelegate::new(&models))
-                        .plugin(stops.clone());
+                        .tool(RefusingSpawn::new(&refused))
+                        .tool(RefusingWait::default());
                     let (agent, services) = child_on_workspace(
                         agent,
                         child,
@@ -797,12 +803,14 @@ impl Host {
                     )
                     .map_err(|error| format!("{error:#}").into())
                 },
-            )
-        };
-        let (agent, refusal) = if main {
-            (agent.tool(delegate), Some(MAIN_DOES_NOT_LAND))
+            );
+            let wait = Wait::new(workspace.clone(), agents);
+            (agent.tool(spawn).tool(wait), Some(MAIN_DOES_NOT_LAND))
         } else {
-            (agent.tool(RefusingDelegate::new(&models)), None)
+            let agent = agent
+                .tool(RefusingSpawn::new(&models))
+                .tool(RefusingWait::default());
+            (agent, None)
         };
         // tau's turn resolving a landing's conflicts on main stops only
         // once they are resolved, or after one more try (ADR 0024).
@@ -926,7 +934,7 @@ impl Host {
         // Named after what it was asked, so the workspace says what it is
         // for.
         let name = workspace_name(&branch_slug(prompt));
-        // A fork is a chat under the main chat: it delegates to none.
+        // A fork is a chat under the main chat: it spawns none.
         let (agent, workspace) =
             self.agent_for_run(choice, repo, name, false, false)?;
         let _guard = self.runtime.enter();
@@ -1240,8 +1248,9 @@ impl Host {
         self.refuse_ended(run)?;
         // A run whose end went by reads nothing more.
         self.settle(run);
-        let runs = self.runs.lock().expect("not poisoned");
-        let Some(control) = runs.get(run) else {
+        let control = self.runs.lock().expect("not poisoned").get(run).cloned();
+        let Some(control) = control.or_else(|| self.sub_agent_control(run))
+        else {
             return Ok(false);
         };
         control.steer(text);
@@ -1313,7 +1322,7 @@ impl Host {
             control.cancel();
             return;
         }
-        self.sub_agents.cancel(run);
+        self.stop_sub_agent(run);
     }
 }
 

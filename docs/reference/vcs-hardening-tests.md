@@ -13,7 +13,7 @@ requests. Run each Store on one enabled-I/O runtime.
 | `finalization_lands_exact_bytes_or_keeps_the_child_workspace` | Independent path-to-bytes map and handoff state          | A child either transfers all generated committed and pending files, or transfers nothing and retains its workspace, bookmark, and durable finalization error. |
 | `oversized_untracked_child_files_are_not_discarded`           | Fixed native snapshot-size boundaries and original bytes | Files omitted by jj-lib's size limit also prevent handoff and remain recoverable.                                                                             |
 | `landing_keeps_a_chat_whose_final_commit_failed`              | Fixed file bytes and unchanged trunk                     | Manual preview and landing cannot delete edits after an unusable final commit message.                                                                        |
-| `retained_delegates_stay_open_at_every_call_depth`            | Exhaustive retention flag × call-depth table             | Direct and nested failed handoffs remain open in the UI, without a close action or navigation away.                                                           |
+| `retained_sub_agents_stay_open_at_every_call_depth`           | Exhaustive retention flag × call-depth table             | A sub-agent a direct or nested `wait` lists as retained stays open in the UI, without a close action or navigation away; one it landed closes.                |
 
 ### Conflicts
 
@@ -70,7 +70,7 @@ updates.
 ## Rust Code
 
 The complete implementations are in
-[`delegate_finalization.rs`](../../crates/plugins/tau-vcs/tests/delegate_finalization.rs),
+[`sub_agent_finalization.rs`](../../crates/plugins/tau-vcs/tests/sub_agent_finalization.rs),
 [`conflict_snapshots.rs`](../../crates/plugins/tau-vcs/tests/conflict_snapshots.rs),
 [`runs_model.rs`](../../crates/plugins/tau-vcs/tests/runs_model.rs), and
 [`diff.rs`](../../crates/plugins/tau-vcs/src/diff.rs).
@@ -107,7 +107,7 @@ tests now check both paths and conflict state.
 
 ```sh
 nix develop -c cargo test -p tau-vcs --lib tree_values_match_the_signed_term_model
-nix develop -c cargo test -p tau-vcs --test delegate_finalization
+nix develop -c cargo test -p tau-vcs --test sub_agent_finalization
 nix develop -c cargo test -p tau-vcs --test conflict_snapshots --test runs_model
 nix develop -c cargo test -p tau-ui --test host --test workspace
 ```
@@ -119,7 +119,7 @@ an additional fixed-seed local run:
 
 ```sh
 HEGEL_DERANDOMIZE=true HEGEL_DATABASE=disabled \
-  nix develop -c cargo test -p tau-vcs --test delegate_finalization
+  nix develop -c cargo test -p tau-vcs --test sub_agent_finalization
 ```
 
 The owned Agent/Store/jj property has 12 cases because each history runs

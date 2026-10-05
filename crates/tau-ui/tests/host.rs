@@ -883,10 +883,11 @@ fn a_chat_under_main_is_not_forked() {
     assert!(main_dir.join("b.txt").exists());
 }
 
-/// A run delegates to a sub-agent (ADR 0009): the sub-agent works in a
-/// workspace of its own, its change lands on the run, and it closes.
+/// The main chat spawns a sub-agent and waits for it (ADR 0009, 0026):
+/// the sub-agent works in a workspace of its own, its change lands on
+/// main in the `wait`, and it closes.
 #[test]
-fn a_run_delegates_and_the_sub_agent_lands() {
+fn main_waits_for_its_sub_agent_and_it_lands() {
     let src = tempfile::tempdir().unwrap();
     git(src.path(), &["init", "--quiet"]);
     std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
@@ -902,10 +903,8 @@ fn a_run_delegates_and_the_sub_agent_lands() {
 
     let llm = ScriptedModel::new()
         .turn(|t| {
-            t.tool_call(
-                "delegate",
-                serde_json::json!({ "task": "write c.txt" }),
-            )
+            t.tool_call("spawn", serde_json::json!({ "task": "write c.txt" }))
+                .tool_call("wait", serde_json::json!({}))
         })
         .turn(|t| {
             t.tool_call(
@@ -913,7 +912,7 @@ fn a_run_delegates_and_the_sub_agent_lands() {
                 serde_json::json!({ "path": "c.txt", "content": "c\n" }),
             )
         })
-        // The sub-agent commits its work; it lands as it returns.
+        // The sub-agent commits its work; it lands in the `wait`.
         .turn(|t| {
             t.tool_call(
                 "vcs_commit",
@@ -924,7 +923,7 @@ fn a_run_delegates_and_the_sub_agent_lands() {
         .turn(|t| t.text("done"));
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_repo(REPO, project.clone());
-    let main = on_main(&host, "delegate c.txt");
+    let main = on_main(&host, "hand c.txt off");
     until_end(&mut events);
     wait_until_done(&host, &main);
 
@@ -938,7 +937,7 @@ fn a_run_delegates_and_the_sub_agent_lands() {
     assert!(project.workspaces().unwrap().is_empty());
     assert!(project.bookmarks("tau/").unwrap().is_empty());
 
-    // From history, the run's delegate card says what landed, and the
+    // From history, main's `wait` card says what landed, and the
     // sub-agent's chat comes back under it.
     let history = host.history().unwrap();
     let main_view = history.iter().find(|view| view.id == main).unwrap();
@@ -946,11 +945,11 @@ fn a_run_delegates_and_the_sub_agent_lands() {
         .items
         .iter()
         .find_map(|item| match item {
-            Item::Tool(card) if card.tool == "delegate" => Some(card),
+            Item::Tool(card) if card.tool == "wait" => Some(card),
             _ => None,
         })
-        .expect("a delegate card");
-    let landed = tau_vcs::ui::delegated(&card.data).expect("a landing");
+        .expect("a wait card");
+    let landed = tau_vcs::ui::waited(&card.data).pop().expect("a landing");
     assert_eq!(landed.changes.len(), 1);
     assert_eq!(landed.title, "write c.txt");
     let child = history
@@ -968,13 +967,14 @@ fn a_run_delegates_and_the_sub_agent_lands() {
 
 /// A sub-agent that fails still comes back from history, under the run
 /// that called it, with how it ended.
-/// A sub-agent's chat stops on its own: its delegate call fails, and
-/// the main chat goes on.
+/// A sub-agent's chat stops on its own: it is dropped, the `wait` on it
+/// says so, and the main chat goes on.
 #[test]
 fn a_sub_agent_stops_and_its_main_chat_goes_on() {
     let llm = ScriptedModel::new()
         .turn(|t| {
-            t.tool_call("delegate", serde_json::json!({ "task": "wait" }))
+            t.tool_call("spawn", serde_json::json!({ "task": "wait" }))
+                .tool_call("wait", serde_json::json!({}))
         })
         // The sub-agent's answer would take a minute.
         .turn(|t| t.text("too late").delay(Duration::from_secs(60)))
@@ -1012,10 +1012,182 @@ fn a_sub_agent_stops_and_its_main_chat_goes_on() {
     };
     assert_eq!(stopped(&child), Some(StopReason::Cancelled));
     assert_eq!(stopped(&main), Some(StopReason::Stop), "main goes on");
-    let failed = seen.iter().any(|event| {
-        matches!(event, RunEvent::ToolEnd { run, is_error: true, .. } if *run == main)
+    let waited = seen.iter().find_map(|event| match event {
+        RunEvent::ToolEnd {
+            run,
+            output,
+            is_error: false,
+            ..
+        } if *run == main && output.text_content().contains("stopped") => {
+            Some(output.text_content())
+        }
+        _ => None,
     });
-    assert!(failed, "the delegate call failed");
+    assert!(
+        waited.is_some_and(|text| text.contains("The person stopped it")),
+        "the wait said it was stopped"
+    );
+}
+
+/// Answers a sub-agent's requests from `child`, every other from
+/// `main`: a sub-agent nobody waits for runs beside main, so one script
+/// cannot say whose request comes next.
+#[derive(Clone)]
+struct Routed {
+    main: ScriptedModel,
+    child: ScriptedModel,
+}
+
+impl tau_ai::llm::Llm for Routed {
+    fn open(
+        &self,
+        settings: tau_ai::responses::request::Settings,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Box<dyn tau_ai::llm::LlmSession>, tau_ai::llm::LlmError>,
+    > {
+        use futures_util::FutureExt as _;
+        let main = self.main.open(settings.clone());
+        let child = self.child.open(settings);
+        async move {
+            Ok(Box::new(RoutedSession {
+                main: main.await?,
+                child: child.await?,
+            }) as Box<dyn tau_ai::llm::LlmSession>)
+        }
+        .boxed()
+    }
+}
+
+struct RoutedSession {
+    main: Box<dyn tau_ai::llm::LlmSession>,
+    child: Box<dyn tau_ai::llm::LlmSession>,
+}
+
+impl tau_ai::llm::LlmSession for RoutedSession {
+    fn settings(&self) -> &tau_ai::responses::request::Settings {
+        self.main.settings()
+    }
+
+    fn set_reasoning(
+        &mut self,
+        effort: Option<tau_ai::responses::request::ReasoningEffort>,
+    ) {
+        self.main.set_reasoning(effort);
+        self.child.set_reasoning(effort);
+    }
+
+    fn respond(
+        &mut self,
+        transcript: &[tau_ai::message::Message],
+        timestamp: tau_ai::message::Timestamp,
+    ) -> tau_ai::llm::EventStream {
+        // A sub-agent's transcript says which call it runs.
+        let sub_agent = format!("{transcript:?}")
+            .contains("You are the sub-agent running this call");
+        let session = if sub_agent {
+            &mut self.child
+        } else {
+            &mut self.main
+        };
+        session.respond(transcript, timestamp)
+    }
+}
+
+/// A sub-agent nobody waits for (ADR 0026): main's turn ends at once,
+/// the sub-agent works on, and once it ends, its work lands on main
+/// through main's queue, and tau's turn on main reports what it said
+/// and what landed.
+#[test]
+fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = Project::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("spawn", serde_json::json!({ "task": "write c.txt" }))
+        })
+        .turn(|t| t.text("it works on c.txt"))
+        // tau's turn with the report.
+        .turn(|t| t.text("c.txt is in"));
+    let child_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "write",
+                serde_json::json!({ "path": "c.txt", "content": "c\n" }),
+            )
+            .tool_call(
+                "vcs_commit",
+                serde_json::json!({ "message": "feat: add c.txt" }),
+            )
+        })
+        .turn(|t| t.text("wrote c.txt"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(Store::memory()).unwrap();
+    let agent = Agent::new(Routed {
+        main: main_llm.clone(),
+        child: child_llm.clone(),
+    })
+    .name("coder");
+    let (host, mut events) = host_of(runtime, store, agent, src.path());
+    let host = host.with_repo(REPO, project.clone());
+    let main = on_main(&host, "hand c.txt off");
+    // Both end: main without waiting, the sub-agent once it is done.
+    let mut ended = Vec::new();
+    while ended.len() < 2 {
+        for event in until_end(&mut events) {
+            if let RunEvent::RunEnd { run, stop, .. } = event {
+                assert_eq!(stop, StopReason::Stop, "{run}");
+                ended.push(run);
+            }
+        }
+    }
+    wait_until_done(&host, &main);
+    let child = ended.into_iter().find(|run| *run != main).unwrap();
+    assert!(host.is_sub_agent(&child));
+    let dir = host.workspace(&main).unwrap();
+    // The coordinator hears both end, in either order: main's turn
+    // ended, then the sub-agent's work lands on main, idle.
+    let before = host.main_turn_ended(&main).unwrap();
+    assert!(before.landed.is_empty(), "nothing waited yet");
+    let report = host.sub_agent_ended(&child).unwrap();
+    assert_eq!(report.landed.len(), 1, "{report:?}");
+    assert_eq!(report.landed[0].0, child);
+    assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
+    assert!(report.queue.is_empty(), "{:?}", report.queue);
+    let prompt = report.resolve.expect("tau's turn reports it");
+    assert!(prompt.contains("wrote c.txt"), "{prompt}");
+    assert!(
+        prompt.contains("Its 1 change landed on top of yours."),
+        "{prompt}"
+    );
+    // The sub-agent is closed, landed on main.
+    assert!(project.workspaces().unwrap().is_empty());
+    assert!(project.bookmarks("tau/").unwrap().is_empty());
+    assert!(matches!(
+        host.ending_of(&child).unwrap(),
+        Some(tau_ui_remote::view::Ending::Landed { .. })
+    ));
+    // tau's turn reports it to main.
+    host.start_resolving(&main, &prompt).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);
+    assert!(asked.contains("wrote c.txt"), "{asked}");
+    main_llm.assert_exhausted();
+    child_llm.assert_exhausted();
 }
 
 #[test]
@@ -1034,16 +1206,14 @@ fn a_failed_sub_agent_comes_back_from_history() {
     .unwrap();
     let llm = ScriptedModel::new()
         .turn(|t| {
-            t.tool_call(
-                "delegate",
-                serde_json::json!({ "task": "write c.txt" }),
-            )
+            t.tool_call("spawn", serde_json::json!({ "task": "write c.txt" }))
+                .tool_call("wait", serde_json::json!({}))
         })
         .turn(|t| t.dropped())
         .turn(|t| t.text("it failed"));
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_repo(REPO, project);
-    let main = on_main(&host, "delegate c.txt");
+    let main = on_main(&host, "hand c.txt off");
     until_end(&mut events);
     until_end(&mut events);
     wait_until_done(&host, &main);
@@ -2337,16 +2507,14 @@ fn landing_keeps_a_chat_whose_final_commit_failed() {
     llm.assert_exhausted();
 }
 
-/// Runs nest one level: the main chat can delegate, and a chat under it,
-/// which could only nest a sub-agent under itself, has the tool only so
-/// its tools match main's: a call is refused, saying why.
+/// Runs nest one level: the main chat can spawn sub-agents, and a chat
+/// under it, which could only nest a sub-agent under itself, has the
+/// tool only so its tools match main's: a call is refused, saying why.
 #[test]
-fn only_the_main_chat_delegates() {
+fn only_the_main_chat_spawns() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("main"))
-        .turn(|t| {
-            t.tool_call("delegate", serde_json::json!({ "task": "nest" }))
-        })
+        .turn(|t| t.tool_call("spawn", serde_json::json!({ "task": "nest" })))
         .turn(|t| t.text("chat"));
     let (host, mut events) = host(llm.clone());
     let main = on_main(&host, "hello main");
@@ -2364,19 +2532,19 @@ fn only_the_main_chat_delegates() {
         .iter()
         .find_map(|message| match message {
             tau_ai::message::Message::ToolResult(result)
-                if result.tool_name == "delegate" =>
+                if result.tool_name == "spawn" =>
             {
                 Some(result.clone())
             }
             _ => None,
         })
-        .expect("the delegate call's result");
+        .expect("the spawn call's result");
     assert!(refused.is_error);
     assert!(
         refused.content.iter().any(|block| matches!(
             block,
             tau_ai::message::InputBlock::Text(text)
-                if text.text.contains(tau_vcs::ONLY_MAIN_DELEGATES)
+                if text.text.contains(tau_vcs::ONLY_MAIN_SPAWNS)
         )),
         "{:?}",
         refused.content
@@ -2570,23 +2738,21 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
 
 /// Main, a chat and a sub-agent of one repository send byte-identical
 /// instructions and tools, in the same order, so each can read the
-/// others' prompt cache: `delegate` and `vcs_land` are on every run, and
+/// others' prompt cache: `spawn`, `wait` and `vcs_land` are on every run, and
 /// say why where they do not apply. Kind-specific guidance goes in the
 /// first message instead.
 #[test]
 fn main_chats_and_sub_agents_send_the_same_prefix() {
     let llm = ScriptedModel::new()
         .turn(|t| {
-            t.tool_call(
-                "delegate",
-                serde_json::json!({ "task": "look around" }),
-            )
+            t.tool_call("spawn", serde_json::json!({ "task": "look around" }))
+                .tool_call("wait", serde_json::json!({}))
         })
         .turn(|t| t.text("looked"))
         .turn(|t| t.text("main done"))
         .turn(|t| t.text("chat done"));
     let (host, mut events) = host(llm.clone());
-    let main = on_main(&host, "delegate something");
+    let main = on_main(&host, "hand something off");
     until_end(&mut events);
     wait_until_done(&host, &main);
     let chat = host
@@ -2606,7 +2772,8 @@ fn main_chats_and_sub_agents_send_the_same_prefix() {
             .map(|t| t.name.clone())
             .collect()
     };
-    assert!(names(main).iter().any(|name| name == "delegate"));
+    assert!(names(main).iter().any(|name| name == "spawn"));
+    assert!(names(main).iter().any(|name| name == "wait"));
     assert!(names(main).iter().any(|name| name == "vcs_land"));
     for (kind, other) in [("sub-agent", sub_agent), ("chat", chat)] {
         assert_eq!(names(other), names(main), "{kind}'s tool order");

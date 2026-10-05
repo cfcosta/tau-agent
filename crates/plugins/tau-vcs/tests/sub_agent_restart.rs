@@ -1,5 +1,5 @@
 //! A sub-agent's workspace after a restart (`docs/reference/vcs.md`,
-//! "Delegating to a sub-agent"), in a test binary of its own: a fresh
+//! "Sub-agents: spawn and wait"), in a test binary of its own: a fresh
 //! process, as tau is after a restart.
 
 mod common;
@@ -8,10 +8,17 @@ use common::{coder, project_with};
 use serde_json::json;
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
-use tau_vcs::{Delegate, Identity, RunWorkspace, delegate::ChildModel};
+use tau_vcs::{
+    Identity,
+    RunWorkspace,
+    Spawn,
+    SubAgents,
+    Wait,
+    sub_agents::ChildModel,
+};
 
 /// A sub-agent workspace left behind by an earlier process, as a crash
-/// in the middle of a delegation leaves it, stays apart from the next
+/// in the middle of a sub-agent leaves it, stays apart from the next
 /// process's sub-agents: their names are random, so the first sub-agent
 /// after a restart starts on its caller's head, and the stale commit
 /// never lands on the caller.
@@ -47,16 +54,23 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
                 )
                 .tool_call("vcs_commit", json!({ "message": "feat: parent" }))
             })
-            .turn(|t| t.tool_call("delegate", json!({ "task": "child" })))
+            .turn(|t| {
+                t.tool_call("spawn", json!({ "task": "child" }))
+                    .tool_call("wait", json!({}))
+            })
             .turn(|t| t.text("done"));
         let parent =
             RunWorkspace::new(project.clone(), "parent", Identity::default())
                 .unwrap();
         let named = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = named.clone();
-        let agent = coder(llm, &parent, true).tool(Delegate::new(
+        let agents = SubAgents::default();
+        let agent = coder(llm, &parent, true)
+            .tool(Wait::new(parent.clone(), agents.clone()))
+            .tool(Spawn::new(
             parent.clone(),
             Identity::default(),
+            agents,
             &[],
             move |workspace, _: &ChildModel| {
                 seen.lock().unwrap().push(workspace.name().to_owned());
@@ -75,7 +89,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
                 Ok(coder(script, &workspace, true))
             },
         ));
-        let outcome = agent.run("work, then delegate", &store).await.unwrap();
+        let outcome = agent.run("work, then hand over", &store).await.unwrap();
         assert_eq!(outcome.text, "done");
         let named = named.lock().unwrap().clone();
         assert_eq!(named.len(), 1);

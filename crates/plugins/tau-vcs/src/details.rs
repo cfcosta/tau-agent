@@ -8,8 +8,9 @@ pub const STATUS: &str = "vcs_status";
 pub const DIFF: &str = "vcs_diff";
 pub const LOG: &str = "vcs_log";
 pub const SHOW: &str = "vcs_show";
-/// The name the model calls the sub-agent tool by.
-pub const DELEGATE: &str = "delegate";
+/// The names the model calls the sub-agent tools by.
+pub const SPAWN: &str = "spawn";
+pub const WAIT: &str = "wait";
 
 /// One change, as the tools describe it in `details`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

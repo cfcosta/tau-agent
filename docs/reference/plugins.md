@@ -932,8 +932,8 @@ pub struct ToolCall {        // what plugins see, in `tau_agent::plugin`
   nested result never reaches the model's context. The Events tab lists
   nested calls as `NestedStart` and `NestedEnd`. What the workspace
   does for a call it does for a nested one too: a nested `vcs_land`
-  proposes the run's landing, and a nested `delegate`'s sub-agent gets
-  its task and closes when that call returns (`vcs.md`). After the
+  proposes the run's landing, a nested `spawn`'s sub-agent gets its
+  task, and a nested `wait` closes what it landed (`vcs.md`). After the
   model's call ends, they read its `details.calls`, whose rows have
   at least `name` and `status` (`ok` for a call that succeeded).
 - **Not callable:** unknown names (`Tool x not found`), `ModelOnly`

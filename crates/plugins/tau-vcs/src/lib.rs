@@ -27,8 +27,6 @@
 
 #[cfg(feature = "host")]
 mod clone;
-#[cfg(feature = "host")]
-pub mod delegate;
 pub mod details;
 #[cfg(feature = "host")]
 mod diff;
@@ -49,6 +47,8 @@ pub mod run_workspace;
 #[cfg(feature = "host")]
 mod session;
 #[cfg(feature = "host")]
+pub mod sub_agents;
+#[cfg(feature = "host")]
 pub mod sweep;
 #[cfg(feature = "host")]
 pub mod tools;
@@ -58,8 +58,6 @@ mod vcs;
 
 #[cfg(feature = "host")]
 pub use clone::{CloneError, TransferError, clone_bare};
-#[cfg(feature = "host")]
-pub use delegate::{Delegate, ONLY_MAIN_DELEGATES, RefusingDelegate};
 pub use details::{ChangeInfo, ChangeKind, FileChange, Landing, TooLarge};
 #[cfg(feature = "host")]
 pub use diff::MAX_DIFF_BYTES;
@@ -91,6 +89,15 @@ pub use project::{
 pub use run_workspace::{Link, RunWorkspace};
 #[cfg(feature = "host")]
 pub use session::MAX_NEW_FILE_SIZE;
+#[cfg(feature = "host")]
+pub use sub_agents::{
+    ONLY_MAIN_SPAWNS,
+    RefusingSpawn,
+    RefusingWait,
+    Spawn,
+    SubAgents,
+    Wait,
+};
 #[cfg(feature = "host")]
 pub use vcs::{Identity, Vcs};
 

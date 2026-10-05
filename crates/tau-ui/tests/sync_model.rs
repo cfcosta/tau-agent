@@ -54,7 +54,7 @@ use tau_ui_remote::{
     remote,
     route::Route,
     update::HostUpdate,
-    view::{ChildKind, Item, Origin, RunView},
+    view::{Item, Origin, RunView},
     workspace::Synced,
 };
 use tau_vcs::{Identity, Project};
@@ -82,7 +82,8 @@ enum Reply {
     Text,
     /// It writes `content` to `path`: the chat has changes to land.
     Write { path: String, content: String },
-    /// It hands `task` to a sub-agent, which only a main chat can.
+    /// It hands `task` to a sub-agent, which only a main chat can, and
+    /// goes on without waiting for it.
     Delegate { task: String },
 }
 
@@ -195,8 +196,9 @@ impl LlmSession for GatedSession {
                     "write",
                     serde_json::json!({ "path": path, "content": content }),
                 ),
-                Reply::Delegate { task } => turn
-                    .tool_call("delegate", serde_json::json!({ "task": task })),
+                Reply::Delegate { task } => {
+                    turn.tool_call("spawn", serde_json::json!({ "task": task }))
+                }
             });
             inner.lock().unwrap().respond(&transcript, timestamp)
         };
@@ -404,6 +406,12 @@ impl Asked {
                     }
                 }
                 self.alerts.push(format!("{title}: {message}"))
+            }
+            // A turn tau starts, reporting sub-agents or resolving a
+            // landing, is a new turn: the one the person stopped stays
+            // stopped.
+            HostUpdate::TauTurn { run, .. } => {
+                self.cancelled.remove(run);
             }
             HostUpdate::Landed {
                 run,
@@ -724,26 +732,16 @@ impl Tau {
             assert!(Instant::now() < deadline, "the host never settled");
             self.computer.cx.run_until_parked();
             let synced = self.computer.synced();
-            // A run waiting for its sub-agent asks the model nothing
-            // until the sub-agent is done.
-            let live: Vec<&RunView> = synced
+            // Every live run, sub-agents included, waits for the model:
+            // nothing waits for a sub-agent (ADR 0026).
+            let live = synced
                 .runs
                 .iter()
                 .filter(|run| run.status.is_live())
-                .collect();
-            let delegating = live
-                .iter()
-                .filter(|run| {
-                    run.children.iter().any(|child| {
-                        child.kind == ChildKind::SubAgent
-                            && child.status.is_live()
-                    })
-                })
                 .count();
-            let live = live.len();
             let sessions = self.gate.sessions.load(Ordering::SeqCst);
             let idle = sessions == live
-                && self.gate.waiting() == live - delegating
+                && self.gate.waiting() == live
                 && !self.host.busy();
             let now =
                 (synced, self.wire.borrow().feed.seq(), self.gate.waiting());
@@ -1131,7 +1129,7 @@ impl Tau {
     /// task to a sub-agent: a chat of its own, under main, on every
     /// device.
     #[rule(weight = 2)]
-    fn main_delegates(&mut self, tc: TestCase) {
+    fn main_spawns(&mut self, tc: TestCase) {
         let who = self.who(&tc);
         let mains: Vec<RunView> =
             self.computer

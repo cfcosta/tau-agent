@@ -959,6 +959,11 @@ impl Host {
                 // that stopped on its own goes on with it; a cancelled one
                 // was stopped on purpose.
                 let unread = match &event {
+                    // A sub-agent does not go on: it lands, or is dropped.
+                    RunEvent::RunEnd { run, .. } if host.is_sub_agent(run) => {
+                        host.take_unread(run);
+                        None
+                    }
                     RunEvent::RunEnd { run, stop, .. } => {
                         let unread = host.take_unread(run);
                         (*stop != StopReason::Cancelled && !unread.is_empty())
@@ -968,8 +973,18 @@ impl Host {
                 };
                 // A main chat's turn ended: what it left in conflict
                 // marks it, and what waited lands (ADR 0024).
+                // Stopped by the person, nothing lands on it yet, and tau
+                // starts no turn on it: Stop means stop (ADR 0026).
                 let main_ended = match &event {
-                    RunEvent::RunEnd { run, .. } if host.is_main(run) => {
+                    RunEvent::RunEnd { run, stop, .. } if host.is_main(run) => {
+                        Some((run.clone(), *stop == StopReason::Cancelled))
+                    }
+                    _ => None,
+                };
+                // A sub-agent of a main chat ended: nobody waiting, it
+                // lands on main and tau reports it (ADR 0026).
+                let sub_agent_ended = match &event {
+                    RunEvent::RunEnd { run, .. } if host.is_sub_agent(run) => {
                         Some(run.clone())
                     }
                     _ => None,
@@ -991,7 +1006,21 @@ impl Host {
                         go_on(&host, &run, &text, &model, &entity, cx)
                     });
                 }
-                if let (Some(main), Some(entity)) =
+                if let (Some(child), Some(entity)) =
+                    (sub_agent_ended, workspace.upgrade())
+                {
+                    let host = host.clone();
+                    cx.update(|cx| {
+                        drain_off_thread(
+                            &host,
+                            &entity,
+                            move |host| host.sub_agent_ended(&child),
+                            "Could not land the sub-agent's work",
+                            cx,
+                        )
+                    });
+                }
+                if let (Some((main, stopped)), Some(entity)) =
                     (main_ended, workspace.upgrade())
                 {
                     let host = host.clone();
@@ -999,7 +1028,13 @@ impl Host {
                         drain_off_thread(
                             &host,
                             &entity,
-                            move |host| host.main_turn_ended(&main),
+                            move |host| {
+                                if stopped {
+                                    host.main_turn_stopped(&main)
+                                } else {
+                                    host.main_turn_ended(&main)
+                                }
+                            },
                             "Could not land what waits on main",
                             cx,
                         )

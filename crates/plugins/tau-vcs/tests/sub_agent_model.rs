@@ -1,7 +1,8 @@
-//! Delegation through the real plugins (`docs/reference/vcs.md`,
-//! "Delegating to a sub-agent"; ADR 0009, 0014, 0015): a caller with
-//! `Delegate` commits drawn work, or leaves it uncommitted, and calls a
-//! batch of drawn sub-agents, more than [`MAX_RUNNING`] at times. Each
+//! Sub-agents through the real plugins (`docs/reference/vcs.md`,
+//! "Sub-agents: spawn and wait"; ADR 0009, 0014, 0015, 0026): a caller
+//! with `Spawn` and `Wait` commits drawn work, or leaves it uncommitted,
+//! and spawns a batch of drawn sub-agents, up to [`MAX_RUNNING`], then
+//! waits for them. Each
 //! sub-agent writes files over one or two turns, commits some of it or
 //! none, and then answers, fails, or is stopped by its turn limit. A gate holds each one before its
 //! answer and lets them finish one at a time, in a drawn order among the
@@ -10,13 +11,16 @@
 //! The model is the caller's stack of changes, each a tree of jj merge
 //! terms (as `tests/runs_model.rs` has them), and what the reference
 //! promises:
-//! - with changes in the caller's `@`, every call is refused and no
+//! - with changes in the caller's `@`, every `spawn` is refused and no
 //!   sub-agent starts;
+//! - cancelling the caller does not stop its sub-agents; stopped by the
+//!   person, they land nothing;
 //! - each sub-agent starts on the caller's head at the call; its commits,
 //!   and its leftovers committed at its end with its model's message,
 //!   land on the caller in the order they finish, each rebased as jj
 //!   rebases, keeping its change id; a failed one lands nothing;
-//! - each result is the sub-agent's answer and `landing_note`'s line,
+//! - each sub-agent's part of `wait`'s result is its answer and
+//!   `landing_note`'s line,
 //!   naming the paths in conflict in the caller's new head that were not
 //!   before the landing;
 //! - the caller links each landed change, in order and from its
@@ -48,19 +52,22 @@ use tau_store::{Entry, Store};
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs::{
     DEFAULT_WORKSPACE,
-    Delegate,
     Identity,
     Link,
     Project,
     RunWorkspace,
-    delegate::{ChildModel, MAX_RUNNING},
+    Spawn,
+    SubAgents,
+    Wait,
     run_workspace::PLUGIN,
+    sub_agents::{ChildModel, Ending, MAX_RUNNING},
 };
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
 const VALUES: [&str; 3] = ["", "one\n", "two\n"];
-/// Sub-agents in a batch, at most.
-const MAX_BATCH: usize = 6;
+/// Sub-agents in a batch, at most: past it, `spawn` refuses, as
+/// `tests/sub_agents.rs` shows.
+const MAX_BATCH: usize = MAX_RUNNING;
 
 fn with(tree: &Tree, writes: &[(&'static str, &'static str)]) -> Tree {
     let mut tree = tree.clone();
@@ -311,7 +318,7 @@ async fn conduct(
     let mut order = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(120);
     while order.len() < n {
-        let running = MAX_RUNNING.min(n - order.len());
+        let running = n - order.len();
         let next = loop {
             assert!(
                 Instant::now() < deadline,
@@ -438,9 +445,6 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
     if cancelled {
         tc.event("the caller is cancelled during the batch");
     }
-    if subs.len() > MAX_RUNNING {
-        tc.event("more sub-agents than run at once");
-    }
 
     runtime.block_on(async {
         let store = Store::memory().await.unwrap();
@@ -489,11 +493,11 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
         llm = llm.turn(move |mut t| {
             for i in 0..calls {
                 t = t.tool_call(
-                    "delegate",
+                    "spawn",
                     json!({ "task": format!("task {i}"), "model": format!("m{i}") }),
                 );
             }
-            t
+            t.tool_call("wait", json!({}))
         });
         llm = llm.turn(|t| t.text("done"));
         if dirty {
@@ -516,15 +520,17 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
         let workspaces: Arc<Mutex<HashMap<usize, RunWorkspace>>> =
             Arc::default();
         let models: Vec<String> = (0..calls).map(|i| format!("m{i}")).collect();
-        let delegate = {
+        let agents = SubAgents::default();
+        let spawn = {
             let subs = subs.clone();
             let scripts = scripts.clone();
             let gates = gates.clone();
             let names = names.clone();
             let workspaces = workspaces.clone();
-            Delegate::new(
+            Spawn::new(
                 caller.clone(),
                 Identity::default(),
+                agents.clone(),
                 &models,
                 move |workspace, model: &ChildModel| {
                     let i: usize = model.model.as_deref().unwrap()[1..]
@@ -545,7 +551,8 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
             )
         };
         let run = coder(llm.clone(), &caller, true)
-            .tool(delegate)
+            .tool(spawn)
+            .tool(Wait::new(caller.clone(), agents.clone()))
             .start("split the work", &store);
         let conductor = (!dirty).then(|| {
             tokio::spawn(conduct(
@@ -566,6 +573,18 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
             Some(conductor) => conductor.await.unwrap(),
             None => Vec::new(),
         };
+        // Cancelling the caller left the rest running: the person stops
+        // them, and they land nothing.
+        let left = agents.running();
+        if cancelled {
+            assert_eq!(left.len(), calls - order.len(), "they go on");
+        } else {
+            assert!(left.is_empty());
+        }
+        for run in &left {
+            assert!(agents.stop(run));
+            assert_eq!(agents.ended(run).await, Some(Ending::Stopped));
+        }
         if order.iter().zip(1..).any(|(i, at)| *i + 1 != at) {
             tc.event("sub-agents finish out of call order");
         }
@@ -584,20 +603,41 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                 _ => None,
             })
             .collect();
-        let results: Vec<(String, bool, Value)> = transcript
-            .iter()
-            .filter_map(|message| match message {
-                Message::ToolResult(result) if result.tool_name == "delegate" => {
-                    Some((
-                        text_of(&result.content),
-                        result.is_error,
-                        result.details.clone().unwrap_or(Value::Null),
-                    ))
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(results.len(), calls);
+        let results = |tool: &str| -> Vec<(String, bool, Value)> {
+            transcript
+                .iter()
+                .filter_map(|message| match message {
+                    Message::ToolResult(result) if result.tool_name == tool => {
+                        Some((
+                            text_of(&result.content),
+                            result.is_error,
+                            result.details.clone().unwrap_or(Value::Null),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let spawned = results("spawn");
+        assert_eq!(spawned.len(), calls);
+        let waited = results("wait");
+        assert_eq!(waited.len(), 1);
+        let (waited, wait_failed, wait_details) = waited[0].clone();
+        assert_eq!(wait_failed, cancelled, "{waited}");
+        // Each sub-agent's part of `wait`'s answer.
+        let section = |run: &str| -> String {
+            let head = format!("## Sub-agent {run}\n\n");
+            let at = waited.find(&head).unwrap_or_else(|| {
+                panic!("no part for {run} in {waited}")
+            });
+            let rest = &waited[at + head.len()..];
+            rest.split("\n\n## Sub-agent ").next().unwrap().to_owned()
+        };
+        let mut landed_details = wait_details["landed"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter();
         let caller_bookmark = caller.bookmark_of(&outcome.run);
         let head = project.bookmark(&caller_bookmark).unwrap().unwrap();
         let stack = walk(home.path(), &head, &trunk);
@@ -617,7 +657,7 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
             .collect();
 
         if dirty {
-            for (text, error, _) in &results {
+            for (text, error, _) in &spawned {
                 assert!(*error, "{text}");
                 assert!(text.contains("Commit your work with vcs_commit"), "{text}");
             }
@@ -629,15 +669,19 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
             let mut from_links = Vec::new();
             for &i in &order {
                 let (commits, held) = &planned[i];
-                let (text, error, details) = &results[i];
+                let (started, error, _) = &spawned[i];
+                assert!(!*error, "sub-agent {i}: {started}");
                 let workspace = workspaces.lock().unwrap()[&i].clone();
                 let run = workspace.run().unwrap().0.to_string();
                 if subs[i].fails {
                     tc.event("a sub-agent fails");
-                    assert!(*error, "sub-agent {i} failed: {text}");
+                    if !cancelled {
+                        let text = section(&run);
+                        assert!(text.starts_with("[It failed"), "sub-agent {i}: {text}");
+                    }
                     continue;
                 }
-                assert!(!*error, "sub-agent {i}: {text}");
+                let details = landed_details.next().unwrap_or(Value::Null);
                 if *held {
                     tc.event("a sub-agent leaves work to commit");
                     // The leftover's message is asked with its own task.
@@ -683,11 +727,21 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                 } else {
                     format!("answer {i}")
                 };
-                assert_eq!(
-                    *text,
-                    format!("{answer}\n\n{}", note(limit, commits.len(), &landed)),
-                    "sub-agent {i}'s result"
-                );
+                // A cancelled `wait` answers with the cancel alone.
+                if !cancelled {
+                    assert_eq!(
+                        section(&run),
+                        format!("{answer}\n\n{}", note(limit, commits.len(), &landed)),
+                        "sub-agent {i}'s result"
+                    );
+                }
+                // What landed is linked whether or not `wait` answered.
+                if cancelled {
+                    for change in landing_ids(home.path(), &run, commits.len(), &links) {
+                        from_links.push((change, run.clone()));
+                    }
+                    continue;
+                }
                 assert_eq!(details["run"], json!(run));
                 assert_eq!(details["conflicts"], json!(landed));
                 assert_eq!(details["limit"], json!(limit.then_some("turns")));
@@ -705,11 +759,10 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
                     from_links.push((id, run.clone()));
                 }
             }
-            // Nothing lands from the sub-agents a cancel stopped.
-            for (i, (text, error, _)) in results.iter().enumerate() {
+            // Nothing lands from the sub-agents the person stopped.
+            for i in 0..calls {
                 if !order.contains(&i) {
                     assert!(cancelled, "sub-agent {i} never finished");
-                    assert!(*error, "sub-agent {i} after the cancel: {text}");
                 }
             }
             // The caller links each landed change, in landing order, from
@@ -758,4 +811,21 @@ fn a_batch_lands_as_the_model_says(tc: TestCase) {
         assert_eq!(project.workspaces().unwrap(), workspaces);
         assert_eq!(project.bookmarks("tau/").unwrap(), bookmarks);
     });
+}
+
+/// The changes `run` landed, oldest first, as the caller linked them:
+/// for a `wait` cancelled after landing, whose details never came back.
+fn landing_ids(
+    _home: &Path,
+    run: &str,
+    count: usize,
+    links: &[Link],
+) -> Vec<String> {
+    let ids: Vec<String> = links
+        .iter()
+        .filter(|link| link.from.as_deref() == Some(run))
+        .map(|link| link.change_id.clone())
+        .collect();
+    assert_eq!(ids.len(), count, "{run}'s landed changes");
+    ids
 }

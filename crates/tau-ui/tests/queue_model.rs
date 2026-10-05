@@ -245,6 +245,7 @@ impl Machine {
                 changes: 1,
                 conflicts: seen.clone(),
                 confirmed: seen,
+                sub_agent: None,
             },
         };
         if !self.world.order.contains(&run) {
@@ -443,4 +444,141 @@ fn a_marked_main_refuses_new_chats() {
         lane.refuse_chat().as_deref(),
         Some("main has conflicts in a.rs, b.rs; resolve them first")
     );
+}
+
+/// A main chat for [`sub_agents_land_whatever_they_bring`]: idle, clean
+/// until a landing brings conflicts, every landing recorded.
+#[derive(Default)]
+struct Plain {
+    queued: Vec<Waiting>,
+    landed: Vec<String>,
+    stack: BTreeSet<String>,
+}
+
+impl Main for Plain {
+    fn busy(&self) -> bool {
+        false
+    }
+
+    fn conflicts(&mut self) -> anyhow::Result<Vec<String>> {
+        Ok(self.stack.iter().cloned().collect())
+    }
+
+    fn preview(&mut self, run: &str) -> Result<Preview, Unlandable> {
+        let waiting = self.queued.iter().find(|w| w.run == run).unwrap();
+        Ok(Preview {
+            changes: 1,
+            conflicts: waiting.conflicts.clone(),
+        })
+    }
+
+    fn land(&mut self, run: &str) -> Result<Vec<String>, Unlandable> {
+        let waiting = self.queued.iter().find(|w| w.run == run).unwrap();
+        assert!(
+            waiting
+                .sub_agent
+                .as_ref()
+                .is_none_or(|end| end.failed.is_none()),
+            "{run} had nothing to land"
+        );
+        assert!(self.stack.is_empty(), "{run} landed on conflicts");
+        self.landed.push(run.to_owned());
+        self.stack.extend(waiting.conflicts.iter().cloned());
+        Ok(waiting.conflicts.clone())
+    }
+
+    fn title(&self, run: &str) -> String {
+        run.to_owned()
+    }
+
+    fn store(&mut self, _record: &Record) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+/// Sub-agents in the queue (ADR 0026) land whatever they conflict in,
+/// one with nothing to land is only reported, and the drain reports
+/// every sub-agent it took, in order: the turn that reports them holds
+/// the queue, as a resolving turn does. Chats keep their rule: they
+/// wait for the person to confirm a conflict.
+#[hegel::test(test_cases = 300)]
+fn sub_agents_land_whatever_they_bring(tc: TestCase) {
+    use tau_ui_remote::queue::SubAgentEnd;
+    let count: usize = tc.draw(gs::integers().max_value(6));
+    let queued: Vec<Waiting> = (0..count)
+        .map(|n| {
+            let conflicts: Vec<String> = tc
+                .draw(gs::subsequences(FILES.to_vec()).max_size(2))
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            let sub_agent = tc.draw(gs::booleans()).then(|| SubAgentEnd {
+                limit: None,
+                failed: tc
+                    .draw(gs::weighted_booleans(0.3))
+                    .then(|| "it failed".to_owned()),
+            });
+            let confirmed = if tc.draw(gs::booleans()) {
+                conflicts.clone()
+            } else {
+                Vec::new()
+            };
+            Waiting {
+                run: format!("r{n}"),
+                title: format!("r{n}"),
+                changes: 1,
+                conflicts,
+                confirmed,
+                sub_agent,
+            }
+        })
+        .collect();
+    let mut lane = Lane::default();
+    let mut main = Plain {
+        queued: queued.clone(),
+        ..Plain::default()
+    };
+    for waiting in &queued {
+        let _ = lane.queue(waiting.clone());
+    }
+    let drained = drain(&mut lane, &mut main).unwrap();
+
+    // What the queue promises, walked by hand.
+    let mut landed = Vec::new();
+    let mut reported = Vec::new();
+    let mut resolves = false;
+    for waiting in &queued {
+        match &waiting.sub_agent {
+            Some(end) if end.failed.is_some() => {
+                reported.push(waiting.run.clone());
+                continue;
+            }
+            Some(_) => {}
+            None if waiting
+                .conflicts
+                .iter()
+                .all(|file| waiting.confirmed.contains(file)) => {}
+            None => break,
+        }
+        landed.push(waiting.run.clone());
+        if waiting.sub_agent.is_some() {
+            reported.push(waiting.run.clone());
+        }
+        if !waiting.conflicts.is_empty() {
+            resolves = true;
+            break;
+        }
+    }
+    assert_eq!(main.landed, landed);
+    assert_eq!(drained.landed, landed);
+    let got: Vec<String> =
+        drained.reported.iter().map(|w| w.run.clone()).collect();
+    assert_eq!(got, reported);
+    assert_eq!(drained.resolve.is_some(), resolves);
+    // A turn follows whenever the drain reports or resolves: nothing more
+    // lands until it ends.
+    assert_eq!(lane.is_pending(), resolves || !reported.is_empty());
+    if lane.is_pending() {
+        assert!(lane.next().is_none());
+    }
 }

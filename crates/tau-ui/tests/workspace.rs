@@ -1895,11 +1895,11 @@ fn a_fork_is_dropped_after_asking(cx: &mut TestAppContext) {
 }
 
 /// A sub-agent gets a chat of its own when it starts, on the task its
-/// parent's call handed it, and closes when that call returns. A
-/// sibling from the same batch keeps its own task and stays open until
-/// its own call returns.
+/// parent's `spawn` handed it. It stays open after it finishes, until
+/// the `wait` that lands it returns; one that fails is dropped and
+/// closes at once. A sibling from the same batch keeps its own task.
 #[gpui::test]
-fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
+fn a_sub_agent_is_a_chat_until_it_lands(cx: &mut TestAppContext) {
     use std::sync::Arc;
 
     use tau_agent::{
@@ -1917,7 +1917,7 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
                 &RunEvent::ToolStart {
                     run: parent.clone(),
                     call_id: call.into(),
-                    tool: Arc::from("delegate"),
+                    tool: Arc::from("spawn"),
                     args: serde_json::json!({ "task": task }),
                     parent: None,
                 },
@@ -1941,6 +1941,11 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
         let view = ws.run(&child).expect("a chat for the sub-agent");
         assert_eq!(view.origin, tau_ui_remote::view::Origin::SubAgent { parent: parent.clone() });
         assert!(matches!(view.items.first(), Some(Item::User(task)) if task == "write the tests"));
+        // `spawn` answers at once: the chats stay.
+        for call in ["d1", "d2"] {
+            ws.apply_event(&calls::end(&parent, call, false, Some(serde_json::json!({ "run": call })), None), cx);
+        }
+        assert!(!ws.is_closed(&child), "open while it works");
         ws.navigate(Route::Run(child.clone()), cx);
 
         ws.apply_event(
@@ -1952,24 +1957,32 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
             },
             cx,
         );
-        assert!(!ws.is_closed(&child), "open until the call returns");
+        assert!(!ws.is_closed(&child), "open until its work lands");
+        // The sibling fails: it is dropped, and closes.
         ws.apply_event(
             &RunEvent::RunEnd {
                 run: sibling.clone(),
                 parent: Some(parent.clone()),
-                stop: StopReason::Stop,
+                stop: StopReason::Error("no".into()),
                 cost: 0.0,
             },
             cx,
         );
+        assert!(ws.is_closed(&sibling), "a failed sub-agent is dropped");
+        assert_eq!(ws.route(), &Route::Run(child.clone()), "nothing moved");
+        ws.apply_event(&calls::start(&parent, "w1", "wait", serde_json::json!({}), None), cx);
         ws.apply_event(
             &RunEvent::ToolEnd {
                 run: parent.clone(),
-                call_id: "d1".into(),
+                call_id: "w1".into(),
                 output: Arc::new(ToolOutput {
                     details: Some(serde_json::json!({
-                        "run": "sub-1",
-                        "landing": { "changes": [], "conflicts": [], "head": "00" },
+                        "landed": [{
+                            "run": "sub-1",
+                            "task": "write the tests",
+                            "landing": { "changes": [], "conflicts": [], "head": "00" },
+                        }],
+                        "retained": [],
                     })),
                     ..ToolOutput::text("done")
                 }),
@@ -1979,10 +1992,11 @@ fn a_sub_agent_is_a_chat_until_its_call_returns(cx: &mut TestAppContext) {
             cx,
         );
         assert!(ws.is_closed(&child));
-        assert!(!ws.is_closed(&sibling), "its own call has not returned");
         assert_eq!(ws.route(), &Route::Run(parent.clone()), "back to the parent");
+        let card = ws.run(&parent).unwrap().tool("w1").unwrap();
+        assert!(tau_vcs::ui::waited(&card.data).iter().any(|landed| landed.from == child));
         let card = ws.run(&parent).unwrap().tool("d1").unwrap();
-        assert!(tau_vcs::ui::delegated(&card.data).is_some_and(|landed| landed.from == child));
+        assert_eq!(tau_vcs::ui::spawned(&card.data), Some(RunId("d1".into())));
     });
     assert!(events.borrow().iter().any(|event| matches!(event,
         WorkspaceEvent::CloseRun { run } if *run == child)));
@@ -2884,11 +2898,13 @@ fn a_landing_is_proposed_once_from_any_depth(cx: &mut TestAppContext) {
     .run();
 }
 
-/// A sub-agent a codemode script delegates to is a chat of its own on
-/// the task the script handed it, and closes once the script's call
-/// returns, as one the model delegates to.
+/// A sub-agent a codemode script spawns is a chat of its own on the
+/// task the script handed it, and closes once the script's `wait` lands
+/// it, as one the model spawns.
 #[gpui::test]
-fn a_nested_delegate_opens_and_closes_its_chat(cx: &mut TestAppContext) {
+fn a_nested_spawn_opens_and_a_nested_wait_closes_its_chat(
+    cx: &mut TestAppContext,
+) {
     use std::sync::Arc;
 
     use serde_json::json;
@@ -2900,7 +2916,7 @@ fn a_nested_delegate_opens_and_closes_its_chat(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         ws.apply_event(&calls::start(&parent, "s1", "codemode", json!({ "code": "" }), None), cx);
         ws.apply_event(
-            &calls::start(&parent, "s1/1", "delegate", json!({ "task": "write the tests" }), Some("s1")),
+            &calls::start(&parent, "s1/1", "spawn", json!({ "task": "write the tests" }), Some("s1")),
             cx,
         );
         ws.apply_event(
@@ -2914,20 +2930,36 @@ fn a_nested_delegate_opens_and_closes_its_chat(cx: &mut TestAppContext) {
         );
         let view = ws.run(&child).expect("a chat for the sub-agent");
         assert!(matches!(view.items.first(), Some(Item::User(task)) if task == "write the tests"));
-        ws.apply_event(&calls::run_end(&child, Some(&parent)), cx);
-        assert!(!ws.is_closed(&child), "open until its call returns");
         ws.apply_event(&calls::end(&parent, "s1/1", false, None, Some("s1")), cx);
-        assert!(ws.is_closed(&child), "its call returned");
+        ws.apply_event(&calls::run_end(&child, Some(&parent)), cx);
+        assert!(!ws.is_closed(&child), "open until it lands");
+        ws.apply_event(&calls::start(&parent, "s1/2", "wait", json!({}), Some("s1")), cx);
+        ws.apply_event(
+            &calls::end(
+                &parent,
+                "s1/2",
+                false,
+                Some(json!({ "landed": [{
+                    "run": "sub-nested",
+                    "landing": { "changes": [], "conflicts": [], "head": "00" },
+                }] })),
+                Some("s1"),
+            ),
+            cx,
+        );
+        assert!(ws.is_closed(&child), "the script's wait landed it");
     });
     assert!(events.borrow().iter().any(|event| matches!(event,
         WorkspaceEvent::CloseRun { run } if *run == child)));
 }
 
-/// The owned delegate's retained-workspace flag keeps its chat and route
-/// open, whether the call is direct or nested. Exhaust the finite flags
-/// and four call depths rather than randomly sampling their combinations.
+/// A sub-agent whose work could not be checked is kept for recovery: a
+/// `wait` that lists it as retained leaves its chat and route open,
+/// whether the `wait` is direct or nested; one that lists it as landed
+/// closes it. Exhaust the finite flags and four call depths rather than
+/// randomly sampling their combinations.
 #[gpui::test]
-fn retained_delegates_stay_open_at_every_call_depth(cx: &mut TestAppContext) {
+fn retained_sub_agents_stay_open_at_every_call_depth(cx: &mut TestAppContext) {
     use std::sync::Arc;
 
     use serde_json::json;
@@ -2939,20 +2971,40 @@ fn retained_delegates_stay_open_at_every_call_depth(cx: &mut TestAppContext) {
             let parent = demo::run_id();
             let child = RunId(format!("retained-{depth}-{retained}").into());
             workspace.update(&mut window, |ws, cx| {
+                ws.apply_event(
+                    &calls::start(
+                        &parent,
+                        "sp",
+                        "spawn",
+                        json!({"task": "keep my work"}),
+                        None,
+                    ),
+                    cx,
+                );
+                ws.apply_event(
+                    &RunEvent::RunStart {
+                        run: child.clone(),
+                        parent: Some(parent.clone()),
+                        agent: Arc::from("coder"),
+                        call: Some("sp".into()),
+                    },
+                    cx,
+                );
+                ws.apply_event(
+                    &calls::end(&parent, "sp", false, None, None),
+                    cx,
+                );
+                ws.apply_event(&calls::run_end(&child, Some(&parent)), cx);
                 let mut previous = None;
                 for index in 0..=depth {
                     let id = format!("retain{}", "/1".repeat(index));
-                    let tool = if index == depth {
-                        "delegate"
-                    } else {
-                        "codemode"
-                    };
+                    let tool = if index == depth { "wait" } else { "codemode" };
                     ws.apply_event(
                         &calls::start(
                             &parent,
                             &id,
                             tool,
-                            json!({"task": "keep my work"}),
+                            json!({}),
                             previous.as_deref(),
                         ),
                         cx,
@@ -2960,22 +3012,29 @@ fn retained_delegates_stay_open_at_every_call_depth(cx: &mut TestAppContext) {
                     previous = Some(id);
                 }
                 let call = previous.unwrap();
-                ws.apply_event(
-                    &RunEvent::RunStart {
-                        run: child.clone(),
-                        parent: Some(parent.clone()),
-                        agent: Arc::from("coder"),
-                        call: Some(call.clone().into()),
-                    },
-                    cx,
-                );
-                ws.apply_event(&calls::run_end(&child, Some(&parent)), cx);
                 ws.navigate(Route::Run(child.clone()), cx);
                 let enclosing = (depth > 0)
                     .then(|| format!("retain{}", "/1".repeat(depth - 1)));
-                ws.apply_event(&calls::end(&parent, &call, true, Some(json!({
-                    "run": child.0.as_ref(), "workspace_retained": retained,
-                })), enclosing.as_deref()), cx);
+                let entry = json!({
+                    "run": child.0.as_ref(),
+                    "workspace": "/kept",
+                    "landing": { "changes": [], "conflicts": [], "head": "00" },
+                });
+                let details = if retained {
+                    json!({ "landed": [], "retained": [entry] })
+                } else {
+                    json!({ "landed": [entry], "retained": [] })
+                };
+                ws.apply_event(
+                    &calls::end(
+                        &parent,
+                        &call,
+                        false,
+                        Some(details),
+                        enclosing.as_deref(),
+                    ),
+                    cx,
+                );
                 assert_eq!(ws.is_closed(&child), !retained);
                 assert_eq!(
                     ws.route(),

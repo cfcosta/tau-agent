@@ -99,7 +99,7 @@ impl Host {
         if let RunKind::Subagent { .. } = record.kind {
             anyhow::bail!(
                 "A sub-agent cut off by tau closing does not go on; its \
-                 caller can delegate again"
+                 caller can spawn another"
             );
         }
         let choice = self.session_of(run).choice.unwrap_or_else(|| {

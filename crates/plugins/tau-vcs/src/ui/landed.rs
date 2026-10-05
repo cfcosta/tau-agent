@@ -1,5 +1,5 @@
 //! A child run's landing on its parent (ADR 0009): what it brought, in
-//! the parent's chat and on the `delegate` card that started it.
+//! the parent's chat and on the `wait` card that landed it.
 
 use gpui::{Div, div, prelude::*};
 use serde::{Deserialize, Serialize};

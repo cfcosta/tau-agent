@@ -27,7 +27,7 @@ own `constitution.db` ([constitution.md](constitution.md)).
   inherits the parent's messages with `seq <= fork_seq`, by reference,
   without copying them.
 - **A sub-agent run** also sets `parent_run_id`. With a `fork_seq`
-  (every `delegate` sub-agent sets one), it inherits as a fork does;
+  (every `spawn` sub-agent sets one), it inherits as a fork does;
   without (`Agent::as_tool`), it inherits nothing. Inheritance follows
   any run that has a `fork_seq`, whatever its kind.
 - **A context rewrite** is a row in `messages` with `kind = 'context'`,
