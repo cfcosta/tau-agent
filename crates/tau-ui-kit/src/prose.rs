@@ -15,12 +15,14 @@ use gpui::{
 
 use crate::{
     components::*,
+    select::{Selectable, selectable, selectable_with},
     theme::{MONO, SANS, Theme, weight},
 };
 
 /// Prose in `color`, with the two marks models use most: `code` in the
-/// monospace face on a chip, and `**bold**`.
-pub fn rich(text: &str, color: Hsla, t: &Theme) -> StyledText {
+/// monospace face on a chip, and `**bold**`. It can be selected inside a
+/// [`crate::select::selection_scope`], as all marked-up text can.
+pub fn rich(text: &str, color: Hsla, t: &Theme) -> Selectable {
     rich_in(text, SANS, color, t)
 }
 
@@ -166,12 +168,14 @@ fn styled_spans(
     }
     let styled = StyledText::new(text).with_runs(runs);
     if links.is_empty() {
-        return styled.into_any_element();
+        return selectable(styled).into_any_element();
     }
+    let layout = styled.layout().clone();
     let (ranges, urls): (Vec<_>, Vec<_>) = links.into_iter().unzip();
-    gpui::InteractiveText::new(SharedString::from(id.to_owned()), styled)
-        .on_click(ranges, move |at, _, cx| cx.open_url(&urls[at]))
-        .into_any_element()
+    let linked =
+        gpui::InteractiveText::new(SharedString::from(id.to_owned()), styled)
+            .on_click(ranges, move |at, _, cx| cx.open_url(&urls[at]));
+    selectable_with(layout, linked).into_any_element()
 }
 
 /// [`rich`] in another body face, such as the serif of a note.
@@ -180,14 +184,14 @@ pub fn rich_in(
     family: &'static str,
     color: Hsla,
     t: &Theme,
-) -> StyledText {
-    marked(text, family, color, true, t)
+) -> Selectable {
+    selectable(marked(text, family, color, true, t))
 }
 
 /// Prose where `code` is only set in the monospace face, with no chip:
 /// for paths and names inside a sentence.
-pub fn prose(text: &str, color: Hsla, t: &Theme) -> StyledText {
-    marked(text, SANS, color, false, t)
+pub fn prose(text: &str, color: Hsla, t: &Theme) -> Selectable {
+    selectable(marked(text, SANS, color, false, t))
 }
 
 /// The text [`rich`] draws and its runs.

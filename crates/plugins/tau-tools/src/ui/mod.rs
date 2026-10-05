@@ -307,16 +307,21 @@ fn peek(
                     div().text_color(t.text_soft).child(
                         match colors.and_then(|colors| colors.get(i)) {
                             Some(parts) if !line.is_empty() => {
-                                gpui::StyledText::new(line.clone())
-                                    .with_runs(syntax::runs(
-                                        line,
-                                        parts,
-                                        t.text_soft,
-                                        &t.syntax,
-                                    ))
-                                    .into_any_element()
+                                tau_ui_kit::select::selectable(
+                                    gpui::StyledText::new(line.clone())
+                                        .with_runs(syntax::runs(
+                                            line,
+                                            parts,
+                                            t.text_soft,
+                                            &t.syntax,
+                                        )),
+                                )
+                                .into_any_element()
                             }
-                            _ => line.clone().into_any_element(),
+                            _ => tau_ui_kit::select::selectable(
+                                gpui::StyledText::new(line.clone()),
+                            )
+                            .into_any_element(),
                         },
                     ),
                 )

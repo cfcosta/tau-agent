@@ -345,7 +345,8 @@ pub fn highlight_lines(lang: Lang, lines: &[impl AsRef<str>]) -> Lines {
 }
 
 /// `text` as an element: in its parts' colors when it has them, else
-/// plainly in `plain`.
+/// plainly in `plain`. It can be selected inside a
+/// [`crate::select::selection_scope`].
 pub fn styled(
     text: &str,
     parts: Option<&[(Range<usize>, Kind)]>,
@@ -354,10 +355,15 @@ pub fn styled(
 ) -> gpui::AnyElement {
     use gpui::IntoElement as _;
     match parts.filter(|parts| !parts.is_empty() && !text.is_empty()) {
-        Some(parts) => gpui::StyledText::new(text.to_owned())
-            .with_runs(runs(text, parts, plain, look))
-            .into_any_element(),
-        None => gpui::SharedString::from(text.to_owned()).into_any_element(),
+        Some(parts) => crate::select::selectable(
+            gpui::StyledText::new(text.to_owned())
+                .with_runs(runs(text, parts, plain, look)),
+        )
+        .into_any_element(),
+        None => {
+            crate::select::selectable(gpui::StyledText::new(text.to_owned()))
+                .into_any_element()
+        }
     }
 }
 

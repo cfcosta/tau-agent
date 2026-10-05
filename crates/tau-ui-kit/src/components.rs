@@ -964,7 +964,7 @@ pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
                     div()
                         .typeset(Type::SMALL.mono())
                         .text_color(t.text_soft)
-                        .child(
+                        .child(crate::select::selectable(
                             gpui::StyledText::new(text.to_owned()).with_runs(
                                 crate::syntax::runs(
                                     text,
@@ -973,9 +973,14 @@ pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
                                     &t.syntax,
                                 ),
                             ),
-                        )
+                        ))
                 }
-                None => mono(text.to_owned(), Type::SMALL, t.text_soft),
+                None => div()
+                    .typeset(Type::SMALL.mono())
+                    .text_color(t.text_soft)
+                    .child(crate::select::selectable(gpui::StyledText::new(
+                        text.to_owned(),
+                    ))),
             },
         )
         .children(lang.map(|lang| {

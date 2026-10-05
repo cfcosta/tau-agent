@@ -13,17 +13,19 @@ pub mod format;
 pub mod input;
 pub mod markdown;
 pub mod prose;
+pub mod select;
 pub mod syntax;
 pub mod theme;
 
 use gpui::App;
 
 /// Sets up what the design language needs once per app: the fonts, the
-/// theme and the text field's keys.
+/// theme, the text field's keys and copying selected text.
 pub fn init(cx: &mut App) {
     if let Err(error) = assets::load_fonts(cx) {
         eprintln!("tau-ui-kit: could not load the bundled fonts: {error}");
     }
     cx.set_global(theme::Theme::tokyo_night());
     input::bind_keys(cx);
+    select::init(cx);
 }

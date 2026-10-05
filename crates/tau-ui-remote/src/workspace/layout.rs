@@ -198,7 +198,7 @@ impl Workspace {
                 .into_any_element();
         }
         let theme = t.clone();
-        gpui::list(
+        let list = gpui::list(
             self.transcript.clone(),
             cx.processor(move |ws, index: usize, window, cx| {
                 let Some(run) =
@@ -209,9 +209,18 @@ impl Workspace {
                 transcript::item(ws, run, index, &theme, compact, window, cx)
             }),
         )
-        .flex_1()
-        .min_h(rems(0.))
-        .into_any_element()
+        .size_full();
+        // The transcript reads as one document: drag across it to select,
+        // ctrl+c to copy.
+        div()
+            .flex_1()
+            .min_h(rems(0.))
+            .child(tau_ui_kit::select::selection_scope(
+                "transcript-text",
+                t.blue_soft,
+                list,
+            ))
+            .into_any_element()
     }
 
     /// How wide the transcript was last laid out; `None` before it was.
