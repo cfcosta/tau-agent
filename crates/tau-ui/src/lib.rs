@@ -10,16 +10,12 @@
 //! ([`host::onboard`]). With `--demo`, [`demo`] replays a scripted
 //! session, its plugins answering through their real host halves.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "not migrated to async yet (ADR 0028)"
-)]
-
 pub mod accounts;
 pub mod demo;
 pub mod github;
 pub mod host;
 pub mod hosted;
+mod interface_runtime;
 pub mod metered;
 pub mod notify;
 pub mod phone_server;

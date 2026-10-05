@@ -282,22 +282,17 @@ impl SignIns {
         });
         let (progress, mut updates) = mpsc::unbounded_channel();
         let chatgpt = credentials.chatgpt();
-        std::thread::spawn(move || {
-            let signed_in = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())
-                .and_then(|runtime| {
-                    runtime.block_on(async {
-                        let chatgpt = chatgpt.map_err(|e| e.to_string())?;
-                        tokio::select! {
-                            done = browser_sign_in(
-                                &chatgpt, account, consent, pasted, &progress,
-                            ) => done,
-                            _ = cancelled => Err(CANCELLED.into()),
-                        }
-                    })
-                });
+        crate::interface_runtime::spawn(async move {
+            let signed_in = async {
+                let chatgpt = chatgpt.map_err(|e| e.to_string())?;
+                tokio::select! {
+                    done = browser_sign_in(
+                        &chatgpt, account, consent, pasted, &progress,
+                    ) => done,
+                    _ = cancelled => Err(CANCELLED.into()),
+                }
+            }
+            .await;
             let _ = progress.send(Progress::SignedIn(signed_in));
         });
         let workspace = workspace.downgrade();
@@ -398,19 +393,9 @@ fn sign_out(
         return;
     };
     let chatgpt = credentials.chatgpt();
-    let (done, finished) = oneshot::channel();
-    std::thread::spawn(move || {
-        let revoked = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())
-            .and_then(|runtime| {
-                let chatgpt = chatgpt.map_err(|e| e.to_string())?;
-                runtime
-                    .block_on(chatgpt.sign_out(&account))
-                    .map_err(|e| e.to_string())
-            });
-        let _ = done.send(revoked);
+    let finished = crate::interface_runtime::spawn(async move {
+        let chatgpt = chatgpt.map_err(|e| e.to_string())?;
+        chatgpt.sign_out(&account).await.map_err(|e| e.to_string())
     });
     let workspace = workspace.downgrade();
     let (credentials, connected) = (credentials.clone(), connected.clone());

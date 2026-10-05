@@ -109,6 +109,10 @@ A std `MutexGuard` held across `.await` makes a spawned future not
 
 ### Enforced by clippy
 
+The demo host (`tau-ui`'s `demo`) is the one exception: a scripted
+stand-in for a host, over an in-memory store, that answers each step
+of its script at once so its screens come out the same every time.
+
 `clippy.toml` disallows `tokio::runtime::Runtime::block_on`,
 `tokio::runtime::Handle::block_on`, `pollster::block_on` and
 `futures::executor::block_on`. The jj jobs that run in
@@ -149,4 +153,5 @@ Each step lands on its own, with the tests passing:
    `on_host`; `off_thread` goes.
 5. `RepoState`: the per-repository locks.
 6. The catalog and spend pushed instead of read.
-7. GitHub and sign-in as tokio tasks; the last crate-wide allow goes.
+7. GitHub and sign-in as tokio tasks, on a runtime the interface keeps
+   for work no host runs; the last crate-wide allow goes.

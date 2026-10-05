@@ -3,6 +3,11 @@
 //! plugin's page asks is carried out the way a host would, so a rule
 //! added in the demo is kept by tau-constitution, not by the demo.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "the demo answers each scripted step at once, from an in-memory store, so its screens are the same every time (ADR 0028)"
+)]
+
 use std::{
     collections::BTreeMap,
     sync::{

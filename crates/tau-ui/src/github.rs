@@ -16,7 +16,7 @@ use std::{
 use gpui::{App, Entity};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::{Notify, oneshot};
+use tokio::sync::Notify;
 
 use crate::{
     accounts::Credentials,
@@ -590,20 +590,12 @@ fn encode(value: &str) -> String {
         .collect()
 }
 
-/// Runs `future` on a thread of its own, for callers without a tokio
-/// runtime (onboarding has none yet).
+/// Runs `future` on the interface's runtime, for callers without a host
+/// (onboarding has none yet).
 pub(crate) fn background<T: Send + 'static>(
     future: impl Future<Output = T> + Send + 'static,
-) -> oneshot::Receiver<T> {
-    let (done, receiver) = oneshot::channel();
-    std::thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("a current-thread runtime builds");
-        let _ = done.send(runtime.block_on(future));
-    });
-    receiver
+) -> tokio::task::JoinHandle<T> {
+    crate::interface_runtime::spawn(future)
 }
 
 /// Wakes the device sign-in going on, when the user says they approved.
@@ -686,7 +678,7 @@ pub fn handle(
 /// Once a sign-in is over: save it, say who is signed in, and list the
 /// repositories; or say what went wrong.
 fn finish(
-    done: oneshot::Receiver<Result<Token, String>>,
+    done: tokio::task::JoinHandle<Result<Token, String>>,
     workspace: &Entity<Workspace>,
     credentials: &Credentials,
     api: &Api,
