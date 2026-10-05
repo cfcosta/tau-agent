@@ -228,7 +228,7 @@ pub struct Land {
 impl TypedTool for Land {
     type Args = LandArgs;
     const NAME: &'static str = "vcs_land";
-    const DESCRIPTION: &'static str = "When your work is finished and committed, propose landing it: your commits go onto the run you were forked from, or into main for a run started on its own. The person sees what would land and confirms; nothing moves until they do. Call it last, with everything committed.";
+    const DESCRIPTION: &'static str = "Only for a chat the person forked or started on its own: when your work is finished and committed, propose landing it: your commits go onto the run you were forked from, or into main for a run started on its own. The person sees what would land and confirms; nothing moves until they do. Call it last, with everything committed. The main chat and sub-agents never call it: the main chat commits to main, and a sub-agent's commits land on its caller when it answers.";
 
     async fn call(
         &self,
