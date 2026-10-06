@@ -1,0 +1,26 @@
+# A hosted runner starts with about 14 GB free on /, where the nix
+# store and the target directory both go; a build of the workspace
+# with GPUI and its tests needs more. This drops the toolchains tau
+# never uses, before nix is installed.
+name: Free disk space
+description: Remove the runner's preinstalled toolchains that tau does not use.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        df -h /
+        sudo rm -rf \
+          /usr/share/dotnet \
+          /usr/local/lib/android \
+          /opt/ghc \
+          /usr/local/.ghcup \
+          /opt/hostedtoolcache/CodeQL \
+          /usr/local/share/boost \
+          /usr/share/swift \
+          /usr/local/share/powershell \
+          /usr/local/share/chromium \
+          /usr/local/lib/node_modules
+        sudo docker image prune --all --force > /dev/null
+        df -h /

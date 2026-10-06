@@ -10,6 +10,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   extended:
@@ -20,20 +21,28 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk
       - uses: DeterminateSystems/determinate-nix-action@main
       - uses: DeterminateSystems/flakehub-cache-action@main
       - uses: Swatinem/rust-cache@v2
-      - run: nix develop -c cargo nextest run --workspace --run-ignored only
+      # In release, as in CI: debug test binaries fill the runner's disk.
+      - run: nix develop -c cargo nextest run --release --workspace --run-ignored only
 
   mutants:
     name: Mutation testing
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # Mutants build in debug, for fast rebuilds; without debug info, so
+    # the baseline and its test binaries fit on the runner's disk.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_DEV_STRIP: debuginfo
     permissions:
       id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk
       - uses: DeterminateSystems/determinate-nix-action@main
       - uses: DeterminateSystems/flakehub-cache-action@main
       - name: cargo mutants

@@ -7,19 +7,28 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request supersedes a run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/free-disk
       - uses: DeterminateSystems/determinate-nix-action@main
       - uses: DeterminateSystems/flakehub-cache-action@main
       - uses: Swatinem/rust-cache@v2
@@ -39,8 +48,11 @@ jobs:
             nix develop -c cargo clippy -p "$plugin" --no-default-features --lib -- -D warnings
           done
 
+      # In release, as developers run them: the debug test binaries,
+      # each with GPUI or jj-lib linked in, come to over 40 GB and fill
+      # the runner's disk; the release ones come to about 8 GB.
       - name: Tests
-        run: nix develop -c cargo nextest run --workspace
+        run: nix develop -c cargo nextest run --release --workspace
 
       - name: sqlx offline metadata is current
         working-directory: crates/tau-store-sqlite

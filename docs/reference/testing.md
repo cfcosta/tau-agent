@@ -627,10 +627,15 @@ missing assertion, or record why the mutant is equivalent in
 
 ## CI tiers
 
-| Tier    | When       | Runs                                                                                                                             |
-| ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run`, `cargo sqlx prepare --check`, `cargo deny check` |
-| Nightly | once a day | everything in Check, plus `cargo nextest run --run-ignored only` (nightly properties) and `cargo mutants` on the modules above   |
+| Tier    | When       | Runs                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run --release`, `cargo sqlx prepare --check`, `cargo deny check` |
+| Nightly | once a day | everything in Check, plus `cargo nextest run --release --run-ignored only` (nightly properties) and `cargo mutants` on the modules above   |
+
+Tests run in release in CI, as they do locally: the debug test binaries,
+each linking GPUI or jj-lib, come to over 40 GB, more than a hosted
+runner's disk holds. `.github/actions/free-disk` also clears the
+runner's unused toolchains first.
 
 The Check tier must stay under five minutes. If it grows past that,
 move cases to nightly variants rather than lowering the default counts.
