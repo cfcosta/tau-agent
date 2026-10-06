@@ -1,4 +1,5 @@
-//! Scripted model, generators and replay for testing tau agents.
+//! Scripted model, fake servers, generators and git fixtures for testing
+//! tau agents.
 
 pub mod fake_chatgpt;
 pub mod fake_openai;

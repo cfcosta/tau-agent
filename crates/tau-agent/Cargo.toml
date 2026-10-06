@@ -1,6 +1,6 @@
 [package]
 name = "tau-agent"
-description = "Agents, runs, the agent loop, tools, hooks, limits, sub-agents, forks and compaction."
+description = "Agents, runs, the agent loop, tools, plugins, limits, sub-agents and forks."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true

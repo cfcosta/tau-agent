@@ -1,6 +1,6 @@
 [package]
 name = "tau-testing"
-description = "Scripted model and recorded-stream replay for testing tau agents."
+description = "Test support for tau agents: ScriptedModel, block_on, fake OpenAI and ChatGPT servers, generators and git fixtures."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true

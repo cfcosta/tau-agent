@@ -1,6 +1,6 @@
 //! A model's reply as blocks of styled text, read with `pulldown-cmark`:
 //! CommonMark with GitHub's tables, strikethrough and task lists.
-//! [`crate::ui::markdown`] draws it.
+//! [`crate::prose::markdown`] draws it.
 //!
 //! Soft line breaks read as spaces, as CommonMark has it; a hard break
 //! (two trailing spaces or a backslash) is a new line. HTML is shown as

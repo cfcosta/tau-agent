@@ -1,6 +1,6 @@
 //! What the workspace shows beyond single runs: the agent's plugins, the
 //! repositories with each plugin's data for them, and the store. The
-//! host fills it from its agents and plugin crates; [`crate::demo`] has
+//! host fills it from its agents and plugin crates; `tau_ui::demo` has
 //! an example.
 
 use serde::{Deserialize, Serialize};

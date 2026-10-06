@@ -1,7 +1,7 @@
-//! tau-ui on an Android phone.
+//! tau's interface on an Android phone.
 //!
 //! The phone runs no agent: it pairs with the tau on a computer and
-//! shows and steers its runs (decision 0013), through tau-ui's
+//! shows and steers its runs (decision 0013), through tau-ui-remote's
 //! [`remote`](tau_ui_remote::remote). Pairing reads the computer's code in
 //! tau's own viewfinder: a Java activity (`TauViewfinder`, on CameraX,
 //! without Google Play services) shows the camera's preview full screen

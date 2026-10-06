@@ -1,6 +1,6 @@
 [package]
 name = "tau-phone"
-description = "tau-ui on an Android phone, through gpui-pre-mobile."
+description = "tau's interface on an Android phone, through gpui-pre-mobile: a remote for the tau on a computer."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true

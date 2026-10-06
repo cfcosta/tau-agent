@@ -1,6 +1,6 @@
 [package]
 name = "tau-ui"
-description = "A GPUI desktop and phone-width interface for tau agents."
+description = "tau on the computer: the host that runs agents behind tau-ui-remote's interface, and the server for paired phones."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true

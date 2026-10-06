@@ -12,13 +12,15 @@
 //! - [`run`] runs a script in a fresh VM and returns an [`Outcome`].
 //! - [`Outcome::render`] turns it into the result the model reads.
 //! - [`signature`] renders tools as Luau signatures and picks those
-//!   that fit the run's context; [`description`] is the tool's text.
-//! - [`live`] is what a call reports while its script runs: its Jev
-//!   requests, which make no run events of their own.
-//! - [`store`] folds the store's records and keeps a script's writes.
+//!   that fit the run's context; [`tau_codemode::description`] is the
+//!   tool's text.
+//! - [`tau_codemode::live`] is what a call reports while its script
+//!   runs: its Jev requests, which make no run events of their own.
+//! - [`tau_codemode::store`] folds the store's records and keeps a
+//!   script's writes.
 //! - [`Codemode`] is the plugin, and [`CodemodeTool`] its tool.
-//! - [`format::formatted`] is a script as the cards show it, and
-//!   [`outline`] its output.
+//! - [`tau_codemode::format::formatted`] is a script as the cards show
+//!   it, and [`tau_codemode::outline`] its output.
 //! - [`CodemodeHost`] is its host half (ADR 0030): the tool for each
 //!   run, its entry on the Plugins screen, and what its card asks. Its
 //!   card and the records it folds are `tau-codemode`'s.
