@@ -52,7 +52,7 @@ jobs:
       # each with GPUI or jj-lib linked in, come to over 40 GB and fill
       # the runner's disk; the release ones come to about 8 GB.
       - name: Tests
-        run: nix develop -c cargo nextest run --release --workspace
+        run: nix develop -c cargo nextest run --release --workspace --no-fail-fast
 
       - name: sqlx offline metadata is current
         working-directory: crates/tau-store-sqlite

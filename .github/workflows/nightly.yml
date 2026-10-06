@@ -30,7 +30,7 @@ jobs:
       # TYPESAFE_API_KEY, and run by hand.
       - run: >-
           nix develop -c cargo nextest run --release --workspace
-          --run-ignored only -E 'not test(/^the_real_jev_/)'
+          --run-ignored only --no-fail-fast -E 'not test(/^the_real_jev_/)'
 
   mutants:
     name: Mutation testing
