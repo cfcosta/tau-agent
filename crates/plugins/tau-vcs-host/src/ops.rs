@@ -1002,6 +1002,7 @@ pub(crate) fn undo(worker: &mut Worker) -> Result<Report, VcsError> {
         let bad = block_on(base.loader().load_at(&target))?;
         let good = block_on(base.loader().load_at(parent))?;
         block_on(tx.repo_mut().merge(&bad, &good))?;
+        keep_git_record(tx);
         carry_edits(tx, &name, &bad, &good, wc)?;
         tx.set_attribute(UNDO_ATTRIBUTE.to_owned(), target.id().hex());
         Ok(target)
@@ -1023,6 +1024,25 @@ pub(crate) fn undo(worker: &mut Worker) -> Result<Report, VcsError> {
             "working_copy": info,
         }),
     })
+}
+
+/// Keeps the view's record of the Git store's refs and `HEAD` as they
+/// are, as `jj op revert` does: the merge would take them back with the
+/// rest of the operation, though Git's refs did not move.
+///
+/// That record is what the next export compares the bookmarks with, so
+/// a bookmark the undone operation moved and the record moved back
+/// would match it, and Git's branch would stay where the operation left
+/// it. The next import, from a `ProjectRepo::update`, would then take
+/// that branch for a move made in Git and bring the undone commit back:
+/// a run's bookmark, which a `vcs_describe` moved, came back on the
+/// described commit as a divergent twin of `@`.
+fn keep_git_record(tx: &mut Transaction) {
+    let current = tx.base_repo().view().store_view();
+    let mut view = tx.repo().view().store_view().clone();
+    view.git_refs.clone_from(&current.git_refs);
+    view.git_heads.clone_from(&current.git_heads);
+    tx.repo_mut().set_view(view);
 }
 
 /// Puts `@` back where the undone operation found it, with the file

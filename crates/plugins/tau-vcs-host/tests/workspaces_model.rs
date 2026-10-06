@@ -1448,6 +1448,37 @@ fn a_turns_paths_leave_out_what_landed() {
     assert_eq!(second.paths, ["c.txt"], "the turn only wrote c.txt");
 }
 
+/// An undone tool stays undone when an update brings in Git's refs. A
+/// `vcs_undo` used to take back the view's record of Git's refs with
+/// the rest of the operation, so the next export found the run's
+/// bookmark, back on `@`, already where the record said and left Git's
+/// branch on the commit the undone `vcs_describe` made. The update's
+/// import took that for a move made in Git: the described commit came
+/// back under the bookmark, a divergent twin of `@`, and after the
+/// catch-up every tool refused the chat as stale.
+#[test]
+fn an_undone_describe_stays_undone_after_an_update() {
+    let (home, project, main, chat, _dir) = a_chat_on_main();
+    // The run's bookmark on `@`: committed, then the commit undone.
+    chat.ok("vcs_commit", json!({ "message": "Fix the parser" }));
+    block_on(chat.vcs.commit_all("tau: the end", "tau/chat")).unwrap();
+    chat.ok("vcs_undo", json!({}));
+    // The describe moves the bookmark with `@`; its undo moves it back.
+    chat.ok("vcs_describe", json!({ "message": "Fix the parser" }));
+    chat.ok("vcs_undo", json!({}));
+    upstream_writes_a(home.path(), &project, &main);
+    let (_, details) =
+        chat.ok("vcs_describe", json!({ "message": "Add a test" }));
+    assert_eq!(details["working_copy"]["divergent"], json!(false));
+    let (_, log) = chat.ok("vcs_log", json!({ "limit": 100 }));
+    let rows = log["changes"].as_array().unwrap();
+    assert_eq!(rows[0]["description"], json!("Add a test\n"));
+    assert!(
+        rows.iter().all(|row| row["divergent"] == json!(false)),
+        "{log}"
+    );
+}
+
 /// A catch-up made by another process while a chat's tool snapshots
 /// forks the operation log: both start from the same operation, and the
 /// next load merges them, leaving the chat's `@` divergent. Inside one
