@@ -187,15 +187,15 @@ the request stays identical. So:
 
 | pi (TypeScript)                                    | tau-agent (Rust)                                                   |
 | -------------------------------------------------- | ------------------------------------------------------------------ |
-| `pi-ai` `AssistantMessageEvent` + shared `partial` | `tau-ai::AssistantEvent` (owned deltas) + `Accumulator`            |
-| `openai-responses-shared.ts`                       | `tau-ai::responses`                                                |
-| `openai-codex-responses.ts` WebSocket cache        | `tau-ai::ws` (plan endpoint, one lane per connection)              |
-| `pi-agent-core` `Agent` / `agentLoop`              | `tau-agent::Agent` / `Run`                                         |
+| `pi-ai` `AssistantMessageEvent` + shared `partial` | `tau_ai::event::AssistantEvent` (owned deltas) + `Accumulator`     |
+| `openai-responses-shared.ts`                       | `tau_ai::responses`                                                |
+| `openai-codex-responses.ts` WebSocket cache        | `tau_ai::ws` (plan endpoint, one lane per connection)              |
+| `pi-agent-core` `Agent` / `agentLoop`              | `tau_agent::agent::Agent` / `Run`                                  |
 | `AgentTool.execute(id, params, signal, onUpdate)`  | `AgentTool::call(args, ToolCtx { cancel, updates })`               |
 | `beforeToolCall` / `afterToolCall` / listeners     | `PluginRun` (`before_tool` / `after_tool_result` / `on_event`)     |
 | steering queue                                     | `Run::steer`                                                       |
 | follow-up queue                                    | not ported (start another run)                                     |
 | JSONL session tree                                 | `runs` + `messages` tables; forks via `parent_run_id` / `fork_seq` |
 | compaction (`coding-agent/src/core/compaction`)    | `tau-compaction` (a plugin)                                        |
-| faux provider                                      | `tau-testing::ScriptedModel`                                       |
+| faux provider                                      | `tau_testing::scripted::ScriptedModel`                             |
 | built-in tools                                     | `tau-tools-host`                                                   |
