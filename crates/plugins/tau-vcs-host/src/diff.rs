@@ -33,7 +33,7 @@ pub const MAX_DIFF_BYTES: usize = 50 * 1024;
 /// The native delta `before - after + absent` cancels to absent exactly
 /// when its tree-value terms agree. jj-lib owns flattening/cancellation;
 /// file presence, executable bits and copy provenance stay in the values.
-fn tree_values_match(
+pub(crate) fn tree_values_match(
     before: &MergedTreeValue,
     after: &MergedTreeValue,
 ) -> bool {

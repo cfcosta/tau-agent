@@ -1080,10 +1080,15 @@ fn carry_edits(
             .diff_stream(&current.tree(), &EverythingMatcher);
         let mut paths = Vec::new();
         while let Some(entry) = stream.next().await {
-            paths.push(entry.path);
+            let values = entry.values?;
+            // A snapshot since can write an untouched conflict in
+            // another form; it was not edited.
+            if !diff::tree_values_match(&values.before, &values.after) {
+                paths.push(entry.path);
+            }
         }
-        paths
-    });
+        Ok::<_, VcsError>(paths)
+    })?;
     let tree = block_on(restore_tree(
         &current.tree(),
         &good_wc.tree(),

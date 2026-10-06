@@ -1479,6 +1479,41 @@ fn an_undone_describe_stays_undone_after_an_update() {
     );
 }
 
+/// An undo keeps what was edited since its operation, and only that. A
+/// conflict a snapshot since wrote in another form, without a change to
+/// the file, was taken for an edit: undoing a `vcs_restore` that
+/// brought back the conflict of `@`'s parent kept the conflict.
+#[test]
+fn an_undo_takes_back_a_restored_conflict() {
+    let (home, project, main, chat, dir) = a_chat_on_main();
+    // Deleted in the chat, changed or added upstream: the catch-up
+    // leaves `@` in conflict at a.txt, and `@`'s parent at b.txt, with
+    // `@` holding upstream's b.txt.
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    std::fs::remove_file(dir.join("b.txt")).unwrap();
+    let src = home.path().join("src");
+    std::fs::write(src.join("a.txt"), "two\n").unwrap();
+    std::fs::write(src.join("b.txt"), "two\n").unwrap();
+    git(&src, &["add", "-A"]);
+    git(&src, &["commit", "--quiet", "-m", "upstream"]);
+    project.update(UpdateFrom::Checkout(&src)).unwrap();
+    let trunk = project.trunk().unwrap();
+    let name = project.trunk_name().unwrap();
+    block_on(main.vcs.move_onto(trunk, name, true)).unwrap();
+    let b = || std::fs::read_to_string(dir.join("b.txt")).unwrap();
+    let (_, status) = chat.ok("vcs_status", json!({}));
+    assert_eq!(status["conflicts"], json!(["a.txt"]));
+    assert_eq!(b(), "two\n");
+    chat.ok("vcs_restore", json!({ "paths": ["b.txt"] }));
+    assert!(b().contains("<<<<<<<"), "{}", b());
+    // An edit since, and a snapshot of it.
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    chat.ok("vcs_status", json!({}));
+    chat.ok("vcs_undo", json!({}));
+    assert_eq!(b(), "two\n", "the restore is undone");
+    assert!(!dir.join("a.txt").exists(), "the edit since stays");
+}
+
 /// A catch-up made by another process while a chat's tool snapshots
 /// forks the operation log: both start from the same operation, and the
 /// next load merges them, leaving the chat's `@` divergent. Inside one
