@@ -18,7 +18,7 @@
 //!   [`encode_text_signature_v1`] of a message item id (and, sometimes, a
 //!   `phase`) — the form `StreamProcessor` itself produces;
 //! - a thinking block's `thinking_signature` is always
-//!   [`generators::reasoning_item_json`], a serialized reasoning item
+//!   `generators::reasoning_item_json`, a serialized reasoning item
 //!   shaped `{"id", "type": "reasoning", "summary": [], "encrypted_content"?}`.
 //!   Its `summary` is always empty, matching encrypted-reasoning mode
 //!   (tau-agent always requests `reasoning.encrypted_content`;
@@ -34,8 +34,9 @@
 //!   server-frame vocabulary this module renders maps to it —
 //!   `StreamProcessor` only ever produces `ErrorReason::Error`. Cancelling
 //!   a turn is a lane-level concept, above this module's scope.
-//! - `usage.cost` is always [`UsageCost::default`] (all zero): the stream
-//!   processor never prices usage, `tau_ai::cost` does.
+//! - `usage.cost` is always
+//!   [`UsageCost::default`](tau_ai::message::UsageCost::default) (all
+//!   zero): the stream processor never prices usage, `tau_ai::cost` does.
 
 use hegel::{
     TestCase,
@@ -445,7 +446,7 @@ fn draw_unknown_frame(tc: &TestCase) -> Value {
     ]))
 }
 
-/// Inserts [`draw_unknown_frame`]s at random points in `frames`, for
+/// Inserts `draw_unknown_frame`s at random points in `frames`, for
 /// testing that `StreamProcessor` ignores them wherever they land,
 /// before the first frame included (`codex.rate_limits` arrives before
 /// `response.created`). Never inserts after the last frame, so a caller

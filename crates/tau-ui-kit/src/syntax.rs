@@ -1,6 +1,6 @@
 //! Syntax highlighting with tree-sitter: what kind of code each part of
 //! a text is, for cards and replies to color it by the theme's
-//! [`SyntaxLook`](crate::theme::SyntaxLook).
+//! [`SyntaxLook`].
 //!
 //! A language comes from a file's extension or a fenced block's tag.
 //! Text in no language this knows, or too long to be worth it, gets no

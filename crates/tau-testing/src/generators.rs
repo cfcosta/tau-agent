@@ -552,7 +552,7 @@ fn assistant_step_unprinted(tc: &TestCase) -> AssistantMessage {
 }
 
 /// A [`ToolResultMessage`] that answers `call`: same id and tool name,
-/// otherwise drawn like [`tool_result_message`].
+/// otherwise drawn like `tool_result_message`.
 pub fn tool_result_for_call(
     call: ToolCall,
 ) -> impl PrintableGenerator<ToolResultMessage> {
@@ -1022,7 +1022,7 @@ pub fn strict_schema(tc: &TestCase, depth: u32) -> Value {
 /// the fact); a nullable-and-optional property is always given a value,
 /// so the pairing stays useful for the round trip through
 /// `tau_agent::schema::strip_nulls_for_optional` (see
-/// [`schema_case_is_nullable`]).
+/// `schema_case_is_nullable`).
 #[hegel::composite]
 pub fn strict_schema_with_value(tc: &TestCase, depth: u32) -> (Value, Value) {
     draw_object_schema_case(tc, depth)

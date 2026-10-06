@@ -403,7 +403,7 @@ pub struct MotionPreference {
 
 impl MotionPreference {
     /// The flag, the environment and the saved setting; the desktop's
-    /// answer comes later, from [`desktop_animations`].
+    /// answer comes later, from the `tau` app's `desktop_animations`.
     pub fn from_startup(flag: bool, settings: &Path) -> Self {
         Self {
             flag,

@@ -45,7 +45,7 @@ fn task(prompt: &str) -> String {
     crate::plugins::read_prompt(prompt).unwrap_or_else(|| prompt.to_owned())
 }
 
-/// The request for `prompt`'s title, at most [`PROMPT_MAX_BYTES`]: the
+/// The request for `prompt`'s title, at most `PROMPT_MAX_BYTES`: the
 /// prompt is cut short, never inside a character.
 pub fn request(prompt: &str) -> String {
     let prefix = format!("{}\n\nUser prompt:\n", instructions());
