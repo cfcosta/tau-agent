@@ -23,6 +23,16 @@ use pollster::block_on;
 
 use crate::error::VcsError;
 
+/// Keeps `.jj/` out of Git's view in the colocated `workspace_root`, as
+/// the jj CLI does: a `.jj/.gitignore` that ignores all it holds.
+/// jj-lib writes none, and without it `git status` lists `.jj/` as
+/// untracked.
+pub(crate) fn ignore_jj_dir(workspace_root: &Path) -> Result<(), VcsError> {
+    let path = workspace_root.join(".jj").join(".gitignore");
+    std::fs::write(&path, "/*\n")
+        .map_err(|source| VcsError::Create { path, source })
+}
+
 /// Commits `tx` as `description`, with the Git store brought in step
 /// first.
 pub(crate) fn commit(

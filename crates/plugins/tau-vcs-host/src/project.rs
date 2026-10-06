@@ -298,6 +298,7 @@ impl ProjectRepo {
             Default::default(),
         ))
         .map_err(VcsError::MakeRepo)?;
+        crate::colocate::ignore_jj_dir(&main)?;
         let mut tx = repo.start_transaction();
         let store = tx.repo().store().clone();
         let mut tree = MergedTreeBuilder::new(store.empty_merged_tree());
@@ -514,6 +515,7 @@ impl ProjectRepo {
                 &git_dir,
             ))
             .map_err(VcsError::MakeRepo)?;
+            crate::colocate::ignore_jj_dir(&main)?;
             let mut tx = repo.start_transaction();
             block_on(import_refs(tx.repo_mut(), &import_options(true)))
                 .map_err(VcsError::ImportBranches)?;
