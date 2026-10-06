@@ -515,6 +515,10 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   restacks the chats on its commits), is refused with
   `VcsError::HiddenHead`, naming it: landing it would bring the old
   copies back beside the new ones. Read the child's bookmark again.
+  The head is checked as the landing finds the repository: when the
+  landing's first step moves the parent onto trunk after an update
+  (`land::follow_bookmark`), the child's head moves with it, and lands
+  where it went.
 - The parent's uncommitted work stays uncommitted: its working copy
   moves onto the landed changes. Landing is between the parent's turns.
 - The host's `Host::land` records each landed change as a `Link` in

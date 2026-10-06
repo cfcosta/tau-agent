@@ -1185,6 +1185,65 @@ fn a_landing_refuses_a_head_that_was_rewritten() {
     assert_eq!(landing.changes.len(), 1);
 }
 
+/// A landing on the main chat that follows an update made after the
+/// host read the chat's head lands that head where the follow put it.
+///
+/// `Host::land` catches the main chat up, reads the chat's head, then
+/// lands it. An update in between moved trunk to upstream's commit, and
+/// the landing's first step (`land::follow_bookmark`) moved the main
+/// chat's commits onto it, and the chat's with them, in the landing's own
+/// transaction. The landing then looked for the head it was given, which
+/// that step had just rewritten, and refused it with
+/// `VcsError::HiddenHead`. The head is now checked when the landing
+/// starts, and landed where the follow left it, as an update before the
+/// catch-up would have had it.
+#[test]
+fn a_landing_follows_an_update_made_after_the_head_was_read() {
+    let repo = Repo::new();
+    write(&repo.main_dir(), "main.txt", Some("x\n"));
+    let main =
+        block_on(repo.main.commit_all("main turn", repo.trunk_name.clone()))
+            .unwrap();
+    let chat = repo.project.add_workspace("c0", &main.commit_id).unwrap();
+    write(&repo.project.workspace_dir("c0"), "chat0.txt", Some("x\n"));
+    let committed = block_on(chat.commit_all("chat turn", "tau/c0")).unwrap();
+    // `Host::land`: the catch-up, then the chat's head.
+    catch_up(&repo.project).unwrap();
+    let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    // The update, between the read and the landing.
+    let up = repo.push_upstream(Some("x\n"));
+    repo.project
+        .update(UpdateFrom::Checkout(&repo.src()))
+        .unwrap();
+    let trunk = repo.project.trunk().unwrap();
+    let parent = repo
+        .project
+        .add_workspace(DEFAULT_WORKSPACE, &trunk)
+        .unwrap();
+    let landing =
+        block_on(parent.land(head.clone(), repo.trunk_name.clone(), true))
+            .unwrap();
+    assert_eq!(landing.changes.len(), 1, "only the chat's change lands");
+    assert_eq!(landing.changes[0].change_id, committed.change_id);
+    assert_ne!(landing.head, head, "the follow moved the chat's head");
+    let trunk = repo.project.trunk().unwrap();
+    assert_eq!(trunk, landing.head);
+    assert!(repo.project.is_ancestor(&up, &trunk).unwrap());
+    let now = repo
+        .project
+        .current([
+            change_link(&main.change_id, &main.commit_id),
+            change_link(&committed.change_id, &committed.commit_id),
+        ])
+        .expect("each change is one commit");
+    for link in &now {
+        assert!(repo.project.is_ancestor(&link.commit_id, &trunk).unwrap());
+    }
+    for file in ["main.txt", "up.txt", "chat0.txt"] {
+        assert_eq!(read(&repo.main_dir(), file).as_deref(), Some("x\n"));
+    }
+}
+
 /// The repository's lock never deadlocks: threads that each take turns
 /// in their own chat, update, add and forget workspaces, drop commits and
 /// remove bookmarks, all on one repository, all finish, and the main

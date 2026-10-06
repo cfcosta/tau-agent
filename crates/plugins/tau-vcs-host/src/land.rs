@@ -49,10 +49,15 @@ pub(crate) fn land(
     if confirm {
         let mut followed = None;
         let (_, landing) = session::mutate(worker, "land", |tx, wc| {
-            let (wc, onto) =
-                follow_bookmark(tx, wc, &name, bookmark, record.last())?;
+            let (landing, onto) = follow_and_restack(
+                tx,
+                wc,
+                &name,
+                &child_head,
+                bookmark,
+                &record,
+            )?;
             followed = onto;
-            let landing = restack(tx, &wc, &name, &child_head, bookmark)?;
             let landed: Vec<&str> = landing
                 .changes
                 .iter()
@@ -78,9 +83,50 @@ pub(crate) fn land(
     // A preview: the same rewrite in a transaction that is dropped.
     let snapshot = session::snapshot(worker)?;
     let mut tx = snapshot.repo.start_transaction();
-    let (wc, _) =
-        follow_bookmark(&mut tx, &snapshot.wc, &name, bookmark, record.last())?;
-    restack(&mut tx, &wc, &name, &child_head, bookmark)
+    let (landing, _) = follow_and_restack(
+        &mut tx,
+        &snapshot.wc,
+        &name,
+        &child_head,
+        bookmark,
+        &record,
+    )?;
+    Ok(landing)
+}
+
+/// The landing, in the transaction `tx` started for it: the parent
+/// follows its bookmark ([`follow_bookmark`]), then the child restacks
+/// onto it. Returns the landing, and the commit the follow moved onto.
+///
+/// `child_head` is checked against the repository as the landing found
+/// it: one rewritten or abandoned before then is stale, and refused. The
+/// follow can rewrite it after: a child stands on the parent's commits,
+/// and an update between the caller's read of the head and this landing
+/// moves them onto upstream's commit, the child's with them. The head
+/// lands where the follow put it, as it would had the update come first.
+fn follow_and_restack(
+    tx: &mut Transaction,
+    wc: &Commit,
+    workspace: &jj_lib::ref_name::WorkspaceName,
+    child_head: &CommitId,
+    bookmark: &str,
+    record: &MovedOnto,
+) -> Result<(Landing, Option<CommitId>), VcsError> {
+    // A head the caller read before something rewrote it, as the main
+    // chat's catch-up restacks the chats on its commits: landing it
+    // would bring the old copies back beside the new ones.
+    let child = tx.repo().store().get_commit(child_head)?;
+    if !visible(tx.repo(), &child)? {
+        return Err(VcsError::HiddenHead(child_head.hex()));
+    }
+    let (wc, onto) =
+        follow_bookmark(tx, wc, workspace, bookmark, record.last())?;
+    let child = match onto {
+        Some(_) => current(tx.repo(), &child)?,
+        None => child,
+    };
+    let landing = restack(tx, &wc, workspace, child.id(), bookmark)?;
+    Ok((landing, onto))
 }
 
 /// Keeps `bookmark` moving forward after an update: when an update moved
@@ -140,13 +186,6 @@ fn restack(
     child_head: &CommitId,
     bookmark: &str,
 ) -> Result<Landing, VcsError> {
-    // A head the caller read before something rewrote it, as the main
-    // chat's catch-up restacks the chats on its commits: landing it
-    // would bring the old copies back beside the new ones.
-    let child = tx.repo().store().get_commit(child_head)?;
-    if !visible(tx.repo(), &child)? {
-        return Err(VcsError::HiddenHead(child_head.hex()));
-    }
     // The parent's uncommitted work stays in its working copy, which
     // moves onto the landed changes.
     let dirty = !block_on(wc.is_empty(tx.repo()))?;
