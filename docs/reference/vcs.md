@@ -1,6 +1,7 @@
 # Version-control tools (`tau-vcs`, optional)
 
-- Status: implemented in `crates/plugins/tau-vcs`, on `jj-lib` 0.45.1.
+- Status: implemented in `crates/plugins/tau-vcs-host`, on `jj-lib` 0.45.1,
+  with its cards in `crates/plugins/tau-vcs`.
 - Design study: [jj-lib.md](../research/jj-lib.md). Decisions:
   [0009](../decisions/0009-child-runs-land-on-their-parent.md) (child
   runs land on their parent),
@@ -20,17 +21,18 @@ there is no staging area, and file edits made with `write`, `edit` or
 use tau_vcs_host::{Identity, Vcs, VcsPlugin};
 
 // An existing jj workspace:
-let vcs = Vcs::open("/path/to/workspace", Identity::default())?;
+let vcs = Vcs::open("/path/to/workspace", Identity::default()).await?;
 // Or a new repository with an internal Git store (`jj git init`):
-let vcs = Vcs::init("/path/to/new", Identity::default())?;
+let vcs = Vcs::init("/path/to/new", Identity::default()).await?;
 
 let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 ```
 
 - `Identity` is the author and committer of the commits and operations
   the tools write. The default is `tau <tau@localhost>`.
-- `Vcs::open` and `Vcs::init` block while the workspace loads. Call them
-  when you set up the agent, not inside a tool.
+- `Vcs::open` and `Vcs::init` are async: they load the workspace on
+  tokio's blocking pool, so they need a runtime. Call them when you set
+  up the agent, not inside a tool.
 - `Vcs::init` makes a non-colocated repository: the Git store is in
   `.jj/repo/store/git`, and there is no `.git` beside `.jj`.
 - `VcsPlugin::new(vcs)` adds all ten tools. `read_only()` keeps only

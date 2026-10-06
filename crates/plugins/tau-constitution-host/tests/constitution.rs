@@ -606,7 +606,8 @@ fn reviews_are_kept_once_in_order(tc: TestCase) {
 
 /// Asks the real Jev about a call that breaks a rule and one that does
 /// not. Needs `TYPESAFE_API_KEY` and the network:
-/// `cargo test -p tau-constitution -- --ignored`.
+/// `cargo nextest run --release -p tau-constitution-host --run-ignored
+/// only`.
 #[test]
 #[ignore = "needs TYPESAFE_API_KEY and the network"]
 fn the_real_jev_tells_a_broken_rule_from_a_kept_one() {

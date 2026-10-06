@@ -156,7 +156,8 @@ fn a_clone_is_colocated_with_its_main_workspace() {
 }
 
 /// Clones a small public repository from GitHub over HTTPS. Needs the
-/// network: `cargo test -p tau-vcs -- --ignored`.
+/// network: `cargo nextest run --release -p tau-vcs-host --run-ignored only
+/// clones_over_https`.
 #[test]
 #[ignore = "needs the network"]
 fn clones_over_https() {

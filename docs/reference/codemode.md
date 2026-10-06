@@ -10,9 +10,10 @@ Related reference pages: [evaluation](codemode-evaluation.md),
 [inference budget](codemode-inference-budget.md), and
 [inference traces](codemode-inference-traces.md).
 
-- Status: built (`crates/plugins/tau-codemode`): the engine, behind a
-  `Host` trait, the `Codemode` plugin that wires it to `ToolCtx::call`,
-  and its interface, `CodemodeUi` (a `UiPlugin`, after
+- Status: built. `crates/plugins/tau-codemode-host` has the engine,
+  behind a `Host` trait, and the `Codemode` plugin that wires it to
+  `ToolCtx::call`; `crates/plugins/tau-codemode` has its interface,
+  `CodemodeUi` (a `UiPlugin`, after
   [0017](../decisions/0017-plugins-bring-their-ui.md)), registered in
   tau-ui. Decided in [0018](../decisions/0018-codemode-and-mcp.md).
 - Date: 2026-10-01

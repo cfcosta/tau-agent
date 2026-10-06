@@ -1,9 +1,9 @@
 # Codemode inference budget
 
-`tau_codemode::inference_budget` provides a host-side budget for inference
-attempts. Create one `Arc<Budget>` at the start of an agent run and share it
-across every script and retry in that run. The budget does not itself call a
-provider or charge `PluginCtx`.
+`tau_codemode_host::inference_budget` provides a host-side budget for
+inference attempts. Create one `Arc<Budget>` at the start of an agent run and
+share it across every script and retry in that run. The budget does not itself
+call a provider or charge `PluginCtx`.
 
 The plugin restores a stored run's call count and reported usage from its
 terminal inference traces. A reserved attempt without a final SDK report
@@ -13,7 +13,10 @@ allowance; inherited parent traces do not spend it. The monotonic deadline is
 new for each activation, while call and reported-usage allowances persist.
 
 ```rust
-use tau_codemode::{CancellationToken, inference_budget::{Budget, Limits}};
+use tau_codemode_host::{
+    CancellationToken,
+    inference_budget::{Budget, Limits},
+};
 
 let budget = Budget::new(Limits::default())?;
 let cancel = CancellationToken::new();

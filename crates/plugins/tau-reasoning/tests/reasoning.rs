@@ -1,6 +1,7 @@
 //! The effort a run gets: Jev's, when it is sure; the default when it
-//! is not, fails, or someone chose one. On the models whose cache
-//! survives a change of effort, Jev picks again when its lease ends.
+//! is not, fails, or someone chose one. It holds for the whole run, since
+//! a change of effort costs the next request its cache; with `redecide`,
+//! Jev picks again when its lease ends.
 
 #![allow(
     clippy::disallowed_methods,

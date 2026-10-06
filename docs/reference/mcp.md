@@ -1,7 +1,7 @@
 # MCP servers (`tau-mcp`)
 
-- Status: built in `crates/plugins/tau-mcp` (`tau-mcp`), with its
-  interface: `McpUi`, a `UiPlugin`
+- Status: built in `crates/plugins/tau-mcp-host` (`tau-mcp-host`),
+  with its interface in `crates/plugins/tau-mcp`: `McpUi`, a `UiPlugin`
   ([0017](../decisions/0017-plugins-bring-their-ui.md)) that tau-ui
   registers ("The interface"). Decided in
   [0018](../decisions/0018-codemode-and-mcp.md). Where the build
@@ -367,7 +367,7 @@ the targets `rmcp::transport::auth` and `rmcp::transport::common::auth`
 ```rust
 use tracing_subscriber::layer::SubscriberExt as _;
 let subscriber = tracing_subscriber::registry()
-    .with(tau_mcp::auth::secrets_filter())
+    .with(tau_mcp_host::auth::secrets_filter())
     .with(tracing_subscriber::fmt::layer());
 ```
 
@@ -678,42 +678,54 @@ or, without a repository, the user's and the settings' alone.
   result's first line. Calls a codemode script made are rows of its
   card, as tau-ui folds nested calls there.
 
-## The crate
+## The crates
 
-- `auth`: `begin`, `SignIn` (`url`, `redirect_uri`, `finish`),
-  `SignInRequest`, `TokenStore` (`get`, `put`, `update`, `sign_out`,
-  `fingerprint`), `Grant`, `GrantKey`, `Loopback`, `read_callback`,
-  `Callback`, `CallbackError`, `pkce_challenge`, `valid_verifier`,
-  `account`, `SECRET_TARGETS`, `LOG_DIRECTIVES`, `secrets_filter`. With `client`, the only modules that touch rmcp.
+The plugin is two crates
+([0030](../decisions/0030-host-halves-are-crates.md)). `tau-mcp`, the
+interface half, has no tau-agent or rmcp dependency, so a phone can draw
+the page and the cards:
+
 - `config`: `McpConfig::parse`/`to_json`, `merge`, `Sources::load`
   (`<user dir>/mcp.json`, the settings, `<repo>/.tau/mcp.json`),
   `Sources::disable`, `Read`, `Settings`, `Disabled`, `Off`,
   `repo_key`, `PendingApproval`, `expand_vars`, `expand_home`,
   `exposure_of`, `ServerConfig::per_repo`, `OAuthConfig`,
   `HttpConfig::uses_oauth`, `callback_address`.
+- `names`: `tool_names`, `namespace`.
+- `info`: `ResourceInfo`, `TemplateInfo`, `PromptInfo`,
+  `PromptArgument`, `Annotations`.
+- `prompts`: `command_names`, `parse_arguments`, `format_arguments`,
+  `check_arguments`, `usage`, `arguments_hint`.
+- `ui`: `McpUi`, the page's data (`Servers`, `ServerRow`, `AuthRow`,
+  `ToolRow`, `PendingRow`), `Act`, `server_entry`, `summary`,
+  `summary_with_sign_in`; `ui::page` and `ui::card`.
+
+`tau-mcp-host`, the host half, connects to the servers:
+
+- `auth`: `begin`, `SignIn` (`url`, `redirect_uri`, `finish`),
+  `SignInRequest`, `TokenStore` (`get`, `put`, `update`, `sign_out`,
+  `fingerprint`), `Grant`, `GrantKey`, `Loopback`, `read_callback`,
+  `Callback`, `CallbackError`, `pkce_challenge`, `valid_verifier`,
+  `account`, `SECRET_TARGETS`, `LOG_DIRECTIVES`, `secrets_filter`.
+  With `client`, the only modules that touch rmcp.
 - `pool`: `Pool` (`new`, `update`, `get`, `connections`, `shutdown`)
   and `diff`, for the host.
-- `names`: `tool_names`, `namespace`.
 - `results`: `map_result`, `resource_contents`, `resource_link`,
-  `cut_middle`, `truncate`, `Spill`.
+  `truncate`, `temp_spill`.
 - `connection`: `Connection` (`new`, `start`, `connect`, `status`,
   `protocol`, `watch`, `tools`,
   `resources`, `templates`, `prompts`, `offers_resources`,
   `offers_prompts`, `instructions`, `call`, `read_resource`,
   `get_prompt`, `settled`, `shutdown`, `oauth`, `auth_need`,
-  `sign_in_request`, `restart`), `State`, `Status`, `AuthNeed`, `ToolInfo`,
-  `ResourceInfo`, `TemplateInfo`, `PromptInfo`, `PromptArgument`,
-  `Annotations`, `CallFailure`, `Environment`. Only its private
-  `client` module touches rmcp.
+  `sign_in_request`, `restart`), `State`, `Status`, `AuthNeed`,
+  `ToolInfo`, `CallFailure`, `Environment`. Only its private `client`
+  module touches rmcp.
 - `resources`: `ResourceTool`, `Kind`, `exposure`, `is_app`.
-- `prompts`: `Prompt`, `prompts`, `command_names`, `parse_arguments`,
-  `format_arguments`, `check_arguments`, `usage`, `arguments_hint`,
-  `prompt_text`.
-- `ui`: `McpUi`, its `Host` (with `sign_in`, `sign_out`,
-  `token_store`), the page's data (`Servers`, `ServerRow`, `AuthRow`,
-  `ToolRow`, `PendingRow`), `Act` and `apply` (what an action does to
-  the settings), `server_entry`, `summary`, `summary_with_sign_in`;
-  `ui::page` and `ui::card`.
+- `prompts`: `Prompt`, `prompts`, `prompt_text`, and tau-mcp's
+  `prompts` again.
+- `McpHost`, the host half tau-ui registers; its `Host` (with
+  `sign_in`, `sign_out`, `token_store`); `apply` (what a page's `Act`
+  does to the settings); `RunServers`.
 - `tool::McpTool`; `McpPlugin` and `McpPluginBuilder`:
 
 ```rust
@@ -743,12 +755,13 @@ server after the files and settings: an in-process one through
 
 ## Against real servers
 
-`crates/plugins/tau-mcp/examples/live.rs` checks tau-mcp and tau-codemode
+`crates/plugins/tau-mcp-host/examples/live.rs` checks tau-mcp and
+tau-codemode
 against real MCP servers. Node, uv and git come from nixpkgs:
 
 ```sh
 nix shell nixpkgs#nodejs nixpkgs#uv nixpkgs#git -c \
-  cargo run -p tau-mcp --example live -- [--model gpt-5.6-luna]
+  cargo run -p tau-mcp-host --example live -- [--model gpt-5.6-luna]
 ```
 
 It writes a temporary `mcp.json` and repository (never the user's

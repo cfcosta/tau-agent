@@ -1,4 +1,4 @@
-# Coding tools (`tau-tools`, optional)
+# Coding tools (`tau-tools-host`, optional)
 
 Related artifact references: [storage](codemode-artifact-storage.md),
 [file artifacts](codemode-artifact-files.md),
@@ -114,7 +114,7 @@ seven, for `Agent::tools`. `bash`, and so both, is unix-only.
 
 ### bash: terminal mode (the `terminal` feature)
 
-With tau-tools' `terminal` feature (tau-ui turns it on), `bash` runs
+With tau-tools-host's `terminal` feature (tau-ui turns it on), `bash` runs
 commands under a pseudo-terminal by default
 ([0010](../decisions/0010-terminal-rendering.md));
 `Bash::with_terminal(false)` goes back to the pipes above. Everything

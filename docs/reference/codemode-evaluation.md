@@ -51,4 +51,4 @@ Each scripted Codemode call has a 30-second VM deadline and the default 10,000-o
 
 ## Checks
 
-The package tests compare the actual deterministic JSON report with both checked-in goldens, verify changed-input and failure cases, and run Hegel properties governed by workspace `hegel.toml`. Focused checks are `cargo test -p tau-codemode-eval` and `cargo clippy -p tau-codemode-eval --all-targets -- -D warnings` inside the repository's Nix development shell. The dispatcher runs the full feature suite.
+The package tests compare the actual deterministic JSON report with both checked-in goldens, verify changed-input and failure cases, and run Hegel properties governed by workspace `hegel.toml`. Focused checks are `cargo nextest run --release -p tau-codemode-eval` and `cargo clippy -p tau-codemode-eval --all-targets -- -D warnings` inside the repository's Nix development shell. The dispatcher runs the full feature suite.

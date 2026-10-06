@@ -38,9 +38,13 @@ tau-agent/
 │       ├── tau-fast-compaction/  # Jev-driven pruning of tool history
 │       ├── tau-goal/             # keeps a chat going until its /goal holds
 │       ├── tau-jev/              # TypeSafe's Jev client, for plugins
+│       ├── tau-luau-plugins/     # plugins written in Luau, run in codemode's
+│       │                         # sandbox (ADR 0027)
 │       ├── tau-mcp/              # MCP servers' tools (rmcp), the Servers page
 │       ├── tau-memory/           # linked notes each repository's runs keep
 │       ├── tau-reasoning/        # picks a run's reasoning effort
+│       ├── tau-skills/           # instructions an agent loads when a task
+│       │                         # calls for them
 │       ├── tau-tools/            # read, bash, edit, write, grep, find, ls
 │       └── tau-vcs/              # version control on jj-lib, and landing runs
 └── docs/
@@ -55,8 +59,9 @@ Dependency direction:
 - `tau-testing` depends on `tau-ai`.
 - `tau-ui-kit` depends on GPUI and `tau-terminal` (the theme's terminal
   palette), and on no other tau crate.
-- `tau-terminal` depends on no tau crate. `tau-tools` uses it for
-  `bash` only with its `terminal` feature, which `tau-ui` turns on
+- `tau-terminal` depends on no tau crate. `tau-tools-host` uses it to
+  run `bash` under a pseudo-terminal, and `tau-tools` to draw `bash`
+  cards, each only with its `terminal` feature, which `tau-ui` turns on
   ([0010](decisions/0010-terminal-rendering.md)).
 - `tau-ui-remote` draws runs and starts none: it depends on the
   plugins' crates, not on their host halves, and lists the plugins
@@ -191,6 +196,6 @@ the request stays identical. So:
 | steering queue                                     | `Run::steer`                                                       |
 | follow-up queue                                    | not ported (start another run)                                     |
 | JSONL session tree                                 | `runs` + `messages` tables; forks via `parent_run_id` / `fork_seq` |
-| compaction (`coding-agent/src/core/compaction`)    | `tau-agent::compaction`                                            |
+| compaction (`coding-agent/src/core/compaction`)    | `tau-compaction` (a plugin)                                        |
 | faux provider                                      | `tau-testing::ScriptedModel`                                       |
-| built-in tools                                     | `tau-tools`                                                        |
+| built-in tools                                     | `tau-tools-host`                                                   |

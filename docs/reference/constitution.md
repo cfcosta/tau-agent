@@ -1,8 +1,10 @@
 # tau-constitution
 
 Checks a run's tool calls and final answer against rules, asking Jev
-(TypeSafe's System One model) how likely each rule is broken. Crate:
-`crates/plugins/tau-constitution`. Design: [plugins.md](plugins.md).
+(TypeSafe's System One model) how likely each rule is broken. Crates:
+`crates/plugins/tau-constitution` (the rules and the screen) and
+`crates/plugins/tau-constitution-host` (the checks and the database).
+Design: [plugins.md](plugins.md).
 
 ## Rules
 
@@ -10,9 +12,9 @@ A constitution is a list of rules and two settings. Each repository's is
 kept in the plugin's own SQLite file,
 `<tau's directory>/plugins/tau-constitution/constitution.db`
 (`constitutions` and `constitution_rules`, with the plugin's own
-migrations and sqlx metadata in `crates/plugins/tau-constitution`), and
-edited only through tau's UI. The same file keeps the flagged calls and
-answers a person reviewed (`reviewed`).
+migrations and sqlx metadata in `crates/plugins/tau-constitution-host`),
+and edited only through tau's UI. The same file keeps the flagged calls
+and answers a person reviewed (`reviewed`).
 
 - **A rule** has an id (`R1`, `R2`… given when it is added), its text,
   where it applies (`on`), and two violation probabilities: `review`
@@ -65,22 +67,23 @@ whether it was sent back (`held`).
 
 ## In tau-ui
 
-- Each repository has its own constitution, kept in tau's store under
-  the repository's checkout path, and edited only on the Constitution
-  screen. Nothing is written to the repository or to a file, and an edit
-  applies from the next tool call, in runs already going too.
+- Each repository has its own constitution, kept in the plugin's
+  `constitution.db` (in `HostCx::plugin_dir`) under the repository's
+  checkout path, and edited only on the Constitution screen. Nothing is
+  written to the repository, and an edit applies from the next tool
+  call, in runs already going too.
 - The Constitution screen:
   - **Rules:** each rule's places, strictness and what it did in the
     repository's runs: the runs loaded in the UI as they go, and every
     other stored run from the plugin's records
-    (`Store::plugin_entries_everywhere`), counted the same way
-    (`ConstitutionStats::add`).
+    (`HostCx::records_everywhere`), counted the same way
+    (`tau_constitution::ui::Stats::add`).
   - **Editor:** writes and edits a rule, with places picked from a list
     (or any `tool.field`), Lenient / Balanced / Strict thresholds
     (flag/block at 0.5/0.9, 0.3/0.8, 0.2/0.6) or steps of 0.05, and
     **Try it**. Try it asks Jev about the repository's latest calls and
     answers the rule reads, with the same question and state a check
-    uses (`tau_constitution::try_rule`), so nothing runs again.
+    uses (`tau_constitution_host::try_rule`), so nothing runs again.
   - **Review:** flagged calls and answers, with the rule and the score
     against its thresholds; Looks fine takes one off the queue. Next to
     it, what the rules handled on their own.
@@ -92,7 +95,8 @@ whether it was sent back (`held`).
     the repository fail at start until they can (once there is a
     TypeSafe key; without one nothing is checked). No edit can fix
     them, so the banner offers to remove them, once confirmed
-    (`Host::reset_rules`), to start again.
+    (`Act::Reset`, which the host answers by storing an empty
+    constitution), to start again.
 - Checks need a TypeSafe key, added on the Models screen and kept in
   tau's config directory (`typesafe-key`), readable only by the user.
   Without one, runs are not checked and the screen says so.

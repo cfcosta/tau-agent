@@ -3,7 +3,7 @@
 //!
 //! ```sh
 //! nix shell nixpkgs#nodejs nixpkgs#uv nixpkgs#git -c \
-//!   cargo run -p tau-mcp --example live -- [--model gpt-5.5]
+//!   cargo run -p tau-mcp-host --example live -- [--model gpt-5.5]
 //! ```
 //!
 //! It writes a temporary `mcp.json` (never the user's) naming four

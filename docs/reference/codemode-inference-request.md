@@ -1,7 +1,7 @@
 # Codemode inference request
 
-`tau_codemode::inference::InferRequest` is the host-side request contract for
-the nested `infer` tool.
+`tau_codemode_host::inference::InferRequest` is the host-side request
+contract for the nested `infer` tool.
 
 The argument object has `task` (required string), `context` (required JSON
 value, including `null`), and `schema` (optional JSON Schema; `null` means

@@ -643,7 +643,7 @@ Research and the reasons behind these choices:
   of Meaning" proves?); calls, tokens and latency. Baselines: no memory,
   one `MEMORY.md`, docbert over raw transcripts.
   - Retrieval and interference run today: `cargo run --release -p
-tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
+tau-memory-host --features docbert --bin tau-memory-eval` (`--keywords`
     for BM25 alone, `--json PATH` for the rows). The corpus is
     `crates/plugins/tau-memory-host/eval/harbor.toml`, synthetic facts about a
     made-up service. Every level holds the same number of notes, so only
@@ -686,7 +686,8 @@ tau-memory --features docbert --bin tau-memory-eval` (`--keywords`
 
 ### `tau-constitution`: rules checked on specific calls
 
-Built: `crates/plugins/tau-constitution`. Its reference is
+Built: `crates/plugins/tau-constitution`, with its host half in
+`crates/plugins/tau-constitution-host`. Its reference is
 [constitution.md](constitution.md).
 
 - **Seams:** `before_tool`, optionally `before_stop`.

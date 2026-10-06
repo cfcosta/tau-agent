@@ -280,7 +280,7 @@ async fn triage_opens_one_ticket() {
         .turn(|t| t.text("Opened one ticket."));
     let tracker = FakeTracker::default();
     let agent = Agent::new(llm).tool(typed(CreateTicket(tracker.clone()))).plugin(NoProdWrites);
-    agent.run("Triage: …", &Store::memory().await.unwrap()).await.unwrap();
+    agent.run("Triage: …", &tau_store_sqlite::memory().await.unwrap()).await.unwrap();
     assert_eq!(tracker.created().len(), 1);
 }
 ```

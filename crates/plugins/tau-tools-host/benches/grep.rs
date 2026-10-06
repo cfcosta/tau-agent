@@ -5,8 +5,8 @@
 //! runs `ITERS` times after a warm-up; the median is reported.
 //!
 //! ```text
-//! cargo bench -p tau-tools --bench grep
-//! FILES=20000 FILE_KB=16 cargo bench -p tau-tools --bench grep
+//! cargo bench -p tau-tools-host --bench grep
+//! FILES=20000 FILE_KB=16 cargo bench -p tau-tools-host --bench grep
 //! ```
 
 #![allow(

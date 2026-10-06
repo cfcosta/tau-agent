@@ -106,10 +106,10 @@ tests now check both paths and conflict state.
 ### Execution and replay
 
 ```sh
-nix develop -c cargo test -p tau-vcs --lib tree_values_match_the_signed_term_model
-nix develop -c cargo test -p tau-vcs --test sub_agent_finalization
-nix develop -c cargo test -p tau-vcs --test conflict_snapshots --test runs_model
-nix develop -c cargo test -p tau-ui --test host --test workspace
+nix develop -c cargo nextest run --release -p tau-vcs-host --lib tree_values_match_the_signed_term_model
+nix develop -c cargo nextest run --release -p tau-vcs-host --test sub_agent_finalization
+nix develop -c cargo nextest run --release -p tau-vcs-host --test conflict_snapshots --test runs_model
+nix develop -c cargo nextest run --release -p tau-ui --test host --test workspace
 ```
 
 The shipped `hegel.toml` profiles are unchanged. Local failures use Hegel's
@@ -119,7 +119,7 @@ an additional fixed-seed local run:
 
 ```sh
 HEGEL_DERANDOMIZE=true HEGEL_DATABASE=disabled \
-  nix develop -c cargo test -p tau-vcs --test sub_agent_finalization
+  nix develop -c cargo nextest run --release -p tau-vcs-host --test sub_agent_finalization
 ```
 
 The owned Agent/Store/jj property has 12 cases because each history runs

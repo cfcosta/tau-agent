@@ -219,11 +219,15 @@ sqlx::query_as!(
 ## sqlx workflow
 
 ```sh
-export DATABASE_URL=sqlite://target/tau-store-dev.db
-cargo sqlx database setup                    # create the database and run migrations/
-cargo sqlx prepare -- -p tau-store-sqlite    # after changing SQL or migrations; commit .sqlx/
-cargo sqlx prepare --check -- -p tau-store-sqlite # CI
+export DATABASE_URL="sqlite://$PWD/target/tau-store-dev.db"
+cargo sqlx database setup --source crates/tau-store-sqlite/migrations
+(cd crates/tau-store-sqlite && cargo sqlx prepare)         # after changing SQL or migrations; commit .sqlx/
+(cd crates/tau-store-sqlite && cargo sqlx prepare --check) # CI
 ```
+
+Run them from the repository root. `cargo sqlx prepare` writes `.sqlx/`
+in the directory it runs in, so it runs in the crate, and the database
+URL is absolute so the macros find it from there too.
 
 A plugin with its own database, such as tau-constitution, keeps its
 migrations and `.sqlx/` in its host crate (`tau-constitution-host`),

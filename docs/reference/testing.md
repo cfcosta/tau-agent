@@ -6,9 +6,8 @@ every test must meet. It covers:
 - the rules that make a test worth keeping;
 - property-based testing with Hegel, which is the default for new tests;
 - the property inventory for each crate;
-- the test harness: `ScriptedModel`, the fake OpenAI server, recorded
-  streams and sqlx;
-- the live tests against the real endpoint;
+- the test harness: `ScriptedModel`, the fake OpenAI server and sqlx;
+- the live probes against the real endpoint, run by hand;
 - CI tiers, mutation testing and the review checklist.
 
 ## Principles
@@ -40,26 +39,26 @@ every test must meet. It covers:
    over a simulated network against a fake server that keeps
    OpenAI's state rules (`FakeOpenAi` in turmoil), the tools against a
    real filesystem (a tempdir), and the request shapes against the real
-   endpoint (the nightly live tier).
+   endpoint (the live probes, run by hand).
 9. **Known bad inputs are kept.** Inputs that broke pi, or that broke
    us, stay in the suite as fixed cases, next to the property that
    should have caught them. See [Known cases](#known-cases).
 
 ## Tools
 
-| Tool                           | Use                                                                  |
-| ------------------------------ | -------------------------------------------------------------------- |
-| `hegeltest` (lib name `hegel`) | Property-based tests: generators, shrinking, stateful model tests    |
-| `cargo nextest`                | Test runner, locally and in CI                                       |
-| `tau-testing`                  | `ScriptedModel`, `FakeOpenAi`, shared generators, replay, async glue |
-| `tau_ui_plugin::testing`       | Feature `testing`: `FakeRun`, `run_ctx`, `fold`, `RepoValues`        |
-| `tokio::time::pause`           | Deterministic time for retries, timeouts, idle timers and rotation   |
-| `turmoil`                      | Deterministic simulated network and clock for the transport tests    |
-| `tempfile`                     | Filesystem fixtures for `tau-tools`                                  |
-| `cargo mutants`                | Test strength on the core modules                                    |
-| `cargo sqlx prepare --check`   | The committed `.sqlx/` metadata matches the queries                  |
-| `trybuild`                     | Compile-fail tests for the public API                                |
-| `cargo bench`                  | Throughput benchmarks: `tau-ai` `transport`, `tau-tools` `grep`      |
+| Tool                           | Use                                                                   |
+| ------------------------------ | --------------------------------------------------------------------- |
+| `hegeltest` (lib name `hegel`) | Property-based tests: generators, shrinking, stateful model tests     |
+| `cargo nextest`                | Test runner, locally and in CI                                        |
+| `tau-testing`                  | `ScriptedModel`, `FakeOpenAi`, shared generators, async glue          |
+| `tau_ui_plugin::testing`       | Feature `testing`: `FakeRun`, `run_ctx`, `fold`, `RepoValues`         |
+| `tokio::time::pause`           | Deterministic time for retries, timeouts, idle timers and rotation    |
+| `turmoil`                      | Deterministic simulated network and clock for the transport tests     |
+| `tempfile`                     | Filesystem fixtures for `tau-tools-host`                              |
+| `cargo mutants`                | Test strength on the core modules                                     |
+| `cargo sqlx prepare --check`   | The committed `.sqlx/` metadata matches the queries                   |
+| `trybuild`                     | Compile-fail tests for the public API                                 |
+| `cargo bench`                  | Benchmarks: `tau-ai` `transport` and `input`, `tau-tools-host` `grep` |
 
 All of these are in the dev shell, except the crates, which come
 through Cargo. `hegeltest` is declared once in
@@ -74,31 +73,34 @@ stateful model testing built in.
 
 ## Benchmarks
 
-Two benchmarks measure throughput. Each is a plain `main` (no harness)
-that takes its sizes from the environment and prints its results:
+Three benchmarks measure throughput and cost. Each is a plain `main` (no
+harness) that takes its sizes from the environment and prints its
+results:
 
 - `cargo bench -p tau-ai --bench transport`: many concurrent sessions
   against an in-process server on in-memory streams, each growing its
   transcript turn by turn. It reports turns per second, turn latency
   percentiles, and the server's count of full and delta requests.
   `RUNS`, `TURNS`, `PAYLOAD`, `DELTAS` and `THINK_MS` set the load.
-- `cargo bench -p tau-tools --bench grep`: the `grep` tool on a
+- `cargo bench -p tau-ai --bench input`: what building a request's
+  input costs as one run's transcript grows, sized by `TURNS` and
+  `PAYLOAD`.
+- `cargo bench -p tau-tools-host --bench grep`: the `grep` tool on a
   generated tree, sized by `FILES` and `FILE_KB`.
 
-Neither runs in CI; run them before and after a change on the hot path.
+None runs in CI; run them before and after a change on the hot path.
 
 ## Layers
 
-| Layer     | What it covers                                                                         | Harness                                                          |
-| --------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Property  | Pure logic: `ws::proto`, conversions, parsers, schema rewrites, truncation, cut points | Hegel; `tests/` for public APIs, `#[cfg(test)]` for private code |
-| Model     | Stateful components: WebSocket pool and lanes, the store, the agent loop               | `#[hegel::state_machine]` against a simple in-memory model       |
-| Transport | The `ws::io` driver: pool, lanes and recovery over a WebSocket                         | turmoil simulation with `FakeOpenAi`; Hegel draws the faults     |
-| Replay    | `tau-ai` event processing against recorded `response.*` streams                        | fixtures under `crates/tau-ai/tests/fixtures/`                   |
-| Scripted  | Workflow behaviour: typed results, sub-agents, forks, limits, plugins                  | `ScriptedModel` + `Store::memory()`, generated scripts           |
-| Live      | Request shapes and continuation against the real endpoint                              | `--features live`; nightly, never in the Check tier              |
-| API shape | Misuse of the public API does not compile                                              | `trybuild` compile-fail cases                                    |
-| Mutation  | Strength of the tests on the delta rule, the loop and the store                        | `cargo mutants`                                                  |
+| Layer     | What it covers                                                                         | Harness                                                           |
+| --------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Property  | Pure logic: `ws::proto`, conversions, parsers, schema rewrites, truncation, cut points | Hegel; `tests/` for public APIs, `#[cfg(test)]` for private code  |
+| Model     | Stateful components: WebSocket pool and lanes, the store, the agent loop               | `#[hegel::state_machine]` against a simple in-memory model        |
+| Transport | The `ws::io` driver: pool, lanes and recovery over a WebSocket                         | turmoil simulation with `FakeOpenAi`; Hegel draws the faults      |
+| Scripted  | Workflow behaviour: typed results, sub-agents, forks, limits, plugins                  | `ScriptedModel` + `tau_store_sqlite::memory()`, generated scripts |
+| Live      | Sign-in, request shapes and prompt caching against the real endpoint                   | `tau-ai`'s `chatgpt_probe` and `cache_probe` examples, by hand    |
+| API shape | Misuse of the public API does not compile                                              | `trybuild` compile-fail cases                                     |
+| Mutation  | Strength of the tests on the delta rule, the loop and the store                        | `cargo mutants`                                                   |
 
 ## Choosing a property
 
@@ -237,12 +239,13 @@ fire. Store tests run on a normal current-thread runtime instead. They
 stay deterministic because they never read the clock and every
 timestamp is written by SQLite and never asserted on.
 
-Loop tests do run a store under paused time, and `Store::memory()`
-sets no timeouts so nothing fires spuriously. The clock still jumps
-while a write waits: the pool's acquire deadline is a pending timer, so
-an idle runtime moves time to it. A run's elapsed time is therefore
-meaningless under paused time, and a test with a `timeout` limit runs on
-the real clock (its scripted turns have no delays, so it stays fast).
+Loop tests do run a store under paused time, and
+`tau_store_sqlite::memory()` sets no timeouts so nothing fires
+spuriously. The clock still jumps while a write waits: the pool's
+acquire deadline is a pending timer, so an idle runtime moves time to
+it. A run's elapsed time is therefore meaningless under paused time, and
+a test with a `timeout` limit runs on the real clock (its scripted turns
+have no delays, so it stays fast).
 
 ### Testing the WebSocket layer
 
@@ -403,8 +406,8 @@ also run in the nightly tier and under `cargo mutants`.
 | Loop and store together: a cancel or a write failure between tool completion and persistence leaves no partial turn                                         | Model        |
 | Message bodies round-trip through the `body` column unchanged                                                                                               | Round trip   |
 
-Store tests use `Store::memory()`. Each Hegel case opens a new store, so
-cases do not share state.
+Store tests use `tau_store_sqlite::memory()`. Each Hegel case opens a new
+store, so cases do not share state.
 
 ### `tau-tools`
 
@@ -505,7 +508,7 @@ serves it on a local TCP port from a thread of its own, and
 `LocalConnector` reaches it.
 `ScriptedModel` replaces the whole `Llm`; `FakeOpenAi` replaces only the
 far end of the socket, so the real pool, lanes, delta rule and recovery
-ladder run. TLS is not simulated; the live tier covers it.
+ladder run. TLS is not simulated; the live probes cover it.
 
 - **Recording.** It numbers connections and records every frame it
   receives, with the connection number.
@@ -548,39 +551,27 @@ ladder run. TLS is not simulated; the live tier covers it.
 There is one `FakeOpenAi`, configured per test. Do not write ad-hoc fake
 sockets in individual tests.
 
-## Live tests
+## Live probes
 
-Live tests run against `wss://api.openai.com/v1/responses` with the
-`live` feature and a saved ChatGPT sign-in with plan usage. They check
-what no fake can: that the server accepts our requests and honours our
-continuation.
+There are no live tests. tau-ai's live checks are two examples, run by
+hand against `api.openai.com` with a saved ChatGPT sign-in with plan
+usage. They check what no fake can: that the server accepts our
+requests, and what it caches.
 
+- `chatgpt_probe` signs in and out, lists accounts and models, and sends
+  plain and tool-calling requests over HTTP and the WebSocket:
+  `cargo run -p tau-ai --example chatgpt_probe -- sign-in`, then
+  `-- accounts`, `-- models`, `-- http`, `-- ws` and the rest its doc
+  comment lists.
+- `cache_probe` measures which ways of sending a conversation read the
+  prompt cache: `cargo run -p tau-ai --example cache_probe -- --cases`,
+  or `--variants`, `--fork`, `--shared` and `--handoff`.
 - **Credentials** come only from the saved sign-in in
   `$XDG_CONFIG_HOME/tau/chatgpt/` (`tau_ai::chatgpt::Store`), never
   from an API key ([0012](../decisions/0012-chatgpt-sign-in-only.md)).
-  Without one, live tests fail with a clear message. They print no
-  token.
-- **Model and budget.** Use the cheapest model that supports the
-  feature under test, and cap each test with `Limits::max_usd`.
-- **No retries.** A live test is not retried. A failure prints the
-  recorded frames so it can become a fixture.
-- **Real assertions.** Each test asserts on responses and `PoolStats`.
-  Logging a result is not an assertion.
-
-Required cases:
-
-| Case                                                               | Asserts                                                                                            |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Plain text, reasoning, parallel tool calls, typed result           | the stream completes and parses                                                                    |
-| Resend after an aborted turn that holds only reasoning             | the server accepts the converted input (no 400)                                                    |
-| Resend after tool calls cancelled mid-batch                        | the server accepts the synthetic "cancelled" results                                               |
-| Continuation probe: a 20-turn tool loop with padding in every turn | every turn after the first is a delta; the cached share of input tokens stays above a pinned floor |
-| Fork and compaction                                                | the first turn after each is a full resend, and later turns are deltas again                       |
-| A real context overflow                                            | it is classified as `context_length_exceeded`, and compaction recovers                             |
-
-The probe is the only check that OpenAI still honours continuation as
-documented. If its floor fails, re-read the WebSocket guide before
-changing code.
+  Neither prints a token of the sign-in.
+- They print what they see, and a person reads it. Neither runs in
+  CI.
 
 ## Known cases
 
@@ -610,33 +601,9 @@ Seed the suite with these cases from pi at `2b0a123`:
 | Paths      | lowercase `am`/`pm`; `~draft.md` and `@~draft.md` stay literal                                                     | `path-utils.test.ts:20`, `:159`                                                     |
 | Images     | a JPEG with EXIF orientation after an XMP segment; a 1×1 BMP; magic bytes against a wrong extension                | `image-processing.test.ts:75`, `tools.test.ts:49`, `:200`                           |
 
-## Recorded streams
-
-A replay test reads one fixture file of raw WebSocket messages, one JSON
-object per line, and feeds them through the processor. Each fixture
-comes from a live run.
-
-Required fixtures:
-
-- plain text;
-- reasoning with encrypted content;
-- parallel function calls;
-- a `previous_response_not_found` error;
-- `response.incomplete` because the output-token limit was hit;
-
-The recorded fixtures also calibrate the stream generator. Every event
-type and field that appears in a fixture must be something the
-generator can produce.
-
-## Replaying stored runs
-
-`tau-testing::replay(store, run_id)` turns a stored run into a
-`ScriptedModel` script. A real run can then become a regression test for
-the workflow code around it.
-
 ## sqlx in tests
 
-- `Store::memory()` runs the migrations on `sqlite::memory:`.
+- `tau_store_sqlite::memory()` runs the migrations on `sqlite::memory:`.
 - The query macros check against the committed `.sqlx/` metadata, so
   tests need no `DATABASE_URL`.
 - CI runs `cargo sqlx prepare --check`.
@@ -652,7 +619,7 @@ the workflow code around it.
 - `tau-fast-compaction`: the state, the decisions, the ledger and the
   plugin; `tau-jev`: answer checking;
 - `tau-store-sqlite`: the append and transcript queries;
-- `tau-tools`: `edit`, which rewrites files, and truncation.
+- `tau-tools-host`: `edit`, which rewrites files, and truncation.
 
 A surviving mutant means a behaviour no test checks. Either add the
 missing assertion, or record why the mutant is equivalent in
@@ -664,7 +631,6 @@ missing assertion, or record why the mutant is equivalent in
 | ------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run`, `cargo sqlx prepare --check`, `cargo deny check` |
 | Nightly | once a day | everything in Check, plus `cargo nextest run --run-ignored only` (nightly properties) and `cargo mutants` on the modules above   |
-| Live    | nightly    | the [live tests](#live-tests) with a budget cap; also run by hand to record new fixtures when the protocol changes               |
 
 The Check tier must stay under five minutes. If it grows past that,
 move cases to nightly variants rather than lowering the default counts.
@@ -687,7 +653,7 @@ move cases to nightly variants rather than lowering the default counts.
   generated events would check it more directly.
 - Retrying a failing test until it passes. A flaky test is a bug in the
   test or in the code.
-- A live test that only checks "no error", or that logs a result
+- A test that only checks "no error", or that logs a result
   instead of asserting on it.
 - Fixtures generated at test time and never committed. A fixture that
   is not in the repository cannot catch a regression.

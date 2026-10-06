@@ -1,9 +1,9 @@
 # Code Mode artifact storage
 
 `tau-artifacts` stores raw byte artifacts in a private directory. `Bytes::new`
-opens a directory with a 64 MiB per-artifact limit and a 512 MiB total limit
-by default. Callers can supply smaller `Quotas`. Each `Bytes` handle is cheap
-to clone.
+opens a directory with the `Quotas` it is given: `Quotas::default()` is a
+64 MiB per-artifact limit and a 512 MiB total limit. Callers can supply
+smaller ones. Each `Bytes` handle is cheap to clone.
 
 `publish_reader` reads at most 64 KiB per call, checks cancellation and the
 per-artifact limit while streaming, and hashes the original bytes with SHA-256.

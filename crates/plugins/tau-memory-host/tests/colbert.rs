@@ -288,7 +288,8 @@ fn an_embedding_file_reads_back(tc: TestCase) {
 /// docbert's model itself: unit-length token vectors, and a paraphrase
 /// ranked above an unrelated note. Downloads the model when it is not
 /// cached, so it runs only when asked:
-/// `cargo test -p tau-memory --features docbert -- --ignored`.
+/// `cargo nextest run --release -p tau-memory-host --features docbert
+/// --run-ignored only`.
 #[cfg(feature = "docbert")]
 #[test]
 #[ignore = "loads docbert's model"]

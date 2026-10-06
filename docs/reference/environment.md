@@ -96,11 +96,11 @@ prefix`. A file that does not parse fails the loads.
 
 - `tau-agent`: `Launch::argv`, and `Launchers` joining in order.
 - `tau-terminal`: a launcher's words run before the program.
-- `tau-tools` (`tests/bash_launch.rs`): the words and variables reach
+- `tau-tools-host` (`tests/bash_launch.rs`): the words and variables reach
   the command, pipes and terminal; no launcher, or a direct one,
   changes nothing; a held command starts once answered; the wait
   counts against the timeout; a cancel ends it.
-- `tau-mcp` (`tests/stdio.rs`): a stdio server starts through the
+- `tau-mcp-host` (`tests/stdio.rs`): a stdio server starts through the
   launcher, asked for the main workspace.
 - `tau-direnv`: the `direnv.toml` merge (every key kept, the person's
   prefixes then each root once, idempotent), the `launch_for` table,
