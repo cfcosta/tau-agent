@@ -1277,6 +1277,23 @@ impl RunView {
                 .is_some_and(lists_landing)
     }
 
+    /// Puts the `secs` the model reasoned (`HostUpdate::Reasoned`) on
+    /// the reasoning it streamed. A model that streamed none and answered
+    /// after a second or more gets a reasoning item of its own, holding
+    /// only the time.
+    pub fn reasoned(&mut self, secs: u64, answered: bool) {
+        match self.items.last_mut() {
+            Some(Item::Thinking {
+                secs: open @ None, ..
+            }) => *open = Some(secs),
+            _ if answered && secs > 0 => self.items.push(Item::Thinking {
+                text: String::new(),
+                secs: Some(secs),
+            }),
+            _ => {}
+        }
+    }
+
     /// Folds one run event into the view. Events of other runs are
     /// ignored, except a child's start and end, which update
     /// [`RunView::children`].

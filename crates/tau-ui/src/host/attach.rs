@@ -1126,7 +1126,7 @@ impl Host {
                     _ => None,
                 };
                 let applied = workspace.update(cx, |ws, cx| {
-                    ws.apply(HostUpdate::Event(event.clone()), cx);
+                    ws.apply_streamed(event.clone(), cx);
                     if let Some(refusal) = &refusal {
                         ws.apply(HostUpdate::PlanRefusal(refusal.clone()), cx);
                     }

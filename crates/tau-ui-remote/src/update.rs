@@ -23,6 +23,16 @@ use crate::{
 pub enum HostUpdate {
     /// What a run streamed.
     Event(RunEvent),
+    /// How long a run's model reasoned, from its turn asking it to its
+    /// first answer (`answered`) or to the turn's end, by the clock of
+    /// the computer that runs it: every interface shows these seconds,
+    /// however late it hears of the turn. Comes before the event that
+    /// stopped the clock.
+    Reasoned {
+        run: RunId,
+        secs: u64,
+        answered: bool,
+    },
     /// Past runs, as the host loaded them.
     History(Vec<RunView>),
     /// A run the host just started, forked or resumed.

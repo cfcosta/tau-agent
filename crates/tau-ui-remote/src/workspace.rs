@@ -2,6 +2,7 @@
 //! back, and the layout for the window's width.
 //!
 //! The workspace never talks to an agent. Runs come in through
+//! [`Workspace::apply_streamed`] on the computer that runs them,
 //! [`Workspace::apply_event`] and [`Workspace::update_run`], the rest of
 //! what it shows through [`Catalog`]; what the user asks for goes out as a
 //! [`WorkspaceEvent`], for the host to carry out.
@@ -543,7 +544,9 @@ pub struct Workspace {
     /// Scripted runs playing, for demos. Several can play at once.
     replays: Vec<Task<()>>,
     /// When each run asked its model, until the model answers: its
-    /// reasoning row counts the seconds from here. This device's own.
+    /// reasoning row counts the seconds from here. This device's own;
+    /// the computer that runs the model also times its reasoning by it
+    /// ([`Workspace::apply_streamed`]).
     pub(crate) asked: HashMap<RunId, Instant>,
     /// Whether a redraw comes once a second, as it does while a run
     /// waits on its model, so the reasoning row's seconds move.
@@ -914,6 +917,18 @@ impl Workspace {
         }
         match update {
             HostUpdate::Event(event) => self.apply_event(&event, cx),
+            HostUpdate::Reasoned {
+                run,
+                secs,
+                answered,
+            } => {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == run)
+                {
+                    view.reasoned(secs, answered);
+                }
+                cx.notify();
+            }
             HostUpdate::History(runs) => self.add_history(runs, cx),
             HostUpdate::Run(run) => self.push_run(*run, cx),
             HostUpdate::Catalog(catalog) => self.set_catalog(*catalog, cx),
@@ -1066,7 +1081,7 @@ impl Workspace {
     /// Feeds a run event to every run it belongs to: its own run, and
     /// the parent that lists it as a child.
     pub fn apply_event(&mut self, event: &RunEvent, cx: &mut Context<Self>) {
-        self.time_reasoning(event, cx);
+        self.watch_reasoning(event, cx);
         // A sub-agent is a chat of its own (ADR 0009), started on the
         // task its parent's call handed it.
         if let RunEvent::RunStart {
@@ -1237,7 +1252,7 @@ impl Workspace {
     ) -> bool {
         // What a run streamed is the host's, for every interface.
         if let RunUpdate::Event(event) = update {
-            self.apply(HostUpdate::Event(event), cx);
+            self.apply_streamed(event, cx);
             return true;
         }
         let Some(view) = self.runs.iter_mut().find(|view| &view.id == run)

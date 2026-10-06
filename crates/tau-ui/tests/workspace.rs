@@ -3401,16 +3401,16 @@ fn the_transcript_times_the_model_reasoning(cx: &mut TestAppContext) {
         delta: "Done.".into(),
     };
     workspace.update(&mut cx, |ws, cx| {
-        ws.apply_event(&turn(7), cx);
+        ws.apply_streamed(turn(7), cx);
         assert!(ws.reasoning_for(&run).is_some(), "it waits on its model");
-        ws.apply_event(
-            &RunEvent::ThinkingDelta {
+        ws.apply_streamed(
+            RunEvent::ThinkingDelta {
                 run: run.clone(),
                 delta: "Check the header first.".into(),
             },
             cx,
         );
-        ws.apply_event(&text, cx);
+        ws.apply_streamed(text.clone(), cx);
         assert!(ws.reasoning_for(&run).is_none(), "it answered");
         let items = &ws.run(&run).unwrap().items;
         assert!(matches!(
@@ -3419,18 +3419,100 @@ fn the_transcript_times_the_model_reasoning(cx: &mut TestAppContext) {
         ));
         // Answered at once, with no reasoning: nothing to say.
         let before = ws.run(&run).unwrap().items.len();
-        ws.apply_event(&turn(8), cx);
-        ws.apply_event(&text, cx);
+        ws.apply_streamed(turn(8), cx);
+        ws.apply_streamed(text.clone(), cx);
         assert_eq!(ws.run(&run).unwrap().items.len(), before);
-        ws.apply_event(&turn(9), cx);
+        ws.apply_streamed(turn(9), cx);
     });
     std::thread::sleep(std::time::Duration::from_millis(1100));
     workspace.update(&mut cx, |ws, cx| {
-        ws.apply_event(&text, cx);
+        ws.apply_streamed(text.clone(), cx);
         let items = &ws.run(&run).unwrap().items;
         assert!(matches!(
             &items[items.len() - 2],
             Item::Thinking { text, secs: Some(1) } if text.is_empty()
         ));
     });
+}
+
+/// The computer times its model's reasoning, and every phone shows the
+/// seconds it timed, however late the phone hears of the turn: one that
+/// hears of an answer a second after the turn started shows no reasoning
+/// the computer does not, and one that hears at once of a turn that took
+/// a second shows the reasoning the computer does.
+#[gpui::test]
+fn a_phone_shows_the_reasoning_the_computer_timed(cx: &mut TestAppContext) {
+    use tau_agent::event::RunEvent;
+    use tau_ui_remote::{update::HostUpdate, view::RunUpdate};
+
+    let (computer, mut computer_cx, _) = open(cx);
+    let (phone, mut phone_cx, _) = open(cx);
+    let echoed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = echoed.clone();
+    computer_cx.update(|_, cx| {
+        cx.subscribe(&computer, move |_, update: &HostUpdate, _| {
+            seen.borrow_mut().push(update.clone())
+        })
+        .detach()
+    });
+    computer.update(&mut computer_cx, |ws, _| ws.set_mirrored(true));
+    let run = demo::run_id();
+    let turn = |turn| {
+        RunUpdate::Event(RunEvent::TurnStart {
+            run: run.clone(),
+            turn,
+        })
+    };
+    let answer = || {
+        RunUpdate::Event(RunEvent::TextDelta {
+            run: run.clone(),
+            parent: None,
+            delta: "Done.".into(),
+        })
+    };
+    let a_second = std::time::Duration::from_millis(1100);
+
+    // Answered at once; the phone drops after the turn starts, and hears
+    // of the answer a second later.
+    computer.update(&mut computer_cx, |ws, cx| {
+        ws.update_run(&run, turn(7), cx);
+        ws.update_run(&run, answer(), cx);
+    });
+    computer_cx.run_until_parked();
+    let updates: Vec<HostUpdate> = echoed.borrow_mut().drain(..).collect();
+    let (started, rest) = updates.split_first().unwrap();
+    phone.update(&mut phone_cx, |ws, cx| ws.apply(started.clone(), cx));
+    std::thread::sleep(a_second);
+    phone.update(&mut phone_cx, |ws, cx| {
+        for update in rest {
+            ws.apply(update.clone(), cx);
+        }
+    });
+    assert_eq!(
+        phone.update(&mut phone_cx, |ws, _| ws.synced()),
+        computer.update(&mut computer_cx, |ws, _| ws.synced()),
+    );
+
+    // Took a second; the phone hears of the whole turn at once.
+    computer
+        .update(&mut computer_cx, |ws, cx| ws.update_run(&run, turn(8), cx));
+    std::thread::sleep(a_second);
+    computer.update(&mut computer_cx, |ws, cx| {
+        ws.update_run(&run, answer(), cx);
+        let items = &ws.run(&run).unwrap().items;
+        assert!(matches!(
+            &items[items.len() - 2],
+            Item::Thinking { text, secs: Some(1) } if text.is_empty()
+        ));
+    });
+    computer_cx.run_until_parked();
+    phone.update(&mut phone_cx, |ws, cx| {
+        for update in echoed.borrow_mut().drain(..) {
+            ws.apply(update, cx);
+        }
+    });
+    assert_eq!(
+        phone.update(&mut phone_cx, |ws, _| ws.synced()),
+        computer.update(&mut computer_cx, |ws, _| ws.synced()),
+    );
 }
