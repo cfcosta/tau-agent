@@ -1057,7 +1057,16 @@ fn keep_git_record(tx: &mut Transaction) {
 /// would stay done (a `vcs_new` kept, a description kept, the original
 /// commit back as a divergent twin). Instead, `@` becomes the commit
 /// the operation started from, with each path edited since as it is
-/// now, and the edited commit is abandoned.
+/// now, and the edited commit counts as rewritten into it.
+///
+/// Rewritten, not abandoned: what moved with `@` since the operation
+/// moves with it again. A run's bookmark that the undone `vcs_describe`
+/// moved with `@`, and a snapshot since moved on to the edited commit,
+/// comes back to `@` on both sides of the merge. Abandoned, the edited
+/// commit sent it to `@`'s parent instead: a conflicted bookmark, which
+/// the export leaves out of Git, so Git's branch stayed on the edited
+/// commit and the next update's import brought it back as a divergent
+/// twin of `@`.
 fn carry_edits(
     tx: &mut Transaction,
     name: &WorkspaceName,
@@ -1100,12 +1109,19 @@ fn carry_edits(
         &FilesMatcher::new(&edited),
     ))?;
     let restored = session::write_commit(tx, |repo| {
-        repo.rewrite_commit(&good_wc).set_tree(tree.clone())
+        let mut builder = repo.rewrite_commit(&good_wc).set_tree(tree.clone());
+        if current.id() != &good_id {
+            let mut predecessors = builder.predecessors().to_vec();
+            predecessors.push(current.id().clone());
+            builder = builder.set_predecessors(predecessors);
+        }
+        builder
     })?;
     tx.repo_mut()
         .set_wc_commit(name.to_owned(), restored.id().clone())?;
     if current.id() != &good_id {
-        tx.repo_mut().record_abandoned_commit(current);
+        tx.repo_mut()
+            .set_rewritten_commit(current.id().clone(), restored.id().clone());
     }
     Ok(())
 }

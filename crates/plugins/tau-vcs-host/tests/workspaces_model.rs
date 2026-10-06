@@ -1613,3 +1613,41 @@ fn jj_repo(home: &Path) -> std::sync::Arc<jj_lib::repo::ReadonlyRepo> {
     .unwrap();
     pollster::block_on(workspace.repo_loader().load_at_head()).unwrap()
 }
+
+/// The same with a file edited between the describe and its undo. The
+/// undo's snapshot moved the run's bookmark with `@` onto the edited
+/// commit, and the undo, putting `@` back with the edit carried over,
+/// abandoned that commit: the bookmark went to `@`'s parent on one side
+/// and back to `@` on the other, a conflict the export could not take to
+/// Git. Git's branch stayed on the abandoned commit, and the update
+/// brought it back as a divergent twin of `@`: the chat was stale.
+#[test]
+fn an_undone_describe_with_an_edit_since_stays_undone_after_an_update() {
+    let (home, project, main, chat, dir) = a_chat_on_main();
+    chat.ok("vcs_commit", json!({ "message": "Fix the parser" }));
+    block_on(chat.vcs.commit_all("tau: the end", "tau/chat")).unwrap();
+    chat.ok("vcs_undo", json!({}));
+    chat.ok("vcs_describe", json!({ "message": "Fix the parser" }));
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    let (_, undone) = chat.ok("vcs_undo", json!({}));
+    assert_eq!(undone["working_copy"]["description"], json!(""));
+    assert_eq!(undone["working_copy"]["bookmarks"], json!(["tau/chat"]));
+    let src = home.path().join("src");
+    std::fs::remove_file(src.join("a.txt")).unwrap();
+    git(&src, &["add", "-A"]);
+    git(&src, &["commit", "--quiet", "-m", "upstream"]);
+    project.update(UpdateFrom::Checkout(&src)).unwrap();
+    let trunk = project.trunk().unwrap();
+    let name = project.trunk_name().unwrap();
+    block_on(main.vcs.move_onto(trunk, name, true)).unwrap();
+    let (_, details) =
+        chat.ok("vcs_describe", json!({ "message": "Fix the parser" }));
+    assert_eq!(details["working_copy"]["divergent"], json!(false));
+    assert!(!dir.join("a.txt").exists(), "the edit since stays");
+    let (_, log) = chat.ok("vcs_log", json!({ "limit": 100 }));
+    let rows = log["changes"].as_array().unwrap();
+    assert!(
+        rows.iter().all(|row| row["divergent"] == json!(false)),
+        "{log}"
+    );
+}
