@@ -1514,6 +1514,44 @@ fn an_undo_takes_back_a_restored_conflict() {
     assert!(!dir.join("a.txt").exists(), "the edit since stays");
 }
 
+/// `@` that holds its parent's conflict as a restore from the parent
+/// wrote it, in another form than the parent's, changes nothing, and
+/// the host's commit at a run's end commits nothing. It used to commit
+/// it: jj's emptiness compares the trees as written.
+#[test]
+fn a_restored_conflict_is_nothing_to_commit() {
+    let (home, project, main, chat, dir) = a_chat_on_main();
+    let src = home.path().join("src");
+    let catch_up = |path: &str| {
+        std::fs::create_dir_all(src.join(path).parent().unwrap()).unwrap();
+        std::fs::write(src.join(path), "two\n").unwrap();
+        git(&src, &["add", "-A"]);
+        git(&src, &["commit", "--quiet", "-m", "upstream"]);
+        project.update(UpdateFrom::Checkout(&src)).unwrap();
+        let trunk = project.trunk().unwrap();
+        let name = project.trunk_name().unwrap();
+        block_on(main.vcs.move_onto(trunk, name, true)).unwrap();
+    };
+    // a.txt deleted in the chat and changed upstream: `@` is in
+    // conflict there when the chat commits.
+    std::fs::remove_file(dir.join("a.txt")).unwrap();
+    std::fs::create_dir_all(dir.join("dir")).unwrap();
+    std::fs::write(dir.join("dir/c.txt"), "one\n").unwrap();
+    catch_up("a.txt");
+    chat.ok("vcs_commit", json!({ "message": "Fix the parser" }));
+    // dir/c.txt added both in the chat's commit and upstream, and
+    // deleted in `@`: the commit is in conflict there, `@` has
+    // upstream's.
+    std::fs::remove_file(dir.join("dir/c.txt")).unwrap();
+    catch_up("dir/c.txt");
+    chat.ok("vcs_restore", json!({ "paths": ["dir/c.txt"] }));
+    let (_, status) = chat.ok("vcs_status", json!({}));
+    assert_eq!(status["changes"], json!([]), "{status}");
+    let turn =
+        block_on(chat.vcs.commit_all("tau: the end", "tau/chat")).unwrap();
+    assert!(!turn.changed, "nothing to commit, yet it committed");
+}
+
 /// A catch-up made by another process while a chat's tool snapshots
 /// forks the operation log: both start from the same operation, and the
 /// next load merges them, leaving the chat's `@` divergent. Inside one

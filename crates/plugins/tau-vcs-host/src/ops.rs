@@ -603,7 +603,19 @@ pub(crate) fn commit_all(
         )?;
         followed = onto;
         let wc = &wc;
-        let committed = if block_on(wc.is_empty(tx.repo()))? {
+        let parent_tree = block_on(wc.parent_tree(tx.repo()))?;
+        // Changed paths, not jj's emptiness, which compares trees as
+        // written: `@` can hold its parent's conflict in another form,
+        // as a restore from it writes, and change no file.
+        let paths: Vec<String> = diff::changed_paths(
+            &parent_tree,
+            &wc.tree(),
+            &jj_lib::matchers::EverythingMatcher,
+        )?
+        .into_iter()
+        .map(|change| change.path)
+        .collect();
+        let committed = if paths.is_empty() {
             let parent = wc.parent_ids().first().ok_or(VcsError::NoParent)?;
             let parent = tx.repo().store().get_commit(parent)?;
             Committed {
@@ -618,15 +630,6 @@ pub(crate) fn commit_all(
             } else {
                 wc.description().to_owned()
             };
-            let parent_tree = block_on(wc.parent_tree(tx.repo()))?;
-            let paths = diff::changed_paths(
-                &parent_tree,
-                &wc.tree(),
-                &jj_lib::matchers::EverythingMatcher,
-            )?
-            .into_iter()
-            .map(|change| change.path)
-            .collect();
             let committed = session::write_commit(tx, |repo| {
                 repo.rewrite_commit(wc).set_description(text.clone())
             })?;
