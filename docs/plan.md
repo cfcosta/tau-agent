@@ -210,8 +210,11 @@ The hardest part is the WebSocket layer. It has to:
       with the compaction known cases.
 - [ ] Live cases for damaged transcripts, forks, compaction and a real
       context overflow. Waits for the live tier (M1 open item).
-- [x] `cargo mutants` clean on the modules listed in the testing doc
-      (the tau-agent modules now run nightly too).
+- [ ] `cargo mutants` clean on the modules listed in the testing doc
+      (`scripts/mutants.sh`, by hand). A partial pass on 2026-10-06
+      (297 of 1367 mutants) missed 18, in tau-agent's `agent.rs`,
+      `plugin.rs` and `runner.rs`; some are `.cargo/mutants.toml`
+      exclusions whose signatures have since changed.
 - Open:
   - a threshold compaction that fails turns compaction off for the rest
     of the run rather than retrying later.

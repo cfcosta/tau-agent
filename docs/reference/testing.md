@@ -358,7 +358,8 @@ list is a floor, not a ceiling.
 | Cost is additive: `cost(a + b) == cost(a) + cost(b)` for usages of the same model and tier                                                                                                                                                                                                                                                                            | Algebraic    |
 
 The delta rule is the riskiest code in the project. Its model test must
-also run in the nightly tier and under `cargo mutants`.
+also run in the nightly tier and under `cargo mutants`
+(`scripts/mutants.sh`).
 
 ### `tau-agent`
 
@@ -610,7 +611,8 @@ Seed the suite with these cases from pi at `2b0a123`:
 
 ## Mutation testing
 
-`cargo mutants` runs on the modules where a silent bug costs the most:
+`scripts/mutants.sh` runs `cargo mutants` on the modules where a
+silent bug costs the most:
 
 - `tau-ai`: the delta rule, the lane state and the event processor;
 - `tau-agent`: the loop, plugins, runs (typed results, forks,
@@ -625,12 +627,16 @@ A surviving mutant means a behaviour no test checks. Either add the
 missing assertion, or record why the mutant is equivalent in
 `.cargo/mutants.toml` with a comment.
 
+It runs by hand, not in CI: a full pass is about 1400 mutants, some
+eight hours on a hosted runner. Run it after changing these modules;
+`scripts/mutants.sh --in-diff <diff>` mutates only the changed lines.
+
 ## CI tiers
 
 | Tier    | When       | Runs                                                                                                                                       |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run --release`, `cargo sqlx prepare --check`, `cargo deny check` |
-| Nightly | once a day | everything in Check, plus `cargo nextest run --release --run-ignored only` (nightly properties) and `cargo mutants` on the modules above   |
+| Nightly | once a day | everything in Check, plus `cargo nextest run --release --run-ignored only` (nightly properties)                                            |
 
 Tests run in release in CI, as they do locally: the debug test binaries,
 each linking GPUI or jj-lib, come to over 40 GB, more than a hosted

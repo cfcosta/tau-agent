@@ -1,6 +1,6 @@
 # The Nightly tier from docs/reference/testing.md: the extended
-# property variants and mutation testing on the modules where a silent
-# bug costs the most.
+# property variants. Mutation testing runs by hand
+# (scripts/mutants.sh): a full pass is about eight runner-hours.
 name: Nightly
 
 on:
@@ -31,49 +31,3 @@ jobs:
       - run: >-
           nix develop -c cargo nextest run --release --workspace
           --run-ignored only --no-fail-fast -E 'not test(/^the_real_jev_/)'
-
-  mutants:
-    name: Mutation testing
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    # Mutants build in debug, for fast rebuilds; without debug info, so
-    # the baseline and its test binaries fit on the runner's disk.
-    env:
-      CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_DEV_STRIP: debuginfo
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/free-disk
-      - uses: DeterminateSystems/determinate-nix-action@main
-      - uses: DeterminateSystems/flakehub-cache-action@main
-      - name: cargo mutants
-        run: |
-          nix develop -c cargo mutants --workspace --test-tool nextest \
-            --file crates/tau-ai/src/ws/proto/continuation.rs \
-            --file crates/tau-ai/src/ws/proto/lane.rs \
-            --file crates/tau-ai/src/ws/proto/pool.rs \
-            --file crates/tau-ai/src/responses/input.rs \
-            --file crates/tau-ai/src/event.rs \
-            --file crates/tau-agent/src/runner.rs \
-            --file crates/tau-agent/src/plugin.rs \
-            --file crates/tau-agent/src/agent.rs \
-            --file crates/tau-agent/src/validation.rs \
-            --file crates/tau-agent/src/schema.rs \
-            --file crates/plugins/tau-compaction/src/lib.rs \
-            --file crates/plugins/tau-compaction/src/plugin.rs \
-            --file crates/plugins/tau-fast-compaction/src/state.rs \
-            --file crates/plugins/tau-fast-compaction/src/decide.rs \
-            --file crates/plugins/tau-fast-compaction/src/ledger.rs \
-            --file crates/plugins/tau-fast-compaction/src/lib.rs \
-            --file crates/plugins/tau-jev/src/lib.rs \
-            --file crates/plugins/tau-tools-host/src/edit.rs \
-            --file crates/plugins/tau-tools-host/src/truncate.rs \
-            --file crates/tau-store-sqlite/src/lib.rs
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: mutants
-          path: mutants.out
