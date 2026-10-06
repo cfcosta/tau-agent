@@ -9,18 +9,18 @@ half, so a phone can draw the cards without it.
 
 ## What it provides
 
-| Item                                                | What it is                                                                 |
-| --------------------------------------------------- | -------------------------------------------------------------------------- |
-| `VcsUi`                                             | The plugin's `UiPlugin`: the tools' cards                                  |
-| `ChangeInfo`, `ChangeKind`, `FileChange`            | One change, and one file's change, as the tools describe them              |
-| `Landing`, `TooLarge`                               | What landing a child did; a new file a snapshot left out for its size     |
-| `details::STATUS`, `DIFF`, `LOG`, `SHOW`, `COMMIT`  | The tool names the cards match on                                          |
-| `details::SPAWN`, `WAIT`                            | The sub-agent tool names                                                   |
-| `ui::change_status`                                 | `ChangeStatus`: the parsed `vcs_status` details                            |
-| `ui::change_diff`                                   | `ChangeDiff`: a parsed `vcs_diff` or `vcs_show`, with files and hunks      |
-| `ui::change_log`                                    | `ChangeLog`: the parsed `vcs_log`, the run's stack and trunk               |
-| `ui::commit_card`, `diff_card`, `log_card`, `status_card` | The cards' bodies and summaries                                      |
-| `ui::landed`                                        | `LandingRecord` and `LandedCard`: what a landing shows                     |
+| Item                                                      | What it is                                                            |
+| --------------------------------------------------------- | --------------------------------------------------------------------- |
+| `VcsUi`                                                   | The plugin's `UiPlugin`: the tools' cards                             |
+| `ChangeInfo`, `ChangeKind`, `FileChange`                  | One change, and one file's change, as the tools describe them         |
+| `Landing`, `TooLarge`                                     | What landing a child did; a new file a snapshot left out for its size |
+| `details::STATUS`, `DIFF`, `LOG`, `SHOW`, `COMMIT`        | The tool names the cards match on                                     |
+| `details::SPAWN`, `WAIT`                                  | The sub-agent tool names                                              |
+| `ui::change_status`                                       | `ChangeStatus`: the parsed `vcs_status` details                       |
+| `ui::change_diff`                                         | `ChangeDiff`: a parsed `vcs_diff` or `vcs_show`, with files and hunks |
+| `ui::change_log`                                          | `ChangeLog`: the parsed `vcs_log`, the run's stack and trunk          |
+| `ui::commit_card`, `diff_card`, `log_card`, `status_card` | The cards' bodies and summaries                                       |
+| `ui::landed`                                              | `LandingRecord` and `LandedCard`: what a landing shows                |
 
 ## How it fits
 

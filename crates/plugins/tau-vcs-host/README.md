@@ -9,21 +9,21 @@ sweeping what old runs left, and pushing.
 
 ## What it provides
 
-| Item                                  | What it is                                                                            |
-| ------------------------------------- | ------------------------------------------------------------------------------------- |
-| `Vcs`                                 | A handle on one jj workspace: `Vcs::open`, `Vcs::init` (internal Git store), `Vcs::lazy` |
-| `Identity`                            | The author of the commits and operations; defaults to `tau <tau@localhost>`           |
-| `VcsPlugin`                           | The tools on one `Vcs`, as a `Plugin` for `Agent::plugin`                             |
-| `tools`                               | One `TypedTool` per tool (`Status`, `Diff`, `Commit`, `Land`, ...)                    |
-| `ProjectRepo`, `Project`              | A repository tau owns, with a workspace per run; `Project` runs its jobs off the async runtime |
-| `RunWorkspace`, `Link`                | A run's own workspace, snapshotted after each turn so forks start from that turn's code |
-| `Spawn`, `Wait`, `SubAgents`          | The `spawn` and `wait` tools, and the sub-agents running beside their caller          |
-| `RefusingSpawn`, `RefusingWait`       | The same tools on runs below the main chat: declared so caches match, refusing every call |
-| `sweep`                               | Which workspaces and bookmarks of finished runs go (`plan`, `ProjectRepo::sweep`)     |
-| `Remote`, `Pushed`                    | Where `ProjectRepo::push_trunk` and `push_branch` push, and what they pushed          |
-| `VcsError`, `CloneError`, `TransferError` | What goes wrong; `VcsError` is what the tools hand the model                     |
-| `VcsHost`                             | tau-vcs's `HostHalf`, for tau's plugin registry                                       |
-| `ChangeInfo`, `FileChange`, `Landing`, ... | The result shapes, re-exported from `tau-vcs`                                    |
+| Item                                       | What it is                                                                                     |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `Vcs`                                      | A handle on one jj workspace: `Vcs::open`, `Vcs::init` (internal Git store), `Vcs::lazy`       |
+| `Identity`                                 | The author of the commits and operations; defaults to `tau <tau@localhost>`                    |
+| `VcsPlugin`                                | The tools on one `Vcs`, as a `Plugin` for `Agent::plugin`                                      |
+| `tools`                                    | One `TypedTool` per tool (`Status`, `Diff`, `Commit`, `Land`, ...)                             |
+| `ProjectRepo`, `Project`                   | A repository tau owns, with a workspace per run; `Project` runs its jobs off the async runtime |
+| `RunWorkspace`, `Link`                     | A run's own workspace, snapshotted after each turn so forks start from that turn's code        |
+| `Spawn`, `Wait`, `SubAgents`               | The `spawn` and `wait` tools, and the sub-agents running beside their caller                   |
+| `RefusingSpawn`, `RefusingWait`            | The same tools on runs below the main chat: declared so caches match, refusing every call      |
+| `sweep`                                    | Which workspaces and bookmarks of finished runs go (`plan`, `ProjectRepo::sweep`)              |
+| `Remote`, `Pushed`                         | Where `ProjectRepo::push_trunk` and `push_branch` push, and what they pushed                   |
+| `VcsError`, `CloneError`, `TransferError`  | What goes wrong; `VcsError` is what the tools hand the model                                   |
+| `VcsHost`                                  | tau-vcs's `HostHalf`, for tau's plugin registry                                                |
+| `ChangeInfo`, `FileChange`, `Landing`, ... | The result shapes, re-exported from `tau-vcs`                                                  |
 
 `VcsPlugin::new(vcs)` adds ten tools:
 

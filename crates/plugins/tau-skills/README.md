@@ -11,20 +11,20 @@ instructions cost nothing until it is loaded.
 
 ## What it provides
 
-| Item                      | What it is                                                                     |
-| ------------------------- | ------------------------------------------------------------------------------ |
-| `Skill`                   | A skill the model can load: name, description, folder, file count, ignored keys |
-| `Problem`                 | A folder that looks like a skill but is not offered, and why                   |
-| `Skills`                  | What the folders hold: the skills by name, and the problems                    |
-| `Loaded`                  | What a `skill` call returns in its details, for its card                       |
-| `SkillsDir`               | A host service: where the host reads skills from                               |
-| `NAME`, `TOOL`            | `"tau-skills"` and `"skill"`                                                   |
-| `SKILL_FILE`, `SKILLS_DIR`, `BUILTIN_DIR` | `SKILL.md`, `.agents/skills` under home, and `skills` under tau's data directory |
-| `SkillsUi`                | The plugin's `UiPlugin`: the Skills screen, the `skill` card, `/name` commands |
-| `scan`                    | Reading a folder: `scan`, `scan_all`, `section` and the name and size limits (feature `host`) |
-| `host::SkillsPlugin`      | The agent plugin: the list in the run's instructions, and the tool (feature `host`) |
-| `SkillsHost`              | The `HostHalf` for tau's plugin registry (feature `host`)                      |
-| `demo::seed`              | Writes the demo's skills folder (feature `demo`)                               |
+| Item                                      | What it is                                                                                    |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `Skill`                                   | A skill the model can load: name, description, folder, file count, ignored keys               |
+| `Problem`                                 | A folder that looks like a skill but is not offered, and why                                  |
+| `Skills`                                  | What the folders hold: the skills by name, and the problems                                   |
+| `Loaded`                                  | What a `skill` call returns in its details, for its card                                      |
+| `SkillsDir`                               | A host service: where the host reads skills from                                              |
+| `NAME`, `TOOL`                            | `"tau-skills"` and `"skill"`                                                                  |
+| `SKILL_FILE`, `SKILLS_DIR`, `BUILTIN_DIR` | `SKILL.md`, `.agents/skills` under home, and `skills` under tau's data directory              |
+| `SkillsUi`                                | The plugin's `UiPlugin`: the Skills screen, the `skill` card, `/name` commands                |
+| `scan`                                    | Reading a folder: `scan`, `scan_all`, `section` and the name and size limits (feature `host`) |
+| `host::SkillsPlugin`                      | The agent plugin: the list in the run's instructions, and the tool (feature `host`)           |
+| `SkillsHost`                              | The `HostHalf` for tau's plugin registry (feature `host`)                                     |
+| `demo::seed`                              | Writes the demo's skills folder (feature `demo`)                                              |
 
 A message that starts with `/name` asks for that skill. Frontmatter
 keys tau does not act on, such as `allowed-tools`, are kept in
@@ -69,10 +69,10 @@ skills from a second folder.
 
 ## Features
 
-| Feature | Default | Effect                                                                     |
-| ------- | ------- | -------------------------------------------------------------------------- |
+| Feature | Default | Effect                                                                        |
+| ------- | ------- | ----------------------------------------------------------------------------- |
 | `host`  | on      | The agent half: `scan`, `host` and `SkillsHost`, with serde_yaml_ng and tokio |
-| `demo`  | off     | `demo::seed`, the skills tau-ui's demo screens show                        |
+| `demo`  | off     | `demo::seed`, the skills tau-ui's demo screens show                           |
 
 ## Testing
 

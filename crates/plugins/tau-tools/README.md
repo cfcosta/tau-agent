@@ -8,21 +8,21 @@ desktop host is running.
 
 ## What it provides
 
-| Item                         | What it is                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------ |
-| `ToolsUi`                    | The plugin's `UiPlugin`: the cards of the seven tools                                      |
-| `ui::NAME`                   | `"tau-tools"`, the name both halves go by                                                  |
-| `ui::State`                  | The fold of the run's artifact grants, the same live and reloaded                          |
-| `ui::Action`, `ActionReply`  | What a card asks the host half (a range of a granted artifact), and the answer             |
-| `ui::ReadView`               | A `read` card's view of a call: path, range and lines                                      |
-| `ui::artifact_status`        | Whether a finished call left an artifact, with its metadata, or why not                    |
-| `ui::diff_of`                | The diff an `edit` or `write` call made                                                    |
-| `ui::output_lines`           | A call's output lines: its result, or the output so far                                    |
-| `ui::listing`, `listing_card` | `DirListing`, the parsed `ls` details, and its card                                       |
-| `ui::term`                   | `TermOutput`: a `bash` call's terminal stream, as the card reads it                        |
-| `ui::term_card`              | `TermCards`: `bash` output drawn as a terminal (feature `terminal`)                        |
-| `details`                    | `Listing`, `Entry`, `EntryKind`: what `ls` puts in its result's details                    |
-| `artifact_grant`             | `ArtifactGrant`, `ArtifactMetadata`, `ArtifactRecord` and `fold_grants`                    |
+| Item                          | What it is                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------ |
+| `ToolsUi`                     | The plugin's `UiPlugin`: the cards of the seven tools                          |
+| `ui::NAME`                    | `"tau-tools"`, the name both halves go by                                      |
+| `ui::State`                   | The fold of the run's artifact grants, the same live and reloaded              |
+| `ui::Action`, `ActionReply`   | What a card asks the host half (a range of a granted artifact), and the answer |
+| `ui::ReadView`                | A `read` card's view of a call: path, range and lines                          |
+| `ui::artifact_status`         | Whether a finished call left an artifact, with its metadata, or why not        |
+| `ui::diff_of`                 | The diff an `edit` or `write` call made                                        |
+| `ui::output_lines`            | A call's output lines: its result, or the output so far                        |
+| `ui::listing`, `listing_card` | `DirListing`, the parsed `ls` details, and its card                            |
+| `ui::term`                    | `TermOutput`: a `bash` call's terminal stream, as the card reads it            |
+| `ui::term_card`               | `TermCards`: `bash` output drawn as a terminal (feature `terminal`)            |
+| `details`                     | `Listing`, `Entry`, `EntryKind`: what `ls` puts in its result's details        |
+| `artifact_grant`              | `ArtifactGrant`, `ArtifactMetadata`, `ArtifactRecord` and `fold_grants`        |
 
 `bash` cards show the command's terminal, or its last lines. `edit` and
 `write` cards show the diff they made. `ls` cards show the directory.
@@ -54,8 +54,8 @@ A host then gives it its half, in its place, with
 
 ## Features
 
-| Feature    | Default | Effect                                                                                   |
-| ---------- | ------- | ---------------------------------------------------------------------------------------- |
+| Feature    | Default | Effect                                                                                    |
+| ---------- | ------- | ----------------------------------------------------------------------------------------- |
 | `terminal` | off     | Draws `bash` output as a terminal through `tau-terminal` (libghostty-vt): `ui::term_card` |
 
 Without `terminal`, `bash` cards show the last lines of the output and

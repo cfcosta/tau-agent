@@ -9,22 +9,22 @@ access.
 
 ## What it provides
 
-| Item                         | What it is                                                                         |
-| ---------------------------- | ---------------------------------------------------------------------------------- |
-| `plugin::CodingTools`        | The tools on one root, as a `Plugin` for `Agent::plugin` (Unix only)               |
-| `plugin::Tool`               | One of the seven tools; `Tool::ALL` lists them in pi's order                       |
-| `coding_tools`               | The same seven tools as a `Vec`, for `Agent::tools` (Unix only)                    |
-| `path::Root`                 | Where paths resolve: the root directory, and the home `~` stands for               |
-| `read`, `bash`, `edit`, ...  | One module per tool: `Read`, `Bash`, `Edit`, `Write`, `Grep`, `Find`, `Ls`         |
-| `artifact_read`              | `ArtifactRead`, the nested `artifact_read` tool over granted artifacts            |
-| `artifact_grant`             | `publish_artifact`, plus the grant shapes re-exported from `tau-tools`             |
-| `truncate`                   | `truncate_head`, `truncate_tail`, `truncate_line` and the shared limits            |
-| `lock`                       | Process-wide per-path locks that `edit` and `write` hold                           |
-| `image`                      | Image detection and resizing for `read`                                            |
-| `errno`                      | I/O errors written as Node prints them, as models saw them from pi                 |
-| `details`                    | Re-export of `tau_tools::details`, the `ls` listing shape                          |
-| `ToolsHost`                  | tau-tools' `HostHalf`, for tau's plugin registry                                   |
-| `SearchError`, `ABORTED`     | A search whose glob or pattern does not parse; the cancelled-call message          |
+| Item                        | What it is                                                                 |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `plugin::CodingTools`       | The tools on one root, as a `Plugin` for `Agent::plugin` (Unix only)       |
+| `plugin::Tool`              | One of the seven tools; `Tool::ALL` lists them in pi's order               |
+| `coding_tools`              | The same seven tools as a `Vec`, for `Agent::tools` (Unix only)            |
+| `path::Root`                | Where paths resolve: the root directory, and the home `~` stands for       |
+| `read`, `bash`, `edit`, ... | One module per tool: `Read`, `Bash`, `Edit`, `Write`, `Grep`, `Find`, `Ls` |
+| `artifact_read`             | `ArtifactRead`, the nested `artifact_read` tool over granted artifacts     |
+| `artifact_grant`            | `publish_artifact`, plus the grant shapes re-exported from `tau-tools`     |
+| `truncate`                  | `truncate_head`, `truncate_tail`, `truncate_line` and the shared limits    |
+| `lock`                      | Process-wide per-path locks that `edit` and `write` hold                   |
+| `image`                     | Image detection and resizing for `read`                                    |
+| `errno`                     | I/O errors written as Node prints them, as models saw them from pi         |
+| `details`                   | Re-export of `tau_tools::details`, the `ls` listing shape                  |
+| `ToolsHost`                 | tau-tools' `HostHalf`, for tau's plugin registry                           |
+| `SearchError`, `ABORTED`    | A search whose glob or pattern does not parse; the cancelled-call message  |
 
 `CodingTools` has builder methods: `only(&[Tool])` and `without(Tool)`
 pick a subset (pi's order is kept), `with_launcher` starts `bash`'s
@@ -73,8 +73,8 @@ let reviewer = Agent::new(llm).plugin(CodingTools::new(root).only(&read_only));
 
 ## Features
 
-| Feature    | Default | Effect                                                                                   |
-| ---------- | ------- | ---------------------------------------------------------------------------------------- |
+| Feature    | Default | Effect                                                                                                               |
+| ---------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
 | `terminal` | off     | `bash` runs under a pseudo-terminal through `tau-terminal` (libghostty-vt), and streams the raw bytes in its details |
 
 Without `terminal`, `bash` uses pipes and `tau-terminal` is not built.

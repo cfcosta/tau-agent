@@ -10,18 +10,18 @@ so the turn goes on without a new message.
 
 ## What it provides
 
-| Item                                         | What it is                                                                 |
-| -------------------------------------------- | -------------------------------------------------------------------------- |
-| `Ask`, `Question`, `Choice`                  | What the agent asks; `Ask::check` enforces the limits                      |
-| `Reply`, `Answer`                            | How the person answered (`Answered` or `Declined`); `Reply::check` against the `Ask` |
-| `ask::MAX_QUESTIONS`, `MIN_CHOICES`, ...     | The limits, and `OTHER`, the label no choice may take                      |
-| `Record`                                     | What the plugin publishes: `Asked`, `Answered`, `Closed`                   |
-| `NAME`, `TOOL`                               | `"tau-ask"` and `"ask"`                                                    |
-| `AskUi`                                      | The plugin's `UiPlugin`: the panel in the composer's place, and the card   |
-| `ui::State`, `ui::Draft`                     | The fold of a run's calls; the person's answers in progress and their keys |
-| `host::Waiting`                              | The calls waiting for an answer; `Waiting::answer` gives one its reply (feature `host`) |
-| `host::AskPlugin`, `host::AskTool`           | The agent plugin and the tool (feature `host`)                             |
-| `AskHost`                                    | The `HostHalf` for tau's plugin registry (feature `host`)                  |
+| Item                                     | What it is                                                                              |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| `Ask`, `Question`, `Choice`              | What the agent asks; `Ask::check` enforces the limits                                   |
+| `Reply`, `Answer`                        | How the person answered (`Answered` or `Declined`); `Reply::check` against the `Ask`    |
+| `ask::MAX_QUESTIONS`, `MIN_CHOICES`, ... | The limits, and `OTHER`, the label no choice may take                                   |
+| `Record`                                 | What the plugin publishes: `Asked`, `Answered`, `Closed`                                |
+| `NAME`, `TOOL`                           | `"tau-ask"` and `"ask"`                                                                 |
+| `AskUi`                                  | The plugin's `UiPlugin`: the panel in the composer's place, and the card                |
+| `ui::State`, `ui::Draft`                 | The fold of a run's calls; the person's answers in progress and their keys              |
+| `host::Waiting`                          | The calls waiting for an answer; `Waiting::answer` gives one its reply (feature `host`) |
+| `host::AskPlugin`, `host::AskTool`       | The agent plugin and the tool (feature `host`)                                          |
+| `AskHost`                                | The `HostHalf` for tau's plugin registry (feature `host`)                               |
 
 `AskPlugin::refusing()` is for sub-agents, which have no one to ask:
 the tool is still declared, so the run's tools match its caller's and
@@ -75,8 +75,8 @@ the call goes on waiting.
 
 ## Features
 
-| Feature | Default | Effect                                                          |
-| ------- | ------- | --------------------------------------------------------------- |
+| Feature | Default | Effect                                                                |
+| ------- | ------- | --------------------------------------------------------------------- |
 | `host`  | on      | `host`, `AskHost` and the tool's JSON schema, with schemars and tokio |
 
 ## Testing

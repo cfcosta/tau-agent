@@ -11,20 +11,20 @@ whitelists the repositories the person allowed.
 
 ## What it provides
 
-| Item                | What it is                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------- |
-| `DirenvUi`          | The plugin's `UiPlugin`: the question, loading and failure cards, menu toggle, settings pane |
-| `Record`            | What the plugin publishes about a run's workspace: `Asked`, `Loading`, `Loaded`, `Failed`, `Denied`, `Off` |
-| `Settings`          | The person's answer per repository (`repos`)                                        |
-| `RepoData`          | Whether a repository has an `.envrc`, and whether direnv is on `PATH`               |
-| `Act`               | What the UI asks the host half: `Decide` for a repository, `Reload` a failed load   |
-| `NAME`              | `"tau-direnv"`, the name both halves go by                                          |
-| `DirenvHost`        | The `HostHalf`: the agent plugin and the launcher (feature `host`)                  |
-| `host::Host`        | The host state: direnv, the answers, each workspace's status (feature `host`)       |
-| `launch::Direnv`    | The `direnv` program and where tau keeps its files; `Direnv::find` looks on `PATH`  |
-| `launch::Status`    | Where a workspace's environment stands                                              |
-| `launch::launch_for`| Pure: how a command in a workspace starts, given direnv, the answer and the status  |
-| `config`            | tau's `direnv.toml`: the person's, with allowed repositories in `[whitelist] prefix` |
+| Item                 | What it is                                                                                                 |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `DirenvUi`           | The plugin's `UiPlugin`: the question, loading and failure cards, menu toggle, settings pane               |
+| `Record`             | What the plugin publishes about a run's workspace: `Asked`, `Loading`, `Loaded`, `Failed`, `Denied`, `Off` |
+| `Settings`           | The person's answer per repository (`repos`)                                                               |
+| `RepoData`           | Whether a repository has an `.envrc`, and whether direnv is on `PATH`                                      |
+| `Act`                | What the UI asks the host half: `Decide` for a repository, `Reload` a failed load                          |
+| `NAME`               | `"tau-direnv"`, the name both halves go by                                                                 |
+| `DirenvHost`         | The `HostHalf`: the agent plugin and the launcher (feature `host`)                                         |
+| `host::Host`         | The host state: direnv, the answers, each workspace's status (feature `host`)                              |
+| `launch::Direnv`     | The `direnv` program and where tau keeps its files; `Direnv::find` looks on `PATH`                         |
+| `launch::Status`     | Where a workspace's environment stands                                                                     |
+| `launch::launch_for` | Pure: how a command in a workspace starts, given direnv, the answer and the status                         |
+| `config`             | tau's `direnv.toml`: the person's, with allowed repositories in `[whitelist] prefix`                       |
 
 ## How it fits
 
@@ -64,8 +64,8 @@ In tau, `DirenvHost` does this for every command.
 
 ## Features
 
-| Feature | Default | Effect                                                                         |
-| ------- | ------- | ------------------------------------------------------------------------------ |
+| Feature | Default | Effect                                                                                |
+| ------- | ------- | ------------------------------------------------------------------------------------- |
 | `host`  | on      | The host half: `DirenvHost`, `host`, `launch` and `config`, with tokio, sha2 and toml |
 
 ## Testing
