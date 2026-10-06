@@ -26,7 +26,11 @@ jobs:
       - uses: DeterminateSystems/flakehub-cache-action@main
       - uses: Swatinem/rust-cache@v2
       # In release, as in CI: debug test binaries fill the runner's disk.
-      - run: nix develop -c cargo nextest run --release --workspace --run-ignored only
+      # The tests that ask the real Jev (`the_real_jev_*`) need
+      # TYPESAFE_API_KEY, and run by hand.
+      - run: >-
+          nix develop -c cargo nextest run --release --workspace
+          --run-ignored only -E 'not test(/^the_real_jev_/)'
 
   mutants:
     name: Mutation testing
