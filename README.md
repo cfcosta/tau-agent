@@ -27,15 +27,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## What it is, and what it is not
 
-- **A library.** There is no CLI, TUI or server. Your program owns the
-  control flow.
+- **A library.** It works on its own, and your program owns the control
+  flow. tau, a desktop app with a phone build, is built on it: see
+  [crates/tau/README.md](crates/tau/README.md) and
+  [crates/tau-ui/README.md](crates/tau-ui/README.md).
 - **OpenAI only.** It talks to the Responses API over its WebSocket mode
   (`wss://api.openai.com/v1/responses`), paid by the user's ChatGPT plan
   through Sign in with ChatGPT. There are no API keys.
   WebSocket is the only transport, so networks that block WebSocket
   upgrades will not work.
 - **Embedded storage.** Runs, messages, forks and costs go to a SQLite
-  file through `sqlx`.
+  file through `sqlx`, in `tau-store-sqlite`.
 - **Coding tools are optional.** `read`, `bash`, `edit`, `write`, `grep`,
   `find` and `ls` live in the separate `tau-tools-host` crate.
 
@@ -66,15 +68,67 @@ output and tools) and `async-trait` (custom tools and plugins).
 The workspace uses Rust edition 2024 and pins a nightly toolchain. No
 database is needed at build time: the sqlx query metadata is committed.
 
-| Crate              | What it gives you                                                                 |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `tau-agent`        | `Agent`, `Run`, the loop, tools, plugins, limits, typed output, forks, sub-agents |
-| `tau-ai`           | The `OpenAi` client, messages, models and pricing, the `Llm` trait                |
-| `tau-store`        | `Store`: storage for runs, transcripts and costs, behind a `Backend`              |
-| `tau-store-sqlite` | The SQLite `Backend`: `open` a database file, or `memory` for tests               |
-| `tau-tools-host`   | Optional coding tools, all rooted at one directory                                |
-| `tau-vcs-host`     | Optional version-control tools on one jj workspace, backed by jj-lib              |
-| `tau-testing`      | `ScriptedModel` and `block_on` for deterministic tests                            |
+Each crate has its own `README.md`. The core crates are the library:
+
+| Crate              | What it gives you                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `tau-agent`        | `Agent`, `Run`, the loop, tools, plugins, limits, typed output, forks, sub-agents        |
+| `tau-ai`           | The `OpenAi` client, Sign in with ChatGPT, messages, models and pricing, the `Llm` trait |
+| `tau-store`        | `Store`: storage for runs, transcripts and costs, behind a `Backend`                     |
+| `tau-store-sqlite` | The SQLite `Backend`: `open` a database file, or `memory` for tests                      |
+| `tau-artifacts`    | Private, quota-bound bytes that tools pass on by an opaque reference                     |
+| `tau-testing`      | `ScriptedModel`, `block_on`, fake OpenAI and ChatGPT servers, generators                 |
+
+The app and its interface, built on the library:
+
+| Crate           | What it gives you                                                                 |
+| --------------- | --------------------------------------------------------------------------------- |
+| `tau`           | The desktop app (`cargo run -p tau`), with every plugin's host half               |
+| `tau-ui`        | The host behind the interface: runs agents, signs in, lands, serves phones        |
+| `tau-ui-remote` | The interface: the workspace, its screens, the plugins' views, the phone's remote |
+| `tau-ui-plugin` | How a plugin brings its UI: `UiPlugin`, `HostHalf`, extension points, `Registry`  |
+| `tau-ui-kit`    | The design language: theme tokens, icons, fonts and shared GPUI components        |
+| `tau-phone`     | The interface on an Android phone, steering the tau on a computer                 |
+| `tau-remote`    | What crosses between a phone and a computer: pairing, TLS identity, frames        |
+| `tau-terminal`  | A terminal for tool output: libghostty-vt, a PTY runner and a GPUI view           |
+
+Plugins, under `crates/plugins/`. Most come in two halves: one with the
+cards and shapes every interface draws, which a phone links, and a
+`-host` one with the behaviour. Light ones are one crate, some with a
+`host` feature.
+
+| Crate                   | What it gives you                                                     |
+| ----------------------- | --------------------------------------------------------------------- |
+| `tau-tools`             | The coding tools' cards, and the shapes they read                     |
+| `tau-tools-host`        | Optional coding tools, all rooted at one directory                    |
+| `tau-vcs`               | The version-control tools' cards, and the shapes they read            |
+| `tau-vcs-host`          | Optional version-control tools on one jj workspace, backed by jj-lib  |
+| `tau-codemode`          | Codemode's cards, and the records they fold                           |
+| `tau-codemode-host`     | The `codemode` tool: a Luau script that calls the run's tools and Jev |
+| `tau-memory`            | Long-term memory's note format, records and pages                     |
+| `tau-memory-host`       | Long-term memory: a Zettelkasten of typed, linked Markdown notes      |
+| `tau-constitution`      | A repository's rules, the checks' records and the Constitution page   |
+| `tau-constitution-host` | Checks tool calls and final answers against the rules, with Jev       |
+| `tau-mcp`               | The `mcpServers` format, the Servers page and MCP tools' cards        |
+| `tau-mcp-host`          | Connects an agent to MCP servers and adds their tools                 |
+| `tau-luau-plugins`      | Plugins written in Luau: what they declare, their records and views   |
+| `tau-luau-plugins-host` | Loads Luau plugins and runs their hooks in codemode's sandbox         |
+| `tau-compaction`        | Summarizing compaction, off unless you add it                         |
+| `tau-fast-compaction`   | Prunes large tool outputs and stale tool history, with Jev            |
+| `tau-goal`              | Keeps a run going until a `/goal` holds, checked with Jev             |
+| `tau-reasoning`         | Picks a run's reasoning effort from its task, with Jev                |
+| `tau-ask`               | The `ask` tool: structured questions to the person                    |
+| `tau-skills`            | Skills from `~/.agents/skills`, loaded with the `skill` tool          |
+| `tau-direnv`            | Runs commands in the repository's direnv environment, once allowed    |
+| `tau-jev`               | A client for Jev, TypeSafe's System One model, shared by plugins      |
+
+Evaluations, under `crates/evals/`:
+
+| Crate                     | What it gives you                                                 |
+| ------------------------- | ----------------------------------------------------------------- |
+| `tau-codemode-eval`       | Offline workloads and hand-written oracles for Codemode           |
+| `tau-memory-e2e`          | The end-to-end evaluation of tau-memory; makes real model calls   |
+| `tau-output-pruning-eval` | How well fast compaction's output pruning keeps what a task needs |
 
 ## Core concepts
 
@@ -391,8 +445,9 @@ what the tools may do.
 ### Testing your agents
 
 `tau-testing` has `ScriptedModel`, an `Llm` that plays back scripted
-turns and records what it was sent. Pair it with `Store::memory()` for
-fast, deterministic tests with no network.
+turns and records what it was sent. Pair it with
+`tau_store_sqlite::memory()` for fast, deterministic tests with no
+network.
 
 ```rust
 use serde_json::json;
@@ -405,7 +460,7 @@ fn looks_up_the_weather() {
         .turn(|t| t.text("It's sunny in Lisbon."));
 
     block_on(async {
-        let store = Store::memory().await.unwrap();
+        let store = tau_store_sqlite::memory().await.unwrap();
         let outcome = Agent::new(llm.clone())
             .tool(typed(Weather))
             .run("Weather in Lisbon?", &store)
@@ -438,6 +493,8 @@ a fork fan-out.
 ## Status
 
 The core crates and `tau-tools-host` are implemented and tested against a
-scripted model and a simulated OpenAI server. Live tests against the real
-endpoint are still pending (see [`docs/plan.md`](docs/plan.md)). The API
-may change before a first release, and no license has been chosen yet.
+scripted model and a simulated OpenAI server. Automated live tests against
+the real endpoint are still pending (see [`docs/plan.md`](docs/plan.md));
+`tau-ai`'s `chatgpt_probe` and `cache_probe` examples check it by hand.
+The API may change before a first release, and no license has been chosen
+yet.
