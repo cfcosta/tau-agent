@@ -678,6 +678,13 @@ tau-memory-host --features docbert --bin tau-memory-eval` (`--keywords`
       cost, wall time; per trial, whether the old fact was used and
       whether the second run read memory. It prints the means per arm
       and variant; `--json PATH` writes every trial.
+- **Model:** the flush and the consolidation pass are its only model
+  calls (search runs locally). They run on the newest model of a plan
+  family at an effort, set in its settings pane: luna at low unless
+  the user picks another, or the run's own model and effort with "Use
+  the chat's model instead". A family the plan lacks, or an effort the
+  model does not take, falls back on the run's model or the model's
+  default.
 - **Scope:** per repository, plus a user scope for preferences across
   projects; a fact lives in exactly one.
   - In the app, a repository's notes are in `memory/` in tau's directory

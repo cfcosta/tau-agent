@@ -28,6 +28,6 @@ pub use half::{
     stale_on_turn,
 };
 pub use memory::Memory;
-pub use plugin::{MemoryPlugin, Scopes};
+pub use plugin::{MemoryPlugin, Scopes, Writer};
 // What it keeps and publishes, from the interface half.
 pub use tau_memory::{NAME, note, record};

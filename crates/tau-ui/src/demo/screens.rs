@@ -17,6 +17,11 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("repo", |ws, _, cx| ws.open_repo_page("tau-agent", cx)),
     ("history", |ws, _, cx| ws.navigate(Route::History, cx)),
     ("plugins", |ws, _, cx| ws.navigate(Route::Plugins, cx)),
+    // tau-memory's settings: the model it writes notes with.
+    ("plugins-memory", |ws, _, cx| {
+        ws.navigate(Route::Plugins, cx);
+        ws.pick_plugin(tau_memory::NAME, None, cx);
+    }),
     ("models", |ws, _, cx| ws.navigate(Route::Models, cx)),
     ("plan", |ws, _, cx| ws.navigate(Route::Plan(run_id()), cx)),
     ("compare", |ws, _, cx| {

@@ -14,7 +14,7 @@ use tau_memory::{
     MemoryUi,
     note::{By, LinkType, Note as MemoryNote},
     record::Record,
-    ui::{LinkView, NoteView, Notebook, ago, notes_link},
+    ui::{LinkView, NoteView, Notebook, ago, notes_link, settings::Settings},
 };
 use tau_ui_plugin::{
     HostCx,
@@ -33,7 +33,7 @@ use crate::{
     MemoryPlugin,
     Scopes,
     index::{Bm25, Index},
-    plugin::Scope,
+    plugin::{Scope, Writer},
     store::Notes,
 };
 
@@ -262,7 +262,7 @@ impl HostHalf for MemoryHost {
         &self,
         host: &Host,
         run: &RunCtx,
-        _settings: &(),
+        settings: &Settings,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         let plugin = match host
             .memories
@@ -274,6 +274,11 @@ impl HostHalf for MemoryHost {
                 return Ok(Vec::new());
             }
         };
+        let plugin = plugin.writer(
+            settings
+                .model()
+                .map(|(model, reasoning)| Writer { model, reasoning }),
+        );
         if let Some(hooks) = run.services.get::<TurnHooks>() {
             hooks.on_turn(stale_on_turn(plugin.clone()));
         }
@@ -284,7 +289,7 @@ impl HostHalf for MemoryHost {
         &self,
         host: &Host,
         run: &RunCtx,
-        _settings: &(),
+        _settings: &Settings,
     ) -> Vec<Record> {
         let notes = host.memories.notebook(&repo_dir(&run.repo)).notes.len();
         vec![Record::Starting { notes }]
@@ -294,7 +299,7 @@ impl HostHalf for MemoryHost {
         &self,
         _host: &Host,
         _cx: &HostCx,
-        _settings: &(),
+        _settings: &Settings,
     ) -> PluginInfo {
         PluginInfo {
             group: tau_ui_plugin::Group::Context,

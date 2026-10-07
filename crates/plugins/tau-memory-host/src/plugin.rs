@@ -29,7 +29,7 @@ use tau_agent::{
 };
 use tau_ai::{
     message::{AssistantBlock, Message, UserContent, UserMessage},
-    responses::request::{Settings, ToolDefinition},
+    responses::request::{ReasoningEffort, Settings, ToolDefinition},
 };
 pub use tau_memory::record::{NAME, Recalled, Record, Saved, USER};
 
@@ -87,6 +87,17 @@ pub struct MemoryPlugin {
     scopes: Scopes,
     /// Whether a consolidation pass runs when a run ends.
     consolidate: bool,
+    /// The model notes are written with, and its effort; `None` for the
+    /// run's own.
+    writer: Option<Writer>,
+}
+
+/// The model memory writes notes with, before compaction and after a
+/// run, and how hard it reasons; `None` leaves the effort to the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Writer {
+    pub model: String,
+    pub reasoning: Option<ReasoningEffort>,
 }
 
 /// The repository's scope, and the user's when there is one.
@@ -168,7 +179,15 @@ impl MemoryPlugin {
         Self {
             scopes,
             consolidate: false,
+            writer: None,
         }
+    }
+
+    /// Writes notes with `writer`'s model and effort, or with the run's
+    /// own when `None`.
+    pub fn writer(mut self, writer: Option<Writer>) -> Self {
+        self.writer = writer;
+        self
     }
 
     /// Turns the consolidation pass at the end of each run on or off.
@@ -277,7 +296,10 @@ impl Plugin for MemoryPlugin {
         }
         Ok(Box::new(MemoryRun {
             plugin: self.clone(),
-            model: plan.model().to_owned(),
+            writer: self.writer.clone().unwrap_or_else(|| Writer {
+                model: plan.model().to_owned(),
+                reasoning: plan.reasoning(),
+            }),
         }))
     }
 }
@@ -323,7 +345,9 @@ pub fn start_context(
 /// the optional consolidation at the end.
 struct MemoryRun {
     plugin: MemoryPlugin,
-    model: String,
+    /// What notes are written with: the plugin's writer, or the run's
+    /// model and effort.
+    writer: Writer,
 }
 
 /// Tools whose `path` argument names a file they change.
@@ -365,7 +389,7 @@ impl PluginRun for MemoryRun {
     ) -> Result<(), PluginError> {
         Ok(distill(
             &self.plugin,
-            &self.model,
+            &self.writer,
             replaced,
             FLUSH_PROMPT,
             By::Agent,
@@ -380,7 +404,7 @@ impl PluginRun for MemoryRun {
         }
         let done = distill(
             &self.plugin,
-            &self.model,
+            &self.writer,
             run.transcript,
             CONSOLIDATE_PROMPT,
             By::Inferred,
@@ -455,7 +479,7 @@ new: then call no tool.
 /// the conversation as text, then carries out the writes it asks for.
 async fn distill(
     plugin: &MemoryPlugin,
-    model: &str,
+    writer: &Writer,
     transcript: &[Message],
     prompt: &str,
     by: By,
@@ -463,7 +487,8 @@ async fn distill(
 ) -> Result<(), MemoryError> {
     let tools = plugin.tool_list();
     let settings = Settings {
-        model: model.to_owned(),
+        model: writer.model.clone(),
+        reasoning: writer.reasoning,
         instructions: Some(prompt.to_owned()),
         tools: tools
             .iter()

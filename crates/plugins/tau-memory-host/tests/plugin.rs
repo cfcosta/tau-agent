@@ -469,3 +469,56 @@ fn both_memory_prompts_read_the_conversation_faithfully() {
     );
     assert!(CONSOLIDATE_PROMPT.starts_with("The run below has ended"));
 }
+
+/// The flush runs on the model and effort memory was given (its
+/// settings: luna, low, by default), and on the run's own when given
+/// none. Finite inventory: a writer and none.
+#[test]
+fn the_flush_writes_with_the_model_memory_was_given() {
+    use tau_ai::responses::request::ReasoningEffort;
+    use tau_memory_host::Writer;
+    let cases = [
+        (
+            Some(Writer {
+                model: "gpt-6-luna".into(),
+                reasoning: Some(ReasoningEffort::Low),
+            }),
+            ("gpt-6-luna", Some(ReasoningEffort::Low)),
+        ),
+        (None, ("gpt-6-sol", Some(ReasoningEffort::High))),
+    ];
+    for (writer, (model_id, effort)) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let model = ScriptedModel::new()
+            .turn(|t| t.tool_call("memory_search", json!({"query": "lanes"})))
+            .turn(|t| t.text("nothing to keep"))
+            .turn(|t| t.text("done"));
+        let agent = Agent::new(model.clone())
+            .model("gpt-6-sol")
+            .reasoning(ReasoningEffort::High)
+            .plugin(Compactor)
+            .plugin(
+                MemoryPlugin::new(scopes(dir.path(), false)).writer(writer),
+            );
+        block_on_io(async {
+            let store = tau_store_sqlite::memory().await.unwrap();
+            let run = agent.start("why do lanes stall", &store);
+            run.steer("keep going");
+            run.outcome().await.unwrap();
+        });
+        let requests = model.requests();
+        let flush = &requests[1];
+        assert!(
+            flush
+                .settings
+                .instructions
+                .as_deref()
+                .unwrap()
+                .contains("being compacted")
+        );
+        assert_eq!(flush.settings.model, model_id);
+        assert_eq!(flush.settings.reasoning, effort);
+        // The run itself keeps its own.
+        assert_eq!(requests[2].settings.model, "gpt-6-sol");
+    }
+}

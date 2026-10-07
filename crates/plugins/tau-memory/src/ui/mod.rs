@@ -1,6 +1,7 @@
 //! tau-memory's UI (ADR 0017): each repository's notes and the user's
 //! on their pages, an entry for each in the sidebar, what a run recalled
-//! and saved in its transcript, and its line in the run's plugin list.
+//! and saved in its transcript, its line in the run's plugin list, and
+//! its settings: the model it writes notes with.
 //!
 //! A repository's notes live in tau's directory for it, beside its
 //! rules; the user's, across repositories, in tau's data directory.
@@ -8,6 +9,7 @@
 //! shared by every run.
 
 pub mod page;
+pub mod settings;
 
 use std::collections::BTreeMap;
 
@@ -186,7 +188,7 @@ impl UiPlugin for MemoryUi {
     /// The user's notes, across repositories.
     type Data = Notebook;
     type RepoData = Notebook;
-    type Settings = ();
+    type Settings = settings::Settings;
     type Ui = page::Ui;
 
     fn name(&self) -> &'static str {
@@ -212,6 +214,7 @@ impl UiPlugin for MemoryUi {
             })
             .status(State::status)
             .contribute(points::TRANSCRIPT, page::mark)
+            .settings(settings::pane)
     }
 }
 

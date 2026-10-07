@@ -9738,6 +9738,7 @@ dependencies = [
  "gpui-pre",
  "serde",
  "serde_json",
+ "tau-ai",
  "tau-ui-kit",
  "tau-ui-plugin",
  "thiserror 2.0.21",
