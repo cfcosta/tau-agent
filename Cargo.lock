@@ -9762,6 +9762,7 @@ dependencies = [
  "tau-store-sqlite",
  "tau-testing",
  "tau-tools-host",
+ "tau-tree-compaction",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

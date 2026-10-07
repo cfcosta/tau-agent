@@ -1,9 +1,10 @@
 //! The end-to-end evaluation of tau-memory (`docs/reference/plugins.md`,
 //! `tau-memory`, "Evaluation first"): coding tasks that need what an
-//! earlier run found, before and after that fact changed, under five
+//! earlier run found, before and after that fact changed, under six
 //! arms (no memory, one `MEMORY.md`, search over the earlier run's raw
-//! transcript, tau-memory, and tau-memory with consolidation), with the
-//! calls, tokens, cost and time each takes.
+//! transcript, tau-memory, tau-memory with consolidation, and the
+//! earlier run folded into a tree to zoom into), with the calls, tokens,
+//! cost and time each takes.
 //!
 //! [`scenario`] holds the tasks, [`arm`] builds each arm's agent,
 //! [`runner`] runs the trials and [`metrics`] reads and sums them up.

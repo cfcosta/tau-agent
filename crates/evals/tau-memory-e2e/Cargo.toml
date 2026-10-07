@@ -25,6 +25,7 @@ tau-compaction.workspace = true
 tau-memory-host.workspace = true
 tau-store.workspace = true
 tau-tools-host.workspace = true
+tau-tree-compaction.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }

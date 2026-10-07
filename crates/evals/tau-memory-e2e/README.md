@@ -3,7 +3,7 @@
 The end-to-end evaluation of tau-memory. Each trial runs a coding agent
 twice on a small generated repository: the first run finds a fact while
 doing one task, and the second run needs that fact for another. It
-compares what the second run knows of the first under five arms, and
+compares what the second run knows of the first under six arms, and
 what each costs in calls, tokens, money and time. It makes real model
 calls.
 
@@ -36,6 +36,7 @@ The arms (`arm::Arm`) are what the second run knows of the first:
 | `transcripts`        | the best matches of a search over the first run's transcript   |
 | `memory`             | tau-memory, consolidation off, as the app runs it              |
 | `memory_consolidate` | tau-memory with its consolidation pass after each run          |
+| `tree`               | the first run as tau-tree-compaction's view, with `zoom`       |
 
 Each arm's agent is built as tau-ui builds one (the coding tools on the
 repository, compaction, the memory plugin), less what needs the app:
@@ -44,13 +45,15 @@ version control, Jev and the constitution.
 Per run (`metrics::RunMetrics`) it records success, turns, tool calls
 and failed calls, input, output and cached tokens, cost and wall time.
 Per trial (`metrics::Trial`) it adds whether memory was saved, given
-and read, and in the changed variant whether the old fact was used.
+and read, and in the changed variant whether the old fact was used. In
+`tree`, the first run is folded as it ends, the requests that takes
+charged to it, and a `zoom` counts as reading memory.
 `metrics::Summary` holds the means per arm and variant.
 
 ## How it fits
 
 It builds on `tau-memory-host` (the memory plugin, its notes and its
-indexes), `tau-compaction`, `tau-tools-host`, `tau-agent`, `tau-ai`,
+indexes), `tau-compaction`, `tau-tree-compaction`, `tau-tools-host`, `tau-agent`, `tau-ai`,
 `tau-store` and `tau-store-sqlite`. No other crate depends on it.
 
 ## Usage

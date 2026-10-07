@@ -187,8 +187,9 @@ impl Trial {
     }
 }
 
-/// Tools that read memory, as the memory arms offer them.
-const MEMORY_READS: [&str; 2] = ["memory_search", "memory_read"];
+/// Tools that read memory, as the memory arms offer them, and the
+/// `tree` arm's `zoom`.
+const MEMORY_READS: [&str; 3] = ["memory_search", "memory_read", "zoom"];
 
 /// How many of `calls` read memory: the memory tools, or `MEMORY.md`
 /// read with a tool or a command.

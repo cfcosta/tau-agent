@@ -10,7 +10,16 @@ use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_ai::{
     llm::Llm,
-    message::{InputBlock, Message, UserContent},
+    message::{
+        AssistantBlock,
+        AssistantMessage,
+        InputBlock,
+        Message,
+        StopReason,
+        TextContent,
+        Usage,
+        UserContent,
+    },
 };
 use tau_memory_e2e::{
     arm::{Arm, MEMORY_MD},
@@ -145,6 +154,35 @@ fn first_run(arm: Arm) -> ScriptedModel {
         Arm::MemoryConsolidate => model
             .turn(|t| t.text("done"))
             .turn(move |t| t.tool_call("memory_write", note)),
+        // The run's messages are folded as it ends; a message too long
+        // to be its own line asks for one.
+        Arm::Tree => (0..4).fold(
+            model
+                .turn(|t| {
+                    t.tool_call(
+                        "bash",
+                        json!({"command": format!("echo {LEARNED}; HARBOR_MODE=test ./test.sh")}),
+                    )
+                })
+                .turn(|t| t.text("done")),
+            |model, _| model.turn_with(line),
+        ),
+    }
+}
+
+/// A compactor's line for whatever it was asked to compress or merge.
+fn line(_: &[Message]) -> AssistantMessage {
+    AssistantMessage {
+        content: vec![AssistantBlock::Text(TextContent {
+            text: "user: asked for the change; talk: done".into(),
+            text_signature: None,
+        })],
+        model: "scripted".into(),
+        response_id: None,
+        usage: Usage::default(),
+        stop_reason: StopReason::Stop,
+        error_message: None,
+        timestamp: 0,
     }
 }
 
@@ -182,6 +220,7 @@ fn the_second_run_starts_with_what_its_arm_carries_over() {
             Arm::MemoryMd => Some("<memory-file"),
             Arm::Transcripts => Some("<transcript"),
             Arm::Memory | Arm::MemoryConsolidate => Some("<memory"),
+            Arm::Tree => Some("<earlier-run"),
         };
         if let Some(fence) = fence {
             assert!(text.contains(fence), "{}: {text}", arm.name());
@@ -192,6 +231,12 @@ fn the_second_run_starts_with_what_its_arm_carries_over() {
         assert_eq!(
             tools.contains(&"memory_search".to_owned()),
             arm.uses_memory(),
+            "{}: {tools:?}",
+            arm.name()
+        );
+        assert_eq!(
+            tools.contains(&"zoom".to_owned()),
+            arm == Arm::Tree,
             "{}: {tools:?}",
             arm.name()
         );
@@ -390,4 +435,68 @@ fn the_budget_stops_the_evaluation_once_spent(tc: TestCase) {
     for (seen, (first, second)) in costs_seen.iter().zip(&costs) {
         assert!((seen - (first + second)).abs() < 1e-9);
     }
+}
+
+/// In the `tree` arm, the first run is folded as it ends, a long result
+/// compressed by a request charged to that run; the second run starts
+/// with the view, and its `zoom` gives the result back whole and counts
+/// as reading memory.
+#[test]
+fn the_tree_arm_folds_the_first_run_and_the_second_zooms() {
+    let work = tempfile::tempdir().unwrap();
+    let mut scripts = Scripts::default();
+    let long = format!("echo {LEARNED} {}", "-".repeat(700));
+    let first = ScriptedModel::new()
+        .turn(|t| t.tool_call("bash", json!({"command": long})))
+        .turn(|t| t.text("done").cost(0.25));
+    // Two long entries (the call, its output), and room for merges.
+    let first = (0..8).fold(first, |model, _| {
+        model.turn_with(|transcript| {
+            let mut reply = line(transcript);
+            reply.usage.cost.total = 0.5;
+            reply
+        })
+    });
+    scripts.set(Arm::Tree, Variant::Stable, 0, Stage::First, first);
+    scripts.set(
+        Arm::Tree,
+        Variant::Stable,
+        0,
+        Stage::Second,
+        ScriptedModel::new()
+            .turn(|t| t.tool_call("zoom", json!({"id": 1, "n": 1})))
+            .turn(|t| t.text("done")),
+    );
+    let config =
+        config("test-mode", &[Variant::Stable], &[Arm::Tree], work.path());
+    let report = run(&config, &scripts);
+    let trial = &report.trials[0];
+    assert!(trial.memory_saved && trial.memory_given);
+    assert_eq!(trial.memory_calls, 1);
+    let folds = scripts
+        .get(Arm::Tree, Variant::Stable, Stage::First)
+        .requests()
+        .len()
+        - 2;
+    assert!(folds >= 2, "{folds} requests folded the run");
+    assert!(
+        (trial.first.cost_usd - (0.25 + 0.5 * folds as f64)).abs() < 1e-9,
+        "{}",
+        trial.first.cost_usd
+    );
+    let second = scripts
+        .get(Arm::Tree, Variant::Stable, Stage::Second)
+        .requests();
+    let view = first_user_text(&second[0]);
+    assert!(view.contains("<chat>\n0+1|user: "), "{view}");
+    let Some(Message::ToolResult(result)) = second[1].transcript.last() else {
+        panic!("the zoom's result")
+    };
+    let shown = tau_ai::message::text_of(&result.content);
+    assert!(
+        shown.starts_with(&format!(
+            "1+1|tool: bash {{\"command\":\"echo {LEARNED} "
+        )),
+        "{shown}"
+    );
 }

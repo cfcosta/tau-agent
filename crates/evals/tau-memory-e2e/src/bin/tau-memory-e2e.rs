@@ -35,7 +35,7 @@ Usage: tau-memory-e2e [options]
 
   --scenario NAME   only these scenarios (repeat, or comma-separated)
   --arm NAME        only these arms: none, memory_md, transcripts, memory,
-                    memory_consolidate (repeat, or comma-separated)
+                    memory_consolidate, tree (repeat, or comma-separated)
   --variant NAME    stable or changed (default: both)
   --trials N        repetitions of each scenario, variant and arm (default 1)
   --model ID        the model (default: gpt-5.5, tau-ui's)

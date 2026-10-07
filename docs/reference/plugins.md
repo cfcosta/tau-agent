@@ -668,9 +668,12 @@ tau-memory-host --features docbert --bin tau-memory-eval` (`--keywords`
       app does. A second run that uses the old fact is counted.
     - Arms: `none`; `memory_md` (the agent keeps `MEMORY.md`, and the
       second run starts with it); `transcripts` (the best chunks of the
-      first run's transcript for the second task); `memory`; and
-      `memory_consolidate`. The memory arms share a fresh scope between
-      a trial's two runs.
+      first run's transcript for the second task); `memory`;
+      `memory_consolidate`; and `tree` (the first run folded into
+      tau-tree-compaction's tree as it ends, its requests charged to
+      that run; the second run starts with a 16,000-byte view and can
+      `zoom`, which counts as reading memory). The memory arms share a
+      fresh scope between a trial's two runs.
     - Per run: success, tool calls, input, output and cached tokens,
       cost, wall time; per trial, whether the old fact was used and
       whether the second run read memory. It prints the means per arm
