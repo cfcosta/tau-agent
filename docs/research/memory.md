@@ -460,7 +460,7 @@ Asked and answered on 2026-09-29; the plan in plugins.md follows them.
 | Question                    | Decision                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
 | Where repository notes live | tau's data directory, private and versioned; nothing in the project's history                          |
-| Background consolidation    | Built, off until the evaluation shows it helps                                                         |
+| Background consolidation    | Built, off until the evaluation shows it helps; on by default since 2026-10-07, a setting              |
 | Context at `start`          | The index note plus the top few search hits, fenced as untrusted                                       |
 | The index note              | Written by the agent, about 2k tokens; a write past the budget is refused with a request to rewrite it |
 | Note and link types         | The full proposed sets                                                                                 |

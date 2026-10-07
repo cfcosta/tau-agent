@@ -114,6 +114,12 @@ fn host_of(
         skills: std::env::temp_dir().join("tau-test-skills-none"),
     };
     let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
     (host.with_repo(REPO, project_of(root)), events)
 }
 
@@ -142,6 +148,12 @@ fn host_with_skills(
     };
     let agent = Agent::new(llm).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
     (host.with_repo(REPO, project_of(root)), events)
 }
 
@@ -2234,6 +2246,12 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         store,
         config_on(data.path()),
     );
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
     let host = host.with_repo(REPO, project_of(dir.path()));
     // Jev finds every chunk it is asked about disposable: the first
     // and last stay anyway.
@@ -3244,4 +3262,48 @@ fn a_run_lists_the_persons_skills_and_loads_one() {
     assert!(!failed, "{text}");
     assert!(text.contains("Group the commits by kind."), "{text}");
     assert!(text.contains(&folder.display().to_string()), "{text}");
+}
+
+/// Unless the person turned it off, memory saves what each run taught as
+/// it ends: one request after the run's own, with the consolidation
+/// prompt, on the newest luna at low.
+#[test]
+fn memory_saves_after_each_run_on_luna_by_default() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hello"))
+        .turn(|t| t.text("nothing worth keeping"));
+    let (host, mut events) =
+        host_on(llm.clone(), &tempfile::tempdir().unwrap().keep());
+    // Memory's own defaults, not the quiet ones the other tests take.
+    let host =
+        host.with_plugin_settings(tau_memory::NAME, serde_json::json!({}));
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let deadline = std::time::Instant::now() + WAIT;
+    while llm.requests().len() < 2 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 2);
+    let pass = &requests[1].settings;
+    assert!(
+        pass.instructions
+            .as_deref()
+            .unwrap()
+            .starts_with("The run below has ended"),
+        "{:?}",
+        pass.instructions
+    );
+    let luna = tau_ai::model::plan_models()
+        .into_iter()
+        .find(|model| model.id.ends_with("-luna"))
+        .unwrap();
+    assert_eq!(pass.model, luna.id);
+    let low = luna
+        .efforts
+        .contains(&tau_ai::responses::request::ReasoningEffort::Low)
+        .then_some(tau_ai::responses::request::ReasoningEffort::Low);
+    assert_eq!(pass.reasoning, low);
+    llm.assert_exhausted();
 }

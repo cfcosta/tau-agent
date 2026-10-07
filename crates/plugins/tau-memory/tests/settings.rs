@@ -11,11 +11,14 @@ use tau_memory::ui::settings::{EFFORTS, Settings};
 fn newest(family: &str) -> &'static tau_ai::model::Model {
     plan_models()
         .into_iter()
-        .find(|model| family_version(&model.id).is_some_and(|(f, _)| f == family))
+        .find(|model| {
+            family_version(&model.id).is_some_and(|(f, _)| f == family)
+        })
         .unwrap_or_else(|| panic!("no {family} on the plan"))
 }
 
-/// Nothing saved, or an empty object saved: luna, low, not the chat's.
+/// Nothing saved, or an empty object saved: luna, low, not the chat's,
+/// and a pass after each run.
 #[test]
 fn memory_writes_with_luna_at_low_by_default() {
     let saved: Settings = serde_json::from_str("{}").unwrap();
@@ -23,6 +26,7 @@ fn memory_writes_with_luna_at_low_by_default() {
     assert_eq!(saved.family, "luna");
     assert_eq!(saved.reasoning.as_deref(), Some("low"));
     assert!(!saved.follow_chat);
+    assert!(saved.after_each_run);
     let luna = newest("luna");
     let low = luna
         .efforts
@@ -31,7 +35,11 @@ fn memory_writes_with_luna_at_low_by_default() {
     assert_eq!(saved.model(), Some((luna.id.clone(), low)));
     assert_eq!(
         saved.runs_as(),
-        format!("Runs as {} · {}.", luna.id, low.map_or("auto", ReasoningEffort::as_str))
+        format!(
+            "Runs as {} · {}.",
+            luna.id,
+            low.map_or("auto", ReasoningEffort::as_str)
+        )
     );
 }
 
@@ -46,7 +54,7 @@ fn each_choice_resolves_against_the_plan() {
             let settings = Settings {
                 family: family.to_owned(),
                 reasoning: effort.map(str::to_owned),
-                follow_chat: false,
+                ..Settings::default()
             };
             let model = newest(family);
             let expected = effort

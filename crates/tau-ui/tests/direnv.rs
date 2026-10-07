@@ -108,6 +108,12 @@ fn host(
     };
     let (host, events) =
         Host::with_agent(runtime, Agent::new(llm).name("coder"), store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
     (host.with_repo(REPO, project), events, data)
 }
 

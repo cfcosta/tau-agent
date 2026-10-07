@@ -34,8 +34,8 @@ The arms (`arm::Arm`) are what the second run knows of the first:
 | `none`               | nothing                                                        |
 | `memory_md`          | the agent keeps `MEMORY.md`, and the second run starts with it |
 | `transcripts`        | the best matches of a search over the first run's transcript   |
-| `memory`             | tau-memory, consolidation off, as the app runs it              |
-| `memory_consolidate` | tau-memory with its consolidation pass after each run          |
+| `memory`             | tau-memory, consolidation off                                  |
+| `memory_consolidate` | tau-memory with its pass after each run, as the app runs it    |
 | `tree`               | the first run as tau-tree-compaction's view, with `zoom`       |
 
 Each arm's agent is built as tau-ui builds one (the coding tools on the

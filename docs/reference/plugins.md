@@ -602,10 +602,14 @@ Research and the reasons behind these choices:
   fenced as untrusted data.
 - **At compaction:** in `rewritten`, one model request (`ctx.ask`) over
   the replaced transcript with only the memory tools, since compaction
-  is where details are lost.
-- **After a run:** a background consolidation pass (signal gate,
-  faithful to the transcript, search before write, one reviewable
-  commit) exists but is **off** until the evaluation shows it helps.
+  is where details are lost. Only a rewrite that drops conversation
+  (`Rewrite::drops_conversation`: a summary, tree compaction's fold)
+  asks; pruning, which keeps it, does not.
+- **After a run:** a consolidation pass (signal gate, faithful to the
+  transcript, search before write), "Save after each run" in its
+  settings, **on** by default since 2026-10-07: without it, a run that
+  never compacts keeps only what the agent chose to write. The
+  evaluation's `memory_consolidate` arm measures it.
 - **Staleness:** a note `about` a file is marked "may be stale" when a
   later turn's commit touches that file; the agent sees the mark and
   re-checks.

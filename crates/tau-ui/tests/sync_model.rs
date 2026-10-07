@@ -950,6 +950,12 @@ fn host(
     };
     let agent = Agent::new(gate.clone()).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
     // Forecasts start at once: no person's burst of changes to wait out.
     let host = host.with_forecast_wait(Duration::from_millis(1));
     let host = REPOS.iter().fold(host, |host, repo| {

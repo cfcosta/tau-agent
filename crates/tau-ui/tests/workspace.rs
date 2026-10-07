@@ -386,6 +386,12 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     };
     // No repository is listed, so the demo's run cannot be forked.
     let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
     cx.update(|_, cx| host.attach(&workspace, events, cx));
     let run = demo::run_id();
     workspace.update(&mut cx, |ws, cx| {

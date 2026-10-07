@@ -274,11 +274,13 @@ impl HostHalf for MemoryHost {
                 return Ok(Vec::new());
             }
         };
-        let plugin = plugin.writer(
-            settings
-                .model()
-                .map(|(model, reasoning)| Writer { model, reasoning }),
-        );
+        let plugin = plugin
+            .writer(
+                settings
+                    .model()
+                    .map(|(model, reasoning)| Writer { model, reasoning }),
+            )
+            .consolidate(settings.after_each_run);
         if let Some(hooks) = run.services.get::<TurnHooks>() {
             hooks.on_turn(stale_on_turn(plugin.clone()));
         }

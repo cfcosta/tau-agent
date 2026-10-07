@@ -326,6 +326,18 @@ impl Host {
         hosted::act(&self.hosted, plugin, action, &self.host_cx()).await
     }
 
+    /// Starts with `value` as `plugin`'s settings everywhere, unsaved:
+    /// for a host that must not take a plugin's defaults, as in tests
+    /// whose scripted model answers only the requests they script.
+    pub fn with_plugin_settings(self, plugin: &str, value: Value) -> Self {
+        self.settings
+            .lock()
+            .expect("not poisoned")
+            .plugins
+            .insert(plugin.to_owned(), value);
+        self
+    }
+
     /// Saves `plugin`'s settings with the model settings; runs started
     /// from now on take them.
     pub async fn save_plugin_settings(

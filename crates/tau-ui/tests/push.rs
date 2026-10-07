@@ -124,6 +124,12 @@ fn host(
     tau_testing::block_on_io(token.save(&config.credentials)).unwrap();
     let agent = Agent::new(llm).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
     (host.with_github(Api::at(&github.web(), api)), events)
 }
 

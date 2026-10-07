@@ -53,9 +53,11 @@ pub enum Arm {
     /// The second run starts with the best matches of a search over the
     /// first run's transcript.
     Transcripts,
-    /// tau-memory, consolidation off, as the app runs it.
+    /// tau-memory, consolidation off: what the agent writes and the
+    /// flush at compaction alone.
     Memory,
-    /// tau-memory with its consolidation pass after each run.
+    /// tau-memory with its consolidation pass after each run, as the
+    /// app runs it.
     MemoryConsolidate,
     /// The first run's transcript folded into a tree of one-line
     /// summaries as it ends (tau-tree-compaction's, after OptChat); the

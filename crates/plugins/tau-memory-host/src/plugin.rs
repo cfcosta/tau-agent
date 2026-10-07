@@ -21,6 +21,7 @@ use tau_agent::{
         Plugin,
         PluginCtx,
         PluginRun,
+        RequestView,
         Rewrite,
         RunPlan,
         ToolResultView,
@@ -300,6 +301,7 @@ impl Plugin for MemoryPlugin {
                 model: plan.model().to_owned(),
                 reasoning: plan.reasoning(),
             }),
+            own_from: None,
         }))
     }
 }
@@ -348,6 +350,11 @@ struct MemoryRun {
     /// What notes are written with: the plugin's writer, or the run's
     /// model and effort.
     writer: Writer,
+    /// Where the run's own messages start in its transcript: its input,
+    /// after the history it inherited. Each message of a chat is a run,
+    /// so the pass at its end reads only what that run added. `None`
+    /// before the first request.
+    own_from: Option<usize>,
 }
 
 /// Tools whose `path` argument names a file they change.
@@ -384,9 +391,15 @@ impl PluginRun for MemoryRun {
     async fn rewritten(
         &mut self,
         replaced: &[Message],
-        _rewrite: &Rewrite,
+        rewrite: &Rewrite,
         ctx: &PluginCtx,
     ) -> Result<(), PluginError> {
+        // The transcript is new: the pass at the end reads all of it.
+        self.own_from = Some(0);
+        // Pruning keeps the conversation: nothing is about to be lost.
+        if !rewrite.drops_conversation {
+            return Ok(());
+        }
         Ok(distill(
             &self.plugin,
             &self.writer,
@@ -398,14 +411,30 @@ impl PluginRun for MemoryRun {
         .await?)
     }
 
+    async fn before_request(
+        &mut self,
+        view: &RequestView<'_>,
+        _ctx: &PluginCtx,
+    ) -> Result<Option<ReasoningEffort>, PluginError> {
+        // The first request ends with the run's input.
+        if self.own_from.is_none() {
+            self.own_from = Some(view.transcript.len().saturating_sub(1));
+        }
+        Ok(None)
+    }
+
     async fn finish(&mut self, run: &FinishedRun<'_>, ctx: &PluginCtx) {
         if !self.plugin.consolidate {
             return;
         }
+        let own = run
+            .transcript
+            .get(self.own_from.unwrap_or(0)..)
+            .unwrap_or_default();
         let done = distill(
             &self.plugin,
             &self.writer,
-            run.transcript,
+            own,
             CONSOLIDATE_PROMPT,
             By::Inferred,
             ctx,

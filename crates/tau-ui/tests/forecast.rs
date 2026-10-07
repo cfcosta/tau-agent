@@ -120,6 +120,12 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
     };
     let agent = tau_agent::agent::Agent::new(llm.clone()).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
     let host = host.with_repo("hello", project.clone());
     cx.update(|_, cx| host.attach(&workspace, events, cx));
     // The host shows its catalog and history from its runtime, a moment

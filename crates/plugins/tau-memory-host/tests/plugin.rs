@@ -253,6 +253,7 @@ impl PluginRun for Compactor {
         Ok(Some(Rewrite {
             messages: view.transcript[from..].to_vec(),
             details: json!({}),
+            drops_conversation: true,
         }))
     }
 }
@@ -521,4 +522,102 @@ fn the_flush_writes_with_the_model_memory_was_given() {
         // The run itself keeps its own.
         assert_eq!(requests[2].settings.model, "gpt-6-sol");
     }
+}
+
+/// Keeps the transcript as it is, as a rewrite that only prunes: the
+/// conversation stays.
+struct Pruner;
+
+#[async_trait]
+impl Plugin for Pruner {
+    fn name(&self) -> &str {
+        "pruner"
+    }
+
+    async fn start(
+        &self,
+        _: &mut RunPlan,
+        _: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(Pruner))
+    }
+}
+
+#[async_trait]
+impl PluginRun for Pruner {
+    async fn rewrite_context(
+        &mut self,
+        view: &ContextView<'_>,
+        _: &PluginCtx,
+    ) -> Result<Option<Rewrite>, PluginError> {
+        Ok(Some(Rewrite {
+            messages: view.transcript.to_vec(),
+            details: json!({}),
+            drops_conversation: false,
+        }))
+    }
+}
+
+/// A rewrite that keeps the conversation, as pruning does, asks memory
+/// for nothing: only one that drops it does.
+#[test]
+fn pruning_asks_memory_for_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let model = ScriptedModel::new()
+        .turn(|t| t.tool_call("memory_search", json!({"query": "lanes"})))
+        .turn(|t| t.text("done"));
+    let agent = Agent::new(model.clone())
+        .plugin(Pruner)
+        .plugin(MemoryPlugin::new(scopes(dir.path(), false)));
+    block_on_io(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let run = agent.start("why do lanes stall", &store);
+        run.outcome().await.unwrap();
+    });
+    // The run's two turns, and no flush between them.
+    assert_eq!(model.requests().len(), 2);
+    model.assert_exhausted();
+}
+
+/// Each message of a chat is a run: the pass after it reads what that
+/// run added, from its message on, not the history it went on from.
+#[test]
+fn the_pass_after_a_run_reads_only_what_the_run_added() {
+    let dir = tempfile::tempdir().unwrap();
+    let model = ScriptedModel::new()
+        .turn(|t| t.text("the lanes stall on drain"))
+        // The pass after the first run.
+        .turn(|t| t.text("nothing to keep"))
+        .turn(|t| t.text("resend in full after a drain"))
+        // The pass after the second.
+        .turn(|t| t.text("nothing to keep"));
+    let agent = Agent::new(model.clone())
+        .plugin(MemoryPlugin::new(scopes(dir.path(), false)).consolidate(true));
+    block_on_io(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let first = agent.run("why do lanes stall", &store).await.unwrap();
+        agent
+            .fork(&first.checkpoint())
+            .run("and how do we fix it", &store)
+            .await
+            .unwrap();
+    });
+    let requests = model.requests();
+    assert_eq!(requests.len(), 4);
+    let shown = |n: usize| {
+        let Message::User(user) = &requests[n].transcript[0] else {
+            panic!()
+        };
+        let UserContent::Text(shown) = &user.content else {
+            panic!()
+        };
+        shown.clone()
+    };
+    let first = shown(1);
+    assert!(first.contains("why do lanes stall"), "{first}");
+    let second = shown(3);
+    assert!(second.contains("and how do we fix it"), "{second}");
+    assert!(second.contains("resend in full after a drain"), "{second}");
+    assert!(!second.contains("why do lanes stall"), "{second}");
+    model.assert_exhausted();
 }

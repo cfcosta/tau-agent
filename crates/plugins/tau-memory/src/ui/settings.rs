@@ -1,6 +1,7 @@
-//! tau-memory's settings (ADR 0029): the model it writes notes with,
-//! before compaction drops a conversation and after a run, and how hard
-//! that model reasons. Search runs locally and needs none.
+//! tau-memory's settings (ADR 0029): whether it saves what each run
+//! taught as the run ends, the model it writes notes with then and
+//! before compaction drops a conversation, and how hard that model
+//! reasons. Search runs locally and needs none.
 
 use gpui::{AnyElement, SharedString, div, prelude::*, rems};
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,10 @@ pub struct Settings {
     pub reasoning: Option<String>,
     /// Writes with the run's own model and effort instead.
     pub follow_chat: bool,
+    /// Saves what a run taught when it ends, besides what the agent
+    /// wrote and what compaction flushed. On by default: without it, a
+    /// run that never compacts keeps only what the agent chose to write.
+    pub after_each_run: bool,
 }
 
 impl Default for Settings {
@@ -46,6 +51,7 @@ impl Default for Settings {
             family: DEFAULT_FAMILY.to_owned(),
             reasoning: Some(DEFAULT_REASONING.to_owned()),
             follow_chat: false,
+            after_each_run: true,
         }
     }
 }
@@ -60,7 +66,8 @@ impl Settings {
             return None;
         }
         let model = plan_models().into_iter().find(|model| {
-            family_version(&model.id).is_some_and(|(family, _)| family == self.family)
+            family_version(&model.id)
+                .is_some_and(|(family, _)| family == self.family)
         })?;
         let reasoning = self
             .reasoning
@@ -171,6 +178,21 @@ pub fn pane(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
             )
         })
         .collect();
+    let after_each_run = {
+        let handle = view.handle.clone();
+        let scope = scope.clone();
+        let next = Settings {
+            after_each_run: !settings.after_each_run,
+            ..settings.clone()
+        };
+        div()
+            .id("memory-after-each-run")
+            .cursor_pointer()
+            .child(ui::switch(settings.after_each_run, &t))
+            .on_click(move |_, _, cx| {
+                handle.save_settings_in(scope.as_deref(), &next, cx)
+            })
+    };
     let follow = {
         let handle = view.handle.clone();
         let scope = scope.clone();
@@ -195,10 +217,19 @@ pub fn pane(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
                 .child(
                     row(false)
                         .child(what(
+                            "Save after each run",
+                            "When a run ends, one request reads it and saves what a later \
+                             run should know, often nothing. Off, memory keeps what the \
+                             agent writes and what compaction is about to drop.",
+                        ))
+                        .child(after_each_run),
+                )
+                .child(
+                    row(false)
+                        .child(what(
                             "Model",
-                            "Writes notes before compaction drops the conversation, and \
-                             after a run when consolidation is on. Search runs locally \
-                             and needs none.",
+                            "Writes notes after each run and before compaction drops the \
+                             conversation. Search runs locally and needs none.",
                         ))
                         .child(control(families)),
                 )
