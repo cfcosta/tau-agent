@@ -40,6 +40,7 @@ tau-store-sqlite.workspace = true
 tau-reasoning.workspace = true
 tau-remote.workspace = true
 tau-fast-compaction.workspace = true
+tau-tree-compaction.workspace = true
 tau-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a
 # pseudo-terminal (docs/decisions/0010-terminal-rendering.md).

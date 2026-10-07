@@ -745,6 +745,27 @@ Built: `crates/plugins/tau-fast-compaction`. Its reference is
 - **Forks** get the ledger back through `RunPlan::last_rewrite`: the
   latest `context` entry, when fast compaction made it.
 
+### `tau-tree-compaction`: fold the context into a tree
+
+Built: `crates/plugins/tau-tree-compaction`, off by default. Its
+reference is [tree-compaction.md](tree-compaction.md).
+
+- **Seams:** `rewrite_context` (every trigger), and `start` to restore
+  the history and add the `zoom` tool.
+- **How** (after OptChat's memory):
+  1. Past the threshold, fold the messages before tau-compaction's cut
+     into a history of entries, kept word for word.
+  2. Build a one-line summary per entry and merge lines in pairs, most
+     due first, until a view of the whole history fits its budget.
+  3. Rewrite the transcript to the view, then the kept messages.
+     `zoom(id, n)` opens a line, down to a message whole.
+- **Output:** a `Rewrite` with the view in `details`, and a `folded`
+  record per compaction with the entries and lines it added. When a
+  line cannot be built it rewrites nothing, and tau-compaction, after
+  it, summarizes.
+- **Forks** rebuild the history from the records and the last
+  rewrite's view.
+
 ### `tau-goal`: keep going until a goal holds
 
 Built: `crates/plugins/tau-goal`. Its reference is [goal.md](goal.md).

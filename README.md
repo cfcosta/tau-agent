@@ -115,6 +115,7 @@ cards and shapes every interface draws, which a phone links, and a
 | `tau-luau-plugins-host` | Loads Luau plugins and runs their hooks in codemode's sandbox         |
 | `tau-compaction`        | Summarizing compaction, off unless you add it                         |
 | `tau-fast-compaction`   | Prunes large tool outputs and stale tool history, with Jev            |
+| `tau-tree-compaction`   | Folds old context into summaries to zoom into; off by default         |
 | `tau-goal`              | Keeps a run going until a `/goal` holds, checked with Jev             |
 | `tau-reasoning`         | Picks a run's reasoning effort from its task, with Jev                |
 | `tau-ask`               | The `ask` tool: structured questions to the person                    |
@@ -417,6 +418,15 @@ System One model, which tool calls and results still matter, and drops
 or cuts the rest, keeping every text verbatim. Add it before
 `Compaction`, which then takes only what pruning cannot free. See
 [docs/reference/fast-compaction.md](docs/reference/fast-compaction.md).
+
+`tau-tree-compaction` keeps what a summary would lose. It folds the
+older messages into a history kept word for word, builds a binary tree
+of one-line summaries over it after
+[OptChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449),
+and puts a view of the tree in their place. The `zoom` tool opens any
+line down to a message whole. Add it before `Compaction`, which
+summarizes when a line cannot be built. See
+[docs/reference/tree-compaction.md](docs/reference/tree-compaction.md).
 
 ### Coding tools
 

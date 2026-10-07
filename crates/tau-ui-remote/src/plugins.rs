@@ -67,8 +67,10 @@ pub fn plugins() -> Registry {
         .with(tau_vcs::ui::VcsUi)
         .with(tau_reasoning::ReasoningPlugin)
         // Pruning first: it is cheaper than a summary, and summarizing
-        // follows when pruning cannot help.
+        // follows when pruning cannot help. The tree, when switched on,
+        // folds before the summary, which steps in when the tree fails.
         .with(tau_fast_compaction::ui::FastCompactionUi)
+        .with(tau_tree_compaction::ui::TreeCompactionUi)
         .with(tau_compaction::ui::CompactionUi)
         // The repository's rules check what the tools do; a goal's
         // hold of a stop comes after theirs.

@@ -46,6 +46,8 @@ tau-agent/
 │       ├── tau-skills/           # instructions an agent loads when a task
 │       │                         # calls for them
 │       ├── tau-tools/            # read, bash, edit, write, grep, find, ls
+│       ├── tau-tree-compaction/  # compaction into a tree of summaries the
+│       │                         # agent zooms into, after OptChat
 │       └── tau-vcs/              # version control on jj-lib, and landing runs
 └── docs/
 ```

@@ -36,6 +36,7 @@ tau-memory.workspace = true
 tau-reasoning.workspace = true
 tau-remote.workspace = true
 tau-fast-compaction.workspace = true
+tau-tree-compaction.workspace = true
 tau-store.workspace = true
 # `bash` cards draw their output as a terminal
 # (docs/decisions/0010-terminal-rendering.md).
