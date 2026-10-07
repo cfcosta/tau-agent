@@ -186,7 +186,11 @@ impl CompactionRun {
             .collect();
         let details = serde_json::to_value(&record).expect("records serialize");
         self.compacted = Some(record);
-        Ok(Some(Rewrite { messages, details }))
+        Ok(Some(Rewrite {
+            messages,
+            details,
+            drops_conversation: true,
+        }))
     }
 
     /// One summary request through [`PluginCtx::ask`]: its own session,

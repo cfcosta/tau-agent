@@ -688,6 +688,7 @@ mod tests {
             &Rewrite {
                 messages,
                 details: Value::Null,
+                drops_conversation: false,
             },
         )
     }
@@ -740,6 +741,7 @@ mod tests {
                 &Rewrite {
                     messages: vec![calls(&["a"], ok)],
                     details: Value::Null,
+                    drops_conversation: false,
                 }
             ),
             Err("it does not end with the transcript's last message".into())
@@ -750,6 +752,7 @@ mod tests {
                 &Rewrite {
                     messages: vec![calls(&["a"], ok)],
                     details: Value::Null,
+                    drops_conversation: false,
                 }
             ),
             Err("tool call a has no result".into())
@@ -807,6 +810,7 @@ mod tests {
         let rewrite = Rewrite {
             messages: rewritten,
             details: Value::Null,
+            drops_conversation: false,
         };
         assert_eq!(check_rewrite(&transcript, &rewrite), Ok(()));
     }
@@ -996,6 +1000,7 @@ mod tests {
         let rewrite = Rewrite {
             messages,
             details: Value::Null,
+            drops_conversation: false,
         };
         assert_eq!(
             check_rewrite(&transcript, &rewrite),

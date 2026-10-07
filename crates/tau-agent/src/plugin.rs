@@ -304,6 +304,12 @@ impl Trigger {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rewrite {
     pub messages: Vec<Message>,
+    /// Whether the rewrite drops conversation from the context: a
+    /// summary, or lines standing for older messages. Pruning, which
+    /// keeps the conversation and cuts tool output, does not. A plugin
+    /// that keeps what a conversation said (memory) saves it before a
+    /// rewrite that drops it.
+    pub drops_conversation: bool,
     /// Stored with the rewrite. A fork of the run gets it back from
     /// [`RunPlan::last_rewrite`] when the rewrite is the latest.
     pub details: Value,

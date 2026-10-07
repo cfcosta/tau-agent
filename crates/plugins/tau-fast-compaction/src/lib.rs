@@ -602,6 +602,8 @@ impl FastCompactionRun {
         Ok(Some(Rewrite {
             messages,
             details: serde_json::to_value(details).expect("details serialize"),
+            // It cuts tool output; the conversation stays.
+            drops_conversation: false,
         }))
     }
 }

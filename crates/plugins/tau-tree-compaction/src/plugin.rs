@@ -346,6 +346,9 @@ impl TreeRun {
         Ok(Some(Rewrite {
             messages,
             details: serde_json::to_value(&details).expect("details serialize"),
+            // The folded messages leave the context: only zoom reaches
+            // them.
+            drops_conversation: true,
         }))
     }
 }

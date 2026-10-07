@@ -881,6 +881,7 @@ impl PluginRun for Pruner {
         Ok(Some(tau_agent::plugin::Rewrite {
             messages,
             details: json!({"pruned_at": view.transcript.len()}),
+            drops_conversation: false,
         }))
     }
 }
