@@ -32,7 +32,9 @@ store, no LLM request, no async. The plugin builds on them.
   the file lists.
 - `SUMMARIZATION_SYSTEM_PROMPT`, `SUMMARIZATION_PROMPT`,
   `UPDATE_SUMMARIZATION_PROMPT`, `TURN_PREFIX_SUMMARIZATION_PROMPT`,
-  `SUMMARY_PREFIX` and `SUMMARY_SUFFIX`: pi's prompts and wrapper.
+  `SUMMARY_PREFIX` and `SUMMARY_SUFFIX`: pi's prompts and wrapper, the
+  prompts with `PRIORITIES`, OptChat's ranking of what a summary keeps
+  (`docs/reference/compaction.md`, "What the prompts add").
 - `NAME`: `"tau-compaction"`, its name in events and stored rewrites.
 - `ui::CompactionUi` and `ui::CompactionHost`: its UI and its host half.
 
