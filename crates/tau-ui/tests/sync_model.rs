@@ -319,6 +319,11 @@ struct Asked {
     /// Chats ever asked to land or be dropped, and the messages that came
     /// for them after: the host refuses those once the chat ended.
     asked_to_end: HashSet<RunId>,
+    /// Chats the host said landed or were dropped, asked for or not: a
+    /// sub-agent nobody waits for lands as it returns (ADR 0026). A
+    /// message the host gets for one after is late too: a phone's,
+    /// typed while the chat still ran.
+    ended: HashSet<RunId>,
     late: HashSet<String>,
     /// What the host said went wrong, for a failure to show.
     alerts: Vec<String>,
@@ -352,7 +357,7 @@ impl Asked {
             }
             WorkspaceEvent::Say { run, text, .. } => {
                 self.said_once(text);
-                if self.asked_to_end.contains(run) {
+                if self.asked_to_end.contains(run) || self.ended.contains(run) {
                     self.late.insert(text.clone());
                 }
                 self.said.push((Some(run.clone()), text.clone(), false));
@@ -427,6 +432,16 @@ impl Asked {
                 result: Err(_),
             } => {
                 self.ending.remove(run);
+            }
+            HostUpdate::Landed {
+                run,
+                landing: Ok(_),
+            }
+            | HostUpdate::Dropped {
+                run,
+                result: Ok(()),
+            } => {
+                self.ended.insert(run.clone());
             }
             _ => {}
         }
