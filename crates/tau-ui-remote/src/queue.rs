@@ -39,6 +39,10 @@ pub struct SubAgentEnd {
     /// could not be checked. It only gets reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
+    /// What the person wrote to it that it ended before reading: main
+    /// gets it with the report, as its work is main's now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unread: Vec<String>,
 }
 
 impl Waiting {

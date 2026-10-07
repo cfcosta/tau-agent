@@ -520,6 +520,7 @@ fn sub_agents_land_whatever_they_bring(tc: TestCase) {
                 failed: tc
                     .draw(gs::weighted_booleans(0.3))
                     .then(|| "it failed".to_owned()),
+                unread: Vec::new(),
             });
             let confirmed = if tc.draw(gs::booleans()) {
                 conflicts.clone()

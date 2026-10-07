@@ -81,10 +81,13 @@ impl Host {
 
     /// `child`, a sub-agent of a main chat, ended: once its work is
     /// checked, it joins main's queue (unless the person stopped it),
-    /// and what may land now lands.
+    /// and what may land now lands. `unread` is what the person wrote to
+    /// it that it never read: it goes to main, whose work it is now,
+    /// with the report, or into main's turn when main waited for it.
     pub async fn sub_agent_ended(
         &self,
         child: &RunId,
+        unread: Vec<String>,
     ) -> anyhow::Result<DrainReport> {
         let main = self.parent_of(child).await?;
         let repo = self.slot_of_run(&main).await?.name;
@@ -99,15 +102,23 @@ impl Host {
             Some(Ending::Done { limit, .. }) => Some(SubAgentEnd {
                 limit: limit.map(|limit| limit_name(limit).to_owned()),
                 failed: None,
+                unread: unread.clone(),
             }),
             Some(
                 ending @ (Ending::Failed { .. } | Ending::Retained { .. }),
             ) => Some(SubAgentEnd {
                 limit: None,
                 failed: Some(ending_text(&ending)),
+                unread: unread.clone(),
             }),
         };
-        // `wait` took it: its call says what it did.
+        // `wait` took it: its call says what it did, and what the person
+        // wrote to it goes into main's turn, waiting on it, or into the
+        // turn tau starts on main.
+        let mut forwarded = None;
+        if end.is_some() && agents.taken(child) == Some(true) {
+            forwarded = self.forward_unread(&main, child, &unread).await?;
+        }
         if let Some(end) = end
             && agents.taken(child) != Some(true)
         {
@@ -139,7 +150,35 @@ impl Host {
             self.perform(&main, actions).await?;
         }
         let (drained, landings) = self.drain_locked(&main).await?;
-        self.report(&main, drained, landings).await
+        let mut report = self.report(&main, drained, landings).await?;
+        if let Some(forwarded) = forwarded {
+            report.resolve = Some(match report.resolve.take() {
+                Some(prompt) => format!("{forwarded}\n\n{prompt}"),
+                None => forwarded,
+            });
+        }
+        Ok(report)
+    }
+
+    /// Hands `unread`, which the person wrote to `child` and it never
+    /// read, to `main`: steered into main's turn when main is going,
+    /// else returned, for a turn on main to start with. `None` when
+    /// there is nothing to hand, or main took it.
+    pub(super) async fn forward_unread(
+        &self,
+        main: &RunId,
+        child: &RunId,
+        unread: &[String],
+    ) -> anyhow::Result<Option<String>> {
+        if unread.is_empty() {
+            return Ok(None);
+        }
+        let title = self.title_of(child).await?;
+        let text = forwarded(&title, child, unread);
+        if self.steer(main, &text).await? == Delivery::Steered {
+            return Ok(None);
+        }
+        Ok(Some(text))
     }
 
     /// The message of tau's turn after a drain: each sub-agent it
@@ -157,10 +196,11 @@ impl Host {
         for waiting in reported {
             let run = RunId(waiting.run.as_str().into());
             let end = waiting.sub_agent.clone().unwrap_or_default();
+            let unread = unread_note(&end.unread);
             if let Some(failed) = &end.failed {
                 sections.push(format!(
                     "Sub-agent `{}` ({}) came back with nothing to \
-                     land: {failed}.",
+                     land: {failed}.{unread}",
                     waiting.title, waiting.run
                 ));
                 continue;
@@ -185,7 +225,7 @@ impl Host {
                 })
                 .unwrap_or_default();
             sections.push(format!(
-                "Sub-agent `{}` ({}) finished.\n\n{answer}\n\n{note}",
+                "Sub-agent `{}` ({}) finished.\n\n{answer}\n\n{note}{unread}",
                 waiting.title, waiting.run
             ));
         }
@@ -206,6 +246,50 @@ fn limit_of(name: &str) -> Option<tau_agent::event::LimitKind> {
     ]
     .into_iter()
     .find(|limit| limit_name(*limit) == name)
+}
+
+/// What a report adds for the messages the person wrote to a
+/// sub-agent that it ended before reading; nothing when there are none.
+fn unread_note(unread: &[String]) -> String {
+    if unread.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n\nThe person also wrote to it after its last turn, so it never \
+         read this. Its work is yours now: take it as written to you.\n\n{}",
+        quoted(unread)
+    )
+}
+
+/// The message main gets for what the person wrote to `child` that it
+/// never read.
+pub(super) fn forwarded(
+    title: &str,
+    child: &RunId,
+    unread: &[String],
+) -> String {
+    format!(
+        "This message is from tau, not the person: the person wrote to \
+         sub-agent `{title}` ({}) after its last turn, so it never read \
+         this. Its work is yours now: take it as written to you.\n\n{}",
+        child.0,
+        quoted(unread)
+    )
+}
+
+/// Each message as a quote, one after the other.
+fn quoted(messages: &[String]) -> String {
+    messages
+        .iter()
+        .map(|message| {
+            message
+                .lines()
+                .map(|line| format!("> {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// What an ending with nothing to land says, for the report.

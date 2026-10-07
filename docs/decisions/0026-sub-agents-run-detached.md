@@ -72,6 +72,14 @@ leaves conflicts. A detached sub-agent can use that queue.
   ends.
 - A sub-agent's chat sits under main as before and closes when it
   lands or is dropped.
+- A sub-agent never goes on with a message, as main does. What the
+  person wrote to one that it ended before reading goes to main, whose
+  work it is now (decided 2026-10-07): quoted in main's report when
+  nobody waited, steered into main's turn when main waited for it, or,
+  with main idle, as the text of tau's turn on main. A message for a
+  sub-agent that ended but has not landed goes to main the same way,
+  and the person is told it was sent there. A sub-agent the person
+  stopped takes what it never read with it: Stop means stop.
 
 ### Restarts
 

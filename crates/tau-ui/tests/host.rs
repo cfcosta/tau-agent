@@ -19,7 +19,7 @@ use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
     github::{Api, Token},
-    host::{Host, HostConfig},
+    host::{Delivery, Host, HostConfig},
 };
 use tau_ui_remote::{
     models::{AccountState, Effort, ModelChoice},
@@ -1020,6 +1020,18 @@ fn main_waits_for_its_sub_agent_and_it_lands() {
         }
     );
     assert!(main_view.children.iter().any(|kid| kid.id == landed.from));
+
+    // What the person wrote to it that it never read goes to main, idle
+    // now, as the text of a turn on it; the `wait` took the sub-agent,
+    // so nothing joins the queue.
+    let child = landed.from.clone();
+    let report = host
+        .block_on(host.sub_agent_ended(&child, vec!["and d.txt".into()]))
+        .unwrap();
+    assert!(report.landed.is_empty() && report.queue.is_empty());
+    let prompt = report.resolve.expect("a turn on main");
+    assert!(prompt.contains("sub-agent `write c.txt`"), "{prompt}");
+    assert!(prompt.ends_with("\n\n> and d.txt"), "{prompt}");
 }
 
 /// A sub-agent that fails still comes back from history, under the run
@@ -1224,7 +1236,9 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     // ended, then the sub-agent's work lands on main, idle.
     let before = host.block_on(host.main_turn_ended(&main)).unwrap();
     assert!(before.landed.is_empty(), "nothing waited yet");
-    let report = host.block_on(host.sub_agent_ended(&child)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
     assert_eq!(report.landed.len(), 1, "{report:?}");
     assert_eq!(report.landed[0].0, child);
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
@@ -1263,6 +1277,166 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     wait_until_done(&host, &main);
     let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);
     assert!(asked.contains("wrote c.txt"), "{asked}");
+    main_llm.assert_exhausted();
+    child_llm.assert_exhausted();
+}
+
+/// A main chat that hands "write c.txt" to a sub-agent nobody waits
+/// for, with `main_llm` and the sub-agent's model, both ended: the host,
+/// its events, main, the sub-agent, and the directories that must
+/// outlive the host.
+fn detached_sub_agent(
+    main_llm: &ScriptedModel,
+    child_llm: &ScriptedModel,
+) -> (
+    Host,
+    UnboundedReceiver<RunEvent>,
+    tau_agent::tool::RunId,
+    tau_agent::tool::RunId,
+    [tempfile::TempDir; 2],
+) {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = tau_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(Routed {
+        main: main_llm.clone(),
+        child: child_llm.clone(),
+    })
+    .name("coder");
+    let (host, mut events) = host_of(runtime, store, agent, src.path());
+    let host = host.with_repo(REPO, project);
+    let main = on_main(&host, "hand c.txt off");
+    let mut ended = Vec::new();
+    while ended.len() < 2 {
+        for event in until_end(&mut events) {
+            if let RunEvent::RunEnd { run, .. } = event {
+                ended.push(run);
+            }
+        }
+    }
+    wait_until_done(&host, &main);
+    let child = ended.into_iter().find(|run| *run != main).unwrap();
+    assert!(host.is_sub_agent(&child));
+    (host, events, main, child, [src, repos])
+}
+
+/// The two turns of a main chat that hands "write c.txt" off and goes
+/// on, and the two of a sub-agent that writes and commits it.
+fn hand_off() -> (ScriptedModel, ScriptedModel) {
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("spawn", serde_json::json!({ "task": "write c.txt" }))
+        })
+        .turn(|t| t.text("it works on c.txt"));
+    let child_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "write",
+                serde_json::json!({ "path": "c.txt", "content": "c\n" }),
+            )
+            .tool_call(
+                "vcs_commit",
+                serde_json::json!({ "message": "feat: add c.txt" }),
+            )
+        })
+        .turn(|t| t.text("wrote c.txt"));
+    (main_llm, child_llm)
+}
+
+/// What the person wrote to a sub-agent that it ended before reading is
+/// not lost: main's report turn quotes it, as main's to act on now.
+#[test]
+fn what_a_sub_agent_never_read_goes_to_main_with_its_report() {
+    let (main_llm, child_llm) = hand_off();
+    let (host, _events, main, child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(
+            &child,
+            vec!["also add d.txt".into(), "two\nlines".into()],
+        ))
+        .unwrap();
+    assert_eq!(report.landed.len(), 1, "{report:?}");
+    let prompt = report.resolve.expect("tau's turn reports it");
+    assert!(prompt.contains("wrote c.txt"), "{prompt}");
+    assert!(
+        prompt.contains(
+            "The person also wrote to it after its last turn, so it never \
+             read this. Its work is yours now: take it as written to you.\n\n\
+             > also add d.txt\n\n> two\n> lines"
+        ),
+        "{prompt}"
+    );
+    // Nothing unread, nothing more said.
+    let (main_llm, child_llm) = hand_off();
+    let (host, _events, main, child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert!(!report.resolve.unwrap().contains("also wrote to it"));
+}
+
+/// A message for a sub-agent that ended, and has not landed yet, goes
+/// to main rather than starting the sub-agent again (ADR 0026): with
+/// main idle, as the text of a turn on it; with main going, into its
+/// turn, which reads it.
+#[test]
+fn a_message_for_a_sub_agent_that_ended_goes_to_main() {
+    let (main_llm, child_llm) = hand_off();
+    let main_llm = main_llm
+        // Main goes on, slowly, so the next message finds it going.
+        .turn(|t| {
+            t.tool_call("read", serde_json::json!({ "path": "README.md" }))
+                .delay(Duration::from_millis(500))
+        })
+        .turn(|t| t.text("on it"));
+    let (host, mut events, main, child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    let delivery = host.block_on(host.steer(&child, "and d.txt")).unwrap();
+    let Delivery::ToMain {
+        main: to,
+        text: Some(text),
+    } = delivery
+    else {
+        panic!("{delivery:?}")
+    };
+    assert_eq!(to, main);
+    assert!(text.contains("after its last turn"), "{text}");
+    assert!(text.ends_with("\n\n> and d.txt"), "{text}");
+    assert!(!host.is_running(&child), "the sub-agent did not go on");
+    // Main going: the message joins its turn.
+    host.block_on(host.resume(&main, "go on", &ModelChoice::default()))
+        .unwrap();
+    let delivery = host.block_on(host.steer(&child, "and e.txt")).unwrap();
+    assert_eq!(
+        delivery,
+        Delivery::ToMain {
+            main: main.clone(),
+            text: None
+        }
+    );
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);
+    assert!(asked.contains("> and e.txt"), "{asked}");
     main_llm.assert_exhausted();
     child_llm.assert_exhausted();
 }

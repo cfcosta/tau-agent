@@ -807,14 +807,34 @@ impl Host {
                         &handler,
                         &workspace,
                         async move |host| host.steer(&job_run, &job_text).await,
-                        move |ws, steered, cx| {
-                            if steered {
+                        move |ws, delivery, cx| match delivery {
+                            Delivery::Steered => {
                                 ws.apply(HostUpdate::Steered { run, text }, cx);
-                            } else {
+                            }
+                            Delivery::GoOn => {
                                 let workspace = cx.entity();
                                 cx.defer(move |cx| {
                                     go_on(&goer, &run, &text, &model, &workspace, cx)
                                 });
+                            }
+                            // The sub-agent ended before reading it: main
+                            // has it, in its turn or in one tau starts.
+                            Delivery::ToMain { main, text: forwarded } => {
+                                ws.apply(
+                                    HostUpdate::alert(
+                                        "Sent to main",
+                                        "The sub-agent had finished, so its main chat got your message.",
+                                    ),
+                                    cx,
+                                );
+                                // Main was idle: tau's turn on it, as for a
+                                // report.
+                                if let Some(prompt) = forwarded {
+                                    let workspace = cx.entity();
+                                    cx.defer(move |cx| {
+                                        resolve_main(&goer, &main, prompt, &workspace, cx)
+                                    });
+                                }
                             }
                         },
                         alert("Could not send the message"),
@@ -1094,10 +1114,16 @@ impl Host {
                 // What the run was steered with too late to read: a run
                 // that stopped on its own goes on with it; a cancelled one
                 // was stopped on purpose.
-                let unread = match &event {
-                    // A sub-agent does not go on: it lands, or is dropped.
+                // A sub-agent does not go on: it lands, or is dropped, and
+                // what it did not read goes to main (ADR 0026).
+                let sub_agent_ended = match &event {
                     RunEvent::RunEnd { run, .. } if host.is_sub_agent(run) => {
-                        host.take_unread(run);
+                        Some((run.clone(), host.take_unread(run)))
+                    }
+                    _ => None,
+                };
+                let unread = match &event {
+                    RunEvent::RunEnd { run, .. } if host.is_sub_agent(run) => {
                         None
                     }
                     RunEvent::RunEnd { run, stop, .. } => {
@@ -1114,14 +1140,6 @@ impl Host {
                 let main_ended = match &event {
                     RunEvent::RunEnd { run, stop, .. } if host.is_main(run) => {
                         Some((run.clone(), *stop == StopReason::Cancelled))
-                    }
-                    _ => None,
-                };
-                // A sub-agent of a main chat ended: nobody waiting, it
-                // lands on main and tau reports it (ADR 0026).
-                let sub_agent_ended = match &event {
-                    RunEvent::RunEnd { run, .. } if host.is_sub_agent(run) => {
-                        Some(run.clone())
                     }
                     _ => None,
                 };
@@ -1142,7 +1160,9 @@ impl Host {
                         go_on(&host, &run, &text, &model, &entity, cx)
                     });
                 }
-                if let (Some(child), Some(entity)) =
+                // A sub-agent of a main chat ended: nobody waiting, it
+                // lands on main and tau reports it (ADR 0026).
+                if let (Some((child, unread)), Some(entity)) =
                     (sub_agent_ended, workspace.upgrade())
                 {
                     let host = host.clone();
@@ -1151,7 +1171,7 @@ impl Host {
                             &host,
                             &entity,
                             async move |host| {
-                                host.sub_agent_ended(&child).await
+                                host.sub_agent_ended(&child, unread).await
                             },
                             "Could not land the sub-agent's work",
                             cx,

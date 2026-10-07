@@ -474,7 +474,31 @@ impl Asked {
                 .any(|view| users(view).contains(text));
             // A steer the run has not read yet shows as queued.
             let queued = run.and_then(|run| computer.queued.get(run));
-            in_transcript || queued.is_some_and(|texts| texts.contains(text))
+            // A sub-agent that ended before reading it handed it to its
+            // main chat, quoted in a message there (ADR 0026).
+            let quoted = format!("> {text}");
+            let forwarded = run
+                .and_then(|run| {
+                    computer.runs.iter().find(|view| &view.id == run)
+                })
+                .and_then(|view| match &view.origin {
+                    Origin::SubAgent { parent } => Some(parent),
+                    _ => None,
+                })
+                .and_then(|parent| {
+                    computer.runs.iter().find(|view| &view.id == parent)
+                })
+                .is_some_and(|main| {
+                    main.items.iter().any(|item| match item {
+                        Item::User(said) | Item::Tau(said) => {
+                            said.contains(&quoted)
+                        }
+                        _ => false,
+                    })
+                });
+            in_transcript
+                || forwarded
+                || queued.is_some_and(|texts| texts.contains(text))
         };
         // A chat that landed or was dropped takes no more messages; the
         // host says so.

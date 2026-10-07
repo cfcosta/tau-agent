@@ -1427,17 +1427,30 @@ impl Host {
     }
 
     /// Steers `run` with `text` if it is going: it reads it before its
-    /// next turn. Returns whether it was going; one that is not goes on
-    /// with the message instead ([`Host::resume`]). A chat that landed
-    /// or was dropped is refused: it takes no more messages.
-    pub async fn steer(&self, run: &RunId, text: &str) -> anyhow::Result<bool> {
+    /// next turn. One that is not goes on with the message instead
+    /// ([`Host::resume`]), except a sub-agent, which never goes on (ADR
+    /// 0026): what it would have read goes to its main chat, whose work
+    /// it is now. A chat that landed or was dropped is refused: it takes
+    /// no more messages.
+    pub async fn steer(
+        &self,
+        run: &RunId,
+        text: &str,
+    ) -> anyhow::Result<Delivery> {
         self.refuse_ended(run).await?;
         // A run whose end went by reads nothing more.
         self.settle(run).await;
         let control = self.runs.lock().expect("not poisoned").get(run).cloned();
         let Some(control) = control.or_else(|| self.sub_agent_control(run))
         else {
-            return Ok(false);
+            if !self.is_sub_agent(run) {
+                return Ok(Delivery::GoOn);
+            }
+            let main = self.parent_of(run).await?;
+            let unread = [text.to_owned()];
+            let text =
+                Box::pin(self.forward_unread(&main, run, &unread)).await?;
+            return Ok(Delivery::ToMain { main, text });
         };
         control.steer(text);
         self.unread
@@ -1446,7 +1459,7 @@ impl Host {
             .entry(run.clone())
             .or_default()
             .push(text.to_owned());
-        Ok(true)
+        Ok(Delivery::Steered)
     }
 
     /// `run` read `text` it was steered with.
@@ -1513,6 +1526,19 @@ impl Host {
         }
         self.stop_sub_agent(run);
     }
+}
+
+/// Where a message to a run went ([`Host::steer`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Delivery {
+    /// The run is going: it reads the message before its next turn.
+    Steered,
+    /// The run stopped: it goes on with the message ([`Host::resume`]).
+    GoOn,
+    /// The run is a sub-agent that ended before reading it: its main
+    /// chat got it. Steered into main's turn, or, when main was idle,
+    /// this text, for a turn on main to start with.
+    ToMain { main: RunId, text: Option<String> },
 }
 
 /// The days of runs the Plugins screen's spend covers.
