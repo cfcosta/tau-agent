@@ -45,6 +45,7 @@ use tau_tree_compaction::{
         BuildError,
         Builder,
         COMPACT_PROMPT,
+        RECENT_CHARS,
         SCALE,
         TRIES,
         cut_bytes,
@@ -457,4 +458,39 @@ fn a_message_is_compressed_with_what_came_before_it() {
 fn the_scale_line_is_exactly_a_line_long() {
     assert_eq!(SCALE.len(), NODE_BYTES);
     assert!(!SCALE.contains('\n'));
+}
+
+/// `<recent>` keeps the newest messages that fit in its 6,000
+/// characters, whole lines only: ten of exactly 1,000 before a message
+/// leave the newest six.
+#[test]
+fn recent_keeps_the_newest_messages_that_fit() {
+    assert_eq!(RECENT_CHARS, 6_000);
+    let fake = Fake::new(|asked| Ok(line_of(asked, 200)));
+    let mut history = History::new();
+    for n in 0..10 {
+        // "echo: " and a tag, then letters to exactly 1,000 characters.
+        let tag = format!("m{n} ");
+        let text = format!("{tag}{}", "k".repeat(1_000 - 6 - tag.len()));
+        history.push(Entry::new(Kind::Echo, text));
+    }
+    let last = "z".repeat(2 * NODE_BYTES);
+    history.push(Entry::new(Kind::Echo, last.clone()));
+    block_on(Builder::new("m").grow(&mut history, 1_000_000, &*fake)).unwrap();
+    let asked = fake.asked();
+    let context = &asked
+        .iter()
+        .find(|asked| asked.step().ends_with(&last))
+        .expect("the last message's request")
+        .texts()[0];
+    let recent = context
+        .split_once("<recent>\n")
+        .and_then(|(_, rest)| rest.strip_suffix("\n</recent>"))
+        .expect("a recent block");
+    let tags: Vec<&str> = recent
+        .lines()
+        .map(|line| line.split(' ').nth(1).unwrap())
+        .collect();
+    assert_eq!(tags, ["m4", "m5", "m6", "m7", "m8", "m9"]);
+    assert!(recent.lines().all(|line| line.chars().count() == 1_000));
 }

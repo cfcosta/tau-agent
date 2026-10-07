@@ -472,10 +472,11 @@ fn most_due(
 ) -> Option<usize> {
     let mut best: Option<(usize, f64)> = None;
     for at in 0..view.len().saturating_sub(1) {
+        // Side by side in a tiling, two lines of one level are
+        // consecutive: siblings when the first's index is even.
         let (a, b) = (view[at], view[at + 1]);
         if a.level != b.level
             || !a.index.is_multiple_of(2)
-            || b.index != a.index + 1
             || !ready(a.parent())
         {
             continue;

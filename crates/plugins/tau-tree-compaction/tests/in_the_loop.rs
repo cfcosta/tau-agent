@@ -19,15 +19,18 @@ use tau_agent::{
     event::RunEvent,
     tool::{ToolCtx, ToolOutput, TypedTool, typed},
 };
-use tau_ai::message::{
-    AssistantBlock,
-    AssistantMessage,
-    InputBlock,
-    Message,
-    StopReason,
-    TextContent,
-    Usage,
-    UserContent,
+use tau_ai::{
+    message::{
+        AssistantBlock,
+        AssistantMessage,
+        InputBlock,
+        Message,
+        StopReason,
+        TextContent,
+        Usage,
+        UserContent,
+    },
+    responses::request::ReasoningEffort,
 };
 use tau_store::{Entry, Store};
 use tau_testing::{block_on, scripted::ScriptedModel};
@@ -158,8 +161,12 @@ fn older_messages_fold_into_the_view() {
         .turn(|t| t.text("done").usage(10, 10));
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
+        let agent = agent(&llm)
+            .model("gpt-5.4-mini")
+            .reasoning(ReasoningEffort::High)
+            .clock(std::sync::Arc::new(|| 1_234));
         let (events, outcome) =
-            run(&agent(&llm), &store, "go", "and then this").await;
+            run(&agent, &store, "go", "and then this").await;
         assert_eq!(outcome.text, "done");
         assert_eq!(rewrites(&events), [NAME]);
         let requests = llm.requests();
@@ -177,6 +184,17 @@ fn older_messages_fold_into_the_view() {
             compactor.settings.instructions.as_deref(),
             Some(COMPACT_PROMPT)
         );
+        // The run's clock stamps what the compactor is sent, and the
+        // view.
+        let stamp = |message: &Message| match message {
+            Message::User(user) => user.timestamp,
+            other => panic!("expected a user message, got {other:?}"),
+        };
+        assert_eq!(stamp(&compactor.transcript[0]), 1_234);
+        assert_eq!(stamp(&requests[2].transcript[0]), 1_234);
+        // The run's model and effort build its lines.
+        assert_eq!(compactor.settings.model, "gpt-5.4-mini");
+        assert_eq!(compactor.settings.reasoning, Some(ReasoningEffort::High));
         assert!(compactor.settings.tools.is_empty());
         assert!(
             text(&compactor.transcript[0])
@@ -263,7 +281,9 @@ fn a_second_compaction_folds_only_what_came_since() {
         let run = agent(&llm).start("go", &store);
         run.steer("and then this");
         run.steer("and also this");
-        assert_eq!(run.outcome().await.unwrap().text, "done");
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.text, "done");
+        let outcome_run = outcome.run.0.clone();
         let requests = llm.requests();
         let second = &requests[3];
         let context = text(&second.transcript[0]);
@@ -279,6 +299,19 @@ fn a_second_compaction_folds_only_what_came_since() {
         // go, read a, its result; and then this, read b, its result.
         assert_eq!(labels, ["0+1", "1+1", "2+1", "3+1", "4+1", "5+1"]);
         assert!(view.contains("3+1|user: and then this"));
+        // Each compaction says how many messages it folded: the second
+        // not counting the view it opened with.
+        let folded: Vec<u64> = store
+            .records(&outcome_run, NAME)
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|body| match serde_json::from_str(body).unwrap() {
+                Record::Compacted { messages, .. } => Some(messages as u64),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(folded, [3, 3]);
     });
 }
 
@@ -424,4 +457,54 @@ fn the_rewrite_keeps_the_view() {
         );
         assert_eq!(view_message(&history, details.timestamp), next[0]);
     });
+}
+
+/// After a failed compaction, tree compaction waits two turns, then
+/// tries again: a failing compactor is not paid for every turn.
+#[test]
+fn a_failed_compaction_is_tried_again_after_a_wait() {
+    let read = |path: &'static str| {
+        move |t: tau_testing::scripted::TurnBuilder| {
+            t.tool_call("read", json!({"path": path})).usage(5_000, 10)
+        }
+    };
+    let llm = ScriptedModel::new()
+        .turn(read("a.rs"))
+        .turn(|t| t.error("invalid_prompt", "refused"))
+        // Turn 2 is inside the wait: nothing is asked.
+        .turn(read("b.rs"))
+        .turn(read("c.rs"))
+        // Turn 3: the results of a.rs and b.rs need a line each.
+        .turn_with(line)
+        .turn_with(line)
+        .turn(|t| t.text("done").usage(10, 10));
+    block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let (events, outcome) =
+            run(&agent(&llm), &store, "go", "and then this").await;
+        assert_eq!(outcome.text, "done");
+        assert_eq!(rewrites(&events), [NAME]);
+        llm.assert_exhausted();
+    });
+}
+
+/// The settings' builders set what they name.
+#[test]
+fn the_builders_set_their_fields() {
+    let settings = TreeCompaction::default()
+        .reserve_tokens(1)
+        .keep_recent_tokens(2)
+        .context_window(3)
+        .view_bytes(4)
+        .jobs(5);
+    assert_eq!(
+        (
+            settings.reserve_tokens,
+            settings.keep_recent_tokens,
+            settings.context_window,
+            settings.view_bytes,
+            settings.jobs
+        ),
+        (1, 2, Some(3), 4, 5)
+    );
 }

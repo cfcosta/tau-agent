@@ -621,7 +621,9 @@ silent bug costs the most:
 - `tau-fast-compaction`: the state, the decisions, the ledger and the
   plugin; `tau-jev`: answer checking;
 - `tau-store-sqlite`: the append and transcript queries;
-- `tau-tools-host`: `edit`, which rewrites files, and truncation.
+- `tau-tools-host`: `edit`, which rewrites files, and truncation;
+- `tau-tree-compaction`: the tree and its fold, the compactor and the
+  plugin.
 
 A surviving mutant means a behaviour no test checks. Either add the
 missing assertion, or record why the mutant is equivalent in

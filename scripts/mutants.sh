@@ -30,5 +30,8 @@ exec cargo mutants --workspace --test-tool nextest \
   --file crates/plugins/tau-jev/src/lib.rs \
   --file crates/plugins/tau-tools-host/src/edit.rs \
   --file crates/plugins/tau-tools-host/src/truncate.rs \
+  --file crates/plugins/tau-tree-compaction/src/tree.rs \
+  --file crates/plugins/tau-tree-compaction/src/build.rs \
+  --file crates/plugins/tau-tree-compaction/src/plugin.rs \
   --file crates/tau-store-sqlite/src/lib.rs \
   "$@"

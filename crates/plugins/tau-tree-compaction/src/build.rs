@@ -236,18 +236,17 @@ impl Builder {
             if line.is_empty() {
                 return Err(BuildError::Empty { node: label });
             }
-            let over = line.len() > NODE_BYTES;
-            if over && tries.len() + 1 < TRIES {
-                input.push(Message::Assistant(reply));
-                input.push(Message::User(UserMessage {
-                    content: UserContent::Text(too_long(&line)),
-                    timestamp: ask.now(),
-                }));
-            }
             tries.push(line);
-            if !over || tries.len() >= TRIES {
+            let line = tries.last().expect("just pushed");
+            if line.len() <= NODE_BYTES || tries.len() == TRIES {
                 break;
             }
+            let told = too_long(line);
+            input.push(Message::Assistant(reply));
+            input.push(Message::User(UserMessage {
+                content: UserContent::Text(told),
+                timestamp: ask.now(),
+            }));
         }
         Ok(tries
             .into_iter()

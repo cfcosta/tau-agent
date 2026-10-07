@@ -216,6 +216,18 @@ fn building_the_wanted_lines_makes_the_view_fit(tc: TestCase) {
         history.set(*node, sized(&node.label(), (a + 1 + b).min(NODE_BYTES)));
     }
     assert_eq!(history.fit(budget), Fit::Fits);
+    // Every wanted line was used: each lies inside one line of the view.
+    for node in &wanted {
+        assert!(
+            history
+                .view()
+                .iter()
+                .any(|line| line.first() <= node.first()
+                    && node.end() <= line.end()),
+            "{} was built for nothing",
+            node.label()
+        );
+    }
     // Only what was wanted was merged.
     assert!(
         history
@@ -491,4 +503,98 @@ fn older_lines_never_cover_less_than_newer_ones(tc: TestCase) {
             "{levels:?}"
         );
     }
+}
+
+/// A pair is due by its age over its weight, not its age alone: with
+/// sixteen messages, two level-2 lines from 0 are due 16/16 and two
+/// leaves from 8 are due 8/4, so the younger leaves merge first.
+#[test]
+fn a_younger_pair_merges_first_when_it_is_more_due() {
+    let mut history = leaves(&[100; 16]);
+    build_parents(&mut history, |_, _, _| Some(100));
+    let mut view = vec![Node::new(2, 0), Node::new(2, 1)];
+    view.extend((8..16).map(Node::leaf));
+    let nodes: Vec<(Node, String)> = history
+        .nodes()
+        .map(|(node, text)| (node, text.to_owned()))
+        .collect();
+    let mut history = History::restore(history.entries().to_vec(), nodes, view);
+    assert_eq!(history.view_bytes(0), 1_000);
+    assert_eq!(history.fit(999), Fit::Fits);
+    assert_eq!(
+        &history.view()[..3],
+        [Node::new(2, 0), Node::new(2, 1), Node::new(1, 4)]
+    );
+}
+
+/// A long text keeps its first and last 15,000 characters, and says how
+/// many were cut between them.
+#[test]
+fn cap_says_how_much_it_cut() {
+    let text = format!(
+        "{}{}{}",
+        "h".repeat(ENTRY_CHARS),
+        "m".repeat(7),
+        "t".repeat(ENTRY_CHARS)
+    );
+    let half = ENTRY_CHARS / 2;
+    assert_eq!(
+        cap(&text),
+        format!(
+            "{}\n[… {} characters cut …]\n{}",
+            "h".repeat(half),
+            ENTRY_CHARS + 7,
+            "t".repeat(half)
+        )
+    );
+}
+
+/// A kept view whose line was never built is not trusted: the history
+/// starts again from its leaves.
+#[test]
+fn restore_rebuilds_a_view_whose_line_is_missing() {
+    let mut history = leaves(&[100; 4]);
+    build_parents(&mut history, |_, _, _| Some(100));
+    let mut nodes: Vec<(Node, String)> = history
+        .nodes()
+        .map(|(node, text)| (node, text.to_owned()))
+        .collect();
+    nodes.retain(|(node, _)| *node != Node::new(1, 1));
+    let restored = History::restore(
+        history.entries().to_vec(),
+        nodes,
+        vec![Node::new(1, 0), Node::new(1, 1)],
+    );
+    assert_eq!(restored.view(), (0..4).map(Node::leaf).collect::<Vec<_>>());
+}
+
+/// A leaf is ready when its message is there; a parent when both its
+/// children are built, not one.
+#[test]
+fn a_line_is_ready_when_its_sources_are() {
+    let mut history = leaves(&[100; 3]);
+    assert!(history.is_ready(Node::leaf(2)));
+    assert!(!history.is_ready(Node::leaf(3)));
+    assert!(history.is_ready(Node::new(1, 0)));
+    history.set(Node::new(1, 0), "a".into());
+    let mut nodes: Vec<(Node, String)> = history
+        .nodes()
+        .map(|(node, text)| (node, text.to_owned()))
+        .collect();
+    nodes.retain(|(node, _)| *node != Node::leaf(1));
+    let history =
+        History::restore(history.entries().to_vec(), nodes, Vec::new());
+    assert!(!history.is_ready(Node::new(1, 0)));
+    assert!(!history.is_ready(Node::new(2, 0)));
+    // Its children not built, a parent cannot be opened either.
+    assert_eq!(history.zoom(0, 2), Err("No line 0+2.".to_owned()));
+}
+
+/// A view exactly at its budget fits: nothing is wanted. A byte over,
+/// one merge is: two 300-byte lines make a line of at most 512.
+#[test]
+fn a_view_at_its_budget_wants_nothing() {
+    let history = leaves(&[300; 8]);
+    assert!(history.wanted(2_400).is_empty());
+    assert_eq!(history.wanted(2_399), [Node::new(1, 0)]);
 }
