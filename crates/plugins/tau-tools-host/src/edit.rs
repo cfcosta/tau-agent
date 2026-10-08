@@ -667,11 +667,33 @@ pub(crate) fn generate_diff(
     let old: Vec<&str> = old.split_inclusive('\n').collect();
     let new: Vec<&str> = new.split_inclusive('\n').collect();
     let diff = TextDiff::from_slices(&old, &new);
-    let text = diff
+    // The lines are written here, not by `similar`: over slices it ends
+    // each line it writes with another `\n`, and told the slices end in
+    // newlines, it takes a lone `\r` for one.
+    let mut text = String::new();
+    for (i, hunk) in diff
         .unified_diff()
         .context_radius(4)
-        .header(path, path)
-        .to_string();
+        .iter_hunks()
+        .enumerate()
+    {
+        if i == 0 {
+            text.push_str(&format!("--- {path}\n+++ {path}\n"));
+        }
+        text.push_str(&format!("{}\n", hunk.header()));
+        for change in hunk.iter_changes() {
+            text.push(match change.tag() {
+                ChangeTag::Equal => ' ',
+                ChangeTag::Delete => '-',
+                ChangeTag::Insert => '+',
+            });
+            let line = change.value();
+            text.push_str(line);
+            if !line.ends_with('\n') {
+                text.push_str("\n\\ No newline at end of file\n");
+            }
+        }
+    }
 
     let mut new_line = 1usize;
     let mut first_changed = None;

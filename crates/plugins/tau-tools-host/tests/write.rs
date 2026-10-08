@@ -60,6 +60,67 @@ fn write_round_trips_the_content(tc: TestCase) {
     );
 }
 
+/// Overwriting a file gives its card a unified diff it can read: after
+/// the two file headers, each line is a hunk header or one of its
+/// hunk's lines, none of them empty, and each hunk holds as many old
+/// and new lines as its header says. A line without its `\n`, even one
+/// that ends in `\r`, is followed by `\ No newline at end of file`.
+#[hegel::test(test_cases = 200)]
+fn write_diffs_hold_what_their_hunks_say(tc: TestCase) {
+    let text = || gs::from_regex("[ab\r\n]{0,40}").fullmatch(true);
+    let old: String = tc.draw(text());
+    let new: String = tc.draw(text());
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("f.txt"), &old).unwrap();
+    let output = tau_testing::block_on(new_write(dir.path()).call(
+        json!({"path": "f.txt", "content": new}),
+        ToolCtx::detached(),
+    ))
+    .unwrap();
+    let details = output.details.expect("details for the card");
+    let diff = details["diff"].as_str().unwrap();
+    let lines: Vec<&str> = diff.split_terminator('\n').collect();
+    if old == new {
+        assert!(lines.is_empty(), "{diff:?}");
+        return;
+    }
+    assert_eq!(lines[..2], ["--- f.txt", "+++ f.txt"], "{diff:?}");
+    // The old and new lines the current hunk has left to give.
+    let (mut old_left, mut new_left) = (0usize, 0usize);
+    let take = |left: &mut usize| {
+        *left = left.checked_sub(1).expect("a hunk past its count");
+    };
+    for line in &lines[2..] {
+        if let Some(header) = line.strip_prefix("@@ ") {
+            assert_eq!((old_left, new_left), (0, 0), "{diff:?}");
+            let count = |sign: char| {
+                header
+                    .split_whitespace()
+                    .find_map(|part| part.strip_prefix(sign))
+                    .map(|range| {
+                        range
+                            .split_once(',')
+                            .map_or(1, |(_, n)| n.parse().unwrap())
+                    })
+                    .unwrap()
+            };
+            (old_left, new_left) = (count('-'), count('+'));
+            continue;
+        }
+        match line.chars().next() {
+            Some(' ') => {
+                take(&mut old_left);
+                take(&mut new_left);
+            }
+            Some('-') => take(&mut old_left),
+            Some('+') => take(&mut new_left),
+            Some('\\') => {}
+            _ => panic!("{line:?} is no diff line: {diff:?}"),
+        }
+    }
+    assert_eq!((old_left, new_left), (0, 0), "{diff:?}");
+}
+
 /// `write` creates missing parent directories (`tools.md`, "write").
 #[test]
 fn write_creates_parent_directories() {
