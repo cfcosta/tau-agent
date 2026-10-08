@@ -37,6 +37,7 @@
 pub mod attach;
 pub mod attention;
 pub mod catalog;
+pub mod crew;
 pub mod models;
 pub mod motion;
 pub mod pairing;

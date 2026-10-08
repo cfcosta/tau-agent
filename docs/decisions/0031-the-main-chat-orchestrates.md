@@ -42,6 +42,12 @@ drain reports to main.
   what landed, resolve conflicts, spawn the next tasks, and tell the
   person in a line or two what landed, what failed and what it started.
   It ends the work only when nothing is left.
+- **Sub-agents are main's crew, not the person's chats.** Forks are
+  kept; sub-agents are disposable. The sidebar lists only forks under a
+  chat, and main's row counts its sub-agents at work. Main's chat
+  shows them in a tray above its composer: each one working, with its
+  turn, latest call and cost, and those spawned since the person's last
+  message, faded, with how they ended. History keeps them all.
 - **8 at once.** `MAX_RUNNING` goes from 4 to 8. A ninth `spawn` is
   refused and told to end the turn and spawn again when tau reports
   one.

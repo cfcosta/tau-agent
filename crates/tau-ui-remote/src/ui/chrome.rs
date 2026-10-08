@@ -368,7 +368,8 @@ fn repo_group(
         return group;
     }
 
-    let current = ws.current().map(|run| run.id.clone());
+    // A sub-agent is not listed: its main chat stands for it.
+    let current = ws.current().map(|run| ws.listed_as(run).clone());
     let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
 
     let mut body = div()
@@ -509,8 +510,8 @@ fn run_row(
         .map_or(0, |(ahead, _)| ahead);
     let (glyph, ink) = state_icon(&attention, run, is_main, unpushed, t);
     let counts = counts(&attention, run, note.as_ref(), unpushed, t);
-    let sub_agent = matches!(run.origin, Origin::SubAgent { .. })
-        && glyph != Icon::SubAgent;
+    // Main's crew at work, which its chat's tray shows.
+    let crew = if is_main { ws.working_crew(&run.id) } else { 0 };
     let strong = active || unread > 0 || attention.needs_you();
     div()
         .id(SharedString::from(format!("run-{}", run.id)))
@@ -545,8 +546,16 @@ fn run_row(
                 .when(strong, |title| title.font_weight(weight::EMPHASIS))
                 .child(run.title.clone()),
         )
-        .when(sub_agent, |row| {
-            row.child(icon(Icon::SubAgent, IconSize::TINY, t.dim))
+        .when(crew > 0, |row| {
+            row.child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap(sp(0.75))
+                    .child(icon(Icon::SubAgent, IconSize::TINY, t.roles.live))
+                    .child(mono(crew.to_string(), Type::CAPTION, t.roles.live)),
+            )
         })
         .when_some(folded, |row, folded| {
             row.child(

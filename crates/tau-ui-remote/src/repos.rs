@@ -109,19 +109,17 @@ impl Workspace {
             .any(|repo| repo.main.as_ref() == Some(run))
     }
 
-    /// `run`'s forks and sub-agents the sidebar lists under it, newest
-    /// first: those with a view of their own that are open, every
-    /// sub-agent, and forks that landed or were dropped. Those that
-    /// ended stay listed, dim, saying so.
+    /// `run`'s forks the sidebar lists under it, newest first: those
+    /// that are open, and those that landed or were dropped, which stay
+    /// listed, dim, saying so. Sub-agents are not listed: they are main's
+    /// crew, in its chat's tray ([`Workspace::crew`]).
     pub fn listed_children<'a>(
         &'a self,
         run: &'a RunView,
     ) -> impl Iterator<Item = &'a RunView> {
         self.runs.iter().filter(move |view| {
-            view.origin.parent() == Some(&run.id)
-                && (matches!(view.origin, Origin::SubAgent { .. })
-                    || !self.closed.contains(&view.id)
-                    || view.ending.is_some())
+            matches!(&view.origin, Origin::Fork { from, .. } if *from == run.id)
+                && (!self.closed.contains(&view.id) || view.ending.is_some())
         })
     }
 
@@ -131,8 +129,7 @@ impl Workspace {
         run.ending.is_some() || self.closed.contains(&run.id)
     }
 
-    /// Folds `run`'s forks and sub-agents away in the sidebar, or shows
-    /// them again.
+    /// Folds `run`'s forks away in the sidebar, or shows them again.
     pub fn toggle_fold(&mut self, run: &RunId, cx: &mut Context<Self>) {
         if !self.folded.remove(run) {
             self.folded.insert(run.clone());
@@ -168,7 +165,9 @@ impl Workspace {
             .children
             .iter()
             .filter(|child| {
-                !self.is_closed(&child.id) && self.run(&child.id).is_none()
+                child.kind == ChildKind::Fork
+                    && !self.is_closed(&child.id)
+                    && self.run(&child.id).is_none()
             })
             .collect();
         let has = !flat && (!children.is_empty() || !others.is_empty());

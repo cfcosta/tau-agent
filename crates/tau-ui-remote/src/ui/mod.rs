@@ -5,6 +5,7 @@
 
 pub mod chrome;
 pub mod components;
+pub mod crew;
 pub mod ending;
 pub mod inspector;
 pub mod interrupted;

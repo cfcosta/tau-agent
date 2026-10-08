@@ -2071,19 +2071,15 @@ fn a_sub_agent_is_a_chat_until_it_lands(cx: &mut TestAppContext) {
         assert!(ws.run(&parent).unwrap().items.iter().any(|item| matches!(item, Item::Landed(card) if card.from == child)));
         let card = ws.run(&parent).unwrap().tool("d1").unwrap();
         assert_eq!(tau_vcs::ui::spawned(&card.data), Some(RunId("d1".into())));
-        // The host takes the closings; the sidebar keeps them listed.
+        // The host takes the closings. The sidebar never lists
+        // sub-agents: they are main's crew, in its chat's tray.
         for run in [&child, &sibling] {
             ws.apply(tau_ui_remote::update::HostUpdate::Closed(run.clone()), cx);
         }
         let view = ws.run(&parent).unwrap();
-        let listed: Vec<RunId> = ws
-            .listed_children(view)
-            .filter(|view| matches!(view.origin, tau_ui_remote::view::Origin::SubAgent { .. }))
-            .map(|view| view.id.clone())
-            .collect();
-        assert_eq!(listed, [child.clone(), sibling.clone()], "newest first");
+        assert!(!ws.listed_children(view).any(|view| matches!(view.origin, tau_ui_remote::view::Origin::SubAgent { .. })));
         for run in [&child, &sibling] {
-            assert!(ws.has_ended(ws.run(run).unwrap()), "{run} is dim");
+            assert!(ws.has_ended(ws.run(run).unwrap()), "{run} ended");
         }
     });
     assert!(events.borrow().iter().any(|event| matches!(event,

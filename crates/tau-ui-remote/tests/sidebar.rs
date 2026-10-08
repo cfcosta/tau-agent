@@ -423,9 +423,9 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
     });
 }
 
-/// A run with forks or sub-agents folds them away, and shows them
-/// again; a run with none has nothing to fold. A sub-agent the host
-/// closed stays listed under its parent, ended.
+/// A run with forks folds them away, and shows them again; a run with
+/// none has nothing to fold. Sub-agents are never listed: they are
+/// main's crew, in its chat's tray.
 #[gpui::test]
 fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
     cx.update(tau_ui_remote::init);
@@ -456,12 +456,87 @@ fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
         ws.apply(HostUpdate::Closed(id("sub")), cx);
         let open = tree(ws);
         assert_eq!(open[0], ("main".to_owned(), Some(false)));
-        assert_eq!(open[1], ("sub".to_owned(), None), "listed though closed");
-        assert!(ws.has_ended(ws.run(&id("sub")).unwrap()));
+        assert!(!open.iter().any(|(title, _)| title == "sub"), "{open:?}");
         ws.toggle_fold(&id("main"), cx);
         assert_eq!(tree(ws), [("main".to_owned(), Some(true))]);
         ws.toggle_fold(&id("main"), cx);
         assert_eq!(tree(ws), open);
+    });
+}
+
+/// A main chat's crew is every sub-agent still working, and those it
+/// spawned since the person's last message; the others went with their
+/// round. Main's row counts those working, and a sub-agent's chat marks
+/// main in the sidebar.
+#[gpui::test]
+fn the_crew_is_this_rounds_sub_agents(cx: &mut TestAppContext) {
+    use std::sync::Arc;
+
+    use tau_agent::{event::RunEvent, tool::ToolOutput};
+    use tau_ui_remote::crew::Standing;
+
+    cx.update(tau_ui_remote::init);
+    let mut main =
+        RunView::new(id("main"), "main", "coder", "gpt-5.5").in_repo(REPO);
+    let spawn = |main: &mut RunView, call: &str, run: &str| {
+        main.apply(&RunEvent::ToolStart {
+            run: id("main"),
+            call_id: call.into(),
+            tool: Arc::from("spawn"),
+            args: serde_json::json!({ "task": run }),
+            parent: None,
+        });
+        main.apply(&RunEvent::ToolEnd {
+            run: id("main"),
+            call_id: call.into(),
+            output: Arc::new(ToolOutput {
+                details: Some(serde_json::json!({ "run": run })),
+                ..ToolOutput::text("started")
+            }),
+            is_error: false,
+            parent: None,
+        });
+    };
+    main.push_user("first");
+    spawn(&mut main, "c1", "old");
+    main.push_user("second");
+    spawn(&mut main, "c2", "new");
+    main.finish_stored(StopReason::Stop, 0.0, 0.0);
+    let sub = |name: &str, finished: bool| {
+        let mut view = RunView::new(id(name), name, "coder", "gpt-5.5")
+            .in_repo(REPO)
+            .with_origin(Origin::SubAgent { parent: id("main") });
+        if finished {
+            view.finish_stored(StopReason::Stop, 0.0, 0.0);
+        }
+        view
+    };
+    let runs = vec![
+        sub("working", false),
+        sub("new", true),
+        sub("old", true),
+        main,
+    ];
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("tau", runs, catalog(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    workspace.update(&mut cx, |ws, _| {
+        let main = ws.run(&id("main")).unwrap();
+        let crew: Vec<(String, Standing)> = ws
+            .crew(main)
+            .into_iter()
+            .map(|member| (member.run.title.clone(), member.standing))
+            .collect();
+        assert_eq!(crew.len(), 2, "{crew:?}");
+        assert_eq!(crew[0].0, "working");
+        assert!(crew[0].1.is_working());
+        assert_eq!(crew[1], ("new".to_owned(), Standing::WaitingToLand));
+        assert_eq!(ws.working_crew(&id("main")), 1);
+        assert_eq!(ws.listed_children(main).count(), 0);
+        let working = ws.run(&id("working")).unwrap();
+        assert_eq!(ws.listed_as(working), &id("main"));
     });
 }
 

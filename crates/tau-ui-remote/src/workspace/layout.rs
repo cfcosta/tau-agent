@@ -652,6 +652,22 @@ impl Workspace {
                 screen.children(banners)
             })
             .child(self.transcript(compact, t, cx))
+            // A main chat's crew, docked above its composer.
+            .children(
+                self.current()
+                    .filter(|_| self.route != Route::NewRun)
+                    .and_then(|run| ui::crew::tray(self, run, compact, t, cx))
+                    .map(|tray| {
+                        div()
+                            .w_full()
+                            .when(!compact, |column| {
+                                column.max_w(rems(50.5)).mx_auto()
+                            })
+                            .px(sp(if compact { 4. } else { 6. }))
+                            .pb(sp(2.5))
+                            .child(tray)
+                    }),
+            )
             .child({
                 // A plugin that needs the person's input more than a
                 // message draws in the composer's place; once none does,
