@@ -14,6 +14,8 @@ pub type Screen = fn(&mut Workspace, &DemoHost, &mut Context<Workspace>);
 /// Every screen `--open` names.
 pub static SCREENS: &[(&str, Screen)] = &[
     ("run", |ws, _, cx| ws.navigate(Route::Run(run_id()), cx)),
+    // Main's crew tray: two sub-agents at work, one landed, one failed.
+    ("crew", |ws, _, cx| crew(ws, cx)),
     ("repo", |ws, _, cx| ws.open_repo_page("tau-agent", cx)),
     ("history", |ws, _, cx| ws.navigate(Route::History, cx)),
     ("plugins", |ws, _, cx| ws.navigate(Route::Plugins, cx)),
@@ -496,6 +498,132 @@ pub fn open(
     };
     screen(workspace, host, cx);
     true
+}
+
+/// Main's crew (ADR 0031): four sub-agents spawned this round, two
+/// still at work in a call, one landed with two changes, one failed.
+fn crew(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    use tau_agent::{
+        event::{RunEvent, StopReason},
+        tool::ToolOutput,
+    };
+
+    let main = run_id();
+    let agents = [
+        ("crew-diff", "Fix the diff parser"),
+        ("crew-adr", "Update ADR 0031"),
+        ("crew-tests", "Rewrite the host tests"),
+        ("crew-wait", "Remove wait from tau-vcs-host"),
+    ];
+    for (n, (run, task)) in agents.iter().enumerate() {
+        let call = format!("crew-spawn-{n}");
+        let child = RunId(Arc::from(*run));
+        workspace.apply_event(
+            &RunEvent::ToolStart {
+                run: main.clone(),
+                call_id: call.as_str().into(),
+                tool: Arc::from("spawn"),
+                args: serde_json::json!({ "task": task }),
+                parent: None,
+            },
+            cx,
+        );
+        workspace.apply_event(
+            &RunEvent::RunStart {
+                run: child.clone(),
+                parent: Some(main.clone()),
+                agent: Arc::from("coder"),
+                call: Some(call.as_str().into()),
+            },
+            cx,
+        );
+        workspace.apply_event(
+            &RunEvent::ToolEnd {
+                run: main.clone(),
+                call_id: call.as_str().into(),
+                output: Arc::new(ToolOutput {
+                    details: Some(serde_json::json!({ "run": run })),
+                    ..ToolOutput::text("started")
+                }),
+                is_error: false,
+                parent: None,
+            },
+            cx,
+        );
+    }
+    // The two at work, each in a call.
+    for (run, turn, tool, args) in [
+        (
+            "crew-wait",
+            4,
+            "edit",
+            serde_json::json!({ "path": "crates/plugins/tau-vcs-host/src/sub_agents.rs" }),
+        ),
+        (
+            "crew-tests",
+            2,
+            "bash",
+            serde_json::json!({ "command": "cargo nextest run --release -p tau-ui" }),
+        ),
+    ] {
+        let run = RunId(Arc::from(run));
+        for turn in 1..=turn {
+            workspace.apply_event(
+                &RunEvent::TurnStart {
+                    run: run.clone(),
+                    turn,
+                },
+                cx,
+            );
+        }
+        workspace.apply_event(
+            &RunEvent::ToolStart {
+                run: run.clone(),
+                call_id: "crew-call".into(),
+                tool: Arc::from(tool),
+                args,
+                parent: None,
+            },
+            cx,
+        );
+    }
+    let end = |run: &str, stop: StopReason| RunEvent::RunEnd {
+        run: RunId(Arc::from(run)),
+        parent: Some(main.clone()),
+        stop,
+        cost: 0.0,
+    };
+    workspace.apply_event(
+        &end("crew-diff", StopReason::Error("tests kept failing".into())),
+        cx,
+    );
+    workspace.apply_event(&end("crew-adr", StopReason::Stop), cx);
+    let change = |id: &str, description: &str| tau_vcs::ChangeInfo {
+        change_id: id.repeat(32),
+        commit_id: id.repeat(40),
+        description: description.into(),
+        empty: false,
+        conflict: false,
+        immutable: false,
+        working_copy: false,
+        divergent: false,
+        bookmarks: Vec::new(),
+    };
+    workspace.apply(
+        HostUpdate::Landed {
+            run: RunId(Arc::from("crew-adr")),
+            landing: Ok(tau_vcs::Landing {
+                changes: vec![
+                    change("k", "docs: the main chat orchestrates"),
+                    change("l", "docs: amend 0026"),
+                ],
+                conflicts: Vec::new(),
+                head: "a".repeat(40),
+            }),
+        },
+        cx,
+    );
+    workspace.navigate(Route::Run(main), cx);
 }
 
 /// `plugin`'s page `page` for tau-agent, which it takes as `param`.

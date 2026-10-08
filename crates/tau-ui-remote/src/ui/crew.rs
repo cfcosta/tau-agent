@@ -27,10 +27,12 @@ pub fn tray(
     if !ws.is_main(&run.id) {
         return None;
     }
-    let crew = ws.crew(run);
+    let mut crew = ws.crew(run);
     if crew.is_empty() {
         return None;
     }
+    // Those at work first; the round's ended ones after, faded.
+    crew.sort_by_key(|member| !member.standing.is_working());
     let working = crew.iter().filter(|m| m.standing.is_working()).count();
     let landed = crew
         .iter()
@@ -72,10 +74,11 @@ pub fn tray(
                     .map(|(said, ink)| div().text_color(ink).child(said)),
             ),
         );
-    let width = if compact { rems(0.) } else { rems(12.5) };
+    // A phone has room for those at work; the head counts the rest.
     let cards = crew
         .into_iter()
-        .map(|member| member_card(member, width, t, cx));
+        .filter(|member| !compact || member.standing.is_working())
+        .map(|member| member_card(member, t, cx));
     Some(
         div()
             .flex()
@@ -87,7 +90,13 @@ pub fn tray(
             .rounded(radius::CARD)
             .bg(t.panel)
             .child(head)
-            .child(div().flex().flex_wrap().gap(sp(2.)).children(cards)),
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(if compact { 1 } else { 3 })
+                    .gap(sp(2.))
+                    .children(cards),
+            ),
     )
 }
 
@@ -95,7 +104,6 @@ pub fn tray(
 /// it does or how it ended, and the way into its chat.
 fn member_card(
     member: Member<'_>,
-    width: gpui::Rems,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
@@ -179,8 +187,7 @@ fn member_card(
         .flex()
         .flex_col()
         .gap(sp(1.))
-        .flex_1()
-        .min_w(width)
+        .min_w(rems(0.))
         .px(sp(2.5))
         .py(sp(2.))
         .border_1()
