@@ -1425,7 +1425,8 @@ fn a_message_for_a_sub_agent_that_ended_goes_to_main() {
     let delivery = host.block_on(host.steer(&child, "and d.txt")).unwrap();
     let Delivery::ToMain {
         main: to,
-        text: Some(text),
+        text,
+        steered: false,
     } = delivery
     else {
         panic!("{delivery:?}")
@@ -1438,13 +1439,16 @@ fn a_message_for_a_sub_agent_that_ended_goes_to_main() {
     host.block_on(host.resume(&main, "go on", &ModelChoice::default()))
         .unwrap();
     let delivery = host.block_on(host.steer(&child, "and e.txt")).unwrap();
-    assert_eq!(
-        delivery,
-        Delivery::ToMain {
-            main: main.clone(),
-            text: None
-        }
-    );
+    let Delivery::ToMain {
+        main: to,
+        text,
+        steered: true,
+    } = delivery
+    else {
+        panic!("{delivery:?}")
+    };
+    assert_eq!(to, main);
+    assert!(text.ends_with("\n\n> and e.txt"), "{text}");
     until_end(&mut events);
     wait_until_done(&host, &main);
     let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);

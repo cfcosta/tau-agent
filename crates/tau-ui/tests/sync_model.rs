@@ -475,7 +475,8 @@ impl Asked {
             // A steer the run has not read yet shows as queued.
             let queued = run.and_then(|run| computer.queued.get(run));
             // A sub-agent that ended before reading it handed it to its
-            // main chat, quoted in a message there (ADR 0026).
+            // main chat, quoted in a message there (ADR 0026), or queued
+            // for main's turn to read.
             let quoted = format!("> {text}");
             let forwarded = run
                 .and_then(|run| {
@@ -489,11 +490,14 @@ impl Asked {
                     computer.runs.iter().find(|view| &view.id == parent)
                 })
                 .is_some_and(|main| {
-                    main.items.iter().any(|item| match item {
+                    let read = main.items.iter().any(|item| match item {
                         Item::User(said) | Item::Tau(said) => {
                             said.contains(&quoted)
                         }
                         _ => false,
+                    });
+                    read || computer.queued.get(&main.id).is_some_and(|texts| {
+                        texts.iter().any(|said| said.contains(&quoted))
                     })
                 });
             in_transcript

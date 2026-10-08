@@ -1448,9 +1448,13 @@ impl Host {
             }
             let main = self.parent_of(run).await?;
             let unread = [text.to_owned()];
-            let text =
+            let sub_agents::Forwarded { text, steered } =
                 Box::pin(self.forward_unread(&main, run, &unread)).await?;
-            return Ok(Delivery::ToMain { main, text });
+            return Ok(Delivery::ToMain {
+                main,
+                text,
+                steered,
+            });
         };
         control.steer(text);
         self.unread
@@ -1536,9 +1540,13 @@ pub enum Delivery {
     /// The run stopped: it goes on with the message ([`Host::resume`]).
     GoOn,
     /// The run is a sub-agent that ended before reading it: its main
-    /// chat got it. Steered into main's turn, or, when main was idle,
-    /// this text, for a turn on main to start with.
-    ToMain { main: RunId, text: Option<String> },
+    /// chat got `text`, which quotes it. Steered into main's turn, or,
+    /// when main was idle, for a turn on main to start with.
+    ToMain {
+        main: RunId,
+        text: String,
+        steered: bool,
+    },
 }
 
 /// The days of runs the Plugins screen's spend covers.

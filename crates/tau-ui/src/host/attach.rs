@@ -819,7 +819,7 @@ impl Host {
                             }
                             // The sub-agent ended before reading it: main
                             // has it, in its turn or in one tau starts.
-                            Delivery::ToMain { main, text: forwarded } => {
+                            Delivery::ToMain { main, text, steered } => {
                                 ws.apply(
                                     HostUpdate::alert(
                                         "Sent to main",
@@ -827,12 +827,16 @@ impl Host {
                                     ),
                                     cx,
                                 );
-                                // Main was idle: tau's turn on it, as for a
-                                // report.
-                                if let Some(prompt) = forwarded {
+                                if steered {
+                                    // Main shows it queued, as any steer,
+                                    // until its turn reads it.
+                                    ws.apply(HostUpdate::Steered { run: main, text }, cx);
+                                } else {
+                                    // Main was idle: tau's turn on it, as
+                                    // for a report.
                                     let workspace = cx.entity();
                                     cx.defer(move |cx| {
-                                        resolve_main(&goer, &main, prompt, &workspace, cx)
+                                        resolve_main(&goer, &main, text, &workspace, cx)
                                     });
                                 }
                             }

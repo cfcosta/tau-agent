@@ -8,6 +8,16 @@ use tau_vcs_host::sub_agents::{Ending, Taken, limit_name};
 
 use super::{landing::Reading, lanes::DrainReport, queue::Lane, *};
 
+/// What the person wrote to a sub-agent that it never read, as its main
+/// chat got it ([`Host::forward_unread`]).
+pub(super) struct Forwarded {
+    /// The message main got, quoting what the person wrote.
+    pub(super) text: String,
+    /// Whether it went into main's turn; else a turn on main starts
+    /// with it.
+    pub(super) steered: bool,
+}
+
 /// What tau's turn reporting sub-agents ends with.
 const REPORT_END: &str = "This message is from tau, not the person: \
     your sub-agents came back. First tell the person where things stand: \
@@ -116,8 +126,12 @@ impl Host {
         // wrote to it goes into main's turn, waiting on it, or into the
         // turn tau starts on main.
         let mut forwarded = None;
-        if end.is_some() && agents.taken(child) == Some(true) {
-            forwarded = self.forward_unread(&main, child, &unread).await?;
+        if end.is_some()
+            && agents.taken(child) == Some(true)
+            && !unread.is_empty()
+        {
+            let to_main = self.forward_unread(&main, child, &unread).await?;
+            forwarded = (!to_main.steered).then_some(to_main.text);
         }
         if let Some(end) = end
             && agents.taken(child) != Some(true)
@@ -162,23 +176,17 @@ impl Host {
 
     /// Hands `unread`, which the person wrote to `child` and it never
     /// read, to `main`: steered into main's turn when main is going,
-    /// else returned, for a turn on main to start with. `None` when
-    /// there is nothing to hand, or main took it.
+    /// else for a turn on main to start with.
     pub(super) async fn forward_unread(
         &self,
         main: &RunId,
         child: &RunId,
         unread: &[String],
-    ) -> anyhow::Result<Option<String>> {
-        if unread.is_empty() {
-            return Ok(None);
-        }
+    ) -> anyhow::Result<Forwarded> {
         let title = self.title_of(child).await?;
         let text = forwarded(&title, child, unread);
-        if self.steer(main, &text).await? == Delivery::Steered {
-            return Ok(None);
-        }
-        Ok(Some(text))
+        let steered = self.steer(main, &text).await? == Delivery::Steered;
+        Ok(Forwarded { text, steered })
     }
 
     /// The message of tau's turn after a drain: each sub-agent it
