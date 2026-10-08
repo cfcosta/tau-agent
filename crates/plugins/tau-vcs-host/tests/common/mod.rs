@@ -11,12 +11,21 @@
 
 pub mod merge;
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
-use tau_agent::agent::Agent;
+use tau_agent::{agent::Agent, tool::RunId};
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_tools_host::{path::Root, plugin::CodingTools};
-use tau_vcs_host::{Identity, Link, ProjectRepo, RunWorkspace, VcsPlugin};
+use tau_vcs_host::{
+    Identity,
+    Link,
+    ProjectRepo,
+    RunWorkspace,
+    SubAgents,
+    VcsPlugin,
+    sub_agents::Ending,
+};
+use tokio::sync::mpsc;
 
 /// A project imported from a git repository whose one commit,
 /// `first`, holds `files`.
@@ -56,6 +65,20 @@ pub fn coder(llm: ScriptedModel, workspace: &RunWorkspace, vcs: bool) -> Agent {
         agent
     };
     agent.plugin(workspace.clone())
+}
+
+/// Sub-agents whose endings come out of the receiver as they end, once
+/// their work is checked: what the host hears, to land them.
+pub fn heard_sub_agents()
+-> (SubAgents, mpsc::UnboundedReceiver<(RunId, Ending)>) {
+    let (sender, ends) = mpsc::unbounded_channel();
+    let agents = SubAgents::new(
+        None,
+        Some(Arc::new(move |run: &RunId, ending: &Ending| {
+            let _ = sender.send((run.clone(), ending.clone()));
+        })),
+    );
+    (agents, ends)
 }
 
 /// The turn links among a run's records, with their sequence numbers.

@@ -1,6 +1,8 @@
 # 0026: Sub-agents run detached: `spawn` and `wait`
 
-- Status: accepted. Amends [0015](0015-delegates-fork-their-caller.md):
+- Status: accepted, amended by
+  [0031](0031-the-main-chat-orchestrates.md): `wait` goes, and main
+  orchestrates. Amends [0015](0015-delegates-fork-their-caller.md):
   `delegate` gives way to `spawn` and `wait`, and a sub-agent outlives
   the call that started it. Amends
   [0024](0024-landings-queue-while-the-parent-works.md): sub-agents

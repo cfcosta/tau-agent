@@ -8,12 +8,11 @@ requests. Run each Store on one enabled-I/O runtime.
 
 ### Finalization
 
-| Test                                                          | Oracle                                                   | Responsibility                                                                                                                                                |
-| ------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `finalization_lands_exact_bytes_or_keeps_the_child_workspace` | Independent path-to-bytes map and handoff state          | A child either transfers all generated committed and pending files, or transfers nothing and retains its workspace, bookmark, and durable finalization error. |
-| `oversized_untracked_child_files_are_not_discarded`           | Fixed native snapshot-size boundaries and original bytes | Files omitted by jj-lib's size limit also prevent handoff and remain recoverable.                                                                             |
-| `landing_keeps_a_chat_whose_final_commit_failed`              | Fixed file bytes and unchanged trunk                     | Manual preview and landing cannot delete edits after an unusable final commit message.                                                                        |
-| `retained_sub_agents_stay_open_at_every_call_depth`           | Exhaustive retention flag × call-depth table             | A sub-agent a direct or nested `wait` lists as retained stays open in the UI, without a close action or navigation away; one it landed closes.                |
+| Test                                                            | Oracle                                                   | Responsibility                                                                                                                                                          |
+| --------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `finalization_commits_exact_bytes_or_keeps_the_child_workspace` | Independent path-to-bytes map and handoff state          | A child either ends with every generated file committed in its workspace, ready to land, or ends retained with its workspace, bookmark, and durable finalization error. |
+| `oversized_untracked_child_files_are_not_discarded`             | Fixed native snapshot-size boundaries and original bytes | Files omitted by jj-lib's size limit also prevent handoff and remain recoverable.                                                                                       |
+| `landing_keeps_a_chat_whose_final_commit_failed`                | Fixed file bytes and unchanged trunk                     | Manual preview and landing cannot delete edits after an unusable final commit message.                                                                                  |
 
 ### Conflicts
 

@@ -17,7 +17,7 @@ sweeping what old runs left, and pushing.
 | `tools`                                    | One `TypedTool` per tool (`Status`, `Diff`, `Commit`, `Land`, ...)                             |
 | `ProjectRepo`, `Project`                   | A repository tau owns, with a workspace per run; `Project` runs its jobs off the async runtime |
 | `RunWorkspace`, `Link`                     | A run's own workspace, snapshotted after each turn so forks start from that turn's code        |
-| `Spawn`, `Wait`, `SubAgents`               | The `spawn` and `wait` tools, and the sub-agents running beside their caller                   |
+| `Spawn`, `SubAgents`                       | The `spawn` tool, and the sub-agents running beside their caller                               |
 | `RefusingSpawn`, `RefusingWait`            | The same tools on runs below the main chat: declared so caches match, refusing every call      |
 | `sweep`                                    | Which workspaces and bookmarks of finished runs go (`plan`, `ProjectRepo::sweep`)              |
 | `Remote`, `Pushed`                         | Where `ProjectRepo::push_trunk` and `push_branch` push, and what they pushed                   |
@@ -116,5 +116,6 @@ cargo nextest run --release -p tau-vcs-host --run-ignored only
 - [0023: Main pushes with git; chat pull requests replay onto origin](../../../docs/decisions/0023-main-pushes-with-git-chat-prs-replay-onto-origin.md)
 - [0024: Landings queue while the parent works](../../../docs/decisions/0024-landings-queue-while-the-parent-works.md)
 - [0026: Sub-agents run detached: spawn and wait](../../../docs/decisions/0026-sub-agents-run-detached.md)
+- [0031: The main chat orchestrates; wait goes](../../../docs/decisions/0031-the-main-chat-orchestrates.md)
 - [0028: Async all the way; blocking only in spawn_blocking](../../../docs/decisions/0028-async-all-the-way-blocking-only-in-spawn-blocking.md)
 - [0030: Host halves are crates](../../../docs/decisions/0030-host-halves-are-crates.md)

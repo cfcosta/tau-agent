@@ -1,7 +1,7 @@
 //! tau-vcs's UI (ADR 0017): the cards of its tools in a run's
-//! transcript (`vcs_status`, `vcs_diff`, `vcs_show`, `vcs_log`, `spawn`
-//! with the way to the sub-agent's chat, and `wait` with what the
-//! sub-agents landed), and the pieces tau's landings draw changes with.
+//! transcript (`vcs_status`, `vcs_diff`, `vcs_show`, `vcs_log`, and
+//! `spawn` with the way to the sub-agent's chat), and the pieces tau's
+//! landings draw changes with.
 //!
 //! The host builds the plugin's tools with the run's workspace, which
 //! they act on (`tau-vcs-host`); this UI draws what they return.
@@ -43,7 +43,6 @@ use self::{
     change_diff::ChangeDiff,
     change_log::ChangeLog,
     change_status::ChangeStatus,
-    landed::{LandedCard, LandingRecord},
 };
 use crate::details;
 
@@ -134,33 +133,6 @@ pub fn spawned(data: &CallData) -> Option<RunId> {
     Some(RunId(run.into()))
 }
 
-/// The sub-agents' landings, from a `wait` call, in the order they
-/// landed.
-pub fn waited(data: &CallData) -> Vec<LandedCard> {
-    let Some(landed) = details(data)
-        .and_then(|details| details.get("landed"))
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
-    landed
-        .iter()
-        .filter_map(|each| {
-            Some(LandedCard::from_record(LandingRecord {
-                from: each.get("run")?.as_str()?.to_owned(),
-                title: each
-                    .get("task")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                landing: serde_json::from_value(each.get("landing")?.clone())
-                    .ok()?,
-                recovered: false,
-            }))
-        })
-        .collect()
-}
-
 /// A link that opens `child`'s chat.
 fn open_child(
     child: RunId,
@@ -216,30 +188,6 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
                     open_child(child, view.handle.clone(), &t)
                         .into_any_element(),
                 ),
-                ..CardView::default()
-            })
-        }
-        details::WAIT => {
-            let landed = waited(data);
-            if landed.is_empty() {
-                return None;
-            }
-            let changes: usize =
-                landed.iter().map(|card| card.changes.len()).sum();
-            let mut body = div().flex().flex_col();
-            for card in &landed {
-                body =
-                    body.child(landed::landed_body(card, &t, compact)).child(
-                        open_child(card.from.clone(), view.handle.clone(), &t),
-                    );
-            }
-            Some(CardView {
-                label: Some(match changes {
-                    0 => "no changes".into(),
-                    1 => "1 change landed".into(),
-                    n => format!("{n} changes landed"),
-                }),
-                body: Some(body.into_any_element()),
                 ..CardView::default()
             })
         }

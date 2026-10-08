@@ -1154,50 +1154,6 @@ impl Workspace {
             self.closed.insert(run.clone());
             cx.emit(WorkspaceEvent::CloseRun { run: run.clone() });
         }
-        // The sub-agents a `wait` landed close: their work is main's now.
-        if let RunEvent::ToolEnd {
-            run,
-            call_id,
-            output,
-            ..
-        } = event
-            && let Some(view) = self.run(run)
-            && view
-                .call(call_id)
-                .is_some_and(|(tool, _)| tool == tau_vcs::details::WAIT)
-        {
-            let landed: Vec<(RunId, usize)> = output
-                .details
-                .as_ref()
-                .and_then(|details| details["landed"].as_array())
-                .into_iter()
-                .flatten()
-                .filter_map(|each| {
-                    let child = each["run"].as_str()?;
-                    let changes = each["landing"]["changes"]
-                        .as_array()
-                        .map_or(0, Vec::len);
-                    Some((RunId(child.into()), changes))
-                })
-                .filter(|(child, _)| !self.closed.contains(child))
-                .collect();
-            let parent = run.clone();
-            for (child, changes) in landed {
-                if let Some(view) =
-                    self.runs.iter_mut().find(|view| view.id == child)
-                {
-                    view.ending = Some(Ending::Landed {
-                        on: parent.clone(),
-                        changes,
-                    });
-                }
-                self.closed.insert(child.clone());
-                cx.emit(WorkspaceEvent::CloseRun { run: child.clone() });
-                if self.route.run() == Some(&child) {
-                    self.navigate(Route::Run(parent.clone()), cx);
-                }
-            }
-        }
         // What it did not read, the host sends again if the run stopped
         // on its own, as a message that resumes it.
         if let RunEvent::RunEnd { run, .. } = event {

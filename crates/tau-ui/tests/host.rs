@@ -91,6 +91,25 @@ fn host_over(
     host_of(runtime, store, Agent::new(llm).name("coder"), root)
 }
 
+/// A host whose sub-agents ask `child` and every other run `main`
+/// ([`Routed`]).
+fn routed_host(
+    main: &ScriptedModel,
+    child: &ScriptedModel,
+) -> (Host, UnboundedReceiver<RunEvent>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(Routed {
+        main: main.clone(),
+        child: child.clone(),
+    })
+    .name("coder");
+    host_of(runtime, store, agent, &tempfile::tempdir().unwrap().keep())
+}
+
 /// A host whose runs start from `agent`.
 fn host_of(
     runtime: tokio::runtime::Runtime,
@@ -951,117 +970,20 @@ fn a_chat_under_main_is_not_forked() {
     assert!(main_dir.join("b.txt").exists());
 }
 
-/// The main chat spawns a sub-agent and waits for it (ADR 0009, 0026):
-/// the sub-agent works in a workspace of its own, its change lands on
-/// main in the `wait`, and it closes.
-#[test]
-fn main_waits_for_its_sub_agent_and_it_lands() {
-    let src = tempfile::tempdir().unwrap();
-    git(src.path(), &["init", "--quiet"]);
-    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
-    git(src.path(), &["add", "README.md"]);
-    git(src.path(), &["commit", "--quiet", "-m", "first"]);
-    let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        repos.path().join("p"),
-        Identity::default(),
-    )
-    .map(Project::from)
-    .unwrap();
-
-    let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("spawn", serde_json::json!({ "task": "write c.txt" }))
-                .tool_call("wait", serde_json::json!({}))
-        })
-        .turn(|t| {
-            t.tool_call(
-                "write",
-                serde_json::json!({ "path": "c.txt", "content": "c\n" }),
-            )
-        })
-        // The sub-agent commits its work; it lands in the `wait`.
-        .turn(|t| {
-            t.tool_call(
-                "vcs_commit",
-                serde_json::json!({ "message": "feat: add c.txt" }),
-            )
-        })
-        .turn(|t| t.text("wrote c.txt"))
-        .turn(|t| t.text("done"));
-    let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_repo(REPO, project.clone());
-    let main = on_main(&host, "hand c.txt off");
-    until_end(&mut events);
-    wait_until_done(&host, &main);
-
-    let dir = host.block_on(host.workspace(&main)).unwrap();
-    assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
-    // The main chat works in the repository's own checkout, the default
-    // workspace.
-    assert_eq!(dir, project.workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE));
-    // The sub-agent is closed: no run workspace, and no run bookmark, as
-    // the main chat commits on trunk.
-    assert!(project.blocking().workspaces().unwrap().is_empty());
-    assert!(project.blocking().bookmarks("tau/").unwrap().is_empty());
-
-    // From history, main's `wait` card says what landed, and the
-    // sub-agent's chat comes back under it.
-    let history = host.block_on(host.history()).unwrap();
-    let main_view = history.iter().find(|view| view.id == main).unwrap();
-    let card = main_view
-        .items
-        .iter()
-        .find_map(|item| match item {
-            Item::Tool(card) if card.tool == "wait" => Some(card),
-            _ => None,
-        })
-        .expect("a wait card");
-    let landed = tau_vcs::ui::waited(&card.data).pop().expect("a landing");
-    assert_eq!(landed.changes.len(), 1);
-    assert_eq!(landed.title, "write c.txt");
-    let child = history
-        .iter()
-        .find(|view| view.id == landed.from)
-        .expect("the sub-agent's chat");
-    assert_eq!(
-        child.origin,
-        Origin::SubAgent {
-            parent: main.clone()
-        }
-    );
-    assert!(main_view.children.iter().any(|kid| kid.id == landed.from));
-
-    // What the person wrote to it that it never read goes to main, idle
-    // now, as the text of a turn on it; the `wait` took the sub-agent,
-    // so nothing joins the queue.
-    let child = landed.from.clone();
-    let report = host
-        .block_on(host.sub_agent_ended(&child, vec!["and d.txt".into()]))
-        .unwrap();
-    assert!(report.landed.is_empty() && report.queue.is_empty());
-    let prompt = report.resolve.expect("a turn on main");
-    assert!(prompt.contains("sub-agent `write c.txt`"), "{prompt}");
-    assert!(prompt.ends_with("\n\n> and d.txt"), "{prompt}");
-}
-
-/// A sub-agent that fails still comes back from history, under the run
-/// that called it, with how it ended.
-/// A sub-agent's chat stops on its own: it is dropped, the `wait` on it
-/// says so, and the main chat goes on.
+/// A sub-agent's chat stops on its own: it is dropped, nothing reports
+/// it, and the main chat it runs beside goes on.
 #[test]
 fn a_sub_agent_stops_and_its_main_chat_goes_on() {
-    let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("spawn", serde_json::json!({ "task": "wait" }))
-                .tool_call("wait", serde_json::json!({}))
-        })
-        // The sub-agent's answer would take a minute.
-        .turn(|t| t.text("too late").delay(Duration::from_secs(60)))
-        .turn(|t| t.text("done without it"));
-    let (host, mut events) = host(llm);
+    let main_llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("spawn", serde_json::json!({ "task": "wait" })))
+        .turn(|t| t.text("it works on it"));
+    // The sub-agent's answer would take a minute.
+    let child_llm = ScriptedModel::new()
+        .turn(|t| t.text("too late").delay(Duration::from_secs(60)));
+    let (host, mut events) = routed_host(&main_llm, &child_llm);
     let main = on_main(&host, "hand it off");
+    // Main may end before the sub-agent starts: what comes first is kept.
+    let mut seen = Vec::new();
     let deadline = std::time::Instant::now() + WAIT;
     let child = loop {
         assert!(std::time::Instant::now() < deadline, "no sub-agent started");
@@ -1071,19 +993,12 @@ fn a_sub_agent_stops_and_its_main_chat_goes_on() {
                 parent: Some(_),
                 ..
             }) => break run,
-            Ok(_) => {}
+            Ok(event) => seen.push(event),
             Err(_) => std::thread::sleep(Duration::from_millis(5)),
         }
     };
     host.cancel(&child);
-    // Everything up to main's own end.
-    let mut seen = Vec::new();
-    while !seen.iter().any(
-        |event| matches!(event, RunEvent::RunEnd { run, .. } if *run == main),
-    ) {
-        seen.extend(until_end(&mut events));
-    }
-    let stopped = |run: &tau_agent::tool::RunId| {
+    let ended = |seen: &[RunEvent], run: &tau_agent::tool::RunId| {
         seen.iter().find_map(|event| match event {
             RunEvent::RunEnd {
                 run: ended, stop, ..
@@ -1091,23 +1006,19 @@ fn a_sub_agent_stops_and_its_main_chat_goes_on() {
             _ => None,
         })
     };
-    assert_eq!(stopped(&child), Some(StopReason::Cancelled));
-    assert_eq!(stopped(&main), Some(StopReason::Stop), "main goes on");
-    let waited = seen.iter().find_map(|event| match event {
-        RunEvent::ToolEnd {
-            run,
-            output,
-            is_error: false,
-            ..
-        } if *run == main && output.text_content().contains("stopped") => {
-            Some(output.text_content())
-        }
-        _ => None,
-    });
-    assert!(
-        waited.is_some_and(|text| text.contains("The person stopped it")),
-        "the wait said it was stopped"
-    );
+    while ended(&seen, &main).is_none() || ended(&seen, &child).is_none() {
+        seen.extend(until_end(&mut events));
+    }
+    assert_eq!(ended(&seen, &child), Some(StopReason::Cancelled));
+    assert_eq!(ended(&seen, &main), Some(StopReason::Stop), "main goes on");
+    wait_until_done(&host, &main);
+    // The person stopped it: nothing lands, and tau starts no turn.
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert!(report.landed.is_empty(), "{report:?}");
+    assert!(report.resolve.is_none(), "{report:?}");
+    main_llm.assert_exhausted();
 }
 
 /// Answers a sub-agent's requests from `child`, every other from
@@ -1255,6 +1166,20 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     assert_eq!(report.landed[0].0, child);
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
     assert!(report.queue.is_empty(), "{:?}", report.queue);
+    // The main chat works in the repository's own checkout, the default
+    // workspace.
+    assert_eq!(dir, project.workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE));
+    // From history, the sub-agent's chat comes back under main.
+    let history = host.block_on(host.history()).unwrap();
+    let main_view = history.iter().find(|view| view.id == main).unwrap();
+    assert!(main_view.children.iter().any(|kid| kid.id == child));
+    let child_view = history.iter().find(|view| view.id == child).unwrap();
+    assert_eq!(
+        child_view.origin,
+        Origin::SubAgent {
+            parent: main.clone()
+        }
+    );
     // It joined the queue with the change it brings, not none.
     let queued = tokio::runtime::Runtime::new().unwrap().block_on(async {
         let store = tau_store_sqlite::open(db.path().join("runs.db"))
@@ -1519,34 +1444,14 @@ fn changes_nothing_and_is_reported(without_bookmark: bool) {
     child_llm.assert_exhausted();
 }
 
+/// A sub-agent that fails still comes back from history, under the run
+/// that called it, with how it ended.
 #[test]
 fn a_failed_sub_agent_comes_back_from_history() {
-    let src = tempfile::tempdir().unwrap();
-    git(src.path(), &["init", "--quiet"]);
-    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
-    git(src.path(), &["add", "README.md"]);
-    git(src.path(), &["commit", "--quiet", "-m", "first"]);
-    let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        repos.path().join("p"),
-        Identity::default(),
-    )
-    .map(Project::from)
-    .unwrap();
-    let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("spawn", serde_json::json!({ "task": "write c.txt" }))
-                .tool_call("wait", serde_json::json!({}))
-        })
-        .turn(|t| t.dropped())
-        .turn(|t| t.text("it failed"));
-    let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_repo(REPO, project);
-    let main = on_main(&host, "hand c.txt off");
-    until_end(&mut events);
-    until_end(&mut events);
-    wait_until_done(&host, &main);
+    let (main_llm, _) = hand_off();
+    let child_llm = ScriptedModel::new().turn(|t| t.dropped());
+    let (host, _events, main, _child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
 
     let history = host.block_on(host.history()).unwrap();
     let main_view = history.iter().find(|view| view.id == main).unwrap();
@@ -3164,22 +3069,27 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
 
 /// Main, a chat and a sub-agent of one repository send byte-identical
 /// instructions and tools, in the same order, so each can read the
-/// others' prompt cache: `spawn`, `wait` and `vcs_land` are on every run, and
+/// others' prompt cache: `spawn` and `vcs_land` are on every run, and
 /// say why where they do not apply. Kind-specific guidance goes in the
-/// first message instead.
+/// first message instead: main's says it orchestrates.
 #[test]
 fn main_chats_and_sub_agents_send_the_same_prefix() {
-    let llm = ScriptedModel::new()
+    let main_llm = ScriptedModel::new()
         .turn(|t| {
             t.tool_call("spawn", serde_json::json!({ "task": "look around" }))
-                .tool_call("wait", serde_json::json!({}))
         })
-        .turn(|t| t.text("looked"))
         .turn(|t| t.text("main done"))
         .turn(|t| t.text("chat done"));
-    let (host, mut events) = host(llm.clone());
+    let child_llm = ScriptedModel::new().turn(|t| t.text("looked"));
+    let (host, mut events) = routed_host(&main_llm, &child_llm);
     let main = on_main(&host, "hand something off");
-    until_end(&mut events);
+    let mut ended = 0;
+    while ended < 2 {
+        ended += until_end(&mut events)
+            .iter()
+            .filter(|event| matches!(event, RunEvent::RunEnd { .. }))
+            .count();
+    }
     wait_until_done(&host, &main);
     let chat = host
         .block_on(host.start("hello chat", &ModelChoice::default(), REPO))
@@ -3187,9 +3097,11 @@ fn main_chats_and_sub_agents_send_the_same_prefix() {
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
 
-    let requests = llm.requests();
-    assert_eq!(requests.len(), 4);
-    let (main, sub_agent, chat) = (&requests[0], &requests[1], &requests[3]);
+    let requests = main_llm.requests();
+    assert_eq!(requests.len(), 3);
+    let sub_agents = child_llm.requests();
+    assert_eq!(sub_agents.len(), 1);
+    let (main, sub_agent, chat) = (&requests[0], &sub_agents[0], &requests[2]);
     let names = |request: &tau_testing::scripted::Request| -> Vec<String> {
         request
             .settings
@@ -3199,8 +3111,12 @@ fn main_chats_and_sub_agents_send_the_same_prefix() {
             .collect()
     };
     assert!(names(main).iter().any(|name| name == "spawn"));
-    assert!(names(main).iter().any(|name| name == "wait"));
+    assert!(!names(main).iter().any(|name| name == "wait"));
     assert!(names(main).iter().any(|name| name == "vcs_land"));
+    let first = |request: &tau_testing::scripted::Request| {
+        format!("{:?}", request.transcript.first())
+    };
+    assert!(first(main).contains("lead the work as an orchestrator"));
     for (kind, other) in [("sub-agent", sub_agent), ("chat", chat)] {
         assert_eq!(names(other), names(main), "{kind}'s tool order");
         assert_eq!(other.settings.tools, main.settings.tools, "{kind}'s tools");

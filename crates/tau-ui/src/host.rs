@@ -54,11 +54,9 @@ use tau_vcs_host::{
     Project,
     ProjectRepo,
     RefusingSpawn,
-    RefusingWait,
     RunWorkspace,
     Spawn,
     VcsPlugin,
-    Wait,
     run_workspace::{PLUGIN as WORKSPACE_PLUGIN, bookmark},
     sub_agents::ChildModel,
 };
@@ -875,7 +873,7 @@ impl Host {
             let spawn = Spawn::new(
                 workspace.clone(),
                 identity(),
-                agents.clone(),
+                agents,
                 &models,
                 move |child, asked| {
                     let choice = match child_choice(&caller, asked) {
@@ -885,8 +883,7 @@ impl Host {
                         }
                     };
                     let agent = for_model(&choice, &child)
-                        .tool(RefusingSpawn::new(&refused))
-                        .tool(RefusingWait::default());
+                        .tool(RefusingSpawn::new(&refused));
                     let (agent, services) = child_on_workspace(
                         agent,
                         child,
@@ -903,13 +900,9 @@ impl Host {
                     })
                 },
             );
-            let wait = Wait::new(workspace.clone(), agents);
-            (agent.tool(spawn).tool(wait), Some(MAIN_DOES_NOT_LAND))
+            (agent.tool(spawn), Some(MAIN_DOES_NOT_LAND))
         } else {
-            let agent = agent
-                .tool(RefusingSpawn::new(&models))
-                .tool(RefusingWait::default());
-            (agent, None)
+            (agent.tool(RefusingSpawn::new(&models)), None)
         };
         // tau's turn resolving a landing's conflicts on main stops only
         // once they are resolved, or after one more try (ADR 0024).
@@ -920,6 +913,13 @@ impl Host {
         let agent = match hold {
             Some(hold) => agent.plugin(hold),
             None => agent,
+        };
+        // Main leads its repository's work through sub-agents (ADR
+        // 0031); the others are told what they are by their tools.
+        let agent = if main {
+            agent.plugin(sub_agents::Orchestrate)
+        } else {
+            agent
         };
         let kind = if main {
             tau_ui_plugin::RunKind::Main

@@ -231,8 +231,8 @@ fn restack(
         return Err(VcsError::NotOneStack);
     }
     for root in roots {
-        // A child the parent waited on already sits on the parent's
-        // head: nothing to rewrite.
+        // A child whose parent has not moved since it started already
+        // sits on the parent's head: nothing to rewrite.
         if root.parent_ids() == std::slice::from_ref(&head) {
             continue;
         }

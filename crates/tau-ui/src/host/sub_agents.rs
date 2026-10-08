@@ -1,7 +1,7 @@
-//! Sub-agents on the host (ADR 0026): each repository's main chat keeps
-//! its [`SubAgents`] between its turns, as they run beside it. One that
-//! ends with nobody waiting joins main's landing queue, and tau's turn
-//! after the drain reports it.
+//! Sub-agents on the host (ADR 0026, 0031): each repository's main chat
+//! keeps its [`SubAgents`] between its turns, as they run beside it.
+//! Each one that ends joins main's landing queue, and tau's turn after
+//! the drain reports it, for main to go on from.
 
 use tau_ui_remote::queue::{SubAgentEnd, Waiting};
 use tau_vcs_host::sub_agents::{Ending, Taken, limit_name};
@@ -18,12 +18,46 @@ pub(super) struct Forwarded {
     pub(super) steered: bool,
 }
 
-/// What tau's turn reporting sub-agents ends with.
+/// What a main chat's runs start with, before the person's message:
+/// main leads the work through sub-agents (ADR 0031). It goes in the
+/// first message, not the instructions, which every run of the
+/// repository shares (ADR 0022).
+const ORCHESTRATE: &str = "You are this repository's main chat, and you \
+    lead the work as an orchestrator: split what the person asks into \
+    tasks that can go on side by side, `spawn` a sub-agent for each, and \
+    end your turn while they work. As each one lands, tau starts a turn \
+    of yours with what it did: check it against what was asked, resolve \
+    any conflicts and commit, then spawn what comes next (follow-ups, \
+    fixes, tests) until the request is done. Do yourself only the glue \
+    between tasks and work too small to hand off.";
+
+/// Puts [`ORCHESTRATE`] in a main chat's run.
+pub(super) struct Orchestrate;
+
+#[async_trait]
+impl Plugin for Orchestrate {
+    fn name(&self) -> &str {
+        "tau-orchestrate"
+    }
+
+    async fn start(
+        &self,
+        plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        plan.context.push(ORCHESTRATE.to_owned());
+        Ok(Box::new(()))
+    }
+}
+
+/// What tau's turn reporting sub-agents ends with: main goes on
+/// orchestrating (ADR 0031).
 const REPORT_END: &str = "This message is from tau, not the person: \
-    your sub-agents came back. First tell the person where things stand: \
-    what landed, what is left, and what failed. Start more work, new \
-    sub-agents included, only when what the person asked for still \
-    clearly needs it.";
+    your sub-agents came back. Check what landed against what the person \
+    asked, resolve any conflicts and commit, then spawn what comes next \
+    (follow-ups, fixes, tests) and end your turn while they work. Tell \
+    the person in a line or two what landed, what failed, and what you \
+    started. When nothing is left to do, say the request is done.";
 
 impl Host {
     /// The sub-agents of `repo`'s main chat, made the first time.
@@ -74,15 +108,15 @@ impl Host {
         self.all_sub_agents().iter().any(|agents| agents.stop(run))
     }
 
-    /// Whether `wait` took `child` already: it landed, or was reported.
+    /// Whether main's queue took `child` already, to land it.
     pub(super) fn sub_agent_taken(&self, child: &RunId) -> bool {
         self.all_sub_agents()
             .iter()
             .any(|agents| agents.taken(child) == Some(true))
     }
 
-    /// Takes `child` to land it from main's queue. `false` when `wait`
-    /// took it first.
+    /// Takes `child` to land it from main's queue. `false` when it is
+    /// still running, or was taken before.
     pub(super) fn take_sub_agent(&self, child: &RunId) -> bool {
         self.all_sub_agents().iter().all(|agents| {
             !matches!(agents.take(child), Taken::Before(_) | Taken::Running)
@@ -93,7 +127,7 @@ impl Host {
     /// checked, it joins main's queue (unless the person stopped it),
     /// and what may land now lands. `unread` is what the person wrote to
     /// it that it never read: it goes to main, whose work it is now,
-    /// with the report, or into main's turn when main waited for it.
+    /// with the report.
     pub async fn sub_agent_ended(
         &self,
         child: &RunId,
@@ -112,30 +146,17 @@ impl Host {
             Some(Ending::Done { limit, .. }) => Some(SubAgentEnd {
                 limit: limit.map(|limit| limit_name(limit).to_owned()),
                 failed: None,
-                unread: unread.clone(),
+                unread,
             }),
             Some(
                 ending @ (Ending::Failed { .. } | Ending::Retained { .. }),
             ) => Some(SubAgentEnd {
                 limit: None,
                 failed: Some(ending_text(&ending)),
-                unread: unread.clone(),
+                unread,
             }),
         };
-        // `wait` took it: its call says what it did, and what the person
-        // wrote to it goes into main's turn, waiting on it, or into the
-        // turn tau starts on main.
-        let mut forwarded = None;
-        if end.is_some()
-            && agents.taken(child) == Some(true)
-            && !unread.is_empty()
-        {
-            let to_main = self.forward_unread(&main, child, &unread).await?;
-            forwarded = (!to_main.steered).then_some(to_main.text);
-        }
-        if let Some(end) = end
-            && agents.taken(child) != Some(true)
-        {
+        if let Some(end) = end {
             let title = self.title_of(child).await?;
             // What it brings, so its place in the queue shows it before
             // its turn to land previews it again. Read without writing:
@@ -164,14 +185,7 @@ impl Host {
             self.perform(&main, actions).await?;
         }
         let (drained, landings) = self.drain_locked(&main).await?;
-        let mut report = self.report(&main, drained, landings).await?;
-        if let Some(forwarded) = forwarded {
-            report.resolve = Some(match report.resolve.take() {
-                Some(prompt) => format!("{forwarded}\n\n{prompt}"),
-                None => forwarded,
-            });
-        }
-        Ok(report)
+        self.report(&main, drained, landings).await
     }
 
     /// Hands `unread`, which the person wrote to `child` and it never

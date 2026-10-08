@@ -11,23 +11,22 @@ mod common;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use common::{coder, project_with};
+use common::{coder, heard_sub_agents, project_with};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::{
     limits::Limits,
     plugin::{FinishedRun, Plugin, PluginCtx, PluginError, PluginRun, RunPlan},
 };
-use tau_ai::message::Message;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs_host::{
     Identity,
     Link,
     RunWorkspace,
     Spawn,
-    SubAgents,
-    Wait,
+    Vcs,
     run_workspace::{PLUGIN, bookmark},
+    sub_agents::Ending,
 };
 
 /// A real jj-lib refusal, not a mocked commit result: tag the already
@@ -109,7 +108,7 @@ impl PluginRun for TagOnFinish {
 #[hegel::test(test_cases = 12, suppress_health_check = [hegel::HealthCheck::TooSlow])]
 #[hegel::explicit_test_case(committed = 0_usize, extra = Vec::<String>::new(), pending = String::new(), limited = false)]
 #[hegel::explicit_test_case(committed = 1_usize, extra = vec![String::from("é\n")], pending = String::new(), limited = true)]
-fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
+fn finalization_commits_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
     let committed: usize = tc.draw(gs::integers().max_value(2));
     let extra: Vec<String> = tc
         .draw(gs::vecs(gs::text().alphabet("ab é\n").max_size(24)).max_size(3));
@@ -136,7 +135,6 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                         "spawn",
                         json!({"task": "write and commit the generated files"}),
                     )
-                    .tool_call("wait", json!({}))
                 })
                 .turn(|t| t.text("caller done"));
             let mut expected = BTreeMap::from([(
@@ -191,57 +189,40 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                 _ => child.turn(|t| t.text("feat: pending files")),
             };
             let child_script = child.clone();
-            let agents = SubAgents::default();
-            let agent = coder(llm.clone(), &parent, true)
-                .tool(Wait::new(parent.clone(), agents.clone()))
-                .tool(Spawn::new(
-                    parent.clone(),
-                    Identity::default(),
-                    agents,
-                    &[],
-                    ready_child(move |workspace, _| {
-                        let agent = if mode == 4 {
-                            tau_agent::agent::Agent::new(child_script.clone())
-                                .plugin(TagOnFinish(workspace.vcs().clone()))
-                                .plugin(
-                                    tau_tools_host::plugin::CodingTools::new(
-                                        tau_tools_host::path::Root::new(
-                                            workspace.dir(),
-                                        ),
-                                    ),
-                                )
-                                .plugin(tau_vcs_host::VcsPlugin::new(
-                                    workspace.vcs().clone(),
-                                ))
-                                .plugin(workspace)
-                        } else {
-                            coder(child_script.clone(), &workspace, true)
-                        };
-                        Ok(if limited {
-                            agent.limits(
-                                Limits::default()
-                                    .max_turns(committed as u32 + 1),
-                            )
-                        } else {
-                            agent
-                        })
-                    }),
-                ));
+            let (agents, mut ends) = heard_sub_agents();
+            let agent = coder(llm.clone(), &parent, true).tool(Spawn::new(
+                parent.clone(),
+                Identity::default(),
+                agents,
+                &[],
+                ready_child(move |workspace, _| {
+                    let agent = if mode == 4 {
+                        tau_agent::agent::Agent::new(child_script.clone())
+                            .plugin(TagOnFinish(workspace.vcs().clone()))
+                            .plugin(tau_tools_host::plugin::CodingTools::new(
+                                tau_tools_host::path::Root::new(
+                                    workspace.dir(),
+                                ),
+                            ))
+                            .plugin(tau_vcs_host::VcsPlugin::new(
+                                workspace.vcs().clone(),
+                            ))
+                            .plugin(workspace)
+                    } else {
+                        coder(child_script.clone(), &workspace, true)
+                    };
+                    Ok(if limited {
+                        agent.limits(
+                            Limits::default().max_turns(committed as u32 + 1),
+                        )
+                    } else {
+                        agent
+                    })
+                }),
+            ));
             let outcome =
                 agent.run("hand the writes over", &store).await.unwrap();
-            let requests = llm.requests();
-            let result = requests[1]
-                .transcript
-                .iter()
-                .find_map(|message| match message {
-                    Message::ToolResult(result)
-                        if result.tool_name == "wait" =>
-                    {
-                        Some(result)
-                    }
-                    _ => None,
-                })
-                .unwrap();
+            let (_, ending) = ends.recv().await.unwrap();
             let children = store.subagents(&outcome.run.0).await.unwrap();
             assert_eq!(children.len(), 1);
             let child_run = &children[0];
@@ -254,54 +235,45 @@ fn finalization_lands_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                 .unwrap();
             let child_dir = project.workspace_dir(&link.workspace);
             let successful = mode == 3;
-            assert!(!result.is_error, "mode={mode}, limited={limited}");
-            let details = result.details.as_ref().unwrap();
-            assert_eq!(
-                details["landed"].as_array().unwrap().len(),
-                usize::from(successful),
-                "mode={mode}, limited={limited}"
-            );
-            assert_eq!(child_dir.exists(), !successful);
+            // Nothing lands here: the host lands what ended. What ends
+            // holds every byte, committed, or keeps its workspace.
+            match &ending {
+                Ending::Done { .. } => assert!(successful, "mode={mode}"),
+                Ending::Retained { workspace, .. } => {
+                    assert!(!successful, "mode={mode}");
+                    assert_eq!(*workspace, child_dir);
+                }
+                ending => panic!("{ending:?}, mode={mode}"),
+            }
+            assert!(child_dir.exists());
             for (path, content) in &expected {
-                let dir = if successful {
-                    parent.dir()
-                } else {
-                    child_dir.clone()
-                };
                 assert_eq!(
-                    std::fs::read(dir.join(path)).unwrap(),
+                    std::fs::read(child_dir.join(path)).unwrap(),
                     content.as_bytes(),
                     "{path}, mode={mode}"
                 );
-                if !successful && path != "existing.txt" {
+                if path != "existing.txt" {
                     assert!(
                         !parent.dir().join(path).exists(),
-                        "partial child commits must not land"
+                        "a sub-agent's work lands only through the host"
                     );
                 }
             }
+            let copy = Vcs::open(&child_dir, Identity::default())
+                .await
+                .unwrap()
+                .working_copy()
+                .await
+                .unwrap();
+            assert_eq!(copy.is_committed(), successful, "mode={mode}");
             assert_eq!(
                 std::fs::read(parent.dir().join("existing.txt")).unwrap(),
                 b"base\n"
             );
             let child_bookmark =
                 project.bookmark(&format!("tau/{}", child_run.id)).unwrap();
-            assert_eq!(child_bookmark.is_some(), !successful);
-            let parent_links =
-                store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap();
-            let landed = parent_links
-                .iter()
-                .filter_map(|(_, body)| Link::parse(body))
-                .filter(|link| link.from.is_some())
-                .count();
-            assert_eq!(landed, if successful { committed + 1 } else { 0 });
+            assert!(child_bookmark.is_some());
             if !successful {
-                let retained = &details["retained"][0];
-                assert_eq!(retained["run"], child_run.id);
-                assert_eq!(
-                    retained["workspace"],
-                    child_dir.display().to_string()
-                );
                 assert!(records.iter().any(|(_, body)| {
                     serde_json::from_str::<
                         serde_json::Value,
@@ -345,7 +317,6 @@ fn oversized_untracked_child_files_are_not_discarded() {
                         "spawn",
                         json!({"task": "write the large file"}),
                     )
-                    .tool_call("wait", json!({}))
                 })
                 .turn(|t| t.text("caller done"));
             let content = "x".repeat(1_048_576 + extra);
@@ -357,37 +328,22 @@ fn oversized_untracked_child_files_are_not_discarded() {
                 )
             });
             let script = child.clone();
-            let agents = SubAgents::default();
-            let agent = coder(llm.clone(), &parent, true)
-                .tool(Wait::new(parent.clone(), agents.clone()))
-                .tool(Spawn::new(
-                    parent.clone(),
-                    Identity::default(),
-                    agents,
-                    &[],
-                    ready_child(move |workspace, _| {
-                        Ok(coder(script.clone(), &workspace, true)
-                            .limits(Limits::default().max_turns(1)))
-                    }),
-                ));
+            let (agents, mut ends) = heard_sub_agents();
+            let agent = coder(llm.clone(), &parent, true).tool(Spawn::new(
+                parent.clone(),
+                Identity::default(),
+                agents,
+                &[],
+                ready_child(move |workspace, _| {
+                    Ok(coder(script.clone(), &workspace, true)
+                        .limits(Limits::default().max_turns(1)))
+                }),
+            ));
             let outcome = agent.run("delegate", &store).await.unwrap();
-            let requests = llm.requests();
-            let result = requests[1]
-                .transcript
-                .iter()
-                .find_map(|message| match message {
-                    Message::ToolResult(result)
-                        if result.tool_name == "wait" =>
-                    {
-                        Some(result)
-                    }
-                    _ => None,
-                })
-                .unwrap();
-            assert!(!result.is_error);
-            let details = &result.details.as_ref().unwrap()["retained"][0];
-            let dir =
-                std::path::Path::new(details["workspace"].as_str().unwrap());
+            let (_, ending) = ends.recv().await.unwrap();
+            let Ending::Retained { workspace: dir, .. } = ending else {
+                panic!("{ending:?}")
+            };
             assert_eq!(
                 std::fs::read(dir.join("large.txt")).unwrap(),
                 expected.as_bytes()

@@ -508,8 +508,8 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
 - The parent's working copy starts again on the child's new head, and
   the parent's bookmark moves there, in the same operation (tagged
   `land`), so the parent's files follow.
-- A child that already sits on the parent's head (the parent waited on
-  it) is not rewritten.
+- A child that already sits on the parent's head (the parent has not
+  moved since it started) is not rewritten.
 - A `child_head` that is no longer visible, because something rewrote
   or abandoned it after the caller read it (the main chat's catch-up
   restacks the chats on its commits), is refused with
@@ -715,12 +715,12 @@ catch-up does, in the same operation: trunk moves forward, never aside.
 And `move_onto` goes onto that commit instead of the one it was given
 when the update came after the caller read trunk.
 
-## Sub-agents: spawn and wait
+## Sub-agents: spawn
 
 Only the main chat starts sub-agents (ADR 0016). Chats and sub-agents
-declare `spawn` and `wait` all the same, as `RefusingSpawn` and
-`RefusingWait` with the same descriptions and arguments, so their
-tools match main's and their first request reads main's prompt cache
+declare `spawn` all the same, as `RefusingSpawn` with the same
+description and arguments, so their tools match main's and their first
+request reads main's prompt cache
 (ADR 0022). A call fails with `ONLY_MAIN_SPAWNS`: "Only the main chat
 starts sub-agents; do this work here or ask the person to start a
 chat."
@@ -729,11 +729,15 @@ A sub-agent is a child run in a chat of its own that forks the
 caller's conversation and runs beside it
 ([ADR 0009](../decisions/0009-child-runs-land-on-their-parent.md),
 [ADR 0015](../decisions/0015-delegates-fork-their-caller.md),
-[ADR 0026](../decisions/0026-sub-agents-run-detached.md)). A caller's
+[ADR 0026](../decisions/0026-sub-agents-run-detached.md),
+[ADR 0031](../decisions/0031-the-main-chat-orchestrates.md)). Main
+orchestrates: each of its runs starts with context that says to split
+the request into tasks, spawn a sub-agent for each, and end its turn
+while they work. Nothing waits for a sub-agent. A caller's
 sub-agents live in a `SubAgents`, which outlives the caller's turns:
 tau-ui keeps one per repository's main chat, which sends the
-sub-agents' events on with the host's own. `Spawn` and `Wait` are built
-per run on the run's `RunWorkspace` and the caller's `SubAgents`.
+sub-agents' events on with the host's own. `Spawn` is built per run on
+the run's `RunWorkspace` and the caller's `SubAgents`.
 `Spawn` also takes the model ids a call may pick from and a closure
 that builds the sub-agent's `Agent` around the sub-agent's own
 `RunWorkspace` on the `ChildModel` its call asked for. tau-ui builds it
@@ -742,8 +746,9 @@ effort the model does not take.
 
 1. `spawn` (`{ task, model?, effort? }`) needs the caller's work
    committed (ADR 0014): with changes in its `@`, it refuses and says to
-   commit with `vcs_commit` first. With `MAX_RUNNING` (4) running
-   already, it refuses and says to `wait` for one. The sub-agent's
+   commit with `vcs_commit` first. With `MAX_RUNNING` (8) running
+   already, it refuses and says to end the turn and spawn again when
+   tau reports one. The sub-agent's
    workspace, `<caller's workspace>-sub-<12 random hex digits>`, so that
    no process reuses one an earlier one left, starts on the caller's
    newest commit (`RunWorkspace::with_base`), so it sees the caller's
@@ -764,41 +769,27 @@ effort the model does not take.
    bookmark stay for recovery. One that failed (`Ending::Failed`) or
    that the person stopped (`Ending::Stopped`) has its changes abandoned,
    and its workspace and bookmark go.
-4. Whoever takes an ended sub-agent first (`SubAgents::take`) lands or
-   reports it; the other finds it taken.
-   - `wait` (`{ runs? }`, every sub-agent not taken yet when `runs` is
-     left out) blocks until they end, and lands each with `Vcs::land` as
-     it ends, one landing at a time. The tool is `ExecutionMode::Grouped`,
-     so the batch's other tools never run while a landing moves the
-     caller's working copy. A landing whose changes clash with the
-     caller's lands its conflicts, and the note names the files this
-     landing left in conflict, not those the caller's head held already.
-     Each sub-agent's section is its answer and a line on what landed,
-     which starts by saying which limit stopped it, if one did
-     (`It stopped at its turn limit.`). Its details list each landing in
-     `landed`: `run`, `task`, the `landing`, the `conflicts` it brought,
-     and the `limit`. After landing, the sub-agent's workspace and
-     bookmark go.
-   - Nobody waiting, tau-ui queues it on the main chat's landing queue
-     (ADR 0024) with how it ended (`Waiting::sub_agent`). It lands
-     whatever it conflicts in. A drain lands queued sub-agents one after
-     another, and reports one with nothing to land; after the drain, tau
-     starts main's turn with each sub-agent's title, answer and landing
-     note, and the conflicts to resolve, if any. A sub-agent the person
-     stopped is not reported. A main turn the person stopped drains nothing
-     (`Host::main_turn_stopped`): what waits lands after main's next
-     turn, or when another sub-agent ends.
+4. tau-ui takes each ended sub-agent (`SubAgents::take`) and queues it
+   on the main chat's landing queue (ADR 0024) with how it ended
+   (`Waiting::sub_agent`). It lands whatever it conflicts in. A drain
+   lands queued sub-agents one after another, and reports one with
+   nothing to land; after the drain, tau starts main's turn with each
+   sub-agent's title, answer and landing note, which starts by saying
+   which limit stopped it, if one did (`It stopped at its turn limit.`),
+   and the conflicts to resolve, if any. The turn tells main to check
+   what landed, resolve conflicts, and spawn what comes next. A
+   sub-agent the person stopped is not reported. A main turn the person
+   stopped drains nothing (`Host::main_turn_stopped`): what waits lands
+   after main's next turn, or when another sub-agent ends.
 
 Behavioral properties and replay instructions are in
 [VCS handoff and conflict properties](vcs-hardening-tests.md).
 
-The caller's links record what came to its stack during the turn: each
-change a `wait` landed with `from` naming the sub-agent, then the
-turn's snapshot. A queued landing records its links as a chat's does.
+A landed sub-agent records its links on main as a chat's landing does.
 A call a tool makes through the loop, such as a codemode script's, is
 a call like the model's: in tau-ui a `spawn` it makes gets a chat on
-its task, and a `wait` it makes closes the chats of what it landed
-(`RunView::call` finds a nested call while the model's call runs).
+its task (`RunView::call` finds a nested call while the model's call
+runs).
 
 ## Pushing
 

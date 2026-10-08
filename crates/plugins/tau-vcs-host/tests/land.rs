@@ -114,10 +114,10 @@ fn a_fork_restacks_onto_its_parent() {
     assert_eq!(project.parent_of(&turn3).unwrap(), Some(landed.head));
 }
 
-/// A child the parent waited on already sits on the parent's head, so
-/// landing it rewrites nothing.
+/// A child whose parent has not moved since it started already sits on
+/// the parent's head, so landing it rewrites nothing.
 #[test]
-fn a_child_the_parent_waited_on_is_not_rewritten() {
+fn a_child_on_the_parents_head_is_not_rewritten() {
     let home = tempfile::tempdir().unwrap();
     let (project, trunk) = project(home.path());
     let parent = run(&project, "parent", &trunk);

@@ -125,3 +125,4 @@ scripted models, so they need no sign-in and no network:
 - [docs/decisions/0026-sub-agents-run-detached.md](../../docs/decisions/0026-sub-agents-run-detached.md)
 - [docs/decisions/0028-async-all-the-way-blocking-only-in-spawn-blocking.md](../../docs/decisions/0028-async-all-the-way-blocking-only-in-spawn-blocking.md)
 - [docs/decisions/0030-host-halves-are-crates.md](../../docs/decisions/0030-host-halves-are-crates.md)
+- [docs/decisions/0031-the-main-chat-orchestrates.md](../../docs/decisions/0031-the-main-chat-orchestrates.md)

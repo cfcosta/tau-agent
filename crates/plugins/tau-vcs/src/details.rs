@@ -10,9 +10,8 @@ pub const LOG: &str = "vcs_log";
 pub const SHOW: &str = "vcs_show";
 /// The name the model commits with.
 pub const COMMIT: &str = "vcs_commit";
-/// The names the model calls the sub-agent tools by.
+/// The name the model starts a sub-agent by.
 pub const SPAWN: &str = "spawn";
-pub const WAIT: &str = "wait";
 
 /// One change, as the tools describe it in `details`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

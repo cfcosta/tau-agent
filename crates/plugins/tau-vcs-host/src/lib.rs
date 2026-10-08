@@ -69,14 +69,7 @@ pub use project::{
 };
 pub use run_workspace::{Link, RunWorkspace};
 pub use session::MAX_NEW_FILE_SIZE;
-pub use sub_agents::{
-    ONLY_MAIN_SPAWNS,
-    RefusingSpawn,
-    RefusingWait,
-    Spawn,
-    SubAgents,
-    Wait,
-};
+pub use sub_agents::{ONLY_MAIN_SPAWNS, RefusingSpawn, Spawn, SubAgents};
 use tau_vcs::ui;
 // The shapes the tools return, from the interface half.
 pub use tau_vcs::{

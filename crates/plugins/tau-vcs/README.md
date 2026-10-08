@@ -1,8 +1,8 @@
 # tau-vcs
 
 The interface half of the version-control tools. It draws the cards
-that `vcs_status`, `vcs_diff`, `vcs_show`, `vcs_log`, `vcs_commit`,
-`spawn` and `wait` leave in a run's transcript, and the pieces tau's
+that `vcs_status`, `vcs_diff`, `vcs_show`, `vcs_log`, `vcs_commit`
+and `spawn` leave in a run's transcript, and the pieces tau's
 landings draw changes with. It also holds the shapes the tools put in
 their results. It does not touch a repository: jj-lib lives in the host
 half, so a phone can draw the cards without it.
@@ -15,7 +15,7 @@ half, so a phone can draw the cards without it.
 | `ChangeInfo`, `ChangeKind`, `FileChange`                  | One change, and one file's change, as the tools describe them         |
 | `Landing`, `TooLarge`                                     | What landing a child did; a new file a snapshot left out for its size |
 | `details::STATUS`, `DIFF`, `LOG`, `SHOW`, `COMMIT`        | The tool names the cards match on                                     |
-| `details::SPAWN`, `WAIT`                                  | The sub-agent tool names                                              |
+| `details::SPAWN`                                          | The sub-agent tool name                                               |
 | `ui::change_status`                                       | `ChangeStatus`: the parsed `vcs_status` details                       |
 | `ui::change_diff`                                         | `ChangeDiff`: a parsed `vcs_diff` or `vcs_show`, with files and hunks |
 | `ui::change_log`                                          | `ChangeLog`: the parsed `vcs_log`, the run's stack and trunk          |

@@ -70,8 +70,8 @@ pi, a note says so.
   A `Grouped` tool's calls run together, apart from the batch's other
   calls: the batch runs in groups (each grouped tool's calls, and all
   the other calls), one after another, in the order their first calls
-  come. `spawn` and `wait` are grouped, so a sub-agent starts from, and
-  lands on, a working copy no other tool is editing.
+  come. `spawn` is grouped, so a sub-agent starts from a working copy
+  no other tool is editing.
 - **Events:** `ToolStart` in source order; `ToolUpdate` while a tool
   runs; `ToolEnd` in completion order.
 - **Result messages** are appended in source order.

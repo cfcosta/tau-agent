@@ -96,16 +96,6 @@ impl Link {
     }
 }
 
-/// A change that came to the run's stack in the middle of a turn: the
-/// run's own work up to a spawned task, or a change the task landed.
-/// It is linked when the turn ends.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Pending {
-    pub commit_id: String,
-    pub change_id: String,
-    pub from: Option<String>,
-}
-
 /// A run's workspace, as a plugin. Build one per run, with a workspace
 /// name of its own, and point the run's other tools at [`Self::dir`].
 /// Clones share what they learn of the run.
@@ -117,7 +107,6 @@ pub struct RunWorkspace {
     observers: Vec<TurnObserver>,
     /// Where a new run's workspace starts instead of trunk.
     base: Option<String>,
-    pending: Arc<Mutex<Vec<Pending>>>,
     /// The run the workspace serves, once it has started.
     run: Arc<Mutex<Option<RunId>>>,
     /// The bookmark the run's commits move, instead of `tau/<run>`: a
@@ -152,7 +141,6 @@ impl RunWorkspace {
             vcs,
             observers: Vec::new(),
             base: None,
-            pending: Arc::default(),
             run: Arc::default(),
             commits_to: None,
             finalization_error: Arc::default(),
@@ -194,11 +182,6 @@ impl RunWorkspace {
             .lock()
             .expect("not poisoned")
             .clone()
-    }
-
-    /// Changes to link when the current turn ends, before its own.
-    pub(crate) fn queue(&self, changes: impl IntoIterator<Item = Pending>) {
-        self.pending.lock().expect("not poisoned").extend(changes);
     }
 
     /// Calls `observer` with each turn's snapshot, after it is made.
@@ -280,7 +263,6 @@ impl Plugin for RunWorkspace {
             vcs: self.vcs.clone(),
             name: self.name.clone(),
             observers: self.observers.clone(),
-            pending: self.pending.clone(),
             model: plan.model().to_owned(),
             task: plan.input.clone(),
             since,
@@ -295,7 +277,6 @@ struct Turns {
     vcs: Vcs,
     name: String,
     observers: Vec<TurnObserver>,
-    pending: Arc<Mutex<Vec<Pending>>>,
     /// The run's model, which describes work left uncommitted.
     model: String,
     /// What the run was asked: its own input, not the first message of a
@@ -364,24 +345,6 @@ impl PluginRun for Turns {
         };
         if run != &ctx.run {
             return;
-        }
-        // What came to the stack during the turn, in order, before the
-        // turn's snapshot.
-        let pending: Vec<Pending> =
-            std::mem::take(&mut *self.pending.lock().expect("not poisoned"));
-        for change in pending {
-            let link = Link {
-                turn: *turn,
-                workspace: self.name.clone(),
-                commit_id: change.commit_id,
-                change_id: change.change_id,
-                changed: true,
-                from: change.from,
-                snapshot: false,
-            };
-            let _ = ctx
-                .record(&serde_json::to_value(link).unwrap_or_default())
-                .await;
         }
         let record = match self
             .vcs

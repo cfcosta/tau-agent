@@ -1,7 +1,7 @@
-//! Sub-agents that run beside their caller (ADR 0009, 0015, 0026):
-//! [`Spawn`] starts one and answers at once, [`Wait`] waits for them and
-//! lands their work, and [`SubAgents`] keeps them between the caller's
-//! turns.
+//! Sub-agents that run beside their caller (ADR 0009, 0015, 0026,
+//! 0031): [`Spawn`] starts one and answers at once, and [`SubAgents`]
+//! keeps them between the caller's turns. Nothing waits for one: the
+//! host lands each as it ends.
 //!
 //! 1. The caller's work must be committed (ADR 0014): `spawn` refuses
 //!    while `@` holds changes. The sub-agent's workspace starts on the
@@ -14,14 +14,12 @@
 //! 3. When one ends, its work is checked. One that finished, or that a
 //!    limit stopped, can land; one that failed or was stopped has its
 //!    changes dropped and closes: its workspace and bookmark go.
-//! 4. `wait` lands each sub-agent it waits for on the caller as it
-//!    finishes, one landing at a time. A landing that conflicts lands
-//!    its conflicts for the caller to resolve. Nobody waiting, the host
-//!    takes it ([`SubAgents::take`]) and lands it when the caller is
-//!    idle.
+//! 4. The host takes each one that ended ([`SubAgents::take`]) and
+//!    lands it on the caller when the caller is idle, one landing at a
+//!    time. A landing that conflicts lands its conflicts for the caller
+//!    to resolve.
 
 use std::{
-    collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -40,9 +38,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 
 use crate::{
     Landing,
-    details::{SPAWN, WAIT},
+    details::SPAWN,
     error::VcsError,
-    run_workspace::{Pending, RunWorkspace, bookmark},
+    run_workspace::{RunWorkspace, bookmark},
     vcs::Identity,
 };
 
@@ -68,7 +66,7 @@ pub type ChildFuture = std::pin::Pin<
 
 /// Sub-agents of one caller that run at once. `spawn` past it is
 /// refused.
-pub const MAX_RUNNING: usize = 4;
+pub const MAX_RUNNING: usize = 8;
 
 /// How a sub-agent ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,12 +109,10 @@ pub struct SubAgents(Arc<Inner>);
 
 struct Inner {
     children: Mutex<Vec<Child>>,
-    /// Bumped whenever a sub-agent ends, for those waiting.
+    /// Bumped whenever a sub-agent ends, for [`SubAgents::ended`].
     changed: watch::Sender<u64>,
     /// Slots for the sub-agents running at once.
     slots: Arc<Semaphore>,
-    /// Held while a sub-agent lands, so landings go one at a time.
-    landing: tokio::sync::Mutex<()>,
     /// Where the sub-agents' events go; dropped when `None`.
     events: Option<mpsc::UnboundedSender<RunEvent>>,
     on_end: Option<OnEnd>,
@@ -125,7 +121,6 @@ struct Inner {
 struct Child {
     run: RunId,
     task: String,
-    workspace: RunWorkspace,
     control: RunControl,
     state: State,
     /// The person stopped it.
@@ -156,7 +151,6 @@ impl SubAgents {
             children: Mutex::default(),
             changed: watch::Sender::new(0),
             slots: Arc::new(Semaphore::new(MAX_RUNNING)),
-            landing: tokio::sync::Mutex::new(()),
             events,
             on_end,
         }))
@@ -297,7 +291,6 @@ impl SubAgents {
             children.push(Child {
                 run: id.clone(),
                 task,
-                workspace: workspace.clone(),
                 control: run.control(),
                 state: State::Running,
                 stopped: false,
@@ -481,49 +474,21 @@ fn spawn_parameters(models: &[String]) -> Value {
     })
 }
 
-/// The `wait` tool's arguments.
-fn wait_parameters() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "runs": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "The ids `spawn` gave. Every \
-                    sub-agent of yours that has not come back yet if \
-                    left out.",
-            },
-        },
-        "additionalProperties": false,
-    })
-}
-
 /// What `spawn` says it does.
 const SPAWN_DESCRIPTION: &str = "Start a sub-agent on a task, and go on \
-    at once. It forks this conversation, so it knows what you know and \
-    `task` can be short. It works in a chat of its own on a copy of your \
-    committed code: commit your work with `vcs_commit` first. Up to 4 \
-    run at once, each on its own part. When one finishes, its commits \
-    land on top of yours and tau tells you what it did in a message of \
-    its own, after your turn; changes that clash with yours land as \
-    conflicts for you to resolve. Call `wait` to have its result in this \
-    turn instead, when you cannot go on without it. It runs on your \
-    model and effort unless `model` or `effort` say otherwise; another \
-    model cannot reuse your prompt cache, so it reads this whole \
-    conversation at full price.";
+    at once: nothing waits for it. It forks this conversation, so it \
+    knows what you know and `task` can be short. It works in a chat of \
+    its own on a copy of your committed code: commit your work with \
+    `vcs_commit` first. Up to 8 run at once; give each its own part, so \
+    their changes clash little. Spawn every task that can start now, \
+    then end your turn: when one finishes, its commits land on top of \
+    yours and tau starts a turn of yours with what it did. Changes that \
+    clash with yours land as conflicts for you to resolve. It runs on \
+    your model and effort unless `model` or `effort` say otherwise; \
+    another model cannot reuse your prompt cache, so it reads this \
+    whole conversation at full price.";
 
-/// What `wait` says it does.
-const WAIT_DESCRIPTION: &str = "Wait for sub-agents you started with \
-    `spawn`, and land their work on yours now: each answer comes back \
-    with what landed. Only when you cannot go on without them: \
-    otherwise end your turn, and tau brings their results when they \
-    finish.";
-
-/// What a cancelled `wait` answers.
-const CANCELLED: &str = "cancelled while waiting; the sub-agents go on, \
-    and tau reports them when they finish";
-
-/// What a call to `spawn` or `wait` below the main chat answers.
+/// What a call to `spawn` below the main chat answers.
 pub const ONLY_MAIN_SPAWNS: &str = "Only the main chat starts \
     sub-agents; do this work here or ask the person to start a chat.";
 
@@ -622,7 +587,7 @@ impl AgentTool for Spawn {
         let Some(slot) = self.agents.slot() else {
             return Err(format!(
                 "{MAX_RUNNING} sub-agents are running already, the most at \
-                 once: `wait` for one, then spawn again."
+                 once: end your turn, and spawn again when tau reports one."
             )
             .into());
         };
@@ -644,223 +609,10 @@ impl AgentTool for Spawn {
             details: Some(json!({ "run": id.0.as_ref() })),
             ..ToolOutput::text(format!(
                 "Sub-agent {id} started. It works on its own: when it \
-                 finishes, its commits land on yours and tau tells you what \
-                 it did. Call `wait` with its id to have that in this turn \
-                 instead."
+                 finishes, its commits land on yours and tau starts a turn \
+                 of yours with what it did. Spawn the other tasks that can \
+                 start now, then end your turn."
             ))
-        })
-    }
-}
-
-/// Waits for the caller's sub-agents and lands their work. Build one per
-/// run, on that run's [`RunWorkspace`] and the caller's [`SubAgents`].
-pub struct Wait {
-    parent: RunWorkspace,
-    agents: SubAgents,
-    parameters: Value,
-}
-
-impl Wait {
-    pub fn new(parent: RunWorkspace, agents: SubAgents) -> Self {
-        Self {
-            parent,
-            agents,
-            parameters: wait_parameters(),
-        }
-    }
-
-    /// The sub-agents a call waits for: those it names, else every one
-    /// not taken yet.
-    fn targets(&self, args: &Value) -> Vec<RunId> {
-        match args["runs"].as_array() {
-            Some(runs) => {
-                let mut seen = HashSet::new();
-                runs.iter()
-                    .filter_map(Value::as_str)
-                    .filter(|run| seen.insert(run.to_owned()))
-                    .map(|run| RunId(run.into()))
-                    .collect()
-            }
-            None => self.agents.with(|children| {
-                children
-                    .iter()
-                    .filter(|c| !matches!(c.state, State::Taken(_)))
-                    .map(|c| c.run.clone())
-                    .collect()
-            }),
-        }
-    }
-
-    /// Lands `run`, which ended as `text` and `limit` say, on the
-    /// caller, and closes it.
-    async fn land(
-        &self,
-        run: &RunId,
-        text: &str,
-        limit: Option<LimitKind>,
-        ctx: &ToolCtx,
-    ) -> Result<(String, Value), ToolError> {
-        let workspace = self
-            .agents
-            .with(|children| {
-                children
-                    .iter()
-                    .find(|c| c.run == *run)
-                    .map(|c| c.workspace.clone())
-            })
-            .ok_or_else(|| ToolError::from(format!("no sub-agent {run}")))?;
-        let project = self.parent.project().clone();
-        let parent_bookmark = self.parent.bookmark_of(&ctx.run);
-        let child_bookmark = bookmark(run);
-        let _turn = self.agents.0.landing.lock().await;
-        // What the caller's head held in conflict before: the note names
-        // only what this landing brought.
-        let before = self.parent.vcs().working_copy().await?.head;
-        let held = before.clone();
-        let held = project.run(move |p| p.conflicts(&held)).await?;
-        let child_head = {
-            let name = child_bookmark.clone();
-            project.run(move |p| p.bookmark(&name)).await?
-        };
-        let landing = match child_head {
-            Some(child_head) => {
-                self.parent
-                    .vcs()
-                    .land(child_head, &parent_bookmark, true)
-                    .await?
-            }
-            None => Landing {
-                changes: Vec::new(),
-                conflicts: Vec::new(),
-                head: before,
-            },
-        };
-        let brought: Vec<String> = landing
-            .conflicts
-            .iter()
-            .filter(|path| !held.contains(path))
-            .cloned()
-            .collect();
-        let from = run.0.to_string();
-        self.parent
-            .queue(landing.changes.iter().rev().map(|change| Pending {
-                commit_id: change.commit_id.clone(),
-                change_id: change.change_id.clone(),
-                from: Some(from.clone()),
-            }));
-        // Landed: its workspace and bookmark go.
-        let name = workspace.name().to_owned();
-        project
-            .run(move |p| {
-                p.forget_workspace(&name)?;
-                p.remove_bookmark(&child_bookmark)?;
-                Ok::<_, VcsError>(())
-            })
-            .await?;
-        let text =
-            format!("{text}\n\n{}", landing_note(&landing, &brought, limit));
-        let details = json!({
-            "run": from,
-            "task": self.agents.task(run).unwrap_or_default(),
-            "landing": landing,
-            "conflicts": brought,
-            "limit": limit.map(limit_name),
-        });
-        Ok((text, details))
-    }
-}
-
-#[async_trait]
-impl AgentTool for Wait {
-    fn name(&self) -> &str {
-        WAIT
-    }
-
-    fn description(&self) -> &str {
-        WAIT_DESCRIPTION
-    }
-
-    fn parameters(&self) -> &Value {
-        &self.parameters
-    }
-
-    // Landings move the caller's working copy: the batch's other tools
-    // stay out of their way.
-    fn execution_mode(&self) -> ExecutionMode {
-        ExecutionMode::Grouped
-    }
-
-    async fn call(
-        &self,
-        args: Value,
-        ctx: ToolCtx,
-    ) -> Result<ToolOutput, ToolError> {
-        let mut left = self.targets(&args);
-        if left.is_empty() {
-            return Ok(ToolOutput::text(
-                "No sub-agent of yours is running or waiting to land.",
-            ));
-        }
-        let mut sections = Vec::new();
-        let mut landed = Vec::new();
-        // Those whose work could not be checked: kept for recovery.
-        let mut retained = Vec::new();
-        let mut changed = self.agents.0.changed.subscribe();
-        while !left.is_empty() {
-            // Nothing lands once the caller is cancelled: what ended
-            // stays for the host to land.
-            if ctx.cancel.is_cancelled() {
-                return Err(CANCELLED.into());
-            }
-            let mut still = Vec::new();
-            for run in left {
-                let section = match self.agents.take(&run) {
-                    Taken::Running => {
-                        still.push(run);
-                        continue;
-                    }
-                    Taken::Unknown => {
-                        format!("No sub-agent {run} of yours is known here.")
-                    }
-                    Taken::Now(Ending::Done { text, limit }) => {
-                        let (text, details) =
-                            self.land(&run, &text, limit, &ctx).await?;
-                        landed.push(details);
-                        text
-                    }
-                    Taken::Before(Ending::Done { text, .. }) => format!(
-                        "{text}\n\n[It landed already, and tau reported it.]"
-                    ),
-                    Taken::Now(ending) | Taken::Before(ending) => {
-                        if let Ending::Retained { error, workspace } = &ending {
-                            retained.push(json!({
-                                "run": run.0.as_ref(),
-                                "workspace": workspace.display().to_string(),
-                                "error": error,
-                            }));
-                        }
-                        format!("[{}.]", failure(&ending))
-                    }
-                };
-                sections.push(format!("## Sub-agent {run}\n\n{section}"));
-            }
-            left = still;
-            if left.is_empty() {
-                break;
-            }
-            tokio::select! {
-                biased;
-                _ = ctx.cancel.cancelled() => return Err(CANCELLED.into()),
-                result = changed.changed() => {
-                    if result.is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(ToolOutput {
-            details: Some(json!({ "landed": landed, "retained": retained })),
-            ..ToolOutput::text(sections.join("\n\n"))
         })
     }
 }
@@ -891,46 +643,6 @@ impl AgentTool for RefusingSpawn {
 
     fn description(&self) -> &str {
         SPAWN_DESCRIPTION
-    }
-
-    fn parameters(&self) -> &Value {
-        &self.parameters
-    }
-
-    fn execution_mode(&self) -> ExecutionMode {
-        ExecutionMode::Grouped
-    }
-
-    async fn call(
-        &self,
-        _args: Value,
-        _ctx: ToolCtx,
-    ) -> Result<ToolOutput, ToolError> {
-        Err(ONLY_MAIN_SPAWNS.into())
-    }
-}
-
-/// `wait` below the main chat, as [`RefusingSpawn`] is `spawn`.
-pub struct RefusingWait {
-    parameters: Value,
-}
-
-impl Default for RefusingWait {
-    fn default() -> Self {
-        Self {
-            parameters: wait_parameters(),
-        }
-    }
-}
-
-#[async_trait]
-impl AgentTool for RefusingWait {
-    fn name(&self) -> &str {
-        WAIT
-    }
-
-    fn description(&self) -> &str {
-        WAIT_DESCRIPTION
     }
 
     fn parameters(&self) -> &Value {

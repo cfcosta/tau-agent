@@ -1983,17 +1983,14 @@ fn a_fork_is_dropped_after_asking(cx: &mut TestAppContext) {
 
 /// A sub-agent gets a chat of its own when it starts, on the task its
 /// parent's `spawn` handed it. It stays open after it finishes, until
-/// the `wait` that lands it returns; one that fails is dropped and
-/// closes at once. A sibling from the same batch keeps its own task.
+/// main's queue lands it; one that fails is dropped and closes at
+/// once. A sibling from the same batch keeps its own task.
 /// Both stay in the sidebar under their parent, newest first, dim.
 #[gpui::test]
 fn a_sub_agent_is_a_chat_until_it_lands(cx: &mut TestAppContext) {
     use std::sync::Arc;
 
-    use tau_agent::{
-        event::RunEvent,
-        tool::{RunId, ToolOutput},
-    };
+    use tau_agent::{event::RunEvent, tool::RunId};
 
     let (workspace, mut cx, events) = open_demo(cx);
     let parent = demo::run_id();
@@ -2058,31 +2055,20 @@ fn a_sub_agent_is_a_chat_until_it_lands(cx: &mut TestAppContext) {
         );
         assert!(ws.is_closed(&sibling), "a failed sub-agent is dropped");
         assert_eq!(ws.route(), &Route::Run(child.clone()), "nothing moved");
-        ws.apply_event(&calls::start(&parent, "w1", "wait", serde_json::json!({}), None), cx);
-        ws.apply_event(
-            &RunEvent::ToolEnd {
-                run: parent.clone(),
-                call_id: "w1".into(),
-                output: Arc::new(ToolOutput {
-                    details: Some(serde_json::json!({
-                        "landed": [{
-                            "run": "sub-1",
-                            "task": "write the tests",
-                            "landing": { "changes": [], "conflicts": [], "head": "00" },
-                        }],
-                        "retained": [],
-                    })),
-                    ..ToolOutput::text("done")
+        // Main's queue lands it.
+        ws.apply(
+            tau_ui_remote::update::HostUpdate::Landed {
+                run: child.clone(),
+                landing: Ok(tau_vcs::Landing {
+                    changes: Vec::new(),
+                    conflicts: Vec::new(),
+                    head: "00".into(),
                 }),
-                is_error: false,
-                parent: None,
             },
             cx,
         );
         assert!(ws.is_closed(&child));
-        assert_eq!(ws.route(), &Route::Run(parent.clone()), "back to the parent");
-        let card = ws.run(&parent).unwrap().tool("w1").unwrap();
-        assert!(tau_vcs::ui::waited(&card.data).iter().any(|landed| landed.from == child));
+        assert!(ws.run(&parent).unwrap().items.iter().any(|item| matches!(item, Item::Landed(card) if card.from == child)));
         let card = ws.run(&parent).unwrap().tool("d1").unwrap();
         assert_eq!(tau_vcs::ui::spawned(&card.data), Some(RunId("d1".into())));
         // The host takes the closings; the sidebar keeps them listed.
@@ -3001,12 +2987,10 @@ fn a_landing_is_proposed_once_from_any_depth(cx: &mut TestAppContext) {
 }
 
 /// A sub-agent a codemode script spawns is a chat of its own on the
-/// task the script handed it, and closes once the script's `wait` lands
-/// it, as one the model spawns.
+/// task the script handed it, as one the model spawns, open until it
+/// lands.
 #[gpui::test]
-fn a_nested_spawn_opens_and_a_nested_wait_closes_its_chat(
-    cx: &mut TestAppContext,
-) {
+fn a_nested_spawn_opens_its_chat(cx: &mut TestAppContext) {
     use std::sync::Arc;
 
     use serde_json::json;
@@ -3035,125 +3019,9 @@ fn a_nested_spawn_opens_and_a_nested_wait_closes_its_chat(
         ws.apply_event(&calls::end(&parent, "s1/1", false, None, Some("s1")), cx);
         ws.apply_event(&calls::run_end(&child, Some(&parent)), cx);
         assert!(!ws.is_closed(&child), "open until it lands");
-        ws.apply_event(&calls::start(&parent, "s1/2", "wait", json!({}), Some("s1")), cx);
-        ws.apply_event(
-            &calls::end(
-                &parent,
-                "s1/2",
-                false,
-                Some(json!({ "landed": [{
-                    "run": "sub-nested",
-                    "landing": { "changes": [], "conflicts": [], "head": "00" },
-                }] })),
-                Some("s1"),
-            ),
-            cx,
-        );
-        assert!(ws.is_closed(&child), "the script's wait landed it");
     });
-    assert!(events.borrow().iter().any(|event| matches!(event,
+    assert!(!events.borrow().iter().any(|event| matches!(event,
         WorkspaceEvent::CloseRun { run } if *run == child)));
-}
-
-/// A sub-agent whose work could not be checked is kept for recovery: a
-/// `wait` that lists it as retained leaves its chat and route open,
-/// whether the `wait` is direct or nested; one that lists it as landed
-/// closes it. Exhaust the finite flags and four call depths rather than
-/// randomly sampling their combinations.
-#[gpui::test]
-fn retained_sub_agents_stay_open_at_every_call_depth(cx: &mut TestAppContext) {
-    use std::sync::Arc;
-
-    use serde_json::json;
-    use tau_agent::{event::RunEvent, tool::RunId};
-
-    for depth in 0..4 {
-        for retained in [false, true] {
-            let (workspace, mut window, events) = open_demo(cx);
-            let parent = demo::run_id();
-            let child = RunId(format!("retained-{depth}-{retained}").into());
-            workspace.update(&mut window, |ws, cx| {
-                ws.apply_event(
-                    &calls::start(
-                        &parent,
-                        "sp",
-                        "spawn",
-                        json!({"task": "keep my work"}),
-                        None,
-                    ),
-                    cx,
-                );
-                ws.apply_event(
-                    &RunEvent::RunStart {
-                        run: child.clone(),
-                        parent: Some(parent.clone()),
-                        agent: Arc::from("coder"),
-                        call: Some("sp".into()),
-                    },
-                    cx,
-                );
-                ws.apply_event(
-                    &calls::end(&parent, "sp", false, None, None),
-                    cx,
-                );
-                ws.apply_event(&calls::run_end(&child, Some(&parent)), cx);
-                let mut previous = None;
-                for index in 0..=depth {
-                    let id = format!("retain{}", "/1".repeat(index));
-                    let tool = if index == depth { "wait" } else { "codemode" };
-                    ws.apply_event(
-                        &calls::start(
-                            &parent,
-                            &id,
-                            tool,
-                            json!({}),
-                            previous.as_deref(),
-                        ),
-                        cx,
-                    );
-                    previous = Some(id);
-                }
-                let call = previous.unwrap();
-                ws.navigate(Route::Run(child.clone()), cx);
-                let enclosing = (depth > 0)
-                    .then(|| format!("retain{}", "/1".repeat(depth - 1)));
-                let entry = json!({
-                    "run": child.0.as_ref(),
-                    "workspace": "/kept",
-                    "landing": { "changes": [], "conflicts": [], "head": "00" },
-                });
-                let details = if retained {
-                    json!({ "landed": [], "retained": [entry] })
-                } else {
-                    json!({ "landed": [entry], "retained": [] })
-                };
-                ws.apply_event(
-                    &calls::end(
-                        &parent,
-                        &call,
-                        false,
-                        Some(details),
-                        enclosing.as_deref(),
-                    ),
-                    cx,
-                );
-                assert_eq!(ws.is_closed(&child), !retained);
-                assert_eq!(
-                    ws.route(),
-                    &Route::Run(if retained {
-                        child.clone()
-                    } else {
-                        parent.clone()
-                    })
-                );
-            });
-            assert_eq!(
-                events.borrow().iter().any(|event| matches!(event,
-                WorkspaceEvent::CloseRun { run } if *run == child)),
-                !retained
-            );
-        }
-    }
 }
 
 /// Every screen the demo opens by name opens on the demo, with its host
