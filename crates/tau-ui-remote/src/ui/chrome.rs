@@ -727,6 +727,7 @@ fn repo_menu(
     let entry = |id: &'static str, glyph: Icon, label: String, color| {
         div()
             .id(id)
+            .debug_selector(|| id.to_owned())
             .flex()
             .items_center()
             .gap(sp(2.5))
@@ -808,6 +809,7 @@ fn repo_menu(
                 cx.listener(move |ws, _, _, cx| ws.remove_repo(&remove, cx)),
             ),
         )
+        .occlude()
         .on_mouse_down_out(cx.listener(|ws, _, _, cx| ws.close_repo_menu(cx)));
     deferred(
         anchored()

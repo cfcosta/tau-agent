@@ -629,3 +629,35 @@ fn a_row_says_where_its_run_stands_and_how_much() {
     sub.ending = None;
     assert_eq!(icon(&Attention::Idle, &sub, false, 0), Icon::SubAgent);
 }
+
+/// A repository menu's entry does what it says, not what the row drawn
+/// under the menu does.
+#[gpui::test]
+fn the_repo_menu_opens_memory(cx: &mut TestAppContext) {
+    use gpui::{Modifiers, size};
+    use tau_ui_remote::route::Route;
+
+    cx.update(tau_ui_remote::init);
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("tau", runs(), catalog(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.simulate_resize(size(gpui::px(1200.), gpui::px(800.)));
+    workspace.update(&mut cx, |ws, cx| ws.toggle_repo_menu(REPO, cx));
+    cx.run_until_parked();
+    let entry = cx.debug_bounds("menu-memory").expect("the menu is drawn");
+    cx.simulate_click(entry.center(), Modifiers::none());
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, _| {
+        assert!(
+            matches!(
+                ws.route(),
+                Route::Plugin { plugin, page, .. }
+                    if plugin == tau_memory::NAME && page == "notes"
+            ),
+            "the menu opened {:?}",
+            ws.route(),
+        );
+    });
+}
