@@ -1453,6 +1453,68 @@ fn a_message_for_a_sub_agent_that_ended_goes_to_main() {
     child_llm.assert_exhausted();
 }
 
+/// A sub-agent nobody waits for that changes no files still lands: its
+/// answer reaches main, with a note that it changed nothing, and it
+/// closes like one that brought changes.
+#[test]
+fn a_sub_agent_that_changes_nothing_is_reported_with_its_answer() {
+    changes_nothing_and_is_reported(false);
+}
+
+/// The same with no bookmark left to name its head, as when no turn of
+/// it ended with a snapshot: it lands from its working copy.
+#[test]
+fn a_sub_agent_without_a_bookmark_is_reported_with_its_answer() {
+    changes_nothing_and_is_reported(true);
+}
+
+fn changes_nothing_and_is_reported(without_bookmark: bool) {
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "spawn",
+                serde_json::json!({ "task": "what does README.md say?" }),
+            )
+        })
+        .turn(|t| t.text("it reads README.md"))
+        // tau's turn with the report.
+        .turn(|t| t.text("README.md says hello"));
+    let child_llm =
+        ScriptedModel::new().turn(|t| t.text("README.md says hello"));
+    let (host, mut events, main, child, dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    if without_bookmark {
+        tau_vcs_host::ProjectRepo::open(
+            dirs[1].path().join("p"),
+            Identity::default(),
+        )
+        .unwrap()
+        .remove_bookmark(&tau_vcs_host::run_workspace::bookmark(&child))
+        .unwrap();
+    }
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert_eq!(report.landed.len(), 1, "{report:?}");
+    assert!(report.landed[0].1.changes.is_empty(), "{report:?}");
+    assert!(matches!(
+        host.block_on(host.ending_of(&child)).unwrap(),
+        Some(tau_ui_remote::view::Ending::Landed { .. })
+    ));
+    let prompt = report.resolve.expect("tau's turn reports it");
+    assert!(prompt.contains("README.md says hello"), "{prompt}");
+    assert!(prompt.contains("[It changed no files.]"), "{prompt}");
+    host.block_on(host.start_resolving(&main, &prompt)).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);
+    assert!(asked.contains("[It changed no files.]"), "{asked}");
+    main_llm.assert_exhausted();
+    child_llm.assert_exhausted();
+}
+
 #[test]
 fn a_failed_sub_agent_comes_back_from_history() {
     let src = tempfile::tempdir().unwrap();

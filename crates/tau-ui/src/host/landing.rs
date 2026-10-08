@@ -631,13 +631,14 @@ impl Host {
                  is retained. Commit or recover its work before landing."
             );
         }
+        // A child that never committed and ended no turn with a snapshot
+        // has no bookmark: its working copy's parent is its newest
+        // commit, and it lands with nothing in it, as `wait` lands it.
         let child_bookmark = bookmark(child);
         let child_head = project
             .run(move |project| project.bookmark(&child_bookmark))
             .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!("{} has no changes to land", child.0)
-            })?;
+            .unwrap_or(copy.head);
         let parent_vcs = if parent_busy || !writes {
             tau_vcs_host::Vcs::open(
                 project.workspace_dir(&parent_workspace),
