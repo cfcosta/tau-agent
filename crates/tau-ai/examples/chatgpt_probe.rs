@@ -10,6 +10,7 @@
 //! cargo run -p tau-ai --example chatgpt_probe -- http-tools  [--model M]
 //! cargo run -p tau-ai --example chatgpt_probe -- ws          [--model M]
 //! cargo run -p tau-ai --example chatgpt_probe -- ws-tools    [--model M]
+//! cargo run -p tau-ai --example chatgpt_probe -- decisions   [--model M] [--path P]
 //! cargo run -p tau-ai --example chatgpt_probe -- refresh
 //! cargo run -p tau-ai --example chatgpt_probe -- sign-out
 //! ```
@@ -103,12 +104,13 @@ async fn main() -> Result<(), Error> {
         "http-tools" => http_probe(&chatgpt, &args, true).await,
         "ws" => ws_probe(&chatgpt, &args, false).await,
         "ws-tools" => ws_probe(&chatgpt, &args, true).await,
+        "decisions" => decisions(&chatgpt, &args).await,
         "refresh" => refresh(&chatgpt, &account(&chatgpt, &args)?).await,
         "sign-out" => sign_out(&chatgpt, &account(&chatgpt, &args)?).await,
         _ => {
             println!(
                 "commands: sign-in, accounts, models, http, http-tools, ws, \
-                 ws-tools, refresh, sign-out"
+                 ws-tools, decisions, refresh, sign-out"
             );
             Ok(())
         }
@@ -620,6 +622,46 @@ where
             _ => {}
         }
     }
+}
+
+/// One non-streaming `POST /v1/decisions` with a predicate, a choice
+/// and a score, on the plan route.
+async fn decisions(chatgpt: &ChatGpt, args: &Args) -> Result<(), Error> {
+    let account = account(chatgpt, args)?;
+    let model = args.value("model").unwrap_or("gpt-6-luna");
+    let path = args.value("path").unwrap_or("decisions");
+    let body = json!({
+        "model": model,
+        "input": "cargo build failed: error[E0432]: unresolved import `foo`",
+        "questions": [
+            {"type": "predicate", "name": "failed",
+             "instructions": "Did the command fail?"},
+            {"type": "choice", "name": "kind",
+             "instructions": "What kind of output is this?",
+             "choices": [
+                 {"value": "build", "description": "compiler output"},
+                 {"value": "test", "description": "test runner output"}]},
+            {"type": "score", "name": "severity",
+             "instructions": "How severe is it?",
+             "levels": [
+                 {"label": "low", "description": "harmless"},
+                 {"label": "high", "description": "blocks work"}]}
+        ]
+    });
+    println!("request: {body}");
+    let token = chatgpt.inference_token(&account).await?;
+    let url = chatgpt.config().api_base.join(path)?;
+    println!("url: {url}");
+    let request = Request::post_json(url, &body).bearer(&token);
+    let mut response = http::open(&Tls, &request).await?;
+    println!("HTTP {}", response.status);
+    println!("request id: {}", response.request_id().unwrap_or("-"));
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        bytes.extend_from_slice(&chunk);
+    }
+    println!("body: {}", String::from_utf8_lossy(&bytes));
+    Ok(())
 }
 
 async fn refresh(chatgpt: &ChatGpt, account: &AccountId) -> Result<(), Error> {
