@@ -108,6 +108,24 @@ pub(crate) async fn wait(cancel: &CancellationToken, delay: Duration) -> bool {
     }
 }
 
+/// What a response cut short by a steering message leaves: what had
+/// finished in it, or an empty message that stops. Dropping the stream
+/// stops it; the next request goes in full.
+fn cut(reading: Reading, model: &str, timestamp: Timestamp) -> AssistantMessage {
+    reading
+        .accumulator
+        .cut()
+        .unwrap_or_else(|| AssistantMessage {
+            content: Vec::new(),
+            model: model.to_owned(),
+            response_id: None,
+            usage: Usage::default(),
+            stop_reason: MessageStop::Stop,
+            error_message: None,
+            timestamp,
+        })
+}
+
 /// Ends a partial message with an error of `reason`.
 pub(super) fn finish(
     mut accumulator: Accumulator,
@@ -183,7 +201,21 @@ impl Runner {
         let model = self.session.settings().model.clone();
         let mut reading = Reading::new(stream);
         let mut call_id = String::new();
-        while let Some(event) = reading.next(&self.cancel).await {
+        loop {
+            // A steering message cuts the response short: the person
+            // should not wait for the rest of an answer they moved on
+            // from (Codex's instant interrupt).
+            let event = tokio::select! {
+                biased;
+                event = reading.next(&self.cancel) => event,
+                Some(text) = self.steering.recv() => {
+                    self.preempted = Some(text);
+                    return (cut(reading, &model, timestamp), Class::Fatal);
+                }
+            };
+            let Some(event) = event else {
+                break;
+            };
             match event {
                 AssistantEvent::TextDelta { delta, .. } => {
                     self.emit(RunEvent::TextDelta {

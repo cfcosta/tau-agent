@@ -666,6 +666,87 @@ fn steering_lands_after_the_batch() {
     });
 }
 
+/// A steered message cuts a response short while it streams (Codex's
+/// instant interrupt): the tool call that finished in it runs, the text
+/// streamed so far stays, and the next request carries the message,
+/// without waiting for the rest.
+#[test]
+fn steering_cuts_a_streaming_response_short() {
+    let long = "Now I will write a very long answer about everything";
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("probe", json!({"ms": 1}))
+                .text(long)
+                .stall(Duration::from_secs(600))
+        })
+        .turn(|t| t.text("heard you"));
+    block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone()).tool(Probe::new(
+            "probe",
+            ExecutionMode::Parallel,
+            log.clone(),
+        ));
+        let run = agent.start("go", &store);
+        let id = run.id();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        run.steer("stop, do this instead");
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.text, "heard you");
+        assert_eq!(log.lock().unwrap().len(), 1, "the finished call ran");
+        let transcript = stored(&store, &id.0).await;
+        let kinds: Vec<&str> = transcript.iter().map(|m| m.role()).collect();
+        assert_eq!(
+            kinds,
+            ["user", "assistant", "toolResult", "user", "assistant"]
+        );
+        let Message::Assistant(cut) = &transcript[1] else {
+            panic!("{transcript:?}")
+        };
+        let [AssistantBlock::ToolCall(_), AssistantBlock::Text(text)] =
+            cut.content.as_slice()
+        else {
+            panic!("{cut:?}")
+        };
+        // Cut, not waited out: the text as far as it had streamed.
+        assert!(
+            !text.text.is_empty()
+                && text.text.len() < long.len()
+                && long.starts_with(&text.text),
+            "the text so far: {:?}",
+            text.text
+        );
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].transcript.len(), 4, "the steered message");
+    });
+}
+
+/// A response cut short before anything in it finished leaves nothing:
+/// its half-streamed reasoning cannot go back to the model.
+#[test]
+fn a_response_cut_before_anything_finished_leaves_nothing() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.thinking("weighing the options at length")
+                .stall(Duration::from_secs(600))
+        })
+        .turn(|t| t.text("heard you"));
+    block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let run = Agent::new(llm.clone()).start("go", &store);
+        let id = run.id();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        run.steer("never mind");
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.text, "heard you");
+        let transcript = stored(&store, &id.0).await;
+        let kinds: Vec<&str> = transcript.iter().map(|m| m.role()).collect();
+        assert_eq!(kinds, ["user", "user", "assistant"]);
+    });
+}
+
 /// A `RunControl` steers and cancels while another task reads events.
 #[test]
 fn control_steers_and_cancels_while_events_are_read() {

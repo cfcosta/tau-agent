@@ -5,7 +5,10 @@
 //!    its deltas; on an error or cancel, store it and end the run; fail
 //!    tool calls cut off by a `length` stop, or run them; store the turn in
 //!    one write; check cancellation and limits; emit `TurnEnd`; take one
-//!    steering message; loop while there were tool calls or steering.
+//!    steering message; loop while there were tool calls or steering. A
+//!    steering message that comes while the response streams cuts it
+//!    short: what finished in it is kept and its tool calls run, and the
+//!    message is the one the turn's end takes.
 //! 3. Emit `RunEnd` and record the run's outcome.
 //!
 //! Tool calls are prepared one at a time in source order (`ToolStart`,
@@ -172,6 +175,9 @@ pub(crate) struct Runner {
     /// Turns the run took before this start: a resumed run keeps
     /// counting. Limits apply to the turns of this start alone.
     pub turns_before: u32,
+    /// The steering message that cut the response being streamed short:
+    /// it is the next one the run reads.
+    pub preempted: Option<String>,
 }
 
 /// How a run ended.
@@ -298,7 +304,12 @@ impl Runner {
                 self.execute(&calls, &transcript, &message).await
             };
 
-            let mut new = vec![Message::Assistant(message.clone())];
+            // A response cut short before anything in it finished leaves
+            // nothing to keep.
+            let mut new = Vec::new();
+            if self.preempted.is_none() || !message.content.is_empty() {
+                new.push(Message::Assistant(message.clone()));
+            }
             new.extend(results.into_iter().map(Message::ToolResult));
             self.persist_turn(&new, &message.usage).await?;
             transcript.extend(new);
@@ -325,8 +336,12 @@ impl Runner {
                 break stop;
             }
 
-            // One steering message per drain, after the tool batch.
-            let steered = self.steering.try_recv().ok();
+            // One steering message per drain, after the tool batch: the
+            // one that cut the response short first.
+            let steered = self
+                .preempted
+                .take()
+                .or_else(|| self.steering.try_recv().ok());
             if let Some(text) = &steered {
                 self.emit(RunEvent::Steered {
                     run: self.run.clone(),

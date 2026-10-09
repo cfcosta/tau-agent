@@ -51,6 +51,8 @@
 //!   `tokio::time::sleep`, before its first event. Under
 //!   [`crate::block_on`]'s paused clock this costs no real time, so a test
 //!   can assert on cancellation and timing without waiting.
+//!   [`TurnBuilder::stall`] sleeps mid-way through a block instead, so a
+//!   test can act while the response streams.
 
 use std::{
     collections::VecDeque,
@@ -130,6 +132,14 @@ struct StaticTurn {
     /// How a failed turn classifies for retries.
     class: Class,
     delay: Option<Duration>,
+    stall: Option<Stall>,
+}
+
+/// A sleep mid-way through block `block`: after its first delta.
+#[derive(Clone, Copy)]
+struct Stall {
+    block: usize,
+    for_: Duration,
 }
 
 #[derive(Default)]
@@ -260,6 +270,7 @@ struct ResolvedTurn {
     cost: f64,
     class: Class,
     delay: Option<Duration>,
+    stall: Option<Stall>,
 }
 
 impl ScriptedSession {
@@ -273,6 +284,7 @@ impl ScriptedSession {
                 cost: 0.0,
                 class: Class::Fatal,
                 delay: None,
+                stall: None,
             },
             Some(Turn::Dynamic(factory)) => {
                 let response = factory(transcript);
@@ -284,6 +296,7 @@ impl ScriptedSession {
                     cost: response.usage.cost.total,
                     class: Class::Fatal,
                     delay: None,
+                    stall: None,
                 }
             }
             Some(Turn::Static(turn)) => ResolvedTurn {
@@ -294,6 +307,7 @@ impl ScriptedSession {
                 cost: turn.cost,
                 class: turn.class,
                 delay: turn.delay,
+                stall: turn.stall,
             },
         }
     }
@@ -345,7 +359,7 @@ impl ScriptedSession {
         transcript_text: &str,
         timestamp: Timestamp,
         response_id: String,
-    ) -> (Vec<AssistantEvent>, Option<Duration>) {
+    ) -> (Vec<AssistantEvent>, Option<Duration>, Option<(usize, Duration)>) {
         let ResolvedTurn {
             blocks,
             stop,
@@ -354,7 +368,11 @@ impl ScriptedSession {
             cost,
             class,
             delay,
+            stall,
         } = resolved;
+        // Where the stall goes: the position, among the events, of the
+        // event after the stalled block's first delta.
+        let mut pause = None;
         let content_text = assistant_content_text(&blocks);
         let mut usage = self.make_usage(transcript_text, &content_text, usage);
         usage.cost = UsageCost {
@@ -369,6 +387,10 @@ impl ScriptedSession {
             timestamp,
         }];
         for (index, block) in blocks.into_iter().enumerate() {
+            // The block's first delta is two events on: its start's next.
+            if let Some(stall) = stall.filter(|stall| stall.block == index) {
+                pause = Some((events.len() + 2, stall.for_));
+            }
             match block {
                 AssistantBlock::Text(TextContent { text, .. }) => {
                     events.push(AssistantEvent::TextStart { index });
@@ -451,7 +473,7 @@ impl ScriptedSession {
                 });
             }
         }
-        (events, delay)
+        (events, delay, pause)
     }
 }
 
@@ -479,13 +501,13 @@ impl LlmSession for ScriptedSession {
         let response_id = self.model.next_response_id();
         let transcript_text = serialize_transcript(transcript);
         let resolved = self.resolve(transcript);
-        let (events, delay) = self.materialize(
+        let (events, delay, pause) = self.materialize(
             resolved,
             &transcript_text,
             timestamp,
             response_id,
         );
-        to_stream(events, delay)
+        to_stream(events, delay, pause)
     }
 
     fn warm_up(
@@ -498,19 +520,26 @@ impl LlmSession for ScriptedSession {
 }
 
 /// Turns `events` into a stream, sleeping once for `delay` (if any) before
-/// the first event. Dropping the stream at any point is safe: it holds no
-/// lock and no other resource across an `.await`.
+/// the first event, and once for `pause` (if any) before the event at its
+/// position. Dropping the stream at any point is safe: it holds no lock
+/// and no other resource across an `.await`.
 fn to_stream(
     events: Vec<AssistantEvent>,
     delay: Option<Duration>,
+    pause: Option<(usize, Duration)>,
 ) -> EventStream {
     stream::unfold(
-        (events.into_iter(), delay),
-        |(mut events, mut delay)| async move {
+        (events.into_iter().enumerate(), delay, pause),
+        |(mut events, mut delay, pause)| async move {
             if let Some(delay) = delay.take() {
                 tokio::time::sleep(delay).await;
             }
-            events.next().map(|event| (event, (events, delay)))
+            let (at, event) = events.next()?;
+            if let Some((_, sleep)) = pause.filter(|(position, _)| *position == at)
+            {
+                tokio::time::sleep(sleep).await;
+            }
+            Some((event, (events, delay, pause)))
         },
     )
     .boxed()
@@ -622,6 +651,7 @@ pub struct TurnBuilder {
     usage: Option<(u64, u64)>,
     cost: f64,
     delay: Option<Duration>,
+    stall: Option<Stall>,
     special: Option<Special>,
     tool_call_ids: Arc<AtomicU64>,
 }
@@ -640,6 +670,7 @@ impl TurnBuilder {
             usage: None,
             cost: 0.0,
             delay: None,
+            stall: None,
             special: None,
             tool_call_ids,
         }
@@ -719,6 +750,22 @@ impl TurnBuilder {
         self
     }
 
+    /// Sleeps for `duration` mid-way through the last block added: after
+    /// its first delta, before the rest. A block whose text splits into
+    /// one delta stalls before its end.
+    pub fn stall(mut self, duration: Duration) -> Self {
+        let block = self
+            .blocks
+            .len()
+            .checked_sub(1)
+            .expect("ScriptedModel: stall needs a block to stall in");
+        self.stall = Some(Stall {
+            block,
+            for_: duration,
+        });
+        self
+    }
+
     /// Scripts a failed response: `Start`, then `Error` with message
     /// `"{code}: {message}"`, classified for retries by `code` as
     /// `tau_ai::retry::classify` does. Any content already added is
@@ -762,6 +809,7 @@ impl TurnBuilder {
         let usage = self.usage;
         let cost = self.cost;
         let delay = self.delay;
+        let stall = self.stall;
         match self.special {
             Some(Special::Error(message, class)) => StaticTurn {
                 blocks: Vec::new(),
@@ -771,6 +819,7 @@ impl TurnBuilder {
                 cost,
                 class,
                 delay,
+                stall,
             },
             Some(Special::Dropped) => StaticTurn {
                 blocks: Vec::new(),
@@ -780,6 +829,7 @@ impl TurnBuilder {
                 cost,
                 class: Class::Fatal,
                 delay,
+                stall,
             },
             Some(Special::FailsBeforeStart) => StaticTurn {
                 blocks: Vec::new(),
@@ -789,6 +839,7 @@ impl TurnBuilder {
                 cost,
                 class: Class::Retryable,
                 delay,
+                stall,
             },
             None => {
                 let has_tool_call = self
@@ -808,6 +859,7 @@ impl TurnBuilder {
                     cost,
                     class: Class::Fatal,
                     delay,
+                    stall,
                 }
             }
         }

@@ -120,6 +120,19 @@ the current tool batch, or at once if no batch is running. The message
 is appended before the next request. pi's default is one message per
 drain, and tau-agent keeps that default.
 
+A message that comes while a response streams cuts it short, as Codex's
+instant interrupt does (`codex-rs/core/src/session/turn.rs`,
+`run_sampling_request`): the person should not wait for the rest of an
+answer they moved on from. What finished in the response is kept: its
+reasoning, text and tool calls that ended, and the text of an open text
+block as far as it streamed. An open reasoning block or tool call is
+dropped, since it cannot go back to the model. The kept tool calls run,
+then the message is the one the drain takes. A response cut before
+anything in it finished is not stored. Every steer cuts: all of them
+come from the person (a message, one forwarded to main, a goal); tau's
+reports to main start turns instead. How the provider stops the cut
+response is the provider's: see `openai-websocket.md`, "Cancel".
+
 ## Cancellation
 
 - Each run owns a `CancellationToken`. Children created through

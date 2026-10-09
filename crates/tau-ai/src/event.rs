@@ -177,6 +177,45 @@ impl Accumulator {
         self.finished
     }
 
+    /// What a response cut off mid-stream leaves to keep: its finished
+    /// blocks, and the text of an open text block as streamed. An open
+    /// thinking block (its reasoning comes at its end) or tool call (its
+    /// arguments are partial) is dropped. It stops for its tool calls if
+    /// it has any, and has no response id: nothing continues from a
+    /// response that did not end. `None` when nothing is left.
+    pub fn cut(self) -> Option<AssistantMessage> {
+        let mut message = self.message?;
+        match self.open {
+            Some(OpenBlock::Thinking(index) | OpenBlock::ToolCall(index)) => {
+                message.content.truncate(index);
+            }
+            Some(OpenBlock::Text(index)) => {
+                if let Some(AssistantBlock::Text(text)) =
+                    message.content.get(index)
+                    && text.text.is_empty()
+                {
+                    message.content.truncate(index);
+                }
+            }
+            None => {}
+        }
+        if message.content.is_empty() {
+            return None;
+        }
+        message.stop_reason = if message
+            .content
+            .iter()
+            .any(|block| matches!(block, AssistantBlock::ToolCall(_)))
+        {
+            StopReason::ToolUse
+        } else {
+            StopReason::Stop
+        };
+        message.response_id = None;
+        message.error_message = None;
+        Some(message)
+    }
+
     /// The final message, once a terminal event has been applied.
     pub fn finish(self) -> Result<AssistantMessage, GrammarError> {
         match self.message {

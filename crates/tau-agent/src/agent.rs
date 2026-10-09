@@ -1025,6 +1025,7 @@ async fn run_task(
         retry: agent.0.retry,
         warmup: agent.0.warmup,
         turns_before,
+        preempted: None,
     }
     .run(first)
     .await?;
@@ -1215,8 +1216,9 @@ impl Run {
         })
     }
 
-    /// Queues a user message for the run. It is added after the current
-    /// tool batch.
+    /// Queues a user message for the run. A response being streamed is
+    /// cut short for it (what had finished is kept, and its tool calls
+    /// run); otherwise it is added after the current tool batch.
     pub fn steer(&self, message: impl Into<String>) {
         let _ = self.steer.send(message.into());
     }
