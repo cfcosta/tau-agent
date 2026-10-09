@@ -219,7 +219,47 @@ Events that force a full resend:
 | `websocket_connection_limit_reached`         | Reconnect, then resend in full.                                                                                                             |
 | Connection lost before any event was emitted | Reconnect, then resend in full. This counts as one retry attempt.                                                                           |
 | Connection lost mid-stream                   | Emit an `error` event with `stopReason = error`. The agent's retry policy decides what happens next.                                        |
-| Cancel                                       | Close the connection, which stops the response there: the server answers a connection's requests in order, so the next one would wait for its tail. The lane takes another connection when it next sends, in full. |
+| Cancel, Lite, response id known              | Send `response.interrupt`; the server stops the response within milliseconds (`response.incomplete`, reason `interrupted`). The lane keeps the connection and its cache; the driver skips the stopped response's tail. See "Responses Lite". |
+| Cancel, otherwise, or the interrupt refused  | Close the connection, which stops the response there: the server answers a connection's requests in order, so the next one would wait for its tail. The lane takes another connection when it next sends, in full. |
+
+## Responses Lite
+
+Codex sends its newer models' requests as Responses Lite
+(`use_responses_lite` in `codex-rs/models-manager/models.json`), and on
+those it stops a response the person steered past with
+`response.interrupt` (its instant interrupt,
+`codex-rs/core/src/session/turn.rs`). tau does the same for the plan
+families from 5.6 on (`tau_ai::model::is_lite`: gpt-6-astra,
+gpt-6.1-sol, gpt-6-sol, gpt-6-luna, gpt-5.6-sol/terra/luna; not
+gpt-5.5).
+
+- **The request.** Three fields make it Lite; the server refuses the
+  marker alone: `client_metadata` with
+  `ws_request_header_x_openai_internal_codex_responses_lite: "true"`,
+  `reasoning.context: "all_turns"`, and `parallel_tool_calls: false`.
+  Codex also moves its instructions and tools into the input (a
+  developer message, and an `additional_tools` item with a `functions`
+  namespace); the server takes tau's `instructions` and top-level
+  `tools` as they are, so tau keeps them. Function calls come back and
+  go back as on a plain request, with no `namespace`.
+- **The interrupt.**
+  `{"type":"response.interrupt","response_id":…,"mode":"discard_partial_items"}`
+  on the response's connection. A gpt-6 model answers
+  `response.interrupt.accepted` within about 20 ms, then
+  `response.output_item.interrupted`, then `response.incomplete` with
+  `incomplete_details.reason: "interrupted"` within about 70 ms. That
+  response keeps its finished items and reports its usage, and a
+  continuation from it works. A gpt-5.6 model takes Lite requests but
+  answers `response.interrupt.failed` (`interrupt_not_supported`) and
+  streams to the end: tau then closes the connection, as without Lite.
+  A plain request's interrupt fails the same way.
+
+Measured on a ChatGPT plan, 2026-10-09, with raw-WebSocket probes. The
+`steer` command of `crates/tau-ai/examples/chatgpt_probe.rs` runs tau's
+own client through a cut: on gpt-6.1-sol the next answer began 1.6 s
+after the cut on the same connection; on gpt-5.6-sol and gpt-5.5 it
+began 2.1 to 2.5 s after, on a second connection. Before, it waited for
+the cut answer to finish, about 14 s for a long one.
 
 ## Retries are invisible to the caller
 

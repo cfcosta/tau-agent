@@ -83,6 +83,19 @@ pub enum Reply {
     /// answering other requests, so responses overlap as they do on a
     /// real connection. The request counts as in flight until then.
     Delay(Duration, Box<Reply>),
+    /// Sends the first `after` of `frames`, then waits for a
+    /// `response.interrupt` of `response_id`, as a Responses Lite
+    /// response streams on. If `accept`, the server stops it, as gpt-6
+    /// models do: `response.interrupt.accepted`, then `response.incomplete`
+    /// with reason `interrupted`, and the connection goes on. Otherwise it
+    /// refuses, as gpt-5.6 does: `response.interrupt.failed`, and the rest
+    /// never comes, until the client closes the connection.
+    Interruptible {
+        frames: Vec<Value>,
+        after: usize,
+        response_id: String,
+        accept: bool,
+    },
 }
 
 impl Reply {
@@ -191,6 +204,9 @@ struct State {
     /// Whether completed responses report the prompt cache in their
     /// usage.
     report_cache: bool,
+    /// Every `response.interrupt` received, as `(connection, response
+    /// id)`.
+    interrupts: Vec<(u32, String)>,
 }
 
 /// A fake OpenAI endpoint. Clones share state.
@@ -355,6 +371,12 @@ impl FakeOpenAi {
         self.state().violations.clone()
     }
 
+    /// Every `response.interrupt` received so far, as `(connection,
+    /// response id)`.
+    pub fn interrupts(&self) -> Vec<(u32, String)> {
+        self.state().interrupts.clone()
+    }
+
     /// Connections accepted so far.
     pub fn connections(&self) -> u32 {
         self.state().connections
@@ -387,7 +409,7 @@ impl FakeOpenAi {
                             cached: p.cached,
                             report: self.state().report_cache,
                         };
-                        if !answer(&mut socket, &mut held, &mut seen, p.reply, served).await {
+                        if !answer(self, connection, &mut socket, &mut held, &mut seen, p.reply, served).await {
                             return;
                         }
                     }
@@ -476,8 +498,16 @@ impl FakeOpenAi {
                         cached: cached_tokens,
                         report: self.state().report_cache,
                     };
-                    if !answer(&mut socket, &mut held, &mut seen, reply, served)
-                        .await
+                    if !answer(
+                        self,
+                        connection,
+                        &mut socket,
+                        &mut held,
+                        &mut seen,
+                        reply,
+                        served,
+                    )
+                    .await
                     {
                         return;
                     }
@@ -608,6 +638,8 @@ fn with_cache_usage(mut frame: Value, served: &Served) -> Value {
 /// Sends `reply` to the request `served`. Returns false once the
 /// connection is done.
 async fn answer<S: AsyncRead + AsyncWrite + Unpin>(
+    fake: &FakeOpenAi,
+    connection: u32,
     socket: &mut WebSocketStream<S>,
     held: &mut HashMap<String, Vec<Value>>,
     seen: &mut Vec<Prompt>,
@@ -659,7 +691,83 @@ async fn answer<S: AsyncRead + AsyncWrite + Unpin>(
         }
         Some(Reply::Delay(_, reply)) => {
             // A delay inside a delay: the outer one already waited.
-            Box::pin(answer(socket, held, seen, Some(*reply), served)).await
+            Box::pin(answer(
+                fake,
+                connection,
+                socket,
+                held,
+                seen,
+                Some(*reply),
+                served,
+            ))
+            .await
+        }
+        Some(Reply::Interruptible {
+            frames,
+            after,
+            response_id,
+            accept,
+        }) => {
+            for frame in frames.into_iter().take(after) {
+                if send(socket, frame).await.is_err() {
+                    return false;
+                }
+            }
+            // The response streams on until the client interrupts it.
+            loop {
+                let Some(Ok(Message::Text(text))) = socket.next().await else {
+                    return false;
+                };
+                let Ok(frame) = serde_json::from_str::<Value>(&text) else {
+                    continue;
+                };
+                if frame["type"] == "response.interrupt"
+                    && frame["response_id"] == response_id.as_str()
+                {
+                    fake.state()
+                        .interrupts
+                        .push((connection, response_id.clone()));
+                    break;
+                }
+                fake.state().violations.push(format!(
+                    "connection {connection}: {} before the interrupt of {response_id}",
+                    frame["type"]
+                ));
+            }
+            if !accept {
+                let failed = json!({
+                    "type": "response.interrupt.failed",
+                    "response_id": response_id,
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "interrupt_not_supported",
+                        "message": "This model does not support response.interrupt.",
+                        "param": "response_id",
+                    },
+                });
+                if send(socket, failed).await.is_err() {
+                    return false;
+                }
+                // The rest of a long answer: it never ends here.
+                while let Some(Ok(_)) = socket.next().await {}
+                return false;
+            }
+            let stopped = [
+                json!({"type": "response.interrupt.accepted", "response_id": response_id, "response": null}),
+                json!({"type": "response.incomplete", "response": {
+                    "id": response_id,
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "interrupted"},
+                    "output": [],
+                    "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                }}),
+            ];
+            for frame in stopped {
+                if send(socket, frame).await.is_err() {
+                    return false;
+                }
+            }
+            true
         }
         Some(Reply::Evict) | None => {
             // Out of script: fail loudly in the test's assertions rather

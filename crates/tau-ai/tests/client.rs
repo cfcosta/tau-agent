@@ -521,14 +521,22 @@ fn session_reasoning_history_follows_effective_wire_fields(tc: TestCase) {
                 transitions[turn - 1]
             };
             let wire_effort = effective_reasoning.then_some(effort).flatten();
-            let expected_reasoning = wire_effort.map(|effort| {
+            let mut expected_reasoning = serde_json::Map::new();
+            if let Some(effort) = wire_effort {
                 let label = match effort {
                     ReasoningEffort::Low => "low",
                     ReasoningEffort::High => "high",
                     _ => unreachable!("history uses only low and high"),
                 };
-                json!({"effort": label, "summary": "auto"})
-            });
+                expected_reasoning.insert("effort".into(), json!(label));
+                expected_reasoning.insert("summary".into(), json!("auto"));
+            }
+            // A Lite model reasons over all turns, whatever the effort.
+            if tau_ai::model::is_lite(model) {
+                expected_reasoning.insert("context".into(), json!("all_turns"));
+            }
+            let expected_reasoning = (!expected_reasoning.is_empty())
+                .then_some(serde_json::Value::Object(expected_reasoning));
             let expected_include = effective_reasoning
                 .then(|| json!(["reasoning.encrypted_content"]));
             assert_eq!(

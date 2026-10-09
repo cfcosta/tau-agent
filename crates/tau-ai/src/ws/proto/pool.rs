@@ -56,7 +56,9 @@
 //!   the lane's next request there would wait for the rest of it. So its
 //!   connection closes, which stops it, and the lane takes another when
 //!   it next sends, in full. The same goes for a lane closed with a
-//!   request in flight.
+//!   request in flight. A request the server was asked to stop
+//!   ([`Pool::interrupted`], Responses Lite) ends within milliseconds, so
+//!   its lane keeps the connection and its cache.
 //! - A connection with a request in flight that has received nothing for
 //!   `stall_timeout` (5 minutes, pi's idle timeout) is treated as lost.
 //! - When a connection is lost, a request that had produced no output
@@ -363,6 +365,24 @@ impl Pool {
         &mut self,
         lane: LaneId,
     ) -> Result<Vec<PoolAction>, PoolError> {
+        self.cancel_request(lane, false)
+    }
+
+    /// Cancels `lane`'s request, which the server was asked to stop
+    /// (`response.interrupt`): its tail is short, so the lane keeps its
+    /// connection, and the cache the connection holds.
+    pub fn interrupted(
+        &mut self,
+        lane: LaneId,
+    ) -> Result<Vec<PoolAction>, PoolError> {
+        self.cancel_request(lane, true)
+    }
+
+    fn cancel_request(
+        &mut self,
+        lane: LaneId,
+        keep: bool,
+    ) -> Result<Vec<PoolAction>, PoolError> {
         let slot = self
             .lanes
             .get_mut(&lane)
@@ -373,7 +393,10 @@ impl Pool {
         let in_flight = slot.lane.is_busy();
         let connection = slot.connection;
         let mut actions = self.apply(lane, Event::Cancel);
-        if in_flight && let Some(connection) = connection {
+        if in_flight
+            && !keep
+            && let Some(connection) = connection
+        {
             if let Some(c) = self.connections.get_mut(&connection) {
                 c.draining = true;
             }

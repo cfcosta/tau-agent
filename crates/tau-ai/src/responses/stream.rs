@@ -56,6 +56,7 @@
 //! | -------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
 //! | `completed`                 | —                              | `Done(Stop)`                                                                                         |
 //! | `incomplete`                | `max_output_tokens`            | `Done(Length)`                                                                                       |
+//! | `incomplete`                | `interrupted`                  | `Done(Stop)`: `response.interrupt` stopped it, and what it kept is whole                             |
 //! | `incomplete`                | anything else, or absent       | `Error("Response incomplete: {reason}")` / `Error("Response incomplete without a provider reason")` |
 //! | absent                       | —                              | `Done(Stop)` (pi: `if (!status) return { stopReason: "stop" }`)                                     |
 //! | any other status string      | —                              | `Error("Unexpected response status: {status}")` — not a status these two frames can actually carry  |
@@ -818,6 +819,9 @@ fn response_field_str<'a>(frame: &'a Value, field: &str) -> Option<&'a str> {
 fn map_incomplete(reason: Option<&str>) -> TerminalOutcome {
     match reason {
         Some("max_output_tokens") => TerminalOutcome::Done(DoneReason::Length),
+        // `response.interrupt` stopped it: what it kept is whole, as
+        // Codex reads it (`codex-api/src/sse/responses.rs`).
+        Some("interrupted") => TerminalOutcome::Done(DoneReason::Stop),
         Some(reason) => {
             TerminalOutcome::Error(format!("Response incomplete: {reason}"))
         }

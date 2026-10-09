@@ -883,8 +883,85 @@ fn a_cancelled_tail_closes_its_connection(tc: TestCase) {
         Ok(())
     });
     assert_eq!(fake.connections(), 2);
+    // Not Lite: nothing to interrupt.
+    assert!(fake.interrupts().is_empty());
     let have = got.borrow_mut().take().unwrap();
     let mut want = next.clone();
+    want.usage.cost = have.usage.cost.clone();
+    assert_eq!(have, want);
+}
+
+/// Cuts a Lite response on gpt-6.1-sol short once it started, then asks
+/// the same lane for `next_reply`'s response: what it got, the response
+/// it should have got, and the fake.
+fn cut_lite_then_ask(
+    tc: &TestCase,
+    accept: bool,
+) -> (AssistantMessage, AssistantMessage, FakeOpenAi) {
+    let (_, cut) = respond(tc, "resp_1");
+    let Reply::Respond { frames, .. } = cut else {
+        unreachable!("respond streams a response")
+    };
+    let cut = Reply::Interruptible {
+        frames,
+        after: 1,
+        response_id: "resp_1".into(),
+        accept,
+    };
+    let (next, next_reply) = respond(tc, "resp_2");
+    let label = (next.model.clone(), next.timestamp);
+    let got: Rc<RefCell<Option<AssistantMessage>>> = Rc::default();
+    let seen = got.clone();
+    let fake = simulate(vec![cut, next_reply], async move {
+        let transport = Transport::start(SimConnector, Limits::default());
+        let settings = Settings {
+            model: "gpt-6.1-sol".into(),
+            lite: true,
+            ..Settings::default()
+        };
+        let input = to_input(&[user("hi")]);
+        let lane = transport.open_lane(Affinity::default()).await.unwrap();
+        let mut response = lane.request(
+            body(&settings, input.clone()),
+            "gpt-6.1-sol".into(),
+            0,
+        );
+        assert!(matches!(
+            response.next().await,
+            Some(AssistantEvent::Start { .. })
+        ));
+        drop(response);
+        let response = lane.request(body(&settings, input), label.0, label.1);
+        *seen.borrow_mut() = Some(collect(response).await);
+        Ok(())
+    });
+    let have = got.borrow_mut().take().unwrap();
+    (have, next, fake)
+}
+
+/// A Lite response cut short is stopped on the server
+/// (`response.interrupt`, Codex's instant interrupt): the lane keeps its
+/// connection, and the next request there gets its answer.
+#[hegel::test(test_cases = 10)]
+fn a_cut_lite_response_is_interrupted_on_its_connection(tc: TestCase) {
+    let (have, next, fake) = cut_lite_then_ask(&tc, true);
+    assert_eq!(fake.connections(), 1);
+    assert_eq!(fake.interrupts(), [(1, "resp_1".to_owned())]);
+    assert!(fake.violations().is_empty(), "{:?}", fake.violations());
+    let mut want = next;
+    want.usage.cost = have.usage.cost.clone();
+    assert_eq!(have, want);
+}
+
+/// A model that cannot stop a Lite response (gpt-5.6) refuses the
+/// interrupt: the connection goes, and the request waiting behind the
+/// tail is answered on another.
+#[hegel::test(test_cases = 10)]
+fn a_refused_interrupt_moves_to_another_connection(tc: TestCase) {
+    let (have, next, fake) = cut_lite_then_ask(&tc, false);
+    assert_eq!(fake.connections(), 2);
+    assert_eq!(fake.interrupts().len(), 1);
+    let mut want = next;
     want.usage.cost = have.usage.cost.clone();
     assert_eq!(have, want);
 }

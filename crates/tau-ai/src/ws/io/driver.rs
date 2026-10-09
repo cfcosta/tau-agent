@@ -19,11 +19,18 @@
 //!
 //! A cancelled request that was already sent keeps streaming on the
 //! server, and the server answers a connection's requests in order, so
-//! the pool closes its connection: the next request goes on another,
-//! without waiting for the tail. Until the close lands, the driver skips
-//! the connection's frames up to the cancelled response's terminal frame
-//! (`response.completed`, `response.failed`, `response.incomplete` or
-//! `error`). The skip ends when that connection closes.
+//! the next request there would wait for its tail. A Responses Lite
+//! request whose response id is known is stopped on the server instead:
+//! the driver sends `response.interrupt` (Codex's instant interrupt), the
+//! tail ends within milliseconds, and the lane keeps its connection and
+//! the cache it holds. If the server refuses
+//! (`response.interrupt.failed`: a model that does not support it), or
+//! the request was not Lite or had no id yet, the connection closes,
+//! which stops the response, and the lane goes on on another. Meanwhile
+//! the driver skips the connection's frames up to the cancelled
+//! response's terminal frame (`response.completed`, `response.failed`,
+//! `response.incomplete` or `error`). The skip ends when that connection
+//! closes.
 //!
 //! Recoveries are invisible to the caller
 //! (`docs/reference/openai-websocket.md`, "Retries are invisible to the
@@ -61,6 +68,7 @@ use crate::{
     refusal::Refusal,
     responses::{input::response_items, stream::StreamProcessor},
     retry::Class,
+    responses::request::LITE_MARKER,
     ws::proto::{
         continuation::Body,
         lane::Event,
@@ -141,6 +149,7 @@ impl Transport {
             connection_events,
             lanes: HashMap::new(),
             skipping: HashMap::new(),
+            interrupting: HashMap::new(),
             origin: Instant::now(),
         };
         tokio::spawn(driver.run(receiver, connection_receiver));
@@ -248,6 +257,9 @@ struct Driver<C: Connector> {
     /// Connections whose cancelled responses are still streaming: how
     /// many terminal frames to skip on each.
     skipping: HashMap<ConnectionId, usize>,
+    /// Responses asked to stop with `response.interrupt`, by id, with
+    /// their connection: a refusal closes it.
+    interrupting: HashMap<String, ConnectionId>,
     origin: Instant,
     refusal: Arc<Mutex<Option<Refusal>>>,
     /// Lanes whose connection was refused for a while: the error their
@@ -270,6 +282,9 @@ struct Active {
     held_error: Option<AssistantEvent>,
     /// The connection the current attempt was sent on, once sent.
     sent_on: Option<ConnectionId>,
+    /// Whether the request went as Responses Lite, whose response the
+    /// server can stop.
+    lite: bool,
 }
 
 impl Active {
@@ -360,7 +375,13 @@ impl<C: Connector> Driver<C> {
                 timestamp,
                 events,
             } => {
+                let lite = body
+                    .fields
+                    .get("client_metadata")
+                    .and_then(|metadata| metadata.get(LITE_MARKER))
+                    .is_some();
                 let active = Active {
+                    lite,
                     events,
                     processor: StreamProcessor::new(model.clone(), timestamp),
                     model,
@@ -389,12 +410,33 @@ impl<C: Connector> Driver<C> {
                 let Some(active) = self.lanes.remove(&lane) else {
                     return;
                 };
-                if let Some(connection) = active.sent_on
-                    && !active.processor.is_finished()
-                {
+                let streaming =
+                    active.sent_on.filter(|_| !active.processor.is_finished());
+                if let Some(connection) = streaming {
                     *self.skipping.entry(connection).or_default() += 1;
                 }
-                if let Ok(actions) = self.pool.cancel(lane) {
+                // A Lite response with an id is stopped on the server;
+                // any other goes with its connection.
+                let interrupt = streaming
+                    .filter(|_| active.lite)
+                    .zip(active.processor.response_id())
+                    .and_then(|(connection, id)| {
+                        let handle = self.connections.get(&connection)?;
+                        handle.send(Outgoing::Json(serde_json::json!({
+                            "type": "response.interrupt",
+                            "response_id": id,
+                            "mode": "discard_partial_items",
+                        })));
+                        Some((id.to_owned(), connection))
+                    });
+                let actions = match interrupt {
+                    Some((id, connection)) => {
+                        self.interrupting.insert(id, connection);
+                        self.pool.interrupted(lane)
+                    }
+                    None => self.pool.cancel(lane),
+                };
+                if let Ok(actions) = actions {
                     self.apply(actions);
                 }
             }
@@ -412,6 +454,7 @@ impl<C: Connector> Driver<C> {
                 refusal,
             } => {
                 self.skipping.remove(&connection);
+                self.interrupting.retain(|_, on| *on != connection);
                 if let Some(refusal) = &refusal {
                     *self.refusal.lock().expect("not poisoned") =
                         Some(refusal.clone());
@@ -463,9 +506,33 @@ impl<C: Connector> Driver<C> {
         if let Some(refusal) = Refusal::from_frame(frame) {
             *self.refusal.lock().expect("not poisoned") = Some(refusal);
         }
+        let kind = frame.get("type").and_then(Value::as_str);
+        let response_id = frame
+            .get("response_id")
+            .or_else(|| frame.pointer("/response/id"))
+            .and_then(Value::as_str);
+        match kind {
+            Some("response.interrupt.accepted") => {
+                if let Some(id) = response_id {
+                    self.interrupting.remove(id);
+                }
+                return;
+            }
+            // The model cannot stop it: its tail would hold up the
+            // connection, so the connection goes, as without Lite.
+            Some("response.interrupt.failed") => {
+                if let Some(lost) =
+                    response_id.and_then(|id| self.interrupting.remove(id))
+                {
+                    self.lose(lost);
+                }
+                return;
+            }
+            _ => {}
+        }
         if let Some(remaining) = self.skipping.get_mut(&connection) {
             let terminal = matches!(
-                frame.get("type").and_then(Value::as_str),
+                kind,
                 Some(
                     "response.completed"
                         | "response.failed"
@@ -474,6 +541,9 @@ impl<C: Connector> Driver<C> {
                 )
             );
             if terminal {
+                if let Some(id) = response_id {
+                    self.interrupting.remove(id);
+                }
                 *remaining -= 1;
                 if *remaining == 0 {
                     self.skipping.remove(&connection);
@@ -533,6 +603,17 @@ impl<C: Connector> Driver<C> {
         }
     }
 
+    /// Closes `connection` as if it were lost: the pool sends a request
+    /// waiting there elsewhere.
+    fn lose(&mut self, connection: ConnectionId) {
+        self.skipping.remove(&connection);
+        self.interrupting.retain(|_, on| *on != connection);
+        if self.connections.remove(&connection).is_some() {
+            let actions = self.pool.connection_lost(connection);
+            self.apply(actions);
+        }
+    }
+
     fn apply(&mut self, actions: Vec<PoolAction>) {
         for action in actions {
             match action {
@@ -546,6 +627,7 @@ impl<C: Connector> Driver<C> {
                 }
                 PoolAction::Close(connection) => {
                     self.connections.remove(&connection);
+                    self.interrupting.retain(|_, on| *on != connection);
                 }
                 PoolAction::Send {
                     connection,

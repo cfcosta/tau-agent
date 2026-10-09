@@ -76,6 +76,7 @@ impl OpenAi {
         let model = find(&settings.model);
         if let Some(model) = model {
             settings.reasoning_model = model.reasoning;
+            settings.lite = model.lite;
         }
         let affinity = match &settings.lineage {
             Some(lineage) => Affinity::new(

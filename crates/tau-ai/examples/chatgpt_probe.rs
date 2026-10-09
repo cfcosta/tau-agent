@@ -11,6 +11,7 @@
 //! cargo run -p tau-ai --example chatgpt_probe -- ws          [--model M]
 //! cargo run -p tau-ai --example chatgpt_probe -- ws-tools    [--model M]
 //! cargo run -p tau-ai --example chatgpt_probe -- decisions   [--model M] [--path P]
+//! cargo run -p tau-ai --example chatgpt_probe -- steer       [--model M]
 //! cargo run -p tau-ai --example chatgpt_probe -- refresh
 //! cargo run -p tau-ai --example chatgpt_probe -- sign-out
 //! ```
@@ -105,6 +106,7 @@ async fn main() -> Result<(), Error> {
         "ws" => ws_probe(&chatgpt, &args, false).await,
         "ws-tools" => ws_probe(&chatgpt, &args, true).await,
         "decisions" => decisions(&chatgpt, &args).await,
+        "steer" => steer(&chatgpt, &args).await,
         "refresh" => refresh(&chatgpt, &account(&chatgpt, &args)?).await,
         "sign-out" => sign_out(&chatgpt, &account(&chatgpt, &args)?).await,
         _ => {
@@ -698,5 +700,79 @@ async fn sign_out(chatgpt: &ChatGpt, account: &AccountId) -> Result<(), Error> {
              ({reason}); disconnect tau in ChatGPT Settings to be sure"
         ),
     }
+    Ok(())
+}
+
+/// tau's own client cutting a long answer short, as a steer does, then
+/// asking the next question on the same session: how soon it answers,
+/// and on how many connections. A Lite model is stopped on the server
+/// and keeps its connection; any other moves to a new one.
+async fn steer(chatgpt: &ChatGpt, args: &Args) -> Result<(), Error> {
+    use tau_ai::{
+        client::OpenAi,
+        event::AssistantEvent,
+        message::{Message, UserContent, UserMessage},
+        responses::request::{Lineage, Settings},
+    };
+    let account = account(chatgpt, args)?;
+    let model = args.value("model").unwrap_or("gpt-6.1-sol").to_owned();
+    let client = OpenAi::chatgpt(chatgpt.clone(), account);
+    let mut session = client
+        .session(Settings {
+            model: model.clone(),
+            instructions: Some("Answer plainly.".into()),
+            lineage: Some(Lineage {
+                path: format!("tau-steer-probe-{}", std::process::id()),
+                parent: None,
+            }),
+            ..Settings::default()
+        })
+        .await?;
+    let user = |text: &str| {
+        Message::User(UserMessage {
+            content: UserContent::Text(text.into()),
+            timestamp: 0,
+        })
+    };
+    let long = user("Write the numbers 1 to 400, one per line, nothing else.");
+    println!("\n=== {model}: a long answer, cut after 5 deltas");
+    let mut response = session.respond(std::slice::from_ref(&long), 0);
+    let mut deltas = 0;
+    while let Some(event) = response.next().await {
+        if let AssistantEvent::TextDelta { .. } = event {
+            deltas += 1;
+            if deltas == 5 {
+                break;
+            }
+        }
+    }
+    drop(response);
+    let cut = std::time::Instant::now();
+    println!("cut after {deltas} deltas; asking the next question");
+    let transcript = [long, user(FOLLOW_UP)];
+    let mut next = session.respond(&transcript, 0);
+    let mut first = None;
+    let mut text = String::new();
+    while let Some(event) = next.next().await {
+        match event {
+            AssistantEvent::TextDelta { delta, .. } => {
+                first.get_or_insert_with(|| cut.elapsed());
+                text.push_str(&delta);
+            }
+            AssistantEvent::Done { .. } => break,
+            AssistantEvent::Error { message, .. } => {
+                println!("error: {message}");
+                break;
+            }
+            _ => {}
+        }
+    }
+    println!(
+        "first text {:?} and done {:?} after the cut: {text:?}",
+        first,
+        cut.elapsed()
+    );
+    let stats = client.stats().await?;
+    println!("connections opened: {}", stats.connections_opened);
     Ok(())
 }

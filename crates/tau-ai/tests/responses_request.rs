@@ -7,6 +7,7 @@ use hegel::{
 };
 use serde_json::{Value, json};
 use tau_ai::responses::request::{
+    LITE_MARKER,
     Lineage,
     PROMPT_CACHE_KEY_MAX_CHARS,
     ReasoningEffort,
@@ -43,6 +44,7 @@ fn settings_unprinted(tc: &TestCase) -> Settings {
             })
             .collect(),
         reasoning_model: tc.draw(gs::booleans()),
+        lite: tc.draw(gs::booleans()),
         reasoning: tc.draw(gs::optional(gs::sampled_from(vec![
             ReasoningEffort::None,
             ReasoningEffort::Minimal,
@@ -120,7 +122,7 @@ fn bodies_follow_websocket_rules(tc: TestCase) {
 
 /// Reasoning models always ask for encrypted reasoning, so a full resend
 /// can replay it; other models never do. The effort is sent only when
-/// set.
+/// set, and a Lite request reasons over all turns.
 #[hegel::test(test_cases = 300)]
 fn encrypted_reasoning_follows_the_model(tc: TestCase) {
     let settings = tc.draw(settings());
@@ -129,13 +131,61 @@ fn encrypted_reasoning_follows_the_model(tc: TestCase) {
     if settings.reasoning_model {
         assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
     }
-    let expected = match (settings.reasoning_model, settings.reasoning) {
-        (true, Some(effort)) => {
-            Some(json!({"effort": effort.as_str(), "summary": "auto"}))
-        }
-        _ => None,
-    };
+    let mut expected = serde_json::Map::new();
+    if settings.reasoning_model
+        && let Some(effort) = settings.reasoning
+    {
+        expected.insert("effort".into(), json!(effort.as_str()));
+        expected.insert("summary".into(), json!("auto"));
+    }
+    if settings.lite {
+        expected.insert("context".into(), json!("all_turns"));
+    }
+    let expected = (!expected.is_empty()).then_some(Value::Object(expected));
     assert_eq!(body.get("reasoning").cloned(), expected);
+}
+
+/// A Lite request carries the marker, all-turns reasoning and one tool
+/// call at a time, as Codex sends it; any other carries none of them.
+#[hegel::test(test_cases = 300)]
+fn lite_requests_say_so(tc: TestCase) {
+    let settings = tc.draw(settings());
+    let body = body(&settings, vec![]);
+    let marked = body
+        .get("client_metadata")
+        .and_then(|metadata| metadata.get(LITE_MARKER))
+        == Some(&json!("true"));
+    assert_eq!(marked, settings.lite);
+    assert_eq!(
+        body.get("parallel_tool_calls"),
+        settings.lite.then_some(json!(false)).as_ref()
+    );
+    assert_eq!(
+        body.get("reasoning")
+            .and_then(|reasoning| reasoning.get("context")),
+        settings.lite.then_some(json!("all_turns")).as_ref()
+    );
+}
+
+/// The plan families from 5.6 on go as Lite, as Codex's table has them;
+/// gpt-5.5 and other shapes do not.
+#[test]
+fn lite_models_are_codexs() {
+    use tau_ai::model::is_lite;
+    for id in [
+        "gpt-6-astra",
+        "gpt-6.1-sol",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ] {
+        assert!(is_lite(id), "{id}");
+    }
+    for id in ["gpt-5.5", "gpt-5.4-mini", "gpt-4o", "o3", "gpt-5.5-sol"] {
+        assert!(!is_lite(id), "{id}");
+    }
 }
 
 /// Property inventory: generic request fields preserve the optional output

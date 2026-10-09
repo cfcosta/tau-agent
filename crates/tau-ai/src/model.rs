@@ -63,6 +63,8 @@ pub struct Model {
     pub context_window: u64,
     pub max_output: u64,
     pub pricing: Pricing,
+    /// Whether requests go as Responses Lite ([`is_lite`]).
+    pub lite: bool,
 }
 
 /// USD per million tokens, plus an optional long-context tier.
@@ -361,6 +363,7 @@ fn build_model(id: String, raw: VendoredModel, overrides: &Overrides) -> Model {
 
     Model {
         efforts: efforts_of(&id, raw.reasoning),
+        lite: is_lite(&id),
         id,
         name: raw.name,
         reasoning: raw.reasoning,
@@ -438,6 +441,18 @@ pub fn newest_per_family<'a>(
         .flatten()
         .map(|(_, model)| model)
         .collect()
+}
+
+/// Whether `id`'s requests go as Responses Lite, the request shape
+/// Codex uses for the plan families from 5.6 on (its `use_responses_lite`
+/// in `codex-rs/models-manager/models.json`: gpt-6-astra, gpt-6.1-sol,
+/// gpt-6-sol, gpt-6-luna, gpt-5.6-sol/terra/luna; not gpt-5.5). A Lite
+/// response can be stopped on the server with `response.interrupt`
+/// (`docs/reference/openai-websocket.md`, "Responses Lite").
+pub fn is_lite(id: &str) -> bool {
+    family_version(id).is_some_and(|(family, version)| {
+        PLAN_FAMILIES.contains(&family) && version >= vec![5, 6]
+    })
 }
 
 /// `gpt-6.1-sol` → `("sol", [6, 1])`, with trailing zeros dropped so

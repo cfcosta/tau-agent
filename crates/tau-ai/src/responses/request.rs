@@ -13,6 +13,12 @@
 //!   continuation would drop the reasoning.
 //! - `prompt_cache_key` is the run's path ([`Lineage::path`]), cut to 64
 //!   characters, OpenAI's limit.
+//! - A Lite request ([`Settings::lite`]) carries what the server needs to
+//!   take it as Responses Lite, as Codex sends it: the marker in
+//!   `client_metadata`, `reasoning.context: "all_turns"` and
+//!   `parallel_tool_calls: false` (`codex-rs/core/src/client.rs`,
+//!   `build_responses_request`). It keeps `instructions` and top-level
+//!   `tools`, which the server takes as they are.
 //!
 //! Every field except `input` depends only on [`Settings`], so two turns
 //! of one run differ only in `input`. The delta rule depends on that.
@@ -25,6 +31,11 @@ use crate::ws::proto::continuation::{Body, Fields};
 
 /// OpenAI's maximum `prompt_cache_key` length, in characters.
 pub const PROMPT_CACHE_KEY_MAX_CHARS: usize = 64;
+
+/// The `client_metadata` key that marks a WebSocket request as Responses
+/// Lite (Codex's `WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY`).
+pub const LITE_MARKER: &str =
+    "ws_request_header_x_openai_internal_codex_responses_lite";
 
 /// A function tool offered to the model.
 #[derive(Debug, Clone, PartialEq)]
@@ -99,6 +110,9 @@ pub struct Settings {
     pub tools: Vec<ToolDefinition>,
     /// Whether the model reasons; decides `include`.
     pub reasoning_model: bool,
+    /// Whether requests go as Responses Lite, which lets a response be
+    /// stopped on the server (see [`crate::model::is_lite`]).
+    pub lite: bool,
     /// The effort to ask for. `None` leaves it to the server.
     pub reasoning: Option<ReasoningEffort>,
     /// The `text.format` of a typed run.
@@ -145,14 +159,21 @@ pub fn fields(settings: &Settings) -> Fields {
             .collect();
         body.insert("tools".into(), Value::Array(tools));
     }
+    let mut reasoning = Map::new();
     if settings.reasoning_model {
         if let Some(effort) = settings.reasoning {
-            body.insert(
-                "reasoning".into(),
-                json!({ "effort": effort.as_str(), "summary": "auto" }),
-            );
+            reasoning.insert("effort".into(), json!(effort.as_str()));
+            reasoning.insert("summary".into(), json!("auto"));
         }
         body.insert("include".into(), json!(["reasoning.encrypted_content"]));
+    }
+    if settings.lite {
+        reasoning.insert("context".into(), json!("all_turns"));
+        body.insert("parallel_tool_calls".into(), json!(false));
+        body.insert("client_metadata".into(), json!({ LITE_MARKER: "true" }));
+    }
+    if !reasoning.is_empty() {
+        body.insert("reasoning".into(), Value::Object(reasoning));
     }
     if let Some(format) = &settings.text_format {
         body.insert("text".into(), json!({ "format": format }));

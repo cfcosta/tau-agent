@@ -814,6 +814,32 @@ impl PoolMachine {
         self.after(&tc, actions, false);
     }
 
+    /// A cancel the server was asked to stop: its connection stays open.
+    /// (The lane may still hand it to a fork waiting for it, as after
+    /// any request.)
+    #[rule]
+    fn interrupt(&mut self, tc: TestCase) {
+        tc.assume(!self.model.lanes.is_empty());
+        let lane =
+            Self::draw_lane(&tc, self.model.lanes.keys().copied().collect());
+        let held = self.pool.connection_of(lane);
+        // A draining connection is left all the same once its request
+        // ends, as on any end.
+        let draining = held.is_some_and(|c| self.pool.is_draining(c));
+        self.model.drop_request(lane);
+        let actions = self.pool.interrupted(lane).unwrap();
+        if !draining {
+            assert!(
+                !actions.iter().any(|action| matches!(
+                    action,
+                    PoolAction::Close(c) if Some(*c) == held
+                )),
+                "{actions:?}"
+            );
+        }
+        self.after(&tc, actions, false);
+    }
+
     #[rule]
     fn tick(&mut self, tc: TestCase) {
         // Mostly short steps, so connections differ in when they were
@@ -1246,6 +1272,23 @@ fn free_connections_are_capped() {
         pool.close_lane(lanes[2]).unwrap(),
         vec![PoolAction::Close(1)]
     );
+}
+
+/// A request the server was asked to stop keeps its connection, and
+/// the lane's next request goes there.
+#[test]
+fn an_interrupted_request_keeps_its_connection() {
+    let mut pool = Pool::new(Limits::default());
+    let (lane, _) = pool.open_lane(Affinity::default());
+    pool.submit(lane, body(1)).unwrap();
+    let connection = pool.connection_of(lane).unwrap();
+    assert!(pool.interrupted(lane).unwrap().is_empty());
+    assert!(!pool.is_busy(lane));
+    assert_eq!(pool.connection_of(lane), Some(connection));
+    assert!(matches!(
+        &pool.submit(lane, body(2)).unwrap()[..],
+        [PoolAction::Send { connection: c, .. }] if *c == connection
+    ));
 }
 
 /// A lane holds one request at a time.
