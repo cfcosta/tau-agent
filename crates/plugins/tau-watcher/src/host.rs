@@ -93,7 +93,7 @@ impl PluginRun for WatcherRun {
     ) -> Result<Option<ReasoningEffort>, PluginError> {
         let steps = steps_of(view.transcript);
         // Cheap tests first: most requests are not a 6th step.
-        if self.noted || steps % crate::cadence::EVERY != 0 {
+        if self.noted || !steps.is_multiple_of(crate::cadence::EVERY) {
             return Ok(None);
         }
         // As stored now: the person may have answered meanwhile.

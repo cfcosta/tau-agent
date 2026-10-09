@@ -29,7 +29,7 @@ pub fn skips(typed_past: u32) -> u32 {
 /// checks come every [`EVERY`] steps, and after the person wrote past
 /// notes, fewer.
 pub fn due(steps: u32, last: Option<u32>, typed_past: u32) -> bool {
-    if steps == 0 || steps % EVERY != 0 {
+    if steps == 0 || !steps.is_multiple_of(EVERY) {
         return false;
     }
     match last {
