@@ -13,6 +13,7 @@
 //! cargo run -p tau-ai --example chatgpt_probe -- decisions   [--model M] [--path P]
 //! cargo run -p tau-ai --example chatgpt_probe -- steer       [--model M]
 //! cargo run -p tau-ai --example chatgpt_probe -- ws-interrupt [--model M] [--lite]
+//! cargo run -p tau-ai --example chatgpt_probe -- ws-lite      [--model M]
 //! cargo run -p tau-ai --example chatgpt_probe -- refresh
 //! cargo run -p tau-ai --example chatgpt_probe -- sign-out
 //! ```
@@ -109,6 +110,7 @@ async fn main() -> Result<(), Error> {
         "decisions" => decisions(&chatgpt, &args).await,
         "steer" => steer(&chatgpt, &args).await,
         "ws-interrupt" => ws_interrupt(&chatgpt, &args).await,
+        "ws-lite" => ws_lite(&chatgpt, &args).await,
         "refresh" => refresh(&chatgpt, &account(&chatgpt, &args)?).await,
         "sign-out" => sign_out(&chatgpt, &account(&chatgpt, &args)?).await,
         _ => {
@@ -973,5 +975,345 @@ async fn steer(chatgpt: &ChatGpt, args: &Args) -> Result<(), Error> {
     );
     let stats = client.stats().await?;
     println!("connections opened: {}", stats.connections_opened);
+    Ok(())
+}
+
+/// Base instructions for the Lite probe, sent as Codex sends them: a
+/// developer message at the head of the input.
+const LITE_INSTRUCTIONS: &str = "You are a careful assistant. Use the \
+                                 tools you are given when they help.";
+
+/// The Lite probe's tools, as Codex's `create_tools_json_for_responses_lite`
+/// builds them: every function tool inside one `functions` namespace
+/// with an empty description.
+fn lite_tools() -> Value {
+    json!([{
+        "type": "namespace",
+        "name": "functions",
+        "description": "",
+        "tools": [
+            {
+                "type": "function",
+                "name": "get_time",
+                "description": "The current time, as HH:MM.",
+                "strict": false,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                },
+            },
+            {
+                "type": "function",
+                "name": "add",
+                "description": "Adds two integers.",
+                "strict": false,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "a": {"type": "integer"},
+                        "b": {"type": "integer"},
+                    },
+                    "required": ["a", "b"],
+                    "additionalProperties": false,
+                },
+            },
+        ],
+    }])
+}
+
+/// The input prefix Codex puts before the conversation on a Lite
+/// request: the tools as an `additional_tools` developer item, then the
+/// base instructions as a developer message, each with a stable id.
+fn lite_prefix() -> Vec<Value> {
+    if std::env::var("PROBE_INSTRUCTIONS_FIELD").is_ok() {
+        return Vec::new();
+    }
+    if std::env::var("PROBE_TOPLEVEL").is_ok() {
+        return vec![json!({
+            "type": "message",
+            "id": "msg_0198a6d0-0000-7000-8000-000000000002",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": LITE_INSTRUCTIONS}],
+        })];
+    }
+    vec![
+        json!({
+            "type": "additional_tools",
+            "id": "at_0198a6d0-0000-7000-8000-000000000001",
+            "role": "developer",
+            "tools": lite_tools(),
+        }),
+        json!({
+            "type": "message",
+            "id": "msg_0198a6d0-0000-7000-8000-000000000002",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": LITE_INSTRUCTIONS}],
+        }),
+    ]
+}
+
+/// A Lite `response.create` body over `input`, as Codex builds it.
+fn lite_body(model: &str, input: Vec<Value>) -> Value {
+    let effort =
+        std::env::var("PROBE_EFFORT").unwrap_or_else(|_| "medium".into());
+    let mut body = json!({
+        "model": model,
+        "stream": true,
+        "input": input,
+        "tool_choice": "auto",
+        "parallel_tool_calls": false,
+        "reasoning": {"effort": effort, "context": "all_turns"},
+        "store": false,
+        "include": ["reasoning.encrypted_content"],
+        "prompt_cache_key": "0198a6d0-0000-7000-8000-00000000cafe",
+        "client_metadata": {
+            "ws_request_header_x_openai_internal_codex_responses_lite": "true",
+        },
+    });
+    // With PROBE_TOPLEVEL, the tools go in the top-level `tools` field,
+    // as a plain request has them, instead of an `additional_tools` item.
+    if std::env::var("PROBE_TOPLEVEL").is_ok() {
+        body["tools"] = lite_tools()[0]["tools"].clone();
+    }
+    // With PROBE_INSTRUCTIONS_FIELD, tau's shape: instructions in the
+    // `instructions` field and the tools top-level, plus Lite's settings.
+    if std::env::var("PROBE_INSTRUCTIONS_FIELD").is_ok() {
+        body["instructions"] = json!(LITE_INSTRUCTIONS);
+        body["tools"] = lite_tools()[0]["tools"].clone();
+    }
+    body
+}
+
+/// One response: every event but the deltas is printed (the response
+/// object of a terminal event without its echoed instructions and
+/// tools), and the output items and response id are returned.
+async fn lite_turn<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    mut body: Value,
+) -> Result<(Outcome, Vec<Value>), Error>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    body["type"] = "response.create".into();
+    let mut shown = body.clone();
+    if let Some(input) = shown["input"].as_array_mut() {
+        for item in input {
+            if item["type"] == "additional_tools" {
+                item["tools"] = json!("(the lite tools)");
+            }
+            if item["type"] == "reasoning" {
+                item["encrypted_content"] = json!("(encrypted)");
+            }
+        }
+    }
+    println!("send: {shown}");
+    socket.send(Message::text(body.to_string())).await?;
+    let mut outcome = Outcome::default();
+    let mut items = Vec::new();
+    let mut deltas: HashMap<String, usize> = HashMap::new();
+    loop {
+        let next =
+            tokio::time::timeout(Duration::from_secs(120), socket.next()).await;
+        let message = match next {
+            Err(_) => {
+                println!("(no frame for 120 s)");
+                break;
+            }
+            Ok(None) => {
+                println!("(the connection closed)");
+                break;
+            }
+            Ok(Some(message)) => message?,
+        };
+        let Message::Text(text) = message else {
+            if let Message::Close(frame) = message {
+                println!("(closed by the server: {frame:?})");
+                break;
+            }
+            continue;
+        };
+        let Ok(mut event) = serde_json::from_str::<Value>(&text) else {
+            println!("(not JSON) {text}");
+            continue;
+        };
+        outcome.see(&event);
+        let kind = event["type"].as_str().unwrap_or_default().to_owned();
+        if kind.ends_with(".delta") {
+            *deltas.entry(kind).or_default() += 1;
+            continue;
+        }
+        if kind == "response.output_item.done" {
+            items.push(event["item"].clone());
+        }
+        for key in ["response"] {
+            if let Some(object) = event[key].as_object_mut() {
+                object.remove("instructions");
+                object.remove("tools");
+                if let Some(output) =
+                    object.get_mut("output").and_then(Value::as_array_mut)
+                {
+                    for item in output {
+                        if item["encrypted_content"].is_string() {
+                            item["encrypted_content"] = json!("(encrypted)");
+                        }
+                    }
+                }
+            }
+        }
+        if event["item"]["encrypted_content"].is_string() {
+            event["item"]["encrypted_content"] = json!("(encrypted)");
+        }
+        println!("{event}");
+        if outcome.terminal.is_some() {
+            break;
+        }
+    }
+    println!("deltas: {deltas:?}");
+    Ok((outcome, items))
+}
+
+/// The output items a later request sends back, as received.
+fn sent_back(items: &[Value]) -> Vec<Value> {
+    items.to_vec()
+}
+
+/// The Responses Lite checks: tool calls with a full resend and with a
+/// continuation, an interrupt with tools in place, then a plain request
+/// on the same connection.
+async fn ws_lite(chatgpt: &ChatGpt, args: &Args) -> Result<(), Error> {
+    let account = account(chatgpt, args)?;
+    let model = model(chatgpt, &account, args).await?;
+    let mut socket = ws_connect(chatgpt, account).await?;
+    let mut summaries = Vec::new();
+    let ask =
+        user("What is 17 + 25? Use the add tool, then answer in one line.");
+
+    println!("\n=== Lite: a tool call");
+    let mut input = lite_prefix();
+    input.push(ask.clone());
+    let (first, items) =
+        lite_turn(&mut socket, lite_body(&model, input.clone())).await?;
+    summaries.push(format!("lite tool call: {}", first.summary()));
+
+    if let Some(call) = first.function_calls.first().cloned() {
+        let output = json!({
+            "type": "function_call_output",
+            "call_id": call["call_id"],
+            "output": "42",
+        });
+        if let Some(previous) = &first.response_id {
+            println!("\n=== Lite: the output, continuing from {previous}");
+            let mut body = lite_body(&model, vec![output.clone()]);
+            body["previous_response_id"] = json!(previous);
+            let (continued, _) = lite_turn(&mut socket, body).await?;
+            summaries
+                .push(format!("lite continuation: {}", continued.summary()));
+        }
+
+        println!("\n=== Lite: the output, as a full resend");
+        let mut full = input.clone();
+        full.extend(sent_back(&items));
+        full.push(output.clone());
+        let (resent, _) =
+            lite_turn(&mut socket, lite_body(&model, full)).await?;
+        summaries.push(format!("lite full resend: {}", resent.summary()));
+
+        println!("\n=== Lite: the call sent back without its namespace");
+        let mut stripped = input.clone();
+        stripped.extend(items.iter().map(|item| {
+            let mut item = item.clone();
+            if let Some(object) = item.as_object_mut() {
+                object.remove("namespace");
+            }
+            item
+        }));
+        stripped.push(output);
+        let (bare, _) =
+            lite_turn(&mut socket, lite_body(&model, stripped)).await?;
+        summaries
+            .push(format!("lite call without namespace: {}", bare.summary()));
+    }
+
+    println!("\n=== Lite: a long answer, interrupted, with tools in place");
+    let mut long = lite_prefix();
+    long.push(user(
+        &std::env::var("PROBE_LONG").unwrap_or_else(|_| LONG_PROMPT.into()),
+    ));
+    let mut body = lite_body(&model, long);
+    body["type"] = "response.create".into();
+    socket.send(Message::text(body.to_string())).await?;
+    let mut id = None;
+    let mut deltas = 0usize;
+    let mut interrupted: Option<std::time::Instant> = None;
+    let mut outcome = Outcome::default();
+    while let Ok(Some(message)) =
+        tokio::time::timeout(Duration::from_secs(60), socket.next()).await
+    {
+        let Message::Text(text) = message? else {
+            continue;
+        };
+        let Ok(mut event) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        outcome.see(&event);
+        let kind = event["type"].as_str().unwrap_or_default().to_owned();
+        if kind == "response.created" {
+            id = event["response"]["id"].as_str().map(str::to_owned);
+        }
+        if kind.ends_with(".delta") {
+            deltas += 1;
+        } else if interrupted.is_some() {
+            if let Some(object) = event["response"].as_object_mut() {
+                object.remove("instructions");
+                object.remove("tools");
+            }
+            if event["item"]["encrypted_content"].is_string() {
+                event["item"]["encrypted_content"] = json!("(encrypted)");
+            }
+            println!(
+                "+{} ms: {event}",
+                interrupted.map_or(0, |at| at.elapsed().as_millis())
+            );
+        }
+        if interrupted.is_none()
+            && deltas >= DELTAS_BEFORE
+            && let Some(id) = &id
+        {
+            let interrupt = json!({
+                "type": "response.interrupt",
+                "response_id": id,
+                "mode": "discard_partial_items",
+            });
+            println!("send: {interrupt}");
+            socket.send(Message::text(interrupt.to_string())).await?;
+            interrupted = Some(std::time::Instant::now());
+        }
+        if outcome.terminal.is_some() {
+            break;
+        }
+    }
+    summaries.push(format!("lite interrupt: {}", outcome.summary()));
+    if let Some(previous) = &outcome.response_id {
+        println!("\n=== Lite: continuing from the interrupted {previous}");
+        let mut body = lite_body(&model, vec![user(FOLLOW_UP)]);
+        body["previous_response_id"] = json!(previous);
+        let (after, _) = lite_turn(&mut socket, body).await?;
+        summaries.push(format!("after the interrupt: {}", after.summary()));
+    }
+
+    println!("\n=== plain request on the same connection");
+    let (plain, _) = lite_turn(
+        &mut socket,
+        json!({"model": model, "store": false, "input": [user(PROMPT)]}),
+    )
+    .await?;
+    summaries.push(format!("plain after lite: {}", plain.summary()));
+
+    let _ = socket.close(None).await;
+    println!("\n=== summary");
+    for line in summaries {
+        println!("{line}");
+    }
     Ok(())
 }
