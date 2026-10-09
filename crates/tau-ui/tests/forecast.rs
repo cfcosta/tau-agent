@@ -23,7 +23,7 @@ use tau_ui_remote::{
     Workspace,
     attention::{Attention, Forecast},
     catalog::Catalog,
-    route::Route,
+    workspace::WorkspaceEvent,
 };
 use tau_vcs_host::{Identity, Project};
 
@@ -50,8 +50,13 @@ fn start(
 ) -> RunId {
     let before = workspace.read_with(cx, |ws, _| ws.runs().len());
     workspace.update(cx, |ws, cx| {
-        ws.navigate(Route::NewRun, cx);
-        ws.submit_prompt(prompt.to_owned(), cx);
+        // A chat forked from main, as "New run" asks for once main
+        // was talked to; on an untouched main the composer goes to main.
+        cx.emit(WorkspaceEvent::NewRun {
+            prompt: prompt.to_owned(),
+            model: ws.next_model().clone(),
+            repo: ws.selected_repo().unwrap_or_default().to_owned(),
+        });
     });
     until(cx, "the run to start", |cx| {
         workspace.read_with(cx, |ws, _| ws.runs().len() > before)

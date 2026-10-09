@@ -1015,10 +1015,20 @@ impl Workspace {
             }
             HostUpdate::Titled { run, title } => self.retitle(&run, title, cx),
             HostUpdate::Repo { repo, main } => {
-                if let Some(main) = main {
+                let main = main.map(|main| {
+                    let id = main.id.clone();
                     self.add_history(vec![*main], cx);
+                    id
+                });
+                self.add_repo(repo, cx);
+                // Waiting on a new run with no chat open, the person
+                // talks to the repository's main next, not to a chat
+                // forked from it.
+                let waiting = self.route == Route::NewRun
+                    || (self.route == Route::Home && self.current().is_none());
+                if let Some(main) = main.filter(|_| waiting) {
+                    self.navigate(Route::Run(main), cx);
                 }
-                self.add_repo(repo, cx)
             }
             HostUpdate::Setup(update) => self.update_setup(update, cx),
             HostUpdate::Snapshot(synced) => self.restore(*synced, cx),
@@ -1735,13 +1745,31 @@ impl Workspace {
                 let run = run.id.clone();
                 self.say(&run, text, cx);
             }
-            _ => cx.emit(WorkspaceEvent::NewRun {
-                prompt: text,
-                model: self.next_model.clone(),
-                repo: self.selected_repo().unwrap_or_default().to_owned(),
-            }),
+            _ => self.start_in_repo(text, cx),
         }
         cx.notify();
+    }
+
+    /// Starts a run on `text` in the selected repository: a chat forked
+    /// from its main, or main itself while nothing was said in it.
+    pub(crate) fn start_in_repo(
+        &mut self,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
+        let repo = self.selected_repo().unwrap_or_default().to_owned();
+        if let Some(main) = self.fresh_main(&repo) {
+            // The model picked for the new run.
+            self.run_models.insert(main.clone(), self.next_model.clone());
+            self.navigate(Route::Run(main.clone()), cx);
+            self.say(&main, text, cx);
+            return;
+        }
+        cx.emit(WorkspaceEvent::NewRun {
+            prompt: text,
+            model: self.next_model.clone(),
+            repo,
+        });
     }
 
     /// Sends `text` to `run`, with the model picked for it or the one it

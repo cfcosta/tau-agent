@@ -443,10 +443,6 @@ impl Workspace {
             return;
         };
         self.finish_setup(cx);
-        cx.emit(WorkspaceEvent::NewRun {
-            prompt: task,
-            model: self.next_model.clone(),
-            repo: self.selected_repo().unwrap_or_default().to_owned(),
-        });
+        self.start_in_repo(task, cx);
     }
 }

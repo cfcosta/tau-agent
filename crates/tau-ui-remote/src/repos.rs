@@ -10,7 +10,7 @@ use tau_agent::tool::RunId;
 use crate::{
     catalog::Repo,
     route::Route,
-    view::{ChildKind, ChildRun, Origin, RunView},
+    view::{ChildKind, ChildRun, Item, Origin, RunView},
     workspace::{Workspace, WorkspaceEvent},
 };
 
@@ -93,6 +93,20 @@ impl Workspace {
             .as_deref()
             .filter(|name| self.catalog.is_listed(name))
             .or_else(|| self.catalog.listed().next().map(|repo| &*repo.name))
+    }
+
+    /// `repo`'s main chat while nothing was said in it: a new run there
+    /// goes to main, since a chat forked from it would start from
+    /// nothing.
+    pub fn fresh_main(&self, repo: &str) -> Option<RunId> {
+        let main = self.catalog.repo(repo)?.main.as_ref()?;
+        self.run(main)
+            .filter(|view| {
+                !view.status.is_live()
+                    && view.ending.is_none()
+                    && !view.items.iter().any(|item| matches!(item, Item::User(_)))
+            })
+            .map(|view| view.id.clone())
     }
 
     /// A repository by name, or an empty one when it is not listed.
