@@ -51,6 +51,12 @@
 //!   so that request is a full resend. A connection that answered
 //!   `websocket_connection_limit_reached` drains the same way, and its
 //!   request is resent at once on another connection.
+//! - A request cancelled after it was sent goes on streaming on the
+//!   server, and the server answers a connection's requests in order:
+//!   the lane's next request there would wait for the rest of it. So its
+//!   connection closes, which stops it, and the lane takes another when
+//!   it next sends, in full. The same goes for a lane closed with a
+//!   request in flight.
 //! - A connection with a request in flight that has received nothing for
 //!   `stall_timeout` (5 minutes, pi's idle timeout) is treated as lost.
 //! - When a connection is lost, a request that had produced no output
@@ -291,9 +297,9 @@ impl Pool {
         (lane, actions)
     }
 
-    /// Closes a lane when its run ends. A request still in flight is
-    /// dropped, as on cancel. Its connection stays open for the next
-    /// lane, with the lane's continuation when it had no request.
+    /// Closes a lane when its run ends. Its connection stays open for
+    /// the next lane, with the lane's continuation; one with a request
+    /// still in flight closes, as on [`Self::cancel`].
     pub fn close_lane(
         &mut self,
         lane: LaneId,
@@ -302,7 +308,14 @@ impl Pool {
             .lanes
             .remove(&lane)
             .ok_or(PoolError::UnknownLane(lane))?;
-        let kept = if slot.lane.is_busy() {
+        let in_flight = slot.lane.is_busy();
+        let kept = if in_flight {
+            if let Some(c) = slot
+                .connection
+                .and_then(|connection| self.connections.get_mut(&connection))
+            {
+                c.draining = true;
+            }
             None
         } else {
             slot.lane.take_continuation()
@@ -341,7 +354,11 @@ impl Pool {
         Ok(actions)
     }
 
-    /// Cancels `lane`'s request, if it has one.
+    /// Cancels `lane`'s request, if it has one. One that was sent goes
+    /// on streaming on the server, and the server answers a connection's
+    /// requests in order, so the lane's next request there would wait
+    /// for the rest of it: the connection closes, which stops it, and
+    /// the lane takes another when it next sends.
     pub fn cancel(
         &mut self,
         lane: LaneId,
@@ -353,7 +370,15 @@ impl Pool {
         if slot.pending.take().is_some() {
             return Ok(Vec::new());
         }
+        let in_flight = slot.lane.is_busy();
+        let connection = slot.connection;
         let mut actions = self.apply(lane, Event::Cancel);
+        if in_flight && let Some(connection) = connection {
+            if let Some(c) = self.connections.get_mut(&connection) {
+                c.draining = true;
+            }
+            actions.extend(self.evacuate(connection));
+        }
         actions.extend(self.finish());
         Ok(actions)
     }

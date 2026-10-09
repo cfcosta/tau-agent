@@ -1256,8 +1256,14 @@ fn a_busy_lane_takes_no_second_request() {
     pool.submit(lane, body(1)).unwrap();
     assert_eq!(pool.submit(lane, body(2)), Err(PoolError::Busy(lane)));
     assert!(pool.is_busy(lane));
-    assert!(pool.cancel(lane).unwrap().is_empty());
+    // The cancelled request streams on there: its connection closes.
+    let connection = pool.connection_of(lane).unwrap();
+    assert_eq!(
+        pool.cancel(lane).unwrap(),
+        vec![PoolAction::Close(connection)]
+    );
     assert!(!pool.is_busy(lane));
+    assert_eq!(pool.connection_of(lane), None);
 }
 
 /// The connection limit moves the lane to a fresh connection, resends in

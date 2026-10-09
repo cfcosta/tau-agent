@@ -219,7 +219,7 @@ Events that force a full resend:
 | `websocket_connection_limit_reached`         | Reconnect, then resend in full.                                                                                                             |
 | Connection lost before any event was emitted | Reconnect, then resend in full. This counts as one retry attempt.                                                                           |
 | Connection lost mid-stream                   | Emit an `error` event with `stopReason = error`. The agent's retry policy decides what happens next.                                        |
-| Cancel                                       | Close the lane's continuation and keep the connection; the driver skips the cancelled response's tail on it. The next turn resends in full. |
+| Cancel                                       | Close the connection, which stops the response there: the server answers a connection's requests in order, so the next one would wait for its tail. The lane takes another connection when it next sends, in full. |
 
 ## Retries are invisible to the caller
 

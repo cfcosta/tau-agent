@@ -18,13 +18,12 @@
 //! until a response completes ([`Transport::refusal`]).
 //!
 //! A cancelled request that was already sent keeps streaming on the
-//! server. Its tail arrives on the same connection, before the frames of
-//! the next request there, because the server answers a connection's
-//! requests in order. So after such a cancel, the driver skips the
-//! connection's frames until the cancelled response's terminal frame
+//! server, and the server answers a connection's requests in order, so
+//! the pool closes its connection: the next request goes on another,
+//! without waiting for the tail. Until the close lands, the driver skips
+//! the connection's frames up to the cancelled response's terminal frame
 //! (`response.completed`, `response.failed`, `response.incomplete` or
-//! `error`) has gone by, whichever lane the connection carries by then.
-//! The skip ends early if that connection closes.
+//! `error`). The skip ends when that connection closes.
 //!
 //! Recoveries are invisible to the caller
 //! (`docs/reference/openai-websocket.md`, "Retries are invisible to the

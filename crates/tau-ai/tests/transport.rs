@@ -844,12 +844,19 @@ fn runs_one_after_another_reuse_a_connection(tc: TestCase) {
     assert_eq!(fake.connections(), 1);
 }
 
-/// A run cancelled mid-response leaves its tail streaming on the
-/// connection. The next run, placed on that connection, skips the tail
-/// and gets its own response.
+/// A run cancelled mid-response would leave its tail streaming on the
+/// connection, ahead of anything sent there next: the connection closes,
+/// and the next run gets its own response on another, without waiting
+/// for the tail.
 #[hegel::test(test_cases = 10)]
-fn the_next_run_skips_a_cancelled_tail(tc: TestCase) {
+fn a_cancelled_tail_closes_its_connection(tc: TestCase) {
+    // The cut response streams on, slowly: anything sent after it on its
+    // connection would wait for good.
     let (_, cut) = respond(&tc, "resp_1");
+    let Reply::Respond { frames, .. } = cut else {
+        unreachable!("respond streams a response")
+    };
+    let cut = Reply::StallAfter { frames, after: 1 };
     let (next, next_reply) = respond(&tc, "resp_2");
     let label = (next.model.clone(), next.timestamp);
     let got: Rc<RefCell<Option<AssistantMessage>>> = Rc::default();
@@ -875,7 +882,7 @@ fn the_next_run_skips_a_cancelled_tail(tc: TestCase) {
         *seen.borrow_mut() = Some(collect(response).await);
         Ok(())
     });
-    assert_eq!(fake.connections(), 1);
+    assert_eq!(fake.connections(), 2);
     let have = got.borrow_mut().take().unwrap();
     let mut want = next.clone();
     want.usage.cost = have.usage.cost.clone();
