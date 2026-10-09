@@ -263,3 +263,195 @@ t.case("says bye", function() t.equal(t.run{}:tool("hello"), "bye") end)
     assert!(asked.contains("is not a plugin's folder"), "{asked}");
     assert!(asked.contains("missing"), "{asked}");
 }
+
+const COUNTER_V1: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "counter",
+  tools = {
+    mark = {
+      description = "Counts a mark.",
+      call = function(args, ctx)
+        ctx.state.n = (ctx.state.n or 0) + 1
+        return "v1 " .. ctx.state.n
+      end,
+    },
+  },
+}
+"#;
+
+const COUNTER_V2: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "counter",
+  tools = {
+    mark = {
+      description = "Counts a mark.",
+      call = function(args, ctx)
+        ctx.state.n = (ctx.state.n or 0) + 1
+        return "v2 " .. ctx.state.n
+      end,
+    },
+  },
+}
+"#;
+
+/// Versions a test sets while a run goes on.
+#[derive(Clone, Default)]
+struct Settable(std::sync::Arc<std::sync::Mutex<Vec<Active>>>);
+
+#[async_trait]
+impl tau_luau_plugins_host::agent::Versions for Settable {
+    async fn now(&self) -> Vec<Active> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// `swap`: makes `to` the active versions.
+struct Swap {
+    versions: Settable,
+    to: Vec<Active>,
+}
+
+#[async_trait]
+impl AgentTool for Swap {
+    fn name(&self) -> &str {
+        "swap"
+    }
+
+    fn description(&self) -> &str {
+        "Changes the plugins."
+    }
+
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::LazyLock<Value> =
+            std::sync::LazyLock::new(|| json!({ "type": "object" }));
+        &SCHEMA
+    }
+
+    async fn call(
+        &self,
+        _args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        *self.versions.0.lock().unwrap() = self.to.clone();
+        Ok(ToolOutput::text("swapped"))
+    }
+}
+
+/// `relay`: calls `mark` as code mode would, from a tool.
+struct Relay;
+
+#[async_trait]
+impl AgentTool for Relay {
+    fn name(&self) -> &str {
+        "relay"
+    }
+
+    fn description(&self) -> &str {
+        "Calls mark."
+    }
+
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::LazyLock<Value> =
+            std::sync::LazyLock::new(|| json!({ "type": "object" }));
+        &SCHEMA
+    }
+
+    async fn call(
+        &self,
+        _args: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let output = ctx
+            .call("mark", json!({}))
+            .await
+            .map_err(|error| ToolError::from(error.to_string()))?;
+        Ok(ToolOutput::text(output.text_content()))
+    }
+}
+
+/// What each `relay` and `mark` call gave, in order.
+fn results(events: &[RunEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::ToolEnd { output, .. } => Some(output.text_content()),
+            _ => None,
+        })
+        .filter(|text| text != "swapped")
+        .collect()
+}
+
+/// A plugin that becomes active while a run goes on works in it from its
+/// next request, reached from a tool as code mode reaches it, without
+/// changing the tools the requests declare.
+#[test]
+fn a_plugin_that_becomes_active_mid_run_works_at_once() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("swap", json!({})))
+        .turn(|t| t.tool_call("relay", json!({})))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let versions = Settable::default();
+    let plugins = block_on_io(LuauPlugins::live(
+        std::sync::Arc::new(versions.clone()),
+        json!({ "kind": "chat", "repo": "tau-plugins", "model": "m" }),
+        None,
+    ));
+    let agent = Agent::new(llm.clone())
+        .tool(Swap {
+            versions,
+            to: vec![active("counter", COUNTER_V1)],
+        })
+        .tool(Relay)
+        .plugin(plugins);
+    let events: Vec<RunEvent> = block_on_io(async {
+        let mut run = agent.start("mark one", &store);
+        let events = run.events().collect().await;
+        run.outcome().await.unwrap();
+        events
+    });
+    assert_eq!(results(&events), ["v1 1", "v1 1"], "{events:#?}");
+    for request in llm.requests() {
+        let tools: Vec<&str> = request
+            .settings
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect();
+        assert!(!tools.contains(&"mark"), "declared: {tools:?}");
+    }
+}
+
+/// A plugin's new version takes over at the run's next request, with the
+/// state the earlier one left.
+#[test]
+fn a_new_version_takes_over_with_its_state() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("mark", json!({})))
+        .turn(|t| t.tool_call("swap", json!({})))
+        .turn(|t| t.tool_call("mark", json!({})))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let versions = Settable::default();
+    *versions.0.lock().unwrap() = vec![active("counter", COUNTER_V1)];
+    let plugins = block_on_io(LuauPlugins::live(
+        std::sync::Arc::new(versions.clone()),
+        json!({ "kind": "chat", "repo": "tau-plugins", "model": "m" }),
+        None,
+    ));
+    let agent = Agent::new(llm)
+        .tool(Swap {
+            versions,
+            to: vec![active("counter", COUNTER_V2)],
+        })
+        .plugin(plugins);
+    let events: Vec<RunEvent> = block_on_io(async {
+        let mut run = agent.start("mark twice", &store);
+        let events = run.events().collect().await;
+        run.outcome().await.unwrap();
+        events
+    });
+    assert_eq!(results(&events), ["v1 1", "v2 2"], "{events:#?}");
+}

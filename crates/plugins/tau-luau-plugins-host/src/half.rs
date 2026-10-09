@@ -17,6 +17,37 @@ use tau_ui_plugin::{HostCx, HostHalf, Link, PluginInfo, RunCtx, Seam};
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LuauPluginsHost;
 
+/// The versions one run has active, with the person's settings: trunk's,
+/// or for a run in the plugins repository, its workspace's where they
+/// may be.
+struct RunVersions {
+    registry: crate::registry::Registry,
+    settings: LuauSettings,
+    workspace: Option<std::path::PathBuf>,
+}
+
+#[async_trait::async_trait]
+impl crate::agent::Versions for RunVersions {
+    async fn now(&self) -> Vec<crate::agent::Active> {
+        let active = match &self.workspace {
+            Some(dir) => self.registry.in_workspace(dir).await,
+            None => self.registry.active().await,
+        };
+        active
+            .into_iter()
+            .map(|mut active| {
+                let name = &active.loaded.declaration.name;
+                active.settings = crate::settings::effective(
+                    &active.loaded.declaration,
+                    self.settings.plugins.get(name),
+                )
+                .0;
+                active
+            })
+            .collect()
+    }
+}
+
 impl HostHalf for LuauPluginsHost {
     type Plugin = LuauPluginsUi;
     type Host = crate::registry::Registry;
@@ -28,31 +59,16 @@ impl HostHalf for LuauPluginsHost {
         settings: &LuauSettings,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         let mut plugins: Vec<Box<dyn Plugin>> = Vec::new();
-        // A run in the plugins repository tests the plugins it writes.
-        if run.repo.name == crate::REPO
-            && let Some(dir) = run.services.get::<tau_ui_plugin::WorkspaceDir>()
-        {
+        // A run in the plugins repository tests plugins as its workspace
+        // has them, and runs them from there as soon as they pass.
+        let workspace = (run.repo.name == crate::REPO)
+            .then(|| run.services.get::<tau_ui_plugin::WorkspaceDir>())
+            .flatten()
+            .map(|dir| dir.0.clone());
+        if let Some(dir) = &workspace {
             plugins.push(Box::new(crate::testing::PluginTesting::new(
-                dir.0.clone(),
+                dir.clone(),
             )));
-        }
-        // Each plugin takes what the person set, over its defaults.
-        let active: Vec<crate::agent::Active> = host
-            .active()
-            .await
-            .into_iter()
-            .map(|mut active| {
-                let name = &active.loaded.declaration.name;
-                active.settings = crate::settings::effective(
-                    &active.loaded.declaration,
-                    settings.plugins.get(name),
-                )
-                .0;
-                active
-            })
-            .collect();
-        if active.is_empty() {
-            return Ok(plugins);
         }
         let kind = match run.kind {
             tau_ui_plugin::RunKind::Main => "main",
@@ -68,8 +84,21 @@ impl HostHalf for LuauPluginsHost {
             .services
             .get::<std::sync::Arc<dyn tau_jev::Jev>>()
             .cloned();
-        plugins
-            .push(Box::new(crate::agent::LuauPlugins::new(active, info, jev)));
+        // Always there, even with no plugin active yet: one that becomes
+        // active while the run goes on works in it from its next request.
+        let versions = RunVersions {
+            registry: host.clone(),
+            settings: settings.clone(),
+            workspace,
+        };
+        plugins.push(Box::new(
+            crate::agent::LuauPlugins::live(
+                std::sync::Arc::new(versions),
+                info,
+                jev,
+            )
+            .await,
+        ));
         Ok(plugins)
     }
 

@@ -36,8 +36,16 @@ outcome on the Plugins screen:
 - **Failing**: its tests fail; the version before stays active.
 - **Broken**: it does not load; the error and its line show.
 
-A run keeps the plugins it started with: a change applies from the
-next message.
+A change is live at once, with no new chat or message:
+
+- **In this chat**, a plugin as this workspace has it runs from your
+  next model request, once `plugin_test` would pass and it reaches
+  nothing new. Write it, test it, then use it right here.
+- **Everywhere else**, once it lands on `main`.
+- A tool the run did not start with is not in your tool list: call it
+  from `codemode`, where `search_tools` finds it. From the next message
+  it is a tool like the others. A changed tool you already have runs
+  its new version.
 
 ## The plugin
 

@@ -215,3 +215,54 @@ return tau.plugin {
             .is_err()
     );
 }
+
+/// Writes `greet` into a workspace `dir`: its plugin and, when given, a
+/// test file.
+fn write_greet(dir: &std::path::Path, plugin: &str, test: Option<&str>) {
+    let folder = dir.join("greet");
+    std::fs::create_dir_all(folder.join("tests")).unwrap();
+    std::fs::write(folder.join("plugin.luau"), plugin).unwrap();
+    match test {
+        Some(test) => std::fs::write(folder.join("tests/basic.luau"), test),
+        None => std::fs::remove_file(folder.join("tests/basic.luau"))
+            .or(Ok(())),
+    }
+    .unwrap();
+}
+
+/// A run in the plugins repository runs a plugin as its workspace has
+/// it, as soon as that version passes its tests and reaches nothing it
+/// was not allowed: before the plugin lands on trunk, and before trunk
+/// has any plugin at all. A failing or further-reaching version leaves
+/// the run as trunk has it.
+#[test]
+fn a_workspace_runs_its_own_passing_versions() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    // Trunk has no plugins yet.
+    let registry =
+        Registry::at(home.path().join("none"), home.path().join("allowed.json"), || {});
+    let names = |registry: &Registry| -> Vec<String> {
+        block_on_io(registry.in_workspace(workspace.path()))
+            .iter()
+            .map(|active| active.loaded.declaration.description.clone())
+            .collect()
+    };
+    assert!(names(&registry).is_empty());
+
+    write_greet(workspace.path(), TOOL_ONLY, Some(PASSING));
+    assert_eq!(names(&registry), ["Says hello."], "a new plugin runs");
+
+    write_greet(workspace.path(), TOOL_ONLY, Some(FAILING));
+    assert!(names(&registry).is_empty(), "a failing version does not");
+
+    // A version that reaches further than allowed waits for the person,
+    // as on trunk.
+    write_greet(workspace.path(), BLOCKING, None);
+    assert!(names(&registry).is_empty(), "nor one that reaches further");
+
+    // Other runs go by trunk alone.
+    write_greet(workspace.path(), TOOL_ONLY, Some(PASSING));
+    assert_eq!(names(&registry), ["Says hello."]);
+    assert!(block_on_io(registry.active()).is_empty());
+}

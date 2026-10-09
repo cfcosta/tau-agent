@@ -5,8 +5,13 @@
 //! the new commit is loaded and tested, and activates by itself unless
 //! its tests fail or it reaches further than the version the person
 //! allowed; then the version before stays active, and the Plugins
-//! screen says why. Every run's agent gets the plugins active when it
-//! starts.
+//! screen says why. A run takes the plugins active before each of its
+//! model requests, so a change reaches runs already going.
+//!
+//! A run in the plugins repository has its own workspace's versions
+//! too ([`Registry::in_workspace`]): a plugin it wrote or changed works
+//! for it as soon as that version's tests pass, before it lands, and for
+//! every other run once it lands on trunk.
 
 use std::{
     collections::BTreeMap,
@@ -53,6 +58,10 @@ struct Shared {
     /// Where what the person allowed is kept.
     allowed_path: PathBuf,
     state: RwLock<State>,
+    /// Versions read from runs' workspaces, by their files' digest: the
+    /// version when it may be active, else `None`. Each is loaded and
+    /// tested once.
+    tried: tokio::sync::Mutex<BTreeMap<String, Option<Loaded>>>,
     /// Asks the interface to draw the catalog again.
     refresh: Box<dyn Fn() + Send + Sync>,
 }
@@ -96,6 +105,7 @@ impl Registry {
             root,
             allowed_path: allowed,
             state: RwLock::default(),
+            tried: tokio::sync::Mutex::default(),
             refresh: Box::new(refresh),
         }))
     }
@@ -103,6 +113,78 @@ impl Registry {
     /// The plugins every new run gets.
     pub async fn active(&self) -> Vec<Active> {
         self.0.state.read().await.active.clone()
+    }
+
+    /// The plugins a run whose workspace is `dir`, in the plugins
+    /// repository, has active: trunk's, each in its version in `dir`
+    /// instead when that version loads, passes its tests and reaches no
+    /// further than the person allowed; else trunk's stays. A plugin
+    /// `dir` lacks keeps trunk's version: removing one takes effect when
+    /// the removal lands.
+    pub async fn in_workspace(&self, dir: &Path) -> Vec<Active> {
+        let mut active = self.active().await;
+        let dir = dir.to_owned();
+        let folders = tokio::task::spawn_blocking(move || plugin_folders(&dir))
+            .await
+            .unwrap_or_default();
+        if folders.is_empty() {
+            return active;
+        }
+        let allowed = read_allowed(&self.0.allowed_path).await;
+        for (name, files) in folders {
+            let digest = files.digest();
+            let at = active
+                .iter()
+                .position(|active| active.loaded.declaration.name == name);
+            if at.is_some_and(|at| active[at].loaded.digest == digest) {
+                continue;
+            }
+            let Some(loaded) = self.try_version(&name, files, &allowed).await
+            else {
+                continue;
+            };
+            let settings = loaded.declaration.default_settings();
+            let version = Active { loaded, settings };
+            match at {
+                Some(at) => active[at] = version,
+                None => active.push(version),
+            }
+        }
+        active
+    }
+
+    /// `name` in `files`, when it may be active: it loads, its tests
+    /// pass, and it reaches no further than `allowed` lets it.
+    async fn try_version(
+        &self,
+        name: &str,
+        files: Files,
+        allowed: &BTreeMap<String, Allowed>,
+    ) -> Option<Loaded> {
+        let digest = files.digest();
+        let mut tried = self.0.tried.lock().await;
+        if let Some(known) = tried.get(&digest) {
+            return known.clone();
+        }
+        let version = match load(name, files).await {
+            Ok(loaded) => {
+                let tests = loaded.test(CancellationToken::new()).await;
+                let grown = match allowed.get(name) {
+                    Some(allowed) if allowed.digest == loaded.digest => {
+                        Vec::new()
+                    }
+                    Some(allowed) => {
+                        loaded.declaration.grown_from(&allowed.declaration)
+                    }
+                    None => loaded.declaration.grown_from(&Declaration::default()),
+                };
+                (tests.iter().all(|test| test.passed) && grown.is_empty())
+                    .then_some(loaded)
+            }
+            Err(_) => None,
+        };
+        tried.insert(digest, version.clone());
+        version
     }
 
     /// The repository as last read, for the Plugins screen.
@@ -328,6 +410,27 @@ impl Registry {
         (self.0.refresh)();
         Ok(())
     }
+}
+
+/// The plugin folders in a workspace `dir`: each top-level folder with a
+/// `plugin.luau`, as its files.
+fn plugin_folders(dir: &Path) -> Vec<(String, Files)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<(String, Files)> = entries
+        .flatten()
+        .filter(|entry| entry.path().join(crate::runtime::PLUGIN_FILE).is_file())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_str()?.to_owned();
+            if name.starts_with('.') {
+                return None;
+            }
+            Some((name, Files::read(&entry.path()).ok()?))
+        })
+        .collect();
+    folders.sort_by(|a, b| a.0.cmp(&b.0));
+    folders
 }
 
 async fn read_allowed(path: &Path) -> BTreeMap<String, Allowed> {

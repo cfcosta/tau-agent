@@ -15,10 +15,10 @@ pub fn first_files() -> Vec<(String, String)> {
 
 const README: &str = "# tau's plugins\n\n\
     Plugins written in Luau, one folder each: `plugin.luau`, modules under \
-    `lib/`, tests under `tests/`, and a README. A plugin is active at the \
-    commit of `main` that holds it, once its tests pass; one that reaches \
-    further than the version you allowed waits for you on the Plugins \
-    screen.\n";
+    `lib/`, tests under `tests/`, and a README. A plugin works in the chat \
+    that writes it as soon as its tests pass, and everywhere once it lands \
+    on `main`; one that reaches further than the version you allowed \
+    waits for you on the Plugins screen.\n";
 
 const AGENTS: &str = "# Writing tau's plugins\n\n\
     This repository holds tau's Luau plugins. Load the `tau-plugins` skill \

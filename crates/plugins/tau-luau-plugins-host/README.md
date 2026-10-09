@@ -35,6 +35,13 @@ tested again. A version activates by itself unless its tests fail, it
 does not load, or it reaches further than the version the person
 allowed; then the version before stays active.
 
+Plugins are live (decision 0033). A run takes the versions active
+before each model request, so a change reaches runs already going. A
+run in the plugins repository also runs its own workspace's versions
+once they pass their tests (`Registry::in_workspace`). A tool that came
+after a run started is reached from code mode through the plugin's tool
+source, so the request's declared tools stay as they were.
+
 ## How it fits
 
 This is the host half (decisions 0027 and 0030). Its partner is

@@ -5,7 +5,8 @@
   [0018](0018-codemode-and-mcp.md), unchanged for Rust plugins. Amends
   [0015](0015-a-main-chat-per-repository.md): tau keeps one local
   repository of its own, the plugins repository, beside those from
-  GitHub.
+  GitHub. Amended by [0033](0033-plugins-are-live.md): plugins are
+  live in runs already going, and in the chat that writes them.
 - Date: 2026-10-05
 
 ## Context
@@ -210,7 +211,9 @@ the plugin's page.
   a plugin's version changes, the host re-renders the trees of every
   run on screen with the new version, stored runs included. Status
   lines, notes, cards and pages change while the person watches.
-- **Behaviour is pinned per run.** A run keeps the hooks and tools it
+- **Behaviour is pinned per run** (amended by
+  [0033](0033-plugins-are-live.md): runs follow versions as they
+  change). A run keeps the hooks and tools it
   started with: its tools are fixed for the run (0022), and a hook
   changing in the middle would make it inconsistent. The next message
   to a chat starts a run on the new version; a running chat says

@@ -6,6 +6,15 @@
 //! the view drawn from the new state are published as [`Record`]s. A
 //! hook that fails counts as allowing or stopping; after
 //! [`MAX_FAILURES`] in a run, its plugin is off for the rest of it.
+//!
+//! The plugins follow their versions live ([`Versions`]): before each
+//! model request the run takes the versions active then, so a plugin
+//! that changed, or a new one, works from that request on. Each hook and
+//! tool call goes to the plugin's version of the moment, its state kept
+//! by name across versions. The tools the run started with are declared
+//! to the model; one that came later is reached from code mode, through
+//! the plugin's tool source, so the request's tools, and the prompt
+//! cache they key, stay as they were.
 
 use std::{
     collections::HashMap,
@@ -24,13 +33,17 @@ use tau_agent::{
         Plugin,
         PluginCtx,
         PluginRun,
+        RequestView,
         RunPlan,
         StopDecision,
         ToolCall,
     },
-    tool::{AgentTool, RunId, ToolCtx, ToolOutput},
+    tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolSource},
 };
-use tau_ai::message::{AssistantBlock, AssistantMessage, Usage};
+use tau_ai::{
+    message::{AssistantBlock, AssistantMessage, Usage},
+    responses::request::ReasoningEffort,
+};
 use tau_codemode_host::{ToolCall as ScriptCall, ToolEntry, ToolReply};
 use tau_jev::Jev;
 
@@ -54,12 +67,30 @@ pub struct Active {
     pub settings: Value,
 }
 
+/// Where a run's plugins come from: the versions active for it now.
+#[async_trait]
+pub trait Versions: Send + Sync + 'static {
+    async fn now(&self) -> Vec<Active>;
+}
+
+/// The same versions, always.
+struct Fixed(Vec<Active>);
+
+#[async_trait]
+impl Versions for Fixed {
+    async fn now(&self) -> Vec<Active> {
+        self.0.clone()
+    }
+}
+
 /// The run's Luau plugins, as one tau-agent plugin. Build one per run.
 #[derive(Clone)]
 pub struct LuauPlugins(Arc<Inner>);
 
 struct Inner {
-    active: Vec<Active>,
+    versions: Arc<dyn Versions>,
+    /// The versions as last taken, in the order they are active.
+    active: Mutex<Arc<Vec<Active>>>,
     /// `{ kind, repo, model }`: what `ctx.run` says besides the run's id
     /// and turn.
     run: Value,
@@ -68,11 +99,13 @@ struct Inner {
     runs: Mutex<HashMap<RunId, Arc<tokio::sync::Mutex<RunState>>>>,
 }
 
-/// One run's state for every plugin, in the order they are active.
+/// One run's state for every plugin, by name.
 #[derive(Debug, Default)]
 struct RunState {
-    states: Vec<Value>,
-    failures: Vec<u32>,
+    states: HashMap<String, Value>,
+    failures: HashMap<String, u32>,
+    /// The digest of each plugin's version the run last drew.
+    drawn: HashMap<String, String>,
     continued: u32,
     turn: u32,
     /// The current turn's text and its calls, by id.
@@ -82,15 +115,33 @@ struct RunState {
 }
 
 impl LuauPlugins {
-    /// `run` is `{ kind, repo, model }`; `jev` is what plugins that use
-    /// Jev ask.
+    /// The plugins `active`, always. `run` is `{ kind, repo, model }`;
+    /// `jev` is what plugins that use Jev ask.
     pub fn new(
         active: Vec<Active>,
         run: Value,
         jev: Option<Arc<dyn Jev>>,
     ) -> Self {
         Self(Arc::new(Inner {
-            active,
+            active: Mutex::new(Arc::new(active.clone())),
+            versions: Arc::new(Fixed(active)),
+            run,
+            jev,
+            runs: Mutex::default(),
+        }))
+    }
+
+    /// The plugins `versions` has active, as they change: taken now, and
+    /// again before each model request.
+    pub async fn live(
+        versions: Arc<dyn Versions>,
+        run: Value,
+        jev: Option<Arc<dyn Jev>>,
+    ) -> Self {
+        let active = versions.now().await;
+        Self(Arc::new(Inner {
+            active: Mutex::new(Arc::new(active)),
+            versions,
             run,
             jev,
             runs: Mutex::default(),
@@ -104,67 +155,81 @@ impl Inner {
             .lock()
             .expect("not poisoned")
             .entry(run.clone())
-            .or_insert_with(|| {
-                Arc::new(tokio::sync::Mutex::new(RunState {
-                    states: vec![json!({}); self.active.len()],
-                    failures: vec![0; self.active.len()],
-                    ..RunState::default()
-                }))
-            })
+            .or_default()
             .clone()
     }
 
-    fn context(&self, run: &RunId, state: &RunState, index: usize) -> Context {
+    /// The versions as last taken.
+    fn active(&self) -> Arc<Vec<Active>> {
+        self.active.lock().expect("not poisoned").clone()
+    }
+
+    /// Takes the versions active now.
+    async fn refresh(&self) {
+        let now = Arc::new(self.versions.now().await);
+        *self.active.lock().expect("not poisoned") = now;
+    }
+
+    /// Plugin `name`'s version now, if it is active.
+    fn plugin(&self, name: &str) -> Option<Active> {
+        self.active()
+            .iter()
+            .find(|active| active.loaded.declaration.name == name)
+            .cloned()
+    }
+
+    fn context(&self, run: &RunId, state: &RunState, active: &Active) -> Context {
         let mut info = self.run.clone();
         if let Some(info) = info.as_object_mut() {
             info.insert("id".into(), json!(run.0.as_ref()));
             info.insert("turn".into(), json!(state.turn));
         }
+        let name = &active.loaded.declaration.name;
         Context {
             run: info,
             now: now(),
-            settings: self.active[index].settings.clone(),
-            state: state.states[index].clone(),
+            settings: active.settings.clone(),
+            state: state.states.get(name).cloned().unwrap_or_else(|| json!({})),
         }
     }
 
-    fn off(&self, state: &RunState, index: usize) -> bool {
-        state.failures[index] >= MAX_FAILURES
+    fn off(&self, state: &RunState, name: &str) -> bool {
+        state.failures.get(name).copied().unwrap_or(0) >= MAX_FAILURES
     }
 
-    /// Calls `hook` of plugin `index` and applies what it did: state,
-    /// log lines, the view, or the error.
+    /// Calls `hook` of `active` and applies what it did: state, log
+    /// lines, the view, or the error.
     async fn call(
         &self,
-        index: usize,
+        active: &Active,
         hook: Hook,
         input: Value,
         state: &mut RunState,
         ctx: &PluginCtx,
         reach: Arc<dyn Reach>,
     ) -> Option<Value> {
-        if self.off(state, index)
-            || !hook.declared_in(&self.active[index].loaded.declaration)
+        let name = &active.loaded.declaration.name;
+        if self.off(state, name) || !hook.declared_in(&active.loaded.declaration)
         {
             return None;
         }
-        let context = self.context(&ctx.run, state, index);
-        let outcome = self.active[index]
+        let context = self.context(&ctx.run, state, active);
+        let outcome = active
             .loaded
             .call(&hook, input, &context, reach, ctx.cancel.child_token())
             .await;
-        self.apply(index, &hook, outcome, state, ctx).await
+        self.apply(active, &hook, outcome, state, ctx).await
     }
 
     async fn apply(
         &self,
-        index: usize,
+        active: &Active,
         hook: &Hook,
         outcome: Outcome,
         state: &mut RunState,
         ctx: &PluginCtx,
     ) -> Option<Value> {
-        let plugin = self.active[index].loaded.declaration.name.clone();
+        let plugin = active.loaded.declaration.name.clone();
         if !outcome.logs.is_empty() {
             ctx.publish(&Record::Log {
                 plugin: plugin.clone(),
@@ -173,14 +238,14 @@ impl Inner {
             .await;
         }
         if let Some(error) = outcome.error {
-            state.failures[index] += 1;
+            *state.failures.entry(plugin.clone()).or_default() += 1;
             ctx.publish(&Record::Error {
                 plugin: plugin.clone(),
                 hook: hook_name(hook),
                 error,
             })
             .await;
-            if self.off(state, index) {
+            if self.off(state, &plugin) {
                 ctx.publish(&Record::Off {
                     plugin,
                     why: format!("{MAX_FAILURES} hooks failed in this run"),
@@ -189,29 +254,29 @@ impl Inner {
             }
             return None;
         }
-        if outcome.state != state.states[index] {
-            state.states[index] = outcome.state.clone();
+        if state.states.get(&plugin) != Some(&outcome.state) {
+            state.states.insert(plugin.clone(), outcome.state.clone());
             ctx.publish(&Record::State {
                 plugin: plugin.clone(),
                 state: outcome.state,
             })
             .await;
             if !matches!(hook, Hook::View) {
-                self.draw(index, state, ctx).await;
+                self.draw(active, state, ctx).await;
             }
         }
         Some(outcome.value)
     }
 
-    /// Draws plugin `index`'s view from its state and publishes it.
-    async fn draw(&self, index: usize, state: &mut RunState, ctx: &PluginCtx) {
-        if self.off(state, index)
-            || !self.active[index].loaded.declaration.hooks.view
-        {
+    /// Draws `active`'s view from its state and publishes it.
+    async fn draw(&self, active: &Active, state: &mut RunState, ctx: &PluginCtx) {
+        let name = active.loaded.declaration.name.clone();
+        state.drawn.insert(name.clone(), active.loaded.digest.clone());
+        if self.off(state, &name) || !active.loaded.declaration.hooks.view {
             return;
         }
-        let context = self.context(&ctx.run, state, index);
-        let outcome = self.active[index]
+        let context = self.context(&ctx.run, state, active);
+        let outcome = active
             .loaded
             .call(
                 &Hook::View,
@@ -221,10 +286,10 @@ impl Inner {
                 ctx.cancel.child_token(),
             )
             .await;
-        let plugin = self.active[index].loaded.declaration.name.clone();
+        let plugin = name;
         match outcome.error {
             Some(error) => {
-                state.failures[index] += 1;
+                *state.failures.entry(plugin.clone()).or_default() += 1;
                 ctx.publish(&Record::Error {
                     plugin,
                     hook: "view".into(),
@@ -263,21 +328,16 @@ impl Plugin for LuauPlugins {
         NAME
     }
 
+    /// The tools of the versions active as the run starts, declared to
+    /// the model.
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
-        self.0
-            .active
-            .iter()
-            .enumerate()
-            .flat_map(|(index, active)| {
-                active.loaded.declaration.tools.iter().map(move |spec| {
-                    Arc::new(LuauTool {
-                        plugins: self.clone(),
-                        index,
-                        spec: spec.clone(),
-                    }) as Arc<dyn AgentTool>
-                })
-            })
-            .collect()
+        self.tools_now()
+    }
+
+    /// The tools of the versions active now: those that came after the
+    /// run started, for code mode.
+    fn tool_source(&self) -> Option<Arc<dyn ToolSource>> {
+        Some(Arc::new(LiveTools(self.clone())))
     }
 
     async fn start(
@@ -298,16 +358,10 @@ impl Plugin for LuauPlugins {
                 else {
                     continue;
                 };
-                if let Some(index) =
-                    self.0.active.iter().position(|active| {
-                        active.loaded.declaration.name == plugin
-                    })
-                {
-                    state.states[index] = kept;
-                }
+                state.states.insert(plugin, kept);
             }
-            for index in 0..self.0.active.len() {
-                self.0.draw(index, &mut state, ctx).await;
+            for active in self.0.active().iter() {
+                self.0.draw(active, &mut state, ctx).await;
             }
         }
         Ok(Box::new(LuauRun {
@@ -334,10 +388,10 @@ impl PluginRun for LuauRun {
         let mut state = self.state.lock().await;
         let input =
             json!({ "id": call.id, "name": call.name, "args": call.args });
-        for index in 0..inner.active.len() {
+        for active in inner.active().iter() {
             let Some(answer) = inner
                 .call(
-                    index,
+                    active,
                     Hook::BeforeTool,
                     input.clone(),
                     &mut state,
@@ -354,11 +408,7 @@ impl PluginRun for LuauRun {
                 Some("block") => return Ok(Decision::Block(reason)),
                 Some("flag") => {
                     ctx.publish(&Record::Flag {
-                        plugin: inner.active[index]
-                            .loaded
-                            .declaration
-                            .name
-                            .clone(),
+                        plugin: active.loaded.declaration.name.clone(),
                         call_id: call.id.clone(),
                         reason,
                     })
@@ -390,10 +440,10 @@ impl PluginRun for LuauRun {
             .collect();
         let input =
             json!({ "text": text, "turn": state.turn, "reason": "stop" });
-        for index in 0..inner.active.len() {
+        for active in inner.active().iter() {
             let Some(answer) = inner
                 .call(
-                    index,
+                    active,
                     Hook::BeforeStop,
                     input.clone(),
                     &mut state,
@@ -412,6 +462,25 @@ impl PluginRun for LuauRun {
             }
         }
         Ok(StopDecision::Stop)
+    }
+
+    /// Takes the versions active now, before each request, and draws
+    /// the view of each plugin whose version changed or that is new.
+    async fn before_request(
+        &mut self,
+        _view: &RequestView<'_>,
+        ctx: &PluginCtx,
+    ) -> Result<Option<ReasoningEffort>, PluginError> {
+        let inner = &self.plugins.0;
+        inner.refresh().await;
+        let mut state = self.state.lock().await;
+        for active in inner.active().iter() {
+            let name = &active.loaded.declaration.name;
+            if state.drawn.get(name) != Some(&active.loaded.digest) {
+                inner.draw(active, &mut state, ctx).await;
+            }
+        }
+        Ok(None)
     }
 
     async fn on_event(&mut self, event: &RunEvent, ctx: &PluginCtx) {
@@ -447,10 +516,10 @@ impl PluginRun for LuauRun {
             }
             RunEvent::TurnEnd { turn, .. } => {
                 let input = json!({ "turn": turn, "text": state.text, "calls": state.calls });
-                for index in 0..inner.active.len() {
+                for active in inner.active().iter() {
                     inner
                         .call(
-                            index,
+                            active,
                             Hook::TurnEnd,
                             input.clone(),
                             &mut state,
@@ -473,10 +542,10 @@ impl PluginRun for LuauRun {
                 "turns": state.turn,
                 "cost": run.usage.cost.total,
             });
-            for index in 0..inner.active.len() {
+            for active in inner.active().iter() {
                 inner
                     .call(
-                        index,
+                        active,
                         Hook::RunEnd,
                         input.clone(),
                         &mut state,
@@ -490,10 +559,42 @@ impl PluginRun for LuauRun {
     }
 }
 
-/// A tool a Luau plugin adds.
+impl LuauPlugins {
+    /// The tools of the versions active now.
+    fn tools_now(&self) -> Vec<Arc<dyn AgentTool>> {
+        self.0
+            .active()
+            .iter()
+            .flat_map(|active| {
+                active.loaded.declaration.tools.iter().map(|spec| {
+                    Arc::new(LuauTool {
+                        plugins: self.clone(),
+                        plugin: active.loaded.declaration.name.clone(),
+                        spec: spec.clone(),
+                    }) as Arc<dyn AgentTool>
+                })
+            })
+            .collect()
+    }
+}
+
+/// The plugins' tools as they are now, for code mode: a run's own tools
+/// hide those of the same name, so this offers the ones that came after
+/// it started.
+struct LiveTools(LuauPlugins);
+
+#[async_trait]
+impl ToolSource for LiveTools {
+    fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
+        self.0.tools_now()
+    }
+}
+
+/// A tool a Luau plugin adds. A call goes to the plugin's version of the
+/// moment.
 struct LuauTool {
     plugins: LuauPlugins,
-    index: usize,
+    plugin: String,
     spec: ToolSpec,
 }
 
@@ -528,15 +629,29 @@ impl AgentTool for LuauTool {
             jev: inner.jev.clone(),
         });
         let tool = Hook::Tool(self.spec.name.clone());
-        let failures = state.failures[self.index];
+        let Some(active) = inner.plugin(&self.plugin).filter(|active| {
+            active
+                .loaded
+                .declaration
+                .tools
+                .iter()
+                .any(|spec| spec.name == self.spec.name)
+        }) else {
+            return Err(format!(
+                "{} has no tool {} any more",
+                self.plugin, self.spec.name
+            )
+            .into());
+        };
+        let failures = state.failures.get(&self.plugin).copied().unwrap_or(0);
         let Some(value) = inner
-            .call(self.index, tool, args.clone(), &mut state, &plugin, reach)
+            .call(&active, tool, args.clone(), &mut state, &plugin, reach)
             .await
         else {
-            if inner.off(&state, self.index) && failures >= MAX_FAILURES {
+            if inner.off(&state, &self.plugin) && failures >= MAX_FAILURES {
                 return Err(format!(
                     "{} is off for this run: {MAX_FAILURES} of its hooks failed",
-                    inner.active[self.index].loaded.declaration.name
+                    self.plugin
                 )
                 .into());
             }
@@ -550,7 +665,7 @@ impl AgentTool for LuauTool {
             let input = json!({ "call": args, "result": value });
             inner
                 .call(
-                    self.index,
+                    &active,
                     Hook::Card(self.spec.name.clone()),
                     input,
                     &mut state,
@@ -567,7 +682,7 @@ impl AgentTool for LuauTool {
         };
         Ok(ToolOutput {
             details: Some(json!({
-                "plugin": inner.active[self.index].loaded.declaration.name,
+                "plugin": self.plugin,
                 "value": value,
                 "card": card,
             })),
