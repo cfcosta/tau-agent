@@ -445,12 +445,29 @@ fn non_object_root_is_an_error() {
     }
 }
 
-/// Nothing may follow the root object but whitespace.
-#[test]
-fn trailing_garbage_is_an_error() {
+/// Nothing may follow the root object but whitespace: any whitespace
+/// is fine and leaves the object as it was, and any other character is
+/// an error, however the text is chunked.
+#[hegel::test(test_cases = 300)]
+fn only_whitespace_may_follow_the_root_object(tc: TestCase) {
+    let value = Value::Object(tc.draw(generators::json_object(3)));
+    let text = serde_json::to_string(&value).unwrap();
+    let blanks = tc.draw(gs::text().alphabet(" \t\r\n").max_size(4));
     let mut parser = PartialJson::new();
-    parser.push("{} x");
-    assert!(parser.finish().is_err());
+    for chunk in tc.draw(generators::char_chunks(format!("{text}{blanks}"))) {
+        parser.push(&chunk);
+    }
+    assert_eq!(parser.finish().expect("trailing whitespace"), value);
+
+    let stray =
+        tc.draw(gs::characters().exclude_categories(&["Z", "Cc", "Cs"]));
+    let mut parser = PartialJson::new();
+    for chunk in
+        tc.draw(generators::char_chunks(format!("{text}{blanks}{stray}")))
+    {
+        parser.push(&chunk);
+    }
+    assert!(parser.finish().is_err(), "{text}{blanks}{stray:?}");
 }
 
 /// Before anything is pushed, the partial view is an empty object.

@@ -106,6 +106,39 @@ fn integer_literals_refuse_silent_rounding_at_both_boundaries() {
     }
 }
 
+/// An integer literal decodes exactly when a Luau double holds it
+/// exactly, i.e. `|n| <= 2^53`, wherever it sits in the document.
+#[hegel::test(test_cases = 300)]
+fn integer_literals_decode_iff_a_double_holds_them(tc: TestCase) {
+    const EXACT: i128 = 1 << 53;
+    let n = tc.draw(hegel::one_of!(
+        gs::integers::<i128>()
+            .min_value(-(1 << 70))
+            .max_value(1 << 70),
+        gs::integers::<i128>()
+            .min_value(EXACT - 3)
+            .max_value(EXACT + 3),
+        gs::integers::<i128>()
+            .min_value(-EXACT - 3)
+            .max_value(-EXACT + 3),
+    ));
+    let text = tc.draw(gs::sampled_from(vec![
+        format!("{n}"),
+        format!("[{n}]"),
+        format!(r#"{{"k":[1,{{"n":{n}}}]}}"#),
+    ]));
+    let decoded = codec::decode(text.as_bytes());
+    if n.abs() <= EXACT {
+        let value = decoded.unwrap_or_else(|e| panic!("{text}: {e}"));
+        assert_eq!(value, serde_json::from_str::<Value>(&text).unwrap());
+    } else {
+        assert!(
+            decoded.unwrap_err().contains("exact range"),
+            "{text} was not refused"
+        );
+    }
+}
+
 #[test]
 fn text_limits_apply_before_decode_and_during_encode() {
     let lua = Lua::new();
