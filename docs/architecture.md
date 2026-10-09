@@ -48,7 +48,9 @@ tau-agent/
 │       ├── tau-tools/            # read, bash, edit, write, grep, find, ls
 │       ├── tau-tree-compaction/  # compaction into a tree of summaries the
 │       │                         # agent zooms into, after OptChat
-│       └── tau-vcs/              # version control on jj-lib, and landing runs
+│       ├── tau-vcs/              # version control on jj-lib, and landing runs
+│       └── tau-watcher/          # notes what you likely missed, every 6th step
+│                                 # (ADR 0032)
 └── docs/
 ```
 

@@ -117,6 +117,7 @@ cards and shapes every interface draws, which a phone links, and a
 | `tau-fast-compaction`   | Prunes large tool outputs and stale tool history, with Jev            |
 | `tau-tree-compaction`   | Folds old context into summaries to zoom into; off by default         |
 | `tau-goal`              | Keeps a run going until a `/goal` holds, checked with Jev             |
+| `tau-watcher`           | Every 6th step, rarely, a note on what you likely missed (off by default) |
 | `tau-reasoning`         | Picks a run's reasoning effort from its task, with Jev                |
 | `tau-ask`               | The `ask` tool: structured questions to the person                    |
 | `tau-skills`            | Skills from `~/.agents/skills`, loaded with the `skill` tool          |

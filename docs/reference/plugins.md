@@ -799,6 +799,17 @@ Built: `crates/plugins/tau-goal`. Its reference is [goal.md](goal.md).
   resumed run keeps it; an interface pauses, extends or clears it by
   storing a record, which the plugin reads at its next check.
 
+### `tau-watcher`: notes what you missed
+
+Built: `crates/plugins/tau-watcher`. Its reference is
+[watcher.md](watcher.md).
+
+- **Seams:** `start` (a message written past a waiting note), and
+  `before_request` (every 6th step, one side request through
+  `PluginCtx::ask`).
+- **State:** records only: `noted`, `dropped`, `typed_past`, `answered`.
+  The interface stores the answers itself.
+
 ## What changed in tau-agent
 
 1. `Plugin`, `PluginRun`, `PluginCtx`, `RunPlan`, `ContextView`,
