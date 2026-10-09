@@ -213,14 +213,14 @@ Events that force a full resend:
 
 ## Recovery ladder
 
-| Condition                                    | Action                                                                                                                                      |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `previous_response_not_found`                | Clear the lane's continuation, then resend in full on the same connection.                                                                  |
-| `websocket_connection_limit_reached`         | Reconnect, then resend in full.                                                                                                             |
-| Connection lost before any event was emitted | Reconnect, then resend in full. This counts as one retry attempt.                                                                           |
-| Connection lost mid-stream                   | Emit an `error` event with `stopReason = error`. The agent's retry policy decides what happens next.                                        |
+| Condition                                    | Action                                                                                                                                                                                                                                       |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `previous_response_not_found`                | Clear the lane's continuation, then resend in full on the same connection.                                                                                                                                                                   |
+| `websocket_connection_limit_reached`         | Reconnect, then resend in full.                                                                                                                                                                                                              |
+| Connection lost before any event was emitted | Reconnect, then resend in full. This counts as one retry attempt.                                                                                                                                                                            |
+| Connection lost mid-stream                   | Emit an `error` event with `stopReason = error`. The agent's retry policy decides what happens next.                                                                                                                                         |
 | Cancel, Lite, response id known              | Send `response.interrupt`; the server stops the response within milliseconds (`response.incomplete`, reason `interrupted`). The lane keeps the connection and its cache; the driver skips the stopped response's tail. See "Responses Lite". |
-| Cancel, otherwise, or the interrupt refused  | Close the connection, which stops the response there: the server answers a connection's requests in order, so the next one would wait for its tail. The lane takes another connection when it next sends, in full. |
+| Cancel, otherwise, or the interrupt refused  | Close the connection, which stops the response there: the server answers a connection's requests in order, so the next one would wait for its tail. The lane takes another connection when it next sends, in full.                           |
 
 ## Responses Lite
 

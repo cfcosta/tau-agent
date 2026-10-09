@@ -66,9 +66,12 @@ use crate::{
     event::{Accumulator, AssistantEvent, ErrorReason},
     message::{Timestamp, Usage},
     refusal::Refusal,
-    responses::{input::response_items, stream::StreamProcessor},
+    responses::{
+        input::response_items,
+        request::LITE_MARKER,
+        stream::StreamProcessor,
+    },
     retry::Class,
-    responses::request::LITE_MARKER,
     ws::proto::{
         continuation::Body,
         lane::Event,

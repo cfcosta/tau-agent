@@ -97,32 +97,32 @@ cards and shapes every interface draws, which a phone links, and a
 `-host` one with the behaviour. Light ones are one crate, some with a
 `host` feature.
 
-| Crate                   | What it gives you                                                     |
-| ----------------------- | --------------------------------------------------------------------- |
-| `tau-tools`             | The coding tools' cards, and the shapes they read                     |
-| `tau-tools-host`        | Optional coding tools, all rooted at one directory                    |
-| `tau-vcs`               | The version-control tools' cards, and the shapes they read            |
-| `tau-vcs-host`          | Optional version-control tools on one jj workspace, backed by jj-lib  |
-| `tau-codemode`          | Codemode's cards, and the records they fold                           |
-| `tau-codemode-host`     | The `codemode` tool: a Luau script that calls the run's tools and Jev |
-| `tau-memory`            | Long-term memory's note format, records and pages                     |
-| `tau-memory-host`       | Long-term memory: a Zettelkasten of typed, linked Markdown notes      |
-| `tau-constitution`      | A repository's rules, the checks' records and the Constitution page   |
-| `tau-constitution-host` | Checks tool calls and final answers against the rules, with Jev       |
-| `tau-mcp`               | The `mcpServers` format, the Servers page and MCP tools' cards        |
-| `tau-mcp-host`          | Connects an agent to MCP servers and adds their tools                 |
-| `tau-luau-plugins`      | Plugins written in Luau: what they declare, their records and views   |
-| `tau-luau-plugins-host` | Loads Luau plugins and runs their hooks in codemode's sandbox         |
-| `tau-compaction`        | Summarizing compaction, off unless you add it                         |
-| `tau-fast-compaction`   | Prunes large tool outputs and stale tool history, with Jev            |
-| `tau-tree-compaction`   | Folds old context into summaries to zoom into; off by default         |
-| `tau-goal`              | Keeps a run going until a `/goal` holds, checked with Jev             |
+| Crate                   | What it gives you                                                         |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `tau-tools`             | The coding tools' cards, and the shapes they read                         |
+| `tau-tools-host`        | Optional coding tools, all rooted at one directory                        |
+| `tau-vcs`               | The version-control tools' cards, and the shapes they read                |
+| `tau-vcs-host`          | Optional version-control tools on one jj workspace, backed by jj-lib      |
+| `tau-codemode`          | Codemode's cards, and the records they fold                               |
+| `tau-codemode-host`     | The `codemode` tool: a Luau script that calls the run's tools and Jev     |
+| `tau-memory`            | Long-term memory's note format, records and pages                         |
+| `tau-memory-host`       | Long-term memory: a Zettelkasten of typed, linked Markdown notes          |
+| `tau-constitution`      | A repository's rules, the checks' records and the Constitution page       |
+| `tau-constitution-host` | Checks tool calls and final answers against the rules, with Jev           |
+| `tau-mcp`               | The `mcpServers` format, the Servers page and MCP tools' cards            |
+| `tau-mcp-host`          | Connects an agent to MCP servers and adds their tools                     |
+| `tau-luau-plugins`      | Plugins written in Luau: what they declare, their records and views       |
+| `tau-luau-plugins-host` | Loads Luau plugins and runs their hooks in codemode's sandbox             |
+| `tau-compaction`        | Summarizing compaction, off unless you add it                             |
+| `tau-fast-compaction`   | Prunes large tool outputs and stale tool history, with Jev                |
+| `tau-tree-compaction`   | Folds old context into summaries to zoom into; off by default             |
+| `tau-goal`              | Keeps a run going until a `/goal` holds, checked with Jev                 |
 | `tau-watcher`           | Every 6th step, rarely, a note on what you likely missed (off by default) |
-| `tau-reasoning`         | Picks a run's reasoning effort from its task, with Jev                |
-| `tau-ask`               | The `ask` tool: structured questions to the person                    |
-| `tau-skills`            | Skills from `~/.agents/skills`, loaded with the `skill` tool          |
-| `tau-direnv`            | Runs commands in the repository's direnv environment, once allowed    |
-| `tau-jev`               | A client for Jev, TypeSafe's System One model, shared by plugins      |
+| `tau-reasoning`         | Picks a run's reasoning effort from its task, with Jev                    |
+| `tau-ask`               | The `ask` tool: structured questions to the person                        |
+| `tau-skills`            | Skills from `~/.agents/skills`, loaded with the `skill` tool              |
+| `tau-direnv`            | Runs commands in the repository's direnv environment, once allowed        |
+| `tau-jev`               | A client for Jev, TypeSafe's System One model, shared by plugins          |
 
 Evaluations, under `crates/evals/`:
 

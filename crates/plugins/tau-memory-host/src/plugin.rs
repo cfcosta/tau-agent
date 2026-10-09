@@ -292,8 +292,8 @@ impl Plugin for MemoryPlugin {
             .filter(|hit| !given.notes.contains(&hit.id))
             .collect();
         let index = index_context(repo.as_deref(), user.as_deref());
-        let index = (given.index.as_deref() != Some(index.as_str()))
-            .then_some(index);
+        let index =
+            (given.index.as_deref() != Some(index.as_str())).then_some(index);
         if index.is_some() || !hits.is_empty() {
             plan.context.push(start_context(index.as_deref(), &hits));
             let given = Record::Given {

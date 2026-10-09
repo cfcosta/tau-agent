@@ -176,7 +176,9 @@ impl Registry {
                     Some(allowed) => {
                         loaded.declaration.grown_from(&allowed.declaration)
                     }
-                    None => loaded.declaration.grown_from(&Declaration::default()),
+                    None => {
+                        loaded.declaration.grown_from(&Declaration::default())
+                    }
                 };
                 (tests.iter().all(|test| test.passed) && grown.is_empty())
                     .then_some(loaded)
@@ -420,7 +422,9 @@ fn plugin_folders(dir: &Path) -> Vec<(String, Files)> {
     };
     let mut folders: Vec<(String, Files)> = entries
         .flatten()
-        .filter(|entry| entry.path().join(crate::runtime::PLUGIN_FILE).is_file())
+        .filter(|entry| {
+            entry.path().join(crate::runtime::PLUGIN_FILE).is_file()
+        })
         .filter_map(|entry| {
             let name = entry.file_name().to_str()?.to_owned();
             if name.starts_with('.') {

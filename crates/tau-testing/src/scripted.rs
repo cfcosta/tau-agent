@@ -359,7 +359,11 @@ impl ScriptedSession {
         transcript_text: &str,
         timestamp: Timestamp,
         response_id: String,
-    ) -> (Vec<AssistantEvent>, Option<Duration>, Option<(usize, Duration)>) {
+    ) -> (
+        Vec<AssistantEvent>,
+        Option<Duration>,
+        Option<(usize, Duration)>,
+    ) {
         let ResolvedTurn {
             blocks,
             stop,
@@ -535,7 +539,8 @@ fn to_stream(
                 tokio::time::sleep(delay).await;
             }
             let (at, event) = events.next()?;
-            if let Some((_, sleep)) = pause.filter(|(position, _)| *position == at)
+            if let Some((_, sleep)) =
+                pause.filter(|(position, _)| *position == at)
             {
                 tokio::time::sleep(sleep).await;
             }

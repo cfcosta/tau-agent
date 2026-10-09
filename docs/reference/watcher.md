@@ -67,12 +67,12 @@ The plugin records a `dropped` outcome and shows nothing.
 
 ## Records
 
-| `kind`       | Fields                      | Effect                                  |
-| ------------ | --------------------------- | --------------------------------------- |
-| `noted`      | `step`, `tag`, `line`, `explain` | a note, anchored under the step    |
-| `dropped`    | `step`, `reason`            | an unusable reply; nothing is drawn     |
-| `typed_past` |                             | a message was written past a new note   |
-| `answered`   | `key`, `answer`             | `learned`, `knew`, `chatted`, `dismissed` |
+| `kind`       | Fields                           | Effect                                    |
+| ------------ | -------------------------------- | ----------------------------------------- |
+| `noted`      | `step`, `tag`, `line`, `explain` | a note, anchored under the step           |
+| `dropped`    | `step`, `reason`                 | an unusable reply; nothing is drawn       |
+| `typed_past` |                                  | a message was written past a new note     |
+| `answered`   | `key`, `answer`                  | `learned`, `knew`, `chatted`, `dismissed` |
 
 `learn: none` makes no record. The UI stores `answered` itself
 (`Request::Record`), so a stored run draws what the live one did.
@@ -93,12 +93,12 @@ The plugin records a `dropped` outcome and shows nothing.
 
 ## Items
 
-| Item                         | What it is                                         |
-| ---------------------------- | -------------------------------------------------- |
-| `WatcherPlugin`              | The agent `Plugin`                                 |
-| `WatcherUi`, `WatcherHost`   | The `UiPlugin` and `HostHalf` tau registers        |
-| `State`                      | Notes and counts folded from the records           |
-| `reply::parse`               | Reads the model's reply                            |
-| `cadence::due`, `skips`      | When to check; the back-off                        |
-| `cadence::recent`            | The last 50 lines the prompt carries               |
-| `ui::settings::Settings`     | `enabled`, `family`                                |
+| Item                       | What it is                                  |
+| -------------------------- | ------------------------------------------- |
+| `WatcherPlugin`            | The agent `Plugin`                          |
+| `WatcherUi`, `WatcherHost` | The `UiPlugin` and `HostHalf` tau registers |
+| `State`                    | Notes and counts folded from the records    |
+| `reply::parse`             | Reads the model's reply                     |
+| `cadence::due`, `skips`    | When to check; the back-off                 |
+| `cadence::recent`          | The last 50 lines the prompt carries        |
+| `ui::settings::Settings`   | `enabled`, `family`                         |

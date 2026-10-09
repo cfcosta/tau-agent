@@ -111,7 +111,11 @@ pub(crate) async fn wait(cancel: &CancellationToken, delay: Duration) -> bool {
 /// What a response cut short by a steering message leaves: what had
 /// finished in it, or an empty message that stops. Dropping the stream
 /// stops it; the next request goes in full.
-fn cut(reading: Reading, model: &str, timestamp: Timestamp) -> AssistantMessage {
+fn cut(
+    reading: Reading,
+    model: &str,
+    timestamp: Timestamp,
+) -> AssistantMessage {
     reading
         .accumulator
         .cut()

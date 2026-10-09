@@ -224,8 +224,9 @@ fn write_greet(dir: &std::path::Path, plugin: &str, test: Option<&str>) {
     std::fs::write(folder.join("plugin.luau"), plugin).unwrap();
     match test {
         Some(test) => std::fs::write(folder.join("tests/basic.luau"), test),
-        None => std::fs::remove_file(folder.join("tests/basic.luau"))
-            .or(Ok(())),
+        None => {
+            std::fs::remove_file(folder.join("tests/basic.luau")).or(Ok(()))
+        }
     }
     .unwrap();
 }
@@ -240,8 +241,11 @@ fn a_workspace_runs_its_own_passing_versions() {
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
     // Trunk has no plugins yet.
-    let registry =
-        Registry::at(home.path().join("none"), home.path().join("allowed.json"), || {});
+    let registry = Registry::at(
+        home.path().join("none"),
+        home.path().join("allowed.json"),
+        || {},
+    );
     let names = |registry: &Registry| -> Vec<String> {
         block_on_io(registry.in_workspace(workspace.path()))
             .iter()

@@ -178,7 +178,12 @@ impl Inner {
             .cloned()
     }
 
-    fn context(&self, run: &RunId, state: &RunState, active: &Active) -> Context {
+    fn context(
+        &self,
+        run: &RunId,
+        state: &RunState,
+        active: &Active,
+    ) -> Context {
         let mut info = self.run.clone();
         if let Some(info) = info.as_object_mut() {
             info.insert("id".into(), json!(run.0.as_ref()));
@@ -209,7 +214,8 @@ impl Inner {
         reach: Arc<dyn Reach>,
     ) -> Option<Value> {
         let name = &active.loaded.declaration.name;
-        if self.off(state, name) || !hook.declared_in(&active.loaded.declaration)
+        if self.off(state, name)
+            || !hook.declared_in(&active.loaded.declaration)
         {
             return None;
         }
@@ -269,9 +275,16 @@ impl Inner {
     }
 
     /// Draws `active`'s view from its state and publishes it.
-    async fn draw(&self, active: &Active, state: &mut RunState, ctx: &PluginCtx) {
+    async fn draw(
+        &self,
+        active: &Active,
+        state: &mut RunState,
+        ctx: &PluginCtx,
+    ) {
         let name = active.loaded.declaration.name.clone();
-        state.drawn.insert(name.clone(), active.loaded.digest.clone());
+        state
+            .drawn
+            .insert(name.clone(), active.loaded.digest.clone());
         if self.off(state, &name) || !active.loaded.declaration.hooks.view {
             return;
         }

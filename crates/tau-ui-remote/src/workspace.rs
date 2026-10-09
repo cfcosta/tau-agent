@@ -1760,7 +1760,8 @@ impl Workspace {
         let repo = self.selected_repo().unwrap_or_default().to_owned();
         if let Some(main) = self.fresh_main(&repo) {
             // The model picked for the new run.
-            self.run_models.insert(main.clone(), self.next_model.clone());
+            self.run_models
+                .insert(main.clone(), self.next_model.clone());
             self.navigate(Route::Run(main.clone()), cx);
             self.say(&main, text, cx);
             return;

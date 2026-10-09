@@ -104,7 +104,10 @@ impl Workspace {
             .filter(|view| {
                 !view.status.is_live()
                     && view.ending.is_none()
-                    && !view.items.iter().any(|item| matches!(item, Item::User(_)))
+                    && !view
+                        .items
+                        .iter()
+                        .any(|item| matches!(item, Item::User(_)))
             })
             .map(|view| view.id.clone())
     }
