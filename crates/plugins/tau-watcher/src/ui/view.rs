@@ -58,8 +58,20 @@ pub fn annotation(
             .typeset(Type::CAPTION)
             .child(
                 div()
-                    .text_color(if muted { t.muted } else { t.text_soft })
-                    .child(format!("{} · {}", note.tag.label(), note.line)),
+                    .flex()
+                    .gap(sp(2.))
+                    .child(tag(&note, if muted { t.muted } else { amber }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(rems(0.))
+                            .text_color(if muted {
+                                t.muted
+                            } else {
+                                t.text_soft
+                            })
+                            .child(note.line.clone()),
+                    ),
             )
             .when_some(explain, |card, explain| {
                 card.child(
@@ -113,17 +125,28 @@ pub fn band(
             .border_color(amber)
             .bg(amber.opacity(0.07))
             .typeset(Type::CAPTION)
+            .child(tag(&note, amber))
             .child(
                 div()
                     .flex_1()
                     .min_w(rems(0.))
                     .truncate()
                     .text_color(t.text_soft)
-                    .child(format!("{} · {}", note.tag.label(), note.line)),
+                    .child(note.line.clone()),
             )
             .child(div().flex().flex_shrink_0().gap(sp(2.)).children(actions))
             .into_any_element(),
     )
+}
+
+/// The note's tag, in amber (grey once answered), ahead of its line.
+fn tag(note: &Note, color: gpui::Hsla) -> AnyElement {
+    div()
+        .flex_shrink_0()
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(color)
+        .child(note.tag.label())
+        .into_any_element()
 }
 
 /// The buttons a note gets: all of them while it is new, and Knew and
