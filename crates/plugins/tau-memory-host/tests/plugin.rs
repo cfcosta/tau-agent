@@ -176,7 +176,8 @@ fn a_chat_gets_each_note_and_index_once() {
     let index = |body: &str| draft(NoteType::Index, "Index", body);
     {
         let mut repo = scopes.repo.lock().unwrap();
-        repo.write(index("- `retry-after`: HTTP dates too"), 1).unwrap();
+        repo.write(index("- `retry-after`: HTTP dates too"), 1)
+            .unwrap();
         repo.write(
             draft(
                 NoteType::Gotcha,
@@ -364,7 +365,11 @@ fn notes_dropped_by_compaction_are_given_again() {
     });
     let requests = model.requests();
     let asked = format!("{:?}", requests.last().unwrap().transcript);
-    assert_eq!(asked.matches("`retry-after` [gotcha]").count(), 1, "{asked}");
+    assert_eq!(
+        asked.matches("`retry-after` [gotcha]").count(),
+        1,
+        "{asked}"
+    );
 }
 
 /// When compaction replaces the transcript, one request with only the
@@ -564,16 +569,38 @@ fn consolidation_writes_after_it_searched() {
                     "body": "Task: flaky lane test. Outcome: fixed."
                 }),
             )
-        })
-        .turn(|t| t.text("done"));
+        });
     let agent = Agent::new(model.clone())
         .plugin(MemoryPlugin::new(scopes.clone()).consolidate(true));
     block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         agent.run("fix the flaky lane test", &store).await.unwrap();
     });
+    // The run, then the pass: a search it gets the answer to, and a
+    // write, after which a round of only writes ends it. The model is
+    // not asked a fourth time.
+    model.assert_exhausted();
+    let requests = model.requests();
+    assert_eq!(requests.len(), 3);
+    let asked = |n: usize| format!("{:?}", requests[n].transcript);
+    assert_eq!(asked(1).matches("ToolResult(").count(), 0);
+    assert_eq!(
+        asked(2).matches("ToolResult(").count(),
+        1,
+        "the search came back"
+    );
     let repo = scopes.repo.lock().unwrap();
-    assert!(repo.notes().get("fixed-a-flaky-lane-test").is_some());
+    assert_eq!(repo.notes().len(), 1, "one note, from the write");
+    let note = repo.notes().get("fixed-a-flaky-lane-test").unwrap();
+    assert_eq!(
+        (&note.title[..], &note.description[..], note.kind.as_str()),
+        (
+            "Fixed a flaky lane test",
+            "a race on drain; resend in full",
+            "case"
+        )
+    );
+    assert_eq!(note.body, "Task: flaky lane test. Outcome: fixed.");
 }
 
 #[test]
