@@ -29,7 +29,13 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput, TypedTool, typed},
 };
 use tau_ai::{
-    message::{AssistantBlock, Message, UserContent, UserMessage},
+    message::{
+        AssistantBlock,
+        Message,
+        ToolResultMessage,
+        UserContent,
+        UserMessage,
+    },
     responses::request::{ReasoningEffort, Settings, ToolDefinition},
 };
 pub use tau_memory::record::{NAME, Recalled, Record, Saved, USER};
@@ -504,7 +510,10 @@ new: then call no tool.
     faithful!()
 );
 
-/// Asks the model once, outside the run, with only the memory tools and
+/// Rounds the model gets to search and then write.
+const MAX_ROUNDS: usize = 4;
+
+/// Asks the model, outside the run, with only the memory tools and
 /// the conversation as text, then carries out the writes it asks for.
 async fn distill(
     plugin: &MemoryPlugin,
@@ -530,40 +539,79 @@ async fn distill(
             .collect(),
         ..Settings::default()
     };
-    let input = [Message::User(UserMessage {
+    let mut input = vec![Message::User(UserMessage {
         content: UserContent::Text(format!(
             "<conversation>\n{}\n</conversation>",
             serialize(transcript)
         )),
         timestamp: ctx.now(),
     })];
-    let answer = ctx.ask(settings, &input).await?;
     let mut saved = Vec::new();
-    for call in answer.tool_calls() {
-        let Some(tool) = tools.iter().find(|tool| tool.name() == call.name)
-        else {
-            continue;
-        };
-        let mut args = Value::Object(call.arguments.clone());
-        // Notes written here say who they come from.
-        if call.name == WriteTool::NAME
-            && let Some(fields) = args.as_object_mut()
-        {
-            fields.insert("by".into(), json!(by_name(by)));
+    // A search comes back to the model before it writes: it goes on
+    // until it makes no more calls or only writes, up to a few rounds.
+    for _ in 0..MAX_ROUNDS {
+        let answer = ctx.ask(settings.clone(), &input).await?;
+        let calls: Vec<_> = answer.tool_calls().cloned().collect();
+        if calls.is_empty() {
+            break;
         }
-        let mut tool_ctx = ToolCtx::detached();
-        tool_ctx.run = ctx.run.clone();
-        match tool.call(args, tool_ctx).await {
-            Ok(output) => saved.push(Saved {
-                tool: call.name.clone(),
-                details: output.details,
-                error: None,
-            }),
-            Err(error) => saved.push(Saved {
-                tool: call.name.clone(),
-                details: None,
-                error: Some(describe(&error)),
-            }),
+        input.push(Message::Assistant(answer));
+        let searched = calls.iter().any(|call| call.name == SearchTool::NAME);
+        for call in calls {
+            let Some(tool) = tools.iter().find(|tool| tool.name() == call.name)
+            else {
+                input.push(Message::ToolResult(ToolResultMessage {
+                    tool_call_id: call.id,
+                    tool_name: call.name.clone(),
+                    content: ToolOutput::text(format!(
+                        "no tool named {}",
+                        call.name
+                    ))
+                    .content,
+                    details: None,
+                    is_error: true,
+                    timestamp: ctx.now(),
+                }));
+                continue;
+            };
+            let mut args = Value::Object(call.arguments.clone());
+            // Notes written here say who they come from.
+            if call.name == WriteTool::NAME
+                && let Some(fields) = args.as_object_mut()
+            {
+                fields.insert("by".into(), json!(by_name(by)));
+            }
+            let mut tool_ctx = ToolCtx::detached();
+            tool_ctx.run = ctx.run.clone();
+            let (content, details, error) = match tool
+                .call(args, tool_ctx)
+                .await
+            {
+                Ok(output) => (output.content, output.details, None),
+                Err(error) => {
+                    let text = describe(&error);
+                    (ToolOutput::text(text.clone()).content, None, Some(text))
+                }
+            };
+            if call.name != SearchTool::NAME {
+                saved.push(Saved {
+                    tool: call.name.clone(),
+                    details: details.clone(),
+                    error: error.clone(),
+                });
+            }
+            input.push(Message::ToolResult(ToolResultMessage {
+                tool_call_id: call.id,
+                tool_name: call.name,
+                content,
+                details,
+                is_error: error.is_some(),
+                timestamp: ctx.now(),
+            }));
+        }
+        // Only a search has an answer the model waits for.
+        if !searched {
+            break;
         }
     }
     if !saved.is_empty() {

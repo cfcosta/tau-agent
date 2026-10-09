@@ -434,6 +434,39 @@ fn consolidation_runs_only_when_turned_on() {
     }
 }
 
+/// A search before a write comes back to the model, which then writes:
+/// the pass is not over after one reply.
+#[test]
+fn consolidation_writes_after_it_searched() {
+    let dir = tempfile::tempdir().unwrap();
+    let scopes = scopes(dir.path(), false);
+    let model = ScriptedModel::new()
+        .turn(|t| t.text("fixed"))
+        .turn(|t| {
+            t.tool_call("memory_search", json!({"query": "flaky lane test"}))
+        })
+        .turn(|t| {
+            t.tool_call(
+                "memory_write",
+                json!({
+                    "type": "case",
+                    "title": "Fixed a flaky lane test",
+                    "description": "a race on drain; resend in full",
+                    "body": "Task: flaky lane test. Outcome: fixed."
+                }),
+            )
+        })
+        .turn(|t| t.text("done"));
+    let agent = Agent::new(model.clone())
+        .plugin(MemoryPlugin::new(scopes.clone()).consolidate(true));
+    block_on_io(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        agent.run("fix the flaky lane test", &store).await.unwrap();
+    });
+    let repo = scopes.repo.lock().unwrap();
+    assert!(repo.notes().get("fixed-a-flaky-lane-test").is_some());
+}
+
 #[test]
 fn an_unknown_type_is_refused_with_its_name() {
     let dir = tempfile::tempdir().unwrap();
