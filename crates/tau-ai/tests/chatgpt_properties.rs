@@ -12,6 +12,7 @@ use serde_json::json;
 use tau_ai::chatgpt::{
     AUTHORIZE_URL,
     AccountId,
+    AccountStatus,
     ApiError,
     AuthorizeParams,
     Callback,
@@ -443,4 +444,214 @@ fn the_retry_policy_follows_the_documented_recovery(tc: TestCase) {
         recovery == Recovery::RetryLater,
         "{code}"
     );
+}
+
+/// Unix seconds a clock could show; `now + 5 minutes` cannot overflow.
+fn clock() -> impl PrintableGenerator<u64> {
+    gs::integers::<u64>().max_value(1 << 62)
+}
+
+/// The restatement `needs_refresh` is held to: no usable access token,
+/// or an expired one, always refreshes; inside the five-minute margin
+/// it waits for `earliest_refresh_at`; before the margin it never does.
+fn should_refresh(record: &Credentials, now: u64) -> bool {
+    let (Some(_), Some(expires)) = (&record.access_token, record.expires_at)
+    else {
+        return true;
+    };
+    if now >= expires {
+        return true;
+    }
+    let near = expires - now <= 300;
+    near && record
+        .earliest_refresh()
+        .is_none_or(|earliest| now >= earliest)
+}
+
+#[hegel::test(test_cases = 500)]
+fn a_refresh_is_due_by_expiry_margin_and_earliest_time(tc: TestCase) {
+    let mut record = tc.draw(credentials().print_as_debug());
+    let now = tc.draw(clock());
+    // Draw the expiry near `now` often: the margin is where the logic is.
+    record.expires_at = tc.draw(gs::optional(hegel::one_of!(
+        clock(),
+        gs::integers::<i64>()
+            .min_value(-400)
+            .max_value(400)
+            .map(move |delta| now.saturating_add_signed(delta)),
+    )));
+    record.earliest_refresh_at = tc.draw(gs::optional(hegel::one_of!(
+        clock().map(|n| json!(n)),
+        clock().map(|n| json!(n.to_string())),
+        gs::just(json!("soon")),
+        gs::just(json!(-5)),
+        gs::just(json!(1.5)),
+        gs::just(json!(null)),
+    )));
+    assert_eq!(
+        record.needs_refresh(now),
+        should_refresh(&record, now),
+        "{record:?} {:?} at {now}",
+        record.earliest_refresh_at
+    );
+}
+
+/// Once a refresh is due it stays due as time passes: the client never
+/// refreshes, then stops wanting to before the token is replaced.
+#[hegel::test(test_cases = 500)]
+fn a_due_refresh_stays_due_as_time_passes(tc: TestCase) {
+    let mut record = tc.draw(credentials().print_as_debug());
+    let now = tc.draw(clock());
+    record.expires_at =
+        Some(now.saturating_add(tc.draw(gs::integers::<u64>().max_value(900))));
+    record.earliest_refresh_at =
+        tc.draw(gs::optional(clock().map(|n| json!(n))));
+    let later =
+        now.saturating_add(tc.draw(gs::integers::<u64>().max_value(2000)));
+    if record.needs_refresh(now) {
+        assert!(record.needs_refresh(later), "{record:?} {now} {later}");
+    }
+}
+
+/// `earliest_refresh_at` counts only as a non-negative integer, or a
+/// string holding one.
+#[hegel::test(test_cases = 300)]
+fn the_earliest_refresh_reads_integers_and_integer_strings(tc: TestCase) {
+    let mut record = tc.draw(credentials().print_as_debug());
+    let n = tc.draw(gs::integers::<u64>());
+    let blanks = tc.draw(gs::text().alphabet(" \t").max_size(2));
+    for (given, want) in [
+        (json!(n), Some(n)),
+        (json!(format!("{blanks}{n}{blanks}")), Some(n)),
+        (json!(format!("-{}", n.max(1))), None),
+        (json!(n as f64 + 0.5), None),
+        (json!("never"), None),
+        (json!(null), None),
+        (json!([n]), None),
+    ] {
+        record.earliest_refresh_at = Some(given.clone());
+        assert_eq!(record.earliest_refresh(), want, "{given}");
+    }
+}
+
+/// Signing out forgets every token and leaves the registration; a dead
+/// session keeps only the ID token. Either way the account reads as
+/// signed out, and a record with a token reads as signed in with
+/// whatever plan usage its scopes grant.
+#[hegel::test(test_cases = 300)]
+fn clearing_tokens_signs_the_account_out_and_keeps_its_registration(
+    tc: TestCase,
+) {
+    let record = tc.draw(credentials().print_as_debug());
+    let expected = if record.has_tokens() {
+        AccountStatus::SignedIn(record.plan_usage())
+    } else {
+        AccountStatus::SignedOut
+    };
+    assert_eq!(record.status(), expected);
+    assert_eq!(
+        record.has_tokens(),
+        record.access_token.is_some() || record.refresh_token.is_some()
+    );
+
+    let mut session = record.clone();
+    session.clear_session();
+    assert_eq!(session.status(), AccountStatus::SignedOut);
+    assert_eq!(session.id_token, record.id_token);
+    assert!(session.needs_refresh(tc.draw(clock())));
+
+    let mut signed_out = record.clone();
+    signed_out.clear_tokens();
+    assert_eq!(signed_out.status(), AccountStatus::SignedOut);
+    assert_eq!(signed_out.id_token, None);
+    assert_eq!(
+        (
+            &signed_out.label,
+            &signed_out.client_id,
+            &signed_out.subject
+        ),
+        (&record.label, &record.client_id, &record.subject)
+    );
+    assert_eq!(signed_out.id(), record.id());
+    assert_eq!(signed_out.plan_usage(), record.plan_usage());
+}
+
+/// An account id is the client id made file-safe, a dash and twelve
+/// hex digits of the subject's hash: a name any file may carry, which
+/// parses back to itself, and which keeps two subjects of one client
+/// apart.
+#[hegel::test(test_cases = 300)]
+fn an_account_id_is_a_safe_file_name_that_tells_subjects_apart(tc: TestCase) {
+    let client = tc.draw(gs::text().max_size(100));
+    let (a, b) = (
+        tc.draw(gs::text().max_size(30)),
+        tc.draw(gs::text().max_size(30)),
+    );
+    let id = AccountId::new(&client, &a);
+    let (prefix, hash) = id.as_str().rsplit_once('-').unwrap();
+    let safe: String = client
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(64)
+        .collect();
+    assert_eq!(prefix, safe);
+    assert!(hash.len() == 12 && hash.bytes().all(|b| b.is_ascii_hexdigit()));
+    assert_eq!(AccountId::parse(id.as_str()), Some(id.clone()));
+    assert_eq!(id, AccountId::new(&client, &a));
+    assert_eq!(a == b, id == AccountId::new(&client, &b));
+}
+
+/// A typed id names a file only if it is made of file-safe characters;
+/// the surrounding whitespace the user typed is dropped.
+#[hegel::test(test_cases = 300)]
+fn a_typed_account_id_is_trimmed_and_must_be_file_safe(tc: TestCase) {
+    let text = tc.draw(gs::text().max_size(20));
+    let want = text.trim();
+    let safe = !want.is_empty()
+        && want
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    assert_eq!(
+        AccountId::parse(&text).map(|id| id.to_string()),
+        safe.then(|| want.to_owned())
+    );
+    let word = tc.draw(gs::from_regex("[A-Za-z0-9_-]{1,20}").fullmatch(true));
+    let padded = format!("  {word}\n");
+    assert_eq!(AccountId::parse(&padded).unwrap().as_str(), word);
+}
+
+/// A made host id is a version 4 `urn:uuid:` that `parse` takes back;
+/// `parse` takes the three documented forms with something after the
+/// prefix, and nothing else.
+#[hegel::test(test_cases = 200)]
+fn host_ids_are_uuid_v4_urns_and_parse_only_the_documented_forms(tc: TestCase) {
+    let made = HostId::new_uuid();
+    let uuid = made.as_str().strip_prefix("urn:uuid:").unwrap();
+    let groups: Vec<&str> = uuid.split('-').collect();
+    assert_eq!(
+        groups.iter().map(|g| g.len()).collect::<Vec<_>>(),
+        [8, 4, 4, 4, 12]
+    );
+    assert!(uuid.bytes().all(|b| b == b'-' || b.is_ascii_hexdigit()));
+    assert!(groups[2].starts_with('4'));
+    assert!(groups[3].starts_with(['8', '9', 'a', 'b']));
+    assert_eq!(HostId::parse(made.as_str()), Some(made));
+
+    let rest = tc.draw(gs::text().max_size(10));
+    for prefix in [
+        "urn:uuid:",
+        "urn:ietf:params:oauth:jwk-thumbprint:",
+        "did:key:",
+    ] {
+        let text = format!("{prefix}{rest}");
+        assert_eq!(HostId::parse(&text).is_some(), !rest.is_empty(), "{text}");
+    }
+    let other = format!("x{rest}");
+    assert!(HostId::parse(&other).is_none());
 }
