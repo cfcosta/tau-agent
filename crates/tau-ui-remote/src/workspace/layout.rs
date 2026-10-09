@@ -668,6 +668,33 @@ impl Workspace {
                             .child(tray)
                     }),
             )
+            // What plugins put between the transcript and the composer.
+            .children(
+                self.current()
+                    .filter(|_| self.route != Route::NewRun)
+                    .map(|run| {
+                        self.contributions(
+                            tau_ui_plugin::points::COMPOSER_BAND,
+                            &tau_ui_plugin::points::AtRun { run: run.info() },
+                            cx,
+                        )
+                    })
+                    .filter(|bands| !bands.is_empty())
+                    .map(|bands| {
+                        div()
+                            .w_full()
+                            .flex_shrink_0()
+                            .flex()
+                            .flex_col()
+                            .gap(sp(1.5))
+                            .when(!compact, |column| {
+                                column.max_w(rems(50.5)).mx_auto()
+                            })
+                            .px(sp(if compact { 4. } else { 6. }))
+                            .pb(sp(2.5))
+                            .children(bands)
+                    }),
+            )
             .child({
                 // A plugin that needs the person's input more than a
                 // message draws in the composer's place; once none does,

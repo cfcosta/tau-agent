@@ -180,12 +180,16 @@ pub const PICKER_AUTO: Point<AtApp, String> = Point::new("tau.picker.auto");
 /// run waits on. The first contribution draws in its place; the
 /// composer comes back once none does.
 pub const COMPOSER: Point<AtRun> = Point::new("tau.run.composer");
+/// A line between a run's transcript and its composer, which stays: a
+/// note the person may act on while it is new (tau-watcher's). Every
+/// contribution is drawn, in order.
+pub const COMPOSER_BAND: Point<AtRun> = Point::new("tau.run.composer.band");
 /// Entries in a repository's menu in the sidebar, after tau's own: a
 /// setting the plugin keeps per repository.
 pub const REPO_MENU: Point<AtRepo> = Point::new("tau.sidebar.repo.menu");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 22] = [
+pub const ALL: [&str; 23] = [
     CARD.name,
     TRANSCRIPT.name,
     REWRITE.name,
@@ -207,5 +211,6 @@ pub const ALL: [&str; 22] = [
     PLAN_STEPS.name,
     PICKER_AUTO.name,
     COMPOSER.name,
+    COMPOSER_BAND.name,
     REPO_MENU.name,
 ];

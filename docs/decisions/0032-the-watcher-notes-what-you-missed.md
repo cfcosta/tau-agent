@@ -76,9 +76,8 @@ seen-list are plain functions of that crate.
 
 ### A point between transcript and composer
 
-`tau.run.composer.band` takes the first contribution per plugin that
-answers, drawn in the transcript's column above the composer, which stays
-in place. `tau.run.composer` replaces the composer; this does not.
+`tau.run.composer.band` draws every contribution, in order, in the
+transcript's column above the composer, which stays in place. `tau.run.composer` replaces the composer; this does not.
 
 ## Consequences
 
