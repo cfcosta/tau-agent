@@ -160,11 +160,40 @@
                 nativeBuildInputs = [
                   pkgs.pkg-config
                   pkgs.makeWrapper
+                  pkgs.copyDesktopItems
+                  pkgs.librsvg
                 ];
                 buildInputs = guiLibs ++ [ libghostty-vt ];
                 # The tests make fixture repositories with git and push to
                 # them.
                 nativeCheckInputs = [ pkgs.git ];
+
+                # The menu entry. It and the icon are named for the
+                # window's app id, `tau-ui`, so the desktop matches the
+                # window to them.
+                desktopItems = [
+                  (pkgs.makeDesktopItem {
+                    name = "tau-ui";
+                    desktopName = "Tau";
+                    comment = "Work with coding agents on your repositories";
+                    exec = "tau";
+                    icon = "tau-ui";
+                    categories = [ "Development" ];
+                    startupWMClass = "tau-ui";
+                  })
+                ];
+
+                # The icon, drawn as scalable and at the sizes menus look
+                # for first.
+                postInstall = ''
+                  icon=crates/tau/assets/tau-ui.svg
+                  install -Dm644 $icon $out/share/icons/hicolor/scalable/apps/tau-ui.svg
+                  for size in 16 24 32 48 64 128 256 512; do
+                    dir=$out/share/icons/hicolor/''${size}x''${size}/apps
+                    mkdir -p $dir
+                    rsvg-convert -w $size -h $size $icon -o $dir/tau-ui.png
+                  done
+                '';
 
                 # GPUI opens Vulkan, Wayland and X11 with dlopen, so the
                 # binary needs them on its library path. jj-lib's push
