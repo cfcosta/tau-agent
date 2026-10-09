@@ -297,6 +297,15 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),
     ("ask-note", |ws, _, cx| ask(ws, "ask-note", cx)),
     ("ask-review", |ws, _, cx| ask(ws, "ask-review", cx)),
+    // tau-watcher (ADR 0032): a new note with its band, the note with
+    // its explanation open, and the note answered "knew this".
+    ("watcher", |ws, _, cx| watcher(ws, None, cx)),
+    ("watcher-open", |ws, _, cx| {
+        watcher(ws, Some(tau_watcher::record::Answer::Learned), cx)
+    }),
+    ("watcher-known", |ws, _, cx| {
+        watcher(ws, Some(tau_watcher::record::Answer::Knew), cx)
+    }),
     // tau-direnv (ADR 0025): the question in the composer's place, the
     // environment loading, a load that failed, and the repository
     // menu's toggle.
@@ -859,6 +868,69 @@ fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
         draft.key(&ask, Key::Right);
         draft.key(&ask, Key::Digit(2));
     });
+}
+
+/// The demo run with a note from the watcher under its last step, and
+/// the answer the person gave it, if any.
+fn watcher(
+    workspace: &mut Workspace,
+    answer: Option<tau_watcher::record::Answer>,
+    cx: &mut Context<Workspace>,
+) {
+    use tau_watcher::record::{Explain, Record, Tag};
+    let run = run_id();
+    workspace.navigate(Route::Run(run.clone()), cx);
+    // The note anchors at the end of the transcript so far, so it waits
+    // for the script to play out.
+    let played: std::time::Duration =
+        super::script().iter().map(|(wait, _)| *wait).sum();
+    let note = Record::Noted {
+        step: 12,
+        tag: Tag::HeadsUp,
+        line: "The agent now counts queued forks in the \u{201c}N need \
+                   you\u{201d} pill, so the pill can show a number when \
+                   nothing needs a decision."
+            .into(),
+        explain: Some(Explain {
+            title: "Queued chats now raise the pill".into(),
+            bullets: vec![
+                "A fork waiting in the queue counts as needing you, \
+                     even though it asks for no decision."
+                    .into(),
+                "The pill can read \u{201c}2 need you\u{201d} while every \
+                     chat is only waiting to start."
+                    .into(),
+                "Running a queued chat, or removing it, lowers the count \
+                     again."
+                    .into(),
+                "The change is in the sidebar's attention states, not in \
+                     the chats themselves."
+                    .into(),
+            ],
+        }),
+    };
+    cx.spawn(async move |this, cx| {
+        cx.background_executor()
+            .timer(played + std::time::Duration::from_millis(300))
+            .await;
+        let records = std::iter::once(note).chain(answer.map(|answer| {
+            Record::Answered {
+                key: "n0".into(),
+                answer,
+            }
+        }));
+        for record in records {
+            let update = HostUpdate::PluginFold {
+                run: run.clone(),
+                plugin: tau_watcher::record::NAME.into(),
+                body: serde_json::to_value(record).expect("plain JSON"),
+            };
+            if this.update(cx, |ws, cx| ws.apply(update, cx)).is_err() {
+                return;
+            }
+        }
+    })
+    .detach();
 }
 
 /// tau-agent's main chat with a `skill` call: release-notes loaded, its
