@@ -20,6 +20,7 @@ use tau_ai::chatgpt::{
     Credentials,
     DYNAMIC_CLIENT_ID,
     HostId,
+    OAuthError,
     RESOURCE,
     Recovery,
     RedirectUri,
@@ -27,6 +28,8 @@ use tau_ai::chatgpt::{
     SCOPES,
     query_pairs,
     read_callback,
+    refuses_model,
+    unavailable_model,
 };
 use url::Url;
 
@@ -654,4 +657,94 @@ fn host_ids_are_uuid_v4_urns_and_parse_only_the_documented_forms(tc: TestCase) {
     }
     let other = format!("x{rest}");
     assert!(HostId::parse(&other).is_none());
+}
+
+fn oauth_response(status: u16, body: &str) -> tau_ai::http::Response {
+    tau_ai::http::Response {
+        status,
+        headers: Vec::new(),
+        body: body.as_bytes().to_vec(),
+    }
+}
+
+/// The codes after which a refresh token is dead for good.
+const DEAD_REFRESH_CODES: [&str; 6] = [
+    "invalid_grant",
+    "invalid_refresh_token",
+    "token_expired",
+    "refresh_token_expired",
+    "refresh_token_invalidated",
+    "refresh_token_reused",
+];
+
+/// An OAuth error reads its code and words from either shape the
+/// server uses (a string `error`, or an object with `code` and
+/// `message`), keeps the status, and calls a refresh token dead for
+/// exactly the documented codes, however the code is carried.
+#[hegel::test(test_cases = 300)]
+fn an_oauth_error_reads_both_shapes_and_knows_a_dead_refresh_token(
+    tc: TestCase,
+) {
+    let status = tc.draw(gs::integers::<u16>().min_value(100).max_value(599));
+    let code = tc.draw(hegel::one_of!(
+        gs::sampled_from(DEAD_REFRESH_CODES.map(str::to_owned).to_vec()),
+        gs::sampled_from(
+            [
+                "invalid_client",
+                "slow_down",
+                "server_error",
+                "invalid_grant "
+            ]
+            .map(str::to_owned)
+            .to_vec()
+        ),
+        gs::from_regex("[a-z_]{1,20}").fullmatch(true),
+    ));
+    let words = tc.draw(some_text());
+    let dead = DEAD_REFRESH_CODES.contains(&code.as_str());
+
+    let flat = json!({"error": code, "error_description": words});
+    let nested = json!({"error": {"code": code, "message": words}});
+    for body in [flat, nested] {
+        let error = OAuthError::from_response(&oauth_response(
+            status,
+            &body.to_string(),
+        ));
+        assert_eq!(error.status, status);
+        assert_eq!(error.code.as_deref(), Some(code.as_str()), "{body}");
+        assert_eq!(error.description.as_deref(), Some(words.as_str()));
+        assert_eq!(error.is_unusable_refresh_token(), dead, "{body}");
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("HTTP {status} {code}"))
+        );
+    }
+
+    // A body that is not an error object: no code, the text as the words
+    // (none if empty), and never a dead token.
+    let plain = tc.draw(gs::from_regex("[a-z ]{0,20}").fullmatch(true));
+    let error = OAuthError::from_response(&oauth_response(status, &plain));
+    assert_eq!(error.code, None);
+    assert_eq!(error.description, (!plain.is_empty()).then_some(plain));
+    assert!(!error.is_unusable_refresh_token());
+}
+
+/// The plan's refusal of a model names that model and no other:
+/// `'gpt-5'` is not `'gpt-5.1'`, and ordinary errors are not refusals.
+#[hegel::test(test_cases = 300)]
+fn a_refused_model_is_the_one_the_message_names(tc: TestCase) {
+    let model = || gs::from_regex("[a-z0-9][a-z0-9.-]{0,14}").fullmatch(true);
+    let (named, asked) = (tc.draw(model()), tc.draw(model()));
+    let message = format!(
+        "The '{named}' model is not supported when using Codex with a \
+         ChatGPT account."
+    );
+    assert_eq!(refuses_model(&message, &asked), named == asked);
+    let other = tc.draw(some_text());
+    assert_eq!(
+        refuses_model(&other, &asked),
+        other.starts_with(&format!("The '{asked}' model is not supported"))
+    );
+    assert!(unavailable_model(&asked).starts_with(&asked));
 }
