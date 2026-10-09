@@ -339,6 +339,9 @@ pub fn preview(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
     }
+    if max == 0 {
+        return String::new();
+    }
     let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
     out.push('…');
     out
