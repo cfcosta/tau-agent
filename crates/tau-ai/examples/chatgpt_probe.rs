@@ -12,6 +12,7 @@
 //! cargo run -p tau-ai --example chatgpt_probe -- ws-tools    [--model M]
 //! cargo run -p tau-ai --example chatgpt_probe -- decisions   [--model M] [--path P]
 //! cargo run -p tau-ai --example chatgpt_probe -- steer       [--model M]
+//! cargo run -p tau-ai --example chatgpt_probe -- ws-interrupt [--model M] [--lite]
 //! cargo run -p tau-ai --example chatgpt_probe -- refresh
 //! cargo run -p tau-ai --example chatgpt_probe -- sign-out
 //! ```
@@ -107,6 +108,7 @@ async fn main() -> Result<(), Error> {
         "ws-tools" => ws_probe(&chatgpt, &args, true).await,
         "decisions" => decisions(&chatgpt, &args).await,
         "steer" => steer(&chatgpt, &args).await,
+        "ws-interrupt" => ws_interrupt(&chatgpt, &args).await,
         "refresh" => refresh(&chatgpt, &account(&chatgpt, &args)?).await,
         "sign-out" => sign_out(&chatgpt, &account(&chatgpt, &args)?).await,
         _ => {
@@ -504,43 +506,7 @@ async fn ws_probe(
 ) -> Result<(), Error> {
     let account = account(chatgpt, args)?;
     let model = model(chatgpt, &account, args).await?;
-    let connector = ChatGptConnector::new(chatgpt.clone(), account);
-    println!(
-        "\n=== WebSocket: connecting to {}",
-        chatgpt.config().websocket_url
-    );
-    let stream = connector.connect().await?;
-    let (mut socket, handshake) = match tokio_tungstenite::client_async(
-        connector.request(),
-        stream,
-    )
-    .await
-    {
-        Ok(done) => done,
-        Err(tungstenite::Error::Http(response)) => {
-            println!("upgrade refused: HTTP {}", response.status());
-            let id = response
-                .headers()
-                .get("x-request-id")
-                .and_then(|v| v.to_str().ok());
-            println!("request id: {}", id.unwrap_or("-"));
-            let body = response.body().as_deref().unwrap_or_default();
-            let error = ApiError::new(
-                response.status().as_u16(),
-                id.map(str::to_owned),
-                body,
-            );
-            print_api_error(&error);
-            return Err("the WebSocket upgrade was refused".into());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    println!("upgrade: HTTP {}", handshake.status());
-    let id = handshake
-        .headers()
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok());
-    println!("request id: {}", id.unwrap_or("-"));
+    let mut socket = ws_connect(chatgpt, account).await?;
 
     let mut summaries = Vec::new();
     if tools {
@@ -573,6 +539,239 @@ async fn ws_probe(
                 summaries.push("continuation: skipped, no response id".into())
             }
         }
+    }
+    let _ = socket.close(None).await;
+    println!("\n=== summary");
+    for line in summaries {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+/// Opens the WebSocket as tau does, printing the upgrade.
+async fn ws_connect(
+    chatgpt: &ChatGpt,
+    account: AccountId,
+) -> Result<
+    tokio_tungstenite::WebSocketStream<<ChatGptConnector as Connector>::Stream>,
+    Error,
+> {
+    let connector = ChatGptConnector::new(chatgpt.clone(), account);
+    println!(
+        "\n=== WebSocket: connecting to {}",
+        chatgpt.config().websocket_url
+    );
+    let stream = connector.connect().await?;
+    let (socket, handshake) = match tokio_tungstenite::client_async(
+        connector.request(),
+        stream,
+    )
+    .await
+    {
+        Ok(done) => done,
+        Err(tungstenite::Error::Http(response)) => {
+            println!("upgrade refused: HTTP {}", response.status());
+            let id = response
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok());
+            println!("request id: {}", id.unwrap_or("-"));
+            let body = response.body().as_deref().unwrap_or_default();
+            let error = ApiError::new(
+                response.status().as_u16(),
+                id.map(str::to_owned),
+                body,
+            );
+            print_api_error(&error);
+            return Err("the WebSocket upgrade was refused".into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    println!("upgrade: HTTP {}", handshake.status());
+    let id = handshake
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok());
+    println!("request id: {}", id.unwrap_or("-"));
+    Ok(socket)
+}
+
+const LONG_PROMPT: &str = "Write the numbers 1 to 400, one per line, \
+                           nothing else.";
+
+/// Text deltas to wait for before interrupting.
+const DELTAS_BEFORE: usize = 5;
+
+/// With `--lite`, Codex's Responses Lite request: its marker, and what
+/// the server then requires (reasoning over all turns, no parallel tool
+/// calls).
+fn lite(body: &mut Value, args: &Args) {
+    if !args.has("lite") {
+        return;
+    }
+    body["client_metadata"] = json!({
+        "ws_request_header_x_openai_internal_codex_responses_lite": "true",
+    });
+    body["reasoning"] = json!({"context": "all_turns"});
+    body["parallel_tool_calls"] = json!(false);
+}
+
+/// Starts a long response, sends `response.interrupt` once it streams,
+/// and logs what follows with the time since the interrupt; then
+/// continues from the interrupted response on the same connection.
+async fn ws_interrupt(chatgpt: &ChatGpt, args: &Args) -> Result<(), Error> {
+    let account = account(chatgpt, args)?;
+    let model = model(chatgpt, &account, args).await?;
+    let mut socket = ws_connect(chatgpt, account).await?;
+    let mut body = json!({
+        "type": "response.create",
+        "model": model,
+        "store": false,
+        "input": [user(LONG_PROMPT)],
+    });
+    lite(&mut body, args);
+    println!("\n=== WebSocket: long request");
+    println!("send: {body}");
+    socket.send(Message::text(body.to_string())).await?;
+    let started = std::time::Instant::now();
+    let mut response_id: Option<String> = None;
+    let mut deltas_before = 0usize;
+    let mut deltas_after = 0usize;
+    let mut text_after = String::new();
+    let mut interrupted: Option<std::time::Instant> = None;
+    let mut outcome = Outcome::default();
+    loop {
+        let wait = match interrupted {
+            Some(at) => Duration::from_secs(20).saturating_sub(at.elapsed()),
+            None => Duration::from_secs(120),
+        };
+        let message = match tokio::time::timeout(wait, socket.next()).await {
+            Err(_) => {
+                println!("(no terminal event in time)");
+                break;
+            }
+            Ok(None) => {
+                println!("(the connection closed)");
+                break;
+            }
+            Ok(Some(message)) => message?,
+        };
+        let text = match message {
+            Message::Text(text) => text,
+            Message::Close(frame) => {
+                println!("(closed by the server: {frame:?})");
+                break;
+            }
+            _ => continue,
+        };
+        let Ok(event) = serde_json::from_str::<Value>(&text) else {
+            println!("(not JSON) {text}");
+            continue;
+        };
+        let kind = event["type"].as_str().unwrap_or_default().to_owned();
+        outcome.see(&event);
+        if kind == "response.created" {
+            response_id = event["response"]["id"].as_str().map(str::to_owned);
+            println!(
+                "+{} ms from start: response.created {}",
+                started.elapsed().as_millis(),
+                response_id.as_deref().unwrap_or("-")
+            );
+        }
+        let delta = kind == "response.output_text.delta";
+        match interrupted {
+            None => {
+                if delta {
+                    deltas_before += 1;
+                } else if kind != "response.created" {
+                    println!("before: {kind}");
+                }
+            }
+            Some(at) => {
+                if delta {
+                    deltas_after += 1;
+                    text_after.push_str(event["delta"].as_str().unwrap_or(""));
+                } else {
+                    let detail = if is_terminal(&kind) {
+                        let mut response = event["response"].clone();
+                        if let Some(object) = response.as_object_mut() {
+                            object.remove("instructions");
+                            object.remove("tools");
+                        }
+                        format!(
+                            " {}",
+                            if kind == "error" {
+                                event.clone()
+                            } else {
+                                response
+                            }
+                        )
+                    } else if kind.contains("interrupt") {
+                        format!(" {event}")
+                    } else if kind.starts_with("response.output_item") {
+                        format!(" item={}", event["item"]["type"])
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "+{} ms: {kind} (text deltas so far after the interrupt: {deltas_after}){detail}",
+                        at.elapsed().as_millis()
+                    );
+                }
+            }
+        }
+        if interrupted.is_none()
+            && deltas_before >= DELTAS_BEFORE
+            && let Some(id) = &response_id
+        {
+            let interrupt = json!({
+                "type": "response.interrupt",
+                "response_id": id,
+                "mode": "discard_partial_items",
+            });
+            println!(
+                "\n+{} ms from start, after {deltas_before} deltas: send {interrupt}",
+                started.elapsed().as_millis()
+            );
+            socket.send(Message::text(interrupt.to_string())).await?;
+            interrupted = Some(std::time::Instant::now());
+        }
+        if is_terminal(&kind) {
+            break;
+        }
+    }
+    let tail: String = text_after
+        .chars()
+        .rev()
+        .take(40)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    println!(
+        "\ninterrupt result: {}; text deltas before {deltas_before}, after {deltas_after} (last text: {tail:?})",
+        outcome.summary()
+    );
+    let mut summaries = vec![format!(
+        "interrupted: {}; deltas after the interrupt: {deltas_after}",
+        outcome.summary()
+    )];
+    match &response_id {
+        Some(previous) => {
+            println!(
+                "\n=== WebSocket: continuing from {previous} on the same connection"
+            );
+            let mut body = json!({
+                "model": model,
+                "store": false,
+                "previous_response_id": previous,
+                "input": [user(FOLLOW_UP)],
+            });
+            lite(&mut body, args);
+            let next = ws_turn(&mut socket, body).await?;
+            summaries.push(format!("continuation: {}", next.summary()));
+        }
+        None => summaries.push("continuation: skipped, no response id".into()),
     }
     let _ = socket.close(None).await;
     println!("\n=== summary");
