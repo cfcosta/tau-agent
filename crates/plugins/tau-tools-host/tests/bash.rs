@@ -825,17 +825,34 @@ async fn truncated_real_output_is_spilled_in_full() {
     assert!(full.trim_end().ends_with("3000"));
 }
 
-/// Progress is reported as `ToolUpdate`s while the command runs.
+/// Progress is reported as `ToolUpdate`s while the command runs: each
+/// one shows the output so far, so what a card shows only ever grows,
+/// and it ends with everything the command wrote.
 #[tokio::test]
 async fn progress_updates_are_sent_while_running() {
     let dir = tempfile::tempdir().unwrap();
     let bash = Bash::new(Root::new(dir.path()));
     let (ctx, _cancel, mut rx) = ctx_with_updates();
-    bash.call(json!({"command": "echo one; sleep 0.3; echo two"}), ctx)
+    let result = bash
+        .call(json!({"command": "echo one; sleep 0.3; echo two"}), ctx)
         .await
         .unwrap();
-    assert!(
-        rx.try_recv().is_ok(),
-        "expected at least one progress update"
-    );
+    let mut shown = Vec::new();
+    while let Ok((call, output)) = rx.try_recv() {
+        assert_eq!(&*call, "call_1");
+        shown.push(text_of(&output).to_owned());
+    }
+    assert!(!shown.is_empty(), "expected at least one progress update");
+    for pair in shown.windows(2) {
+        assert!(
+            pair[1].starts_with(&pair[0]),
+            "an update shrank or changed: {:?} then {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+    let last = shown.last().unwrap();
+    assert!(last.contains("one"), "{shown:?}");
+    assert!(text_of(&result).contains("two"));
+    assert!(text_of(&result).starts_with(last.as_str()));
 }
