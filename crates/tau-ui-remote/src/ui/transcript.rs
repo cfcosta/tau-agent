@@ -746,7 +746,15 @@ fn landed(
         .overflow_hidden()
         .child(
             div()
-                .id(SharedString::from(format!("landed-{}", card.from.0)))
+                // A chat that goes on lands more than once (ADR 0034):
+                // each card by its newest change.
+                .id(SharedString::from(format!(
+                    "landed-{}-{}",
+                    card.from.0,
+                    card.changes
+                        .first()
+                        .map_or("", |change| change.info.commit_id.as_str())
+                )))
                 .flex()
                 .items_center()
                 .gap(sp(2.))

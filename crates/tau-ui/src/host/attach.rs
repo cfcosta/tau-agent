@@ -1147,6 +1147,18 @@ impl Host {
                     }
                     _ => None,
                 };
+                // A chat's turn ended as it meant to: a plugin may let it
+                // land by itself and go on (ADR 0034).
+                let chat_ended = match &event {
+                    RunEvent::RunEnd {
+                        run,
+                        stop: StopReason::Stop,
+                        ..
+                    } if !host.is_main(run) && !host.is_sub_agent(run) => {
+                        Some(run.clone())
+                    }
+                    _ => None,
+                };
                 let applied = workspace.update(cx, |ws, cx| {
                     ws.apply_streamed(event.clone(), cx);
                     if let Some(refusal) = &refusal {
@@ -1198,6 +1210,35 @@ impl Host {
                                 }
                             },
                             "Could not land what waits on main",
+                            cx,
+                        )
+                    });
+                }
+                if let (Some(chat), Some(entity)) =
+                    (chat_ended, workspace.upgrade())
+                {
+                    let shower = host.clone();
+                    cx.update(|cx| {
+                        on_host(
+                            &host,
+                            &entity,
+                            async move |host| host.land_itself(&chat).await,
+                            move |ws, record, cx| {
+                                if let Some(record) = record {
+                                    ws.apply(
+                                        HostUpdate::LandedItself(record),
+                                        cx,
+                                    );
+                                    // It moved trunk.
+                                    shower.catalog_changed();
+                                }
+                            },
+                            |_, error, _| {
+                                eprintln!(
+                                    "tau-ui: a chat could not land by \
+                                     itself: {error}"
+                                )
+                            },
                             cx,
                         )
                     });

@@ -6,7 +6,9 @@
   [0015](0015-a-main-chat-per-repository.md): tau keeps one local
   repository of its own, the plugins repository, beside those from
   GitHub. Amended by [0033](0033-plugins-are-live.md): plugins are
-  live in runs already going, and in the chat that writes them.
+  live in runs already going, and in the chat that writes them. And by
+  [0034](0034-plugin-chats-land-themselves.md): a chat there lands by
+  itself once its plugins pass, and goes on.
 - Date: 2026-10-05
 
 ## Context

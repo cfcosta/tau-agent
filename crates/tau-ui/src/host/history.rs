@@ -171,9 +171,11 @@ fn landed(
         }
     }
     // A landing's record counts its changes itself, and covers one that
-    // brought none.
+    // brought none. One the chat went on from did not end it (ADR 0034).
     for (parent, body) in landings {
-        if let Ok(record) = serde_json::from_str::<LandingRecord>(body) {
+        if let Ok(record) = serde_json::from_str::<LandingRecord>(body)
+            && !record.kept
+        {
             landed.insert(
                 record.from,
                 Ending::Landed {

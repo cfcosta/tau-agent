@@ -975,6 +975,7 @@ impl Workspace {
             HostUpdate::LandingFinished(record) => {
                 self.landing_finished(record, cx)
             }
+            HostUpdate::LandedItself(record) => self.landed_itself(record, cx),
             HostUpdate::TauTurn { run, prompt } => {
                 self.tau_turn(&run, prompt, cx)
             }

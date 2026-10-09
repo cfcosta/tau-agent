@@ -90,6 +90,7 @@ impl Workspace {
             title: child.title.clone(),
             landing,
             recovered: false,
+            kept: false,
         });
         let changes = card.changes.len();
         if let Some(view) = self.runs.iter_mut().find(|view| view.id == parent)
@@ -150,6 +151,35 @@ impl Workspace {
         }
         self.closed.insert(run.clone());
         cx.emit(WorkspaceEvent::CloseRun { run });
+        cx.notify();
+    }
+
+    /// `record`'s chat landed by itself and went on (ADR 0034): the card
+    /// goes in its parent's chat, in place of the fork waiting there,
+    /// and in its own. Nothing closes.
+    pub fn landed_itself(
+        &mut self,
+        record: LandingRecord,
+        cx: &mut Context<Self>,
+    ) {
+        let run = RunId(record.from.as_str().into());
+        let Some(parent) = self
+            .run(&run)
+            .and_then(|child| child.origin.parent().cloned())
+        else {
+            return;
+        };
+        let card = LandedCard::from_record(record);
+        for view in self.runs.iter_mut() {
+            if view.id == parent {
+                view.items.retain(
+                    |item| !matches!(item, Item::ForkReady { fork } if *fork == run),
+                );
+            }
+            if view.id == parent || view.id == run {
+                view.items.push(Item::Landed(card.clone()));
+            }
+        }
         cx.notify();
     }
 

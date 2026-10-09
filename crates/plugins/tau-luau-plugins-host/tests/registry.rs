@@ -270,3 +270,33 @@ fn a_workspace_runs_its_own_passing_versions() {
     assert_eq!(names(&registry), ["Says hello."]);
     assert!(block_on_io(registry.active()).is_empty());
 }
+
+/// A workspace's plugins may land by themselves when what they change
+/// passes and reaches nothing new (ADR 0034). A plugin the same as
+/// trunk's does not count, even when trunk's fails: the workspace did
+/// not break it.
+#[test]
+fn a_workspace_is_ready_when_what_it_changes_passes() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        || {},
+    );
+    let ready = || block_on_io(registry.ready(workspace.path()));
+    assert!(ready(), "no plugins, nothing to check");
+
+    write_greet(workspace.path(), TOOL_ONLY, Some(PASSING));
+    assert!(ready(), "a new plugin that passes");
+    write_greet(workspace.path(), TOOL_ONLY, Some(FAILING));
+    assert!(!ready(), "one whose tests fail");
+    write_greet(workspace.path(), BLOCKING, Some(PASSING));
+    assert!(!ready(), "one that reaches further than allowed");
+
+    // Trunk's failing version, unchanged in the workspace.
+    let (failing, trunk) = project(home.path(), 1, TOOL_ONLY, Some(FAILING));
+    block_on_io(registry.reload(&failing, &trunk));
+    write_greet(workspace.path(), TOOL_ONLY, Some(FAILING));
+    assert!(ready(), "trunk's own version");
+}

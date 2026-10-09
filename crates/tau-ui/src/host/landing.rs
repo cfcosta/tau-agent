@@ -21,6 +21,10 @@ pub(super) struct Intent {
     /// start leaves it be.
     #[serde(default)]
     pub(super) cancelled: bool,
+    /// The child goes on after it lands (ADR 0034): its workspace and
+    /// bookmark stay.
+    #[serde(default)]
+    pub(super) keep: bool,
 }
 
 /// A step of [`Host::land`] after which tau may close, for tests that
@@ -201,15 +205,70 @@ impl Host {
     /// first, the restack is one jj operation that records what it did,
     /// and the steps after it find nothing to do when done before.
     pub async fn land(&self, child: &RunId) -> anyhow::Result<Landing> {
-        self.land_as(child, false).await
+        self.land_as(child, false, false).await
+    }
+
+    /// Lands `child` on its parent as [`Host::land`] does, but the child
+    /// goes on (ADR 0034): its workspace and bookmark stay, its working
+    /// copy moves onto the parent's new head with its changes, and it
+    /// takes messages as before. A later landing brings what it did
+    /// since. Both runs must be idle.
+    pub async fn land_and_go_on(
+        &self,
+        child: &RunId,
+    ) -> anyhow::Result<Landing> {
+        self.land_as(child, false, true).await
+    }
+
+    /// Lands `child`, a chat whose turn just ended, when a plugin lets
+    /// its repository's chats land by themselves (ADR 0034): it goes on
+    /// ([`Host::land_and_go_on`]). The record of the landing, or `None`
+    /// when it does not land now: no plugin lets it, it or its parent is
+    /// going, it has nothing to land, or landing would conflict. Its next
+    /// turn tries again.
+    pub async fn land_itself(
+        &self,
+        child: &RunId,
+    ) -> anyhow::Result<Option<LandingRecord>> {
+        if self.is_main(child)
+            || self.is_sub_agent(child)
+            || self.ending_of(child).await?.is_some()
+        {
+            return Ok(None);
+        }
+        let Ok(parent) = self.parent_of(child).await else {
+            return Ok(None);
+        };
+        // Its end went by: it stops in a moment.
+        self.settle(child).await;
+        if self.is_running(child) || self.is_running(&parent) {
+            return Ok(None);
+        }
+        let repo = self.slot_of_run(child).await?;
+        let Some(dir) = self.workspace(child).await else {
+            return Ok(None);
+        };
+        if !self.lands_itself(&repo, &dir).await {
+            return Ok(None);
+        }
+        let state = self.repo_state(&repo.name);
+        let _draining = state.draining.lock().await;
+        let preview = self.land_dry(child, Reading::Forecast).await?;
+        if preview.changes.is_empty() || !preview.conflicts.is_empty() {
+            return Ok(None);
+        }
+        let landing = self.land_and_go_on(child).await?;
+        self.landing_record(&parent, child, &landing).await
     }
 
     /// [`Host::land`]; `recovered` when tau finishes, at start, a
-    /// landing it was asked for before it closed.
+    /// landing it was asked for before it closed, and `keep` when the
+    /// child goes on ([`Host::land_and_go_on`]).
     async fn land_as(
         &self,
         child: &RunId,
         recovered: bool,
+        keep: bool,
     ) -> anyhow::Result<Landing> {
         // No run starts while it lands: a main chat's turn would start
         // on the stack the landing rewrites.
@@ -223,6 +282,7 @@ impl Host {
             child_workspace: plan.child_workspace.clone(),
             parent_workspace: plan.parent_workspace.clone(),
             cancelled: false,
+            keep,
         };
         self.store_intent(&plan.parent, &intent).await?;
         self.cut(LandingStep::Intent)?;
@@ -254,7 +314,8 @@ impl Host {
     /// What a landing does after its restack, each step finding nothing
     /// to do when it was done before: records the landed changes as the
     /// parent's links with a record of the landing, then forgets the
-    /// child's workspace and removes its bookmark.
+    /// child's workspace and removes its bookmark. A child that goes on
+    /// keeps both, and its links do not name it: it did not end.
     async fn finish_landing(
         &self,
         project: &Project,
@@ -269,8 +330,13 @@ impl Host {
             title: self.title_of(&child).await?,
             landing: landing.clone(),
             recovered,
+            kept: intent.keep,
         };
-        if self.landing_record(parent, &child).await?.is_none() {
+        if self
+            .landing_record(parent, &child, landing)
+            .await?
+            .is_none()
+        {
             // The landed changes join the parent's links, oldest first,
             // at the parent's latest turn, so forks, the compare view and
             // pull requests see them as the parent's own.
@@ -289,7 +355,7 @@ impl Host {
                         commit_id: change.commit_id.clone(),
                         change_id: change.change_id.clone(),
                         changed: true,
-                        from: Some(intent.from.clone()),
+                        from: (!intent.keep).then(|| intent.from.clone()),
                         snapshot: false,
                     };
                     Ok(Entry::Plugin {
@@ -307,8 +373,25 @@ impl Host {
             self.store
                 .append_turn(&parent.0, &entries, TurnUsage::default())
                 .await?;
+            // The child that goes on keeps the card too, where it shows
+            // what it landed.
+            if intent.keep {
+                self.store
+                    .append_turn(
+                        &child.0,
+                        &[Entry::Plugin {
+                            plugin: LANDING_RECORD.to_owned(),
+                            body: serde_json::to_string(&record)?,
+                        }],
+                        TurnUsage::default(),
+                    )
+                    .await?;
+            }
         }
         self.cut(LandingStep::Record)?;
+        if intent.keep {
+            return Ok(record);
+        }
         // The child's changes live on the parent's stack now.
         let workspace = intent.child_workspace.clone();
         project
@@ -323,11 +406,14 @@ impl Host {
         Ok(record)
     }
 
-    /// The record `parent` keeps of `child`'s landing, once stored.
+    /// The record `parent` keeps of `child`'s `landing`, once stored. A
+    /// child that goes on lands more than once, each landing to its own
+    /// head.
     async fn landing_record(
         &self,
         parent: &RunId,
         child: &RunId,
+        landing: &Landing,
     ) -> anyhow::Result<Option<LandingRecord>> {
         Ok(self
             .store
@@ -337,7 +423,9 @@ impl Host {
             .filter_map(|(_, body)| {
                 serde_json::from_str::<LandingRecord>(body).ok()
             })
-            .find(|record| *record.from == *child.0))
+            .find(|record| {
+                *record.from == *child.0 && record.landing.head == landing.head
+            }))
     }
 
     async fn store_intent(
@@ -403,22 +491,38 @@ impl Host {
                 let project = self.slot_of_run(&child).await?.project().await?;
                 let head = intent.child_head.clone();
                 match project.run(move |project| project.landed(&head)).await? {
-                    Some(landing) => {
-                        self.finish_landing(
+                    // A child that goes on and whose landing was recorded
+                    // is done: nothing to finish, or to show again.
+                    Some(landing)
+                        if intent.keep
+                            && self
+                                .landing_record(&parent, &child, &landing)
+                                .await?
+                                .is_some() =>
+                    {
+                        Ok(None)
+                    }
+                    Some(landing) => self
+                        .finish_landing(
                             &project, &parent, &intent, &landing, true,
                         )
                         .await
-                    }
+                        .map(Some),
                     None => {
-                        self.land_as(&child, true).await?;
-                        self.landing_record(&parent, &child).await?.ok_or_else(
-                            || anyhow::anyhow!("The landing left no record"),
-                        )
+                        let landing =
+                            self.land_as(&child, true, intent.keep).await?;
+                        self.landing_record(&parent, &child, &landing)
+                            .await?
+                            .map(Some)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("The landing left no record")
+                            })
                     }
                 }
             };
             match finish.await {
-                Ok(record) => finished.push(record),
+                Ok(Some(record)) => finished.push(record),
+                Ok(None) => {}
                 Err(error) => eprintln!(
                     "tau-ui: cannot finish the landing of {}: {error:#}",
                     child.0

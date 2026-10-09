@@ -426,6 +426,20 @@ pub trait HostHalf: Send + Sync + 'static {
         std::future::ready(None)
     }
 
+    /// Whether a chat in `repo`, working in `workspace`, may land its
+    /// work on the repository's main by itself once a turn of it ends,
+    /// and go on (ADR 0034): a repository whose work the plugin checks
+    /// itself, as tau-luau-plugins does its own. The host lands it when
+    /// any plugin says so.
+    fn lands_itself(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _workspace: &std::path::Path,
+    ) -> impl Future<Output = bool> + Send {
+        std::future::ready(false)
+    }
+
     /// Its entry on the Plugins screen. The registry sets its name.
     fn catalog(
         &self,

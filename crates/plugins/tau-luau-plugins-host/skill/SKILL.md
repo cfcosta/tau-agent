@@ -21,7 +21,9 @@ folder each:
 
 The folder's name is the plugin's `name`. A plugin is active once its
 commit is on `main` and its tests pass. Write it, write its tests, run
-`plugin_test` with the plugin's name until they pass, then commit.
+`plugin_test` with the plugin's name until they pass, then commit. When
+your turn ends, tau lands your commits on `main` by itself if every
+plugin you changed passes and reaches nothing new; this chat goes on.
 
 ## What the person sees
 
@@ -41,7 +43,11 @@ A change is live at once, with no new chat or message:
 - **In this chat**, a plugin as this workspace has it runs from your
   next model request, once `plugin_test` would pass and it reaches
   nothing new. Write it, test it, then use it right here.
-- **Everywhere else**, once it lands on `main`.
+- **Everywhere else**, once it lands on `main`: tau lands this chat's
+  commits when a turn ends with every plugin you changed passing and
+  reaching nothing new, and this chat goes on from there. Work that
+  fails its tests, waits for the person, or would conflict stays here
+  until a later turn fixes it; say so to the person.
 - A tool the run did not start with is not in your tool list: call it
   from `codemode`, where `search_tools` finds it. From the next message
   it is a tool like the others. A changed tool you already have runs

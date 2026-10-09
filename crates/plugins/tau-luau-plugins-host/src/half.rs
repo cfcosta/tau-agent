@@ -11,7 +11,15 @@ use tau_luau_plugins::{
     ui::PAGE,
 };
 use tau_ui_kit::theme::Tone;
-use tau_ui_plugin::{HostCx, HostHalf, Link, PluginInfo, RunCtx, Seam};
+use tau_ui_plugin::{
+    HostCx,
+    HostHalf,
+    Link,
+    PluginInfo,
+    RepoCtx,
+    RunCtx,
+    Seam,
+};
 
 /// tau-luau-plugins on the host.
 #[derive(Debug, Clone, Copy, Default)]
@@ -100,6 +108,17 @@ impl HostHalf for LuauPluginsHost {
             .await,
         ));
         Ok(plugins)
+    }
+
+    /// A chat in the plugins repository lands by itself once its
+    /// plugins pass and want nothing new (ADR 0034).
+    async fn lands_itself(
+        &self,
+        host: &Self::Host,
+        repo: &RepoCtx,
+        workspace: &std::path::Path,
+    ) -> bool {
+        repo.name == crate::REPO && host.ready(workspace).await
     }
 
     async fn catalog(

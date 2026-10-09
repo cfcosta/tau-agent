@@ -2966,6 +2966,108 @@ fn a_long_agents_file_is_cut() {
     assert!(instructions.len() < long.len() + 2048);
 }
 
+/// A chat can land and go on (ADR 0034): its work joins main, and it
+/// keeps its workspace and bookmark and takes messages as before; its
+/// next landing brings only what it did since. Each landing's card is in
+/// main and in the chat, and none ends it. A landing tau closed in the
+/// middle of is finished at start without closing the chat, once.
+#[test]
+fn a_chat_lands_and_goes_on() {
+    use tau_ui::host::LandingStep;
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("wrote a"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
+        .turn(|t| t.text("wrote b"))
+        .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: c")))
+        .turn(|t| t.text("wrote c"));
+    let src = tempfile::tempdir().unwrap();
+    let (host, mut events) = host_on(llm.clone(), src.path());
+    let project = host.block_on(host.project_of(REPO)).unwrap();
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    let chat = host
+        .block_on(host.start("write a", &ModelChoice::default(), REPO))
+        .unwrap()
+        .id;
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+    let on_trunk = |file: &str| {
+        let project = project.blocking();
+        let trunk = project.trunk().unwrap();
+        project
+            .files_under(&trunk, "")
+            .unwrap()
+            .iter()
+            .any(|(path, _)| path == file)
+    };
+    let mut go_on = |prompt: &str| {
+        host.block_on(host.resume(&chat, prompt, &ModelChoice::default()))
+            .unwrap();
+        until_end(&mut events);
+        wait_until_done(&host, &chat);
+    };
+
+    // No plugin lets a chat here land by itself.
+    assert_eq!(host.block_on(host.land_itself(&chat)).unwrap(), None);
+
+    let landed = host.block_on(host.land_and_go_on(&chat)).unwrap();
+    assert_eq!(landed.changes.len(), 1);
+    assert_eq!(project.blocking().trunk().unwrap(), landed.head);
+    assert!(on_trunk("a.txt"));
+    // It goes on: no ending, its bookmark and workspace stay.
+    let bookmark = format!("tau/{}", chat.0);
+    assert_eq!(host.block_on(host.ending_of(&chat)).unwrap(), None);
+    assert!(project.blocking().bookmark(&bookmark).unwrap().is_some());
+    let dir = host.block_on(host.workspace(&chat)).unwrap();
+    assert!(dir.join("a.txt").exists());
+
+    // Its next turn works on top of main, and lands only what is new.
+    go_on("and b");
+    assert!(dir.join("a.txt").exists() && dir.join("b.txt").exists());
+    let landed = host.block_on(host.land_and_go_on(&chat)).unwrap();
+    assert_eq!(landed.changes.len(), 1, "only b");
+    assert!(on_trunk("b.txt"));
+    assert_eq!(host.block_on(host.ending_of(&chat)).unwrap(), None);
+
+    // Cut off after its restack, the landing finishes at start, and the
+    // chat still goes on; a second start has nothing to finish.
+    go_on("and c");
+    host.cut_landing_after(Some(LandingStep::Restack));
+    assert!(host.block_on(host.land_and_go_on(&chat)).is_err());
+    host.cut_landing_after(None);
+    let finished = host.block_on(host.finish_landings()).unwrap();
+    assert_eq!(finished.len(), 1);
+    assert!(finished[0].kept && finished[0].recovered);
+    assert!(on_trunk("c.txt"));
+    assert!(host.block_on(host.finish_landings()).unwrap().is_empty());
+    assert_eq!(host.block_on(host.ending_of(&chat)).unwrap(), None);
+    assert!(project.blocking().bookmark(&bookmark).unwrap().is_some());
+
+    // From history, main and the chat each show the three landings, and
+    // the chat has not ended.
+    let history = host.block_on(host.history()).unwrap();
+    let kept = |run: &tau_agent::tool::RunId| -> usize {
+        history
+            .iter()
+            .find(|view| view.id == *run)
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| matches!(item, Item::Landed(card) if card.kept))
+            .count()
+    };
+    assert_eq!(kept(&main), 3);
+    assert_eq!(kept(&chat), 3);
+    let view = history.iter().find(|view| view.id == chat).unwrap();
+    assert_eq!(view.ending, None);
+}
+
 /// A chat that landed or was dropped takes no more messages: the host
 /// refuses to resume or steer it, saying why, and makes it no new
 /// workspace or bookmark, a branch nothing would land. History still

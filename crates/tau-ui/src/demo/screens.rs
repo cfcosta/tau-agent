@@ -218,6 +218,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
             title,
             landing: landing_preview(false),
             recovered: true,
+            kept: false,
         };
         ws.apply(HostUpdate::LandingFinished(record), cx);
         ws.navigate(Route::Run(run_id()), cx);

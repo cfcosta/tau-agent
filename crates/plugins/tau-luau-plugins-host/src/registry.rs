@@ -72,6 +72,9 @@ struct State {
     active: Vec<Active>,
     /// Versions waiting for the person, by plugin.
     waiting: BTreeMap<String, Loaded>,
+    /// Each plugin's files on trunk, by their digest, whatever its
+    /// standing: what a workspace's plugins are told apart from.
+    trunk: BTreeMap<String, String>,
 }
 
 impl PluginHost for Registry {
@@ -151,6 +154,29 @@ impl Registry {
             }
         }
         active
+    }
+
+    /// Whether what `dir`, a workspace of the plugins repository,
+    /// changes in its plugins may land on trunk as it is: each plugin
+    /// whose files differ from trunk's loads, passes its tests and
+    /// reaches no further than the person allowed (ADR 0034). One that
+    /// is the same as trunk's does not count, even when trunk's fails.
+    pub async fn ready(&self, dir: &Path) -> bool {
+        let trunk = self.0.state.read().await.trunk.clone();
+        let dir = dir.to_owned();
+        let folders = tokio::task::spawn_blocking(move || plugin_folders(&dir))
+            .await
+            .unwrap_or_default();
+        let allowed = read_allowed(&self.0.allowed_path).await;
+        for (name, files) in folders {
+            if trunk.get(&name) == Some(&files.digest()) {
+                continue;
+            }
+            if self.try_version(&name, files, &allowed).await.is_none() {
+                return false;
+            }
+        }
+        true
     }
 
     /// `name` in `files`, when it may be active: it loads, its tests
@@ -273,7 +299,10 @@ impl Registry {
         for (name, paths) in folders {
             let earlier = before.get(&name).cloned();
             let loaded = match Files::from_paths(&paths) {
-                Ok(files) => load(&name, files).await,
+                Ok(files) => {
+                    state.trunk.insert(name.clone(), files.digest());
+                    load(&name, files).await
+                }
                 Err(error) => Err(error),
             };
             let loaded = match loaded {

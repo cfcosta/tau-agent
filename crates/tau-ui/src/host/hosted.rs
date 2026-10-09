@@ -200,6 +200,26 @@ impl Host {
         }
     }
 
+    /// Whether a plugin lets a chat in `repo`, working in `workspace`,
+    /// land by itself (ADR 0034).
+    pub(super) async fn lands_itself(
+        &self,
+        repo: &RepoSlot,
+        workspace: &Path,
+    ) -> bool {
+        let ctx = self.repo_ctx(repo);
+        for hosted in &self.hosted {
+            if hosted
+                .plugin
+                .lands_itself(&hosted.state, &ctx, workspace)
+                .await
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// What adds each plugin's agent plugins, in the registry's order, to
     /// an agent in `repo`: the run's, or a sub-agent's, on its model, with
     /// what its workspace offers (`services`). A plugin that cannot build

@@ -133,6 +133,12 @@ pub trait ErasedPlugin: Send + Sync {
         repo: &'a RepoCtx,
         cx: &'a HostCx,
     ) -> HostFuture<'a, PluginValue>;
+    fn lands_itself<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+        workspace: &'a std::path::Path,
+    ) -> HostFuture<'a, bool>;
     fn act<'a>(
         &'a self,
         host: &'a HostState,
@@ -379,6 +385,15 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
                 self.half.repo_data(self.host_of(host), repo, cx).await,
             )
         })
+    }
+
+    fn lands_itself<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+        workspace: &'a std::path::Path,
+    ) -> HostFuture<'a, bool> {
+        Box::pin(self.half.lands_itself(self.host_of(host), repo, workspace))
     }
 
     fn act<'a>(

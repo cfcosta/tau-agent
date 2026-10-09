@@ -20,6 +20,10 @@ pub struct LandingRecord {
     /// next start.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub recovered: bool,
+    /// The chat landed what it had and went on (ADR 0034): it did not
+    /// close.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub kept: bool,
 }
 
 impl LandedCard {
@@ -35,6 +39,7 @@ impl LandedCard {
                 .collect(),
             conflicts: record.landing.conflicts,
             recovered: record.recovered,
+            kept: record.kept,
         }
     }
 }
@@ -52,6 +57,9 @@ pub struct LandedCard {
     /// tau finished the landing at start, after closing in its middle.
     #[serde(default)]
     pub recovered: bool,
+    /// The chat went on after it landed (ADR 0034).
+    #[serde(default)]
+    pub kept: bool,
 }
 
 /// What a landing brought: its changes as they sit on the stack, and

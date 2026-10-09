@@ -2,7 +2,9 @@
 
 - Status: accepted. Amends [0027](0027-luau-plugins.md): runs no longer
   keep the plugin versions they started with, and a chat in the plugins
-  repository runs its own versions before they land.
+  repository runs its own versions before they land. Amended by
+  [0034](0034-plugin-chats-land-themselves.md): such a chat now lands
+  by itself.
 - Date: 2026-10-09
 
 ## Context

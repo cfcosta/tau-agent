@@ -90,6 +90,9 @@ pub enum HostUpdate {
     /// A landing tau closed in the middle of, which it finished as it
     /// started: its card goes in the parent's chat, and the child closes.
     LandingFinished(crate::view::LandingRecord),
+    /// A chat landed by itself and went on (ADR 0034): its card goes in
+    /// its parent's chat and in its own.
+    LandedItself(crate::view::LandingRecord),
     /// tau started a run's next turn itself, with this message: resolving
     /// what a landing left in conflict (ADR 0014).
     TauTurn {
