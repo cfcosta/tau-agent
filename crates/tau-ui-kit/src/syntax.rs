@@ -61,6 +61,8 @@ impl Lang {
         match name {
             "flake.lock" => return Some(Lang::Json),
             "Cargo.lock" => return Some(Lang::Toml),
+            // direnv's, which it runs with bash.
+            ".envrc" => return Some(Lang::Bash),
             _ => {}
         }
         let (_, ext) = name.rsplit_once('.')?;

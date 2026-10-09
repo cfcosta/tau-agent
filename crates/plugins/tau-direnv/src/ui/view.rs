@@ -9,7 +9,9 @@ use tau_ui_kit::{
     assets::Icon,
     components::{self as ui, ButtonKind, mono},
     format::clock,
-    theme::{IconSize, Theme, Type, radius, sp, weight},
+    select::selectable,
+    syntax::{self, Lang},
+    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
 };
 use tau_ui_plugin::{
     Handle,
@@ -34,6 +36,17 @@ pub fn question(
     };
     let t = view.theme().clone();
     let compact = view.compact;
+    // As direnv runs it: with bash.
+    let envrc = envrc.trim_end().to_owned();
+    let colors = syntax::highlight_cached(Lang::Bash, &envrc);
+    let script = selectable(
+        gpui::StyledText::new(envrc.clone()).with_runs(syntax::runs(
+            &envrc,
+            &colors,
+            t.text_soft,
+            &t.syntax,
+        )),
+    );
     let decide = |id: &'static str, label: &'static str, kind, load: bool| {
         let (handle, repo) = (view.handle.clone(), repo.clone());
         div()
@@ -102,13 +115,9 @@ pub fn question(
                             .bg(t.depth.well)
                             .border_1()
                             .border_color(t.border)
-                            .children(
-                                envrc
-                                    .trim_end()
-                                    .lines()
-                                    .map(|line| mono(line.to_owned(), Type::SMALL, t.text_soft))
-                                    .collect::<Vec<_>>(),
-                            ),
+                            .typeset(Type::SMALL.mono())
+                            .text_color(t.text_soft)
+                            .child(script),
                     )
                     .child(div().flex().gap(sp(2.)).child(load).child(skip)),
             )

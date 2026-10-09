@@ -57,6 +57,7 @@ fn languages_come_from_paths_and_tags() {
     assert_eq!(Lang::of_path("src/main.rs"), Some(Lang::Rust));
     assert_eq!(Lang::of_path("a/b/navigation.ts"), Some(Lang::TypeScript));
     assert_eq!(Lang::of_path("Cargo.lock"), Some(Lang::Toml));
+    assert_eq!(Lang::of_path("repo/.envrc"), Some(Lang::Bash));
     assert_eq!(Lang::of_path("README"), None);
     assert_eq!(Lang::of_path("notes.md"), None);
     assert_eq!(Lang::of_name("Python"), Some(Lang::Python));
