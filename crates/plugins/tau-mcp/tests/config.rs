@@ -24,6 +24,7 @@ use tau_mcp::config::{
     Sources,
     StdioConfig,
     Transport,
+    callback_address,
     expand_vars,
     exposure_of,
     merge,
@@ -484,4 +485,127 @@ fn oauth_blocks_are_checked() {
         ..OAuthConfig::default()
     };
     assert!(!format!("{secret:?}").contains("hush"));
+}
+
+/// A loopback host as a callback URL writes it, and as the redirect
+/// URI must give it back.
+#[hegel::composite]
+fn loopback_host(tc: &TestCase) -> (String, String) {
+    match tc.draw(gs::integers::<u8>().max_value(2)) {
+        0 => {
+            let ip = format!(
+                "127.{}.{}.{}",
+                tc.draw(gs::integers::<u8>()),
+                tc.draw(gs::integers::<u8>()),
+                tc.draw(gs::integers::<u8>())
+            );
+            (ip.clone(), ip)
+        }
+        1 => {
+            let written = tc.draw(gs::sampled_from(vec![
+                "localhost",
+                "LOCALHOST",
+                "LocalHost",
+            ]));
+            (written.to_owned(), "localhost".to_owned())
+        }
+        _ => ("[::1]".to_owned(), "[::1]".to_owned()),
+    }
+}
+
+#[hegel::composite]
+fn callback_path(tc: &TestCase) -> String {
+    let segments =
+        tc.draw(gs::vecs(gs::from_regex("[a-z0-9_-]{1,8}")).max_size(3));
+    format!("/{}", segments.join("/"))
+}
+
+/// A callback URL on a loopback host with a port and a path is taken
+/// as written, and the redirect URI it registers is that URL. Port 80
+/// is the case `Url` hides, so it is drawn on purpose.
+#[hegel::test(test_cases = 300)]
+fn a_loopback_callback_url_is_the_redirect_uri(tc: TestCase) {
+    let (written, host) = tc.draw(loopback_host());
+    let port = tc.draw(hegel::one_of!(
+        gs::just(80_u16),
+        gs::integers::<u16>().min_value(1)
+    ));
+    let path = tc.draw(callback_path());
+    let agreeing = tc.draw(gs::optional(gs::just(port)));
+    let url = format!("http://{written}:{port}{path}");
+    let address = callback_address(Some(&url), agreeing)
+        .unwrap_or_else(|error| panic!("{url}: {error}"));
+    assert_eq!((address.port, &address.path), (port, &path), "{url}");
+    assert_eq!(
+        address.redirect_uri(port),
+        format!("http://{host}:{port}{path}")
+    );
+    assert!(address.ip.is_loopback());
+}
+
+/// The port may come from `callbackPort` alone; without either, the
+/// URL is refused; with both they must agree.
+#[hegel::test(test_cases = 300)]
+fn the_callback_port_comes_from_the_url_or_the_setting_and_they_agree(
+    tc: TestCase,
+) {
+    let (written, _) = tc.draw(loopback_host());
+    let (url_port, setting) = (
+        tc.draw(gs::integers::<u16>().min_value(1)),
+        tc.draw(gs::integers::<u16>()),
+    );
+    let bare = format!("http://{written}/cb");
+    assert_eq!(
+        callback_address(Some(&bare), Some(setting)).unwrap().port,
+        setting
+    );
+    assert!(callback_address(Some(&bare), None).is_err());
+    let with_port = format!("http://{written}:{url_port}/cb");
+    let both = callback_address(Some(&with_port), Some(setting));
+    assert_eq!(
+        both.is_ok(),
+        url_port == setting,
+        "{with_port} and {setting}"
+    );
+}
+
+/// Everything else about a callback URL is refused: another scheme, a
+/// user, a query or a fragment, and any host that is not loopback.
+#[hegel::test(test_cases = 300)]
+fn a_callback_url_that_is_not_plain_loopback_http_is_refused(tc: TestCase) {
+    let (written, _) = tc.draw(loopback_host());
+    let port = tc.draw(gs::integers::<u16>().min_value(1));
+    let path = tc.draw(callback_path());
+    let url = match tc.draw(gs::integers::<u8>().max_value(5)) {
+        0 => format!("https://{written}:{port}{path}"),
+        1 => format!("http://user@{written}:{port}{path}"),
+        2 => format!("http://user:pw@{written}:{port}{path}"),
+        3 => format!("http://{written}:{port}{path}?x=1"),
+        4 => format!("http://{written}:{port}{path}#frag"),
+        _ => {
+            let host = tc.draw(hegel::one_of!(
+                gs::sampled_from(vec![
+                    "0.0.0.0".to_owned(),
+                    "[::]".to_owned(),
+                    "10.0.0.1".to_owned(),
+                    "192.168.1.9".to_owned(),
+                    "128.0.0.1".to_owned(),
+                    "[::2]".to_owned(),
+                ]),
+                gs::domains().map(|domain| format!("x{domain}")),
+            ));
+            format!("http://{host}:{port}{path}")
+        }
+    };
+    assert!(callback_address(Some(&url), Some(port)).is_err(), "{url}");
+}
+
+/// With no URL the callback is `127.0.0.1` on the asked port, or any
+/// free one, at the default path.
+#[hegel::test(test_cases = 100)]
+fn the_default_callback_is_127_0_0_1_at_the_default_path(tc: TestCase) {
+    let setting = tc.draw(gs::optional(gs::integers::<u16>()));
+    let address = callback_address(None, setting).unwrap();
+    assert_eq!(address.port, setting.unwrap_or(0));
+    assert_eq!(address.redirect_uri(1234), "http://127.0.0.1:1234/callback");
 }
