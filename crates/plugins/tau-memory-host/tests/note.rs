@@ -159,14 +159,50 @@ fn wiki_links_skip_what_is_not_an_id() {
     assert_eq!(wiki_links("[[a]] [[B]] [[a]] [[c-2]] [[x"), ["a", "c-2"]);
 }
 
-#[test]
-fn a_multi_line_title_is_refused() {
-    let mut note = Note::parse(
-        "+++\nid = \"a\"\ntitle = \"t\"\ndescription = \"d\"\ntype = \"fact\"\n\
-         created = 1\nupdated = 1\nvalid_from = 1\n\n[source]\nby = \"user\"\n+++\nbody",
-    )
-    .unwrap();
-    assert!(note.validate().is_ok());
-    note.title = "two\nlines".into();
-    assert!(note.validate().is_err());
+/// A line break in any front-matter field would let a value close the
+/// front matter or start another key, so `validate` refuses it in every
+/// field, whichever break it is and wherever in the value it falls.
+#[hegel::test(test_cases = 300)]
+fn a_line_break_in_any_front_matter_field_is_refused(tc: TestCase) {
+    let mut note = tc.draw(note());
+    note.validate().unwrap();
+    let broken = format!(
+        "{}{}{}",
+        tc.draw(common::line()),
+        tc.draw(gs::sampled_from(vec!["\n", "\r", "\r\n", "\n+++\n"])),
+        tc.draw(gs::text().max_size(10)),
+    );
+    let link = Link {
+        to: tc.draw(id()),
+        kind: LinkType::Relates,
+        why: None,
+    };
+    match tc.draw(gs::integers::<u8>().max_value(8)) {
+        0 => note.title = broken,
+        1 => note.description = broken,
+        2 => note.tags.push(broken),
+        3 => note.stale = Some(broken),
+        4 => note.source.run = Some(broken),
+        5 => note.source.commit = Some(broken),
+        6 => note.source.files.push(broken),
+        7 => note.links.push(Link { to: broken, ..link }),
+        _ => note.links.push(Link {
+            why: Some(broken),
+            ..link
+        }),
+    }
+    assert!(note.validate().is_err(), "{note:?}");
+}
+
+/// The fields that name the note cannot be blank either.
+#[hegel::test(test_cases = 100)]
+fn a_blank_title_or_description_is_refused(tc: TestCase) {
+    let mut note = tc.draw(note());
+    let blank: String = tc.draw(gs::text().alphabet(" \t").max_size(5));
+    if tc.draw(gs::booleans()) {
+        note.title = blank;
+    } else {
+        note.description = blank;
+    }
+    assert!(note.validate().is_err(), "{note:?}");
 }
