@@ -528,17 +528,6 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_response_is_an_error() {
-        assert!(parse(b"HTTP/1.1 200").is_err());
-        assert!(
-            parse(
-                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nZZ\r\n"
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
     fn headers_are_kept_and_found_in_any_case() {
         let response =
             parse(b"HTTP/1.1 200 OK\r\nX-Request-Id: req_1\r\n\r\n").unwrap();
@@ -597,19 +586,103 @@ mod tests {
         Ok(body)
     }
 
-    #[tokio::test]
-    async fn streaming_matches_the_whole_parse_at_any_read_size() {
-        let cases: [&[u8]; 3] = [
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
-              3\r\n{\"a\r\n5;x=y\r\n\":1}\n\r\n0\r\n\r\n",
-            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
-            b"HTTP/1.1 200 OK\r\n\r\nuntil the end",
-        ];
-        for raw in cases {
-            let whole = parse(raw).unwrap().body;
-            for step in 1..raw.len() {
-                assert_eq!(stream_all(raw, step).await.unwrap(), whole);
+    /// A response as a server frames its body: by length, in chunks of
+    /// the given sizes (some with an extension), or until the close.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Frame {
+        Length,
+        Chunked,
+        UntilClose,
+    }
+
+    hegel::pretty_print_as_debug!(Frame);
+
+    /// `(framing, raw response, body)`.
+    #[hegel::composite]
+    fn response(tc: &hegel::TestCase) -> (Frame, Vec<u8>, Vec<u8>) {
+        use hegel::generators as gs;
+        let body: Vec<u8> =
+            tc.draw(gs::vecs(gs::integers::<u8>()).max_size(60));
+        let frame = tc.draw(gs::sampled_from(vec![
+            Frame::Length,
+            Frame::Chunked,
+            Frame::UntilClose,
+        ]));
+        let mut raw = b"HTTP/1.1 200 OK\r\nX-Request-Id: req_1\r\n".to_vec();
+        match frame {
+            Frame::Length => {
+                raw.extend(
+                    format!("Content-Length: {}\r\n\r\n", body.len()).bytes(),
+                );
+                raw.extend(&body);
             }
+            Frame::Chunked => {
+                raw.extend(b"Transfer-Encoding: chunked\r\n\r\n");
+                let mut rest = body.as_slice();
+                while !rest.is_empty() {
+                    let take = tc.draw(
+                        gs::integers::<usize>()
+                            .min_value(1)
+                            .max_value(rest.len()),
+                    );
+                    let extension =
+                        if tc.draw(gs::booleans()) { ";x=y" } else { "" };
+                    raw.extend(format!("{:x}{extension}\r\n", take).bytes());
+                    raw.extend(&rest[..take]);
+                    raw.extend(b"\r\n");
+                    rest = &rest[take..];
+                }
+                raw.extend(b"0\r\n\r\n");
+            }
+            Frame::UntilClose => {
+                raw.extend(b"\r\n");
+                raw.extend(&body);
+            }
+        }
+        (frame, raw, body)
+    }
+
+    fn run<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    /// However the bytes arrive, one at a time or a few, the stream
+    /// yields the body the whole-response oracle finds.
+    #[hegel::test(test_cases = 200)]
+    fn streaming_matches_the_whole_parse_at_any_read_size(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let (_, raw, body) = tc.draw(response());
+        let step =
+            tc.draw(gs::integers::<usize>().min_value(1).max_value(raw.len()));
+        assert_eq!(parse(&raw).unwrap().body, body);
+        assert_eq!(run(stream_all(&raw, step)).unwrap(), body);
+    }
+
+    /// A response cut short is an error, not a shorter body: anywhere
+    /// inside a head, a length-framed body or a chunked one. (A body
+    /// that ends when the connection does cannot be told from a whole
+    /// one, so it is left out.)
+    #[hegel::test(test_cases = 300)]
+    fn a_cut_response_is_an_error(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let (frame, raw, body) = tc.draw(response());
+        tc.assume(frame != Frame::UntilClose);
+        // A cut inside the final `0\r\n\r\n` of a chunked body may leave
+        // a body that is already whole; every other cut loses data.
+        let tail = if frame == Frame::Chunked { 5 } else { 0 };
+        let keep =
+            tc.draw(gs::integers::<usize>().max_value(raw.len() - tail - 1));
+        let step =
+            tc.draw(gs::integers::<usize>().min_value(1).max_value(raw.len()));
+        match run(stream_all(&raw[..keep], step)) {
+            Err(_) => {}
+            Ok(got) => panic!(
+                "{keep} of {} bytes gave {got:?}, not an error (body {body:?})",
+                raw.len()
+            ),
         }
     }
 }
