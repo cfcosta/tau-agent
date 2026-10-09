@@ -143,7 +143,7 @@ pub fn band(
 fn tag(note: &Note, color: gpui::Hsla) -> AnyElement {
     div()
         .flex_shrink_0()
-        .font_weight(gpui::FontWeight::MEDIUM)
+        .font_weight(tau_ui_kit::theme::weight::EMPHASIS)
         .text_color(color)
         .child(note.tag.label())
         .into_any_element()
