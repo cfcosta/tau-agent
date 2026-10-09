@@ -1,8 +1,8 @@
 //! A main chat's crew (ADR 0031): the sub-agents it spawned, as its
 //! chat's tray shows them. Sub-agents are disposable: they live in the
-//! tray while they work and for the round that spawned them, not in the
-//! sidebar, which keeps the forks the person made. History keeps them
-//! all.
+//! tray while they work and for the round that spawned them, and in the
+//! sidebar only while they work; the sidebar keeps the forks the person
+//! made. History keeps them all.
 
 use std::collections::HashSet;
 
@@ -91,11 +91,14 @@ impl Workspace {
         })
     }
 
-    /// The run the sidebar marks for `run`: a sub-agent's main chat,
-    /// since sub-agents are not listed there, else `run` itself.
+    /// The run the sidebar marks for `run`: a sub-agent that ended has
+    /// left the list, and its main chat stands for it; any other run is
+    /// marked itself.
     pub fn listed_as<'a>(&self, run: &'a RunView) -> &'a RunId {
         match &run.origin {
-            Origin::SubAgent { parent } => parent,
+            Origin::SubAgent { parent } if !self.is_listed_sub_agent(run) => {
+                parent
+            }
             _ => &run.id,
         }
     }

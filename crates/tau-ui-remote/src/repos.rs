@@ -125,16 +125,31 @@ impl Workspace {
 
     /// `run`'s forks the sidebar lists under it, newest first: those
     /// that are open, and those that landed or were dropped, which stay
-    /// listed, dim, saying so. Sub-agents are not listed: they are main's
-    /// crew, in its chat's tray ([`Workspace::crew`]).
+    /// listed, dim, saying so; and its sub-agents while they work. A
+    /// sub-agent that ended leaves the list: it stays in main's tray for
+    /// the round ([`Workspace::crew`]).
     pub fn listed_children<'a>(
         &'a self,
         run: &'a RunView,
     ) -> impl Iterator<Item = &'a RunView> {
-        self.runs.iter().filter(move |view| {
-            matches!(&view.origin, Origin::Fork { from, .. } if *from == run.id)
-                && (!self.closed.contains(&view.id) || view.ending.is_some())
+        self.runs.iter().filter(move |view| match &view.origin {
+            Origin::Fork { from, .. } => {
+                *from == run.id
+                    && (!self.closed.contains(&view.id)
+                        || view.ending.is_some())
+            }
+            Origin::SubAgent { parent } => {
+                *parent == run.id && self.is_listed_sub_agent(view)
+            }
+            Origin::Root => false,
         })
+    }
+
+    /// Whether the sidebar lists `run`, a sub-agent: while it works.
+    pub fn is_listed_sub_agent(&self, run: &RunView) -> bool {
+        run.status.is_live()
+            && run.ending.is_none()
+            && !self.closed.contains(&run.id)
     }
 
     /// Whether `run` ended for good: it landed, was dropped, or was
@@ -194,8 +209,15 @@ impl Workspace {
         if !has || folded {
             return;
         }
-        let shown = limit.unwrap_or(children.len());
-        for child in children.into_iter().take(shown) {
+        // The limit is on forks: sub-agents at work are all listed.
+        let mut forks = limit.unwrap_or(usize::MAX);
+        for child in children {
+            if child.origin.is_fork() {
+                if forks == 0 {
+                    continue;
+                }
+                forks -= 1;
+            }
             self.tree_rows(tree, child, depth + 1, None, false);
         }
         for child in others {
@@ -245,10 +267,14 @@ impl Workspace {
                     })
                     .count();
                 let everything = self.all_runs.contains(&repo.name);
-                // With a main chat, the chats under it are what gets long.
+                // With a main chat, the chats under it are what gets long;
+                // its sub-agents at work are listed whatever the limit.
                 let main = repo.main.as_ref().and_then(|id| self.run(id));
-                let chats =
-                    main.map_or(0, |main| self.listed_children(main).count());
+                let chats = main.map_or(0, |main| {
+                    self.listed_children(main)
+                        .filter(|run| run.origin.is_fork())
+                        .count()
+                });
                 let total = all.len() + chats;
                 let named = repo.name.to_lowercase().contains(&filter);
                 if filter.is_empty() || named {

@@ -368,7 +368,7 @@ fn repo_group(
         return group;
     }
 
-    // A sub-agent is not listed: its main chat stands for it.
+    // A sub-agent that ended is not listed: its main chat stands for it.
     let current = ws.current().map(|run| ws.listed_as(run).clone());
     let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
 
@@ -510,8 +510,13 @@ fn run_row(
         .map_or(0, |(ahead, _)| ahead);
     let (glyph, ink) = state_icon(&attention, run, is_main, unpushed, t);
     let counts = counts(&attention, run, note.as_ref(), unpushed, t);
-    // Main's crew at work, which its chat's tray shows.
-    let crew = if is_main { ws.working_crew(&run.id) } else { 0 };
+    // Main's crew at work, counted while main is folded: unfolded, each
+    // is a row under it.
+    let crew = if is_main && folded == Some(true) {
+        ws.working_crew(&run.id)
+    } else {
+        0
+    };
     let strong = active || unread > 0 || attention.needs_you();
     div()
         .id(SharedString::from(format!("run-{}", run.id)))
@@ -580,7 +585,10 @@ fn run_row(
             )
         })
         .map(|row| {
-            if hovered && !ended && !ws.is_main(&run.id) {
+            // A sub-agent is not closed: it leaves the list as it ends,
+            // and the tray's Stop stops it.
+            let sub_agent = matches!(run.origin, Origin::SubAgent { .. });
+            if hovered && !ended && !ws.is_main(&run.id) && !sub_agent {
                 row.child(
                     div()
                         .id("close-run")
@@ -631,6 +639,11 @@ pub fn state_icon(
     match attention {
         // Main is the branch others land on, whatever it does.
         Attention::Working { .. } if is_main => (Icon::Branch, t.roles.live),
+        Attention::Working { .. }
+            if matches!(run.origin, Origin::SubAgent { .. }) =>
+        {
+            (Icon::SubAgent, t.roles.live)
+        }
         Attention::Working { .. } => (Icon::Draft, t.roles.live),
         Attention::Asks { .. } => (Icon::Question, t.roles.waiting),
         Attention::ReadyToLand { .. } => (Icon::PullRequest, t.green),

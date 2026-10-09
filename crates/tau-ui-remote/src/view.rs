@@ -125,6 +125,10 @@ impl Origin {
             Self::SubAgent { parent } => Some(parent),
         }
     }
+
+    pub fn is_fork(&self) -> bool {
+        matches!(self, Self::Fork { .. })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

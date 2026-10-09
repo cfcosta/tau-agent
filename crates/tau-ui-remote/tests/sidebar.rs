@@ -424,8 +424,8 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
 }
 
 /// A run with forks folds them away, and shows them again; a run with
-/// none has nothing to fold. Sub-agents are never listed: they are
-/// main's crew, in its chat's tray.
+/// none has nothing to fold. A sub-agent that ended is not listed: it
+/// is in main's tray, for the round.
 #[gpui::test]
 fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
     cx.update(tau_ui_remote::init);
@@ -466,8 +466,8 @@ fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
 
 /// A main chat's crew is every sub-agent still working, and those it
 /// spawned since the person's last message; the others went with their
-/// round. Main's row counts those working, and a sub-agent's chat marks
-/// main in the sidebar.
+/// round. The sidebar lists those working under main; one that ended
+/// is not listed, and its chat marks main.
 #[gpui::test]
 fn the_crew_is_this_rounds_sub_agents(cx: &mut TestAppContext) {
     use std::sync::Arc;
@@ -534,9 +534,19 @@ fn the_crew_is_this_rounds_sub_agents(cx: &mut TestAppContext) {
         assert!(crew[0].1.is_working());
         assert_eq!(crew[1], ("new".to_owned(), Standing::WaitingToLand));
         assert_eq!(ws.working_crew(&id("main")), 1);
-        assert_eq!(ws.listed_children(main).count(), 0);
+        let listed: Vec<&str> = ws
+            .listed_children(main)
+            .map(|run| run.title.as_str())
+            .collect();
+        assert_eq!(listed, ["working"]);
+        // Sub-agents at work do not count toward the forks shown.
+        let rows = ws.repo_rows("");
+        assert_eq!(rows[0].older, 0);
+        assert_eq!(rows[0].main_children, None);
         let working = ws.run(&id("working")).unwrap();
-        assert_eq!(ws.listed_as(working), &id("main"));
+        assert_eq!(ws.listed_as(working), &id("working"));
+        let ended = ws.run(&id("new")).unwrap();
+        assert_eq!(ws.listed_as(ended), &id("main"));
     });
 }
 
@@ -628,6 +638,11 @@ fn a_row_says_where_its_run_stands_and_how_much() {
     assert_eq!(icon(&Attention::Idle, &fork, false, 0), Icon::Fork);
     sub.ending = None;
     assert_eq!(icon(&Attention::Idle, &sub, false, 0), Icon::SubAgent);
+    // A sub-agent at work stays one, not a fork's draft.
+    assert_eq!(
+        icon(&Attention::Working { turn: 1 }, &sub, false, 0),
+        Icon::SubAgent
+    );
 }
 
 /// A repository menu's entry does what it says, not what the row drawn
