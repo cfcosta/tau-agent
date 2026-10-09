@@ -29,6 +29,7 @@ tau-constitution.workspace = true
 tau-ask = { path = "../plugins/tau-ask", default-features = false }
 tau-direnv = { path = "../plugins/tau-direnv", default-features = false }
 tau-goal.workspace = true
+tau-watcher.workspace = true
 tau-luau-plugins.workspace = true
 tau-skills = { path = "../plugins/tau-skills", default-features = false }
 tau-mcp.workspace = true

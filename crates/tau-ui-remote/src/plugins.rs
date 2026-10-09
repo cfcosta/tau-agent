@@ -79,6 +79,8 @@ pub fn plugins() -> Registry {
         .with(tau_memory::ui::MemoryUi)
         .with(tau_constitution::ui::ConstitutionUi)
         .with(tau_goal::GoalUi)
+        // Notes on what the person likely missed, once switched on.
+        .with(tau_watcher::WatcherUi)
         // Plugins the person wrote in Luau: after the rules and the
         // goal, so theirs hold first.
         .with(tau_luau_plugins::LuauPluginsUi)

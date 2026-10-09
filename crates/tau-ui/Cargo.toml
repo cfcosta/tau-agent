@@ -35,6 +35,7 @@ tau-jev.workspace = true
 tau-mcp = { workspace = true, features = ["demo"] }
 tau-mcp-host.workspace = true
 tau-memory.workspace = true
+tau-watcher.workspace = true
 tau-memory-host = { workspace = true, features = ["docbert", "demo"] }
 tau-store-sqlite.workspace = true
 tau-reasoning.workspace = true
