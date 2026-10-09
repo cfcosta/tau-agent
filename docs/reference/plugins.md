@@ -599,7 +599,12 @@ Research and the reasons behind these choices:
   silently.
 - **start:** puts the index note into `plan.context`, frozen for the
   run, then the top few docbert hits for the input (about three), both
-  fenced as untrusted data.
+  fenced as untrusted data. Each message of a chat is a run, so each
+  gives only what the conversation lacks: a hit it was given before
+  stays out, and so does the index until it changes (a stored
+  `given` record says what went in). A rewrite that drops the
+  conversation stores `forgotten`, and the next run gives everything
+  again. Index notes are never hits too.
 - **At compaction:** in `rewritten`, one model request (`ctx.ask`) over
   the replaced transcript with only the memory tools, since compaction
   is where details are lost. Only a rewrite that drops conversation

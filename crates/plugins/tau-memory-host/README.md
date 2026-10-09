@@ -4,7 +4,7 @@ Long-term memory for tau agents: a Zettelkasten of typed, linked Markdown
 notes that runs search and write. This is tau-memory's host half. It keeps
 the notes on disk, indexes and searches them, and builds the plugin each
 run gets: four tools, the index note and a few search hits at the start of
-a run, a memory-only request when compaction drops the transcript, and
+a run (only those the conversation was not given yet), a memory-only request when compaction drops the transcript, and
 stale marks when a file a note is about changes.
 
 ## What it provides

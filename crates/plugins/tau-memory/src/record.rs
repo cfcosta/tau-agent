@@ -23,6 +23,18 @@ pub enum Record {
     Error {
         message: String,
     },
+    /// What a run put in the conversation as it started, stored, never
+    /// shown: the notes by id, and the index notes' text when they went
+    /// in (they changed since they last did). The next run of the
+    /// conversation leaves out what it already has.
+    Given {
+        notes: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<String>,
+    },
+    /// The conversation earlier runs gave notes to was compacted away:
+    /// the next run gives them again. Stored, never shown.
+    Forgotten,
     /// What the interface folds as a run starts, never stored: how many
     /// notes the repository has.
     Starting {

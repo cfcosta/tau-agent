@@ -156,6 +156,8 @@ impl Fold for State {
             ),
             Record::Saved { calls } => Mark::Saved(calls.len()),
             Record::Error { message } => Mark::Failed(message),
+            // Bookkeeping for the next run: nothing to show.
+            Record::Given { .. } | Record::Forgotten => return,
         };
         let key = format!("m{}", self.marks.len());
         self.marks.insert(key.clone(), mark);

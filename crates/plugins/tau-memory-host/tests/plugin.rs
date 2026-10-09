@@ -166,6 +166,70 @@ fn a_note_written_through_the_tools_reads_back(tc: TestCase) {
     });
 }
 
+/// Each message of a chat is a run, and each starts with memory: a note
+/// the chat already has stays out, and so does the index until it
+/// changes.
+#[test]
+fn a_chat_gets_each_note_and_index_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let scopes = scopes(dir.path(), false);
+    let index = |body: &str| draft(NoteType::Index, "Index", body);
+    {
+        let mut repo = scopes.repo.lock().unwrap();
+        repo.write(index("- `retry-after`: HTTP dates too"), 1).unwrap();
+        repo.write(
+            draft(
+                NoteType::Gotcha,
+                "Retry after",
+                "retry-after can be an HTTP date",
+            ),
+            1,
+        )
+        .unwrap();
+    }
+    let model = ScriptedModel::new()
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("done too"))
+        .turn(|t| t.text("done again"));
+    let agent =
+        Agent::new(model.clone()).plugin(MemoryPlugin::new(scopes.clone()));
+    // How often the last request carries `text`, in all its messages.
+    let times = |text: &str| {
+        let requests = model.requests();
+        let asked = format!("{:?}", requests.last().unwrap().transcript);
+        asked.matches(text).count()
+    };
+    block_on_io(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let first = agent
+            .run("fix the retry after parsing", &store)
+            .await
+            .unwrap();
+        agent
+            .resume(&first.run)
+            .run("and the retry after header", &store)
+            .await
+            .unwrap();
+        assert_eq!(times("`retry-after` [gotcha]"), 1, "the note, once");
+        assert_eq!(times("HTTP dates too"), 1, "the index, once");
+        // The index changed: it goes in again, as it is now.
+        {
+            let mut repo = scopes.repo.lock().unwrap();
+            let id = repo.index_note().unwrap().id.clone();
+            let mut new = index("- `retry-after`: seconds or a date");
+            new.id = Some(id);
+            repo.write(new, 2).unwrap();
+        }
+        agent
+            .resume(&first.run)
+            .run("now the retry after tests", &store)
+            .await
+            .unwrap();
+    });
+    assert_eq!(times("seconds or a date"), 1, "the new index");
+    assert_eq!(times("`retry-after` [gotcha]"), 1, "the note, still once");
+}
+
 #[test]
 fn a_run_starts_with_the_index_and_the_notes_for_its_task() {
     let dir = tempfile::tempdir().unwrap();
@@ -256,6 +320,51 @@ impl PluginRun for Compactor {
             drops_conversation: true,
         }))
     }
+}
+
+/// Compaction that drops the conversation drops the notes it was given:
+/// the chat's next message gets them again.
+#[test]
+fn notes_dropped_by_compaction_are_given_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let scopes = scopes(dir.path(), false);
+    scopes
+        .repo
+        .lock()
+        .unwrap()
+        .write(
+            draft(
+                NoteType::Gotcha,
+                "Retry after",
+                "retry-after can be an HTTP date",
+            ),
+            1,
+        )
+        .unwrap();
+    let model = ScriptedModel::new()
+        .turn(|t| t.tool_call("memory_search", json!({"query": "retry"})))
+        // The flush, with nothing to write.
+        .turn(|t| t.text("nothing new"))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("done too"));
+    let agent = Agent::new(model.clone())
+        .plugin(Compactor)
+        .plugin(MemoryPlugin::new(scopes.clone()));
+    block_on_io(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let mut run = agent.start("fix the retry after parsing", &store);
+        run.steer("keep going");
+        run.events().for_each(|_| async {}).await;
+        let first = run.outcome().await.unwrap();
+        agent
+            .resume(&first.run)
+            .run("and the retry after header", &store)
+            .await
+            .unwrap();
+    });
+    let requests = model.requests();
+    let asked = format!("{:?}", requests.last().unwrap().transcript);
+    assert_eq!(asked.matches("`retry-after` [gotcha]").count(), 1, "{asked}");
 }
 
 /// When compaction replaces the transcript, one request with only the
