@@ -22,7 +22,7 @@ use common::{coder, heard_sub_agents, project_with};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
-    event::LimitKind,
+    event::{LimitKind, RunEvent},
     limits::Limits,
     tool::{AgentTool, RunId, ToolCtx, ToolError, ToolOutput},
 };
@@ -635,6 +635,51 @@ fn a_sub_agent_outlives_its_callers_turn() {
         assert_eq!(agents.take(&running[0]), Taken::Before(ending));
         assert_eq!(agents.taken(&running[0]), Some(true));
         assert_eq!(stack_of(&project, &running[0]), ["feat: child"]);
+    });
+}
+
+/// A sub-agent whose end went by reads nothing more: whoever hears it
+/// can no longer steer it, though its work is still being checked.
+#[test]
+fn a_sub_agent_that_ended_cannot_be_steered() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
+    runtime().block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let parent = caller(&project);
+        let (sink, mut events) = tokio::sync::mpsc::unbounded_channel();
+        let agents = SubAgents::new(Some(sink), None);
+        let child = |workspace: RunWorkspace| {
+            let script = ScriptedModel::new()
+                .turn(|t| t.tool_call("write", write("child.txt")))
+                .turn(|t| t.tool_call("vcs_commit", commit("feat: child")))
+                .turn(|t| t.text("child.txt is written"));
+            Ok(coder(script, &workspace, true))
+        };
+        let first = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("spawn", json!({ "task": "write child.txt" }))
+            })
+            .turn(|t| t.text("started"));
+        spawning(first, &parent, &agents, child)
+            .run("hand child.txt over", &store)
+            .await
+            .unwrap();
+        let ended = loop {
+            match events.recv().await.unwrap() {
+                RunEvent::RunEnd { run, .. } if agents.task(&run).is_some() => {
+                    break run;
+                }
+                _ => {}
+            }
+        };
+        assert!(agents.control(&ended).is_none());
+        assert!(
+            agents.is_ending(&ended) || !agents.is_running(&ended),
+            "it is ending or ended"
+        );
+        agents.ended(&ended).await.unwrap();
+        assert!(!agents.is_ending(&ended));
     });
 }
 

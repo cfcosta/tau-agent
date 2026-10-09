@@ -123,6 +123,9 @@ struct Child {
     task: String,
     control: RunControl,
     state: State,
+    /// Its `RunEnd` went by: it reads nothing more, while its work is
+    /// checked.
+    ending: bool,
     /// The person stopped it.
     stopped: bool,
 }
@@ -180,13 +183,29 @@ impl SubAgents {
         })
     }
 
-    /// How to steer `run`, while it runs.
+    /// How to steer `run`, while it runs and still reads: none once
+    /// its `RunEnd` went by, as what it was steered with then would be
+    /// lost.
     pub fn control(&self, run: &RunId) -> Option<RunControl> {
         self.with(|children| {
             children
                 .iter()
-                .find(|c| c.run == *run && matches!(c.state, State::Running))
+                .find(|c| {
+                    c.run == *run
+                        && !c.ending
+                        && matches!(c.state, State::Running)
+                })
                 .map(|c| c.control.clone())
+        })
+    }
+
+    /// Whether `run`'s `RunEnd` went by while its work is still being
+    /// checked: it is running for a moment more.
+    pub fn is_ending(&self, run: &RunId) -> bool {
+        self.with(|children| {
+            children.iter().any(|c| {
+                c.run == *run && c.ending && matches!(c.state, State::Running)
+            })
         })
     }
 
@@ -293,6 +312,7 @@ impl SubAgents {
                 task,
                 control: run.control(),
                 state: State::Running,
+                ending: false,
                 stopped: false,
             })
         });
@@ -301,6 +321,18 @@ impl SubAgents {
             {
                 let mut events = run.events();
                 while let Some(event) = events.next().await {
+                    // Marked before anyone hears its end, so nobody
+                    // steers it after (`Self::control`).
+                    if matches!(&event, RunEvent::RunEnd { run, .. } if *run == id)
+                    {
+                        agents.with(|children| {
+                            if let Some(child) =
+                                children.iter_mut().find(|c| c.run == id)
+                            {
+                                child.ending = true;
+                            }
+                        });
+                    }
                     if let Some(sink) = &agents.0.events {
                         let _ = sink.send(event);
                     }

@@ -594,14 +594,15 @@ impl Host {
             .collect()
     }
 
-    /// Whether `run` is still going.
     /// Waits for a run whose `RunEnd` went by to finish storing its
-    /// outcome, a moment at most. A run still working is not waited on.
+    /// outcome, or a sub-agent's to have its work checked, a moment at
+    /// most. A run still working is not waited on.
     async fn settle(&self, run: &RunId) {
         for _ in 0..500 {
-            if !self.ending.lock().expect("not poisoned").contains(run)
-                || !self.is_running(run)
-            {
+            let ending =
+                self.ending.lock().expect("not poisoned").contains(run)
+                    || self.sub_agent_ending(run);
+            if !ending || !self.is_running(run) {
                 return;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;

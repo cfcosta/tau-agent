@@ -92,6 +92,14 @@ impl Host {
             .any(|agents| agents.is_running(run))
     }
 
+    /// Whether `run` is a sub-agent whose end went by, while its work
+    /// is checked.
+    pub(super) fn sub_agent_ending(&self, run: &RunId) -> bool {
+        self.all_sub_agents()
+            .iter()
+            .any(|agents| agents.is_ending(run))
+    }
+
     /// How to steer `run`, a sub-agent still running.
     pub(super) fn sub_agent_control(
         &self,
