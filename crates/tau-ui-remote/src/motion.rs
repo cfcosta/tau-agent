@@ -784,4 +784,143 @@ mod tests {
         let t = tc.draw(gs::floats::<f32>().min_value(0.).max_value(1.));
         assert!(close(mix(color.into(), color.into(), t).into(), color));
     }
+
+    fn unit() -> impl hegel::generators::PrintableGenerator<f32> {
+        gs::floats::<f32>().min_value(0.).max_value(1.)
+    }
+
+    /// A CSS timing function whose control points stay in the unit
+    /// square is a monotone map of `[0, 1]` onto itself: it starts at 0,
+    /// ends at 1 and never runs backwards, whatever the solver does
+    /// with flat or steep stretches.
+    #[hegel::test(test_cases = 300)]
+    fn a_bezier_inside_the_unit_square_is_monotone_from_0_to_1(
+        tc: hegel::TestCase,
+    ) {
+        let curve = cubic_bezier(
+            tc.draw(unit()),
+            tc.draw(unit()),
+            tc.draw(unit()),
+            tc.draw(unit()),
+        );
+        assert!(curve(0.).abs() < 2e-3 && (curve(1.) - 1.).abs() < 2e-3);
+        let mut last = curve(0.);
+        for step in 1..=50 {
+            let value = curve(step as f32 / 50.);
+            assert!((-2e-3..=1. + 2e-3).contains(&value), "{value}");
+            assert!(value >= last - 2e-3, "{last} then {value}");
+            last = value;
+        }
+    }
+
+    /// Time outside a curve's range is the nearest end.
+    #[hegel::test(test_cases = 100)]
+    fn a_bezier_holds_its_ends_outside_the_unit_interval(tc: hegel::TestCase) {
+        let curve = cubic_bezier(
+            tc.draw(unit()),
+            tc.draw(unit()),
+            tc.draw(unit()),
+            tc.draw(unit()),
+        );
+        let early = tc.draw(gs::floats::<f32>().max_value(0.));
+        let late = tc.draw(gs::floats::<f32>().min_value(1.));
+        assert_eq!(curve(early), curve(0.));
+        assert_eq!(curve(late), curve(1.));
+    }
+
+    /// A breath is symmetric about the middle of its loop and stays in
+    /// `[0, 1]`, so a loop's two halves mirror each other.
+    #[hegel::test(test_cases = 200)]
+    fn a_breath_mirrors_itself_within_the_unit_interval(tc: hegel::TestCase) {
+        let phase = tc.draw(unit());
+        let breath = breath(phase);
+        assert!((-1e-6..=1. + 1e-6).contains(&breath));
+        assert!((breath - super::breath(1. - phase)).abs() < 1e-4);
+    }
+
+    /// A pop's two legs meet at 60 %, where the scale is the peak, for
+    /// every curve the screens pop along. (A curve that is nearly
+    /// vertical may jump anywhere, so arbitrary ones are not asked.)
+    #[hegel::test(test_cases = 100)]
+    fn a_pop_is_continuous_at_its_peak(tc: hegel::TestCase) {
+        let curves: Vec<Box<dyn Fn(f32) -> f32>> = vec![
+            Box::new(curve::pop()),
+            Box::new(curve::swap()),
+            Box::new(curve::bounce()),
+            Box::new(curve::rise()),
+            Box::new(curve::ease_in_out()),
+        ];
+        let which =
+            tc.draw(gs::integers::<usize>().max_value(curves.len() - 1));
+        let curve = &curves[which];
+        let (before, _) = pop(0.6 - 1e-4, curve);
+        let (after, opacity) = pop(0.6, curve);
+        assert!((before - after).abs() < 0.02, "{before} then {after}");
+        assert!((after - 1.12).abs() < 0.02 && opacity == 1.);
+        assert_eq!(pop(1., curve).0, 1.);
+        let t = tc.draw(unit());
+        let (scale, opacity) = pop(t, curve);
+        assert!(scale > 0. && (0. ..=1.).contains(&opacity));
+    }
+
+    /// `Tracked` against a model: the epoch counts the observations
+    /// that differed from the value before them, and `previous` is the
+    /// value that last gave way.
+    #[hegel::test(test_cases = 200)]
+    fn tracked_follows_a_model_of_its_observations(tc: hegel::TestCase) {
+        let first = tc.draw(gs::integers::<u8>().max_value(3));
+        let seen =
+            tc.draw(gs::vecs(gs::integers::<u8>().max_value(3)).max_size(20));
+        let mut tracked = Tracked::new(first);
+        let (mut current, mut previous, mut epoch) = (first, first, 0);
+        for value in seen {
+            let changed = tracked.observe(value);
+            assert_eq!(changed, value != current);
+            if changed {
+                previous = current;
+                current = value;
+                epoch += 1;
+            }
+            assert_eq!(
+                (tracked.current, tracked.previous, tracked.epoch),
+                (current, previous, epoch)
+            );
+            assert_eq!(tracked.changed(), previous != current);
+        }
+    }
+
+    /// After any series of frames, the clones followed are exactly the
+    /// ones the last frame listed, each at its latest progress.
+    #[hegel::test(test_cases = 200)]
+    fn followed_clones_are_the_ones_last_listed(tc: hegel::TestCase) {
+        let frame = || {
+            gs::hashmaps(
+                gs::sampled_from(vec!["a", "b", "c", "d"]),
+                hegel::tuples!(
+                    gs::integers::<u32>().max_value(1000),
+                    gs::booleans()
+                ),
+            )
+            .max_size(4)
+        };
+        let frames = tc.draw(gs::vecs(frame()).min_size(1).max_size(6));
+        let mut motion = SetupMotion::default();
+        for listed in &frames {
+            motion.observe_clones(
+                listed
+                    .iter()
+                    .map(|(name, (share, ready))| (*name, *share, *ready)),
+            );
+        }
+        let last = frames.last().unwrap();
+        let mut followed: Vec<&str> =
+            motion.clones.keys().map(String::as_str).collect();
+        followed.sort_unstable();
+        let mut listed: Vec<&str> = last.keys().copied().collect();
+        listed.sort_unstable();
+        assert_eq!(followed, listed);
+        for (name, progress) in last {
+            assert_eq!(motion.clones[*name].current, *progress);
+        }
+    }
 }
