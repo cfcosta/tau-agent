@@ -504,6 +504,8 @@ pub fn saved_reduce_motion(path: &Path) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
+    use hegel::generators as gs;
+
     use super::*;
 
     #[test]
@@ -715,9 +717,71 @@ mod tests {
     }
 
     #[test]
-    fn colors_mix_through_rgb() {
+    fn black_and_white_mix_to_grey() {
         let (black, white) = (gpui::black(), gpui::white());
         let grey: Rgba = mix(black, white, 0.5).into();
         assert!((grey.r - 0.5).abs() < 1e-3 && (grey.a - 1.).abs() < 1e-3);
+    }
+
+    /// Any colour, channels in `[0, 1]`; built in RGB so the HSL round
+    /// trip inside `mix` is what the properties exercise.
+    #[hegel::composite]
+    fn channels(tc: &hegel::TestCase) -> (f32, f32, f32, f32) {
+        let channel = || gs::floats::<f32>().min_value(0.).max_value(1.);
+        (
+            tc.draw(channel()),
+            tc.draw(channel()),
+            tc.draw(channel()),
+            tc.draw(channel()),
+        )
+    }
+
+    fn rgba((r, g, b, a): (f32, f32, f32, f32)) -> Rgba {
+        Rgba { r, g, b, a }
+    }
+
+    fn close(left: Rgba, right: Rgba) -> bool {
+        [
+            (left.r, right.r),
+            (left.g, right.g),
+            (left.b, right.b),
+            (left.a, right.a),
+        ]
+        .iter()
+        .all(|(l, r)| (l - r).abs() < 1e-3)
+    }
+
+    /// The ends of a mix are its inputs: `t = 0` is `from`, `t = 1` is
+    /// `to`.
+    #[hegel::test(test_cases = 200)]
+    fn a_mix_starts_at_from_and_ends_at_to(tc: hegel::TestCase) {
+        let (from, to) = (rgba(tc.draw(channels())), rgba(tc.draw(channels())));
+        assert!(close(mix(from.into(), to.into(), 0.).into(), from));
+        assert!(close(mix(from.into(), to.into(), 1.).into(), to));
+    }
+
+    /// Every channel of a mix lies between the same channel of its two
+    /// inputs, so a transition never overshoots either colour.
+    #[hegel::test(test_cases = 200)]
+    fn a_mix_stays_between_its_inputs(tc: hegel::TestCase) {
+        let (from, to) = (rgba(tc.draw(channels())), rgba(tc.draw(channels())));
+        let t = tc.draw(gs::floats::<f32>().min_value(0.).max_value(1.));
+        let mixed: Rgba = mix(from.into(), to.into(), t).into();
+        for (m, f, o) in [
+            (mixed.r, from.r, to.r),
+            (mixed.g, from.g, to.g),
+            (mixed.b, from.b, to.b),
+            (mixed.a, from.a, to.a),
+        ] {
+            assert!(m >= f.min(o) - 1e-3 && m <= f.max(o) + 1e-3);
+        }
+    }
+
+    /// Mixing a colour with itself changes nothing, whatever `t` is.
+    #[hegel::test(test_cases = 200)]
+    fn a_mix_of_one_color_is_that_color(tc: hegel::TestCase) {
+        let color = rgba(tc.draw(channels()));
+        let t = tc.draw(gs::floats::<f32>().min_value(0.).max_value(1.));
+        assert!(close(mix(color.into(), color.into(), t).into(), color));
     }
 }

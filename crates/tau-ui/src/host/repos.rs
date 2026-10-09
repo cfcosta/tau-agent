@@ -157,7 +157,6 @@ impl RepoSlot {
     }
 }
 
-/// A new workspace's name: unique, and sorting by when it was made.
 /// A name for a new workspace: `slug` (a message's first words), then
 /// the time in hex, so it says what it is for and stays unique.
 pub(super) fn workspace_name(slug: &str) -> String {

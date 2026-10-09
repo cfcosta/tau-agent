@@ -1669,14 +1669,28 @@ mod tests {
         }
     }
 
-    #[test]
-    fn workspace_names_start_with_the_slug_and_end_in_hex() {
-        let name = workspace_name("fix-the-retry-loop");
+    /// A name is the slug, a dash and the creation time in hex: parsing
+    /// the hex gives a time inside the window the call happened in, so
+    /// names sort by when they were made.
+    #[hegel::test(test_cases = 200)]
+    fn workspace_names_are_the_slug_then_the_time_in_hex(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let slug = tc.draw(gs::from_regex("[a-z0-9]+(-[a-z0-9]+){0,3}"));
+        let now = || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("after the epoch")
+                .as_millis()
+        };
+        let before = now();
+        let name = workspace_name(&slug);
+        let after = now();
         let hex = name
-            .strip_prefix("fix-the-retry-loop-")
-            .expect("the slug first");
-        assert!(!hex.is_empty());
-        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()), "{name}");
+            .strip_prefix(&format!("{slug}-"))
+            .unwrap_or_else(|| panic!("the slug first: {name}"));
+        let millis = u128::from_str_radix(hex, 16)
+            .unwrap_or_else(|_| panic!("hex after the slug: {name}"));
+        assert!((before..=after).contains(&millis), "{name}");
     }
 
     #[test]
