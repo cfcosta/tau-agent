@@ -10,6 +10,7 @@
 //! cargo run -p tau-ai --example cache_probe -- --fork SECONDS
 //! cargo run -p tau-ai --example cache_probe -- --shared
 //! cargo run -p tau-ai --example cache_probe -- --handoff
+//! cargo run -p tau-ai --example cache_probe -- --idle SECONDS,SECONDS,...
 //! ```
 //!
 //! - `--cases`: a chain of three requests on one connection (new, delta,
@@ -26,6 +27,10 @@
 //! - `--handoff`: a connection writes a prefix; new connections read it
 //!   at once with the same key, another key or none, then after the
 //!   first closes.
+//! - `--idle A,B,...`: for each wait, at once, a connection writes a
+//!   prefix, stays open and idle for that many seconds (answering the
+//!   server's pings, as tau's driver does), then resends it: how long an
+//!   idle connection keeps its cache.
 //!
 //! Every command takes `--model M` (default `gpt-5.5`), `--account ID`
 //! (default: the active account) and `--store DIR` (default:
@@ -452,6 +457,64 @@ async fn handoff(probe: &Probe, key: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// Waits `seconds` on an idle connection, reading what the server sends
+/// so its pings are answered; fails if the server closes it.
+async fn idle(socket: &mut Socket, seconds: u64) -> Result<(), Error> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(seconds);
+    loop {
+        match tokio::time::timeout_at(deadline, socket.next()).await {
+            Err(_) => return Ok(()),
+            Ok(None) => return Err("the server closed the connection".into()),
+            Ok(Some(Err(error))) => return Err(error.into()),
+            Ok(Some(Ok(Message::Close(frame)))) => {
+                return Err(format!("the server closed it: {frame:?}").into());
+            }
+            Ok(Some(Ok(_))) => {}
+        }
+    }
+}
+
+/// A connection writes a prefix, stays idle `wait` seconds, then
+/// resends it.
+async fn idle_resend(probe: &Probe, key: &str, wait: u64) -> String {
+    let started = std::time::Instant::now();
+    let run = async {
+        let mut a = probe.connect().await?;
+        let mut input = vec![user("Say: one.")];
+        let first =
+            send(&mut a, probe.body(input.clone(), true, Some(key))).await?;
+        input.extend(first.output_items.clone());
+        input.push(user("Say: two."));
+        let warm =
+            send(&mut a, probe.body(input.clone(), true, Some(key))).await?;
+        input.extend(warm.output_items.clone());
+        input.push(user("Say: three."));
+        idle(&mut a, wait).await?;
+        let later = send(&mut a, probe.body(input, true, Some(key))).await?;
+        let _ = a.close(None).await;
+        Ok::<_, Error>((warm, later))
+    };
+    match run.await {
+        Ok((warm, later)) => {
+            let percent = |turn: &Turn| {
+                (turn.cached * 100).checked_div(turn.input).unwrap_or(0)
+            };
+            format!(
+                "  idle {wait:>5}s: before {:>3}%  after {:>3}%  \
+                 (input {}, cached {})",
+                percent(&warm),
+                percent(&later),
+                later.input,
+                later.cached
+            )
+        }
+        Err(error) => format!(
+            "  idle {wait:>5}s: failed after {}s: {error}",
+            started.elapsed().as_secs()
+        ),
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Error> {
     let args = Args::parse();
@@ -488,6 +551,35 @@ async fn main() -> Result<(), Error> {
         let (p, f) = (format!("parent-{stamp}"), format!("fork-{stamp}"));
         return fork_keys(&probe("fork"), &p, &f, args.seconds("fork")?).await;
     }
+    if args.has("idle") {
+        let waits = args
+            .value("idle")
+            .ok_or("waits in seconds, comma-separated")?
+            .split(',')
+            .map(str::parse)
+            .collect::<Result<Vec<u64>, _>>()?;
+        println!("== idle connections ({model})");
+        let probes: Vec<(Probe, String)> = waits
+            .iter()
+            .map(|wait| {
+                (
+                    probe(&format!("idle-{wait}")),
+                    format!("idle-{wait}-{stamp}"),
+                )
+            })
+            .collect();
+        let lines = futures_util::future::join_all(
+            probes
+                .iter()
+                .zip(&waits)
+                .map(|((probe, key), wait)| idle_resend(probe, key, *wait)),
+        )
+        .await;
+        for line in lines {
+            println!("{line}");
+        }
+        return Ok(());
+    }
     if args.has("variants") {
         let key = format!("probe-key-{stamp}");
         let key = (!args.has("no-key")).then_some(key);
@@ -502,7 +594,8 @@ async fn main() -> Result<(), Error> {
     }
     if !args.has("cases") {
         println!(
-            "pick one: --cases, --variants N, --fork N, --shared, --handoff"
+            "pick one: --cases, --variants N, --fork N, --shared, --handoff, \
+             --idle A,B,..."
         );
         return Ok(());
     }
