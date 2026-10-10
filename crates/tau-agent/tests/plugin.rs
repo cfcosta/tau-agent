@@ -35,6 +35,7 @@ use tau_ai::{
 };
 use tau_store::{Status, Store};
 use tau_testing::{block_on, scripted::ScriptedModel};
+use tokio_util::sync::CancellationToken;
 
 mod common;
 use common::assert_grammar;
@@ -1855,5 +1856,159 @@ fn plugins_see_what_a_run_inherits() {
             tau_agent::context::estimate_context_tokens(&messages[..2]);
         assert!(expected > 0);
         assert_eq!(*seen.lock().unwrap(), vec![0, expected, expected]);
+    });
+}
+
+/// Takes part in idle compactions: replaces everything before the last
+/// message with what the model answers in the run's conversation.
+#[derive(Clone, Default)]
+struct IdleSummary {
+    /// The inputs it asked with.
+    asked: Arc<Mutex<Vec<Vec<Message>>>>,
+}
+
+#[async_trait]
+impl Plugin for IdleSummary {
+    fn name(&self) -> &str {
+        "idle-summary"
+    }
+
+    async fn start_idle(
+        &self,
+        _plan: &RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Option<Box<dyn PluginRun>>, PluginError> {
+        Ok(Some(Box::new(self.clone())))
+    }
+}
+
+#[async_trait]
+impl PluginRun for IdleSummary {
+    async fn rewrite_context(
+        &mut self,
+        view: &tau_agent::plugin::ContextView<'_>,
+        ctx: &PluginCtx,
+    ) -> Result<Option<tau_agent::plugin::Rewrite>, PluginError> {
+        if view.trigger != tau_agent::plugin::Trigger::Idle {
+            return Ok(None);
+        }
+        let (last, before) = view.transcript.split_last().unwrap();
+        let mut input = before.to_vec();
+        input.push(Message::User(tau_ai::message::UserMessage {
+            content: UserContent::Text("summarize".into()),
+            timestamp: ctx.now(),
+        }));
+        self.asked.lock().unwrap().push(input.clone());
+        let answer = view
+            .conversation
+            .ask(&input, ctx)
+            .await
+            .map_err(PluginError::other)?;
+        let summary = Message::User(tau_ai::message::UserMessage {
+            content: UserContent::Text(answer.text()),
+            timestamp: ctx.now(),
+        });
+        Ok(Some(tau_agent::plugin::Rewrite {
+            messages: vec![summary, last.clone()],
+            details: json!({}),
+            drops_conversation: true,
+        }))
+    }
+}
+
+/// An idle compaction starts only the plugins that take part in one,
+/// asks in the run's conversation with the settings it is given, emits
+/// only what the rewrite does, and charges the run. With no plugin
+/// taking part it opens no session; a run going on is not compacted.
+#[test]
+fn an_idle_compaction_starts_only_the_plugins_that_take_part() {
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.text("first"))
+            .turn(|t| t.text("done"))
+            .turn(|t| t.text("the summary").cost(0.25));
+        let probe = Probe::named("probe");
+        let idle = IdleSummary::default();
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let alone = Agent::new(model.clone()).plugin(probe.clone());
+        let (_, outcome) = run_to_end(&alone, &store, "go", Some("more")).await;
+        let started = probe.log().len();
+        let none = alone
+            .resume(&outcome.run)
+            .compact_idle(
+                outcome.request.clone(),
+                &store,
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(none, None);
+        assert_eq!(probe.log().len(), started, "{:?}", probe.log());
+        assert_eq!(model.requests().len(), 2);
+
+        let agent = alone.plugin(idle.clone());
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(16);
+        let compacted = agent
+            .resume(&outcome.run)
+            .compact_idle(
+                outcome.request.clone(),
+                &store,
+                Some(sender),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .expect("compacted");
+        assert_eq!(&*compacted.plugin, "idle-summary");
+        assert_eq!(probe.log().len(), started);
+        let requests = model.requests();
+        assert_eq!(requests[2].settings, outcome.request);
+        assert_eq!(requests[2].transcript, idle.asked.lock().unwrap()[0]);
+        let mut events = Vec::new();
+        while let Some(event) = receiver.recv().await {
+            events.push(event);
+        }
+        assert!(
+            matches!(
+                events.as_slice(),
+                [
+                    RunEvent::PluginCharged { .. },
+                    RunEvent::ContextRewritten {
+                        trigger: tau_agent::plugin::Trigger::Idle,
+                        ..
+                    }
+                ]
+            ),
+            "{events:?}"
+        );
+        let record = store.run(&outcome.run.0).await.unwrap().unwrap();
+        assert_eq!(record.status, Status::Done);
+        assert_eq!(record.cost_usd, outcome.usage.cost.total + 0.25);
+
+        let mut going = agent.start("go on", &store);
+        {
+            use futures_util::StreamExt;
+            let started = going.events().next().await;
+            assert!(matches!(started, Some(RunEvent::RunStart { .. })));
+        }
+        let refused = agent
+            .resume(&going.id())
+            .compact_idle(
+                outcome.request,
+                &store,
+                None,
+                CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            matches!(
+                refused,
+                Err(AgentError::Store(tau_store::StoreError::StillRunning(_)))
+            ),
+            "{refused:?}"
+        );
+        going.cancel();
+        let _ = going.outcome().await;
     });
 }

@@ -152,6 +152,9 @@ pub struct Outcome {
     pub usage: Usage,
     /// The `seq` of the run's last stored entry.
     last_seq: i64,
+    /// The settings its last request went with: what an idle compaction
+    /// sends with ([`Resumed::compact_idle`]), to read its prompt cache.
+    pub request: Settings,
 }
 
 impl Outcome {
@@ -583,6 +586,133 @@ impl Resumed {
     ) -> Result<Outcome, AgentError> {
         self.start(input, store).outcome().await
     }
+
+    /// Offers the run's transcript for a rewrite while it is idle
+    /// ([`crate::plugin::Trigger::Idle`]), on a session opened with `request`, the
+    /// settings its last request went with ([`Outcome::request`]): a
+    /// plugin asking in [`crate::plugin::ContextView::conversation`] then reads the
+    /// prompt cache that request left, while it lasts. Only the plugins
+    /// that take part start ([`Plugin::start_idle`]). It adds no message
+    /// and leaves the run as it was, finished: it stores the rewrite, if
+    /// one came, and what plugins charged. `events` gets what the
+    /// rewrite emits, and `cancel` stops it; a rewrite not stored by then
+    /// never is.
+    ///
+    /// `None` when no plugin rewrote the transcript. Fails with
+    /// [`StoreError::StillRunning`] if the run is going on.
+    pub async fn compact_idle(
+        &self,
+        request: Settings,
+        store: &Store,
+        events: Option<mpsc::Sender<RunEvent>>,
+        cancel: CancellationToken,
+    ) -> Result<Option<Compacted>, AgentError> {
+        let agent = &self.agent;
+        let id = &self.run;
+        let record = store
+            .run(&id.0)
+            .await?
+            .ok_or_else(|| StoreError::UnknownRun(id.0.to_string()))?;
+        if record.status == Status::Running {
+            return Err(StoreError::StillRunning(id.0.to_string()).into());
+        }
+        let (mut history, last_rewrite) =
+            messages(store.transcript(&id.0).await?)?;
+        keep_own_reasoning(&mut history, &request.model);
+        let shared = RunShared {
+            run: id.clone(),
+            parent: None,
+            agent: agent.0.name.clone(),
+            cancel: cancel.clone(),
+            llm: agent.0.llm.clone(),
+            store: store.clone(),
+            charged: Arc::default(),
+            last_seq: Arc::new(AtomicI64::new(-1)),
+            clock: agent.0.clock.clone(),
+            retry: agent.0.retry,
+            reports: Arc::default(),
+        };
+        let mut plan = RunPlan::new(
+            String::new(),
+            request.instructions.clone(),
+            request.reasoning,
+            request.model.clone(),
+            record.kind.clone(),
+            record.workflow_id.map(Into::into),
+        );
+        plan.set_inherited_tokens(estimate_context_tokens(&history));
+        let mut plugins = Vec::new();
+        for plugin in &agent.0.plugins {
+            let ctx = shared.ctx(plugin.name());
+            plan.set_records(plugin_records(store, id, plugin.name()).await?);
+            plan.set_last_rewrite(
+                last_rewrite
+                    .as_ref()
+                    .filter(|(by, _)| by == plugin.name())
+                    .map(|(_, details)| details.clone()),
+            );
+            let started =
+                plugin.start_idle(&plan, &ctx).await.map_err(|error| {
+                    AgentError::Plugin {
+                        plugin: plugin.name().to_owned(),
+                        message: error.to_string(),
+                    }
+                })?;
+            if let Some(run) = started {
+                plugins.push(ActivePlugin { run, ctx });
+            }
+        }
+        if plugins.is_empty() {
+            return Ok(None);
+        }
+        // Its own conversation, never a fork's parent's.
+        let request = Settings {
+            lineage: Some(Lineage {
+                path: id.0.to_string(),
+                parent: None,
+            }),
+            ..request
+        };
+        let session = agent.0.llm.open(request).await?;
+        let (_steer, steering) = mpsc::unbounded_channel();
+        let runner = Runner {
+            run: id.clone(),
+            parent: None,
+            agent: agent.0.name.clone(),
+            call: None,
+            tools: Arc::new(Toolbox::new(Vec::new(), agent.0.sources.clone())),
+            plugins,
+            limits: agent.0.limits,
+            session,
+            store: store.clone(),
+            events,
+            steering,
+            cancel,
+            clock: agent.0.clock.clone(),
+            history,
+            prelude: Vec::new(),
+            pending_turn: None,
+            reports: shared.reports,
+            last_seq: shared.last_seq,
+            charged: shared.charged,
+            workflow: None,
+            children: Arc::default(),
+            retry: agent.0.retry,
+            warmup: false,
+            turns_before: u32::try_from(record.turns).unwrap_or(u32::MAX),
+            preempted: None,
+        };
+        Ok(runner.compact_idle().await?)
+    }
+}
+
+/// What [`Resumed::compact_idle`] did: the plugin that rewrote the
+/// transcript, and the transcript's estimated tokens before and after.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Compacted {
+    pub plugin: Arc<str>,
+    pub tokens_before: u64,
+    pub tokens_after: u64,
 }
 
 /// An agent as a tool. See [`Agent::as_tool`].
@@ -1035,6 +1165,7 @@ async fn run_task(
         stop: result.stop,
         usage: result.usage,
         last_seq: result.last_seq,
+        request: result.request,
     })
 }
 

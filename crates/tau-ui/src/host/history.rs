@@ -37,6 +37,9 @@ pub(super) async fn stored_view(
                 .map(|body| Stored::Rewrite {
                     plugin,
                     body,
+                    idle: stats.as_ref().is_some_and(|stats| {
+                        stats.trigger == tau_agent::plugin::Trigger::Idle.name()
+                    }),
                     tokens: stats
                         .map(|stats| (stats.tokens_before, stats.tokens_after)),
                 }),

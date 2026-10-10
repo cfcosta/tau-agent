@@ -184,8 +184,8 @@ pub struct Host {
     /// signing out, or on an account without plan use.
     account: Mutex<Option<AccountId>>,
     /// The client `base` reaches models with, for what it learns on the
-    /// way: why the ChatGPT plan refused a run. `None` for an agent built
-    /// elsewhere, as in tests.
+    /// way: why the ChatGPT plan refused a run, and when a chat's prompt
+    /// cache lapses. `None` for an agent built elsewhere, as in tests.
     client: Mutex<Option<OpenAi>>,
     /// Why OpenAI refused the eligibility check at the last sign-in
     /// because plan use is not available to the account
@@ -268,6 +268,8 @@ pub struct Host {
     previews: Mutex<HashMap<RunId, queue::Preview>>,
     /// Hears of conflicts still on a main chat after its turn.
     conflicts_hook: Option<lanes::ConflictsHook>,
+    /// What each chat's last turn left, to compact it while it is idle.
+    idle: Arc<Mutex<HashMap<RunId, idle::Idle>>>,
     /// What plugins' host halves tell the interface, and its receiving
     /// end until [`Self::attach`] takes it.
     pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
@@ -288,6 +290,7 @@ mod config;
 mod forecast;
 mod history;
 mod hosted;
+pub mod idle;
 mod instructions;
 mod landing;
 mod lanes;
@@ -514,6 +517,7 @@ impl Host {
             lanes: Mutex::default(),
             previews: Mutex::default(),
             conflicts_hook: None,
+            idle: Arc::default(),
             pushes,
             pushed: Mutex::new(Some(pushed)),
         };
@@ -529,6 +533,13 @@ impl Host {
     /// Asks `jev` instead of TypeSafe's, for tests.
     pub fn with_jev(mut self, jev: Arc<dyn tau_jev::Jev>) -> Self {
         self.jev = Some(jev);
+        self
+    }
+
+    /// Learns what the plan refused and when caches lapse from `client`,
+    /// the one the agent was built with: for tests.
+    pub fn with_client(mut self, client: OpenAi) -> Self {
+        self.client = Mutex::new(Some(client));
         self
     }
 
@@ -1168,6 +1179,8 @@ impl Host {
             anyhow::bail!("The run is still going; steer it instead");
         }
         self.refuse_ended(run).await?;
+        // It goes on from its transcript as an idle compaction left it.
+        self.stop_compacting(run).await;
         let repo = self.slot_of_run(run).await?;
         let state = self.repo_state(&repo.name);
         let _starting = state.starting.lock().await;
@@ -1362,6 +1375,7 @@ impl Host {
         let events = self.events.clone();
         let runs = self.runs.clone();
         let ending = self.ending.clone();
+        let idle = self.idle.clone();
         self.runtime.spawn(async move {
             let id = run.id();
             {
@@ -1371,17 +1385,28 @@ impl Host {
                     // stops in a moment (`Host::settle`). Marked here, by
                     // the task that unmarks it, so the mark cannot outlive
                     // the run.
-                    if matches!(&event, RunEvent::RunEnd { run, .. } if *run == id)
-                    {
-                        ending.lock().expect("not poisoned").insert(id.clone());
+                    match &event {
+                        RunEvent::RunEnd { run, .. } if *run == id => {
+                            ending
+                                .lock()
+                                .expect("not poisoned")
+                                .insert(id.clone());
+                        }
+                        RunEvent::TurnEnd { run, usage, .. } if *run == id => {
+                            Host::turn_ended(&idle, &id, usage);
+                        }
+                        _ => {}
                     }
                     if events.send(event).is_err() {
                         break;
                     }
                 }
             }
-            // The outcome is stored by the run; the events said it all.
-            let _ = run.outcome().await;
+            // The outcome is stored by the run; the events said it all,
+            // but what its last request went with.
+            if let Ok(outcome) = run.outcome().await {
+                Host::run_ended(&idle, &id, outcome.request);
+            }
             runs.lock().expect("not poisoned").remove(&id);
             ending.lock().expect("not poisoned").remove(&id);
         });

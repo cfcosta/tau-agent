@@ -16,6 +16,7 @@ use tau_ai::ws::proto::{
     lane::{CONNECTION_LIMIT_REACHED, Event, PREVIOUS_RESPONSE_NOT_FOUND},
     pool::{
         Affinity,
+        CacheLapse,
         ConnectionId,
         LaneId,
         Limits,
@@ -914,6 +915,37 @@ impl PoolMachine {
                 );
             }
         }
+        // A conversation's cache lapses with its idle connection: the
+        // free one that serves it and takes lanes, used last, while no
+        // lane of it holds one; `cache_lifetime` after its last use, or
+        // at rotation.
+        for path in PATHS {
+            let serves = |c: &&Conn| c.path.as_deref() == Some(path);
+            let held = self
+                .model
+                .conns
+                .values()
+                .filter(serves)
+                .any(|c| c.lane.is_some());
+            let expected = self
+                .model
+                .conns
+                .iter()
+                .filter(|(id, c)| serves(c) && !self.pool.is_draining(**id))
+                .map(|(_, c)| c)
+                .max_by_key(|c| c.last_used)
+                .filter(|_| !held)
+                .map(|c| CacheLapse {
+                    last_used: c.last_used,
+                    at: (c.last_used + self.limits.cache_lifetime)
+                        .min(c.opened_at + self.limits.rotate_after),
+                });
+            assert_eq!(
+                self.pool.cache_lapse(path),
+                expected,
+                "lapse of {path}"
+            );
+        }
         // At most `max_idle` connections are free.
         let free = self
             .model
@@ -965,7 +997,8 @@ impl PoolMachine {
 /// each lane where a reference selector says (its own path's idle
 /// connection, else its parent's, else a wait, else a free one, else a
 /// new one), moves what a connection serves with the lane placed on it,
-/// keeps one lane and one request per connection, only sends a delta on
+/// keeps one lane and one request per connection, says when each idle
+/// conversation's cache lapses, only sends a delta on
 /// the connection that holds the response it continues (and the server
 /// rebuilds exactly the submitted input), keeps at most `max_idle` free
 /// connections, never waits past `affinity_wait`, and closes idle,
@@ -995,6 +1028,7 @@ fn pool_places_lanes_by_affinity_body(tc: TestCase) {
         stall_timeout: seconds(1),
         affinity_wait: seconds(0),
         max_idle: tc.draw(gs::integers::<usize>().max_value(6)),
+        cache_lifetime: seconds(1),
     };
     hegel::stateful::machine(PoolMachine::new(limits))
         .steps(80)

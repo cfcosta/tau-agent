@@ -3302,6 +3302,158 @@ fn conversations_go_back_to_their_connections() {
     assert_eq!(stats.handoffs, 1);
 }
 
+/// An idle chat is compacted in its own conversation: on the connection
+/// that served it, with the instructions and tools of its last request,
+/// so the summary reads the chat from that connection's prompt cache.
+/// The rewrite says it was an idle one, and the chat goes on from the
+/// summary and the turn it kept.
+#[test]
+fn an_idle_chat_is_compacted_from_its_cache() {
+    use tau_ai::{client::OpenAi, ws::proto::pool::Limits};
+    use tau_testing::fake_openai::{FakeOpenAi, LocalConnector, Reply};
+
+    let fake = FakeOpenAi::new(vec![
+        Reply::text("resp_1", "read the first"),
+        Reply::text("resp_2", "read the second"),
+        Reply::text("resp_3", "## Goal\nRead two long texts."),
+        // tau-memory keeps what the summary drops.
+        Reply::text("resp_4", "nothing to keep"),
+        Reply::text("resp_5", "back"),
+    ])
+    .report_cache();
+    let address = fake.listen();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let client = {
+        let _guard = runtime.enter();
+        OpenAi::with_connector(LocalConnector(address), Limits::default())
+    };
+    let agent = Agent::new(client.clone()).name("coder");
+    let root = tempfile::tempdir().unwrap().keep();
+    let (host, mut events) = host_of(runtime, store, agent, &root);
+
+    // Two turns, each longer than what compaction keeps: the first is
+    // summarized, the second kept.
+    let long = |word: &str| format!("{word} ").repeat(20_000);
+    let chat = host
+        .block_on(host.start(&long("first"), &ModelChoice::default(), REPO))
+        .unwrap()
+        .id;
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+    host.block_on(host.resume(&chat, &long("second"), &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+
+    let compacted = host
+        .block_on(host.compact_idle(&chat))
+        .unwrap()
+        .expect("compacted");
+    assert_eq!(&*compacted.plugin, tau_compaction::NAME);
+    assert!(compacted.tokens_after < compacted.tokens_before / 2);
+    let received = fake.received();
+    let (last, summary) = (&received[1], &received[2]);
+    assert_eq!(summary.connection, last.connection);
+    assert_eq!(summary.body["prompt_cache_key"], chat.0.as_ref());
+    for field in ["model", "instructions", "tools", "reasoning"] {
+        assert_eq!(summary.body[field], last.body[field], "{field}");
+    }
+    // The chat up to the summarized turn comes from cache.
+    assert!(
+        summary.cached_tokens >= received[0].input_tokens,
+        "{} cached of {}",
+        summary.cached_tokens,
+        received[0].input_tokens
+    );
+    let rewritten =
+        std::iter::from_fn(|| events.try_recv().ok()).find_map(|event| {
+            match event {
+                RunEvent::ContextRewritten { run, trigger, .. }
+                    if run == chat =>
+                {
+                    Some(trigger)
+                }
+                _ => None,
+            }
+        });
+    assert_eq!(rewritten, Some(tau_agent::plugin::Trigger::Idle));
+
+    host.block_on(host.resume(&chat, "back", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+    let next = fake.received().last().unwrap().body.to_string();
+    assert!(next.contains("Read two long texts."), "{next}");
+    assert!(next.contains("second second"));
+    assert!(!next.contains("first first"));
+    let history = host.block_on(host.history()).unwrap();
+    let view = history.iter().find(|view| view.id == chat).unwrap();
+    assert!(
+        view.items
+            .iter()
+            .any(|item| matches!(item, Item::Rewrite { idle: true, .. })),
+        "{:?}",
+        view.items
+    );
+}
+
+/// A message for a chat being compacted while idle stops the
+/// compaction: the chat goes on from its transcript as it was, and
+/// nothing of the summary is stored.
+#[test]
+fn a_message_stops_an_idle_compaction() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("read the first"))
+        .turn(|t| t.text("read the second"))
+        .turn(|t| t.text("## Goal").stall(Duration::from_secs(600)))
+        .turn(|t| t.text("went on"));
+    let (host, mut events) = host(llm.clone());
+    let long = |word: &str| format!("{word} ").repeat(20_000);
+    let chat = host
+        .block_on(host.start(&long("first"), &ModelChoice::default(), REPO))
+        .unwrap()
+        .id;
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+    host.block_on(host.resume(&chat, &long("second"), &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+
+    let compacted = host.block_on(async {
+        let compacting = host.compact_idle(&chat);
+        let message = async {
+            while llm.requests().len() < 3 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            host.resume(&chat, "go on", &ModelChoice::default())
+                .await
+                .unwrap();
+        };
+        tokio::join!(compacting, message).0
+    });
+    assert_eq!(compacted.unwrap(), None);
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 4);
+    let went_on = format!("{:?}", requests[3].transcript);
+    assert!(went_on.contains("first first"));
+    assert!(!went_on.contains("<summary>"));
+    let history = host.block_on(host.history()).unwrap();
+    let view = history.iter().find(|view| view.id == chat).unwrap();
+    assert!(
+        !view
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Rewrite { .. }))
+    );
+}
+
 /// The person's skills are listed in a run's instructions, and the model
 /// loads one by name: its instructions, and the folder its files are in.
 #[test]
@@ -3390,4 +3542,108 @@ fn memory_saves_after_each_run_on_luna_by_default() {
         .then_some(tau_ai::responses::request::ReasoningEffort::Low);
     assert_eq!(pass.reasoning, low);
     llm.assert_exhausted();
+}
+
+/// An idle chat is compacted nine tenths of the way from its last
+/// request to its cache's lapse, and only when its context holds half
+/// its model's window.
+#[test]
+fn an_idle_chat_compacts_late_and_only_when_long() {
+    use tau_ai::ws::io::driver::CacheLapse;
+    use tau_ui::host::idle::{fire_at, worth_compacting};
+
+    let last_used = tokio::time::Instant::now();
+    for minutes in [1, 10, 55, 60] {
+        let lapse = CacheLapse {
+            last_used,
+            at: last_used + Duration::from_secs(60 * minutes),
+        };
+        let fire = fire_at(&lapse);
+        assert_eq!(fire - last_used, Duration::from_secs(54 * minutes));
+        assert!(fire < lapse.at);
+    }
+    assert!(!worth_compacting(135_999, 272_000));
+    assert!(worth_compacting(136_000, 272_000));
+}
+
+/// A long chat left idle is compacted by itself shortly before its
+/// connection's prompt cache lapses, and says so.
+#[test]
+fn a_long_idle_chat_compacts_before_its_cache_lapses() {
+    use tau_ai::{client::OpenAi, ws::proto::pool::Limits};
+    use tau_testing::fake_openai::{FakeOpenAi, LocalConnector, Reply};
+
+    let fake = FakeOpenAi::new(vec![
+        Reply::text("resp_1", "read the first"),
+        Reply::text("resp_2", "read the second"),
+        Reply::text("resp_3", "## Goal\nRead two long texts."),
+        Reply::text("resp_4", "nothing to keep"),
+    ])
+    .report_cache();
+    let address = fake.listen();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let client = {
+        let _guard = runtime.enter();
+        OpenAi::with_connector(
+            LocalConnector(address),
+            Limits {
+                cache_lifetime: Duration::from_secs(3),
+                ..Limits::default()
+            },
+        )
+    };
+    let agent = Agent::new(client.clone()).name("coder");
+    let root = tempfile::tempdir().unwrap().keep();
+    let (host, mut events) = host_of(runtime, store, agent, &root);
+    let host = std::sync::Arc::new(host.with_client(client));
+
+    // More than half the window, and a last turn longer than what
+    // compaction keeps.
+    let chat = host
+        .block_on(host.start(
+            &"first ".repeat(100_000),
+            &ModelChoice::default(),
+            REPO,
+        ))
+        .unwrap()
+        .id;
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+    host.block_on(host.resume(
+        &chat,
+        &"second ".repeat(12_000),
+        &ModelChoice::default(),
+    ))
+    .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+    let ended = std::time::Instant::now();
+    host.watch_idle(&chat);
+
+    let deadline = ended + WAIT;
+    let trigger = loop {
+        assert!(std::time::Instant::now() < deadline, "no compaction");
+        match events.try_recv() {
+            Ok(RunEvent::ContextRewritten { run, trigger, .. })
+                if run == chat =>
+            {
+                break trigger;
+            }
+            Ok(_) => {}
+            Err(_) => std::thread::sleep(Duration::from_millis(10)),
+        }
+    };
+    assert_eq!(trigger, tau_agent::plugin::Trigger::Idle);
+    // Nine tenths of the way to the lapse.
+    assert!(
+        ended.elapsed() >= Duration::from_secs(2),
+        "{:?}",
+        ended.elapsed()
+    );
+    let summary = &fake.received()[2];
+    assert!(summary.cached_tokens > 0);
 }

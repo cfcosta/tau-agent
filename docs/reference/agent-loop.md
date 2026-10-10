@@ -183,7 +183,7 @@ pub enum RunEvent {
     ToolUpdate { run: RunId, call_id: String, partial: Arc<ToolOutput>, parent: Option<String> },
     ToolEnd    { run: RunId, call_id: String, output: Arc<ToolOutput>, is_error: bool, parent: Option<String> },
     TurnEnd    { run: RunId, turn: u32, usage: Usage },
-    ContextRewritten { run: RunId, plugin: Arc<str>, tokens_before: u64, tokens_after: u64 },  // between turns, or in an overflowing turn
+    ContextRewritten { run: RunId, plugin: Arc<str>, tokens_before: u64, tokens_after: u64, trigger: Trigger },  // between turns, in an overflowing turn, or alone for an idle run
     Retry      { run: RunId, turn: u32, attempt: u32, delay: Duration, error: String },
     Continued  { run: RunId, plugin: Arc<str>, message: String },  // between turns
     PluginReport { run: RunId, plugin: Arc<str>, body: Value },  // before the event it explains

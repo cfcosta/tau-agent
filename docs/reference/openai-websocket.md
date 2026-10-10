@@ -134,6 +134,16 @@ Re-run on 2026-10-03 (`--handoff`): the source connection read 85–86%
 on every request; three new connections read 0%, 85% and 0% (same key,
 another key, none); a new one after the source closed read 85%.
 
+Idle connections, measured on 2026-10-10 with gpt-5.5
+(`cache_probe --idle`): connections that wrote a prefix, then sat idle
+(answering pings) for 1, 5, 10, 15, 20, 30, 40, 50 and 54 minutes, all
+read 85% of it again when they resent it. An idle connection keeps its
+cache as long as it lives, so a conversation's cache lapses when its
+connection rotates, 55 minutes after it opened.
+`OpenAi::cache_lapse` says when that is for a conversation none of
+whose lanes holds a connection; tau-ui compacts a long idle chat just
+before ([compaction.md](compaction.md), "Idle compaction").
+
 - A connection continues only from its most recent response:
   `previous_response_id` of an older one fails with
   `previous_response_not_found`.

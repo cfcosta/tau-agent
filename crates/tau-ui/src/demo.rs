@@ -2687,6 +2687,7 @@ pub fn script() -> Vec<Step> {
             plugin: Arc::from(tau_fast_compaction::NAME),
             tokens_before: 172_000,
             tokens_after: 81_000,
+            trigger: tau_agent::plugin::Trigger::TurnEnd,
         },
     );
     s.at(

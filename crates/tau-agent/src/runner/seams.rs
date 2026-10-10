@@ -3,6 +3,23 @@
 
 use super::*;
 
+/// The run's session, as [`ContextView::conversation`] offers it.
+struct RunConversation<'s> {
+    session: tokio::sync::Mutex<&'s mut dyn LlmSession>,
+}
+
+#[async_trait::async_trait]
+impl Conversation for RunConversation<'_> {
+    async fn ask(
+        &self,
+        input: &[Message],
+        ctx: &PluginCtx,
+    ) -> Result<AssistantMessage, AskError> {
+        let mut session = self.session.lock().await;
+        ctx.ask_on(&mut **session, input).await
+    }
+}
+
 /// Why a rewrite cannot replace `transcript`, if it cannot: it must not
 /// be empty, must end with the message the transcript ends with (the one
 /// the next request answers), and must keep every tool call of a
@@ -127,43 +144,50 @@ impl Runner {
 
     /// Offers the transcript to each plugin, in order, until one rewrites
     /// it; stores the rewrite and makes it the working transcript.
-    /// `Ok(Ok(()))` when a plugin rewrote it; otherwise the plugins that
-    /// failed, and why (each also reported as a `PluginError`).
+    /// `Ok(Ok(_))` when a plugin rewrote it, with what it did; otherwise
+    /// the plugins that failed, and why (each also reported as a
+    /// `PluginError`).
     pub(super) async fn rewrite_context(
         &mut self,
         transcript: &mut Vec<Message>,
         trigger: Trigger,
         turn: u32,
-    ) -> Result<Result<(), Failures>, StoreError> {
+    ) -> Result<Result<Compacted, Failures>, StoreError> {
         let tokens = estimate_context_tokens(transcript);
         let window = model::find(&self.session.settings().model)
             .map(|model| model.context_window);
-        let view = ContextView {
-            transcript,
-            tokens,
-            window,
-            trigger,
-            turn,
-        };
         let mut failures: Failures = Vec::new();
         let mut chosen = None;
-        for plugin in &mut self.plugins {
-            let name: Arc<str> = plugin.ctx.plugin().into();
-            match plugin.run.rewrite_context(&view, &plugin.ctx).await {
-                Ok(None) => {}
-                Ok(Some(rewrite)) => {
-                    match check_rewrite(transcript, &rewrite) {
-                        Ok(()) => {
-                            chosen = Some((name, rewrite));
-                            break;
+        {
+            let conversation = RunConversation {
+                session: tokio::sync::Mutex::new(&mut *self.session),
+            };
+            let view = ContextView {
+                transcript,
+                tokens,
+                window,
+                trigger,
+                turn,
+                conversation: &conversation,
+            };
+            for plugin in &mut self.plugins {
+                let name: Arc<str> = plugin.ctx.plugin().into();
+                match plugin.run.rewrite_context(&view, &plugin.ctx).await {
+                    Ok(None) => {}
+                    Ok(Some(rewrite)) => {
+                        match check_rewrite(transcript, &rewrite) {
+                            Ok(()) => {
+                                chosen = Some((name, rewrite));
+                                break;
+                            }
+                            Err(problem) => failures.push((
+                                name,
+                                format!("rejected rewrite: {problem}"),
+                            )),
                         }
-                        Err(problem) => failures.push((
-                            name,
-                            format!("rejected rewrite: {problem}"),
-                        )),
                     }
+                    Err(error) => failures.push((name, describe(&error))),
                 }
-                Err(error) => failures.push((name, describe(&error))),
             }
         }
         self.report_failures(&failures).await;
@@ -206,12 +230,17 @@ impl Runner {
         *transcript = rewrite.messages;
         self.emit(RunEvent::ContextRewritten {
             run: self.run.clone(),
+            plugin: plugin.clone(),
+            tokens_before: tokens,
+            tokens_after,
+            trigger,
+        })
+        .await;
+        Ok(Ok(Compacted {
             plugin,
             tokens_before: tokens,
             tokens_after,
-        })
-        .await;
-        Ok(Ok(()))
+        }))
     }
 
     /// Asks each plugin, in order, whether the run may stop after

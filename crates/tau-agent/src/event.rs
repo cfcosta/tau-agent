@@ -4,14 +4,20 @@
 //! A run's events follow the grammar
 //! `RunStart (TurnStart … TurnEnd)* RunEnd`, and nothing follows
 //! `RunEnd`. Events from a child run carry `parent`, so one subscriber can
-//! follow a whole workflow tree.
+//! follow a whole workflow tree. An idle compaction
+//! ([`crate::agent::Resumed::compact_idle`]) emits only what its rewrite
+//! does, outside any start: plugins' charges, reports and errors, and
+//! `ContextRewritten`.
 
 use std::{sync::Arc, time::Duration};
 
 use serde_json::Value;
 use tau_ai::message::{StopReason as MessageStop, Usage};
 
-use crate::tool::{RunId, ToolOutput};
+use crate::{
+    plugin::Trigger,
+    tool::{RunId, ToolOutput},
+};
 
 /// Why a run ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +116,8 @@ pub enum RunEvent {
         plugin: Arc<str>,
         tokens_before: u64,
         tokens_after: u64,
+        /// Why it was offered.
+        trigger: Trigger,
     },
     /// A response failed in a way worth retrying; attempt `attempt`
     /// starts after `delay`. Comes inside the turn it retries.

@@ -23,7 +23,9 @@ use tau_ai::{
 };
 use tau_compaction::{
     Compaction,
+    IN_CONTEXT_PREAMBLE,
     Record,
+    SUMMARIZATION_PROMPT,
     SUMMARIZATION_SYSTEM_PROMPT,
     SUMMARY_PREFIX,
     TURN_PREFIX_SUMMARIZATION_PROMPT,
@@ -31,6 +33,7 @@ use tau_compaction::{
 };
 use tau_store::{Entry, Store};
 use tau_testing::{block_on, scripted::ScriptedModel};
+use tokio_util::sync::CancellationToken;
 
 struct Read;
 
@@ -588,5 +591,131 @@ fn a_failing_summary_is_tried_as_the_policy_allows() {
         assert!(message.contains("compaction failed"), "{message}");
         assert_eq!(llm.requests().len(), 4);
         assert_eq!(llm.remaining(), 1);
+    });
+}
+
+/// An idle run is summarized in its own conversation
+/// (`docs/reference/compaction.md`, "Idle compaction"): the request
+/// goes with the settings of the run's last request, its input the
+/// messages it summarizes as they are, then the in-context prompt. The
+/// rewrite is stored as an idle one, after the run's last entry, with no
+/// message added and the run left finished; it goes on from the
+/// summary. A second one updates the summary the conversation opens
+/// with.
+#[test]
+fn an_idle_run_is_summarized_in_its_own_conversation() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("first"))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("## Goal\nidle summary"))
+        .turn(|t| t.text("again"))
+        .turn(|t| t.text("## Goal\nupdated summary"));
+    block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        // No window known: nothing compacts at a turn's end.
+        let agent = Agent::new(llm.clone())
+            .tool(typed(Read))
+            .plugin(Compaction::default().keep_recent_tokens(1));
+        let (_, outcome) = run(&agent, &store, "go", "and then this").await;
+        let id = outcome.run.clone();
+        let before = store.run(&id.0).await.unwrap().unwrap();
+
+        let compacted = agent
+            .resume(&id)
+            .compact_idle(
+                outcome.request.clone(),
+                &store,
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+            .expect("compacted");
+        assert_eq!(&*compacted.plugin, tau_compaction::NAME);
+        let requests = llm.requests();
+        let summary = &requests[2];
+        assert_eq!(summary.settings, outcome.request);
+        // All but the reply it keeps: what the last request sent.
+        assert_eq!(&summary.transcript[..3], &requests[1].transcript[..]);
+        let prompt = text(&summary.transcript[3]);
+        assert!(prompt.starts_with(IN_CONTEXT_PREAMBLE), "{prompt}");
+        assert!(prompt.ends_with(SUMMARIZATION_PROMPT), "{prompt}");
+        assert_eq!(summary.transcript.len(), 4);
+
+        let after = store.run(&id.0).await.unwrap().unwrap();
+        assert_eq!((after.status, after.turns), (before.status, before.turns));
+        let entries = store.transcript(&id.0).await.unwrap();
+        let Entry::Context {
+            stats: Some(stats), ..
+        } = &entries[0]
+        else {
+            panic!("{entries:?}");
+        };
+        assert_eq!(stats.trigger, "idle");
+        let messages: Vec<Message> = entries[1..]
+            .iter()
+            .map(|entry| match entry {
+                Entry::Message { body, .. } => {
+                    serde_json::from_str(body).unwrap()
+                }
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(messages.len(), 2);
+        assert!(text(&messages[0]).contains("idle summary"));
+        assert!(
+            matches!(&messages[1], Message::Assistant(reply) if reply.text() == "done")
+        );
+
+        // It goes on from the summary, and the next idle compaction
+        // updates it.
+        let next = agent.resume(&id).run("next", &store).await.unwrap();
+        assert!(
+            text(&llm.requests()[3].transcript[0]).contains("idle summary")
+        );
+        agent
+            .resume(&id)
+            .compact_idle(next.request, &store, None, CancellationToken::new())
+            .await
+            .unwrap()
+            .expect("compacted again");
+        let update = llm.requests()[4].transcript.clone();
+        assert!(text(&update[0]).contains("idle summary"));
+        let prompt = text(update.last().unwrap());
+        assert!(
+            prompt.contains(
+                "existing summary in <summary> tags at the start of the conversation"
+            ),
+            "{prompt}"
+        );
+    });
+}
+
+/// With idle compaction off, an idle run is left as it is: no request,
+/// nothing stored.
+#[test]
+fn idle_compaction_off_leaves_the_run() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("first"))
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let agent = Agent::new(llm.clone())
+            .plugin(Compaction::default().keep_recent_tokens(1).idle(false));
+        let (_, outcome) = run(&agent, &store, "go", "and then this").await;
+        let compacted = agent
+            .resume(&outcome.run)
+            .compact_idle(
+                outcome.request,
+                &store,
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(compacted, None);
+        assert_eq!(llm.requests().len(), 2);
+        let entries = store.transcript(&outcome.run.0).await.unwrap();
+        assert!(!entries.iter().any(|e| matches!(e, Entry::Context { .. })));
     });
 }

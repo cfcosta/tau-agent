@@ -323,14 +323,32 @@ impl Plugin for MemoryPlugin {
             ))
             .await;
         }
-        Ok(Box::new(MemoryRun {
+        Ok(Box::new(self.run_for(plan)))
+    }
+
+    /// An idle compaction drops conversation as any summary does, and
+    /// what it drops is distilled first ([`PluginRun::rewritten`]).
+    /// Nothing is searched or given: no message follows.
+    async fn start_idle(
+        &self,
+        plan: &RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Option<Box<dyn PluginRun>>, PluginError> {
+        Ok(Some(Box::new(self.run_for(plan))))
+    }
+}
+
+impl MemoryPlugin {
+    /// Its part in a run that `plan` prepares.
+    fn run_for(&self, plan: &RunPlan) -> MemoryRun {
+        MemoryRun {
             plugin: self.clone(),
             writer: self.writer.clone().unwrap_or_else(|| Writer {
                 model: plan.model().to_owned(),
                 reasoning: plan.reasoning(),
             }),
             own_from: None,
-        }))
+        }
     }
 }
 

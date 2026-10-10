@@ -72,6 +72,14 @@ pub trait Plugin: Send + Sync + 'static {
         plan: &mut RunPlan,
         ctx: &PluginCtx,
     ) -> Result<Box<dyn PluginRun>, PluginError>;
+
+    /// Prepares the plugin's part in an idle compaction (see "Idle
+    /// compaction" below), or keeps it out: `None`, the default.
+    async fn start_idle(
+        &self,
+        plan: &RunPlan,
+        ctx: &PluginCtx,
+    ) -> Result<Option<Box<dyn PluginRun>>, PluginError>;
 }
 ```
 
@@ -282,6 +290,11 @@ pub struct ContextView<'a> {
     pub window: Option<u64>,
     pub trigger: Trigger,
     pub turn: u32,
+    /// The run's own conversation: `conversation.ask(input, ctx)` sends
+    /// `input` on the run's session, so it goes on the run's connection
+    /// with its instructions, tools and effort, and the part of `input`
+    /// the transcript starts with reads the prompt cache.
+    pub conversation: &'a dyn Conversation,
 }
 
 pub enum Trigger {
@@ -292,6 +305,8 @@ pub enum Trigger {
     Start,
     /// The last request failed with `context_length_exceeded`.
     Overflow,
+    /// The run is idle, and its prompt cache is about to lapse.
+    Idle,
 }
 
 pub struct Rewrite {
@@ -330,7 +345,22 @@ pub struct Rewrite {
   inherits from `RunPlan::last_rewrite`, when its plugin made it.
   Compaction resumes its summary and file lists from there.
 - **Events.** `ContextRewritten { run, plugin, tokens_before,
-tokens_after }` marks each rewrite.
+tokens_after, trigger }` marks each rewrite.
+- **Idle compaction.** `Resumed::compact_idle(request, store, events,
+cancel)` offers a finished run's transcript for a rewrite with
+  `Trigger::Idle`, and stops. `request` is the settings the run's last
+  request went with (`Outcome::request`): the session opens with them,
+  so a summary asked in `ContextView::conversation` reads the cache
+  that request left. Only plugins whose `start_idle` returns a run take
+  part, and `plan` shows them the run as stored, with no input; no
+  plugin's `start` runs, so nothing a start does (an effort picked, a
+  memory search, a record) happens, and the settings stay the last
+  request's. tau-compaction and tau-memory take part: one summarizes,
+  the other keeps what the summary drops. The rewrite is stored as any
+  is; no message is added, the run stays finished, and its events are
+  only the rewrite's (`ContextRewritten`, and what plugins charged,
+  reported or failed at). Cancelling it stores nothing that was not
+  stored. See [compaction.md](compaction.md), "Idle compaction".
 
 ## Where each seam sits in the loop
 
@@ -349,6 +379,11 @@ start run
        └─ rewrite_context(TurnEnd)       → store, rewritten (each), next request goes in full
   ├─ store the outcome
   └─ PluginRun::finish (each)
+
+compact an idle run
+  ├─ Plugin::start_idle (each, in order; None keeps it out)
+  ├─ open session with the last request's settings
+  └─ rewrite_context(Idle)              → store, rewritten (each)
 ```
 
 `on_event` sees every event throughout.
@@ -738,7 +773,9 @@ Built: `crates/plugins/tau-constitution`, with its host half in
 Built: `crates/plugins/tau-fast-compaction`. Its reference is
 [fast-compaction.md](fast-compaction.md).
 
-- **Seams:** `rewrite_context` (both triggers), `start` to restore
+- **Seams:** `rewrite_context` (turn ends, starts and overflows; it
+  leaves an idle run to tau-compaction, since pruning first would
+  change what that summary reads from cache), `start` to restore
   its ledger, and `after_tool_result` to prune a large `bash` output
   before the model first sees it.
 - **How** (after `joelhooks/pi-fast-jev-compaction`):
@@ -769,8 +806,9 @@ Built: `crates/plugins/tau-fast-compaction`. Its reference is
 Built: `crates/plugins/tau-tree-compaction`, off by default. Its
 reference is [tree-compaction.md](tree-compaction.md).
 
-- **Seams:** `rewrite_context` (every trigger), and `start` to restore
-  the history and add the `zoom` tool.
+- **Seams:** `rewrite_context` (every trigger but `Idle`, which it
+  leaves to tau-compaction), and `start` to restore the history and
+  add the `zoom` tool.
 - **How** (after OptChat's memory):
   1. Past the threshold, fold the messages before tau-compaction's cut
      into a history of entries, kept word for word.

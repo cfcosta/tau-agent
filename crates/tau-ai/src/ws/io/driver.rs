@@ -134,6 +134,17 @@ enum Command {
     },
     Cancel(LaneId),
     Stats(oneshot::Sender<PoolStats>),
+    CacheLapse(Arc<str>, oneshot::Sender<Option<CacheLapse>>),
+}
+
+/// When a conversation's prompt cache lapses: see
+/// [`Transport::cache_lapse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheLapse {
+    /// When its connection last took a request.
+    pub last_used: Instant,
+    /// When its cache lapses.
+    pub at: Instant,
 }
 
 impl Transport {
@@ -180,6 +191,20 @@ impl Transport {
             lane,
             commands: self.commands.clone(),
         })
+    }
+
+    /// When the prompt cache of `path`'s conversation lapses, while it
+    /// is idle: [`Pool::cache_lapse`]. `None` when no free connection
+    /// serves it, or one of its lanes holds one.
+    pub async fn cache_lapse(
+        &self,
+        path: &str,
+    ) -> Result<Option<CacheLapse>, Stopped> {
+        let (reply, answer) = oneshot::channel();
+        self.commands
+            .send(Command::CacheLapse(path.into(), reply))
+            .map_err(|_| Stopped)?;
+        answer.await.map_err(|_| Stopped)
     }
 
     /// The pool's counters.
@@ -445,6 +470,15 @@ impl<C: Connector> Driver<C> {
             }
             Command::Stats(reply) => {
                 let _ = reply.send(self.pool.stats());
+            }
+            Command::CacheLapse(path, reply) => {
+                let origin = self.origin;
+                let _ = reply.send(self.pool.cache_lapse(&path).map(|lapse| {
+                    CacheLapse {
+                        last_used: origin + lapse.last_used,
+                        at: origin + lapse.at,
+                    }
+                }));
             }
         }
     }

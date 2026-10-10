@@ -29,6 +29,7 @@ use crate::{
     CompactionError,
     Record,
     SUMMARIZATION_SYSTEM_PROMPT,
+    build_in_context_summary_request,
     build_summary_request,
     build_turn_prefix_summary_request,
     check_summary,
@@ -52,12 +53,32 @@ impl Plugin for Compaction {
         plan: &mut RunPlan,
         _ctx: &PluginCtx,
     ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(self.run_for(plan)?))
+    }
+
+    /// An idle run is summarized while its cache lasts, when
+    /// [`Compaction::idle`] is on.
+    async fn start_idle(
+        &self,
+        plan: &RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Option<Box<dyn PluginRun>>, PluginError> {
+        if !self.idle {
+            return Ok(None);
+        }
+        Ok(Some(Box::new(self.run_for(plan)?)))
+    }
+}
+
+impl Compaction {
+    /// Its part in a run that `plan` prepares.
+    fn run_for(&self, plan: &RunPlan) -> Result<CompactionRun, PluginError> {
         let known = model::find(plan.model());
         let compacted = plan
             .last_rewrite()
             .map(|details| serde_json::from_value(details.clone()))
             .transpose()?;
-        Ok(Box::new(CompactionRun {
+        Ok(CompactionRun {
             settings: *self,
             model: plan.model().to_owned(),
             reasoning: plan.reasoning,
@@ -67,7 +88,7 @@ impl Plugin for Compaction {
             compacted,
             failures: 0,
             retry_at: 0,
-        }))
+        })
     }
 }
 
@@ -122,6 +143,8 @@ impl PluginRun for CompactionRun {
                 Ok(result?)
             }
             Trigger::Overflow => Ok(self.compact(view, ctx).await?),
+            // Whoever offers an idle run judged it worth compacting.
+            Trigger::Idle => Ok(self.compact_in_context(view, ctx).await?),
         }
     }
 }
@@ -172,6 +195,63 @@ impl CompactionRun {
             let text = self.summarize(request, ctx).await?;
             summary = merge_split_turn_summary(&summary, &text);
         }
+        let (read_files, modified_files) = files.file_lists();
+        summary.push_str(&format_file_operations(&read_files, &modified_files));
+        let record = Record {
+            summary,
+            tokens_before: view.tokens,
+            read_files,
+            modified_files,
+            timestamp: ctx.now(),
+        };
+        let messages = std::iter::once(record.message())
+            .chain(transcript[plan.kept_from..].iter().cloned())
+            .collect();
+        let details = serde_json::to_value(&record).expect("records serialize");
+        self.compacted = Some(record);
+        Ok(Some(Rewrite {
+            messages,
+            details,
+            drops_conversation: true,
+        }))
+    }
+
+    /// [`Self::compact`], asking for the summary in the run's own
+    /// conversation, which an idle run's prompt cache still holds
+    /// (`docs/reference/compaction.md`, "Idle compaction"): the messages
+    /// it summarizes go as they are, and the request ends with the
+    /// prompt. One request covers what a split turn would ask twice.
+    async fn compact_in_context(
+        &mut self,
+        view: &ContextView<'_>,
+        ctx: &PluginCtx,
+    ) -> Result<Option<Rewrite>, CompactionError> {
+        let transcript = view.transcript;
+        let summarized =
+            usize::from(self.compacted.as_ref().is_some_and(|record| {
+                transcript.first() == Some(&record.message())
+            }));
+        let Some(plan) =
+            plan(transcript, summarized, self.settings.keep_recent_tokens)
+        else {
+            return Ok(None);
+        };
+        let mut files = self
+            .compacted
+            .as_ref()
+            .filter(|_| summarized == 1)
+            .map(Record::files)
+            .unwrap_or_default();
+        files.extract_from_messages(&transcript[summarized..plan.kept_from]);
+        let mut input = transcript[..plan.kept_from].to_vec();
+        input.push(Message::User(UserMessage {
+            content: UserContent::Text(build_in_context_summary_request(
+                summarized == 1,
+            )),
+            timestamp: ctx.now(),
+        }));
+        let message = view.conversation.ask(&input, ctx).await?;
+        let mut summary = check_summary(&message)?;
         let (read_files, modified_files) = files.file_lists();
         summary.push_str(&format_file_operations(&read_files, &modified_files));
         let record = Record {

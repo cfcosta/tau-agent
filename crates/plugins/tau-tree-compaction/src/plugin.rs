@@ -259,6 +259,9 @@ impl PluginRun for TreeRun {
                 Ok(result?)
             }
             Trigger::Overflow => Ok(self.compact(view, ctx).await?),
+            // An idle run is tau-compaction's to summarize, in its own
+            // conversation, while its cache lasts.
+            Trigger::Idle => Ok(None),
         }
     }
 }

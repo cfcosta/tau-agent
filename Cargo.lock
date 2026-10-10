@@ -9508,6 +9508,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
+ "gpui-pre",
  "hegeltest",
  "schemars",
  "serde",
@@ -9520,6 +9521,7 @@ dependencies = [
  "tau-ui-kit",
  "tau-ui-plugin",
  "thiserror 2.0.21",
+ "tokio-util",
 ]
 
 [[package]]

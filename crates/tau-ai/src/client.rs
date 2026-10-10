@@ -27,7 +27,7 @@ use crate::{
     ws::{
         io::{
             connection::Connector,
-            driver::{LaneHandle, Response, Stopped, Transport},
+            driver::{CacheLapse, LaneHandle, Response, Stopped, Transport},
         },
         proto::{
             continuation::{Body, Fields},
@@ -97,6 +97,16 @@ impl OpenAi {
     /// The pool's counters, including every session's requests.
     pub async fn stats(&self) -> Result<PoolStats, Stopped> {
         self.transport.stats().await
+    }
+
+    /// When the prompt cache of the conversation whose lineage path is
+    /// `path` lapses, while none of its sessions is open: `None` when no
+    /// connection holds it (see [`Transport::cache_lapse`]).
+    pub async fn cache_lapse(
+        &self,
+        path: &str,
+    ) -> Result<Option<CacheLapse>, Stopped> {
+        self.transport.cache_lapse(path).await
     }
 
     /// Why the latest request or connection was refused, if no response

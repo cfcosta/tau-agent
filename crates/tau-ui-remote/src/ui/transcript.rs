@@ -220,6 +220,7 @@ fn item_view(
             plugin,
             tokens,
             key,
+            idle,
         } => key
             .as_ref()
             .and_then(|key| {
@@ -238,7 +239,7 @@ fn item_view(
                 .next()
             })
             .unwrap_or_else(|| {
-                rewrite(plugin, *tokens, t, compact).into_any_element()
+                rewrite(plugin, *tokens, *idle, t, compact).into_any_element()
             }),
         Item::Retry {
             attempt,
@@ -1103,21 +1104,26 @@ fn plugin_note(
 }
 
 /// A rewrite no plugin draws: who rewrote the context, and what it
-/// saved when the run saw it.
+/// saved when the run saw it. An idle chat's compaction says so, as
+/// Claude Code does.
 fn rewrite(
     plugin: &str,
     tokens_seen: Option<(u64, u64)>,
+    idle: bool,
     t: &Theme,
     compact: bool,
 ) -> Div {
     let line = || div().flex_1().h(rems(0.0625)).bg(t.blue_border);
+    let did = if idle {
+        "Compacted while idle, before the prompt cache expired"
+    } else {
+        "rewrote the context"
+    };
     let what = match tokens_seen {
-        Some((before, after)) => format!(
-            "rewrote the context: {} to {}",
-            tokens(before),
-            tokens(after)
-        ),
-        None => "rewrote the context".to_owned(),
+        Some((before, after)) => {
+            format!("{did}: {} to {}", tokens(before), tokens(after))
+        }
+        None => did.to_owned(),
     };
     div()
         .flex()

@@ -348,6 +348,10 @@ impl PluginRun for FastCompactionRun {
             // fit the window runs.
             Trigger::Start => self.overfull(view.tokens),
             Trigger::TurnEnd => self.due(view.tokens),
+            // An idle run is summarized in its own conversation while
+            // its cache lasts (tau-compaction): pruning first would
+            // change the transcript that summary reads from cache.
+            Trigger::Idle => false,
         };
         if !due {
             return Ok(None);

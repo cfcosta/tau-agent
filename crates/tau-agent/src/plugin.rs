@@ -20,7 +20,7 @@ use std::sync::{
 use async_trait::async_trait;
 use serde_json::Value;
 use tau_ai::{
-    llm::{Llm, LlmError},
+    llm::{Llm, LlmError, LlmSession},
     message::{AssistantMessage, Message, Timestamp, Usage},
     responses::request::{ReasoningEffort, Settings},
     retry::{Class, RetryPolicy, jitter},
@@ -126,6 +126,22 @@ pub trait Plugin: Send + Sync + 'static {
     ) -> Result<Box<dyn PluginRun>, PluginError> {
         let _ = (plan, ctx);
         Ok(Box::new(()))
+    }
+
+    /// Prepares the plugin's part in an idle compaction of a run
+    /// ([`Trigger::Idle`], [`crate::agent::Resumed::compact_idle`]): no
+    /// input, no turn, and the settings the run's last request went
+    /// with, which nothing changes. The run's transcript is offered for
+    /// a rewrite, and every plugin taking part hears of one. `None`, the
+    /// default, keeps the plugin out: one that rewrites an idle run, or
+    /// keeps what a rewrite drops, takes part.
+    async fn start_idle(
+        &self,
+        plan: &RunPlan,
+        ctx: &PluginCtx,
+    ) -> Result<Option<Box<dyn PluginRun>>, PluginError> {
+        let _ = (plan, ctx);
+        Ok(None)
     }
 }
 
@@ -244,6 +260,33 @@ pub struct ContextView<'a> {
     pub trigger: Trigger,
     /// The turn that just ended, or that overflowed.
     pub turn: u32,
+    /// The run's own conversation, to ask the model in: a request there
+    /// goes on the run's connection with its instructions, tools and
+    /// effort, so the part of its input the transcript starts with reads
+    /// the prompt cache. A summary of the transcript asked this way
+    /// costs a fraction of one asked in a session of its own.
+    pub conversation: &'a dyn Conversation,
+}
+
+/// The run's own conversation, offered with [`ContextView`].
+#[async_trait]
+pub trait Conversation: Send + Sync {
+    /// Asks the model once for the response to `input`, as a turn of the
+    /// run would, without storing anything: the run's retry policy, its
+    /// cancellation, every attempt's usage charged to the run as
+    /// `ctx`'s plugin's. As [`PluginCtx::ask`], the final response can
+    /// still be a failed one.
+    async fn ask(
+        &self,
+        input: &[Message],
+        ctx: &PluginCtx,
+    ) -> Result<AssistantMessage, AskError>;
+}
+
+impl std::fmt::Debug for dyn Conversation + '_ {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Conversation")
+    }
 }
 
 /// What [`PluginRun::after_tool_result`] is offered.
@@ -273,6 +316,11 @@ pub struct RequestView<'a> {
 
 /// Why the context is offered for a rewrite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(rename_all = "snake_case")
+)]
 pub enum Trigger {
     /// A turn ended, and the run goes on.
     TurnEnd,
@@ -282,6 +330,11 @@ pub enum Trigger {
     Start,
     /// The last request failed because the context was too long.
     Overflow,
+    /// The run is idle, and the prompt cache that holds its transcript
+    /// is about to lapse ([`crate::agent::Resumed::compact_idle`]): a
+    /// rewrite now reads the transcript from cache, and the next request
+    /// starts from the rewrite instead of resending it all uncached.
+    Idle,
 }
 
 impl Trigger {
@@ -291,6 +344,7 @@ impl Trigger {
             Self::TurnEnd => "turn_end",
             Self::Start => "start",
             Self::Overflow => "overflow",
+            Self::Idle => "idle",
         }
     }
 }
@@ -750,55 +804,87 @@ impl PluginCtx {
                 .as_mut()
                 .expect("session opened")
                 .respond(input, self.now());
-            let (message, class) = match Reading::new(stream)
-                .read_all(&self.cancel)
-                .await
-            {
-                Streamed::Finished(message, class) => {
-                    self.charge(&message.usage);
-                    if let Some(permit) = &mut permit {
-                        permit.report(&message.usage, AskAttemptEnd::Finished);
-                    }
-                    (message, class)
-                }
-                streamed => {
-                    let (accumulator, end, error) = match streamed {
-                        Streamed::Cancelled(accumulator) => (
-                            accumulator,
-                            AskAttemptEnd::Cancelled,
-                            AskError::Cancelled,
-                        ),
-                        Streamed::BrokeGrammar(accumulator) => (
-                            accumulator,
-                            AskAttemptEnd::BrokeGrammar,
-                            AskError::BrokeGrammar,
-                        ),
-                        Streamed::NoTerminal(accumulator) => (
-                            accumulator,
-                            AskAttemptEnd::NoTerminal,
-                            AskError::NoTerminal,
-                        ),
-                        Streamed::Finished(_, _) => unreachable!(),
-                    };
-                    let usage =
-                        accumulator.partial().map(|message| &message.usage);
-                    if accumulator.is_finished()
-                        && let Some(usage) = usage
-                    {
-                        self.charge(usage);
-                    }
-                    if let Some(permit) = &mut permit {
-                        permit.report(usage.unwrap_or(&Usage::default()), end);
-                    }
-                    return Err(error);
-                }
-            };
+            let (message, class) = self.read(stream, permit.as_mut()).await?;
             if class != Class::Retryable || !self.retry.allows(attempts) {
                 return Ok(message);
             }
             let delay = self.retry.delay(attempts, jitter());
             attempts += 1;
             drop(permit);
+            if !respond::wait(&self.cancel, delay).await {
+                return Err(AskError::Cancelled);
+            }
+        }
+    }
+
+    /// Reads one attempt's response to its end, charging its usage to
+    /// the run and reporting it to `permit`. An error when it did not
+    /// finish.
+    async fn read(
+        &self,
+        stream: tau_ai::llm::EventStream,
+        permit: Option<&mut Box<dyn AskPermit>>,
+    ) -> Result<(AssistantMessage, Class), AskError> {
+        match Reading::new(stream).read_all(&self.cancel).await {
+            Streamed::Finished(message, class) => {
+                self.charge(&message.usage);
+                if let Some(permit) = permit {
+                    permit.report(&message.usage, AskAttemptEnd::Finished);
+                }
+                Ok((message, class))
+            }
+            streamed => {
+                let (accumulator, end, error) = match streamed {
+                    Streamed::Cancelled(accumulator) => (
+                        accumulator,
+                        AskAttemptEnd::Cancelled,
+                        AskError::Cancelled,
+                    ),
+                    Streamed::BrokeGrammar(accumulator) => (
+                        accumulator,
+                        AskAttemptEnd::BrokeGrammar,
+                        AskError::BrokeGrammar,
+                    ),
+                    Streamed::NoTerminal(accumulator) => (
+                        accumulator,
+                        AskAttemptEnd::NoTerminal,
+                        AskError::NoTerminal,
+                    ),
+                    Streamed::Finished(_, _) => unreachable!(),
+                };
+                let usage = accumulator.partial().map(|message| &message.usage);
+                if accumulator.is_finished()
+                    && let Some(usage) = usage
+                {
+                    self.charge(usage);
+                }
+                if let Some(permit) = permit {
+                    permit.report(usage.unwrap_or(&Usage::default()), end);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Asks the model once in the run's own conversation (see
+    /// [`ContextView::conversation`]): on `session`, the run's, with the
+    /// run's retry policy, observing the run's cancellation. Every
+    /// attempt's usage is charged to the run. As [`Self::ask`], the
+    /// final response can still be a failed one.
+    pub(crate) async fn ask_on(
+        &self,
+        session: &mut dyn LlmSession,
+        input: &[Message],
+    ) -> Result<AssistantMessage, AskError> {
+        let mut attempts = 1;
+        loop {
+            let stream = session.respond(input, self.now());
+            let (message, class) = self.read(stream, None).await?;
+            if class != Class::Retryable || !self.retry.allows(attempts) {
+                return Ok(message);
+            }
+            let delay = self.retry.delay(attempts, jitter());
+            attempts += 1;
             if !respond::wait(&self.cancel, delay).await {
                 return Err(AskError::Cancelled);
             }

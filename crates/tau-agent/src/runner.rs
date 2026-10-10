@@ -52,6 +52,7 @@ use tau_ai::{
         UserMessage,
     },
     model,
+    responses::request::Settings,
     retry::{Class, RetryPolicy},
 };
 use tau_store::{Entry, RewriteStats, Status, Store, StoreError, TurnUsage};
@@ -62,6 +63,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    agent::Compacted,
     context::{
         estimate_context_tokens,
         estimate_message_tokens,
@@ -71,8 +73,10 @@ use crate::{
     event::{RunEvent, StopReason},
     limits::Limits,
     plugin::{
+        AskError,
         Charged,
         ContextView,
+        Conversation,
         Decision,
         FinishedRun,
         PluginCtx,
@@ -191,6 +195,8 @@ pub struct RunResult {
     pub text: String,
     /// The `seq` of the run's last stored entry.
     pub last_seq: i64,
+    /// The settings the run's last request went with.
+    pub request: Settings,
 }
 
 impl Runner {
@@ -268,7 +274,7 @@ impl Runner {
                     .rewrite_context(&mut transcript, Trigger::Overflow, turn)
                     .await?
                 {
-                    Ok(()) => message = self.respond(&transcript, turn).await.0,
+                    Ok(_) => message = self.respond(&transcript, turn).await.0,
                     Err(failures) => {
                         if !failures.is_empty() {
                             let original = message
@@ -419,7 +425,28 @@ impl Runner {
             usage,
             text,
             last_seq: self.last_seq.load(Ordering::SeqCst),
+            request: self.session.settings().clone(),
         })
+    }
+
+    /// Offers the transcript for a rewrite while the run is idle, and
+    /// stops: no start, no turn, no end
+    /// ([`crate::agent::Resumed::compact_idle`]).
+    pub(crate) async fn compact_idle(
+        mut self,
+    ) -> Result<Option<Compacted>, StoreError> {
+        let mut transcript = std::mem::take(&mut self.history);
+        if transcript.is_empty() {
+            return Ok(None);
+        }
+        let rewritten = self
+            .rewrite_context(&mut transcript, Trigger::Idle, self.turns_before)
+            .await?;
+        // What plugins charged for a rewrite that did not come still
+        // counts, and is said.
+        self.save_charged().await?;
+        self.flush().await;
+        Ok(rewritten.ok())
     }
 
     /// The run's own usage plus its children's and what its plugins
@@ -485,6 +512,15 @@ impl Runner {
         if starts {
             self.deliver(event.clone()).await;
         }
+        self.flush().await;
+        if !starts {
+            self.deliver(event).await;
+        }
+    }
+
+    /// Emits what plugins charged, then what they reported, since the
+    /// last event.
+    async fn flush(&mut self) {
         let charges = std::mem::take(
             &mut self.charged.lock().expect("not poisoned").unreported,
         );
@@ -505,9 +541,6 @@ impl Runner {
                 body,
             })
             .await;
-        }
-        if !starts {
-            self.deliver(event).await;
         }
     }
 

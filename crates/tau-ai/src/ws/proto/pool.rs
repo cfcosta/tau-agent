@@ -110,6 +110,13 @@ impl Affinity {
     }
 }
 
+/// How long OpenAI keeps an idle connection's prompt cache: as long as
+/// the connection, which OpenAI closes at 60 minutes. Measured with
+/// `cache_probe --idle`: a connection left idle 54 minutes still read
+/// 85% of its prefix (`docs/reference/openai-websocket.md`, "Prompt
+/// cache"). So rotation is what ends a cache.
+pub const CACHE_LIFETIME: Duration = Duration::from_secs(60 * 60);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     /// Age at which a connection starts draining.
@@ -124,6 +131,21 @@ pub struct Limits {
     pub affinity_wait: Duration,
     /// How many free connections stay open.
     pub max_idle: usize,
+    /// How long a connection keeps a prompt cache it is not asked for
+    /// (`docs/reference/openai-websocket.md`, "Prompt cache"): from its
+    /// last request, at most this long, and never past rotation.
+    pub cache_lifetime: Duration,
+}
+
+/// When the prompt cache of a conversation's connection lapses, as the
+/// pool knows it: see [`Pool::cache_lapse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheLapse {
+    /// When the connection last took a request.
+    pub last_used: Duration,
+    /// When its cache lapses: [`Limits::cache_lifetime`] after that, or
+    /// as it starts draining, whichever comes first.
+    pub at: Duration,
 }
 
 impl Default for Limits {
@@ -137,6 +159,7 @@ impl Default for Limits {
             stall_timeout: Duration::from_secs(5 * 60),
             affinity_wait: Duration::from_secs(5),
             max_idle: 8,
+            cache_lifetime: CACHE_LIFETIME,
         }
     }
 }
@@ -536,6 +559,30 @@ impl Pool {
             handoffs: self.handoffs,
             waits: self.waits,
         }
+    }
+
+    /// When the cache of `path`'s conversation lapses, while no lane of
+    /// it holds a connection: the free connection that serves it and
+    /// takes lanes, the one used last if more than one does. `None` when
+    /// there is none, or a lane holds it.
+    pub fn cache_lapse(&self, path: &str) -> Option<CacheLapse> {
+        let serves = |c: &Connection| c.path.as_deref() == Some(path);
+        if self
+            .connections
+            .values()
+            .any(|c| serves(c) && c.lane.is_some())
+        {
+            return None;
+        }
+        self.connections
+            .values()
+            .filter(|c| serves(c) && !c.draining)
+            .max_by_key(|c| c.last_used)
+            .map(|c| CacheLapse {
+                last_used: c.last_used,
+                at: (c.last_used + self.limits.cache_lifetime)
+                    .min(c.opened_at + self.limits.rotate_after),
+            })
     }
 
     /// Every open connection, by id.

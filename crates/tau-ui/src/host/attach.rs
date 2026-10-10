@@ -1147,6 +1147,13 @@ impl Host {
                     }
                     _ => None,
                 };
+                // A chat idle from now on is compacted before its prompt
+                // cache lapses, if it is worth it and nothing comes first.
+                if let RunEvent::RunEnd { run, .. } = &event
+                    && !host.is_sub_agent(run)
+                {
+                    host.watch_idle(run);
+                }
                 // A chat's turn ended as it meant to: a plugin may let it
                 // land by itself and go on (ADR 0034).
                 let chat_ended = match &event {

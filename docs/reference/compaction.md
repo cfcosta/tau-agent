@@ -35,6 +35,54 @@ compacts by is the loop's, in `tau_agent::context`.
   good. On overflow it always tries; when that fails, the run fails
   with the overflow error and the compaction error.
 
+## Idle compaction
+
+As Claude Code does ("Compacted while idle, before the prompt cache
+expired"), tau compacts a long chat left idle shortly before the prompt
+cache that holds it lapses. Compacting then reads the chat from cache,
+and the person's next message starts from the summary instead of
+resending the whole chat uncached. Claude Code's rules, and tau's:
+
+|                     | Claude Code                                                                                                                                  | tau                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| What lapses         | the 1-hour prompt cache (`ttl: "1h"` requests only)                                                                                          | the connection's cache: [openai-websocket.md](openai-websocket.md), "Prompt cache" |
+| When it fires       | 0.9 of the way from the last request to the lapse                                                                                            | the same                                                                           |
+| Too late            | more than 60 s after it was due, or the cache not warm                                                                                       | the same, or the lapse passed                                                      |
+| Worth it            | 200,000 tokens of context or more (at least 100,000 if set)                                                                                  | half the model's window or more (136,000 of 272,000)                               |
+| Not when            | a turn is in flight, a newer request was made, near a usage limit, the person typed in the last minute, or another process holds the session | the chat is working, a later turn ended, or it landed or was dropped               |
+| A message meanwhile | the compaction is dropped if a newer turn began                                                                                              | stops the compaction; the chat goes on as it was                                   |
+| Switch              | `idleCompaction` setting                                                                                                                     | "Compact idle chats" in tau-compaction's settings                                  |
+| Shown               | "Compacted while idle, before the prompt cache expired"                                                                                      | the same, on the rewrite's line with its tokens before and after                   |
+
+- **The summary is asked in the chat's own conversation.** A summary
+  request of its own (its own instructions, the history as text) reads
+  nothing from cache. So an idle compaction opens a session with the
+  settings of the chat's last request (`Outcome::request`): its
+  instructions, tools, effort and `prompt_cache_key`, on the connection
+  that served it. Its input is the messages the cut summarizes, as
+  they were sent, then a user message: a preamble, that the
+  conversation is about to be compacted, to answer with the summary
+  alone and call no tool, followed by the usual prompt, or the
+  "update" one when the chat opens with an earlier summary, which is
+  then the one in `<summary>` tags at its start. That input begins
+  with what the cache holds. A split turn needs no prefix request: its
+  start is in the input.
+- **The cut and the record are compaction's usual ones** ("Cut point",
+  "After compaction"); the rewrite's trigger is stored as `idle`.
+- **Which plugins take part.** Only those whose `start_idle` runs:
+  tau-compaction, when idle compaction is on, and tau-memory, which
+  keeps what the summary drops. No plugin's `start` runs, so nothing
+  changes the settings: tau-reasoning picks no effort, and nothing is
+  searched or recorded. Pruning (tau-fast-compaction) and the tree
+  (tau-tree-compaction) decline it: a rewrite before the summary would
+  change what it reads from cache.
+- **Where it runs.** tau-ui's host notes each chat turn's context
+  (`TurnEnd` usage) and its last request's settings, and watches the
+  chat from its `RunEnd` (`host/idle.rs`). The pool says when the
+  chat's cache lapses (`OpenAi::cache_lapse`). The chat's events,
+  `ContextRewritten` with `trigger: Idle` among them, reach the
+  interface as a run's do.
+
 ## Token estimate
 
 1. Start from the context size the last successful assistant message

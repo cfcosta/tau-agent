@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::{
     event::{LimitKind, RunEvent, StopReason},
+    plugin::Trigger,
     tool::{RunId, ToolOutput},
 };
 use tau_ai::message::{
@@ -181,11 +182,14 @@ pub enum Item {
     /// landing left in conflict (ADR 0014).
     Tau(String),
     /// A plugin rewrote the context: the tokens before and after, when
-    /// the run saw it, and what the plugin named it, to draw it.
+    /// the run saw it, and what the plugin named it, to draw it. `idle`:
+    /// it compacted the chat while it was idle, before its prompt cache
+    /// lapsed.
     Rewrite {
         plugin: String,
         tokens: Option<(u64, u64)>,
         key: Option<String>,
+        idle: bool,
     },
     Retry {
         attempt: u32,
@@ -659,12 +663,14 @@ pub enum Stored {
         plugin: String,
         body: Value,
     },
-    /// A context rewrite, in place: the details the plugin gave it, and
-    /// the context's tokens before and after, when stored.
+    /// A context rewrite, in place: the details the plugin gave it, the
+    /// context's tokens before and after, when stored, and whether it
+    /// compacted an idle chat.
     Rewrite {
         plugin: String,
         body: Value,
         tokens: Option<(u64, u64)>,
+        idle: bool,
     },
 }
 
@@ -752,11 +758,13 @@ impl RunView {
                     plugin,
                     body,
                     tokens,
+                    idle,
                 } => {
                     view.items.push(Item::Rewrite {
                         plugin: plugin.clone(),
                         tokens: *tokens,
                         key: None,
+                        idle: *idle,
                     });
                     rewrites.push((plugin, body));
                 }
@@ -1435,6 +1443,7 @@ impl RunView {
                 plugin,
                 tokens_before,
                 tokens_after,
+                trigger,
                 ..
             } => {
                 self.context.before = Some(*tokens_before);
@@ -1443,6 +1452,7 @@ impl RunView {
                     plugin: plugin.to_string(),
                     tokens: Some((*tokens_before, *tokens_after)),
                     key: self.pending_rewrites.remove(&**plugin),
+                    idle: *trigger == Trigger::Idle,
                 });
             }
             RunEvent::Retry {
@@ -2059,6 +2069,7 @@ mod tests {
             plugin: tau_fast_compaction::NAME.into(),
             tokens_before: 2000,
             tokens_after: 1100,
+            trigger: Trigger::TurnEnd,
         });
         let state = pruning(&view);
         assert_eq!(state.ledger.len(), 2);
@@ -2850,6 +2861,7 @@ mod tests {
                     plugin: tau_fast_compaction::NAME.into(),
                     body: ledger,
                     tokens: None,
+                    idle: false,
                 },
                 Stored::Message(call("t2")),
                 Stored::Message(result("t2")),
@@ -2861,6 +2873,7 @@ mod tests {
             plugin,
             tokens: None,
             key: Some(key),
+            ..
         }) = view.items.first()
         else {
             panic!("the rewrite first, named: {:?}", view.items.first())
@@ -2986,6 +2999,7 @@ mod tests {
             plugin: tau_compaction::NAME.into(),
             tokens: Some((5_000, 100)),
             key: None,
+            idle: false,
         });
         view.items.push(Item::Text("z".repeat(800)));
         view.context.used = 100;
