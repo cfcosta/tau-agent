@@ -54,7 +54,8 @@ Three things stand in the way:
   kept, not something they work on, so the sidebar, search, History's
   chips, settings scopes and new runs leave it out, even while one of
   its chats is open. Its chats are listed on the Plugins page, and
-  `/plugin` is the way in.
+  `/plugin` is the way in. (0036 lists its chats in the sidebar too,
+  under Plugins, with the person's plugins' page.)
 - One plugin is one folder:
 
   ```text

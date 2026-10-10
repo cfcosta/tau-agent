@@ -509,6 +509,9 @@ pub struct Workspace {
     pub(crate) all_runs: HashSet<String>,
     /// Runs whose forks and sub-agents the sidebar folds away.
     pub(crate) folded: HashSet<RunId>,
+    /// Whether the sidebar's Plugins shows what is under it: the built-in
+    /// plugins, the person's own, and the chats writing them.
+    pub(crate) plugins_open: bool,
     /// The repository row under the pointer, which shows its actions.
     pub(crate) hovered_repo: Option<String>,
     /// The repository whose menu is open.
@@ -775,6 +778,7 @@ impl Workspace {
             open_repos: HashSet::new(),
             all_runs: HashSet::new(),
             folded: HashSet::new(),
+            plugins_open: true,
             hovered_repo: None,
             repo_menu: None,
             sidebar_filter,
@@ -1445,6 +1449,38 @@ impl Workspace {
             input.set_placeholder("Describe the task for a new run");
         });
         self.composer.read(cx).focus_handle(cx).focus(window, cx);
+    }
+
+    /// Starts writing a plugin: the new-run screen, its composer holding
+    /// the command of the plugin that keeps the person's own.
+    pub fn write_plugin(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let command = self.catalog.yours().and_then(|yours| {
+            let plugin = crate::plugins::registry().get(&yours.name)?;
+            self.plugin_commands(plugin.as_ref())
+                .into_iter()
+                .find(|command| !command.args.is_empty())
+        });
+        self.start_new_run(window, cx);
+        if let Some(command) = command {
+            self.composer.update(cx, |input, cx| {
+                input.set_text(format!("/{} ", command.name), cx)
+            });
+            self.composer_changed(cx);
+        }
+    }
+
+    /// The page of the person's own plugins, or of `entry`, one of them.
+    pub fn yours_route(&self, entry: Option<&str>) -> Option<Route> {
+        let mut route = self.plugin_route(self.catalog.yours()?)?;
+        if let (Route::Plugin { params, .. }, Some(entry)) = (&mut route, entry)
+        {
+            params.insert(tau_ui_plugin::ENTRY.to_owned(), entry.to_owned());
+        }
+        Some(route)
     }
 
     /// Opens or closes the detail of the note at `index` of `run`.

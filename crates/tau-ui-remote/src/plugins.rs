@@ -24,6 +24,7 @@ use tau_ui_plugin::{
 };
 
 use crate::{
+    route::Route,
     view::RunView,
     workspace::{Workspace, WorkspaceEvent},
 };
@@ -167,7 +168,7 @@ impl Workspace {
             Request::Navigate(link) => {
                 let link = link.from(plugin);
                 self.navigate(
-                    crate::route::Route::Plugin {
+                    Route::Plugin {
                         plugin: link.plugin.unwrap_or_default(),
                         page: link.page,
                         params: link.params,
@@ -233,8 +234,16 @@ impl Workspace {
                 });
             }
             Request::Composer(text) => {
+                // From a page with no composer, to a new run's.
+                if !matches!(
+                    self.route,
+                    Route::Run(_) | Route::Home | Route::NewRun
+                ) {
+                    self.navigate(Route::NewRun, cx);
+                }
                 self.composer
                     .update(cx, |input, cx| input.set_text(text, cx));
+                self.composer_changed(cx);
             }
             Request::RunDetails => {
                 if self.compact() && !self.sheet_is_open() {
@@ -243,9 +252,7 @@ impl Workspace {
             }
             Request::Submit => self.submit_from_button(cx),
             Request::Refresh => {}
-            Request::OpenRun(run) => {
-                self.navigate(crate::route::Route::Run(run), cx)
-            }
+            Request::OpenRun(run) => self.navigate(Route::Run(run), cx),
             Request::AskJevKey => self.ask_for_jev_key_later(cx),
             Request::Focus(handle) => {
                 self.plugin_focus = Some(handle);
@@ -544,7 +551,7 @@ impl Workspace {
     /// new runs start in.
     pub(crate) fn command_repo(&self) -> Option<String> {
         self.current()
-            .filter(|_| self.route != crate::route::Route::NewRun)
+            .filter(|_| self.route != Route::NewRun)
             .map(|run| run.repo.clone())
             .filter(|repo| !repo.is_empty())
             .or_else(|| self.selected_repo().map(str::to_owned))
@@ -588,7 +595,7 @@ impl Workspace {
         };
         let run = self
             .current()
-            .filter(|_| self.route != crate::route::Route::NewRun)
+            .filter(|_| self.route != Route::NewRun)
             .cloned();
         let repo = self.command_repo();
         let params = BTreeMap::new();
@@ -617,9 +624,7 @@ impl Workspace {
         cx: &mut App,
     ) -> Option<AnyElement> {
         let erased = registry().get(plugin)?;
-        let run = self
-            .current()
-            .filter(|_| self.route != crate::route::Route::NewRun);
+        let run = self.current().filter(|_| self.route != Route::NewRun);
         self.with_plugin(
             erased.as_ref(),
             run,

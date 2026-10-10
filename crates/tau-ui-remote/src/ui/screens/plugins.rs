@@ -1,6 +1,8 @@
-//! The agent's plugins (ADR 0029): a list grouped by what each plugin is
-//! for, and a pane for the one selected, with its settings, what it did
-//! and how it works. On a phone the list and the pane are two steps.
+//! The plugins built in (ADR 0029): a list grouped by what each plugin
+//! is for, and a pane for the one selected, with its settings, what it
+//! did and how it works. On a phone the list and the pane are two steps.
+//! The person's own plugins have their own page (ADR 0036), which the
+//! list links to.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
 use tau_ui_plugin::{CatalogEntry, Group, Note, Seam};
@@ -81,11 +83,11 @@ impl Row<'_> {
     }
 }
 
-/// Every row, in the catalog's order: each plugin, then its entries.
+/// Every row, in the catalog's order: each plugin built in, then its
+/// entries. The person's own plugins have a page of their own.
 fn rows(ws: &Workspace) -> Vec<Row<'_>> {
     ws.catalog
-        .plugins
-        .iter()
+        .built_in()
         .flat_map(|plugin| {
             std::iter::once(Row {
                 plugin,
@@ -237,8 +239,21 @@ fn list(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let catalog = &ws.catalog;
-    let spent: f64 = catalog.plugins.iter().map(|plugin| plugin.spend).sum();
+    let spent: f64 = catalog.built_in().map(|plugin| plugin.spend).sum();
     let rows = rows(ws);
+    // The person's own plugins are on a page of their own.
+    let yours = ws.yours_route(None).map(|route| {
+        div()
+            .id("plugins-yours-link")
+            .px(sp(2.))
+            .cursor_pointer()
+            .typeset(Type::CAPTION)
+            .text_color(t.roles.link)
+            .child("Your own plugins ›")
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
+            )
+    });
     let groups = Group::ALL.into_iter().filter_map(|group| {
         let rows: Vec<AnyElement> = rows
             .iter()
@@ -297,10 +312,11 @@ fn list(
                     div()
                         .typeset(Type::HEADING)
                         .text_color(t.text)
-                        .child("Plugins"),
+                        .child("Built in"),
                 )
                 .child(mono(usd(spent), Type::CAPTION, t.roles.cost)),
         )
+        .children(yours)
         .children(groups)
         .children(jev)
         .into_any_element()

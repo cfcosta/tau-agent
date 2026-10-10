@@ -446,7 +446,8 @@ fn plugins_section(
 
 /// Each plugin's state in the run. A row opens the plugin's settings in
 /// place, in the run's repository or everywhere (ADR 0029); a plugin
-/// with nothing to set opens its screen.
+/// with nothing to set opens its screen, and so does the one that keeps
+/// the person's own plugins, each set on its page (ADR 0036).
 fn plugin_states(
     ws: &Workspace,
     run: &RunView,
@@ -462,11 +463,11 @@ fn plugin_states(
         .rounded(radius::BOX)
         .overflow_hidden()
         .children(statuses.iter().map(|plugin| {
-            let settings = ws
-                .catalog
-                .plugins
-                .iter()
-                .any(|info| info.name == plugin.name && info.settings);
+            let settings = ws.catalog.plugins.iter().any(|info| {
+                info.name == plugin.name
+                    && info.settings
+                    && info.group != tau_ui_plugin::Group::Yours
+            });
             let open = settings
                 && ws.inspector_plugin.as_deref() == Some(plugin.name.as_str());
             let route = ws.plugin_route_named(&plugin.name, &run.id);

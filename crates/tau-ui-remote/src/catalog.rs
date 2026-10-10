@@ -90,6 +90,40 @@ impl Catalog {
     pub fn is_listed(&self, name: &str) -> bool {
         self.repo(name).is_some_and(|repo| !repo.own)
     }
+
+    /// tau's own repository, where the person's plugins are written
+    /// (ADR 0027): the sidebar lists its chats under Plugins.
+    pub fn own_repo(&self) -> Option<&Repo> {
+        self.repos.iter().find(|repo| repo.own)
+    }
+
+    /// The plugins tau has built in: every one but the person's own.
+    pub fn built_in(&self) -> impl Iterator<Item = &PluginInfo> {
+        self.plugins
+            .iter()
+            .filter(|plugin| plugin.group != tau_ui_plugin::Group::Yours)
+    }
+
+    /// The plugin that keeps the person's own plugins, each an entry of
+    /// it.
+    pub fn yours(&self) -> Option<&PluginInfo> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.group == tau_ui_plugin::Group::Yours)
+    }
+
+    /// How many of the person's plugins need them: a version to allow,
+    /// tests to fix, one that does not load. A note on the entry says
+    /// which.
+    pub fn yours_need_you(&self) -> usize {
+        self.yours().map_or(0, |yours| {
+            yours
+                .entries
+                .iter()
+                .filter(|entry| entry.note.is_some())
+                .count()
+        })
+    }
 }
 
 /// A repository runs work on: its memory and its plugins' data belong

@@ -261,83 +261,99 @@ impl Workspace {
         self.catalog
             .listed()
             .filter_map(|repo| {
-                let all: Vec<&RunView> = self.root_runs(&repo.name).collect();
-                let live = self
-                    .runs
-                    .iter()
-                    .filter(|run| {
-                        run.status.is_live() && self.repo_of(run) == repo.name
-                    })
-                    .count();
-                let everything = self.all_runs.contains(&repo.name);
-                // With a main chat, the chats under it are what gets long;
-                // its sub-agents at work are listed whatever the limit.
-                let main = repo.main.as_ref().and_then(|id| self.run(id));
-                let chats = main.map_or(0, |main| {
-                    self.listed_children(main)
-                        .filter(|run| run.origin.is_fork())
-                        .count()
-                });
-                let total = all.len() + chats;
-                let named = repo.name.to_lowercase().contains(&filter);
-                if filter.is_empty() || named {
-                    let open = self.is_repo_open(&repo.name);
-                    if main.is_some() {
-                        let shown = if everything {
-                            chats
-                        } else {
-                            chats.min(RUNS_SHOWN)
-                        };
-                        return Some(RepoRows {
-                            repo,
-                            open,
-                            runs: all,
-                            main_children: (shown < chats).then_some(shown),
-                            flat: false,
-                            older: chats - shown,
-                            total,
-                            live,
-                        });
-                    }
-                    let shown = if everything {
-                        total
-                    } else {
-                        total.min(RUNS_SHOWN)
-                    };
-                    return Some(RepoRows {
-                        repo,
-                        open,
-                        runs: all[..shown].to_vec(),
-                        main_children: None,
-                        flat: false,
-                        older: total - shown,
-                        total,
-                        live,
-                    });
-                }
-                // Any conversation in the repository whose title matches,
-                // listed on its own.
-                let runs: Vec<&RunView> = self
-                    .runs
-                    .iter()
-                    .filter(|run| {
-                        self.repo_of(run) == repo.name
-                            && !self.closed.contains(&run.id)
-                            && run.title.to_lowercase().contains(&filter)
-                    })
-                    .collect();
-                (!runs.is_empty()).then_some(RepoRows {
-                    repo,
-                    open: true,
-                    runs,
-                    main_children: None,
-                    flat: true,
-                    older: 0,
-                    total,
-                    live,
-                })
+                self.rows_of(repo, self.is_repo_open(&repo.name), &filter)
             })
             .collect()
+    }
+
+    /// The chats of tau's own repository, which the sidebar lists under
+    /// Plugins: open while Plugins is.
+    pub fn own_rows(&self) -> Option<RepoRows<'_>> {
+        let repo = self.catalog.own_repo()?;
+        self.rows_of(repo, self.plugins_open, "")
+    }
+
+    /// `repo`'s rows, `open` or folded, for a lowercase `filter`.
+    fn rows_of<'a>(
+        &'a self,
+        repo: &'a Repo,
+        open: bool,
+        filter: &str,
+    ) -> Option<RepoRows<'a>> {
+        let all: Vec<&RunView> = self.root_runs(&repo.name).collect();
+        let live = self
+            .runs
+            .iter()
+            .filter(|run| {
+                run.status.is_live() && self.repo_of(run) == repo.name
+            })
+            .count();
+        let everything = self.all_runs.contains(&repo.name);
+        // With a main chat, the chats under it are what gets long;
+        // its sub-agents at work are listed whatever the limit.
+        let main = repo.main.as_ref().and_then(|id| self.run(id));
+        let chats = main.map_or(0, |main| {
+            self.listed_children(main)
+                .filter(|run| run.origin.is_fork())
+                .count()
+        });
+        let total = all.len() + chats;
+        let named = repo.name.to_lowercase().contains(filter);
+        if filter.is_empty() || named {
+            if main.is_some() {
+                let shown = if everything {
+                    chats
+                } else {
+                    chats.min(RUNS_SHOWN)
+                };
+                return Some(RepoRows {
+                    repo,
+                    open,
+                    runs: all,
+                    main_children: (shown < chats).then_some(shown),
+                    flat: false,
+                    older: chats - shown,
+                    total,
+                    live,
+                });
+            }
+            let shown = if everything {
+                total
+            } else {
+                total.min(RUNS_SHOWN)
+            };
+            return Some(RepoRows {
+                repo,
+                open,
+                runs: all[..shown].to_vec(),
+                main_children: None,
+                flat: false,
+                older: total - shown,
+                total,
+                live,
+            });
+        }
+        // Any conversation in the repository whose title matches,
+        // listed on its own.
+        let runs: Vec<&RunView> = self
+            .runs
+            .iter()
+            .filter(|run| {
+                self.repo_of(run) == repo.name
+                    && !self.closed.contains(&run.id)
+                    && run.title.to_lowercase().contains(filter)
+            })
+            .collect();
+        (!runs.is_empty()).then_some(RepoRows {
+            repo,
+            open: true,
+            runs,
+            main_children: None,
+            flat: true,
+            older: 0,
+            total,
+            live,
+        })
     }
 
     /// Opens the repositories the sidebar had open last time, or the
@@ -383,6 +399,12 @@ impl Workspace {
             .map(|repo| repo.name.clone())
             .collect();
         cx.emit(WorkspaceEvent::OpenRepos(open));
+    }
+
+    /// Opens or folds the sidebar's Plugins.
+    pub fn toggle_plugins_open(&mut self, cx: &mut Context<Self>) {
+        self.plugins_open = !self.plugins_open;
+        cx.notify();
     }
 
     /// Opens or closes a repository in the sidebar, and selects it.

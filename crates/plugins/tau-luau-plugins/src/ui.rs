@@ -31,17 +31,26 @@ use tau_ui_kit::{
         dot,
         empty,
         heading,
+        icon,
         mono,
+        pill,
+        tag,
+        text_link,
+        tile,
     },
     prose::rich,
-    theme::{Design as _, Theme, Tone, Type, radius, sp},
+    theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp},
 };
 use tau_ui_plugin::{
+    ENTRY,
     Fold,
+    Handle,
+    Link,
     Manifest,
     Page,
     RunCx,
     RunInfo,
+    SCOPE,
     SlashCommand,
     UiPlugin,
     ViewCx,
@@ -50,17 +59,24 @@ use tau_ui_plugin::{
 
 use crate::{
     Act,
+    Declaration,
+    Entry,
     LuauSettings,
     NAME,
     Overview,
     Record,
     SettingsPage,
     Standing,
+    TestResult,
+    Uses,
     pane::{Bind, SettingsUi},
 };
 
-/// The page that lists the plugins repository's plugins.
+/// The page of the person's own plugins, and, with an entry, of one.
 pub const PAGE: &str = "luau-plugins";
+
+/// The command that writes or changes a plugin.
+const COMMAND: &str = "plugin";
 
 /// How deep a view tree may nest, and how many pieces a list or a row
 /// may hold, before the rest is left out.
@@ -386,11 +402,14 @@ impl UiPlugin for LuauPluginsUi {
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
-            .page(Page::new(PAGE, page).title(|_| "Luau plugins".to_owned()))
+            .page(Page::new(PAGE, page).title(|view| {
+                view.entry()
+                    .map_or_else(|| "Your plugins".to_owned(), str::to_owned)
+            }))
             .settings(crate::pane::render)
             .command(
                 SlashCommand::new(
-                    "plugin",
+                    COMMAND,
                     "Write or change a plugin, in a chat of its own",
                     start_plugin_chat,
                 )
@@ -437,25 +456,73 @@ impl UiPlugin for LuauPluginsUi {
     }
 }
 
-/// The plugins page: each plugin of the plugins repository, where it
-/// stands, its tests, and Allow for a version waiting for the person.
+/// The page of the person's own plugins (ADR 0036): each plugin of the
+/// plugins repository as a card, with where it stands, and the chats
+/// writing them. Opened for one plugin, the page is that plugin's.
 fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
+    match view.entry().map(str::to_owned) {
+        Some(entry) => plugin_page(&entry, view),
+        None => overview(view),
+    }
+}
+
+/// Every plugin of the plugins repository, the way to write one, and the
+/// chats there.
+fn overview(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
     let t = view.theme().clone();
     let overview = view.data.clone();
     let handle = view.handle.clone();
-    let mut column = div().flex().flex_col().gap(sp(4.)).p(sp(6.));
-    column = column.child(div().typeset(Type::SMALL).child(rich(
-        "Type `/plugin` and what it should do in any chat, and tau writes \
-         one. A version is active once it lands and its tests pass.",
-        t.muted,
-        &t,
-    )));
-    // Where tau writes them: the chats of the plugins repository, which
-    // the sidebar does not list.
-    let only = view.entry().map(str::to_owned);
-    if only.is_none() {
-        column = column.child(chats(view, &t));
-    }
+    let write = {
+        let handle = handle.clone();
+        button("Write a plugin", ButtonKind::Primary, &t)
+            .id("write-plugin")
+            .on_click(move |_, _, cx| {
+                handle.composer(format!("/{COMMAND} "), cx)
+            })
+    };
+    let head = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap(sp(3.5))
+        .child(tile(
+            Icon::Plug,
+            t.change,
+            t.change.opacity(0.12),
+            t.change.opacity(0.3),
+        ))
+        .child(
+            div()
+                .flex_1()
+                .min_w(rems(12.))
+                .flex()
+                .flex_col()
+                .gap(sp(0.5))
+                .child(
+                    div()
+                        .typeset(Type::TITLE)
+                        .text_color(t.text)
+                        .child("Your plugins"),
+                )
+                .child(mono(crate::REPO, Type::CAPTION, t.dim)),
+        )
+        .child(write);
+    let mut column = div()
+        .flex()
+        .flex_col()
+        .gap(sp(5.))
+        .p(sp(6.))
+        .max_w(rems(66.))
+        .child(head)
+        .child(div().typeset(Type::SMALL).child(rich(
+            &format!(
+                "Type `/{COMMAND}` and what it should do in any chat, and \
+                 tau writes one here. A version is active once it lands \
+                 and its tests pass."
+            ),
+            t.muted,
+            &t,
+        )));
     if let Some(error) = &overview.error {
         column = column.child(
             div()
@@ -465,121 +532,597 @@ fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
         );
     }
     if overview.plugins.is_empty() {
-        return column
-            .child(empty("No plugins yet.", &t))
-            .into_any_element();
+        column = column.child(empty("No plugins yet.", &t));
+    } else {
+        column = column.child(counts(&overview, &t)).child(
+            div().flex().flex_wrap().gap(sp(4.)).children(
+                overview
+                    .plugins
+                    .iter()
+                    .map(|entry| plugin_card(entry, &handle, &t)),
+            ),
+        );
     }
-    // Opened from one plugin's row, the page is that plugin's.
-    for entry in overview
-        .plugins
-        .iter()
-        .filter(|entry| only.as_ref().is_none_or(|only| &entry.name == only))
-    {
-        let (label, tone_of) = match &entry.standing {
-            Standing::Active => ("active", Tone::Good),
-            Standing::Waiting { .. } => ("waiting for you", Tone::Warn),
-            Standing::Failing => ("tests failing", Tone::Danger),
-            Standing::Broken { .. } => ("does not load", Tone::Danger),
-        };
-        let color = t.tone(tone_of);
+    column.child(chats(view, &t)).into_any_element()
+}
+
+/// How many plugins there are, and how many stand each way.
+fn counts(overview: &Overview, t: &Theme) -> gpui::Div {
+    let count = |of: fn(&Standing) -> bool| {
+        overview
+            .plugins
+            .iter()
+            .filter(|entry| of(&entry.standing))
+            .count()
+    };
+    let all = overview.plugins.len();
+    let tones = [
+        (
+            count(|standing| matches!(standing, Standing::Active)),
+            "active",
+            Tone::Good,
+        ),
+        (
+            count(|standing| matches!(standing, Standing::Waiting { .. })),
+            "waiting for you",
+            Tone::Warn,
+        ),
+        (
+            count(|standing| {
+                matches!(standing, Standing::Failing | Standing::Broken { .. })
+            }),
+            "failing",
+            Tone::Danger,
+        ),
+    ];
+    div()
+        .flex()
+        .flex_wrap()
+        .gap(sp(2.))
+        .child(pill(
+            if all == 1 {
+                "1 plugin".to_owned()
+            } else {
+                format!("{all} plugins")
+            },
+            t.text_soft,
+            t.raised,
+        ))
+        .children(tones.into_iter().filter(|(n, ..)| *n > 0).map(
+            |(n, label, tone)| {
+                let color = t.tone(tone);
+                pill(format!("{n} {label}"), color, color.opacity(0.12))
+            },
+        ))
+}
+
+/// Where `standing` leaves a plugin, in words and a tone.
+fn standing_label(standing: &Standing) -> (&'static str, Tone) {
+    match standing {
+        Standing::Active => ("active", Tone::Good),
+        Standing::Waiting { .. } => ("waiting for you", Tone::Warn),
+        Standing::Failing => ("tests failing", Tone::Danger),
+        Standing::Broken { .. } => ("does not load", Tone::Danger),
+    }
+}
+
+/// How many of `entry`'s tests pass, when it has any.
+fn tests_line(entry: &Entry) -> Option<String> {
+    (!entry.tests.is_empty()).then(|| {
         let passed = entry.tests.iter().filter(|test| test.passed).count();
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .gap(sp(2.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .child(mono(entry.name.clone(), Type::SMALL, t.text))
-                    .child(badge(label, color, color.opacity(0.4)))
-                    .when(!entry.tests.is_empty(), |row| {
-                        row.child(mono(
-                            format!(
-                                "{passed} of {} tests pass",
-                                entry.tests.len()
-                            ),
-                            Type::CAPTION,
-                            t.dim,
-                        ))
-                    }),
-            )
-            .when(!entry.description.is_empty(), |body| {
-                body.child(
-                    div()
-                        .typeset(Type::SMALL)
-                        .text_color(t.text_soft)
-                        .child(entry.description.clone()),
-                )
-            });
-        if entry.keeps_earlier {
-            body = body.child(
-                div().typeset(Type::CAPTION).text_color(t.dim).child(
-                    "Runs keep the version before until this one is fixed \
-                     or allowed.",
-                ),
-            );
+        format!("{passed} of {} tests pass", entry.tests.len())
+    })
+}
+
+/// Where a plugin's declaration says it steps into a run.
+fn steps_in(declaration: &Declaration) -> Vec<String> {
+    let hooks = &declaration.hooks;
+    let mut seams: Vec<String> = declaration
+        .tools
+        .iter()
+        .map(|tool| format!("the {} tool", tool.name))
+        .collect();
+    for (on, label) in [
+        (hooks.before_tool, "before each call"),
+        (hooks.before_stop, "before a run stops"),
+        (hooks.turn_end, "as a turn ends"),
+        (hooks.run_end, "as a run ends"),
+        (hooks.view, "in the run's view"),
+    ] {
+        if on {
+            seams.push(label.to_owned());
         }
-        match &entry.standing {
-            Standing::Waiting { grown } => {
-                let plugin = entry.name.clone();
-                let handle = handle.clone();
-                body = body.child(
+    }
+    seams
+}
+
+/// What a plugin may reach beyond its own hooks.
+fn reaches(uses: &Uses) -> Vec<String> {
+    let mut reach: Vec<String> = uses
+        .tools
+        .iter()
+        .map(|tool| format!("the {tool} tool"))
+        .collect();
+    if uses.jev {
+        reach.push("Jev".to_owned());
+    }
+    if uses.infer {
+        reach.push("infer".to_owned());
+    }
+    reach
+}
+
+/// The link to `entry`'s own page.
+fn entry_link(entry: &str) -> Link {
+    Link::page(PAGE).param(ENTRY, entry)
+}
+
+/// The Allow that lets a waiting version of `plugin` reach what it asks.
+fn allow(
+    plugin: &str,
+    handle: &Handle,
+    t: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let (plugin, handle) = (plugin.to_owned(), handle.clone());
+    button("Allow", ButtonKind::Primary, t)
+        .id(gpui::SharedString::from(format!("allow-{plugin}")))
+        .on_click(move |_, _, cx| {
+            handle.act(
+                Act::Allow {
+                    plugin: plugin.clone(),
+                },
+                cx,
+            )
+        })
+}
+
+/// One plugin on the page of all of them: its name, which opens its own
+/// page, where it stands, where it steps in, and what it needs.
+fn plugin_card(entry: &Entry, handle: &Handle, t: &Theme) -> AnyElement {
+    let (label, tone) = standing_label(&entry.standing);
+    let color = t.tone(tone);
+    let open = {
+        let (link, handle) = (entry_link(&entry.name), handle.clone());
+        move |_: &gpui::ClickEvent, _: &mut gpui::Window, cx: &mut gpui::App| {
+            handle.navigate(link.clone(), cx)
+        }
+    };
+    let mut body = div()
+        .flex()
+        .flex_col()
+        .gap(sp(3.))
+        .child(
+            div()
+                .id(gpui::SharedString::from(format!("open-{}", entry.name)))
+                .flex()
+                .flex_col()
+                .gap(sp(1.))
+                .cursor_pointer()
+                .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(sp(3.))
-                        .child(div().flex_1().typeset(Type::SMALL).child(rich(
-                            &format!("It wants to use {}.", grown.join(", ")),
-                            t.text_soft,
-                            &t,
-                        )))
+                        .gap(sp(2.))
                         .child(
-                            button("Allow", ButtonKind::Primary, &t)
-                                .id(gpui::SharedString::from(format!(
-                                    "allow-{plugin}"
-                                )))
-                                .on_click(move |_, _, cx| {
-                                    handle.act(
-                                        Act::Allow {
-                                            plugin: plugin.clone(),
-                                        },
-                                        cx,
-                                    )
-                                }),
-                        ),
-                );
-            }
-            Standing::Broken { error } => {
-                body = body.child(code_block(None, error, &t));
-            }
-            _ => {}
+                            mono(entry.name.clone(), Type::SMALL, t.text)
+                                .min_w(rems(0.))
+                                .truncate(),
+                        )
+                        .child(badge(label, color, color.opacity(0.4)))
+                        .child(div().flex_1())
+                        .child(icon(Icon::Chevron, IconSize::TINY, t.dim)),
+                )
+                .children(
+                    tests_line(entry)
+                        .map(|line| mono(line, Type::CAPTION, t.dim)),
+                )
+                .on_click(open),
+        )
+        .when(!entry.description.is_empty(), |body| {
+            body.child(
+                div()
+                    .typeset(Type::SMALL)
+                    .text_color(t.text_soft)
+                    .child(entry.description.clone()),
+            )
+        });
+    if let Some(declaration) = &entry.declaration {
+        let seams = steps_in(declaration);
+        if !seams.is_empty() {
+            body = body.child(
+                div().flex().flex_wrap().gap(sp(1.5)).children(
+                    seams
+                        .into_iter()
+                        .map(|seam| tag(seam, Type::CAPTION, t.text_soft, t)),
+                ),
+            );
         }
-        let failing: Vec<_> =
-            entry.tests.iter().filter(|test| !test.passed).collect();
-        if !failing.is_empty() {
-            body = body.child(heading("Failing tests", &t));
-            for test in failing {
-                body = body.child(
+    }
+    match &entry.standing {
+        Standing::Waiting { grown } => {
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(3.))
+                    .p(sp(3.))
+                    .rounded(radius::BOX)
+                    .bg(color.opacity(0.08))
+                    .child(div().flex_1().typeset(Type::SMALL).child(rich(
+                        &format!("It wants to use {}.", grown.join(", ")),
+                        t.text,
+                        t,
+                    )))
+                    .child(allow(&entry.name, handle, t)),
+            );
+        }
+        Standing::Broken { error } => {
+            body = body.child(code_block(None, error, t));
+        }
+        _ => {}
+    }
+    let failing: Vec<_> =
+        entry.tests.iter().filter(|test| !test.passed).collect();
+    if !failing.is_empty() {
+        body = body.child(failing_tests(&failing, t));
+    }
+    if entry.keeps_earlier {
+        body =
+            body.child(div().typeset(Type::CAPTION).text_color(t.dim).child(
+                "Runs keep the version before until this one is fixed or \
+                 allowed.",
+            ));
+    }
+    card(t)
+        .p(sp(4.))
+        .flex_1()
+        .min_w(rems(20.))
+        .when(matches!(entry.standing, Standing::Waiting { .. }), |card| {
+            card.border_color(color.opacity(0.4))
+        })
+        .child(body)
+        .into_any_element()
+}
+
+/// Tests that fail, each with why.
+fn failing_tests(failing: &[&TestResult], t: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(1.5))
+        .child(heading("Failing tests", t))
+        .children(failing.iter().map(|test| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(1.))
+                .child(mono(
+                    format!("{} · {}", test.file, test.name),
+                    Type::CAPTION,
+                    t.text_soft,
+                ))
+                .when_some(test.error.clone(), |column, error| {
+                    column.child(mono(error, Type::CAPTION, t.red))
+                })
+        }))
+}
+
+/// One plugin's own page: where it stands, Allow when it waits, where it
+/// steps in and what it reaches, its tests, and its settings, everywhere
+/// or a repository's own.
+fn plugin_page(
+    entry: &str,
+    view: &mut ViewCx<'_, LuauPluginsUi>,
+) -> AnyElement {
+    let t = view.theme().clone();
+    let handle = view.handle.clone();
+    let back = {
+        let handle = handle.clone();
+        text_link("‹ Your plugins", Type::CAPTION, &t)
+            .id("back-to-plugins")
+            .on_click(move |_, _, cx| handle.navigate(Link::page(PAGE), cx))
+    };
+    let Some(found) = view
+        .data
+        .plugins
+        .iter()
+        .find(|plugin| plugin.name == entry)
+        .cloned()
+    else {
+        return div()
+            .flex()
+            .flex_col()
+            .gap(sp(4.))
+            .p(sp(6.))
+            .child(back)
+            .child(empty(format!("No plugin {entry} here."), &t))
+            .into_any_element();
+    };
+    let (label, tone) = standing_label(&found.standing);
+    let color = t.tone(tone);
+    let head = div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(sp(2.5))
+                .child(mono(found.name.clone(), Type::TITLE, t.text))
+                .child(badge(label, color, color.opacity(0.4)))
+                .children(
+                    tests_line(&found)
+                        .map(|line| mono(line, Type::CAPTION, t.dim)),
+                ),
+        )
+        .when(!found.description.is_empty(), |head| {
+            head.child(
+                div()
+                    .text_color(t.muted)
+                    .leading(1.5)
+                    .child(found.description.clone()),
+            )
+        });
+    let mut column = div()
+        .flex()
+        .flex_col()
+        .gap(sp(5.))
+        .p(sp(6.))
+        .max_w(rems(66.))
+        .child(back)
+        .child(head);
+    match &found.standing {
+        Standing::Waiting { grown } => {
+            column = column.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(sp(3.5))
+                    .p(sp(3.5))
+                    .rounded(radius::BOX)
+                    .bg(color.opacity(0.08))
+                    .border_1()
+                    .border_color(color.opacity(0.35))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(rems(14.))
+                            .flex()
+                            .flex_col()
+                            .gap(sp(1.))
+                            .child(div().typeset(Type::SMALL).child(rich(
+                                &format!(
+                                    "Its new version wants to use {}.",
+                                    grown.join(", ")
+                                ),
+                                t.text,
+                                &t,
+                            )))
+                            .when(found.keeps_earlier, |text| {
+                                text.child(
+                                    div()
+                                        .typeset(Type::CAPTION)
+                                        .text_color(t.muted)
+                                        .child(
+                                            "Runs keep the version before \
+                                             until you allow it.",
+                                        ),
+                                )
+                            }),
+                    )
+                    .child(allow(&found.name, &handle, &t)),
+            );
+        }
+        Standing::Broken { error } => {
+            column = column
+                .child(heading("It does not load", &t))
+                .child(code_block(None, error, &t));
+        }
+        Standing::Failing if found.keeps_earlier => {
+            column = column.child(
+                div().typeset(Type::CAPTION).text_color(t.dim).child(
+                    "Runs keep the version before until its tests pass.",
+                ),
+            );
+        }
+        _ => {}
+    }
+
+    // What it does, on the left; its settings beside it.
+    let mut about = div()
+        .flex_grow(1.)
+        .flex_basis(rems(26.))
+        .min_w(rems(0.))
+        .flex()
+        .flex_col()
+        .gap(sp(5.));
+    if let Some(declaration) = &found.declaration {
+        let seams = steps_in(declaration);
+        about = about.child(section(
+            "Where it steps in",
+            if seams.is_empty() {
+                div()
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child("Only in the interface.")
+            } else {
+                div().flex().flex_wrap().gap(sp(1.5)).children(
+                    seams
+                        .into_iter()
+                        .map(|seam| tag(seam, Type::CAPTION, t.text_soft, &t)),
+                )
+            },
+            &t,
+        ));
+        let reach = reaches(&declaration.uses);
+        about = about.child(section(
+            "What it may reach",
+            if reach.is_empty() {
+                div()
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child("Nothing beyond the run it is in.")
+            } else {
+                div().flex().flex_wrap().gap(sp(1.5)).children(
+                    reach.into_iter().map(|reach| {
+                        tag(reach, Type::CAPTION, t.text_soft, &t)
+                    }),
+                )
+            },
+            &t,
+        ));
+    }
+    about = about.child(section(
+        "Tests",
+        if found.tests.is_empty() {
+            div()
+                .typeset(Type::CAPTION)
+                .text_color(t.dim)
+                .child("It has none yet.")
+        } else {
+            card(&t).flex().flex_col().children(found.tests.iter().map(
+                |test| {
                     div()
                         .flex()
                         .flex_col()
                         .gap(sp(1.))
-                        .child(mono(
-                            format!("{} · {}", test.file, test.name),
-                            Type::CAPTION,
-                            t.text_soft,
-                        ))
-                        .when_some(test.error.clone(), |column, error| {
-                            column.child(mono(error, Type::CAPTION, t.red))
-                        }),
-                );
-            }
-        }
-        column = column.child(card(&t).p(sp(4.)).child(body));
-    }
-    column.into_any_element()
+                        .px(sp(3.5))
+                        .py(sp(2.))
+                        .border_b_1()
+                        .border_color(t.border)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(sp(2.5))
+                                .child(if test.passed {
+                                    icon(
+                                        Icon::Check,
+                                        IconSize::COMPACT,
+                                        t.green,
+                                    )
+                                } else {
+                                    icon(Icon::Close, IconSize::COMPACT, t.red)
+                                })
+                                .child(
+                                    mono(
+                                        format!(
+                                            "{} · {}",
+                                            test.file, test.name
+                                        ),
+                                        Type::CAPTION,
+                                        t.text_soft,
+                                    )
+                                    .flex_1()
+                                    .min_w(rems(0.)),
+                                ),
+                        )
+                        .when_some(test.error.clone(), |row, error| {
+                            row.child(
+                                mono(error, Type::CAPTION, t.red).pl(sp(6.5)),
+                            )
+                        })
+                },
+            ))
+        },
+        &t,
+    ));
+    let has_settings = found
+        .declaration
+        .as_ref()
+        .is_some_and(|declaration| declaration.settings.is_some());
+    let settings = has_settings.then(|| {
+        div()
+            .flex_grow(1.)
+            .flex_basis(rems(20.))
+            .max_w(rems(28.))
+            .min_w(rems(0.))
+            .flex()
+            .flex_col()
+            .gap(sp(3.))
+            .child(heading("Settings", &t))
+            .child(scopes(entry, view, &t))
+            .child(crate::pane::render(view))
+    });
+    column
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_start()
+                .gap(sp(7.))
+                .child(about)
+                .children(settings),
+        )
+        .into_any_element()
+}
+
+/// A section of a plugin's page: its heading over `body`.
+fn section(title: &str, body: gpui::Div, t: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.5))
+        .child(heading(title, t))
+        .child(body)
+}
+
+/// Everywhere and each of the person's repositories, as a switch: the
+/// scope `entry`'s settings show (ADR 0029), and what it means.
+fn scopes(
+    entry: &str,
+    view: &ViewCx<'_, LuauPluginsUi>,
+    t: &Theme,
+) -> gpui::Div {
+    let scope = view.scope().map(str::to_owned);
+    let options = std::iter::once(None).chain(
+        view.repos()
+            .map(|(name, _)| name)
+            .filter(|name| *name != crate::REPO)
+            .map(|name| Some(name.to_owned())),
+    );
+    let switch = div()
+        .flex()
+        .flex_wrap()
+        .gap(sp(0.5))
+        .p(sp(0.75))
+        .rounded(radius::CONTROL)
+        .bg(t.panel)
+        .border_1()
+        .border_color(t.border)
+        .children(options.map(|option| {
+            let on = option == scope;
+            let label = option.clone().unwrap_or_else(|| "Everywhere".into());
+            let link = match &option {
+                Some(repo) => entry_link(entry).param(SCOPE, repo.clone()),
+                None => entry_link(entry),
+            };
+            let handle = view.handle.clone();
+            div()
+                .id(gpui::SharedString::from(format!("scope-{label}")))
+                .px(sp(3.))
+                .py(sp(1.5))
+                .rounded(radius::SMALL)
+                .cursor_pointer()
+                .typeset(Type::CAPTION)
+                .text_color(if on { t.text } else { t.dim })
+                .when(on, |option| option.bg(t.raised))
+                .child(label)
+                .on_click(move |_, _, cx| handle.navigate(link.clone(), cx))
+        }));
+    let means = match &scope {
+        Some(repo) => format!("Runs in {repo} use these."),
+        None => "Every repository without its own copy uses these.".to_owned(),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .child(switch)
+        .child(div().typeset(Type::CAPTION).text_color(t.dim).child(means))
 }
 
 /// The chats writing plugins, newest first, each opening its run.

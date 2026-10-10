@@ -32,7 +32,7 @@ use tau_ui_plugin::{
 use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
-    catalog::Catalog,
+    catalog::{Catalog, PluginInfo},
     hosted::{self, Hosted},
 };
 
@@ -60,6 +60,9 @@ pub struct DemoHost {
     /// The repositories' own copies, by repository, then plugin.
     repo_settings: Mutex<BTreeMap<String, BTreeMap<String, Value>>>,
     pushed: Mutex<Option<mpsc::UnboundedReceiver<Push>>>,
+    /// Plugins whose entry and data a screen set, whatever their host
+    /// half says.
+    pinned: Mutex<Vec<(PluginInfo, PluginValue)>>,
     // Dropped last: the plugins' files, and the runtime their work runs
     // on.
     runtime: Runtime,
@@ -140,9 +143,17 @@ impl DemoHost {
             settings,
             repo_settings: Mutex::default(),
             pushed: Mutex::new(Some(pushed)),
+            pinned: Mutex::default(),
             runtime,
             _dir: dir,
         })
+    }
+
+    /// Shows `info` and `data` for its plugin from now on, in place of
+    /// what its host half has: a screen's plugin in a state the demo's
+    /// host never reaches.
+    pub fn pin(&self, info: PluginInfo, data: PluginValue) {
+        self.pinned.lock().expect("not poisoned").push((info, data));
     }
 
     /// `catalog` with what the plugins have now: their entries, data and
@@ -161,6 +172,11 @@ impl DemoHost {
         }
         catalog.plugins = plugins;
         catalog.plugin_data = data;
+        for (info, data) in self.pinned.lock().expect("not poisoned").iter() {
+            catalog.plugins.retain(|plugin| plugin.name != info.name);
+            catalog.plugins.push(info.clone());
+            catalog.plugin_data.insert(info.name.clone(), data.clone());
+        }
         catalog.plugin_settings = settings;
         catalog.repo_plugin_settings = self
             .repo_settings

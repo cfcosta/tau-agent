@@ -112,14 +112,12 @@ pub fn sidebar(
         .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
         .on_click(cx.listener(|ws, _, _, cx| ws.pick_github_repos(cx)));
 
-    let plugins = ws.catalog.plugins.len().to_string();
     let phones = match ws.phones.paired.len() {
         0 => String::new(),
         n => format!("{n} paired"),
     };
     let everywhere = [
         (Route::History, "History", "all repos".to_owned(), t.dim),
-        (Route::Plugins, "Plugins", plugins, t.dim),
         (Route::Phones, "Phones", phones, t.green),
         // Sign-ins, keys and the models runs use.
         (Route::Models, "Models and accounts", String::new(), t.dim),
@@ -181,6 +179,7 @@ pub fn sidebar(
         })
         .child(div().flex_1().min_h(sp(4.)))
         .child(section("Everywhere", None, t))
+        .child(plugins_tree(ws, t, cx))
         .children(everywhere.into_iter().map(|(route, label, meta, ink)| {
             let active = ws.route == route;
             div()
@@ -201,6 +200,173 @@ pub fn sidebar(
                     ws.navigate(route.clone(), cx)
                 }))
         }))
+}
+
+/// Plugins in the sidebar: the ones built in, the person's own in tau's
+/// plugins repository (ADR 0036), and that repository's chats, which
+/// write them. Its chevron folds them away; the rest of its row opens
+/// the built-in ones.
+fn plugins_tree(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
+    let open = ws.plugins_open;
+    let waiting = ws.catalog.yours_need_you();
+    let head = div()
+        .id("plugins")
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(sp(2.))
+        .h(rems(1.875))
+        .px(sp(2.))
+        .rounded(radius::BOX)
+        .cursor_pointer()
+        .text_color(if open { t.text } else { t.text_soft })
+        .hover(|style| style.bg(t.card))
+        .child(
+            div()
+                .id("fold-plugins")
+                .size(rems(1.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon(
+                    if open { Icon::Down } else { Icon::Chevron },
+                    IconSize::TINY,
+                    t.dim,
+                ))
+                .on_click(cx.listener(|ws, _, _, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_plugins_open(cx)
+                })),
+        )
+        .child(icon(Icon::Plug, IconSize::COMPACT, t.change))
+        .child(
+            div()
+                .flex_1()
+                .when(open, |label| label.font_weight(weight::EMPHASIS))
+                .child("Plugins"),
+        )
+        .when(waiting > 0, |row| {
+            row.child(need_you_pill(waiting, Type::MICRO, t))
+        })
+        .on_click(cx.listener(|ws, _, _, cx| ws.navigate(Route::Plugins, cx)));
+    let tree = div().flex().flex_col().flex_shrink_0().child(head);
+    if !open {
+        return tree;
+    }
+
+    let link = |id: &'static str, label: String, count: usize, route: Route| {
+        let active = match (&ws.route, &route) {
+            (
+                Route::Plugin { plugin, page, .. },
+                Route::Plugin {
+                    plugin: to,
+                    page: to_page,
+                    ..
+                },
+            ) => plugin == to && page == to_page,
+            (at, to) => at == to,
+        };
+        div()
+            .id(id)
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(sp(2.))
+            .h(rems(1.875))
+            .px(sp(2.))
+            .rounded(radius::BOX)
+            .cursor_pointer()
+            .text_color(if active { t.text } else { t.text_soft })
+            .when(active, |row| row.bg(t.raised))
+            .when(!active, |row| row.hover(|style| style.bg(t.card)))
+            .child(div().flex_1().min_w(rems(0.)).truncate().child(label))
+            .child(
+                div()
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child(count.to_string()),
+            )
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
+            )
+    };
+    let mut body = div()
+        .flex()
+        .flex_col()
+        .gap(sp(0.25))
+        .pl(sp(6.5))
+        .pt(sp(0.5))
+        .pb(sp(1.5))
+        .child(link(
+            "plugins-built-in",
+            "Built in".to_owned(),
+            ws.catalog.built_in().count(),
+            Route::Plugins,
+        ));
+    let yours = ws.catalog.yours();
+    if let (Some(yours), Some(route)) = (yours, ws.yours_route(None)) {
+        let label = match ws.catalog.own_repo() {
+            Some(repo) => format!("Yours, in {}", repo.name),
+            None => "Yours".to_owned(),
+        };
+        body = body.child(link(
+            "plugins-yours",
+            label,
+            yours.entries.len(),
+            route,
+        ));
+    }
+    // The chats in the plugins repository, as a repository lists its own.
+    if let Some(rows) = ws.own_rows() {
+        let tree = ws.repo_tree(&rows);
+        if !tree.is_empty() {
+            body = body.child(
+                div()
+                    .px(sp(2.))
+                    .pt(sp(2.))
+                    .pb(sp(0.5))
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child("Chats"),
+            );
+        }
+        let current = ws.current().map(|run| ws.listed_as(run).clone());
+        let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
+        for row in tree {
+            body = match row {
+                TreeRow::Run { run, depth, folded } => {
+                    let active = on_run && current.as_ref() == Some(&run.id);
+                    body.child(run_row(ws, run, active, depth, folded, t, cx))
+                }
+                TreeRow::Child { child, depth, .. } => {
+                    body.child(child_row(ws, &row, child, depth, t, cx))
+                }
+            };
+        }
+    }
+    if yours.is_some() {
+        body =
+            body.child(
+                div()
+                    .id("write-plugin")
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap(sp(2.))
+                    .h(rems(1.875))
+                    .px(sp(2.))
+                    .rounded(radius::BOX)
+                    .cursor_pointer()
+                    .text_color(t.dim)
+                    .hover(|style| style.bg(t.card).text_color(t.text_soft))
+                    .child(icon(Icon::Plus, IconSize::COMPACT, t.dim))
+                    .child(div().flex_1().child("Write a plugin"))
+                    .on_click(cx.listener(|ws, _, window, cx| {
+                        ws.write_plugin(window, cx)
+                    })),
+            );
+    }
+    tree.child(body)
 }
 
 /// A heading in the sidebar, with an action at its end.

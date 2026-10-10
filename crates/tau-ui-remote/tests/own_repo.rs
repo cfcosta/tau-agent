@@ -1,7 +1,8 @@
 //! tau's own repositories, like its plugins repository (ADR 0027), are
 //! in the catalog so their chats work, but the person never sees them as
-//! a repository: the sidebar, search and new runs pass them by, even
-//! while one of their chats is open.
+//! a repository: the sidebar's repositories, search and new runs pass
+//! them by, even while one of their chats is open. The sidebar lists the
+//! plugins repository's chats under Plugins (`plugins_sidebar`).
 
 use gpui::{TestAppContext, VisualTestContext};
 use tau_agent::tool::RunId;

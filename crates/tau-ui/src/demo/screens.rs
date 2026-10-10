@@ -39,6 +39,12 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("mcp", |ws, _, cx| {
         plugin_page(ws, tau_mcp_host::NAME, "servers", "repo", cx)
     }),
+    // The person's own plugins (ADR 0036): their page, and the page of
+    // one that waits for them.
+    ("plugins-yours", |ws, host, cx| yours(ws, host, None, cx)),
+    ("plugins-yours-entry", |ws, host, cx| {
+        yours(ws, host, Some("no-force-push"), cx)
+    }),
     ("ledger", |ws, _, cx| {
         let run = run_id().0.to_string();
         let page = Route::Plugin {
@@ -637,6 +643,202 @@ fn crew(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
 }
 
 /// `plugin`'s page `page` for tau-agent, which it takes as `param`.
+/// The plugins repository with three plugins, one active, one waiting
+/// for the person and one whose tests fail, and a chat there writing
+/// one; then their page, or `entry`'s.
+fn yours(
+    ws: &mut Workspace,
+    host: &DemoHost,
+    entry: Option<&str>,
+    cx: &mut Context<Workspace>,
+) {
+    use tau_luau_plugins::{
+        Declaration,
+        Entry,
+        Hooks,
+        Overview,
+        Standing,
+        TestResult,
+        Uses,
+    };
+    use tau_ui_kit::theme::Tone;
+    use tau_ui_plugin::{CatalogEntry, Group, Link, Note};
+
+    let test = |file: &str, name: &str, error: Option<&str>| TestResult {
+        file: file.into(),
+        name: name.into(),
+        passed: error.is_none(),
+        error: error.map(Into::into),
+    };
+    let plugin = |name: &str,
+                  description: &str,
+                  hooks: Hooks,
+                  uses: Uses,
+                  settings: Option<Value>,
+                  standing: Standing,
+                  tests: Vec<TestResult>| Entry {
+        name: name.into(),
+        description: description.into(),
+        keeps_earlier: !matches!(standing, Standing::Active),
+        standing,
+        declaration: Some(Declaration {
+            name: name.into(),
+            description: description.into(),
+            uses,
+            settings,
+            hooks,
+            ..Default::default()
+        }),
+        tests,
+    };
+    let overview = Overview {
+        commit: Some("4f2a9c1".into()),
+        plugins: vec![
+            plugin(
+                "commit-style",
+                "Keeps commit messages in the repository's style: a type, \
+                 a scope, and a title in the imperative.",
+                Hooks {
+                    before_tool: true,
+                    ..Default::default()
+                },
+                Uses::default(),
+                None,
+                Standing::Active,
+                vec![
+                    test("style", "accepts feat(scope): title", None),
+                    test("style", "refuses a title in the past tense", None),
+                    test("style", "refuses a missing scope", None),
+                    test("style", "says how to fix it", None),
+                ],
+            ),
+            plugin(
+                "no-force-push",
+                "Refuses a push that would rewrite a bookmark someone else \
+                 may have built on.",
+                Hooks {
+                    before_tool: true,
+                    ..Default::default()
+                },
+                Uses {
+                    tools: vec!["bash".into()],
+                    ..Default::default()
+                },
+                Some(json!({
+                    "schema": { "type": "object", "properties": {
+                        "protected": { "type": "string" },
+                        "own_bookmarks": { "type": "boolean" },
+                    } },
+                    "default": { "protected": "main, release/*", "own_bookmarks": true },
+                })),
+                Standing::Waiting {
+                    grown: vec!["the `bash` tool".into()],
+                },
+                vec![
+                    test("push", "refuses a forced push to main", None),
+                    test("push", "refuses a forced push to release/*", None),
+                    test("push", "lets a plain push through", None),
+                    test(
+                        "push",
+                        "lets a run force-push its own bookmark",
+                        None,
+                    ),
+                    test("push", "says why it refused", None),
+                ],
+            ),
+            plugin(
+                "test-before-stop",
+                "A run may stop only once the repository's tests pass.",
+                Hooks {
+                    before_stop: true,
+                    ..Default::default()
+                },
+                Uses::default(),
+                None,
+                Standing::Failing,
+                vec![
+                    test("stop", "lets a run stop when tests pass", None),
+                    test(
+                        "stop",
+                        "refuses a stop while tests fail",
+                        Some("expected a refusal, got allow"),
+                    ),
+                    test("stop", "says which tests fail", None),
+                ],
+            ),
+        ],
+        error: None,
+    };
+
+    let mut catalog = ws.catalog().clone();
+    let entries = overview
+        .plugins
+        .iter()
+        .map(|entry| CatalogEntry {
+            name: entry.name.clone(),
+            description: entry.description.clone(),
+            group: Group::Yours,
+            seams: Vec::new(),
+            note: match entry.standing {
+                Standing::Active => None,
+                Standing::Waiting { .. } => {
+                    Some(Note::new("waits for you", Tone::Warn))
+                }
+                _ => Some(Note::new("tests fail", Tone::Danger)),
+            },
+        })
+        .collect();
+    let info = crate::catalog::PluginInfo {
+        name: tau_luau_plugins::NAME.into(),
+        description: "Plugins written in Luau".into(),
+        group: Group::Yours,
+        page: Some(Link::page(tau_luau_plugins::ui::PAGE)),
+        seams: Vec::new(),
+        spend: 0.0,
+        note: None,
+        entries,
+        settings: true,
+    };
+    let data = PluginValue::typed(overview);
+    catalog.plugins.retain(|plugin| plugin.name != info.name);
+    catalog.plugins.push(info.clone());
+    catalog
+        .plugin_data
+        .insert(tau_luau_plugins::NAME.into(), data.clone());
+    host.pin(info, data);
+    let chat = RunId("plugins-commit-style".into());
+    if catalog.own_repo().is_none() {
+        catalog.repos.push(crate::catalog::Repo {
+            name: tau_luau_plugins::REPO.into(),
+            main: Some(chat.clone()),
+            own: true,
+            ..Default::default()
+        });
+    }
+    ws.set_catalog(catalog, cx);
+    let mut run = RunView::new(
+        chat.clone(),
+        "Teach commit-style scopes",
+        "coder",
+        "gpt-6.1-sol",
+    )
+    .in_repo(tau_luau_plugins::REPO);
+    run.turn = 3;
+    ws.apply(HostUpdate::Run(Box::new(run)), cx);
+    let mut params = std::collections::BTreeMap::new();
+    if let Some(entry) = entry {
+        params.insert(tau_ui_plugin::ENTRY.to_owned(), entry.to_owned());
+    }
+    ws.navigate(
+        Route::Plugin {
+            plugin: tau_luau_plugins::NAME.into(),
+            page: tau_luau_plugins::ui::PAGE.into(),
+            params,
+        },
+        cx,
+    );
+}
+
 fn plugin_page(
     workspace: &mut Workspace,
     plugin: &str,
