@@ -496,6 +496,31 @@ server's.
   and spaces aside) is not listed, its contents are dropped from a
   read, and reading a `ui://` URI fails. tau shows no MCP apps.
 
+### Subscriptions
+
+An agent's `mcp` trigger (ADR 0037) watches one resource:
+`Connection::watch_resource(uri)` gives a `ResourceWatch` whose
+`changed()` says each time the server says the resource changed.
+
+- **Only where the server says so:** a server whose capabilities do not
+  set `resources.subscribe` (or offer no resources) fails the watch with
+  `WatchError::Unsupported`, which says a poll can read it instead.
+- **How:** on 2026-07-28 each subscribed resource is a
+  `subscriptions/listen` of its own, its filter's `resourceSubscriptions`
+  naming the URI; a server that does not take the URI back in its
+  acknowledgment fails it. On 2025-11-25 it is `resources/subscribe`,
+  and `notifications/resources/updated` reaches the client's handler.
+- **Shared:** watches of one resource on one connection share one
+  subscription; the last one to drop cancels the listen or sends
+  `resources/unsubscribe`.
+- **Tied to the session:** a session that ends ends its watches
+  (`changed()` is `false`). Watching again connects again and
+  subscribes on the new session; the watcher reads the resource again,
+  since a change may have come in between.
+- Outside any run, host halves reach watches and reads through the
+  `OutsideResources` service (`tau-ui-plugin`), which tau-mcp-host
+  offers.
+
 ## Prompts
 
 A server's prompts are the composer's commands, not the model's tools.

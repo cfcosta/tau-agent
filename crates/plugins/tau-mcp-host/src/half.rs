@@ -951,14 +951,20 @@ impl Plugin for RunServers {
 impl PluginHost for Host {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         let refresher = cx.clone();
-        if let Some(outside) = cx.outside_tools() {
-            outside.offer(Arc::new(Outside {
-                host: Host::new(
-                    cx.runtime.clone(),
-                    cx.config_dir().map(Path::to_owned),
-                ),
-                cx: cx.clone(),
-            }));
+        // Polls' tools and `mcp` triggers' resources share a host of
+        // their own.
+        let outside = Arc::new(Outside {
+            host: Host::new(
+                cx.runtime.clone(),
+                cx.config_dir().map(Path::to_owned),
+            ),
+            cx: cx.clone(),
+        });
+        if let Some(tools) = cx.outside_tools() {
+            tools.offer(outside.clone());
+        }
+        if let Some(resources) = cx.outside_resources() {
+            resources.offer(outside);
         }
         Ok(
             Host::new(cx.runtime.clone(), cx.config_dir().map(Path::to_owned))
@@ -967,8 +973,9 @@ impl PluginHost for Host {
     }
 }
 
-/// The servers' tools outside any run, for an agent's polls (ADR 0037):
-/// a host of their own, whose connections are not the runs'.
+/// The servers' tools and resources outside any run, for an agent's
+/// polls and `mcp` triggers (ADR 0037): a host of their own, whose
+/// connections are not the runs'.
 struct Outside {
     host: Host,
     cx: HostCx,
@@ -999,6 +1006,58 @@ impl tau_ui_plugin::ToolSource for Outside {
                 format!("no MCP server offers `{name}` to this repository")
             })?;
             tool.call_outside(args, &cancel).await
+        }))
+    }
+}
+
+impl Outside {
+    /// The connection to `server` for the repository at `checkout`, if
+    /// it has one.
+    fn connection(
+        &self,
+        checkout: &Path,
+        server: &str,
+    ) -> Option<Arc<crate::connection::Connection>> {
+        let settings: Settings = self.cx.settings(NAME);
+        self.host
+            .plugin(Some(checkout), &settings)
+            .connections()
+            .iter()
+            .find(|connection| connection.name() == server)
+            .cloned()
+    }
+}
+
+impl tau_ui_plugin::ResourceSource for Outside {
+    fn read<'a>(
+        &'a self,
+        checkout: &'a Path,
+        server: &'a str,
+        uri: &'a str,
+    ) -> Option<tau_ui_plugin::registry::HostFuture<'a, Result<Value, String>>>
+    {
+        let connection = self.connection(checkout, server)?;
+        Some(Box::pin(async move {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            connection.read_resource(uri, &cancel).await
+        }))
+    }
+
+    fn watch<'a>(
+        &'a self,
+        checkout: &'a Path,
+        server: &'a str,
+        uri: &'a str,
+    ) -> Option<
+        tau_ui_plugin::registry::HostFuture<
+            'a,
+            Result<tau_ui_plugin::ResourceWatch, tau_ui_plugin::WatchError>,
+        >,
+    > {
+        let connection = self.connection(checkout, server)?;
+        Some(Box::pin(async move {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            connection.watch_resource(uri, &cancel).await
         }))
     }
 }

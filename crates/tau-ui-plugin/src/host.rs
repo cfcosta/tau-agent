@@ -346,6 +346,145 @@ impl OutsideTools {
     }
 }
 
+/// A watch on one MCP resource, outside any run: what an agent's `mcp`
+/// trigger follows (ADR 0037). It says each time the resource changed;
+/// dropping it stops watching.
+pub struct ResourceWatch {
+    updates: tokio::sync::mpsc::UnboundedReceiver<()>,
+    _held: Box<dyn Send + Sync>,
+}
+
+impl ResourceWatch {
+    /// A watch that hears of each change on `updates`, keeping `held`,
+    /// whatever stops the watching when it drops, until it ends.
+    pub fn new(
+        updates: tokio::sync::mpsc::UnboundedReceiver<()>,
+        held: impl Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            updates,
+            _held: Box::new(held),
+        }
+    }
+
+    /// Waits until the resource changes: `false` once the watch ended,
+    /// as its connection did. Watching again connects again.
+    pub async fn changed(&mut self) -> bool {
+        self.updates.recv().await.is_some()
+    }
+}
+
+impl std::fmt::Debug for ResourceWatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ResourceWatch")
+    }
+}
+
+/// Why a resource cannot be watched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchError {
+    /// Its server does not say when its resources change: only a poll
+    /// can follow it.
+    Unsupported(String),
+    /// Anything else, such as no connection: watching again may work.
+    Failed(String),
+}
+
+impl std::fmt::Display for WatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported(why) | Self::Failed(why) => f.write_str(why),
+        }
+    }
+}
+
+/// One plugin's MCP resources outside any run: what an agent's `mcp`
+/// triggers watch and read (ADR 0037).
+pub trait ResourceSource: Send + Sync {
+    /// Reads `uri` of the server `server` for the repository checked out
+    /// at `checkout`: its `ReadResourceResult` as JSON. `None` when
+    /// `server` is not one of this source's there.
+    fn read<'a>(
+        &'a self,
+        checkout: &'a Path,
+        server: &'a str,
+        uri: &'a str,
+    ) -> Option<crate::registry::HostFuture<'a, Result<Value, String>>>;
+
+    /// Watches `uri` of `server` for the repository at `checkout`.
+    /// `None` when `server` is not one of this source's there.
+    fn watch<'a>(
+        &'a self,
+        checkout: &'a Path,
+        server: &'a str,
+        uri: &'a str,
+    ) -> Option<
+        crate::registry::HostFuture<'a, Result<ResourceWatch, WatchError>>,
+    >;
+}
+
+/// The MCP resources a host half may read and watch outside any run,
+/// from the plugins that offer them. The host puts one in
+/// [`HostCx::services`]; clones share it.
+#[derive(Clone, Default)]
+pub struct OutsideResources(
+    Arc<std::sync::Mutex<Vec<Arc<dyn ResourceSource>>>>,
+);
+
+impl OutsideResources {
+    /// Adds `source`'s resources.
+    pub fn offer(&self, source: Arc<dyn ResourceSource>) {
+        self.0.lock().expect("not poisoned").push(source);
+    }
+
+    fn sources(&self) -> Vec<Arc<dyn ResourceSource>> {
+        self.0.lock().expect("not poisoned").clone()
+    }
+
+    /// Reads `uri` of `server` for the repository at `checkout`, through
+    /// the first source that has the server.
+    pub async fn read(
+        &self,
+        checkout: &Path,
+        server: &str,
+        uri: &str,
+    ) -> Result<Value, String> {
+        for source in &self.sources() {
+            if let Some(read) = source.read(checkout, server, uri) {
+                return read.await;
+            }
+        }
+        Err(no_server(server))
+    }
+
+    /// Watches `uri` of `server` for the repository at `checkout`,
+    /// through the first source that has the server.
+    pub async fn watch(
+        &self,
+        checkout: &Path,
+        server: &str,
+        uri: &str,
+    ) -> Result<ResourceWatch, WatchError> {
+        for source in &self.sources() {
+            if let Some(watch) = source.watch(checkout, server, uri) {
+                return watch.await;
+            }
+        }
+        Err(WatchError::Failed(no_server(server)))
+    }
+}
+
+fn no_server(server: &str) -> String {
+    format!("no MCP server `{server}` is set up for this repository")
+}
+
+impl std::fmt::Debug for OutsideResources {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sources = self.0.lock().map_or(0, |sources| sources.len());
+        write!(f, "OutsideResources({sources} sources)")
+    }
+}
+
 impl std::fmt::Debug for OutsideTools {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let sources = self.0.lock().map_or(0, |sources| sources.len());
@@ -549,6 +688,12 @@ impl HostCx {
     /// keeps them.
     pub fn outside_tools(&self) -> Option<&OutsideTools> {
         self.services.get::<OutsideTools>()
+    }
+
+    /// The MCP resources a host half may read and watch outside any run,
+    /// when the host keeps them.
+    pub fn outside_resources(&self) -> Option<&OutsideResources> {
+        self.services.get::<OutsideResources>()
     }
 
     /// Asks the interface to draw the catalog again.

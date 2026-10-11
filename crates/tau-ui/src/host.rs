@@ -208,6 +208,9 @@ pub struct Host {
     /// The tools plugins offer outside any run: an agent's polls call
     /// them (ADR 0037).
     outside_tools: tau_ui_plugin::OutsideTools,
+    /// The MCP resources plugins offer outside any run: an agent's
+    /// `mcp` triggers watch them (ADR 0037).
+    outside_resources: tau_ui_plugin::OutsideResources,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -507,6 +510,7 @@ impl Host {
             jev_meter: Arc::default(),
             memory_search: tau_memory_host::Search::Keywords,
             outside_tools: tau_ui_plugin::OutsideTools::default(),
+            outside_resources: tau_ui_plugin::OutsideResources::default(),
             store,
             settings: Arc::new(Mutex::new(settings)),
             config,

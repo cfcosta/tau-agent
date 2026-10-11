@@ -419,48 +419,7 @@ struct Watched {
     watchers: BTreeMap<u64, mpsc::UnboundedSender<()>>,
 }
 
-/// A watch on one of a server's resources (ADR 0037): it says each time
-/// the resource changes. It ends when the connection does; watching
-/// again connects again. Dropping it stops watching, and the last one
-/// unsubscribes.
-pub struct ResourceWatch {
-    updates: mpsc::UnboundedReceiver<()>,
-    _unwatch: Unwatch,
-}
-
-impl ResourceWatch {
-    /// Waits until the resource changes: `false` once the watch ended,
-    /// as its connection did.
-    pub async fn changed(&mut self) -> bool {
-        self.updates.recv().await.is_some()
-    }
-}
-
-impl fmt::Debug for ResourceWatch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ResourceWatch")
-            .field("uri", &self._unwatch.uri)
-            .finish()
-    }
-}
-
-/// Why a resource cannot be watched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WatchError {
-    /// The server does not say when its resources change: only a poll
-    /// can follow it.
-    Unsupported(String),
-    /// Anything else, such as no connection: watching again may work.
-    Failed(String),
-}
-
-impl fmt::Display for WatchError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unsupported(why) | Self::Failed(why) => f.write_str(why),
-        }
-    }
-}
+pub use tau_ui_plugin::{ResourceWatch, WatchError};
 
 /// Stops one watch when it drops.
 struct Unwatch {
@@ -1137,14 +1096,14 @@ impl Connection {
                 },
             );
         }
-        Ok(ResourceWatch {
+        Ok(ResourceWatch::new(
             updates,
-            _unwatch: Unwatch {
+            Unwatch {
                 connection: self.clone(),
                 uri: uri.to_owned(),
                 id,
             },
-        })
+        ))
     }
 
     /// How many resources it subscribes to now.

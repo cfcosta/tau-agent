@@ -42,10 +42,13 @@ pub use host::{
     HOST_RECORD,
     HostCx,
     HostRecord,
+    OutsideResources,
     OutsideTools,
     Push,
     RepoCtx,
     RepoLauncher,
+    ResourceSource,
+    ResourceWatch,
     RunCtx,
     RunKind,
     SavedSettings,
@@ -53,6 +56,7 @@ pub use host::{
     Turn,
     TurnCommit,
     TurnHooks,
+    WatchError,
     WorkspaceDir,
 };
 pub use manifest::{

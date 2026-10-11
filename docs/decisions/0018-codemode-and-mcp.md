@@ -160,5 +160,6 @@ signatures.
   `auth-client-credentials-jwt`: it pulls aws-lc-rs.
 - Left for later: pi's `auth.provider` (a `/login` provider's token for
   a server), sampling and elicitation, resource subscriptions
-  (`resources/subscribe`), and prompt argument completion
+  (`resources/subscribe`; built for agents' `mcp` triggers in
+  [0037](0037-agents.md)), and prompt argument completion
   (`completion/complete`).
