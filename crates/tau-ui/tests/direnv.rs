@@ -1,5 +1,5 @@
 //! tau-direnv in the host, with a fake `direnv` first on `PATH`: a
-//! chat's `bash` waits while the person is asked, then sees the
+//! chat's `exec_command` waits while the person is asked, then sees the
 //! repository's environment only once they allowed it; a later chat is
 //! not asked again; "Run without it" leaves commands as they were; a
 //! failed load says so and Try again loads it; and the repository's MCP
@@ -117,10 +117,10 @@ fn host(
     (host.with_repo(REPO, project), events, data)
 }
 
-/// A turn running `command` with bash, then one answering.
-fn bash_then_done(llm: ScriptedModel, command: &str) -> ScriptedModel {
+/// A turn running `command` with `exec_command`, then one answering.
+fn exec_then_done(llm: ScriptedModel, command: &str) -> ScriptedModel {
     let command = command.to_owned();
-    llm.turn(move |t| t.tool_call("bash", json!({ "command": command })))
+    llm.turn(move |t| t.tool_call("exec_command", json!({ "cmd": command })))
         .turn(|t| t.text("done"))
 }
 
@@ -162,8 +162,8 @@ fn act(host: &Host, act: Act) {
         .unwrap();
 }
 
-/// The text bash gave the model in `run`, once it ended.
-fn bash_output(
+/// The text `exec_command` gave the model in `run`, once it ended.
+fn exec_output(
     host: &Host,
     run: &RunId,
     events: &mut UnboundedReceiver<RunEvent>,
@@ -196,21 +196,21 @@ fn bash_output(
     view.items
         .iter()
         .find_map(|item| match item {
-            Item::Tool(card) if card.tool == "bash" => {
+            Item::Tool(card) if card.tool == "exec_command" => {
                 card.data.result.as_ref().map(|result| result.text.clone())
             }
             _ => None,
         })
-        .expect("bash ran")
+        .expect("exec_command ran")
 }
 
 /// The first chat's command waits while the person is asked, with the
 /// `.envrc`; once they allow it, it runs in the environment. The next
 /// chat is not asked, and its command runs in it from the start.
 #[test]
-fn bash_sees_the_environment_only_once_the_person_allows_it() {
+fn exec_command_sees_the_environment_only_once_the_person_allows_it() {
     let llm =
-        bash_then_done(bash_then_done(ScriptedModel::new(), PROBE), PROBE);
+        exec_then_done(exec_then_done(ScriptedModel::new(), PROBE), PROBE);
     let (host, mut events, _data) = host(llm, "export TAU_PROBE=1\n");
     let first = host
         .block_on(host.start("check the probe", &ModelChoice::default(), REPO))
@@ -225,7 +225,10 @@ fn bash_sees_the_environment_only_once_the_person_allows_it() {
             envrc: "export TAU_PROBE=1\n".into()
         }
     );
-    assert!(host.is_running(&first.id), "bash waits for the answer");
+    assert!(
+        host.is_running(&first.id),
+        "exec_command waits for the answer"
+    );
 
     act(
         &host,
@@ -234,7 +237,7 @@ fn bash_sees_the_environment_only_once_the_person_allows_it() {
             load: true,
         },
     );
-    let output = bash_output(&host, &first.id, &mut events);
+    let output = exec_output(&host, &first.id, &mut events);
     assert!(output.contains("probe=1"), "{output}");
     let kinds: Vec<Record> = records(&host, &first.id);
     assert!(kinds.contains(&Record::Loaded), "{kinds:?}");
@@ -242,7 +245,7 @@ fn bash_sees_the_environment_only_once_the_person_allows_it() {
     let second = host
         .block_on(host.start("check it again", &ModelChoice::default(), REPO))
         .unwrap();
-    let output = bash_output(&host, &second.id, &mut events);
+    let output = exec_output(&host, &second.id, &mut events);
     assert!(output.contains("probe=1"), "{output}");
     assert!(
         !records(&host, &second.id)
@@ -255,7 +258,7 @@ fn bash_sees_the_environment_only_once_the_person_allows_it() {
 /// "Run without it": the waiting command runs as it would have.
 #[test]
 fn run_without_it_leaves_commands_as_they_were() {
-    let llm = bash_then_done(ScriptedModel::new(), PROBE);
+    let llm = exec_then_done(ScriptedModel::new(), PROBE);
     let (host, mut events, _data) = host(llm, "export TAU_PROBE=1\n");
     let run = host
         .block_on(host.start("check the probe", &ModelChoice::default(), REPO))
@@ -268,7 +271,7 @@ fn run_without_it_leaves_commands_as_they_were() {
             load: false,
         },
     );
-    let output = bash_output(&host, &run.id, &mut events);
+    let output = exec_output(&host, &run.id, &mut events);
     assert!(output.contains("probe=none"), "{output}");
     assert!(records(&host, &run.id).contains(&Record::Off));
 }
@@ -277,7 +280,7 @@ fn run_without_it_leaves_commands_as_they_were() {
 /// again loads the workspace once the `.envrc` is fixed.
 #[test]
 fn a_failed_load_runs_without_it_until_tried_again() {
-    let llm = bash_then_done(ScriptedModel::new(), PROBE);
+    let llm = exec_then_done(ScriptedModel::new(), PROBE);
     let (host, mut events, _data) =
         host(llm, "echo 'no devShell here' >&2\nexit 1\n");
     let run = host
@@ -300,7 +303,7 @@ fn a_failed_load_runs_without_it_until_tried_again() {
             output: "no devShell here".into()
         }
     );
-    let output = bash_output(&host, &run.id, &mut events);
+    let output = exec_output(&host, &run.id, &mut events);
     assert!(output.contains("probe=none"), "{output}");
 
     let workspace = host.block_on(host.workspace(&run.id)).unwrap();
@@ -318,7 +321,7 @@ fn a_failed_load_runs_without_it_until_tried_again() {
 /// starts through direnv in the main workspace once allowed.
 #[test]
 fn the_repositorys_mcp_servers_start_in_the_environment() {
-    let llm = bash_then_done(ScriptedModel::new(), PROBE);
+    let llm = exec_then_done(ScriptedModel::new(), PROBE);
     let (host, mut events, data) = host(llm, "export TAU_PROBE=1\n");
     let seen = data.join("mcp-saw");
     std::fs::create_dir_all(data.join("config")).unwrap();
@@ -349,7 +352,7 @@ fn the_repositorys_mcp_servers_start_in_the_environment() {
             load: true,
         },
     );
-    bash_output(&host, &main, &mut events);
+    exec_output(&host, &main, &mut events);
     let deadline = Instant::now() + WAIT;
     while !seen.exists() {
         assert!(Instant::now() < deadline, "the server never started");

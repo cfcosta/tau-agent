@@ -2239,7 +2239,10 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
             "write".to_owned(),
             serde_json::json!({ "path": "a", "content": "x.unwrap()" }),
         ),
-        ("bash".to_owned(), serde_json::json!({ "command": "ls" })),
+        (
+            "exec_command".to_owned(),
+            serde_json::json!({ "cmd": "ls" }),
+        ),
     ];
     let try_rule =
         |text: &str, on: &str| -> tau_constitution::ui::TrialResult {
@@ -2304,7 +2307,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert!(stored().rules.is_empty());
 }
 
-/// A large `bash` output reaches the model pruned, with the whole of it
+/// A large `exec_command` output reaches the model pruned, with the whole of it
 /// archived in tau's directory for the repository, readable only by the
 /// user; the call's card says what was kept, live and from history.
 #[test]
@@ -2312,13 +2315,12 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     use std::os::unix::fs::PermissionsExt as _;
     let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
-    // Under bash's 2,000 lines and 50 KB, so nothing spills, and over
-    // output pruning's 10,000 estimated tokens.
+    // Over output pruning's 10,000 estimated tokens.
     let command = "for i in $(seq 1 1200); do \
                    echo \"::::::::::::::::::::::::: line $i\"; done";
     let llm = ScriptedModel::new()
         .turn(|t| {
-            t.tool_call("bash", serde_json::json!({ "command": command }))
+            t.tool_call("exec_command", serde_json::json!({ "cmd": command }))
         })
         .turn(|t| t.text("built"));
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -2349,7 +2351,10 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         .into_iter()
         .find(|plugin| plugin.name == tau_fast_compaction::NAME)
         .expect("fast compaction runs with Jev");
-    assert!(status.description.contains("bash outputs"), "{status:?}");
+    assert!(
+        status.description.contains("command outputs"),
+        "{status:?}"
+    );
 
     let mut view = host
         .block_on(host.start("build it", &ModelChoice::default(), REPO))
@@ -2366,13 +2371,12 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     wait_until_done(&host, &view.id);
     let cut_of = |view: &tau_ui_remote::view::RunView| {
         view.items.iter().find_map(|item| match item {
-            Item::Tool(card) if card.tool == "bash" => card.cut.clone(),
+            Item::Tool(card) if card.tool == "exec_command" => card.cut.clone(),
             _ => None,
         })
     };
     let cut = cut_of(&view).expect("the card says what was cut");
-    // And the empty one after the last newline.
-    assert_eq!(cut.lines, 1201);
+    assert_eq!(cut.lines, 1200);
     assert!(cut.kept < cut.lines / 10, "{cut:?}");
     let archive = Path::new(&cut.archive);
     assert!(
@@ -2780,7 +2784,7 @@ fn each_message_is_scored_again() {
 
 /// A run keeps a note in its repository's memory, the Memory screen
 /// shows it, and a later run's commit that changes the file it is about,
-/// even through bash, marks it as maybe stale.
+/// even through a command, marks it as maybe stale.
 #[test]
 fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     let src = tempfile::tempdir().unwrap();
@@ -2803,11 +2807,11 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
         "body": "Read a.txt for the count.",
         "links": [{ "to": "a.txt", "type": "about" }],
     });
-    let bash = serde_json::json!({ "command": "echo two > a.txt" });
+    let exec = serde_json::json!({ "cmd": "echo two > a.txt" });
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("memory_write", note.clone()))
         .turn(|t| t.text("noted"))
-        .turn(|t| t.tool_call("bash", bash.clone()))
+        .turn(|t| t.tool_call("exec_command", exec.clone()))
         .turn(|t| t.text("changed"));
     let (host, mut events) = host_on(llm, src.path());
     let host = host.with_repo(REPO, project);
@@ -3898,10 +3902,10 @@ fn only_an_agent_s_runs_have_http() {
 
 /// An agent's commands run only in its sandbox (ADR 0037): with no
 /// launcher of tau-agents' (none is installed here, as without `bwrap`),
-/// an agent's runs declare no `bash`, while the person's repositories'
-/// runs keep it.
+/// an agent's runs declare no command tools, while the person's
+/// repositories' runs keep them.
 #[test]
-fn an_agent_without_a_sandbox_has_no_bash() {
+fn an_agent_without_a_sandbox_has_no_commands() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("done"))
         .turn(|t| t.text("done"));
@@ -3928,6 +3932,47 @@ fn an_agent_without_a_sandbox_has_no_bash() {
     };
     let (agent, person) = (names(&requests[0]), names(&requests[1]));
     assert!(agent.iter().any(|name| name == "read"), "{agent:?}");
-    assert!(!agent.iter().any(|name| name == "bash"), "{agent:?}");
-    assert!(person.iter().any(|name| name == "bash"), "{person:?}");
+    for tool in ["exec_command", "write_stdin"] {
+        assert!(!agent.iter().any(|name| name == tool), "{agent:?}");
+        assert!(person.iter().any(|name| name == tool), "{person:?}");
+    }
+}
+
+/// A command a turn left running goes on between turns: the next turn
+/// types to it and reads what it wrote, though that turn builds its own
+/// tools.
+#[test]
+fn a_command_left_running_goes_on_in_the_next_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "exec_command",
+                serde_json::json!({ "cmd": "cat", "tty": true,
+                                    "yield_time_ms": 250 }),
+            )
+        })
+        .turn(|t| t.text("cat runs"))
+        .turn(|t| {
+            t.tool_call(
+                "write_stdin",
+                serde_json::json!({ "process_id": 1, "chars": "hello\n",
+                                    "yield_time_ms": 500 }),
+            )
+        })
+        .turn(|t| t.text("it answered"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    let main = on_main(&host, "start cat");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    host.block_on(host.resume(&main, "type to it", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = format!("{:?}", llm.requests().last().unwrap().transcript);
+    assert!(
+        asked.contains("hello") && !asked.contains("No process"),
+        "{asked}"
+    );
+    llm.assert_exhausted();
 }
