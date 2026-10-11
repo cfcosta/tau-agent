@@ -148,11 +148,17 @@ pub enum Read {
 /// Reads `text/event-stream` as it comes, chunk by chunk, into frames:
 /// the event's name (`message` when the server named none), its data
 /// (its `data:` lines, joined) and the last id. Comments, a keep-alive
-/// among them, and events with no data are no frame. Lines end in `\n`
-/// or `\r\n`.
+/// among them, and events with no data are no frame. Lines end in `\n`,
+/// `\r\n` or `\r`. A `retry:` field sets how long to wait before
+/// opening again ([`Self::retry`]).
 #[derive(Debug, Default)]
 pub struct Sse {
     last_id: Option<String>,
+    /// How long the server asked to wait before opening again.
+    retry: Option<Duration>,
+    /// The last byte ended a line with `\r`: a `\n` right after it ends
+    /// no other.
+    after_cr: bool,
     line: Vec<u8>,
     /// The line going is longer than a frame may be: it is dropped up
     /// to its end.
@@ -173,15 +179,23 @@ impl Sse {
         }
     }
 
+    /// How long the server last asked to wait before the stream opens
+    /// again, in a `retry:` field.
+    pub fn retry(&self) -> Option<Duration> {
+        self.retry
+    }
+
     /// The frames `bytes` finish.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<Read> {
         let mut out = Vec::new();
         for &byte in bytes {
-            if byte == b'\n' {
-                let mut line = std::mem::take(&mut self.line);
-                if line.last() == Some(&b'\r') {
-                    line.pop();
-                }
+            let after_cr = std::mem::take(&mut self.after_cr);
+            if byte == b'\n' && after_cr {
+                continue;
+            }
+            if byte == b'\n' || byte == b'\r' {
+                self.after_cr = byte == b'\r';
+                let line = std::mem::take(&mut self.line);
                 if std::mem::take(&mut self.skipping) {
                     self.too_large = true;
                 } else {
@@ -224,6 +238,14 @@ impl Sse {
             }
             "id" if !value.contains('\0') => {
                 self.last_id = Some(value.to_owned());
+            }
+            "retry"
+                if !value.is_empty()
+                    && value.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                if let Ok(millis) = value.parse::<u64>() {
+                    self.retry = Some(Duration::from_millis(millis));
+                }
             }
             _ => {}
         }
@@ -313,6 +335,15 @@ impl Connection {
             }
         };
         opened.map_err(|_| "the stream did not answer in time".to_owned())?
+    }
+
+    /// How long the server asked to wait before opening the stream again,
+    /// if it did (server-sent events' `retry:`).
+    pub fn retry(&self) -> Option<Duration> {
+        match &self.0 {
+            Opened::Sse(open) => open.reader.retry(),
+            Opened::Websocket(_) => None,
+        }
     }
 
     /// What comes next: a frame, one dropped, why the stream failed, or
@@ -474,6 +505,29 @@ mod tests {
             [json!({ "event": "build", "data": "one\ntwo", "id": "7" })]
         );
         assert_eq!(sse.last_id.as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn a_bare_carriage_return_ends_a_line_and_one_before_a_newline_ends_one() {
+        let mut sse = Sse::new(None);
+        let got = frames(sse.feed(b"data: one\rdata: two\r\r"));
+        assert_eq!(got, [json!({ "event": "message", "data": "one\ntwo" })]);
+        // `\r` at a chunk's end, then `\n`: one line end, not two.
+        assert!(sse.feed(b"data: three\r").is_empty());
+        assert!(sse.feed(b"\n").is_empty());
+        let got = frames(sse.feed(b"\r\n"));
+        assert_eq!(got, [json!({ "event": "message", "data": "three" })]);
+    }
+
+    #[test]
+    fn retry_says_how_long_to_wait_and_nothing_else_does() {
+        let mut sse = Sse::new(None);
+        assert_eq!(sse.retry(), None);
+        sse.feed(b"retry: 2500\n\n");
+        assert_eq!(sse.retry(), Some(Duration::from_millis(2500)));
+        // Not a number of milliseconds: ignored.
+        sse.feed(b"retry: soon\nretry: -1\nretry:\n\n");
+        assert_eq!(sse.retry(), Some(Duration::from_millis(2500)));
     }
 
     #[test]

@@ -56,11 +56,21 @@ pub struct Due {
 #[derive(Debug, Clone)]
 pub struct Store {
     dir: PathBuf,
+    /// How many times a file was written, for the tests of how often.
+    writes: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Store {
     pub fn at(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            writes: std::sync::Arc::default(),
+        }
+    }
+
+    /// How many times it wrote an agent's file.
+    pub fn writes(&self) -> u64 {
+        self.writes.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn path(&self, agent: &str) -> PathBuf {
@@ -80,6 +90,8 @@ impl Store {
         let (path, text) = (self.path(agent), serde_json::to_string(kept)?);
         tokio::task::spawn_blocking(move || crate::write_atomic(&path, &text))
             .await??;
+        self.writes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }

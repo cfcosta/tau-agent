@@ -36,6 +36,7 @@ pub mod tools;
 
 pub use agents::{
     Agents,
+    SAVE_SOON,
     talk::{MAX_HOPS, MAX_MESSAGE, MAX_TEXT, hops_of},
 };
 pub use half::AgentsHost;

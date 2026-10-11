@@ -154,11 +154,13 @@ impl Agents {
         let key = (agent.to_owned(), trigger.to_owned());
         let (first, longest) = self.0.streams.waits;
         let mut failures = 0;
+        // How long the server asked to wait, the last time it said.
+        let mut retry = None;
         loop {
             let read = tokio::select! {
                 biased;
                 () = cancel.cancelled() => break,
-                read = self.read_stream(agent, trigger, kind, &mut failures) => read,
+                read = self.read_stream(agent, trigger, kind, &mut failures, &mut retry) => read,
             };
             self.0.streams.open.lock().await.remove(&key);
             if let Err(error) = read {
@@ -174,8 +176,12 @@ impl Agents {
                 .await;
             }
             self.0.env.refresh();
+            // The server's `retry:` is the least it waits, within the
+            // longest wait.
             let wait =
-                stream::wait(failures.max(1), first, longest, stream::jitter());
+                stream::wait(failures.max(1), first, longest, stream::jitter())
+                    .max(retry.unwrap_or_default())
+                    .min(longest);
             tokio::select! {
                 biased;
                 () = cancel.cancelled() => break,
@@ -188,13 +194,15 @@ impl Agents {
 
     /// Opens `agent`'s stream `trigger` once and reads it to its end:
     /// `Ok` when the server closed it, else why it failed, scrubbed of
-    /// every secret. Once it opens, `failures` starts over.
+    /// every secret. Once it opens, `failures` starts over; `retry` takes
+    /// what the server says of how long to wait.
     async fn read_stream(
         &self,
         agent: &str,
         trigger: &str,
         kind: &TriggerKind,
         failures: &mut u32,
+        retry: &mut Option<Duration>,
     ) -> Result<(), String> {
         let secrets = self
             .0
@@ -229,6 +237,9 @@ impl Agents {
         .await;
         self.0.env.refresh();
         while let Some(read) = connection.next().await {
+            if let Some(asked) = connection.retry() {
+                *retry = Some(asked);
+            }
             match read.map_err(|error| scrub.text(&error))? {
                 Reading::TooLarge => eprintln!(
                     "{NAME}: {agent}'s stream {trigger}: a frame longer than \
@@ -272,7 +283,7 @@ impl Agents {
             eprintln!("{NAME}: {agent}'s stream {trigger}: {error}");
         }
         let now = self.0.clock.now();
-        self.with_kept(agent, |kept| {
+        self.with_kept_soon(agent, |kept| {
             let Some(streamed) = kept.streams.get_mut(trigger) else {
                 return;
             };

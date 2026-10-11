@@ -427,3 +427,53 @@ async fn a_websockets_messages_are_frames_and_it_opens_again() {
     assert!(authorizations.len() >= 2);
     f.agents.close_streams().await;
 }
+
+/// A busy stream writes its agent's file about once a second, not once a
+/// frame, and what it keeps is written all the same.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_busy_stream_writes_its_agent_s_file_seldom() {
+    const FRAMES: usize = 60;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        read_head(&mut stream).await;
+        let mut body = String::from(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n",
+        );
+        for n in 0..FRAMES {
+            body.push_str(&format!("id: {n}\ndata: {{\"n\":{n}}}\n\n"));
+        }
+        stream.write_all(body.as_bytes()).await.unwrap();
+        stream.flush().await.unwrap();
+        // Held open until the client goes.
+        let mut buffer = [0u8; 64];
+        while stream.read(&mut buffer).await.unwrap_or(0) > 0 {}
+    });
+    let f = Fixture::new(&agent(&format!("sse = \"http://{address}/events\"")))
+        .await;
+    let before = f.agents.kept_writes();
+    f.until("every frame is heard", || async {
+        f.heard().len() >= FRAMES
+    })
+    .await;
+    let writes = f.agents.kept_writes() - before;
+    assert!(
+        writes < FRAMES as u64 / 2,
+        "{writes} writes for {FRAMES} frames"
+    );
+    // What it keeps is written within a second, or at once when asked.
+    f.agents.flush().await;
+    let kept = std::fs::read_to_string(
+        f.home
+            .path()
+            .join("state")
+            .join("agents")
+            .join("watch.json"),
+    )
+    .unwrap();
+    assert!(
+        kept.contains(&format!("\"last_id\":\"{}\"", FRAMES - 1)),
+        "{kept}"
+    );
+}

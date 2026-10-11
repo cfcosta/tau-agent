@@ -87,6 +87,9 @@ struct Inner {
     store: Store,
     /// What is kept of each agent, read from its file the first time.
     kept: Mutex<BTreeMap<String, Kept>>,
+    /// The agents whose kept changes wait to be written
+    /// ([`Agents::with_kept_soon`]).
+    unsaved: std::sync::Mutex<BTreeSet<String>>,
     /// Each agent's spend today, as last counted, and when.
     spend: Mutex<BTreeMap<String, (f64, i64)>>,
     /// What the registry tells agents: their versions that failed.
@@ -109,6 +112,10 @@ struct Inner {
     /// The MCP resources watched, by agent and trigger.
     resources: resources::Resources,
 }
+
+/// How long a stream's changes to what is kept of its agent may wait
+/// before they are written ([`Agents::with_kept_soon`]).
+pub const SAVE_SOON: Duration = Duration::from_secs(1);
 
 impl PluginHost for Agents {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
@@ -190,6 +197,7 @@ impl Agents {
             clock,
             store: Store::at(dir.join("agents")),
             kept: Mutex::default(),
+            unsaved: std::sync::Mutex::default(),
             spend: Mutex::default(),
             told: Mutex::new(told),
             commands: AtomicU64::new(0),
@@ -293,12 +301,82 @@ impl Agents {
         let kept = all.get_mut(agent).expect("just read");
         let before = kept.clone();
         let answer = change(kept);
+        if *kept != before {
+            // Written whole: what waited to be written goes with it.
+            self.0.unsaved.lock().expect("not poisoned").remove(agent);
+            if let Err(error) = self.0.store.save(agent, kept).await {
+                eprintln!("{NAME}: cannot keep {agent}'s events: {error:#}");
+            }
+        }
+        answer
+    }
+
+    /// [`Self::with_kept`], but what changed is written within
+    /// [`SAVE_SOON`], with whatever else changes until then: a busy
+    /// stream writes its agent's file once a second, not once a frame.
+    /// tau closed in between loses at most that second, which the
+    /// stream sends again from the id last written.
+    pub(crate) async fn with_kept_soon<T>(
+        &self,
+        agent: &str,
+        change: impl FnOnce(&mut Kept) -> T,
+    ) -> T {
+        let mut all = self.0.kept.lock().await;
+        if !all.contains_key(agent) {
+            let kept = self.0.store.load(agent).await;
+            all.insert(agent.to_owned(), kept);
+        }
+        let kept = all.get_mut(agent).expect("just read");
+        let before = kept.clone();
+        let answer = change(kept);
         if *kept != before
+            && self
+                .0
+                .unsaved
+                .lock()
+                .expect("not poisoned")
+                .insert(agent.to_owned())
+        {
+            let (agents, agent) = (self.clone(), agent.to_owned());
+            tokio::spawn(async move {
+                tokio::time::sleep(SAVE_SOON).await;
+                agents.save_unsaved(&agent).await;
+            });
+        }
+        answer
+    }
+
+    /// Writes what is kept of `agent`, if changes wait to be written.
+    async fn save_unsaved(&self, agent: &str) {
+        let all = self.0.kept.lock().await;
+        let waiting =
+            self.0.unsaved.lock().expect("not poisoned").remove(agent);
+        if waiting
+            && let Some(kept) = all.get(agent)
             && let Err(error) = self.0.store.save(agent, kept).await
         {
             eprintln!("{NAME}: cannot keep {agent}'s events: {error:#}");
         }
-        answer
+    }
+
+    /// Writes every change that waits to be written, now.
+    pub async fn flush(&self) {
+        let waiting: Vec<String> = self
+            .0
+            .unsaved
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .cloned()
+            .collect();
+        for agent in waiting {
+            self.save_unsaved(&agent).await;
+        }
+    }
+
+    /// How many times an agent's kept file was written.
+    pub fn kept_writes(&self) -> u64 {
+        self.0.store.writes()
     }
 
     /// Puts `event` in `agent`'s queue, unless the same one waits there.

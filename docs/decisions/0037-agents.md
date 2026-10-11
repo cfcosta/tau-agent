@@ -177,8 +177,12 @@ return tau.agent {
   that is not a success fires nothing. A poll that fails shows why on
   its trigger, and after three in a row waits four intervals, at most
   an hour.
-- **Streams** reconnect with back-off and send `Last-Event-ID` when the
-  server gave one. The host holds the connection; Luau never does.
+- **Streams** reconnect with back-off, waiting at least what a
+  server-sent `retry:` asked, and send `Last-Event-ID` when the server
+  gave one. Lines may end in `\n`, `\r\n` or `\r`. The host holds the
+  connection; Luau never does. A busy stream writes its agent's kept
+  state at most once a second: tau closed in between loses that second,
+  which the server sends again from the id last written.
 - **MCP subscriptions** are new to tau-mcp: it subscribes while an
   active agent names the resource and the server can
   (`resources.subscribe`), on 2026-07-28 through a
