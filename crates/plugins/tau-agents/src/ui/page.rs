@@ -28,7 +28,7 @@ use tau_ui_kit::{
     },
     format::usd,
     prose::rich,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
+    theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp, weight},
 };
 use tau_ui_plugin::{Link, ViewCx};
 
@@ -326,6 +326,14 @@ fn agent_card(
                 .line_clamp(3)
                 .child(agent.purpose.clone()),
         )
+        .when_some(agent.sandbox.clone(), |card, problem| {
+            card.child(
+                div()
+                    .typeset(Type::CAPTION)
+                    .text_color(t.tone(Tone::Warn))
+                    .child(problem),
+            )
+        })
         .when(!agent.triggers.is_empty(), |card| {
             card.child(div().flex().flex_wrap().gap(sp(1.5)).children(triggers))
         })

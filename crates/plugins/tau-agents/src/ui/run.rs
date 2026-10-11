@@ -18,7 +18,7 @@ use tau_ui_kit::{
     assets::Icon,
     components::{ButtonKind, bar, button, field, icon, mono},
     format::usd,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
+    theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp, weight},
 };
 use tau_ui_plugin::{
     ViewCx,
@@ -241,6 +241,16 @@ pub(super) fn panel(
             .child(wakes)
             .child(keys)
             .when(!agent.versions.is_empty(), |panel| panel.child(versions))
+            .when_some(agent.sandbox.clone(), |panel, problem| {
+                panel.child(
+                    section("Commands", &t).child(
+                        div()
+                            .typeset(Type::CAPTION)
+                            .text_color(t.tone(Tone::Warn))
+                            .child(problem),
+                    ),
+                )
+            })
             .when_some(broken(&agent), |panel, error| {
                 panel.child(section("Broken", &t).child(
                     div().typeset(Type::CAPTION).text_color(t.red).child(error),
