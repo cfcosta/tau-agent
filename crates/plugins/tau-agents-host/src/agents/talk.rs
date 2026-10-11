@@ -67,6 +67,24 @@ impl Agents {
         self.leave(agent, question, Some(choices)).await
     }
 
+    /// What `agent` left that the person has not dealt with yet: its
+    /// questions waiting for an answer, and its notes not dismissed,
+    /// oldest first.
+    pub async fn waiting(&self, agent: &str) -> Vec<Notice> {
+        self.with_kept(agent, |kept| kept.notices.clone()).await
+    }
+
+    /// The id of `agent`'s question `question`, if the same one waits
+    /// for an answer already.
+    pub async fn asked(&self, agent: &str, question: &str) -> Option<String> {
+        let question = question.trim();
+        self.waiting(agent)
+            .await
+            .into_iter()
+            .find(|notice| notice.asks() && notice.text == question)
+            .map(|notice| notice.id)
+    }
+
     async fn leave(
         &self,
         agent: &str,

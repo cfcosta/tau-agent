@@ -344,7 +344,7 @@ fn only_an_agents_runs_have_its_tools() {
     };
     assert_eq!(
         tools(&f.home.path().join("agents/triage")),
-        ["notify", "ask", "agent_send"]
+        ["notify", "ask", "pending_asks", "agent_send"]
     );
     assert!(tools(Path::new("/src/tau-agent")).is_empty());
 }
@@ -440,4 +440,37 @@ fn a_chain_of_messages_stops_after_its_hops() {
             .unwrap_err();
     assert!(refused.contains("tau stops at 8"), "{refused}");
     assert_eq!(f.agent("triage").queued, 1);
+}
+
+/// An agent sees what still waits for the person, so it does not ask
+/// twice: the same question, while it waits, is the one asked before.
+#[test]
+fn an_agent_sees_what_still_waits_for_the_person() {
+    let f = Fixture::new();
+    assert!(block_on_io(f.agents.waiting("triage")).is_empty());
+    let question =
+        block_on_io(f.agents.ask("triage", "Quarantine it?", Vec::new()))
+            .unwrap();
+    block_on_io(f.agents.notify("triage", "Build 2318 failed")).unwrap();
+    let waiting = block_on_io(f.agents.waiting("triage"));
+    assert_eq!(waiting.len(), 2);
+    assert_eq!(waiting[0].id, question);
+    assert_eq!(
+        block_on_io(f.agents.asked("triage", "  Quarantine it? ")),
+        Some(question.clone())
+    );
+    assert_eq!(
+        block_on_io(f.agents.asked("triage", "Build 2318 failed")),
+        None
+    );
+    f.act(Act::Answer {
+        agent: "triage".into(),
+        notice: question,
+        answer: "Yes".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        block_on_io(f.agents.asked("triage", "Quarantine it?")),
+        None
+    );
 }

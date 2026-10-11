@@ -1,6 +1,7 @@
 //! The tools an agent's runs have, and no other run (ADR 0037): `notify`
-//! and `ask`, to reach the person without waiting for them, and
-//! `agent_send`, to reach another agent.
+//! and `ask`, to reach the person without waiting for them,
+//! `pending_asks`, what of that still waits for them, and `agent_send`,
+//! to reach another agent.
 //!
 //! An agent works unattended, so its `ask` does not hold the turn open
 //! as tau-ask's does (the host leaves tau-ask out of an agent's runs):
@@ -57,6 +58,10 @@ impl Plugin for AgentTools {
                 agent: agent.clone(),
             }),
             Arc::new(Ask {
+                agents: agents.clone(),
+                agent: agent.clone(),
+            }),
+            Arc::new(Pending {
                 agents: agents.clone(),
                 agent: agent.clone(),
             }),
@@ -195,6 +200,12 @@ impl AgentTool for Ask {
         _ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
         let args: AskArgs = serde_json::from_value(args)?;
+        if let Some(id) = self.agents.asked(&self.agent, &args.question).await {
+            return Ok(ToolOutput::text(format!(
+                "You asked this already ({id}); it still waits for the \
+                 person. Their answer comes as an event `ask · answer · {id}`."
+            )));
+        }
         let id = self
             .agents
             .ask(&self.agent, &args.question, args.choices)
@@ -203,6 +214,63 @@ impl AgentTool for Ask {
         Ok(ToolOutput::text(format!(
             "Asked. The answer comes as an event `ask · answer · {id}`."
         )))
+    }
+}
+
+/// `pending_asks {}`.
+struct Pending {
+    agents: Agents,
+    agent: String,
+}
+
+#[async_trait]
+impl AgentTool for Pending {
+    fn name(&self) -> &str {
+        "pending_asks"
+    }
+
+    fn description(&self) -> &str {
+        "What you left the person that they have not dealt with yet: your \
+         questions still waiting for an answer, and your notes they have \
+         not dismissed. Look before you ask or tell them something again."
+    }
+
+    fn parameters(&self) -> &Value {
+        static CELL: OnceLock<Value> = OnceLock::new();
+        schema(&CELL, || {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false,
+            })
+        })
+    }
+
+    async fn call(
+        &self,
+        _args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let waiting = self.agents.waiting(&self.agent).await;
+        if waiting.is_empty() {
+            return Ok(ToolOutput::text("Nothing waits for the person."));
+        }
+        let lines: Vec<String> = waiting
+            .iter()
+            .map(|notice| match &notice.choices {
+                Some(choices) if !choices.is_empty() => format!(
+                    "- {} · question · {} (choices: {})",
+                    notice.id,
+                    notice.text,
+                    choices.join(" / ")
+                ),
+                Some(_) => {
+                    format!("- {} · question · {}", notice.id, notice.text)
+                }
+                None => format!("- {} · note · {}", notice.id, notice.text),
+            })
+            .collect();
+        Ok(ToolOutput::text(lines.join("\n")))
     }
 }
 

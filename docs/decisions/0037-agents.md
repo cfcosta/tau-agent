@@ -323,8 +323,10 @@ return tau.agent {
   turn open as tau-ask's does (0019): the answer comes back as an event
   of its own, kind `answer` from the trigger `ask`, with the question
   and the answer. tau-ask is left out of an agent's runs, so `ask` is
-  always tau-agents'. These tools, and `agent_send`, are in an agent's
-  runs and no other.
+  always tau-agents'. `pending_asks` lists what of that still waits
+  for the person, and asking the same question while it waits only
+  says so, so an agent does not ask twice. These tools, and
+  `agent_send`, are in an agent's runs and no other.
 - Both, and the spend cap, reach the person three ways: a "needs you"
   pill on its sidebar row and an item on the Agents page; a desktop
   notification (`tau-ui`'s `notify`, a new kind beside `Asks`); and the

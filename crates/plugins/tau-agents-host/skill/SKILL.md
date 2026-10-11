@@ -138,7 +138,7 @@ one message; events that come while you work arrive at your next turn.
 
 ## Reaching the person and other agents
 
-The person is usually not watching. Three tools reach out:
+The person is usually not watching. These tools reach out:
 
 - `notify { text }` leaves the person a note: it shows on your page
   and in their sidebar, and as a notification on their desktop and
@@ -148,7 +148,11 @@ The person is usually not watching. Three tools reach out:
   offer if it is one of a few. It does not wait: go on with what does
   not depend on it, or end your turn. The answer reaches you later as
   an event of its own, kind `answer`, from the trigger `ask`:
-  `{"question": "...", "answer": "..."}`.
+  `{"question": "...", "answer": "..."}`. Asking the same question
+  again while it waits only says it waits.
+- `pending_asks {}` lists what you left the person that they have not
+  dealt with yet: your questions without an answer, your notes not
+  dismissed. Look before you ask or tell them again.
 - `agent_send { to, text }` sends another agent a message. It reaches
   that agent as a `message` event, `{"from": "...", "text": "...",
 "hops": n}`, under its own cap. Only an agent whose `agent.luau`
