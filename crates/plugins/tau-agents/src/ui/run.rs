@@ -64,6 +64,15 @@ pub(super) fn banner(
             }
         })
     };
+    // On a phone the panel is in the run's sheet: what the agent left
+    // the person opens it from here.
+    let waits = agent.waits_on_you();
+    let for_you = (view.compact && waits > 0).then(|| {
+        let handle = view.handle.clone();
+        button(format!("{waits} for you"), ButtonKind::Primary, &t)
+            .id("agent-for-you")
+            .on_click(move |_, _, cx| handle.run_details(cx))
+    });
     let queued = (agent.queued > 0).then(|| {
         div().typeset(Type::CAPTION).text_color(t.dim).child(
             match agent.queued {
@@ -113,6 +122,7 @@ pub(super) fn banner(
                     ),
             )
             .children(queued)
+            .children(for_you)
             .child(toggle)
             .into_any_element(),
     )
