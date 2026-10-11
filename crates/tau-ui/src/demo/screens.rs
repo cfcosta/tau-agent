@@ -1123,6 +1123,20 @@ fn agents(
         .plugin_data
         .insert(tau_agents::NAME.into(), data.clone());
     host.pin(info, data);
+    // The person's MCP servers, for the New agent form to offer: no
+    // server answers in a demo.
+    if let Some(mcp) = catalog
+        .plugins
+        .iter()
+        .find(|plugin| plugin.name == tau_mcp_host::NAME)
+        .cloned()
+    {
+        let servers = PluginValue::typed(tau_mcp::demo::servers());
+        catalog
+            .plugin_data
+            .insert(tau_mcp_host::NAME.into(), servers.clone());
+        host.pin(mcp, servers);
+    }
     for agent in &overview.agents {
         if catalog.repo(&agent.name).is_none() {
             catalog.repos.push(crate::catalog::Repo {

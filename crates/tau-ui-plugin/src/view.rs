@@ -402,8 +402,13 @@ pub struct ViewCx<'a, P: UiPlugin> {
     pub handle: Handle,
     runs: &'a dyn Fn() -> Vec<(RunInfo, crate::PluginValue)>,
     cards: &'a dyn Fn(&RunId) -> Vec<crate::CardInfo>,
+    /// Every plugin's data, by plugin: see [`Self::data_of`].
+    others: &'a BTreeMap<String, crate::PluginValue>,
     pub cx: &'a mut App,
 }
+
+/// No plugin's data, for a view made without it.
+static NO_OTHERS: BTreeMap<String, crate::PluginValue> = BTreeMap::new();
 
 impl<'a, P: UiPlugin> ViewCx<'a, P> {
     #[allow(clippy::too_many_arguments)]
@@ -439,8 +444,25 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             handle,
             runs,
             cards,
+            others: &NO_OTHERS,
             cx,
         }
+    }
+
+    /// The same view, reading other plugins' data from `others`.
+    pub fn with_others(
+        mut self,
+        others: &'a BTreeMap<String, crate::PluginValue>,
+    ) -> Self {
+        self.others = others;
+        self
+    }
+
+    /// What the plugin `plugin` knows across repositories, as JSON: one
+    /// plugin reads another's data without depending on its crate, so
+    /// it reads only what it needs and takes none as nothing there.
+    pub fn data_of(&self, plugin: &str) -> Option<&'a serde_json::Value> {
+        self.others.get(plugin).map(crate::PluginValue::json)
     }
 
     /// The scope a settings pane shows: a repository's name, or none

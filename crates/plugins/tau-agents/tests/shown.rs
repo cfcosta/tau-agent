@@ -209,3 +209,20 @@ fn an_agent_is_its_main_chat_only() {
     };
     assert!(unnamed.agent_of_main("pr-triage", "its-main").is_none());
 }
+
+#[test]
+fn the_form_offers_the_person_s_mcp_servers_that_are_on() {
+    use tau_agents::ui::mcp_servers;
+    let data = serde_json::json!({
+        "started": true,
+        "servers": [
+            { "name": "github", "enabled": true },
+            { "name": "linear" },
+            { "name": "off", "enabled": false },
+        ],
+    });
+    assert_eq!(mcp_servers(Some(&data)), ["github", "linear"]);
+    // Without tau-mcp's data, or with a shape it does not know, none.
+    assert!(mcp_servers(None).is_empty());
+    assert!(mcp_servers(Some(&serde_json::json!([1, 2]))).is_empty());
+}

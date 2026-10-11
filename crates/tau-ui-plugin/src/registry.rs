@@ -49,6 +49,8 @@ pub struct Env<'a> {
     pub runs: &'a dyn Fn() -> Vec<(RunInfo, PluginValue)>,
     /// A run's tool calls.
     pub cards: &'a dyn Fn(&tau_agent::tool::RunId) -> Vec<crate::CardInfo>,
+    /// Every plugin's data, by plugin.
+    pub others: &'a BTreeMap<String, PluginValue>,
     pub cx: &'a mut App,
 }
 
@@ -276,7 +278,8 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
             env.runs,
             env.cards,
             env.cx,
-        );
+        )
+        .with_others(env.others);
         Some(f(&mut view))
     }
 }

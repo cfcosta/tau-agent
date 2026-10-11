@@ -354,6 +354,7 @@ impl Workspace {
             handle: self.plugin_handle(name),
             runs: &runs,
             cards: &cards,
+            others: &self.catalog.plugin_data,
             cx,
         };
         Some(f(plugin, env))

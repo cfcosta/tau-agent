@@ -447,6 +447,7 @@ pub(super) fn new_agent(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
     let (name, purpose) = (ui.name.clone(), ui.purpose.clone());
     let (model, daily_cap, window_secs) =
         (ui.model.clone(), ui.daily_cap, ui.window_secs);
+    let chosen = ui.servers.clone();
     let error = ui.error.clone();
     let name_text = name.read(view.cx).text().to_owned();
     let label = |text: &'static str, caption: Option<&'static str>| {
@@ -532,6 +533,24 @@ pub(super) fn new_agent(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
                     text.to_owned(),
                     window_secs == seconds,
                     Box::new(move |ui| ui.window_secs = seconds),
+                )
+            })
+            .collect();
+    let servers: Vec<gpui::Stateful<Div>> =
+        super::mcp_servers(view.data_of(super::MCP))
+            .into_iter()
+            .map(|server| {
+                let on = chosen.contains(&server);
+                let name = server.clone();
+                segment(
+                    format!("new-agent-server-{server}"),
+                    server,
+                    on,
+                    Box::new(move |ui| {
+                        if !ui.servers.remove(&name) {
+                            ui.servers.insert(name.clone());
+                        }
+                    }),
                 )
             })
             .collect();
@@ -645,6 +664,19 @@ pub(super) fn new_agent(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
                         .child(segments(windows)),
                 ),
         )
+        .when(!servers.is_empty(), |form| {
+            form.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(2.))
+                    .child(label(
+                        "MCP servers it starts with",
+                        Some("Yours, as tau-mcp lists them. It can connect more itself."),
+                    ))
+                    .child(segments(servers)),
+            )
+        })
         .children(error.map(|error| div().typeset(Type::SMALL).text_color(t.red).child(error)))
         .child(
             div()

@@ -52,6 +52,24 @@ pub const OVERVIEW: &str = "agents";
 /// The New agent form.
 pub const NEW: &str = "new-agent";
 
+/// The plugin whose data lists the person's MCP servers: the form reads
+/// their names from it, as JSON, without depending on its crate.
+const MCP: &str = "tau-mcp";
+
+/// The person's MCP servers, by name, from tau-mcp's data: `servers`,
+/// each with its `name`, and `enabled` unless it is off.
+pub fn mcp_servers(data: Option<&Value>) -> Vec<String> {
+    data.and_then(|data| data.get("servers"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|server| {
+            server.get("enabled").and_then(Value::as_bool) != Some(false)
+        })
+        .filter_map(|server| server.get("name")?.as_str().map(str::to_owned))
+        .collect()
+}
+
 /// tau-agents' interface half.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AgentsUi;
@@ -68,6 +86,8 @@ pub struct Ui {
     pub(crate) model: Option<String>,
     pub(crate) daily_cap: f64,
     pub(crate) window_secs: u64,
+    /// The person's MCP servers it starts with.
+    pub(crate) servers: std::collections::BTreeSet<String>,
     /// The agent the host made, until its conversation opens.
     pub(crate) making: Option<String>,
     /// Why the host could not make it.
@@ -124,7 +144,7 @@ impl Ui {
             model: self.model.clone(),
             daily_cap: Some(self.daily_cap),
             window_secs: Some(self.window_secs),
-            servers: Vec::new(),
+            servers: self.servers.iter().cloned().collect(),
         })
     }
 
@@ -184,6 +204,7 @@ impl Ui {
         self.making = None;
         self.error = None;
         self.suggested.clear();
+        self.servers.clear();
         self.name.update(cx, |input, cx| input.clear(cx));
         self.purpose.update(cx, |input, cx| input.clear(cx));
     }
@@ -227,6 +248,7 @@ impl PluginUi for Ui {
             model: None,
             daily_cap: defaults.daily_cap,
             window_secs: defaults.window_secs,
+            servers: Default::default(),
             making: None,
             error: None,
         }
