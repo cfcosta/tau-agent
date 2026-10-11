@@ -2,8 +2,9 @@
 //! what its runs cost, and its conversation. [`HostEnv`] is the host's;
 //! tests give their own.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
+use serde_json::Value;
 use tau_agents::{NAME, Settings};
 use tau_tools_host::secrets::SecretStore;
 use tau_ui_plugin::{
@@ -42,6 +43,19 @@ pub trait Env: Send + Sync {
 
     /// tau's secret store, which agents' requests name keys from.
     fn secrets(&self) -> SecretStore;
+
+    /// Calls the tool `name` with `args` outside any run, for the agent
+    /// checked out at `checkout`: what its poll reads.
+    fn call_tool<'a>(
+        &'a self,
+        checkout: &'a Path,
+        name: &'a str,
+        args: Value,
+    ) -> HostFuture<'a, Result<Value, String>>;
+
+    /// Makes the HTTP request `spec`, its secrets from [`Self::secrets`]:
+    /// what its poll reads ([`crate::poll::fetch`]).
+    fn fetch(&self, spec: Value) -> HostFuture<'_, Result<Value, String>>;
 }
 
 /// The host's [`Env`], over what it gives every plugin.
@@ -118,5 +132,25 @@ impl Env for HostEnv {
             std::path::Path::to_path_buf,
         );
         SecretStore::in_dir(&dir)
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        checkout: &'a Path,
+        name: &'a str,
+        args: Value,
+    ) -> HostFuture<'a, Result<Value, String>> {
+        Box::pin(async move {
+            match self.0.outside_tools() {
+                Some(tools) => tools.call(checkout, name, args).await,
+                None => Err("this host calls no tools outside a run".into()),
+            }
+        })
+    }
+
+    fn fetch(&self, spec: Value) -> HostFuture<'_, Result<Value, String>> {
+        Box::pin(
+            async move { crate::poll::fetch(&self.secrets(), &spec).await },
+        )
     }
 }

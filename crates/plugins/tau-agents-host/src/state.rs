@@ -1,6 +1,6 @@
 //! What tau keeps of each agent across restarts (ADR 0037): the events
-//! waiting for its next turn, when its schedules are due, and what its
-//! day's spend is counted from.
+//! waiting for its next turn, when its schedules and polls are due,
+//! what each poll saw, and what its day's spend is counted from.
 //!
 //! Each agent's is a JSON file of its own in tau-agents' directory,
 //! written whole each time it changes. An agent's queue is short: a
@@ -33,6 +33,8 @@ pub struct Kept {
     pub base: BTreeMap<String, f64>,
     /// When to try again a turn that did not start.
     pub retry_at: Option<i64>,
+    /// Each poll's keys and when it polls next, by trigger.
+    pub polls: BTreeMap<String, crate::poll::Polled>,
 }
 
 /// When a schedule is due next, and what it was when that was worked

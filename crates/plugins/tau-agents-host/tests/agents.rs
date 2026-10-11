@@ -1,7 +1,7 @@
 //! An agent's events, from what wakes it to the turn that hears them
 //! (ADR 0037): schedules that come due and catch up, commands, the
-//! coalescing window, a turn that is going, the daily cap, and making
-//! an agent.
+//! coalescing window, a turn that is going, the daily cap, making an
+//! agent, and polls.
 
 #![allow(
     clippy::disallowed_methods,
@@ -9,8 +9,8 @@
 )]
 
 use std::{
-    collections::BTreeMap,
-    path::Path,
+    collections::{BTreeMap, VecDeque},
+    path::{Path, PathBuf},
     sync::{
         Arc,
         Mutex,
@@ -18,7 +18,7 @@ use std::{
     },
 };
 
-use serde_json::json;
+use serde_json::{Value, json};
 use tau_agents::{Act, Settings, Status, event::Message};
 use tau_agents_host::{Agents, clock::FakeClock, env::Env};
 use tau_testing::block_on_io;
@@ -42,6 +42,11 @@ return tau.agent {
                         headers = { authorization = "Bearer " .. tau.secret("github") } } },
       every = "1h",
       key = "id",
+    },
+    pulls = {
+      poll = { tool = "mcp__github__list_pull_requests", args = { state = "open" } },
+      every = "10m",
+      key = "number",
     },
   },
 }
@@ -89,6 +94,23 @@ struct Host {
     secrets: std::sync::OnceLock<SecretStore>,
     settings: Mutex<BTreeMap<String, Settings>>,
     costs: Mutex<BTreeMap<String, f64>>,
+    /// What each tool answers next, in turn; none is a failure.
+    answers: Mutex<BTreeMap<String, VecDeque<Result<Value, String>>>>,
+    /// The tools called outside a run: where, which, with what.
+    called: Mutex<Vec<(PathBuf, String, Value)>>,
+    /// Whether requests go out; else they fail, offline.
+    online: AtomicBool,
+}
+
+impl Host {
+    fn answer(&self, tool: &str, answer: Result<Value, String>) {
+        self.answers
+            .lock()
+            .unwrap()
+            .entry(tool.to_owned())
+            .or_default()
+            .push_back(answer);
+    }
 }
 
 impl Env for Host {
@@ -130,6 +152,36 @@ impl Env for Host {
     fn secrets(&self) -> SecretStore {
         self.secrets.get().expect("the fixture sets it").clone()
     }
+
+    fn call_tool<'a>(
+        &'a self,
+        checkout: &'a Path,
+        name: &'a str,
+        args: Value,
+    ) -> HostFuture<'a, Result<Value, String>> {
+        self.called.lock().unwrap().push((
+            checkout.to_owned(),
+            name.to_owned(),
+            args,
+        ));
+        let answer = self
+            .answers
+            .lock()
+            .unwrap()
+            .get_mut(name)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| Err(format!("{name} has no answer")));
+        Box::pin(async move { answer })
+    }
+
+    fn fetch(&self, spec: Value) -> HostFuture<'_, Result<Value, String>> {
+        Box::pin(async move {
+            if !self.online.load(Ordering::SeqCst) {
+                return Err("offline".into());
+            }
+            tau_agents_host::poll::fetch(&self.secrets(), &spec).await
+        })
+    }
 }
 
 struct Fixture {
@@ -142,11 +194,16 @@ struct Fixture {
 impl Fixture {
     /// The agent `greet` with [`AGENT`], over a fresh host.
     fn new() -> Self {
+        Self::with(AGENT)
+    }
+
+    /// The agent `greet` with `source` as its `agent.luau`.
+    fn with(source: &str) -> Self {
         let home = tempfile::tempdir().unwrap();
         ProjectRepo::init(
             home.path().join("agents").join("greet"),
             Identity::default(),
-            &[("agent.luau".to_owned(), AGENT.to_owned())],
+            &[("agent.luau".to_owned(), source.to_owned())],
         )
         .unwrap();
         let clock = Arc::new(FakeClock::new(MONDAY_EIGHT, 0));
@@ -171,8 +228,21 @@ impl Fixture {
         agents
     }
 
+    /// A tick, and the polls it started, to their end.
     fn tick(&self) {
-        block_on_io(self.agents.tick());
+        block_on_io(async {
+            self.agents.tick().await;
+            self.agents.polls_settled().await;
+        });
+    }
+
+    /// The trigger `name` as the agent's page shows it.
+    fn trigger(&self, name: &str) -> tau_agents::Trigger {
+        self.agent()
+            .triggers
+            .into_iter()
+            .find(|trigger| trigger.name == name)
+            .unwrap()
     }
 
     fn turns(&self) -> Vec<Turn> {
@@ -515,4 +585,244 @@ fn an_agent_names_its_secrets_and_the_person_fills_them() {
         }))
         .is_err()
     );
+}
+
+/// A tick of `agents`, and the polls it started, to their end.
+fn tick_on(agents: &Agents) {
+    block_on_io(async {
+        agents.tick().await;
+        agents.polls_settled().await;
+    });
+}
+
+fn pulls(numbers: &[u64]) -> Result<Value, String> {
+    Ok(numbers.iter().map(|n| json!({ "number": n })).collect())
+}
+
+#[test]
+fn a_poll_records_what_is_there_then_fires_what_is_new() {
+    let f = Fixture::new();
+    let tool = "mcp__github__list_pull_requests";
+    f.host.answer(tool, pulls(&[1, 2]));
+    f.tick();
+    // The first poll ran at once, with its args, in the agent's checkout;
+    // it only recorded what is there.
+    let called = f.host.called.lock().unwrap().clone();
+    assert_eq!(called.len(), 1);
+    assert!(called[0].0.ends_with("agents/greet"), "{:?}", called[0].0);
+    assert_eq!(called[0].1, tool);
+    assert_eq!(called[0].2, json!({ "state": "open" }));
+    assert_eq!(f.agent().queued, 0);
+    assert_eq!(f.trigger("pulls").next, Some(MONDAY_EIGHT + 600));
+    assert_eq!(f.trigger("pulls").error, None);
+
+    // Not due yet: no call.
+    f.clock.advance(300);
+    f.tick();
+    assert_eq!(f.host.called.lock().unwrap().len(), 1);
+
+    // Due: what is new fires, once.
+    f.clock.set(MONDAY_EIGHT + 600);
+    f.host.answer(tool, pulls(&[1, 2, 3]));
+    f.tick();
+    assert_eq!(f.agent().queued, 1);
+    assert_eq!(f.trigger("pulls").last, Some(MONDAY_EIGHT + 600));
+    f.clock.advance(30);
+    f.tick();
+    let turns = f.turns();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        heard(&turns[0]),
+        [("pulls".to_owned(), "{\"number\":3}".to_owned())]
+    );
+    assert!(
+        turns[0].text.contains("pulls · poll · pulls:3"),
+        "{}",
+        turns[0].text
+    );
+
+    // Seen already: nothing more.
+    f.clock.set(MONDAY_EIGHT + 1200);
+    f.host.answer(tool, pulls(&[2, 3]));
+    f.tick();
+    assert_eq!(f.agent().queued, 0);
+}
+
+#[test]
+fn every_poll_runs_at_once_when_tau_starts_and_keeps_what_it_saw() {
+    let f = Fixture::new();
+    let tool = "mcp__github__list_pull_requests";
+    f.host.answer(tool, pulls(&[1]));
+    f.tick();
+    assert_eq!(f.trigger("pulls").next, Some(MONDAY_EIGHT + 600));
+
+    // tau starts again two minutes on: the poll is not due, but runs.
+    f.clock.advance(120);
+    let again = f.restarted();
+    f.host.answer(tool, pulls(&[1, 2]));
+    tick_on(&again);
+    assert_eq!(f.host.called.lock().unwrap().len(), 2);
+    // What it saw before tau closed is still seen: only 2 is new.
+    let agent = block_on_io(again.overview()).agents[0].clone();
+    assert_eq!(agent.queued, 1);
+}
+
+#[test]
+fn a_poll_that_fails_says_why_and_waits_longer_after_three() {
+    let f = Fixture::new();
+    let tool = "mcp__github__list_pull_requests";
+    f.host.answer(tool, Err("the server is down".into()));
+    f.tick();
+    let trigger = f.trigger("pulls");
+    assert_eq!(trigger.error.as_deref(), Some("the server is down"));
+    assert_eq!(trigger.next, Some(MONDAY_EIGHT + 600));
+    for n in 1..=2 {
+        f.clock.set(MONDAY_EIGHT + 600 * n);
+        f.tick();
+    }
+    // Three failures in a row: four intervals, not one.
+    assert_eq!(f.trigger("pulls").next, Some(MONDAY_EIGHT + 1200 + 2400));
+    assert_eq!(f.agent().queued, 0);
+    // One that works starts over, and only records: what waits is the
+    // two schedules due at 09:00 too.
+    f.clock.set(MONDAY_EIGHT + 3600);
+    f.host.answer(tool, pulls(&[7]));
+    f.tick();
+    let trigger = f.trigger("pulls");
+    assert_eq!(trigger.error, None);
+    assert_eq!(trigger.next, Some(MONDAY_EIGHT + 3600 + 600));
+    assert_eq!(f.agent().queued, 2);
+    assert_eq!(f.trigger("pulls").last, None);
+}
+
+#[test]
+fn a_poll_whose_key_fails_fires_nothing_and_says_why() {
+    let source = r#"
+local tau = require("tau")
+return tau.agent {
+  name = "greet",
+  triggers = {
+    pulls = {
+      poll = { tool = "mcp__github__list_pull_requests" },
+      every = "10m",
+      key = function(pr) error("no key here") end,
+    },
+  },
+}
+"#;
+    let f = Fixture::with(source);
+    f.host
+        .answer("mcp__github__list_pull_requests", pulls(&[1]));
+    f.tick();
+    let error = f.trigger("pulls").error.unwrap();
+    assert!(error.contains("no key here"), "{error}");
+}
+
+/// A server on 127.0.0.1 that answers each request with `status` and
+/// `body`, and keeps what it was sent.
+struct Server {
+    url: String,
+    seen: Arc<Mutex<Vec<String>>>,
+}
+
+fn serve(answers: Vec<(u16, String)>) -> Server {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/releases", listener.local_addr().unwrap());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let kept = seen.clone();
+    std::thread::spawn(move || {
+        for (status, body) in answers {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let Ok(read) = stream.read(&mut buffer) else {
+                    return;
+                };
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+            }
+            kept.lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&request).into_owned());
+            let answer = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\n\
+                 content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(answer.as_bytes());
+        }
+    });
+    Server { url, seen }
+}
+
+fn http_agent(url: &str) -> String {
+    format!(
+        r#"
+local tau = require("tau")
+return tau.agent {{
+  name = "greet",
+  triggers = {{
+    releases = {{
+      poll = {{ http = {{ url = "{url}", headers = {{ authorization = "Bearer " .. tau.secret("github") }} }} }},
+      every = "1h",
+      key = "id",
+      items = function(result) return result.releases end,
+    }},
+  }},
+}}
+"#
+    )
+}
+
+#[test]
+fn an_http_poll_sends_its_secret_and_fires_what_is_new() {
+    let server = serve(vec![
+        (200, r#"{"releases":[{"id":1}]}"#.to_owned()),
+        (200, r#"{"releases":[{"id":1},{"id":2}]}"#.to_owned()),
+    ]);
+    let f = Fixture::with(&http_agent(&server.url));
+    f.host.online.store(true, Ordering::SeqCst);
+    block_on_io(f.host.secrets().set("github", "tok-value-1234")).unwrap();
+    f.tick();
+    assert_eq!(f.trigger("releases").error, None);
+    let sent = server.seen.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    assert!(
+        sent[0]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer tok-value-1234"),
+        "{}",
+        sent[0]
+    );
+    f.clock.advance(3600);
+    f.tick();
+    assert_eq!(f.agent().queued, 1);
+    f.clock.advance(30);
+    f.tick();
+    assert_eq!(
+        heard(&f.turns()[0]),
+        [("releases".to_owned(), "{\"id\":2}".to_owned())]
+    );
+}
+
+#[test]
+fn an_http_poll_that_fails_says_why_without_its_secret() {
+    let server = serve(vec![(
+        500,
+        r#"{"error":"bad token tok-value-1234"}"#.to_owned(),
+    )]);
+    let f = Fixture::with(&http_agent(&server.url));
+    f.host.online.store(true, Ordering::SeqCst);
+    block_on_io(f.host.secrets().set("github", "tok-value-1234")).unwrap();
+    f.tick();
+    let error = f.trigger("releases").error.unwrap();
+    assert!(error.contains("500"), "{error}");
+    assert!(error.contains("[secret:github]"), "{error}");
+    assert!(!error.contains("tok-value-1234"), "{error}");
 }

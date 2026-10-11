@@ -7,9 +7,12 @@
 //! a turn of it is going (they wait for the next), the person paused it,
 //! or it spent its day's cap. An event leaves the queue once the turn
 //! that hears it started: tau closed before then delivers it again.
+//!
+//! Polls run beside the ticks, each in a task of its own, so a slow one
+//! holds up nothing else; what one finds joins the queue when it ends.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{
         Arc,
@@ -32,14 +35,20 @@ use tau_agents::{
     TriggerKind,
     event::{Batch, Event, Kind},
 };
+use tau_luau_plugins_host::runtime::{evaluate, long_string};
 use tau_ui_plugin::{By, HostCx, PluginHost, Turn};
-use tokio::sync::{Mutex, mpsc};
+use tokio::{
+    sync::{Mutex, mpsc},
+    task::JoinSet,
+};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     NAME,
     ROOT,
     clock::{self, Clock, SystemClock},
     env::{Env, HostEnv},
+    poll::{self, Polled},
     registry::{Read, Registry},
     schedule::Schedule,
     state::{Due, Kept, Store},
@@ -54,11 +63,16 @@ const RETRY: i64 = 30;
 /// How long a day's spend, as counted, is good for.
 const SPEND_FOR: i64 = 30;
 
+/// How long reading a poll's items in its agent's Luau may take.
+const ITEMS_LIMIT: Duration = Duration::from_secs(2);
+
 /// tau-agents on the host. Clones share it.
 #[derive(Clone)]
 pub struct Agents(Arc<Inner>);
 
 struct Inner {
+    /// Where the agents' repositories are: one directory each.
+    root: PathBuf,
     registry: Registry,
     env: Arc<dyn Env>,
     clock: Arc<dyn Clock>,
@@ -71,6 +85,13 @@ struct Inner {
     told: Mutex<mpsc::UnboundedReceiver<(String, Event)>>,
     /// Makes each command's event id its own.
     commands: AtomicU64,
+    /// The polls going now, by agent and trigger.
+    polling: Mutex<BTreeSet<(String, String)>>,
+    /// The polls that ran since tau started: one that has not runs at
+    /// once.
+    polled: Mutex<BTreeSet<(String, String)>>,
+    /// The polls' tasks.
+    tasks: Mutex<JoinSet<()>>,
 }
 
 impl PluginHost for Agents {
@@ -111,7 +132,7 @@ impl Agents {
         let (tell, told) = mpsc::unbounded_channel();
         let refresher = env.clone();
         let registry = Registry::at(
-            root,
+            root.clone(),
             dir.join("versions.json"),
             clock.clone(),
             move || refresher.refresh(),
@@ -120,6 +141,7 @@ impl Agents {
             },
         );
         Self(Arc::new(Inner {
+            root,
             registry,
             env,
             clock,
@@ -128,6 +150,9 @@ impl Agents {
             spend: Mutex::default(),
             told: Mutex::new(told),
             commands: AtomicU64::new(0),
+            polling: Mutex::default(),
+            polled: Mutex::default(),
+            tasks: Mutex::default(),
         }))
     }
 
@@ -149,8 +174,11 @@ impl Agents {
             self.enqueue(&agent, event).await;
             changed = true;
         }
+        // Let go of the polls that ended.
+        while self.0.tasks.lock().await.try_join_next().is_some() {}
         for (name, read) in self.0.registry.agents().await {
             changed |= self.fire_schedules(&name, &read, now).await;
+            changed |= self.start_polls(&name, &read, now).await;
             let counted = self.0.spend.lock().await.get(&name).copied();
             if counted.is_none_or(|(_, at)| now - at >= SPEND_FOR) {
                 let before = counted.map(|(spend, _)| spend);
@@ -251,6 +279,187 @@ impl Agents {
             *kept != before
         })
         .await
+    }
+
+    /// Waits for every poll going to end: for tests, which tick by
+    /// hand.
+    pub async fn polls_settled(&self) {
+        let mut tasks = self.0.tasks.lock().await;
+        while tasks.join_next().await.is_some() {}
+    }
+
+    /// Keeps `agent`'s polls as its live version declares them, and
+    /// starts those that are due and not going. Whether anything
+    /// changed.
+    async fn start_polls(&self, agent: &str, read: &Read, now: i64) -> bool {
+        let declared: Vec<(String, TriggerKind, i64)> = read
+            .live
+            .iter()
+            .flat_map(|live| &live.declared.triggers)
+            .filter_map(|trigger| match &trigger.kind {
+                TriggerKind::Poll { every, .. } => {
+                    poll::every(every).ok().map(|every| {
+                        (trigger.name.clone(), trigger.kind.clone(), every)
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        let fresh: Vec<bool> = {
+            let mut polled = self.0.polled.lock().await;
+            declared
+                .iter()
+                .map(|(name, ..)| {
+                    polled.insert((agent.to_owned(), name.clone()))
+                })
+                .collect()
+        };
+        let (changed, due) = self
+            .with_kept(agent, |kept| {
+                let before = kept.polls.clone();
+                kept.polls.retain(|name, _| {
+                    declared.iter().any(|(known, ..)| known == name)
+                });
+                let mut due = Vec::new();
+                for ((name, kind, every), fresh) in declared.iter().zip(fresh) {
+                    let same = kept
+                        .polls
+                        .get(name)
+                        .is_some_and(|polled| polled.kind == *kind);
+                    // New, or polling something else: from scratch, now.
+                    if !same {
+                        kept.polls.insert(
+                            name.clone(),
+                            Polled::new(kind.clone(), now),
+                        );
+                    }
+                    let polled = kept.polls.get_mut(name).expect("just kept");
+                    // Every poll runs at once when tau starts.
+                    if fresh {
+                        polled.next = polled.next.min(now);
+                    }
+                    if polled.next <= now {
+                        due.push((name.clone(), kind.clone(), *every));
+                    }
+                }
+                (kept.polls != before, due)
+            })
+            .await;
+        for (trigger, kind, every) in due {
+            let key = (agent.to_owned(), trigger.clone());
+            if !self.0.polling.lock().await.insert(key) {
+                continue;
+            }
+            let (agents, agent) = (self.clone(), agent.to_owned());
+            self.0.tasks.lock().await.spawn(async move {
+                agents.run_poll(&agent, &trigger, &kind, every).await;
+            });
+        }
+        changed
+    }
+
+    /// Polls `agent`'s `trigger` once: queues what it found that is new,
+    /// or keeps why it failed.
+    async fn run_poll(
+        &self,
+        agent: &str,
+        trigger: &str,
+        kind: &TriggerKind,
+        every: i64,
+    ) {
+        let result = match kind {
+            TriggerKind::Poll {
+                tool: Some(tool),
+                args,
+                ..
+            } => {
+                let args = args.clone().unwrap_or_else(|| json!({}));
+                let checkout = self.0.root.join(agent);
+                self.0.env.call_tool(&checkout, tool, args).await
+            }
+            TriggerKind::Poll {
+                http: Some(spec), ..
+            } => self.0.env.fetch(spec.clone()).await,
+            _ => Err("this poll names no tool and no request".to_owned()),
+        };
+        let items = match result {
+            Ok(result) => self.poll_items(agent, trigger, &result).await,
+            Err(error) => Err(error),
+        };
+        let now = self.0.clock.now();
+        self.with_kept(agent, |kept| {
+            let Some(polled) = kept.polls.get_mut(trigger) else {
+                return;
+            };
+            // It changed while it polled: the new one polls afresh.
+            if polled.kind != *kind {
+                return;
+            }
+            match items {
+                Ok(items) => {
+                    let events = polled.found(trigger, items, every, now);
+                    if !events.is_empty() {
+                        kept.fired.insert(trigger.to_owned(), now);
+                    }
+                    for event in events {
+                        let known = kept.queue.iter().any(|queued| {
+                            queued.trigger == event.trigger
+                                && queued.id == event.id
+                        });
+                        if !known {
+                            kept.queue.push(event);
+                        }
+                    }
+                }
+                Err(error) => {
+                    eprintln!("{NAME}: {agent}'s poll {trigger}: {error}");
+                    polled.failed(error, every, now);
+                }
+            }
+        })
+        .await;
+        self.0
+            .polling
+            .lock()
+            .await
+            .remove(&(agent.to_owned(), trigger.to_owned()));
+        self.0.env.refresh();
+    }
+
+    /// The items, with their keys, `result` holds for `agent`'s poll
+    /// `trigger`, as its live version's `key` and `items` read them.
+    async fn poll_items(
+        &self,
+        agent: &str,
+        trigger: &str,
+        result: &Value,
+    ) -> Result<Vec<(String, Value)>, String> {
+        let live = self
+            .0
+            .registry
+            .live(agent)
+            .await
+            .ok_or("no version of it is live")?;
+        let result = result.to_string();
+        if result.len() > tau_tools_host::http::MAX_JSON_BYTES {
+            return Err("the answer is longer than a poll reads".into());
+        }
+        let script = format!(
+            "local tau = require(\"tau\")\n\
+             return tau._poll_items(require(\"agent\"), {trigger}, \
+             json.decode({result}))\n",
+            trigger = long_string(trigger),
+            result = long_string(&result),
+        );
+        let found = evaluate(
+            agent,
+            live.modules.clone(),
+            script,
+            ITEMS_LIMIT,
+            CancellationToken::new(),
+        )
+        .await?;
+        poll::items(found)
     }
 
     /// Counts what `agent` spent today: what each of its runs cost since
@@ -402,8 +611,16 @@ impl Agents {
                     next: kept
                         .schedules
                         .get(&declared.name)
-                        .map(|due| due.next),
-                    error: None,
+                        .map(|due| due.next)
+                        .or_else(|| {
+                            kept.polls
+                                .get(&declared.name)
+                                .map(|polled| polled.next)
+                        }),
+                    error: kept
+                        .polls
+                        .get(&declared.name)
+                        .and_then(|polled| polled.error.clone()),
                 })
                 .collect();
             let main = conversations
