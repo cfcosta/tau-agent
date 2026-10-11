@@ -941,3 +941,21 @@ fn the_person_s_messages_go_to_the_agent_s_model() {
         None
     );
 }
+
+/// An agent's repository is one no person attends: its MCP servers start
+/// in its sandbox, or, without `bwrap`, not at all, saying why. Another
+/// repository is none of its.
+#[test]
+fn an_agent_s_servers_start_in_its_sandbox_or_not_at_all() {
+    use tau_ui_plugin::UnattendedSource as _;
+    let f = Fixture::new();
+    let checkout = f._home.path().join("agents").join("greet");
+    let with = open(f._home.path(), &f.clock, &f.host)
+        .with_bwrap(Some("/bin/bwrap".into()));
+    let sandbox = with.unattended(&checkout).unwrap().sandbox.unwrap();
+    assert_eq!(sandbox.dir, checkout);
+    assert!(with.unattended(Path::new("/src/tau-agent")).is_none());
+    let without = open(f._home.path(), &f.clock, &f.host).with_bwrap(None);
+    let why = without.unattended(&checkout).unwrap().sandbox.unwrap_err();
+    assert!(why.contains("bwrap"), "{why}");
+}

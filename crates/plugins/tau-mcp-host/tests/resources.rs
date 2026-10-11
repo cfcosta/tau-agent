@@ -39,6 +39,7 @@ fn environment() -> Environment {
         repo: None,
         auth: None,
         launcher: Default::default(),
+        refused: Default::default(),
     }
 }
 

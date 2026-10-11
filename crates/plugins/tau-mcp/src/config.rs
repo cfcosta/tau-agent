@@ -1114,6 +1114,14 @@ impl Sources {
         }
     }
 
+    /// Approves every repository server: a repository no person attends,
+    /// an agent's, connects its servers without asking (ADR 0037).
+    pub fn trust_repo(&mut self) {
+        for pending in std::mem::take(&mut self.pending) {
+            self.servers.push((Origin::Repo, pending.server));
+        }
+    }
+
     /// Turns off the servers the settings turn off in `repo`, or in the
     /// user's servers alone without one ([`Disabled::off`]): a server is
     /// on when its entry says so and nothing turned it off. Run after

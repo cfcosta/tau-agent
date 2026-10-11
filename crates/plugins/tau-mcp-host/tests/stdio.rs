@@ -129,6 +129,7 @@ async fn closing_ends_the_server_and_its_children() {
         repo: Some(dir.path().to_owned()),
         auth: None,
         launcher: Default::default(),
+        refused: Default::default(),
     };
     let connection = Connection::new(config, Origin::User, environment);
     connection.connect();
@@ -208,6 +209,7 @@ async fn a_launcher_starts_the_server() {
         repo: Some(dir.path().to_owned()),
         auth: None,
         launcher: Default::default(),
+        refused: Default::default(),
     };
     let probe = Arc::new(Probe(Default::default()));
     let main = dir.path().join("main");

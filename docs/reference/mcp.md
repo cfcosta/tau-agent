@@ -42,6 +42,13 @@ connected.
 pi reads a project's file only when the project is trusted; tau asks
 per server.
 
+An agent's repository (ADR 0037) is one no person attends, as the
+plugins that keep such repositories tell the host
+(`tau_ui_plugin::Unattended`): its servers connect without approval,
+and its stdio servers start in its sandbox (`RepoLauncher`) whether a
+run or a poll asks for them. Without a sandbox (no `bwrap`) they do not
+start at all, and the server fails with why.
+
 ### Turning servers off
 
 The page turns any server off or on again without editing a file. The

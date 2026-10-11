@@ -227,6 +227,9 @@ pub struct Environment {
     /// a run gave it. Shared by the clones, so a pool's connections
     /// take it when it comes.
     pub launcher: Arc<Mutex<Option<RepoLauncher>>>,
+    /// Why stdio servers may not start here, when they may not: a
+    /// repository whose servers start only in a sandbox it lacks.
+    pub refused: Arc<Mutex<Option<String>>>,
 }
 
 impl Environment {
@@ -238,12 +241,18 @@ impl Environment {
             repo,
             auth: None,
             launcher: Arc::default(),
+            refused: Arc::default(),
         }
     }
 
     /// Starts stdio servers through `launcher` from now on.
     pub fn set_launcher(&self, launcher: RepoLauncher) {
         *self.launcher.lock().expect("launcher lock") = Some(launcher);
+    }
+
+    /// Starts no stdio server from now on, each failing with `why`.
+    pub fn refuse_stdio(&self, why: String) {
+        *self.refused.lock().expect("refused lock") = Some(why);
     }
 
     /// The same, keeping sign-ins in `store`.
@@ -274,6 +283,12 @@ impl Environment {
                 .collect::<Result<Vec<_>, String>>()
         };
         let home = self.home.as_deref();
+        if let Transport::Stdio(_) = &config.transport
+            && let Some(why) =
+                self.refused.lock().expect("refused lock").clone()
+        {
+            return Err(why);
+        }
         Ok(match &config.transport {
             Transport::Stdio(stdio) => Endpoint::Stdio {
                 program: expand_home(&stdio.command, home),

@@ -219,6 +219,8 @@ pub struct Host {
     /// The MCP resources plugins offer outside any run: an agent's
     /// `mcp` triggers watch them (ADR 0037).
     outside_resources: tau_ui_plugin::OutsideResources,
+    /// The repositories no person attends, which plugins say.
+    unattended: tau_ui_plugin::Unattended,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -519,6 +521,7 @@ impl Host {
             memory_search: tau_memory_host::Search::Keywords,
             outside_tools: tau_ui_plugin::OutsideTools::default(),
             outside_resources: tau_ui_plugin::OutsideResources::default(),
+            unattended: tau_ui_plugin::Unattended::default(),
             store,
             settings: Arc::new(Mutex::new(settings)),
             config,

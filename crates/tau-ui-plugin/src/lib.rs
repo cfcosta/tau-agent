@@ -57,6 +57,9 @@ pub use host::{
     Turn,
     TurnCommit,
     TurnHooks,
+    Unattended,
+    UnattendedRepo,
+    UnattendedSource,
     WatchError,
     WorkspaceDir,
 };

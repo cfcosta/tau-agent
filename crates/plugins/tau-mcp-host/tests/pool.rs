@@ -76,6 +76,7 @@ fn environment() -> Environment {
         repo: None,
         auth: None,
         launcher: Default::default(),
+        refused: Default::default(),
     }
 }
 
@@ -292,4 +293,97 @@ fn a_repository_server_wins_over_a_shared_one() {
 fn write_repo_file(repo: &Path, file: &serde_json::Value) {
     std::fs::create_dir_all(repo.join(".tau")).unwrap();
     std::fs::write(repo.join(".tau/mcp.json"), file.to_string()).unwrap();
+}
+
+/// What an agent keeps of its repository at `repo`, for the tests: its
+/// sandbox, or why it has none.
+struct AgentRepo {
+    repo: std::path::PathBuf,
+    sandbox: Result<tau_ui_plugin::RepoLauncher, String>,
+}
+
+impl tau_ui_plugin::UnattendedSource for AgentRepo {
+    fn unattended(
+        &self,
+        checkout: &Path,
+    ) -> Option<tau_ui_plugin::UnattendedRepo> {
+        (checkout == self.repo).then(|| tau_ui_plugin::UnattendedRepo {
+            sandbox: self.sandbox.clone(),
+        })
+    }
+}
+
+/// A launcher that says each time it was asked, and starts nothing
+/// that runs.
+struct Asked(Arc<std::sync::atomic::AtomicUsize>);
+
+#[async_trait::async_trait]
+impl tau_agent::launch::Launcher for Asked {
+    async fn launch(&self, _dir: &Path) -> tau_agent::launch::Launch {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        tau_agent::launch::Launch {
+            prefix: vec!["/nonexistent/sandbox".into()],
+            env: Vec::new(),
+        }
+    }
+}
+
+/// An agent's repository (ADR 0037): its servers connect without the
+/// person's approval, and a stdio one starts only in its sandbox. With
+/// none, it does not start, and says why.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_s_servers_need_no_approval_and_start_only_in_its_sandbox() {
+    let (agent, person) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let file =
+        json!({ "mcpServers": { "own": { "command": "/nonexistent/own" } } });
+    write_repo_file(agent.path(), &file);
+    write_repo_file(person.path(), &file);
+    let unattended = tau_ui_plugin::Unattended::default();
+    unattended.offer(Arc::new(AgentRepo {
+        repo: agent.path().to_owned(),
+        sandbox: Err("bwrap is not installed".into()),
+    }));
+    let host = Host::new(tokio::runtime::Handle::current(), None)
+        .with_unattended(unattended);
+    let settings = Settings::default();
+    // The person's repository still asks; the agent's does not.
+    assert_eq!(
+        host.servers(Some(person.path()), &settings).pending.len(),
+        1
+    );
+    assert!(
+        host.servers(Some(agent.path()), &settings)
+            .pending
+            .is_empty()
+    );
+    let plugin = host.plugin(Some(agent.path()), &settings);
+    let own = plugin.connections()[0].clone();
+    assert_eq!(own.origin(), Origin::Repo);
+    own.connect();
+    own.settled(&CancellationToken::new()).await;
+    let status = own.status();
+    assert_eq!(status.state, State::Failed);
+    assert_eq!(status.error.as_deref(), Some("bwrap is not installed"));
+
+    // With a sandbox, its stdio servers start through it, run or not.
+    let sandboxed = tempfile::tempdir().unwrap();
+    write_repo_file(sandboxed.path(), &file);
+    let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let unattended = tau_ui_plugin::Unattended::default();
+    unattended.offer(Arc::new(AgentRepo {
+        repo: sandboxed.path().to_owned(),
+        sandbox: Ok(tau_ui_plugin::RepoLauncher {
+            launcher: Arc::new(Asked(asked.clone())),
+            dir: sandboxed.path().to_owned(),
+        }),
+    }));
+    let host = Host::new(tokio::runtime::Handle::current(), None)
+        .with_unattended(unattended);
+    let plugin = host.plugin(Some(sandboxed.path()), &settings);
+    let own = plugin.connections()[0].clone();
+    own.connect();
+    own.settled(&CancellationToken::new()).await;
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    drop((host, plugin, own));
 }

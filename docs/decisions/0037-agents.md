@@ -266,7 +266,9 @@ return tau.agent {
   alone, so nothing of another plugin's (direnv's `.envrc`) runs
   outside it. Without `bwrap` on `PATH`, an agent's runs have no `bash`,
   and its page says so; it never falls back to running unsandboxed.
-- The agent's stdio MCP servers start through the same launcher.
+- The agent's stdio MCP servers start through the same launcher, for a
+  run or for a poll or `mcp` trigger alike; without `bwrap` they do not
+  start, and the server says why.
 
 ### Codemode gains `http` and secrets by name
 

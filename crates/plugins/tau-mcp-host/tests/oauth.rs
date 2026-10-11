@@ -650,6 +650,7 @@ fn environment(dir: &Path) -> Environment {
         repo: None,
         auth: Some(TokenStore::in_dir(dir)),
         launcher: Default::default(),
+        refused: Default::default(),
     }
 }
 

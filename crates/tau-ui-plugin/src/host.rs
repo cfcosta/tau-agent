@@ -355,6 +355,51 @@ impl OutsideTools {
     }
 }
 
+/// A repository no person attends: an agent's (ADR 0037). Its MCP
+/// servers connect without the person's approval, and its stdio servers
+/// start only through its sandbox.
+#[derive(Clone)]
+pub struct UnattendedRepo {
+    /// What its stdio servers start through, or why none can: they never
+    /// start outside it.
+    pub sandbox: Result<RepoLauncher, String>,
+}
+
+/// What says which repositories no person attends: a plugin that keeps
+/// them offers one to the host's [`Unattended`].
+pub trait UnattendedSource: Send + Sync {
+    /// What it keeps of the repository checked out at `checkout`, when
+    /// it is one of its own.
+    fn unattended(&self, checkout: &Path) -> Option<UnattendedRepo>;
+}
+
+/// The repositories no person attends, from the plugins that keep them.
+/// The host puts one in [`HostCx::services`]; clones share it.
+#[derive(Clone, Default)]
+pub struct Unattended(Arc<std::sync::Mutex<Vec<Arc<dyn UnattendedSource>>>>);
+
+impl Unattended {
+    /// Adds `source`'s repositories.
+    pub fn offer(&self, source: Arc<dyn UnattendedSource>) {
+        self.0.lock().expect("not poisoned").push(source);
+    }
+
+    /// The repository checked out at `checkout`, when a source keeps it.
+    pub fn of(&self, checkout: &Path) -> Option<UnattendedRepo> {
+        let sources = self.0.lock().expect("not poisoned").clone();
+        sources
+            .iter()
+            .find_map(|source| source.unattended(checkout))
+    }
+}
+
+impl std::fmt::Debug for Unattended {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sources = self.0.lock().expect("not poisoned").len();
+        write!(f, "Unattended({sources} sources)")
+    }
+}
+
 /// A watch on one MCP resource, outside any run: what an agent's `mcp`
 /// trigger follows (ADR 0037). It says each time the resource changed;
 /// dropping it stops watching.
@@ -703,6 +748,11 @@ impl HostCx {
     /// when the host keeps them.
     pub fn outside_resources(&self) -> Option<&OutsideResources> {
         self.services.get::<OutsideResources>()
+    }
+
+    /// The repositories no person attends, when the host keeps them.
+    pub fn unattended(&self) -> Option<&Unattended> {
+        self.services.get::<Unattended>()
     }
 
     /// Asks the interface to draw the catalog again.

@@ -123,6 +123,11 @@ impl PluginHost for Agents {
             Arc::new(HostEnv(cx.clone())),
             Arc::new(SystemClock),
         );
+        // Its repositories' MCP servers connect without the person and
+        // start only in its sandbox (ADR 0037).
+        if let Some(unattended) = cx.unattended() {
+            unattended.offer(Arc::new(agents.clone()));
+        }
         let (watcher, ticker) = (agents.registry().clone(), agents.clone());
         cx.runtime.spawn(async move { watcher.watch().await });
         cx.runtime.spawn(async move {
@@ -132,6 +137,28 @@ impl PluginHost for Agents {
             }
         });
         Ok(agents)
+    }
+}
+
+/// An agent's repository is one no person attends: its MCP servers
+/// connect without the person's approval, and its stdio servers start
+/// only in its sandbox, or not at all without one (ADR 0037).
+impl tau_ui_plugin::UnattendedSource for Agents {
+    fn unattended(
+        &self,
+        checkout: &std::path::Path,
+    ) -> Option<tau_ui_plugin::UnattendedRepo> {
+        let agent = self.agent_at(checkout)?;
+        let sandbox = match self.sandbox(&agent, checkout) {
+            Some(sandbox) => Ok(tau_ui_plugin::RepoLauncher {
+                launcher: Arc::new(sandbox),
+                dir: checkout.to_owned(),
+            }),
+            None => Err(self.sandbox_problem().unwrap_or_else(|| {
+                "this agent has no sandbox to start its servers in".to_owned()
+            })),
+        };
+        Some(tau_ui_plugin::UnattendedRepo { sandbox })
     }
 }
 

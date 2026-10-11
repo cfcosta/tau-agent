@@ -94,7 +94,9 @@ prefix`. A file that does not parse fails the loads.
 
 An agent's repository (ADR 0037) takes one launcher, tau-agents', and
 no other plugin's: its commands, and its stdio MCP servers, start inside
-`bwrap` (`tau_agents_host::sandbox`), one sandbox per command.
+`bwrap` (`tau_agents_host::sandbox`), one sandbox per command. Its MCP
+servers take the sandbox through `tau_ui_plugin::Unattended`, also when
+no run asks for them; without `bwrap` they do not start.
 
 - **Seen:** the command's workspace, read-write, where it starts;
   `/nix`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`,

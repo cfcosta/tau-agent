@@ -144,6 +144,7 @@ impl McpPluginBuilder {
             // Sign-ins are kept next to the user's file.
             auth: self.user_dir.as_deref().map(TokenStore::in_dir),
             launcher: process.launcher,
+            refused: process.refused,
         };
         let connections: Vec<Arc<Connection>> = sources
             .servers

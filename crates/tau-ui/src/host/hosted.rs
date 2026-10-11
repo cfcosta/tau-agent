@@ -79,6 +79,7 @@ impl Host {
             .with(self.memory_search)
             .with(self.outside_tools.clone())
             .with(self.outside_resources.clone())
+            .with(self.unattended.clone())
             .with(saved)
             .with(ConfigDir(self.config.credentials.dir.clone()))
             .with(tau_skills::SkillsDir(self.config.skills.clone()));

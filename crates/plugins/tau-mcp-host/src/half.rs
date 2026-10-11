@@ -163,6 +163,9 @@ pub struct Host {
     refresh: Option<Refresh>,
     /// The connections whose changes reach `refresh` already.
     watched: Mutex<Vec<std::sync::Weak<Connection>>>,
+    /// The repositories no person attends: theirs connect without
+    /// approval, and start only in their sandbox.
+    unattended: Option<tau_ui_plugin::Unattended>,
 }
 
 /// Asks the interface to draw the catalog again.
@@ -184,7 +187,28 @@ impl Host {
             signing_in: Mutex::default(),
             refresh: None,
             watched: Mutex::default(),
+            unattended: None,
         }
+    }
+
+    /// The same host, knowing from `unattended` which repositories no
+    /// person attends (ADR 0037): their servers connect without the
+    /// person's approval, and their stdio servers start in the sandbox
+    /// it gives, or not at all.
+    pub fn with_unattended(
+        mut self,
+        unattended: tau_ui_plugin::Unattended,
+    ) -> Self {
+        self.unattended = Some(unattended);
+        self
+    }
+
+    /// What is kept of `scope`'s repository when no person attends it.
+    fn unattended(
+        &self,
+        scope: &Scope,
+    ) -> Option<tau_ui_plugin::UnattendedRepo> {
+        self.unattended.as_ref()?.of(scope.repo()?)
     }
 
     /// The same host, asking the interface to draw the page again
@@ -251,13 +275,16 @@ impl Host {
             Sources::from_reads(&user, settings, &Read::default()),
             None,
         );
-        let sources = match scope.repo() {
+        let mut sources = match scope.repo() {
             None => shared.clone(),
             Some(repo) => with_added(
                 Sources::from_reads(&user, settings, &Read::repo(Some(repo))),
                 Some(repo),
             ),
         };
+        if self.unattended(scope).is_some() {
+            sources.trust_repo();
+        }
         Loaded {
             shared: shared
                 .servers
@@ -339,8 +366,16 @@ impl Host {
             },
             |built| built.pool,
         );
-        if let Some(launcher) = launcher {
-            pool.environment().set_launcher(launcher.clone());
+        // A repository no person attends starts its stdio servers in its
+        // sandbox whoever asks, a run or not, and none without one.
+        match self.unattended(&scope).map(|unattended| unattended.sandbox) {
+            Some(Ok(sandbox)) => pool.environment().set_launcher(sandbox),
+            Some(Err(why)) => pool.environment().refuse_stdio(why),
+            None => {
+                if let Some(launcher) = launcher {
+                    pool.environment().set_launcher(launcher.clone());
+                }
+            }
         }
         let servers = &loaded.sources.servers;
         let own: Vec<(Origin, ServerConfig)> = servers
@@ -953,11 +988,13 @@ impl PluginHost for Host {
         let refresher = cx.clone();
         // Polls' tools and `mcp` triggers' resources share a host of
         // their own.
+        let unattended = cx.unattended().cloned().unwrap_or_default();
         let outside = Arc::new(Outside {
             host: Host::new(
                 cx.runtime.clone(),
                 cx.config_dir().map(Path::to_owned),
-            ),
+            )
+            .with_unattended(unattended.clone()),
             cx: cx.clone(),
         });
         if let Some(tools) = cx.outside_tools() {
@@ -968,7 +1005,8 @@ impl PluginHost for Host {
         }
         Ok(
             Host::new(cx.runtime.clone(), cx.config_dir().map(Path::to_owned))
-                .with_refresh(Arc::new(move || refresher.refresh())),
+                .with_refresh(Arc::new(move || refresher.refresh()))
+                .with_unattended(unattended),
         )
     }
 }
