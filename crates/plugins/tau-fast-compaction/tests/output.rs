@@ -9,7 +9,7 @@ use tau_ai::message::{InputBlock, TextContent};
 use tau_fast_compaction::{
     OutputPruning,
     history::{CallRecord, Field, Record, ResultRecord, split_history},
-    output::{self, HEADER, MAX_CHUNKS, MAX_LINE_CHARS, SPILL},
+    output::{self, HEADER, MAX_CHUNKS, MAX_LINE_CHARS},
     plan::{REQUEST_OVERHEAD_TOKENS, Tally},
     state::{Role, estimate_state_tokens, estimate_tokens},
 };
@@ -62,13 +62,17 @@ fn output_text(tc: &TestCase) -> String {
         .join("\n")
 }
 
-/// The gate lets through only a successful `bash` result of text,
+/// The gate lets through only a successful `exec_command` or `write_stdin` result of text,
 /// without a NUL byte, estimated over the threshold, and then takes the
 /// result's text as the whole output. Everything else goes untouched,
 /// with no Jev call.
 #[hegel::test(test_cases = 200)]
 fn the_gate_passes_only_large_successful_text(tc: TestCase) {
-    let tool = tc.draw(gs::sampled_from(vec!["bash", "read"]));
+    let tool = tc.draw(gs::sampled_from(vec![
+        "exec_command",
+        "write_stdin",
+        "read",
+    ]));
     let is_error = tc.draw(gs::booleans());
     let mut text = tc.draw(output_text());
     if tc.draw(gs::booleans()) {
@@ -82,7 +86,7 @@ fn the_gate_passes_only_large_successful_text(tc: TestCase) {
             tc.draw(tau_testing::generators::image_content()),
         ));
     }
-    let expected = tool == "bash"
+    let expected = tool != "read"
         && !is_error
         && !image
         && !text.contains('\0')
@@ -91,42 +95,8 @@ fn the_gate_passes_only_large_successful_text(tc: TestCase) {
     let gated = output::gate(tool, is_error, &content, min);
     assert_eq!(gated.is_some(), expected);
     if let Some(gated) = gated {
-        assert_eq!(gated.full, text);
-        assert_eq!(gated.seen, text);
-        assert_eq!(gated.spill, None);
+        assert_eq!(gated, text);
     }
-}
-
-/// When `bash` spilled the output to its file, the gate reads the whole
-/// output from it; a file of invalid UTF-8 leaves the result untouched;
-/// a path `bash` would not have written is not read.
-#[test]
-fn the_gate_reads_what_bash_spilled() {
-    let dir = std::env::temp_dir()
-        .join(format!("tau-fast-compaction-gate-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let full = (0..3000)
-        .map(|n| format!("line {n}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let spill = dir.join("tau-bash-00ff.log");
-    std::fs::write(&spill, &full).unwrap();
-    let seen = format!("line 2999{SPILL}{}", spill.display());
-    let gated = output::gate("bash", false, &[text_block(&seen)], 100).unwrap();
-    assert_eq!(gated.full, full);
-    assert_eq!(gated.seen, seen);
-    assert_eq!(gated.spill.as_deref(), Some(spill.as_path()));
-
-    std::fs::write(&spill, [b'a', 0xff, b'\n'].repeat(4000)).unwrap();
-    assert_eq!(output::gate("bash", false, &[text_block(&seen)], 100), None);
-
-    let other = dir.join("notes.log");
-    std::fs::write(&other, &full).unwrap();
-    let seen = format!("{}{SPILL}{}", "word ".repeat(200), other.display());
-    let gated = output::gate("bash", false, &[text_block(&seen)], 100).unwrap();
-    assert_eq!(gated.full, seen);
-    assert_eq!(gated.spill, None);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// What a rendered body says, line by line: a kept line, or a count of
@@ -281,7 +251,7 @@ fn record(tc: &TestCase, i: usize) -> Record {
         tool_calls: (0..calls)
             .map(|n| CallRecord {
                 id: format!("t{i}{n}"),
-                tool: "bash".into(),
+                tool: "exec_command".into(),
                 input: tc.draw(sized(TEXT, big)),
                 result: tc
                     .draw(gs::booleans())

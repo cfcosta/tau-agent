@@ -1,7 +1,7 @@
 //! Keeps a run's context lean with Jev, in two stages
 //! (`docs/reference/fast-compaction.md`):
 //!
-//! - **Output pruning,** at `after_tool`: a large `bash` result is
+//! - **Output pruning,** at `after_tool`: a large `exec_command` or `write_stdin` result is
 //!   trimmed to the chunks of lines Jev says the task still needs,
 //!   before the model first sees it, with the whole output archived to a
 //!   file the model can read. Nothing already sent changes, so it costs
@@ -399,16 +399,14 @@ impl PluginRun for FastCompactionRun {
 }
 
 /// Prunes one output that passed the gate: plans the requests, asks Jev,
-/// renders what stays, and writes the archive when `bash` did not spill
-/// the output already. The pruned text, when it saves at least
-/// `min_reduction_ratio` of the whole output and is no larger than what
-/// the model would otherwise see. Reports how it went whenever Jev was
+/// renders what stays, and writes the archive. The pruned text, when it
+/// saves at least `min_reduction_ratio` of the output. Reports how it went whenever Jev was
 /// asked, and records it with the run.
 async fn prune_output(
     jev: &dyn Jev,
     settings: &Settings,
     view: &ToolResultView<'_>,
-    gated: output::Gated,
+    full: String,
     ctx: &PluginCtx,
 ) -> Result<Option<String>, PruneError> {
     let pruning = &settings.output;
@@ -417,10 +415,10 @@ async fn prune_output(
         .extend(state::entries(&[Message::Assistant(view.message.clone())]));
     let task = state::goal_or_prompts(settings.goal.as_deref(), &transcript);
     let records = output::output_records(&transcript);
-    let command = view.call.args["command"].as_str().unwrap_or_default();
-    let lines = output::lines(&gated.full);
+    let command = command_of(view.call);
+    let lines = output::lines(&full);
     let Some(planned) =
-        output::plan_requests(&lines, &records, &task, command, pruning)?
+        output::plan_requests(&lines, &records, &task, &command, pruning)?
     else {
         return Ok(None);
     };
@@ -434,17 +432,14 @@ async fn prune_output(
         ctx.charge(usage)
     })
     .await?;
-    let archive = gated
-        .spill
-        .clone()
-        .unwrap_or_else(|| archive::new_path(&settings.archive_dir, "output"));
+    let archive = archive::new_path(&settings.archive_dir, "output");
     let text = output::render(
         &lines,
         &planned.chunks,
         &asked.keep,
         &archive.display().to_string(),
     );
-    let tokens_before = state::estimate_tokens(&gated.seen);
+    let tokens_before = state::estimate_tokens(&full);
     let tokens_after = state::estimate_tokens(&text);
     let dropped_lines = planned
         .chunks
@@ -453,16 +448,11 @@ async fn prune_output(
         .filter(|(_, kept)| !**kept)
         .map(|(range, _)| range.len())
         .sum::<usize>();
-    // Measured against the whole output, which the pruned one is cut
-    // from, and never larger than what the model would otherwise see:
-    // bash's tail when it truncated.
-    let tokens_full = state::estimate_tokens(&gated.full);
     let pruned = dropped_lines > 0
-        && tokens_after <= tokens_before
         && tokens_after as f64
-            <= tokens_full as f64 * (1.0 - pruning.min_reduction_ratio);
-    if pruned && gated.spill.is_none() {
-        archive::write(&archive, &gated.full).map_err(|source| {
+            <= tokens_before as f64 * (1.0 - pruning.min_reduction_ratio);
+    if pruned {
+        archive::write(&archive, &full).map_err(|source| {
             PruneError::Archive {
                 path: archive.clone(),
                 source,
@@ -485,6 +475,21 @@ async fn prune_output(
     };
     ctx.publish(&Record::Output(stats)).await;
     Ok(pruned.then_some(text))
+}
+
+/// What Jev is told was run: `exec_command`'s command, or a note of the
+/// input `write_stdin` sent to its process.
+fn command_of(call: &tau_agent::plugin::ToolCall) -> String {
+    if call.name != "write_stdin" {
+        return call.args["cmd"].as_str().unwrap_or_default().to_owned();
+    }
+    match call.args["chars"]
+        .as_str()
+        .filter(|chars| !chars.is_empty())
+    {
+        Some(chars) => format!("write_stdin: {chars}"),
+        None => format!("write_stdin to process {}", call.args["process_id"]),
+    }
 }
 
 impl FastCompactionRun {

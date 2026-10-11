@@ -1,4 +1,4 @@
-//! Output pruning as a plugin of an `Agent`: a fake `bash` whose output
+//! Output pruning as a plugin of an `Agent`: a fake `exec_command` whose output
 //! the tests choose, `ScriptedModel`, and a `FakeJev` that keeps the
 //! chunks holding an error.
 
@@ -22,7 +22,7 @@ use tau_fast_compaction::{
     NAME,
     OutputStats,
     Settings,
-    output::{HEADER, SPILL},
+    output::HEADER,
 };
 use tau_jev::{Answer, JevError, fake::FakeJev};
 use tau_testing::{block_on, scripted::ScriptedModel};
@@ -39,43 +39,47 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// How the fake `bash` answers.
+/// How the fake `exec_command` answers.
 #[derive(Clone)]
 enum Answering {
     /// The whole output.
     Whole,
-    /// The last lines, and the file in `dir` it spilled the whole output
-    /// to, as `bash` does past its limits.
-    Spilled { dir: PathBuf, tail: usize },
     /// A failed command, with the whole output.
     Failed,
 }
 
-/// `bash`, answering every command with the same output.
-struct Bash {
+/// `exec_command` (or another tool by `named`), answering every call with
+/// the same output.
+struct Exec {
+    name: &'static str,
     output: String,
     answering: Answering,
     schema: Value,
 }
 
-impl Bash {
+impl Exec {
     fn new(output: String, answering: Answering) -> Self {
         Self {
+            name: "exec_command",
             output,
             answering,
             schema: json!({
                 "type": "object",
-                "properties": {"command": {"type": "string"}},
-                "required": ["command"],
+                "properties": {"cmd": {"type": "string"}},
             }),
         }
+    }
+
+    fn named(mut self, name: &'static str) -> Self {
+        self.name = name;
+        self
     }
 }
 
 #[async_trait]
-impl AgentTool for Bash {
+impl AgentTool for Exec {
     fn name(&self) -> &str {
-        "bash"
+        self.name
     }
     fn description(&self) -> &str {
         "Runs a command."
@@ -90,13 +94,6 @@ impl AgentTool for Bash {
     ) -> Result<ToolOutput, ToolError> {
         match &self.answering {
             Answering::Whole => Ok(ToolOutput::text(self.output.clone())),
-            Answering::Spilled { dir, tail } => {
-                let path = dir.join("tau-bash-0123abcd.log");
-                std::fs::write(&path, &self.output)?;
-                let lines: Vec<&str> = self.output.lines().collect();
-                let tail = lines[lines.len() - tail..].join("\n");
-                Ok(ToolOutput::text(format!("{tail}{SPILL}{}", path.display())))
-            }
             Answering::Failed => {
                 Err(format!("{}\n\nCommand exited with code 101", self.output)
                     .into())
@@ -153,7 +150,7 @@ fn keeps_errors() -> FakeJev {
 /// One `cargo build`, then an answer.
 fn one_build() -> ScriptedModel {
     ScriptedModel::new()
-        .turn(|t| t.tool_call("bash", json!({"command": "cargo build"})))
+        .turn(|t| t.tool_call("exec_command", json!({"cmd": "cargo build"})))
         .turn(|t| t.text("done"))
 }
 
@@ -166,13 +163,13 @@ fn settings(archive_dir: &Path) -> Settings {
 
 async fn run(
     model: &ScriptedModel,
-    bash: Bash,
+    exec: Exec,
     jev: FakeJev,
     settings: Settings,
 ) -> (Vec<RunEvent>, Outcome) {
     let store = tau_store_sqlite::memory().await.unwrap();
     let agent = Agent::new(model.clone())
-        .tool(bash)
+        .tool(exec)
         .plugin(FastCompaction::new(jev).settings(settings));
     let mut run = agent.start("fix the build", &store);
     let events = run.events().collect().await;
@@ -227,7 +224,7 @@ fn a_large_output_reaches_the_model_pruned() {
     block_on(async {
         let (events, outcome) = run(
             &model,
-            Bash::new(log.clone(), Answering::Whole),
+            Exec::new(log.clone(), Answering::Whole),
             jev.clone(),
             settings(&dir),
         )
@@ -291,7 +288,7 @@ fn the_report_is_recorded() {
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone())
-            .tool(Bash::new(build_log(3000), Answering::Whole))
+            .tool(Exec::new(build_log(3000), Answering::Whole))
             .plugin(
                 FastCompaction::new(keeps_errors()).settings(settings(&dir)),
             );
@@ -317,35 +314,31 @@ fn the_report_is_recorded() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// When `bash` spilled the output, the whole of it is judged, so an
-/// error far above the tail it kept reaches the model; the spilled file
-/// is the archive, and nothing else is written.
+/// A `write_stdin` result is pruned like an `exec_command` one; Jev is
+/// told what was written.
 #[test]
-fn a_spilled_output_is_judged_whole() {
-    let dir = scratch("spilled");
-    let log = build_log(6000);
-    let model = one_build();
+fn a_write_stdin_result_is_pruned_too() {
+    let dir = scratch("stdin");
+    let log = build_log(3000);
+    let model = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("write_stdin", json!({"process_id": 7, "chars": "y\n"}))
+        })
+        .turn(|t| t.text("done"));
+    let jev = keeps_errors();
     block_on(async {
-        let bash = Bash::new(
-            log.clone(),
-            Answering::Spilled {
-                dir: dir.clone(),
-                tail: 2000,
-            },
-        );
-        let (_, outcome) =
-            run(&model, bash, keeps_errors(), settings(&dir)).await;
-        assert_eq!(outcome.text, "done");
+        let (events, _) = run(
+            &model,
+            Exec::new(log, Answering::Whole).named("write_stdin"),
+            jev.clone(),
+            settings(&dir),
+        )
+        .await;
         let seen = seen_result(&model);
         assert!(seen.starts_with(HEADER), "{seen}");
         assert!(seen.contains("error[E0425]"));
-        let archive = footer_archive(&seen);
-        assert_eq!(
-            archive,
-            dir.join("tau-bash-0123abcd.log").display().to_string()
-        );
-        assert_eq!(std::fs::read_to_string(&archive).unwrap(), log);
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert_eq!(jev.requests()[0].state["command"], "write_stdin: y\n");
+        assert!(output_reports(&events)[0].pruned);
     });
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -368,7 +361,7 @@ fn small_or_failed_outputs_are_untouched() {
         block_on(async {
             let (events, _) = run(
                 &model,
-                Bash::new(log, answering),
+                Exec::new(log, answering),
                 jev.clone(),
                 settings(&dir),
             )
@@ -394,7 +387,7 @@ fn output_pruning_can_be_off() {
     block_on(async {
         run(
             &model,
-            Bash::new(log.clone(), Answering::Whole),
+            Exec::new(log.clone(), Answering::Whole),
             jev.clone(),
             settings,
         )
@@ -416,7 +409,7 @@ fn a_jev_failure_leaves_the_output() {
         let jev = FakeJev::new(|_| Err(JevError::Status(503)));
         let (events, outcome) = run(
             &model,
-            Bash::new(log.clone(), Answering::Whole),
+            Exec::new(log.clone(), Answering::Whole),
             jev,
             settings(&dir),
         )
@@ -448,7 +441,7 @@ fn keeping_everything_leaves_the_output() {
     block_on(async {
         let (events, _) = run(
             &model,
-            Bash::new(log.clone(), Answering::Whole),
+            Exec::new(log.clone(), Answering::Whole),
             FakeJev::nouls(|_| 0.9),
             settings(&dir),
         )
@@ -460,89 +453,5 @@ fn keeping_everything_leaves_the_output() {
         assert_eq!(reports[0].dropped_lines, 0);
     });
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// Jev keeping the chunks `keep` says, by index.
-fn keeps_chunks(
-    keep: impl Fn(usize) -> bool + Send + Sync + 'static,
-) -> FakeJev {
-    FakeJev::nouls(move |id| {
-        let index: usize = id.trim_start_matches('c').parse().unwrap();
-        if keep(index - 1) { 0.9 } else { 0.1 }
-    })
-}
-
-/// The saving counts against the whole output: a spilled output pruned
-/// to a little less than the tail `bash` kept replaces it, though it
-/// saves under `min_reduction_ratio` of that tail, since it saves far
-/// more of the whole.
-#[test]
-fn the_saving_counts_against_the_whole_output() {
-    let dir = scratch("whole-saving");
-    let log = build_log(6000);
-    let model = one_build();
-    block_on(async {
-        let bash = Bash::new(
-            log.clone(),
-            Answering::Spilled {
-                dir: dir.clone(),
-                tail: 2000,
-            },
-        );
-        // The first 1,860 lines (chunks of 30) and the last chunk.
-        let (events, _) = run(
-            &model,
-            bash,
-            keeps_chunks(|index| index < 62),
-            settings(&dir),
-        )
-        .await;
-        let reports = output_reports(&events);
-        assert_eq!(reports.len(), 1);
-        let report = &reports[0];
-        assert!(report.pruned, "{report:?}");
-        assert!(
-            report.tokens_after as f64 > report.tokens_before as f64 * 0.9,
-            "{report:?}"
-        );
-        assert!(seen_result(&model).starts_with(HEADER));
-    });
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// A pruned output larger than what `bash` showed does not replace it,
-/// however much of the whole output it saves: pruning never grows the
-/// context past `bash`'s own limits.
-#[test]
-fn a_pruned_output_never_outgrows_the_tail() {
-    let dir = scratch("outgrown");
-    let log = build_log(6000);
-    let model = one_build();
-    block_on(async {
-        let bash = Bash::new(
-            log.clone(),
-            Answering::Spilled {
-                dir: dir.clone(),
-                tail: 100,
-            },
-        );
-        // Every other chunk: half the output, twenty times the tail.
-        let (events, _) = run(
-            &model,
-            bash,
-            keeps_chunks(|index| index % 2 == 0),
-            settings(&dir),
-        )
-        .await;
-        let reports = output_reports(&events);
-        assert_eq!(reports.len(), 1);
-        assert!(!reports[0].pruned);
-        assert!(reports[0].dropped_lines > 0);
-        assert_eq!(reports[0].tokens_after, reports[0].tokens_before);
-        assert!(!seen_result(&model).starts_with(HEADER));
-    });
-    // Only the spilled file: no archive was written.
-    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
     std::fs::remove_dir_all(&dir).unwrap();
 }

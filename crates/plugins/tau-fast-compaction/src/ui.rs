@@ -400,7 +400,7 @@ impl HostHalf for FastCompactionHost {
             group: tau_ui_plugin::Group::Context,
             description: needs_jev(
                 jev,
-                "Prunes large bash outputs as they arrive, and stale tool \
+                "Prunes large command outputs as they arrive, and stale tool \
                  history",
             ),
             seams: vec![Seam::Start, Seam::Rewrite],

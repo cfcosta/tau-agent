@@ -7,7 +7,7 @@ summarizing compaction (`tau-compaction`, added after it) takes over.
 
 It works in two stages:
 
-- Output pruning, at `after_tool_result`. A large `bash` result is
+- Output pruning, at `after_tool_result`. A large `exec_command` or `write_stdin` result is
   trimmed to the chunks of lines Jev says the task still needs, before
   the model first sees it. The whole output is archived to a file the
   model can read. Nothing already sent changes, so it costs no resend.
