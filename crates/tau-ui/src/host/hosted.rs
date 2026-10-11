@@ -273,9 +273,14 @@ impl Host {
     + Send
     + Sync
     + 'static {
+        // An agent asks through tau-agents' own `ask`, whose answer comes
+        // back as an event: tau-ask's holds the turn open for a person
+        // who is not watching (ADR 0037).
+        let agent = self.config.is_agent_path(&repo.path);
         let hosted: Vec<(Hosted, PluginValue)> = self
             .hosted
             .iter()
+            .filter(|hosted| !(agent && hosted.plugin.name() == tau_ask::NAME))
             .map(|hosted| {
                 (
                     hosted.clone(),

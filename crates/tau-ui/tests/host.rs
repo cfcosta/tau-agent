@@ -3933,6 +3933,10 @@ fn an_agent_without_a_sandbox_has_no_commands() {
         assert!(!agent.iter().any(|name| name == tool), "{agent:?}");
         assert!(person.iter().any(|name| name == tool), "{person:?}");
     }
+    // tau-ask's `ask` holds a turn open for the person; an agent's runs
+    // ask through tau-agents', whose answer comes back as an event.
+    assert!(!agent.iter().any(|name| name == "ask"), "{agent:?}");
+    assert!(person.iter().any(|name| name == "ask"), "{person:?}");
 }
 
 /// A command a turn left running goes on between turns: the next turn
