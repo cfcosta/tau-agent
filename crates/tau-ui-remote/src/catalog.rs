@@ -83,18 +83,37 @@ impl Catalog {
     /// The person's repositories, in the sidebar's order: tau's own are
     /// left out.
     pub fn listed(&self) -> impl Iterator<Item = &Repo> {
-        self.repos.iter().filter(|repo| !repo.own)
+        self.repos.iter().filter(|repo| repo.own.is_none())
     }
 
     /// Whether `name` is one of the person's repositories.
     pub fn is_listed(&self, name: &str) -> bool {
-        self.repo(name).is_some_and(|repo| !repo.own)
+        self.repo(name).is_some_and(|repo| repo.own.is_none())
     }
 
     /// tau's own repository, where the person's plugins are written
     /// (ADR 0027): the sidebar lists its chats under Plugins.
     pub fn own_repo(&self) -> Option<&Repo> {
-        self.repos.iter().find(|repo| repo.own)
+        self.repos
+            .iter()
+            .find(|repo| repo.own == Some(Own::Plugins))
+    }
+
+    /// The agents, each a repository of tau's own (ADR 0037), by name.
+    pub fn agents(&self) -> impl Iterator<Item = &Repo> {
+        let mut agents: Vec<&Repo> = self
+            .repos
+            .iter()
+            .filter(|repo| repo.own == Some(Own::Agent))
+            .collect();
+        agents.sort_by(|a, b| a.name.cmp(&b.name));
+        agents.into_iter()
+    }
+
+    /// Whether `name` is an agent's repository.
+    pub fn is_agent(&self, name: &str) -> bool {
+        self.repo(name)
+            .is_some_and(|repo| repo.own == Some(Own::Agent))
     }
 
     /// The plugins tau has built in: every one but the person's own.
@@ -150,10 +169,21 @@ pub struct Repo {
     /// Trunk's branch, which `origin/<trunk>` names on GitHub.
     #[serde(default)]
     pub trunk: Option<String>,
-    /// tau's own, like its plugins repository (ADR 0027): runs work in
-    /// it, but the sidebar, search and pickers do not list it.
+    /// tau's own, like its plugins repository (ADR 0027) or an agent's
+    /// (ADR 0037): runs work in it, but the sidebar's Repositories,
+    /// search and pickers do not list it.
     #[serde(default)]
-    pub own: bool,
+    pub own: Option<Own>,
+}
+
+/// Which of tau's own repositories a repository is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Own {
+    /// The plugins repository (ADR 0027).
+    Plugins,
+    /// An agent's (ADR 0037).
+    Agent,
 }
 
 impl Repo {

@@ -811,7 +811,7 @@ fn yours(
         catalog.repos.push(crate::catalog::Repo {
             name: tau_luau_plugins::REPO.into(),
             main: Some(chat.clone()),
-            own: true,
+            own: Some(crate::catalog::Own::Plugins),
             ..Default::default()
         });
     }

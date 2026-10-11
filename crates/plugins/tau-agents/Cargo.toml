@@ -1,0 +1,9 @@
+[package]
+name = "tau-agents"
+description = "tau-agents' interface half: agents, each a conversation that never ends in a repository of its own (ADR 0037)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

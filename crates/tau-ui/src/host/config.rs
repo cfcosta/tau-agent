@@ -87,6 +87,21 @@ impl HostConfig {
             .join(tau_luau_plugins::repository::ROOT)
     }
 
+    /// Where agents live (ADR 0037): a repository each, named for the
+    /// agent, beside the plugins repository.
+    pub fn agents_dir(&self) -> PathBuf {
+        self.repos
+            .parent()
+            .unwrap_or(&self.repos)
+            .join(tau_agents::ROOT)
+    }
+
+    /// Whether `path` is an agent's repository: a directory right under
+    /// [`Self::agents_dir`].
+    pub fn is_agent_path(&self, path: &Path) -> bool {
+        path.parent() == Some(self.agents_dir().as_path())
+    }
+
     /// Where clones from GitHub live, each a project of its own, under
     /// `<owner>/<name>`.
     pub fn github_dir(&self) -> PathBuf {
@@ -99,6 +114,7 @@ impl HostConfig {
     /// its project.
     pub fn project_dir_of(&self, path: &Path) -> PathBuf {
         if path == self.plugins_repo()
+            || self.is_agent_path(path)
             || path.starts_with(self.github_dir())
             || path.starts_with(canonical(&self.github_dir()))
         {
@@ -148,11 +164,11 @@ pub(super) struct Listed {
     /// The id of its main chat, once made; see [`Host::main_of`].
     #[serde(default)]
     pub(super) main: Option<String>,
-    /// A repository of tau's own, such as the plugins repository (ADR
-    /// 0027): made here, not cloned, and listed though it is not from
-    /// GitHub.
+    /// A repository of tau's own, the plugins repository (ADR 0027) or an
+    /// agent's (ADR 0037): made here, not cloned, and listed though it is
+    /// not from GitHub.
     #[serde(default)]
-    pub(super) own: bool,
+    pub(super) own: Option<Own>,
 }
 
 impl RepoList {
@@ -172,7 +188,7 @@ impl RepoList {
     /// tau's own excepted, and with only the listed ones open.
     pub(super) fn github_only(mut self) -> Self {
         self.repos
-            .retain(|listed| listed.github.is_some() || listed.own);
+            .retain(|listed| listed.github.is_some() || listed.own.is_some());
         let listed: Vec<String> = self
             .repos
             .iter()
@@ -194,6 +210,12 @@ impl RepoList {
     /// it was removed, and returns its name: the directory's, made
     /// unique.
     pub(super) fn list(&mut self, path: &Path) -> String {
+        self.list_as(path, None)
+    }
+
+    /// Lists the repository at `path` as [`Self::list`] does, as one of
+    /// tau's own when `own` says which.
+    pub(super) fn list_as(&mut self, path: &Path, own: Option<Own>) -> String {
         let path = path.to_owned();
         if let Some(listed) =
             self.repos.iter_mut().find(|listed| listed.path == path)
@@ -219,7 +241,7 @@ impl RepoList {
             hidden: false,
             github: None,
             main: None,
-            own: false,
+            own,
         });
         name
     }

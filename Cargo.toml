@@ -140,6 +140,7 @@ tau-constitution-host = { path = "crates/plugins/tau-constitution-host", version
 tau-fast-compaction = { path = "crates/plugins/tau-fast-compaction", version = "0.1.0" }
 tau-tree-compaction = { path = "crates/plugins/tau-tree-compaction", version = "0.1.0" }
 tau-goal = { path = "crates/plugins/tau-goal", version = "0.1.0" }
+tau-agents = { path = "crates/plugins/tau-agents", version = "0.1.0" }
 tau-luau-plugins = { path = "crates/plugins/tau-luau-plugins", version = "0.1.0" }
 tau-luau-plugins-host = { path = "crates/plugins/tau-luau-plugins-host", version = "0.1.0" }
 tau-skills = { path = "crates/plugins/tau-skills", version = "0.1.0" }

@@ -1558,7 +1558,10 @@ fn repositories_are_listed_and_remembered() {
     // even the directory tau started in.
     assert_eq!(names(&host), ["tau-plugins"]);
     // tau's own, which the sidebar leaves out.
-    assert!(host.block_on(host.catalog()).repos[0].own);
+    assert_eq!(
+        host.block_on(host.catalog()).repos[0].own,
+        Some(tau_ui_remote::catalog::Own::Plugins)
+    );
     // Two repositories with one name get two names.
     assert_eq!(
         host.block_on(host.clone_github("a/proj")).unwrap().name,
@@ -3646,4 +3649,66 @@ fn a_long_idle_chat_compacts_before_its_cache_lapses() {
     );
     let summary = &fake.received()[2];
     assert!(summary.cached_tokens > 0);
+}
+
+/// Agents live beside the plugins repository, a repository each (ADR
+/// 0037), and each is its own project, as the plugins repository is.
+#[test]
+fn agents_live_in_a_repository_each_beside_the_plugins_repository() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HostConfig {
+        account: test_account(),
+        credentials: Credentials::new(root.path().join("config")),
+        model: None,
+        store: root.path().join("runs.db"),
+        repos: root.path().join("repos"),
+        settings: root.path().join("models.json"),
+        repo_list: root.path().join("repos.json"),
+        skills: root.path().join("skills"),
+    };
+    let agents = config.agents_dir();
+    assert_eq!(agents, root.path().join("agents"));
+    let triage = agents.join("triage");
+    assert!(config.is_agent_path(&triage));
+    assert!(!config.is_agent_path(&agents));
+    assert!(!config.is_agent_path(&triage.join("lib")));
+    assert!(!config.is_agent_path(&config.plugins_repo()));
+    assert_eq!(config.project_dir_of(&triage), triage);
+}
+
+/// A new agent gets a repository of tau's own, opened as a project with
+/// what an agent starts with, and a main chat: the agent's
+/// conversation. Its name must name a directory, once.
+#[test]
+fn a_new_agent_is_a_repository_of_tau_s_own_with_a_main_chat() {
+    let (host, _events) = host(ScriptedModel::new());
+    let repo = host.block_on(host.list_agent("triage")).unwrap();
+    assert_eq!(repo.name, "triage");
+    assert_eq!(repo.own, Some(tau_ui_remote::catalog::Own::Agent));
+    let main = repo.main.clone().expect("a main chat");
+
+    let project = host
+        .block_on(host.project_of("triage"))
+        .expect("its project opens");
+    let dir = project.root().to_owned();
+    assert!(dir.ends_with("agents/triage"), "{dir:?}");
+    let repo_files = project.blocking();
+    let trunk = repo_files.trunk().unwrap();
+    let files: Vec<String> = repo_files
+        .files_under(&trunk, "")
+        .unwrap()
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    assert_eq!(files, ["AGENTS.md"]);
+
+    let catalog = host.block_on(host.catalog());
+    let listed = catalog.repo("triage").expect("listed");
+    assert_eq!(listed.own, Some(tau_ui_remote::catalog::Own::Agent));
+    assert_eq!(listed.main.as_ref(), Some(&main));
+    assert!(catalog.is_agent("triage"));
+    assert!(!catalog.is_listed("triage"));
+
+    assert!(host.block_on(host.list_agent("triage")).is_err());
+    assert!(host.block_on(host.list_agent("Not An Agent")).is_err());
 }

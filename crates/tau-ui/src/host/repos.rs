@@ -233,19 +233,20 @@ impl Host {
         let project = slot.project.clone();
         let source = slot.path.to_string_lossy().into_owned();
         let dir = self.config.project_dir_of(&slot.path);
-        let plugins = slot.path == self.config.plugins_repo();
+        // tau's own repositories are made here the first time, each with
+        // what it starts with; a clone is a project from the start.
+        let first_files = if slot.path == self.config.plugins_repo() {
+            Some(tau_luau_plugins::repository::first_files())
+        } else if self.config.is_agent_path(&slot.path) {
+            Some(tau_agents::repository::first_files())
+        } else {
+            None
+        };
         let cloned = dir == slot.path;
         let catalog = self.catalog_wanted.clone();
         self.runtime.spawn(async move {
-            // tau's own plugins repository is made here the first time;
-            // a clone is a project from the start.
-            let opened = if plugins {
-                Project::open_or_init(
-                    dir,
-                    identity(),
-                    tau_luau_plugins::repository::first_files(),
-                )
-                .await
+            let opened = if let Some(first_files) = first_files {
+                Project::open_or_init(dir, identity(), first_files).await
             } else if cloned {
                 Project::open(dir, identity()).await
             } else {
@@ -281,7 +282,7 @@ impl Host {
                 hidden: false,
                 github: None,
                 main,
-                own: false,
+                own: None,
             });
         }
         let mut repos = self.repos.lock().expect("not poisoned");
@@ -574,11 +575,9 @@ impl Host {
         {
             let mut list = self.list.lock().expect("not poisoned");
             let path = self.config.plugins_repo();
-            if list
-                .repos
-                .iter()
-                .any(|listed| listed.own && listed.path == path)
-            {
+            if list.repos.iter().any(|listed| {
+                listed.own == Some(Own::Plugins) && listed.path == path
+            }) {
                 return;
             }
             list.repos.push(Listed {
@@ -587,12 +586,79 @@ impl Host {
                 hidden: false,
                 github: None,
                 main: None,
-                own: true,
+                own: Some(Own::Plugins),
             });
         }
         if let Err(error) = self.save_list().await {
             eprintln!("tau-ui: cannot list the plugins repository: {error:#}");
         }
+    }
+
+    /// Lists every agent's repository under the agents' directory (ADR
+    /// 0037) that is not listed yet, and forgets the agents whose
+    /// directory is gone.
+    pub(super) async fn list_agents(&self) {
+        let dir = self.config.agents_dir();
+        let mut found = Vec::new();
+        if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let is_dir =
+                    entry.file_type().await.is_ok_and(|kind| kind.is_dir());
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if is_dir && tau_agents::valid_name(&name) {
+                    found.push(entry.path());
+                }
+            }
+        }
+        found.sort();
+        {
+            let mut list = self.list.lock().expect("not poisoned");
+            list.repos.retain(|listed| {
+                listed.own != Some(Own::Agent) || found.contains(&listed.path)
+            });
+            for path in &found {
+                if !list.repos.iter().any(|listed| listed.path == *path) {
+                    list.list_as(path, Some(Own::Agent));
+                }
+            }
+        }
+        if let Err(error) = self.save_list().await {
+            eprintln!("tau-ui: cannot list the agents: {error:#}");
+        }
+    }
+
+    /// Makes the repository of a new agent, `name` (ADR 0037), lists it,
+    /// starts opening its project and makes its main chat, the agent's
+    /// conversation. Returns it as the sidebar shows it.
+    pub async fn list_agent(&self, name: &str) -> anyhow::Result<Repo> {
+        anyhow::ensure!(
+            tau_agents::valid_name(name),
+            "An agent's name is lower-case letters, digits and dashes, \
+             starting with a letter: {name} is not"
+        );
+        let dir = self.config.agents_dir().join(name);
+        anyhow::ensure!(
+            !tokio::fs::try_exists(&dir).await?,
+            "There is an agent named {name} already"
+        );
+        tokio::fs::create_dir_all(&dir).await?;
+        let name = self
+            .list
+            .lock()
+            .expect("not poisoned")
+            .list_as(&dir, Some(Own::Agent));
+        self.save_list().await?;
+        let slot = RepoSlot {
+            name: name.clone(),
+            path: dir.clone(),
+            project: ProjectSlot::new(ProjectState::Importing),
+        };
+        self.spawn_import(&slot);
+        self.repos.lock().expect("not poisoned").push(slot);
+        let mut repo = Repo::new(&name, dir.display().to_string());
+        repo.main = Some(self.main_of(&name).await?);
+        repo.own = Some(Own::Agent);
+        Ok(repo)
     }
 
     /// The `owner/name` a repository was cloned from, if it came from

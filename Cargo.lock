@@ -9371,6 +9371,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-agents"
+version = "0.1.0"
+
+[[package]]
 name = "tau-ai"
 version = "0.1.0"
 dependencies = [
@@ -10053,6 +10057,7 @@ dependencies = [
  "serde_json",
  "tau",
  "tau-agent",
+ "tau-agents",
  "tau-ai",
  "tau-artifacts",
  "tau-ask",

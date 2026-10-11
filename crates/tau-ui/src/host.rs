@@ -64,7 +64,7 @@ use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
     accounts::{self, Credentials},
-    catalog::{Catalog, PluginInfo, ProjectStatus, Repo, Seam, StoreInfo},
+    catalog::{Catalog, Own, PluginInfo, ProjectStatus, Repo, Seam, StoreInfo},
     github,
     models::{
         AccessInfo,
@@ -424,6 +424,7 @@ impl Host {
         host.memory_search = tau_memory_host::Search::Semantic;
         host.host_plugins();
         host.runtime.block_on(host.list_plugins_repo());
+        host.runtime.block_on(host.list_agents());
         // Importing clones can take a while; the window opens first.
         let listed: Vec<Listed> = host
             .list
@@ -1610,24 +1611,27 @@ mod tests {
 
     /// A saved list keeps only repositories from GitHub, and tau's own,
     /// and opens only those it keeps: a local checkout listed before is
-    /// dropped, the plugins repository stays (ADR 0027).
+    /// dropped, the plugins repository (ADR 0027) and agents (ADR 0037)
+    /// stay.
     #[test]
     fn a_saved_list_keeps_only_repositories_from_github_and_taus_own() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("repos.json");
-        let listed = |name: &str, github: Option<&str>, own: bool| Listed {
-            name: name.to_owned(),
-            path: dir.path().join(name),
-            hidden: false,
-            github: github.map(str::to_owned),
-            main: None,
-            own,
-        };
+        let listed =
+            |name: &str, github: Option<&str>, own: Option<Own>| Listed {
+                name: name.to_owned(),
+                path: dir.path().join(name),
+                hidden: false,
+                github: github.map(str::to_owned),
+                main: None,
+                own,
+            };
         let saved = RepoList {
             repos: vec![
-                listed("tau-agent", None, false),
-                listed("ascend", Some("cfcosta/ascend"), false),
-                listed("tau-plugins", None, true),
+                listed("tau-agent", None, None),
+                listed("ascend", Some("cfcosta/ascend"), None),
+                listed("tau-plugins", None, Some(Own::Plugins)),
+                listed("triage", None, Some(Own::Agent)),
             ],
             open: vec![
                 "tau-agent".into(),
@@ -1643,7 +1647,7 @@ mod tests {
             .iter()
             .map(|listed| listed.name.as_str())
             .collect();
-        assert_eq!(names, ["ascend", "tau-plugins"]);
+        assert_eq!(names, ["ascend", "tau-plugins", "triage"]);
         assert_eq!(list.open, ["ascend", "tau-plugins"]);
     }
 

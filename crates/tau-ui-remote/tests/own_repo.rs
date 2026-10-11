@@ -1,4 +1,5 @@
-//! tau's own repositories, like its plugins repository (ADR 0027), are
+//! tau's own repositories, its plugins repository (ADR 0027) and the
+//! agents' (ADR 0037), are
 //! in the catalog so their chats work, but the person never sees them as
 //! a repository: the sidebar's repositories, search and new runs pass
 //! them by, even while one of their chats is open. The sidebar lists the
@@ -8,7 +9,7 @@ use gpui::{TestAppContext, VisualTestContext};
 use tau_agent::tool::RunId;
 use tau_ui_remote::{
     Workspace,
-    catalog::{Catalog, Repo},
+    catalog::{Catalog, Own, Repo},
     route::Route,
     search::Pick,
     view::RunView,
@@ -28,7 +29,7 @@ fn catalog() -> Catalog {
             Repo {
                 name: OWN.into(),
                 main: Some(id("plugins-main")),
-                own: true,
+                own: Some(Own::Plugins),
                 ..Default::default()
             },
             Repo {
@@ -89,4 +90,42 @@ fn tau_s_own_repositories_are_not_listed(cx: &mut TestAppContext) {
         assert_eq!(listed(ws), [REPO]);
         assert_eq!(ws.selected_repo(), Some(REPO));
     });
+}
+
+/// The catalog with two agents beside the plugins repository and the
+/// person's, listed out of name order.
+fn with_agents() -> Catalog {
+    let mut catalog = catalog();
+    for name in ["triage", "digest"] {
+        catalog.repos.push(Repo {
+            name: name.into(),
+            own: Some(Own::Agent),
+            ..Default::default()
+        });
+    }
+    catalog
+}
+
+#[test]
+fn agents_are_tau_s_own_and_neither_the_person_s_nor_the_plugins_repository() {
+    let catalog = with_agents();
+    let listed: Vec<&str> =
+        catalog.listed().map(|repo| repo.name.as_str()).collect();
+    assert_eq!(listed, [REPO]);
+    assert_eq!(catalog.own_repo().map(|repo| repo.name.as_str()), Some(OWN));
+    let agents: Vec<&str> =
+        catalog.agents().map(|repo| repo.name.as_str()).collect();
+    assert_eq!(agents, ["digest", "triage"]);
+    assert!(catalog.is_agent("triage"));
+    assert!(!catalog.is_agent(OWN));
+    assert!(!catalog.is_agent(REPO));
+    assert!(!catalog.is_listed("triage"));
+}
+
+#[test]
+fn a_catalog_with_only_agents_has_no_plugins_repository() {
+    let mut catalog = with_agents();
+    catalog.repos.retain(|repo| repo.own != Some(Own::Plugins));
+    assert!(catalog.own_repo().is_none());
+    assert_eq!(catalog.agents().count(), 2);
 }
