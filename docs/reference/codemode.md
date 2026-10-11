@@ -265,6 +265,27 @@ b` appends each value that is not `nil`. A return value JSON cannot
   request is reported while it runs (see "Events").
 - A failed request raises a Lua error with the error's text.
 
+### HTTP (an agent's runs only)
+
+- `http` exists only in a run that has the `http` tool: tau-ui gives it
+  to the runs of an agent's repository (ADR 0037) and to no other run.
+  Elsewhere `http` is nil.
+- `http.request { method?, url, headers?, body?, timeout? }` calls the
+  tool and returns `{ status, headers, body, json, artifact, truncated }`
+  ([tools.md](tools.md), "http"). `method` is `GET` when left out;
+  `timeout` is in seconds, 30 by default and at most 60. Only `http` and
+  `https` URLs; redirects are answered, not followed.
+- `http.secret(name, prefix?)` names a secret from tau's secret store
+  (`~/.config/tau/secrets.json`). It is a table, `{ ["$secret"] = name,
+prefix = prefix }`, that a header or the body may hold, at any depth
+  of a JSON body. `"Bearer " .. http.secret("github")` is the same as
+  `http.secret("github", "Bearer ")`; a secret can follow text, nothing
+  else. The value goes in as the request leaves: the script, the
+  transcript and the run's records never hold it, and every value in
+  the store is scrubbed (as `[secret:<name>]`) from what comes back.
+- `tau.secret` in an agent's `agent.luau` is the same marker, for its
+  polls.
+
 ### Discovery
 
 - `search_tools` ranks with BM25 (k1 1.2, b 0.75) as pi's tool search

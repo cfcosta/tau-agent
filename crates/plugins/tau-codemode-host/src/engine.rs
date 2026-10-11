@@ -92,6 +92,37 @@ const TIMED_OUT: u8 = 1;
 const CANCELLED: u8 = 2;
 const EXITED: u8 = 3;
 
+/// `http`, in a run that has the `http` tool (an agent's, ADR 0037):
+/// `http.request` calls it, `http.secret` names a secret for its headers
+/// or body. `"Bearer " .. http.secret("github")` is the secret with that
+/// text before its value.
+const HTTP: &str = r#"
+local tools, setmetatable, getmetatable, error, type =
+    tools, setmetatable, getmetatable, error, type
+local Secret = {}
+local function secret(name, prefix)
+    if type(name) ~= "string" or name == "" then
+        error("http.secret takes a secret's name", 2)
+    end
+    if prefix ~= nil and type(prefix) ~= "string" then
+        error("http.secret's prefix is text", 2)
+    end
+    return setmetatable({ ["$secret"] = name, prefix = prefix }, Secret)
+end
+Secret.__concat = function(left, right)
+    if type(left) == "string" and getmetatable(right) == Secret then
+        return secret(right["$secret"], left .. (right.prefix or ""))
+    end
+    error('a secret can only follow text, as in "Bearer " .. http.secret("github")', 2)
+end
+return {
+    request = function(request)
+        return tools.http(request)
+    end,
+    secret = secret,
+}
+"#;
+
 const PRELUDE: &str = r#"
 local pack, unpack, error = table.pack, table.unpack, error
 return function(f, level)
@@ -867,6 +898,11 @@ fn install(lua: &Lua, state: &Arc<State>) -> mlua::Result<()> {
         )?;
     }
     globals.set("tools", tools)?;
+    if state.by_name.contains_key("http") {
+        let http: Table = lua.load(HTTP).set_name("=http").eval()?;
+        http.set_readonly(true);
+        globals.set("http", http)?;
+    }
     let s = Arc::clone(state);
     globals.set(
         "parallel",
