@@ -554,10 +554,12 @@ pub async fn run_tests(
     results
 }
 
-/// `text` as a Luau long string, at a level `text` cannot close.
+/// `text` as a Luau long string, at a level `text` cannot close, nor
+/// its last `]` with the closing bracket.
 pub fn long_string(text: &str) -> String {
+    let closed = format!("{text}]");
     let mut level = 0;
-    while text.contains(&format!("]{}]", "=".repeat(level))) {
+    while closed.contains(&format!("]{}]", "=".repeat(level))) {
         level += 1;
     }
     let equals = "=".repeat(level);
@@ -744,5 +746,9 @@ mod tests {
         assert_eq!(long_string("a"), "[[a]]");
         assert_eq!(long_string("x]]y"), "[=[x]]y]=]");
         assert_eq!(long_string("]=]]]"), "[==[]=]]]]==]");
+        // A JSON list ends in `]`: with `]]` after it, it would close
+        // one early.
+        assert_eq!(long_string("[1]"), "[=[[1]]=]");
+        assert_eq!(long_string("[1]=]"), "[==[[1]=]]==]");
     }
 }
