@@ -36,10 +36,12 @@ pub enum Kind {
     /// A version of its `agent.luau` that did not load or whose tests
     /// failed: the agent hears so it can fix it.
     Version,
+    /// The person's answer to one of its questions (`ask`).
+    Answer,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 7] = [
+    pub const ALL: [Kind; 8] = [
         Kind::Schedule,
         Kind::Command,
         Kind::Poll,
@@ -47,6 +49,7 @@ impl Kind {
         Kind::Mcp,
         Kind::Message,
         Kind::Version,
+        Kind::Answer,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -58,6 +61,7 @@ impl Kind {
             Kind::Mcp => "mcp",
             Kind::Message => "message",
             Kind::Version => "version",
+            Kind::Answer => "answer",
         }
     }
 

@@ -1,0 +1,265 @@
+//! The tools an agent's runs have, and no other run (ADR 0037): `notify`
+//! and `ask`, to reach the person without waiting for them, and
+//! `agent_send`, to reach another agent.
+//!
+//! An agent works unattended, so its `ask` does not hold the turn open
+//! as tau-ask's does (the host leaves tau-ask out of an agent's runs):
+//! the question waits on its page, and the answer comes back as an
+//! event in a later turn.
+
+use std::sync::{
+    Arc,
+    OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
+
+use async_trait::async_trait;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use tau_agent::{
+    error::ToolError,
+    plugin::{Plugin, PluginCtx, PluginError, PluginRun, RunPlan},
+    tool::{AgentTool, ToolCtx, ToolOutput},
+};
+
+use crate::{Agents, NAME, hops_of};
+
+/// The tools of one run of the agent `agent`.
+pub struct AgentTools {
+    agents: Agents,
+    agent: String,
+    /// How far a message this run sends goes ([`hops_of`]): set as it
+    /// starts, from what woke it.
+    hops: Arc<AtomicU64>,
+}
+
+impl AgentTools {
+    pub fn new(agents: Agents, agent: String) -> Self {
+        Self {
+            agents,
+            agent,
+            hops: Arc::new(AtomicU64::new(1)),
+        }
+    }
+}
+
+#[async_trait]
+impl Plugin for AgentTools {
+    fn name(&self) -> &str {
+        NAME
+    }
+
+    fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
+        let (agents, agent) = (self.agents.clone(), self.agent.clone());
+        vec![
+            Arc::new(Notify {
+                agents: agents.clone(),
+                agent: agent.clone(),
+            }),
+            Arc::new(Ask {
+                agents: agents.clone(),
+                agent: agent.clone(),
+            }),
+            Arc::new(Send {
+                agents,
+                agent,
+                hops: self.hops.clone(),
+            }),
+        ]
+    }
+
+    /// Reads what woke the run: a turn that only messages woke sends its
+    /// own one hop further.
+    async fn start(
+        &self,
+        plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        self.hops.store(hops_of(&plan.input), Ordering::Relaxed);
+        Ok(Box::new(()))
+    }
+}
+
+/// A tool's parameters, as JSON Schema, made once.
+fn schema(
+    cell: &'static OnceLock<Value>,
+    make: fn() -> Value,
+) -> &'static Value {
+    cell.get_or_init(make)
+}
+
+/// `notify { text }`.
+struct Notify {
+    agents: Agents,
+    agent: String,
+}
+
+#[derive(Deserialize)]
+struct NotifyArgs {
+    text: String,
+}
+
+#[async_trait]
+impl AgentTool for Notify {
+    fn name(&self) -> &str {
+        "notify"
+    }
+
+    fn description(&self) -> &str {
+        "Leave the person a note: something they should know, found while \
+         they were away. It shows on your page and in their sidebar, and \
+         as a notification on their desktop and phone, until they dismiss \
+         it. Say it in a sentence or two; use it for what matters, not for \
+         every step."
+    }
+
+    fn parameters(&self) -> &Value {
+        static CELL: OnceLock<Value> = OnceLock::new();
+        schema(&CELL, || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "The note." },
+                },
+                "required": ["text"],
+                "additionalProperties": false,
+            })
+        })
+    }
+
+    async fn call(
+        &self,
+        args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let args: NotifyArgs = serde_json::from_value(args)?;
+        self.agents
+            .notify(&self.agent, &args.text)
+            .await
+            .map_err(|error| ToolError::Message(format!("{error:#}")))?;
+        Ok(ToolOutput::text("Left for the person."))
+    }
+}
+
+/// `ask { question, choices? }`.
+struct Ask {
+    agents: Agents,
+    agent: String,
+}
+
+#[derive(Deserialize)]
+struct AskArgs {
+    question: String,
+    #[serde(default)]
+    choices: Vec<String>,
+}
+
+#[async_trait]
+impl AgentTool for Ask {
+    fn name(&self) -> &str {
+        "ask"
+    }
+
+    fn description(&self) -> &str {
+        "Ask the person something only they can decide. It does not wait: \
+         the question shows on your page and as a notification, and their \
+         answer reaches you later as an event (`ask · answer`, with the \
+         question and the answer), in a turn of its own. Offer `choices` \
+         when the answer is one of a few; leave them out for any answer. \
+         Go on with what does not depend on it, or end your turn."
+    }
+
+    fn parameters(&self) -> &Value {
+        static CELL: OnceLock<Value> = OnceLock::new();
+        schema(&CELL, || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "question": { "type": "string" },
+                    "choices": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "The answers to offer, if it is \
+                                        one of a few.",
+                    },
+                },
+                "required": ["question"],
+                "additionalProperties": false,
+            })
+        })
+    }
+
+    async fn call(
+        &self,
+        args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let args: AskArgs = serde_json::from_value(args)?;
+        let id = self
+            .agents
+            .ask(&self.agent, &args.question, args.choices)
+            .await
+            .map_err(|error| ToolError::Message(format!("{error:#}")))?;
+        Ok(ToolOutput::text(format!(
+            "Asked. The answer comes as an event `ask · answer · {id}`."
+        )))
+    }
+}
+
+/// `agent_send { to, text }`.
+struct Send {
+    agents: Agents,
+    agent: String,
+    hops: Arc<AtomicU64>,
+}
+
+#[derive(Deserialize)]
+struct SendArgs {
+    to: String,
+    text: String,
+}
+
+#[async_trait]
+impl AgentTool for Send {
+    fn name(&self) -> &str {
+        "agent_send"
+    }
+
+    fn description(&self) -> &str {
+        "Send another agent a message. It reaches that agent as a `message` \
+         event, with the others in its next turn, under its own spend cap; \
+         only an agent whose agent.luau declares a `message = true` trigger \
+         hears messages. A chain of messages between agents that nothing \
+         else wakes stops after a few hops: do not use messages to keep \
+         each other going."
+    }
+
+    fn parameters(&self) -> &Value {
+        static CELL: OnceLock<Value> = OnceLock::new();
+        schema(&CELL, || {
+            json!({
+                "type": "object",
+                "properties": {
+                    "to": { "type": "string", "description": "The agent's name." },
+                    "text": { "type": "string" },
+                },
+                "required": ["to", "text"],
+                "additionalProperties": false,
+            })
+        })
+    }
+
+    async fn call(
+        &self,
+        args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let args: SendArgs = serde_json::from_value(args)?;
+        let hops = self.hops.load(Ordering::Relaxed);
+        self.agents
+            .send(&self.agent, &args.to, &args.text, hops)
+            .await
+            .map_err(ToolError::Message)?;
+        Ok(ToolOutput::text(format!("Sent to {}.", args.to)))
+    }
+}

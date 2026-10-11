@@ -54,6 +54,8 @@ use crate::{
     state::{Due, Kept, Store},
 };
 
+pub(crate) mod talk;
+
 /// How often schedules and queues are looked at.
 const TICK: Duration = Duration::from_secs(1);
 
@@ -680,6 +682,7 @@ impl Agents {
                 main,
                 secrets,
                 sandbox: self.sandbox_problem(),
+                notices: kept.notices.clone(),
                 name,
                 purpose: read.purpose.clone(),
                 status,
@@ -743,6 +746,14 @@ impl Agents {
             }
             Act::RemoveSecret { name } => {
                 self.0.env.secrets().remove(&name).await?;
+            }
+            Act::Answer {
+                agent,
+                notice,
+                answer,
+            } => self.answer(&agent, &notice, &answer).await?,
+            Act::Dismiss { agent, notice } => {
+                self.dismiss(&agent, &notice).await?;
             }
             Act::Pause { agent } => {
                 self.with_kept(&agent, |kept| kept.paused = true).await;

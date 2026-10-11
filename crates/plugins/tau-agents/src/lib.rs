@@ -12,6 +12,7 @@
 //! - [`Act`]: what the interface asks the host.
 //! - [`event`]: the message an agent's events reach it as.
 
+pub mod alert;
 pub mod event;
 pub mod repository;
 pub mod shown;
@@ -201,6 +202,34 @@ pub struct Agent {
     /// are off without a sandbox to run in.
     #[serde(default)]
     pub sandbox: Option<String>,
+    /// What it left for the person and they have not dealt with yet:
+    /// its notes and its questions, oldest first.
+    #[serde(default)]
+    pub notices: Vec<Notice>,
+}
+
+/// Something an agent left for the person (ADR 0037): a note
+/// (`notify`), kept until they dismiss it, or a question (`ask`), kept
+/// until they answer it. The answer reaches the agent as an event
+/// ([`event::Kind::Answer`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Notice {
+    /// Its own among the agent's: what an answer or a dismissal names.
+    pub id: String,
+    /// When it was left, in seconds since the epoch.
+    pub at: i64,
+    pub text: String,
+    /// For a question, the answers it offers, none meaning any; for a
+    /// note, nothing.
+    #[serde(default)]
+    pub choices: Option<Vec<String>>,
+}
+
+impl Notice {
+    /// Whether it is a question, waiting for an answer.
+    pub fn asks(&self) -> bool {
+        self.choices.is_some()
+    }
 }
 
 /// A secret an agent names, by name only: its value never leaves tau's
@@ -313,6 +342,15 @@ pub enum Act {
     SetSecret { name: String, value: String },
     /// Forgets the secret `name`.
     RemoveSecret { name: String },
+    /// The person answered `agent`'s question `notice`: it hears the
+    /// answer as an event, and the question goes.
+    Answer {
+        agent: String,
+        notice: String,
+        answer: String,
+    },
+    /// The person read `agent`'s note `notice`: it goes.
+    Dismiss { agent: String, notice: String },
     /// The person sent `/command args` in a composer: fires `agent`'s
     /// command trigger of that name. `from` is the run it was typed in,
     /// if any.

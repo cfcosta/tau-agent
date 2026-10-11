@@ -26,15 +26,23 @@ impl HostHalf for AgentsHost {
     type Plugin = AgentsUi;
     type Host = Agents;
 
-    /// An agent's runs are its conversation's: what wakes it is the
-    /// host's, not a plugin of the run.
+    /// An agent's runs reach the person and other agents: `notify`,
+    /// `ask` and `agent_send` ([`crate::tools`]). No other run has them.
+    /// What wakes it is the host's, not a plugin of the run.
     async fn agent_plugins(
         &self,
-        _host: &Agents,
-        _run: &RunCtx,
+        host: &Agents,
+        run: &RunCtx,
         _settings: &Settings,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        Ok(Vec::new())
+        Ok(host
+            .agent_at(&run.repo.checkout)
+            .map(|agent| {
+                Box::new(crate::tools::AgentTools::new(host.clone(), agent))
+                    as Box<dyn Plugin>
+            })
+            .into_iter()
+            .collect())
     }
 
     /// An agent's commands, and its stdio MCP servers, run in its

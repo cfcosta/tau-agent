@@ -926,6 +926,7 @@ fn agents(
         main: Some(main(name).0.to_string()),
         secrets: Vec::new(),
         sandbox: None,
+        notices: Vec::new(),
     };
     let overview = Overview {
         agents: vec![

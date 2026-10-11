@@ -12,7 +12,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tau_agents::{Last, TriggerKind, event::Event};
+use tau_agents::{Last, Notice, TriggerKind, event::Event};
 
 /// One agent's.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -35,6 +35,11 @@ pub struct Kept {
     pub retry_at: Option<i64>,
     /// Each poll's keys and when it polls next, by trigger.
     pub polls: BTreeMap<String, crate::poll::Polled>,
+    /// Its notes and questions the person has not dealt with yet,
+    /// oldest first.
+    pub notices: Vec<Notice>,
+    /// How many notices it ever left: the next one's id.
+    pub noticed: u64,
 }
 
 /// When a schedule is due next, and what it was when that was worked

@@ -10,6 +10,8 @@
 //! - `schedule`: when a schedule comes due.
 //! - `poll`: what a poll fires, once per new item.
 //! - `state`: each agent's queue and schedules, kept across restarts.
+//! - `tools`: what an agent's runs have to reach the person and other
+//!   agents.
 //! - `env`: what the agents reach of the host.
 //! - `sandbox`: where an agent's commands run.
 //! - `clock`: the host's time, and its local days.
@@ -25,8 +27,12 @@ pub mod sandbox;
 pub mod schedule;
 pub mod skill;
 pub mod state;
+pub mod tools;
 
-pub use agents::Agents;
+pub use agents::{
+    Agents,
+    talk::{MAX_HOPS, MAX_TEXT, hops_of},
+};
 pub use half::AgentsHost;
 pub use tau_agents::{NAME, ROOT, SKILL};
 use tau_luau_plugins_host::runtime::Root;

@@ -43,6 +43,7 @@ fn agent(name: &str, status: Status, triggers: Vec<Trigger>) -> Agent {
         main: None,
         secrets: Vec::new(),
         sandbox: None,
+        notices: Vec::new(),
     }
 }
 

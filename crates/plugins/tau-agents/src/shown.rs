@@ -40,10 +40,18 @@ impl Status {
 }
 
 impl Agent {
-    /// Whether it waits on the person: it spent its day, or nothing
-    /// loads to wake it.
+    /// Whether it waits on the person: it spent its day, nothing loads
+    /// to wake it, or it left them a note or a question.
     pub fn needs_you(&self) -> bool {
-        matches!(self.status, Status::AtCap | Status::Broken { .. })
+        self.waits_on_you() > 0
+    }
+
+    /// How many things of its wait on the person: its notes and
+    /// questions, and its state when it spent its day or nothing loads.
+    pub fn waits_on_you(&self) -> usize {
+        let state =
+            matches!(self.status, Status::AtCap | Status::Broken { .. });
+        self.notices.len() + usize::from(state)
     }
 
     /// When the first of its triggers fires next, if any says.
