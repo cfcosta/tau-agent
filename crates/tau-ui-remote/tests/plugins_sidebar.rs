@@ -133,8 +133,10 @@ fn plugins_lists_the_built_in_the_person_s_own_and_their_chats(
     let (workspace, mut cx) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         let catalog = ws.catalog();
-        let built_in: Vec<&str> =
-            catalog.built_in().map(|plugin| plugin.name.as_str()).collect();
+        let built_in: Vec<&str> = catalog
+            .built_in()
+            .map(|plugin| plugin.name.as_str())
+            .collect();
         assert_eq!(built_in, ["tau-reasoning", "tau-tools"]);
         assert_eq!(
             catalog.yours().map(|plugin| plugin.name.as_str()),
