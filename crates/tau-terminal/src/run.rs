@@ -3,8 +3,10 @@
 //!
 //! The program gets a real terminal of a fixed size on stdout and
 //! stderr, so it prints colors and progress bars, and stdin on
-//! `/dev/null`, so nothing waits for input. It leads its own session
-//! and process group with the terminal as its controlling terminal.
+//! `/dev/null`, so nothing waits for input. [`Command::interactive`]
+//! puts stdin on the terminal too, and [`Run::input`] writes to it. It
+//! leads its own session and process group with the terminal as its
+//! controlling terminal.
 //!
 //! Three pieces run a command:
 //!
@@ -20,7 +22,7 @@ use std::{
     os::fd::{BorrowedFd, OwnedFd},
     path::PathBuf,
     process::{ExitStatus, Stdio},
-    sync::mpsc as std_mpsc,
+    sync::{Arc, mpsc as std_mpsc},
     time::{Duration, Instant},
 };
 
@@ -145,6 +147,7 @@ pub struct Command {
     idle: Duration,
     preview_interval: Duration,
     replay_cap: usize,
+    interactive: bool,
 }
 
 impl Command {
@@ -159,6 +162,7 @@ impl Command {
             idle: DEFAULT_IDLE,
             preview_interval: DEFAULT_PREVIEW_INTERVAL,
             replay_cap: DEFAULT_REPLAY_CAP,
+            interactive: false,
         }
     }
 
@@ -220,6 +224,16 @@ impl Command {
         self
     }
 
+    /// Puts the program's stdin on the terminal, for [`Run::input`] to
+    /// write to: a line, or a control character such as `^C` (which the
+    /// terminal turns into `SIGINT`) or `^D` (end of input). Off by
+    /// default: stdin is `/dev/null`, and a program that reads
+    /// `/dev/tty` gets end of file at once.
+    pub fn interactive(mut self, on: bool) -> Self {
+        self.interactive = on;
+        self
+    }
+
     /// Starts the program.
     pub fn spawn(self) -> Result<Run, Error> {
         let master = rustix::pty::openpt(
@@ -265,8 +279,13 @@ impl Command {
         for (key, value) in &self.env {
             command.env(key, value);
         }
+        let stdin = if self.interactive {
+            Stdio::from(slave.try_clone()?)
+        } else {
+            Stdio::null()
+        };
         command
-            .stdin(Stdio::null())
+            .stdin(stdin)
             .stdout(Stdio::from(slave.try_clone()?))
             .stderr(Stdio::from(slave));
         // SAFETY: runs in the child between fork and exec, and calls
@@ -310,9 +329,15 @@ impl Command {
         // A program that reads `/dev/tty` (a password prompt) gets end
         // of file at once instead of waiting for input nobody sends: an
         // EOF character in the terminal's (canonical) input queue.
-        let _ = rustix::io::write(&master, b"\x04");
+        if !self.interactive {
+            let _ = rustix::io::write(&master, b"\x04");
+        }
 
         rustix::io::ioctl_fionbio(&master, true).map_err(io::Error::from)?;
+        let input = self
+            .interactive
+            .then(|| master.try_clone().map(|fd| Input(Arc::new(fd))))
+            .transpose()?;
         let master = AsyncFd::new(master)?;
 
         let (to_terminal, from_reader) = std_mpsc::channel();
@@ -334,6 +359,7 @@ impl Command {
         Ok(Run {
             events: receiver,
             killer: Killer { pgid },
+            input,
             pid,
         })
     }
@@ -344,7 +370,32 @@ impl Command {
 pub struct Run {
     events: mpsc::UnboundedReceiver<Event>,
     killer: Killer,
+    input: Option<Input>,
     pid: u32,
+}
+
+/// Writes to an [interactive](Command::interactive) program's terminal.
+/// Cloneable and `Send`. Writing after the program is gone fails or is
+/// dropped.
+#[derive(Debug, Clone)]
+pub struct Input(Arc<OwnedFd>);
+
+impl Input {
+    /// Writes all of `bytes` to the terminal, waiting while its input
+    /// queue is full.
+    pub async fn write(&self, mut bytes: &[u8]) -> io::Result<()> {
+        while !bytes.is_empty() {
+            match rustix::io::write(&*self.0, bytes) {
+                Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+                Ok(n) => bytes = &bytes[n..],
+                Err(rustix::io::Errno::AGAIN) => {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Run {
@@ -356,6 +407,12 @@ impl Run {
 
     pub fn killer(&self) -> Killer {
         self.killer.clone()
+    }
+
+    /// Where to write the program's input; `None` unless the command
+    /// was [interactive](Command::interactive).
+    pub fn input(&self) -> Option<Input> {
+        self.input.clone()
     }
 
     /// The next event; `None` after [`Event::Exit`].

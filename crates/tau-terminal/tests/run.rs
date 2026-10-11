@@ -260,3 +260,47 @@ async fn screens_show_progress() {
     );
     assert_eq!(run.all_text(), "one\ntwo\n");
 }
+
+/// An interactive program reads what is written to its input, and a
+/// control character reaches it as the terminal's signal.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_interactive_program_reads_its_input() {
+    let mut run = sh("read line; echo got:$line; trap 'echo int; exit 3' INT; \
+                      while :; do sleep 0.05; done")
+    .interactive(true)
+    .spawn()
+    .unwrap();
+    let input = run.input().expect("interactive");
+    input.write(b"hello\n").await.unwrap();
+    let mut seen = String::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut finished = None;
+    let mut interrupted = false;
+    while finished.is_none() {
+        assert!(Instant::now() < deadline, "{seen:?}");
+        let event = tokio::time::timeout(Duration::from_millis(500), run.next());
+        match event.await {
+            Ok(Some(Event::Output(bytes))) => {
+                seen.push_str(&String::from_utf8_lossy(&bytes));
+                if seen.contains("got:hello") && !interrupted {
+                    interrupted = true;
+                    input.write(b"\x03").await.unwrap();
+                }
+            }
+            Ok(Some(Event::Exit(end))) => finished = Some(end.unwrap()),
+            Ok(Some(_)) => {}
+            Ok(None) => break,
+            Err(_) => {}
+        }
+    }
+    let finished = finished.expect("it ended");
+    assert_eq!(finished.status.unwrap().code(), Some(3), "{seen:?}");
+    assert!(seen.contains("int"), "{seen:?}");
+}
+
+/// A command that is not interactive has no input to write to.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_that_is_not_interactive_has_no_input() {
+    let run = sh("true").spawn().unwrap();
+    assert!(run.input().is_none());
+}

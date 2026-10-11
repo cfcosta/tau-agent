@@ -50,6 +50,7 @@ pub use crate::{
         DEFAULT_REPLAY_CAP,
         Event,
         Finished,
+        Input,
         Killer,
         Replay,
         Run,
