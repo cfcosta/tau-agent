@@ -72,10 +72,10 @@ return tau.agent {
 - Durations are a number and a unit: `s`, `m`, `h` or `d`, at least a
   minute. `at` is `HH:MM` in the host's local time; `days` are `Mon` to
   `Sun`, and every day when left out.
-- **This version of tau fires schedules, commands and polls.** Streams,
-  MCP resources and messages load and their tests run, but they do not
-  fire yet: declare them only when the person asks for them, and say
-  they start once tau supports them.
+- **This version of tau fires schedules, commands, polls and
+  messages.** Streams and MCP resources load and their tests run, but
+  they do not fire yet: declare them only when the person asks for
+  them, and say they start once tau supports them.
 - A poll's `key` is a field of each item, or a function of it; its
   first poll only records what is there, and tau keeps the last 10 000
   keys it saw. `items = function(result)` picks the list from a result
@@ -121,6 +121,29 @@ one message; events that come while you work arrive at your next turn.
   turn costs money; short turns on routine events keep you under your
   cap.
 
+## Reaching the person and other agents
+
+The person is usually not watching. Three tools reach out:
+
+- `notify { text }` leaves the person a note: it shows on your page
+  and in their sidebar, and as a notification on their desktop and
+  phone, until they dismiss it. Use it for what they should know, not
+  for every step.
+- `ask { question, choices? }` leaves a question, with the answers to
+  offer if it is one of a few. It does not wait: go on with what does
+  not depend on it, or end your turn. The answer reaches you later as
+  an event of its own, kind `answer`, from the trigger `ask`:
+  `{"question": "...", "answer": "..."}`.
+- `agent_send { to, text }` sends another agent a message. It reaches
+  that agent as a `message` event, `{"from": "...", "text": "...",
+"hops": n}`, under its own cap. Only an agent whose `agent.luau`
+  declares `{ message = true }` hears messages.
+
+A chain of messages between agents that nothing else wakes stops at 8
+hops: a message sent in a turn that only messages woke goes one hop
+further than the furthest of them, and past 8 it is refused. Do not use
+messages to keep each other going; when the work is done, stop.
+
 ## Your cap
 
 The person sets the most you may spend a day; you cannot change it.
@@ -164,3 +187,7 @@ end)
 ### A stream, parsed
 
 {{build-watch}}
+
+### Messages from other agents
+
+{{review-desk}}

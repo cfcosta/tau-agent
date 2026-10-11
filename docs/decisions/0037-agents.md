@@ -289,22 +289,35 @@ return tau.agent {
   window and cap.
 - **A guard against ping-pong.** A message carries a hop count: a
   message sent in a turn that only messages woke is one hop further
-  than the furthest of them. Past 8 hops it is refused, and the sender
-  is told why. The cap alone would let two agents spend both their
+  than the furthest of them; a message that does not say how far it
+  went counts as far as any. Past 8 hops it is refused, and the sender
+  is told why. The turn reads its hops from the event message that
+  started it, so a turn the person or anything else started begins a
+  chain afresh. An agent cannot message itself, and one whose
+  `agent.luau` declares no message trigger refuses messages. The cap alone would let two agents spend both their
   days in minutes and then sit paused; the hop count stops that loop
   without limiting agents that are woken by anything else.
 
 ### It reaches the person
 
-- `notify { text }` leaves a line in its feed. `ask { question,
-choices? }` leaves a question, as tau-ask's are (0019); the answer
-  comes back as an event.
+- `notify { text }` leaves the person a note, kept on the agent's page
+  until they dismiss it (the latest 20). `ask { question, choices? }`
+  leaves a question, kept until they answer it, with its choices as
+  buttons or an answer field when it offers none. It does not hold the
+  turn open as tau-ask's does (0019): the answer comes back as an event
+  of its own, kind `answer` from the trigger `ask`, with the question
+  and the answer. tau-ask is left out of an agent's runs, so `ask` is
+  always tau-agents'. These tools, and `agent_send`, are in an agent's
+  runs and no other.
 - Both, and the spend cap, reach the person three ways: a "needs you"
   pill on its sidebar row and an item on the Agents page; a desktop
   notification (`tau-ui`'s `notify`, a new kind beside `Asks`); and the
   paired phone, which shows it as an Android notification. tau-remote
   has no push service, so the phone hears while it is connected; a push
-  for when its app is closed is new work, left for later.
+  for when its app is closed is new work, left for later. The desktop
+  and the phone decide when the same way (`tau_agents::alert::Watch`):
+  once for each note or question, once each time an agent reaches its
+  cap, and never for what was there when they first saw the agent.
 
 ### Creating one, and where it shows
 
