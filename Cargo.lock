@@ -9373,6 +9373,13 @@ dependencies = [
 [[package]]
 name = "tau-agents"
 version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-ai",
+ "tau-luau-plugins",
+]
 
 [[package]]
 name = "tau-ai"
