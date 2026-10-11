@@ -42,7 +42,10 @@ use tau_ai::{
 use tau_artifacts::{Bytes, Quotas};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
-use tau_tools_host::{path::Root, plugin::CodingTools};
+use tau_tools_host::{
+    path::Root,
+    plugin::{CodingTools, Tool},
+};
 use tau_ui_plugin::{HOST_RECORD, HostRecord, Services, TurnCommit, TurnHooks};
 use tau_vcs_host::{
     ChangeKind,
@@ -825,8 +828,12 @@ impl Host {
         // after theirs, and context compaction goes by the run's model.
         let registered = self.registered(repo).await;
         let project = repo.project().await?;
-        // What the plugins give the run's commands: an environment.
+        // What the plugins give the run's commands: an environment. An
+        // agent's commands run only in its sandbox: without one, its runs
+        // have no `bash` (ADR 0037).
         let launcher = self.launcher_of(repo).await;
+        let no_bash =
+            launcher.is_none() && self.config.is_agent_path(&repo.path);
         let artifacts =
             Bytes::new(project.root().join("artifacts"), Quotas::default())?;
         // An agent's runs reach the network with `http`, its keys named
@@ -867,6 +874,11 @@ impl Host {
                 let dir = workspace.dir();
                 let tools = CodingTools::new(Root::new(dir.clone()))
                     .with_artifacts(artifacts.clone());
+                let tools = if no_bash {
+                    tools.without(Tool::Bash)
+                } else {
+                    tools
+                };
                 let tools = match &launcher {
                     Some(launcher) => tools.with_launcher(launcher.clone()),
                     None => tools,

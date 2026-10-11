@@ -206,14 +206,21 @@ impl Host {
 
     /// What commands in `repo` start through: every plugin's launcher,
     /// joined in the registry's order; none when no plugin gives one.
+    /// An agent's repository takes tau-agents' alone, its sandbox (ADR
+    /// 0037): nothing of another plugin's (direnv's `.envrc`) runs
+    /// outside it, and none means its runs have no `bash`.
     pub(super) async fn launcher_of(
         &self,
         repo: &RepoSlot,
     ) -> Option<Arc<dyn tau_agent::launch::Launcher>> {
         let ctx = self.repo_ctx(repo);
+        let agent = self.config.is_agent_path(&repo.path);
         let mut launchers: Vec<Arc<dyn tau_agent::launch::Launcher>> =
             Vec::new();
         for hosted in &self.hosted {
+            if agent && hosted.plugin.name() != tau_agents::NAME {
+                continue;
+            }
             let settings =
                 self.plugin_settings(hosted.plugin.as_ref(), Some(&ctx.name));
             launchers.extend(

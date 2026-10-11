@@ -3783,3 +3783,39 @@ fn only_an_agent_s_runs_have_http() {
     assert!(came[0].contains("could not connect"), "{came:?}");
     assert!(came[1].contains("Tool http not found"), "{came:?}");
 }
+
+/// An agent's commands run only in its sandbox (ADR 0037): with no
+/// launcher of tau-agents' (none is installed here, as without `bwrap`),
+/// an agent's runs declare no `bash`, while the person's repositories'
+/// runs keep it.
+#[test]
+fn an_agent_without_a_sandbox_has_no_bash() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("done"));
+    let (host, mut events) = host(llm.clone());
+    let repo = host.block_on(host.list_agent("triage")).unwrap();
+    let main = repo.main.clone().expect("a main chat");
+    host.block_on(host.resume(&main, "hello", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let theirs = on_main(&host, "hello");
+    until_end(&mut events);
+    wait_until_done(&host, &theirs);
+
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 2);
+    let names = |request: &tau_testing::scripted::Request| -> Vec<String> {
+        request
+            .settings
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect()
+    };
+    let (agent, person) = (names(&requests[0]), names(&requests[1]));
+    assert!(agent.iter().any(|name| name == "read"), "{agent:?}");
+    assert!(!agent.iter().any(|name| name == "bash"), "{agent:?}");
+    assert!(person.iter().any(|name| name == "bash"), "{person:?}");
+}
