@@ -1,6 +1,7 @@
 //! Desktop notifications, while tau's window is not focused: a chat
 //! asks the person something, a chat is ready to land, a turn left
-//! conflicts on main, a run failed.
+//! conflicts on main, a run failed, an agent left a note or a question
+//! or reached its cap (ADR 0037).
 //!
 //! [`Notifier`] decides when: one notice each time a chat's state turns
 //! into one of those, never per frame, and none for what was already so
@@ -20,6 +21,7 @@ use gpui::{
     Global,
 };
 use tau_agent::tool::RunId;
+use tau_agents::alert::AlertKind;
 use tau_ui_remote::attention::{Attention, count};
 use tokio::sync::mpsc;
 
@@ -36,6 +38,12 @@ pub enum Kind {
     ConflictsOnMain,
     /// A run stopped with an error.
     Failed,
+    /// An agent left the person a note (`notify`).
+    AgentNote,
+    /// An agent asks the person something (`ask`).
+    AgentAsks,
+    /// An agent spent what it may today.
+    AgentAtCap,
 }
 
 impl Kind {
@@ -122,6 +130,8 @@ pub trait Sink {
 pub struct Notifier {
     /// The notice each chat's state called for when last seen.
     seen: HashMap<RunId, Option<Kind>>,
+    /// What each agent had when last seen.
+    agents: tau_agents::alert::Watch,
 }
 
 impl Notifier {
@@ -150,6 +160,32 @@ impl Notifier {
             seen.insert(sighting.run.clone(), kind);
         }
         self.seen = seen;
+    }
+
+    /// Takes in the agents as they are now: each note or question one
+    /// left since, and each that reached its cap, gets a notice that
+    /// opens its conversation, unless the window is `focused`.
+    pub fn agents(
+        &mut self,
+        overview: &tau_agents::Overview,
+        focused: bool,
+        sink: &mut dyn Sink,
+    ) {
+        for alert in self.agents.observe(overview) {
+            let Some(main) = alert.main.filter(|_| !focused) else {
+                continue;
+            };
+            sink.show(Notice {
+                run: RunId(main.into()),
+                kind: match alert.kind {
+                    AlertKind::Note => Kind::AgentNote,
+                    AlertKind::Question => Kind::AgentAsks,
+                    AlertKind::AtCap => Kind::AgentAtCap,
+                },
+                title: alert.title,
+                body: alert.body,
+            });
+        }
     }
 
     /// A turn of `main`, `repo`'s main chat, left conflicts in `files`
@@ -276,10 +312,12 @@ pub fn follow(
     });
     cx.observe(workspace, |workspace, cx| {
         let sightings = workspace.update(cx, |ws, cx| sightings(ws, cx));
+        let agents = workspace.read(cx).agents().cloned().unwrap_or_default();
         cx.update_global::<Notifications, _>(|notifications, cx| {
             let quiet = notifications.focused(cx) || !notifications.on();
             let Notifications { notifier, sink, .. } = notifications;
             notifier.observe(&sightings, quiet, sink.as_mut());
+            notifier.agents(&agents, quiet, sink.as_mut());
         });
     })
     .detach();
