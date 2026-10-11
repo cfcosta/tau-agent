@@ -171,9 +171,9 @@ fn memory_reads_are_the_memory_tools_and_memory_md() {
         call("memory_read", json!({"id": "tests"})),
         call("memory_write", json!({"title": "t"})),
         call("read", json!({"path": "MEMORY.md"})),
-        call("bash", json!({"command": "cat MEMORY.md"})),
+        call("exec_command", json!({"cmd": "cat MEMORY.md"})),
         call("read", json!({"path": "README.md"})),
-        call("bash", json!({"command": "ls"})),
+        call("exec_command", json!({"cmd": "ls"})),
     ];
     assert_eq!(memory_calls(&calls), 4);
     assert_eq!(memory_calls(&calls[5..]), 0);
@@ -183,7 +183,7 @@ fn memory_reads_are_the_memory_tools_and_memory_md() {
 fn the_old_fact_counts_when_acted_on_not_when_written_down() {
     let stale = Regex::new(r"\bHARBOR_MODE\b").unwrap();
     let acted = [
-        call("bash", json!({"command": "HARBOR_MODE=test ./test.sh"})),
+        call("exec_command", json!({"cmd": "HARBOR_MODE=test ./test.sh"})),
         call("read", json!({"path": "HARBOR_MODE"})),
         call(
             "edit",
@@ -200,7 +200,7 @@ fn the_old_fact_counts_when_acted_on_not_when_written_down() {
             json!({"path": "MEMORY.md", "content": "HARBOR_MODE is gone"}),
         ),
         call("memory_write", json!({"body": "HARBOR_MODE was renamed"})),
-        call("bash", json!({"command": "HARBOR_ENV=test ./test.sh"})),
+        call("exec_command", json!({"cmd": "HARBOR_ENV=test ./test.sh"})),
         call("grep", json!({"pattern": "HARBOR_MODE"})),
     ];
     assert!(!stale_used(&noted, &stale));

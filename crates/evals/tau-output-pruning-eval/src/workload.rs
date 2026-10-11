@@ -4,7 +4,7 @@
 //!
 //! After the evaluations of `tamaratran/jev-pruner` (`evals/*/prompt.md`),
 //! with larger outputs, since tau prunes only past 10,000 estimated
-//! tokens, and three kinds of its own: a needle `bash`'s tail loses,
+//! tokens, and three kinds of its own: a needle `exec_command`'s tail loses,
 //! needles far apart, and a needle only an earlier tool result makes
 //! relevant.
 
@@ -28,8 +28,8 @@ pub enum Kind {
     StructuredJson,
     /// Nothing the task needs: pruning should cut most of it.
     AllNoise,
-    /// A failure far above the 2,000 lines `bash` keeps.
-    SpilledMiddle,
+    /// A failure far above the 2,000 lines `exec_command` keeps.
+    CutMiddle,
     /// Three failures far apart.
     MultiNeedle,
     /// A line only an earlier tool result, one too large to share a
@@ -44,7 +44,7 @@ impl Kind {
         Kind::SummaryLine,
         Kind::StructuredJson,
         Kind::AllNoise,
-        Kind::SpilledMiddle,
+        Kind::CutMiddle,
         Kind::MultiNeedle,
         Kind::EarlierRequirement,
     ];
@@ -56,7 +56,7 @@ impl Kind {
             Kind::SummaryLine => "summary-line",
             Kind::StructuredJson => "structured-json",
             Kind::AllNoise => "all-noise",
-            Kind::SpilledMiddle => "spilled-middle",
+            Kind::CutMiddle => "cut-middle",
             Kind::MultiNeedle => "multi-needle",
             Kind::EarlierRequirement => "earlier-requirement",
         }
@@ -79,8 +79,8 @@ impl Kind {
                 "a service registry as JSON; the task needs one service's record"
             }
             Kind::AllNoise => "a pip install the task needs nothing from",
-            Kind::SpilledMiddle => {
-                "a failed step far above the 2,000-line tail bash keeps"
+            Kind::CutMiddle => {
+                "a failed step far above the 2,000-line tail `exec_command` keeps"
             }
             Kind::MultiNeedle => {
                 "three failing tests far apart in a cargo test run"
@@ -117,7 +117,7 @@ pub struct Workload {
     pub prompt: String,
     /// Tool calls before the command, in order.
     pub earlier: Vec<Earlier>,
-    /// The `bash` command.
+    /// The `exec_command` command.
     pub command: String,
     /// Its whole output.
     pub output: String,
@@ -316,7 +316,7 @@ pub fn generate(kind: Kind, seed: u64) -> Workload {
                 "pip install -r requirements.txt".to_owned(),
             )
         }
-        Kind::SpilledMiddle => {
+        Kind::CutMiddle => {
             let total = rng.range(3_200, 3_800);
             let at = rng.range(total / 6, total - 2_400);
             let step = noise::ident(rng);

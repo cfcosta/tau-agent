@@ -12,7 +12,7 @@ use tau_fast_compaction::{
 use tau_jev::{Answer, Jev, JevError, fake::FakeJev};
 use tau_output_pruning_eval::{
     metrics::summarize,
-    runner::{self, Bash, Config, SPILL_NAME, bash_result, evaluate},
+    runner::{self, Config, Exec, evaluate, exec_result},
     workload::{Kind, Workload, generate},
 };
 use tau_testing::block_on;
@@ -50,11 +50,11 @@ fn ground_truth(workload: &Workload) -> FakeJev {
 /// What pruning renders when the chunks `keep` says stay, with the
 /// archive at `archive`.
 fn rendered(
-    workload: &Workload,
+    output: &str,
     archive: &str,
     keep: impl Fn(usize, &[Line<'_>]) -> bool,
 ) -> String {
-    let lines = output::lines(&workload.output);
+    let lines = output::lines(output);
     let chunks =
         output::chunks(lines.len(), OutputPruning::default().chunk_lines);
     let last = chunks.len() - 1;
@@ -71,7 +71,7 @@ fn rendered(
 fn trial(
     workload: &Workload,
     jev: FakeJev,
-    bash: Bash,
+    exec: Exec,
 ) -> (tau_output_pruning_eval::metrics::Trial, tempfile::TempDir) {
     let work = tempfile::tempdir().unwrap();
     let trial = block_on(runner::run(
@@ -79,7 +79,7 @@ fn trial(
         Arc::new(jev) as Arc<dyn Jev>,
         Settings::default(),
         work.path(),
-        bash,
+        exec,
     ))
     .unwrap();
     (trial, work)
@@ -87,45 +87,40 @@ fn trial(
 
 /// With a Jev that keeps exactly the needle chunks, every needle
 /// reaches the model and the result is exactly the first, last and
-/// needle chunks: the reduction is that render's against what `bash`
-/// showed. Spilled outputs name the spill file; whole ones a new
-/// archive holding the output.
+/// needle chunks: the reduction is that render's against what
+/// `exec_command` showed. The archive holds what the tool returned:
+/// the whole output, or its tail, in which a cut-away needle is lost.
 #[test]
 fn ground_truth_keeps_every_needle() {
-    for bash in [Bash::Tau, Bash::Whole] {
+    for exec in [Exec::Tau, Exec::Whole] {
         for kind in Kind::ALL {
             for seed in 0..2 {
                 let workload = generate(kind, seed);
                 let jev = ground_truth(&workload);
-                let (trial, work) = trial(&workload, jev.clone(), bash);
-                let context = format!("{kind:?} #{seed} {bash:?}: {trial:?}");
+                let (trial, _work) = trial(&workload, jev.clone(), exec);
+                let context = format!("{kind:?} #{seed} {exec:?}: {trial:?}");
                 assert_eq!(trial.error, None, "{context}");
-                assert_eq!(trial.retained, trial.needles, "{context}");
-                assert!(trial.missed.is_empty(), "{context}");
+                let (native, cut) = match exec {
+                    Exec::Tau => exec_result(&workload.output),
+                    Exec::Whole => (workload.output.clone(), false),
+                };
+                assert_eq!(trial.cut, cut, "{context}");
+                let tail: HashSet<&str> = native.split('\n').collect();
+                let seen = workload
+                    .needles
+                    .iter()
+                    .filter(|needle| tail.contains(needle.text.as_str()))
+                    .count();
+                assert_eq!(trial.retained, seen, "{context}");
+                assert_eq!(trial.missed.len(), trial.needles - seen);
                 assert!(trial.replaced, "{context}");
                 let archive = trial.archive.clone().unwrap();
-                if trial.spilled {
-                    assert_eq!(
-                        archive,
-                        work.path().join(SPILL_NAME).display().to_string()
-                    );
-                }
-                assert_eq!(
-                    std::fs::read_to_string(&archive).unwrap(),
-                    workload.output
-                );
+                assert_eq!(std::fs::read_to_string(&archive).unwrap(), native);
                 let needles: HashSet<&str> =
                     workload.needles.iter().map(|n| n.text.as_str()).collect();
-                let expected = rendered(&workload, &archive, |_, lines| {
+                let expected = rendered(&native, &archive, |_, lines| {
                     lines.iter().any(|line| needles.contains(line.text))
                 });
-                let (native, _) = match bash {
-                    Bash::Tau => bash_result(
-                        &workload.output,
-                        &work.path().join(SPILL_NAME),
-                    ),
-                    Bash::Whole => (workload.output.clone(), false),
-                };
                 assert_eq!(trial.tokens_before, estimate_tokens(&native));
                 assert_eq!(
                     trial.tokens_after,
@@ -140,7 +135,7 @@ fn ground_truth_keeps_every_needle() {
                 assert!(trial.requests > 0 && trial.cost_usd > 0.0);
                 // The recorded answers replay the decision: each needle's
                 // chunk scored as needed, every other asked chunk not.
-                assert_eq!(trial.needle_chunks.len(), trial.needles);
+                assert_eq!(trial.needle_chunks.len(), seen);
                 assert_eq!(Some(trial.scores.len()), trial.chunks);
                 for (index, score) in trial.scores.iter().enumerate() {
                     let needed = trial.needle_chunks.contains(&index);
@@ -180,7 +175,7 @@ fn keeping_nothing_keeps_the_ends() {
     for kind in Kind::ALL {
         let workload = generate(kind, 3);
         let (trial, _work) =
-            trial(&workload, FakeJev::nouls(|_| 0.0), Bash::Whole);
+            trial(&workload, FakeJev::nouls(|_| 0.0), Exec::Whole);
         let lines = output::lines(&workload.output);
         let chunks =
             output::chunks(lines.len(), OutputPruning::default().chunk_lines);
@@ -195,10 +190,11 @@ fn keeping_nothing_keeps_the_ends() {
         assert_eq!(trial.kept_chunks, Some(2));
         assert_eq!((trial.answers.uncertain, trial.answers.needed), (0, 0));
         assert!(trial.answers.noise >= chunks.len() - 2);
-        let expected =
-            rendered(&workload, trial.archive.as_deref().unwrap(), |_, _| {
-                false
-            });
+        let expected = rendered(
+            &workload.output,
+            trial.archive.as_deref().unwrap(),
+            |_, _| false,
+        );
         assert_eq!(
             trial.tokens_after,
             estimate_tokens(&expected),
@@ -208,7 +204,7 @@ fn keeping_nothing_keeps_the_ends() {
     // The totals line of summary-line sits in the last chunk or near it;
     // the error of needle-error never does.
     let error = generate(Kind::NeedleError, 3);
-    let (trial, _work) = trial(&error, FakeJev::nouls(|_| 0.0), Bash::Whole);
+    let (trial, _work) = trial(&error, FakeJev::nouls(|_| 0.0), Exec::Whole);
     assert_eq!(trial.retained, 0);
 }
 
@@ -220,14 +216,14 @@ fn the_threshold_alone_decides() {
     for kind in [Kind::AllNoise, Kind::NeedleError] {
         let workload = generate(kind, 2);
         let (uncertain, _work) =
-            trial(&workload, FakeJev::nouls(|_| 0.3), Bash::Tau);
+            trial(&workload, FakeJev::nouls(|_| 0.3), Exec::Tau);
         assert!(uncertain.replaced, "{kind:?}");
         assert_eq!(uncertain.kept_chunks, Some(2));
         assert_eq!((uncertain.answers.noise, uncertain.answers.needed), (0, 0));
         assert!(uncertain.answers.uncertain > 0);
 
         let (needed, _work) =
-            trial(&workload, FakeJev::nouls(|_| 0.5), Bash::Tau);
+            trial(&workload, FakeJev::nouls(|_| 0.5), Exec::Tau);
         assert!(!needed.replaced, "{kind:?}");
         assert_eq!(needed.retained, needed.tail_retained);
         assert_eq!(needed.kept_chunks, needed.chunks);
@@ -236,15 +232,15 @@ fn the_threshold_alone_decides() {
     }
 }
 
-/// A Jev that fails leaves the result as `bash` returned it: the whole
-/// output keeps every needle with no reduction; a spilled one keeps
+/// A Jev that fails leaves the result as `exec_command` returned it: the
+/// whole output keeps every needle with no reduction; a cut one keeps
 /// what its tail held.
 #[test]
 fn a_failing_jev_leaves_the_output() {
     for kind in Kind::ALL {
         let workload = generate(kind, 1);
         let failing = || FakeJev::new(|_| Err(JevError::Status(503)));
-        let (whole, _work) = trial(&workload, failing(), Bash::Whole);
+        let (whole, _work) = trial(&workload, failing(), Exec::Whole);
         assert!(!whole.replaced);
         assert_eq!(whole.retained, whole.needles);
         assert_eq!(whole.reduction(), 0.0);
@@ -255,16 +251,16 @@ fn a_failing_jev_leaves_the_output() {
         );
         assert_eq!(whole.cost_usd, 0.0);
 
-        let (spilled, _work) = trial(&workload, failing(), Bash::Tau);
-        assert!(!spilled.replaced);
-        assert_eq!(spilled.retained, spilled.tail_retained);
-        assert_eq!(spilled.reduction(), 0.0);
+        let (cut, _work) = trial(&workload, failing(), Exec::Tau);
+        assert!(!cut.replaced);
+        assert_eq!(cut.retained, cut.tail_retained);
+        assert_eq!(cut.reduction(), 0.0);
     }
-    let middle = generate(Kind::SpilledMiddle, 1);
+    let middle = generate(Kind::CutMiddle, 1);
     let (trial, _work) = trial(
         &middle,
         FakeJev::new(|_| Err(JevError::Status(503))),
-        Bash::Tau,
+        Exec::Tau,
     );
     assert_eq!((trial.retained, trial.tail_retained), (0, 0));
 }

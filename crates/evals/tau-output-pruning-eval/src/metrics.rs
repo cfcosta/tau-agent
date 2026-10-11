@@ -15,8 +15,8 @@ pub struct Trial {
     pub needles: usize,
     /// Of those, the ones in the result the model saw, verbatim as lines.
     pub retained: usize,
-    /// Of those, the ones in what `bash` alone would have shown: the
-    /// whole output, or its tail when it spilled.
+    /// Of those, the ones in what `exec_command` alone would have shown: the
+    /// whole output, or its tail when it was cut.
     pub tail_retained: usize,
     /// The needles the model did not see.
     pub missed: Vec<String>,
@@ -28,9 +28,9 @@ pub struct Trial {
     /// asked (the plugin's report), replaced or not.
     pub chunks: Option<usize>,
     pub kept_chunks: Option<usize>,
-    /// Whether `bash` truncated the output and spilled it to a file.
-    pub spilled: bool,
-    /// Estimated tokens of the whole output, of what `bash` alone would
+    /// Whether `exec_command` cut the output to its tail.
+    pub cut: bool,
+    /// Estimated tokens of the whole output, of what `exec_command` alone would
     /// have shown, and of what the model saw.
     pub tokens_full: usize,
     pub tokens_before: usize,
@@ -57,7 +57,7 @@ pub struct Trial {
 
 impl Trial {
     /// The share of the estimated tokens pruning saved against what
-    /// `bash` alone would have shown; 0 when it saved nothing.
+    /// `exec_command` alone would have shown; 0 when it saved nothing.
     pub fn reduction(&self) -> f64 {
         if self.tokens_before == 0 {
             return 0.0;
@@ -66,7 +66,7 @@ impl Trial {
     }
 
     /// The share of the whole output's estimated tokens the model was
-    /// spared: what pruning left out of it, or `bash`'s truncation; 0
+    /// spared: what pruning left out of it, or `exec_command`'s truncation; 0
     /// when nothing.
     pub fn reduction_full(&self) -> f64 {
         if self.tokens_full == 0 {
@@ -84,7 +84,7 @@ pub struct Summary {
     pub needles: usize,
     pub retained: usize,
     pub tail_retained: usize,
-    /// Mean of the trials' reductions, against what `bash` alone shows
+    /// Mean of the trials' reductions, against what `exec_command` alone shows
     /// and against the whole output.
     pub mean_reduction: f64,
     pub mean_reduction_full: f64,
@@ -170,7 +170,7 @@ fn ratio(value: Option<f64>, retained: usize, needles: usize) -> String {
 }
 
 /// The summaries as a plain-text table. `reduction` is against what
-/// `bash` alone shows, `of whole` against the whole output. `answers
+/// `exec_command` alone shows, `of whole` against the whole output. `answers
 /// n/u/y` counts Jev's answers about chunks: confident noise (at most
 /// 0.1), uncertain, and needed (0.5 or more).
 pub fn table(summaries: &[Summary]) -> String {

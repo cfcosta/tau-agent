@@ -66,10 +66,10 @@ Usage: tau-output-pruning-eval [options]
   --seeds N         seeds 0 to N-1 of each workload (default 1)
   --budget-usd USD  stop once Jev spend passes this
   --json PATH       also write every trial and summary to PATH
-  --whole           bash returns every output whole, as a shell without
-                    limits would (default: tau's bash, which keeps the
-                    last 2,000 lines or 50 KB and spills the rest)
-  --work DIR        where archives and spilled outputs go (default: a new
+  --whole           exec_command returns every output whole, as a shell
+                    without limits would (default: tau's, which keeps
+                    the last 2,000 lines or 50 KB and drops the rest)
+  --work DIR        where archives go (default: a new
                     directory in the temp dir, removed afterwards)
   --list            list the workloads, and exit
   --help            print this, and exit
@@ -200,7 +200,7 @@ fn run() -> Result<(), CliError> {
     config.seeds = (0..options.seeds).collect();
     config.budget_usd = options.budget;
     if options.whole {
-        config.bash = runner::Bash::Whole;
+        config.exec = runner::Exec::Whole;
     }
 
     eprintln!(

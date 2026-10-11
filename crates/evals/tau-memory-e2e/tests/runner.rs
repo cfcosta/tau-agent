@@ -131,8 +131,8 @@ fn first_run(arm: Arm) -> ScriptedModel {
         Arm::Transcripts => model
             .turn(|t| {
                 t.tool_call(
-                    "bash",
-                    json!({"command": format!("echo {LEARNED}; HARBOR_MODE=test ./test.sh")}),
+                    "exec_command",
+                    json!({"cmd": format!("echo {LEARNED}; HARBOR_MODE=test ./test.sh")}),
                 )
             })
             .turn(|t| t.text("done")),
@@ -160,8 +160,8 @@ fn first_run(arm: Arm) -> ScriptedModel {
             model
                 .turn(|t| {
                     t.tool_call(
-                        "bash",
-                        json!({"command": format!("echo {LEARNED}; HARBOR_MODE=test ./test.sh")}),
+                        "exec_command",
+                        json!({"cmd": format!("echo {LEARNED}; HARBOR_MODE=test ./test.sh")}),
                     )
                 })
                 .turn(|t| t.text("done")),
@@ -280,8 +280,8 @@ fn a_changed_fact_is_marked_stale_and_its_use_is_caught() {
         ScriptedModel::new()
             .turn(|t| {
                 t.tool_call(
-                    "bash",
-                    json!({"command": test_mode.second.solution}),
+                    "exec_command",
+                    json!({"cmd": test_mode.second.solution}),
                 )
             })
             .turn(|t| t.text("done")),
@@ -322,7 +322,7 @@ fn success_is_the_checks_verdict_on_the_repository() {
                 Stage::First,
                 ScriptedModel::new()
                     .turn(move |t| {
-                        t.tool_call("bash", json!({"command": first}))
+                        t.tool_call("exec_command", json!({"cmd": first}))
                     })
                     .turn(|t| t.text("done")),
             );
@@ -333,7 +333,7 @@ fn success_is_the_checks_verdict_on_the_repository() {
                 Stage::Second,
                 ScriptedModel::new()
                     .turn(move |t| {
-                        t.tool_call("bash", json!({"command": second}))
+                        t.tool_call("exec_command", json!({"cmd": second}))
                     })
                     .turn(|t| t.text("done")),
             );
@@ -447,7 +447,7 @@ fn the_tree_arm_folds_the_first_run_and_the_second_zooms() {
     let mut scripts = Scripts::default();
     let long = format!("echo {LEARNED} {}", "-".repeat(700));
     let first = ScriptedModel::new()
-        .turn(|t| t.tool_call("bash", json!({"command": long})))
+        .turn(|t| t.tool_call("exec_command", json!({"cmd": long})))
         .turn(|t| t.text("done").cost(0.25));
     // Two long entries (the call, its output), and room for merges.
     let first = (0..8).fold(first, |model, _| {
@@ -495,7 +495,7 @@ fn the_tree_arm_folds_the_first_run_and_the_second_zooms() {
     let shown = tau_ai::message::text_of(&result.content);
     assert!(
         shown.starts_with(&format!(
-            "1+1|tool: bash {{\"command\":\"echo {LEARNED} "
+            "1+1|tool: exec_command {{\"cmd\":\"echo {LEARNED} "
         )),
         "{shown}"
     );

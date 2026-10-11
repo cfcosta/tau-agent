@@ -19,13 +19,13 @@ needles, are each in the output exactly once.
 | `summary-line`        | npm's totals line, with post-install noise after it          |
 | `structured-json`     | one service's record in a large JSON registry                |
 | `all-noise`           | none: pruning should cut most of a pip install               |
-| `spilled-middle`      | a failed step far above the 2,000-line tail `bash` keeps     |
+| `cut-middle`          | a failed step far above the 2,000-line tail `exec_command` keeps |
 | `multi-needle`        | three failing tests far apart in a cargo test run            |
 | `earlier-requirement` | a checksum only a large runbook read earlier asks for        |
 
 The runner drives each workload through the agent loop as the app
 prunes: a scripted model makes the workload's calls, fake tools answer,
-and a fake `bash` truncates and spills like tau's. Fast compaction, with
+and a fake `exec_command` cuts its output to the tail like tau's. Fast compaction, with
 only output pruning at work, prunes the output before the model's next
 request.
 
@@ -33,8 +33,8 @@ Per trial (`metrics::Trial`) it records:
 
 - recall: needles in the result the model saw, each as a whole line (a
   needle only in the archive does not count), and tail recall, the same
-  for what `bash` alone would have shown;
-- estimated tokens before (what `bash` alone shows) and after, the
+  for what `exec_command` alone would have shown;
+- estimated tokens before (what `exec_command` alone shows) and after, the
   reduction, and the reduction against the whole output;
 - whether the result was replaced, Jev requests, input tokens, cost and
   latency;
@@ -66,8 +66,8 @@ TYPESAFE_API_KEY=… cargo run -p tau-output-pruning-eval -- \
 | `--seeds N`        | Seeds 0 to N-1 of each workload (default 1)                                           |
 | `--budget-usd USD` | Stop once Jev's spend passes this                                                     |
 | `--json PATH`      | Also write every trial and summary to `PATH`                                          |
-| `--whole`          | `bash` returns every output whole, with no truncation or spill                        |
-| `--work DIR`       | Where archives and spilled outputs go (default: a temp directory, removed afterwards) |
+| `--whole`          | `exec_command` returns every output whole, with no truncation                         |
+| `--work DIR`       | Where archives go (default: a temp directory, removed afterwards) |
 | `--list`           | List the workloads, and exit                                                          |
 | `--help`           | Print the usage, and exit                                                             |
 

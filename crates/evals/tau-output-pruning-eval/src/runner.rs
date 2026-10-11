@@ -1,7 +1,7 @@
 //! Runs a workload through the agent loop exactly as the app prunes: a
 //! scripted model makes the workload's tool calls, fake tools answer
-//! with its results, the fake `bash` truncating and spilling its output
-//! as tau's `bash` does, and fast compaction, with only output pruning
+//! with its results, the fake `exec_command` cutting its output to the
+//! tail as tau's does, and fast compaction, with only output pruning
 //! at work, prunes the command's output before the model's next request.
 
 use std::{
@@ -26,7 +26,7 @@ use tau_fast_compaction::{
     NAME,
     OutputStats,
     Settings,
-    output::{self, SPILL, chunk_id},
+    output::{self, chunk_id},
     state,
 };
 use tau_jev::{Jev, JevError, Request, Response};
@@ -35,7 +35,7 @@ use tau_tools_host::truncate::{MAX_BYTES, MAX_LINES, truncate_tail};
 
 use crate::{
     metrics::{Summary, Trial, summarize},
-    workload::{Kind, Workload, generate},
+    workload::{Kind, Needle, Workload, generate},
 };
 
 /// Why a trial could not run to its end.
@@ -53,28 +53,30 @@ pub enum EvalError {
     NoResult,
 }
 
-/// The name of the file the fake `bash` spills to: tau's `bash` names
-/// its `tau-bash-<hex>.log`, which is what the gate reads.
-pub const SPILL_NAME: &str = "tau-bash-0e7a1c0de.log";
-
-/// What tau's `bash` returns for `output`: the whole of it, or its tail
-/// within 2,000 lines and 50 KB and the path of the file it spilled the
-/// whole output to. The second value says whether it spilled.
-pub fn bash_result(output: &str, spill: &Path) -> (String, bool) {
+/// What tau's `exec_command` returns for `output`: the whole of it, or
+/// its tail within 2,000 lines and 50 KB under a note saying so. The
+/// second value says whether it cut the output.
+pub fn exec_result(output: &str) -> (String, bool) {
     let tail = truncate_tail(output, MAX_LINES, MAX_BYTES);
     if tail.truncated() {
-        (format!("{}{SPILL}{}", tail.content, spill.display()), true)
+        (
+            format!(
+                "[output cut to the last {} of {} lines]\n{}",
+                tail.output_lines, tail.total_lines, tail.content
+            ),
+            true,
+        )
     } else {
         (output.to_owned(), false)
     }
 }
 
-/// How the fake `bash` returns an output.
+/// How the fake `exec_command` returns an output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Bash {
-    /// As tau's `bash` does: past 2,000 lines or 50 KB, the tail and the
-    /// path of the file holding the whole output ([`bash_result`]).
+pub enum Exec {
+    /// As tau's `exec_command` does: past 2,000 lines or 50 KB, the tail
+    /// ([`exec_result`]).
     #[default]
     Tau,
     /// The whole output, as a shell without limits would.
@@ -197,25 +199,21 @@ fn object_schema() -> Value {
 }
 
 /// Runs `workload` once, pruning with `jev` under `settings` (whose
-/// `archive_dir` is replaced by `work`), with files in `work`, `bash`
-/// returning the output as `bash` says.
+/// `archive_dir` is replaced by `work`), with files in `work`,
+/// `exec_command` returning the output as `exec` says.
 pub async fn run(
     workload: &Workload,
     jev: Arc<dyn Jev>,
     mut settings: Settings,
     work: &Path,
-    bash: Bash,
+    exec: Exec,
 ) -> Result<Trial, EvalError> {
     settings.archive_dir = work.to_owned();
     let chunk_lines = settings.output.chunk_lines;
-    let spill = work.join(SPILL_NAME);
-    let (native, spilled) = match bash {
-        Bash::Tau => bash_result(&workload.output, &spill),
-        Bash::Whole => (workload.output.clone(), false),
+    let (native, cut) = match exec {
+        Exec::Tau => exec_result(&workload.output),
+        Exec::Whole => (workload.output.clone(), false),
     };
-    if spilled {
-        std::fs::write(&spill, &workload.output)?;
-    }
 
     let mut model = ScriptedModel::new();
     for earlier in &workload.earlier {
@@ -224,13 +222,15 @@ pub async fn run(
     }
     let command = workload.command.clone();
     model = model
-        .turn(move |turn| turn.tool_call("bash", json!({"command": command})))
+        .turn(move |turn| {
+            turn.tool_call("exec_command", json!({"cmd": command}))
+        })
         .turn(|turn| turn.text("done"));
 
     let metered = Arc::new(Metered::new(jev));
     let mut agent = Agent::new(model.clone()).tool(Scripted {
-        name: "bash".into(),
-        answers: vec![(json!({"command": workload.command}), native.clone())],
+        name: "exec_command".into(),
+        answers: vec![(json!({"cmd": workload.command}), native.clone())],
         schema: object_schema(),
     });
     let mut tools: Vec<Scripted> = Vec::new();
@@ -313,7 +313,7 @@ pub async fn run(
             .collect()
     };
     let tally = metered.tally();
-    let layout = layout(workload, chunk_lines);
+    let layout = layout(&native, &workload.needles, chunk_lines);
     let tokens_before = state::estimate_tokens(&native);
     let tokens_after = state::estimate_tokens(&seen);
     Ok(Trial {
@@ -330,7 +330,7 @@ pub async fn run(
             .map(|stats| stats.lines - stats.dropped_lines),
         chunks: stats.as_ref().map(|stats| stats.chunks),
         kept_chunks: stats.as_ref().map(|stats| stats.kept),
-        spilled,
+        cut,
         tokens_full: state::estimate_tokens(&workload.output),
         tokens_before,
         tokens_after,
@@ -350,7 +350,8 @@ pub async fn run(
     })
 }
 
-/// How the plugin chunks a workload's whole output.
+/// How the plugin chunks the output the tool returned; a needle the
+/// tool cut away is in no chunk.
 struct Layout {
     /// Each chunk's estimated tokens.
     chunk_tokens: Vec<usize>,
@@ -358,18 +359,9 @@ struct Layout {
     needle_chunks: Vec<usize>,
 }
 
-fn layout(workload: &Workload, chunk_lines: usize) -> Layout {
-    let lines = output::lines(&workload.output);
+fn layout(output: &str, needles: &[Needle], chunk_lines: usize) -> Layout {
+    let lines = output::lines(output);
     let ranges = output::chunks(lines.len(), chunk_lines);
-    // The piece each whole line starts at.
-    let mut starts = Vec::new();
-    let mut starting = true;
-    for (index, line) in lines.iter().enumerate() {
-        if starting {
-            starts.push(index);
-        }
-        starting = line.ends;
-    }
     Layout {
         chunk_tokens: ranges
             .iter()
@@ -377,11 +369,11 @@ fn layout(workload: &Workload, chunk_lines: usize) -> Layout {
                 state::estimate_tokens(&output::text_of(&lines, range.clone()))
             })
             .collect(),
-        needle_chunks: workload
-            .needles
+        needle_chunks: needles
             .iter()
             .filter_map(|needle| {
-                let piece = *starts.get(needle.line)?;
+                let piece =
+                    lines.iter().position(|line| line.text == needle.text)?;
                 ranges.iter().position(|range| range.contains(&piece))
             })
             .collect(),
@@ -396,7 +388,7 @@ pub struct Config {
     /// Stop once Jev spend passes this many dollars.
     pub budget_usd: Option<f64>,
     pub settings: Settings,
-    pub bash: Bash,
+    pub exec: Exec,
     /// Where each trial's files go, in a directory of its own.
     pub work: PathBuf,
 }
@@ -408,7 +400,7 @@ impl Config {
             seeds: vec![0],
             budget_usd: None,
             settings: Settings::default(),
-            bash: Bash::Tau,
+            exec: Exec::Tau,
             work,
         }
     }
@@ -452,7 +444,7 @@ pub async fn evaluate(
                 jev.clone(),
                 config.settings.clone(),
                 &dir,
-                config.bash,
+                config.exec,
             )
             .await?;
             spent += trial.cost_usd;

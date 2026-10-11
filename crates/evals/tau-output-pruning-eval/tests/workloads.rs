@@ -4,7 +4,7 @@
 use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_fast_compaction::{OutputPruning, state::estimate_tokens};
 use tau_output_pruning_eval::{
-    runner::bash_result,
+    runner::exec_result,
     workload::{Kind, generate},
 };
 use tau_tools_host::truncate::MAX_LINES;
@@ -44,21 +44,20 @@ fn needles_are_where_claimed_exactly_once(tc: TestCase) {
     );
 }
 
-/// The kinds that promise a place keep it: spilled-middle's needle is
-/// above the tail `bash` keeps; multi-needle's three are far apart;
+/// The kinds that promise a place keep it: cut-middle's needle is
+/// above the tail `exec_command` keeps; multi-needle's three are far apart;
 /// earlier-requirement's needle is named only by its earlier read,
 /// which is larger than the half of a state the history gets beside a
 /// large output.
 #[hegel::test(test_cases = 20)]
 fn kinds_keep_their_promises(tc: TestCase) {
     let seed = tc.draw(gs::integers::<u64>());
-    let spilled = generate(Kind::SpilledMiddle, seed);
-    let lines = spilled.output.split('\n').count();
-    assert!(spilled.needles[0].line + MAX_LINES < lines);
-    let (tail, truncated) =
-        bash_result(&spilled.output, std::path::Path::new("/x/tau-bash-0.log"));
+    let cut = generate(Kind::CutMiddle, seed);
+    let lines = cut.output.split('\n').count();
+    assert!(cut.needles[0].line + MAX_LINES < lines);
+    let (tail, truncated) = exec_result(&cut.output);
     assert!(truncated);
-    assert!(!tail.contains(&spilled.needles[0].text));
+    assert!(!tail.contains(&cut.needles[0].text));
 
     let multi = generate(Kind::MultiNeedle, seed);
     assert_eq!(multi.needles.len(), 3);

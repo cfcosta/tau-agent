@@ -200,7 +200,7 @@ pub fn memory_calls(calls: &[Call]) -> u32 {
             MEMORY_READS.contains(&call.tool.as_str())
                 || match call.tool.as_str() {
                     "read" => arg(call, "path").ends_with("MEMORY.md"),
-                    "bash" => arg(call, "command").contains("MEMORY.md"),
+                    "exec_command" => arg(call, "cmd").contains("MEMORY.md"),
                     _ => false,
                 }
         })
@@ -213,7 +213,7 @@ pub fn memory_calls(calls: &[Call]) -> u32 {
 /// count: writing down that a fact changed is not using it.
 pub fn stale_used(calls: &[Call], stale: &Regex) -> bool {
     calls.iter().any(|call| match call.tool.as_str() {
-        "bash" => stale.is_match(arg(call, "command")),
+        "exec_command" => stale.is_match(arg(call, "cmd")),
         "read" => stale.is_match(arg(call, "path")),
         "edit" | "write" => {
             !arg(call, "path").ends_with("MEMORY.md")

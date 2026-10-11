@@ -28,7 +28,7 @@ fn trial(tc: &TestCase) -> Trial {
         kept_lines: None,
         chunks: None,
         kept_chunks: None,
-        spilled: tc.draw(gs::booleans()),
+        cut: tc.draw(gs::booleans()),
         tokens_full,
         tokens_before,
         tokens_after,
