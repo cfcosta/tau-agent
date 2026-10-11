@@ -85,6 +85,8 @@ pub fn plugins() -> Registry {
         // Plugins the person wrote in Luau: after the rules and the
         // goal, so theirs hold first.
         .with(tau_luau_plugins::LuauPluginsUi)
+        // Agents: their pages, and what their conversations show.
+        .with(tau_agents::AgentsUi)
         // Questions the agent asks the person, answered in the
         // composer's place.
         .with(tau_ask::AskUi)

@@ -273,6 +273,24 @@ impl Workspace {
         self.rows_of(repo, self.plugins_open, "")
     }
 
+    /// The runs of the agent `name`'s repository, which its row lists
+    /// while it is open (ADR 0037).
+    pub fn agent_rows(&self, name: &str) -> Option<RepoRows<'_>> {
+        let repo = self
+            .catalog
+            .repo(name)
+            .filter(|repo| repo.own == Some(crate::catalog::Own::Agent))?;
+        self.rows_of(repo, self.open_agents.contains(name), "")
+    }
+
+    /// What tau-agents' host last said of the agents, if it said.
+    pub fn agents(&self) -> Option<&tau_agents::Overview> {
+        self.catalog
+            .plugin_data
+            .get(tau_agents::NAME)
+            .map(|data| data.get::<tau_agents::Overview>())
+    }
+
     /// `repo`'s rows, `open` or folded, for a lowercase `filter`.
     fn rows_of<'a>(
         &'a self,
@@ -405,6 +423,27 @@ impl Workspace {
     pub fn toggle_plugins_open(&mut self, cx: &mut Context<Self>) {
         self.plugins_open = !self.plugins_open;
         cx.notify();
+    }
+
+    /// Opens or folds an agent's row in the sidebar.
+    pub fn toggle_agent_open(&mut self, name: &str, cx: &mut Context<Self>) {
+        if !self.open_agents.remove(name) {
+            self.open_agents.insert(name.to_owned());
+        }
+        cx.notify();
+    }
+
+    /// Opens an agent's conversation: its repository's main chat, with
+    /// the inspector beside it, where the agent's panel is (ADR 0037).
+    pub fn open_agent(&mut self, name: &str, cx: &mut Context<Self>) {
+        let main = self.catalog.repo(name).and_then(|repo| repo.main.clone());
+        match main {
+            Some(main) => {
+                self.details_open = true;
+                self.navigate(Route::Run(main), cx)
+            }
+            None => self.navigate(Route::agents(tau_agents::ui::OVERVIEW), cx),
+        }
     }
 
     /// Opens or closes a repository in the sidebar, and selects it.

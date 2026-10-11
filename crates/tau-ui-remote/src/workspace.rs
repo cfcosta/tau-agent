@@ -512,6 +512,9 @@ pub struct Workspace {
     /// Whether the sidebar's Plugins shows what is under it: the built-in
     /// plugins, the person's own, and the chats writing them.
     pub(crate) plugins_open: bool,
+    /// The agents whose rows show what is under them: their last line
+    /// and their sub-agents at work (ADR 0037).
+    pub(crate) open_agents: HashSet<String>,
     /// The repository row under the pointer, which shows its actions.
     pub(crate) hovered_repo: Option<String>,
     /// The repository whose menu is open.
@@ -779,6 +782,7 @@ impl Workspace {
             all_runs: HashSet::new(),
             folded: HashSet::new(),
             plugins_open: true,
+            open_agents: HashSet::new(),
             hovered_repo: None,
             repo_menu: None,
             sidebar_filter,

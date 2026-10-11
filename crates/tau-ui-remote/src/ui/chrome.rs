@@ -177,6 +177,7 @@ pub fn sidebar(
                     .child("No repositories yet. Add one to start runs in it."),
             )
         })
+        .child(agents_section(ws, t, cx))
         .child(div().flex_1().min_h(sp(4.)))
         .child(section("Everywhere", None, t))
         .child(plugins_tree(ws, t, cx))
@@ -367,6 +368,249 @@ fn plugins_tree(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             );
     }
     tree.child(body)
+}
+
+/// The agents, a section of their own (ADR 0037): its heading opens the
+/// Agents page and its `+` the New agent form; each agent's row opens
+/// its conversation, and its chevron shows its last line and its
+/// sub-agents at work.
+fn agents_section(
+    ws: &Workspace,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let on_page = |page: &str| {
+        matches!(&ws.route, Route::Plugin { plugin, page: at, .. }
+            if plugin == tau_agents::NAME && at == page)
+    };
+    let new = div()
+        .id("new-agent")
+        .size(rems(1.375))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(radius::TAG)
+        .cursor_pointer()
+        .hover(|style| style.bg(t.selected))
+        .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
+        .on_click(cx.listener(|ws, _, _, cx| {
+            cx.stop_propagation();
+            ws.navigate(Route::agents(tau_agents::ui::NEW), cx)
+        }));
+    let heading = div()
+        .id("agents")
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .mt(sp(2.))
+        .pt(sp(1.5))
+        .pb(sp(1.5))
+        .px(sp(2.))
+        .rounded(radius::BOX)
+        .cursor_pointer()
+        .typeset(Type::CAPTION)
+        .text_color(if on_page(tau_agents::ui::OVERVIEW) {
+            t.text
+        } else {
+            t.dim
+        })
+        .hover(|style| style.text_color(t.text_soft))
+        .child(div().flex_1().child("Agents"))
+        .child(new)
+        .on_click(cx.listener(|ws, _, _, cx| {
+            ws.navigate(Route::agents(tau_agents::ui::OVERVIEW), cx)
+        }));
+    let mut section = div().flex().flex_col().flex_shrink_0().child(heading);
+    let agents: Vec<&crate::catalog::Repo> = ws.catalog.agents().collect();
+    if agents.is_empty() {
+        return section.child(
+            div()
+                .px(sp(2.5))
+                .py(sp(1.5))
+                .typeset(Type::CAPTION)
+                .text_color(t.muted)
+                .child("None yet. /agent and what it should do makes one."),
+        );
+    }
+    let overview = ws.agents();
+    let now = tau_agents::shown::now();
+    let current = ws.current().map(|run| ws.listed_as(run).clone());
+    let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
+    for repo in agents {
+        let name = repo.name.clone();
+        let agent = overview.and_then(|overview| overview.agent(&name));
+        let open = ws.open_agents.contains(&name);
+        let main = repo.main.as_ref().and_then(|id| ws.run(id));
+        let live = main.is_some_and(|main| main.status.is_live());
+        let active = on_run
+            && repo.main.is_some()
+            && current.as_ref() == repo.main.as_ref();
+        let end: Option<AnyElement> = match agent.map(|agent| &agent.status) {
+            _ if live => Some(
+                status_tag("working", t.roles.live, Type::MICRO)
+                    .into_any_element(),
+            ),
+            Some(tau_agents::Status::Working) => Some(
+                status_tag("working", t.roles.live, Type::MICRO)
+                    .into_any_element(),
+            ),
+            Some(
+                tau_agents::Status::AtCap | tau_agents::Status::Broken { .. },
+            ) => Some(need_you_pill(1, Type::MICRO, t).into_any_element()),
+            Some(tau_agents::Status::Paused) => Some(
+                status_tag("paused", t.roles.waiting, Type::MICRO)
+                    .into_any_element(),
+            ),
+            _ => agent.and_then(|agent| agent.next()).map(|next| {
+                div()
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child(tau_agents::shown::relative(next, now))
+                    .into_any_element()
+            }),
+        };
+        let fold = {
+            let name = name.clone();
+            div()
+                .id(SharedString::from(format!("fold-agent-{name}")))
+                .size(rems(1.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon(
+                    if open { Icon::Down } else { Icon::Chevron },
+                    IconSize::TINY,
+                    t.dim,
+                ))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    cx.stop_propagation();
+                    ws.toggle_agent_open(&name, cx)
+                }))
+        };
+        let row = div()
+            .id(SharedString::from(format!("agent-{name}")))
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(sp(2.))
+            .h(rems(2.))
+            .px(sp(2.))
+            .rounded(radius::BOX)
+            .cursor_pointer()
+            .text_color(if active { t.text } else { t.text_soft })
+            .when(active, |row| row.bg(t.raised))
+            .when(!active, |row| row.hover(|style| style.bg(t.card)))
+            .child(fold)
+            .child(tau_agents::ui::mark(&name, 18., t))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(rems(0.))
+                    .truncate()
+                    .when(active, |label| label.font_weight(weight::EMPHASIS))
+                    .child(name.clone()),
+            )
+            .children(end)
+            .on_click({
+                let name = name.clone();
+                cx.listener(move |ws, _, _, cx| ws.open_agent(&name, cx))
+            });
+        section = section.child(row);
+        if !open {
+            continue;
+        }
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap(sp(0.25))
+            .pl(sp(6.5))
+            .pb(sp(1.5));
+        if let Some(last) = agent.and_then(|agent| agent.last.as_ref()) {
+            body = body.child(
+                div()
+                    .flex()
+                    .gap(sp(2.))
+                    .h(rems(1.5))
+                    .items_center()
+                    .px(sp(2.))
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(rems(0.))
+                            .truncate()
+                            .child(last.line.clone()),
+                    )
+                    .child(tau_agents::shown::relative(last.at, now)),
+            );
+        }
+        // Its row stands for its main chat: what is under it is the
+        // agent's crew.
+        if let Some(rows) = ws.agent_rows(&name) {
+            let tree: Vec<TreeRow<'_>> = ws
+                .repo_tree(&rows)
+                .into_iter()
+                .filter(|row| {
+                    !matches!(row, TreeRow::Run { run, .. }
+                        if repo.main.as_ref() == Some(&run.id))
+                })
+                .collect();
+            if !tree.is_empty() {
+                body = body.child(
+                    div()
+                        .px(sp(2.))
+                        .pt(sp(1.))
+                        .typeset(Type::CAPTION)
+                        .text_color(t.dim)
+                        .child("Sub-agents"),
+                );
+            }
+            for row in tree {
+                body = match row {
+                    TreeRow::Run { run, depth, folded } => {
+                        let active =
+                            on_run && current.as_ref() == Some(&run.id);
+                        body.child(run_row(
+                            ws,
+                            run,
+                            active,
+                            depth.saturating_sub(1),
+                            folded,
+                            t,
+                            cx,
+                        ))
+                    }
+                    TreeRow::Child { child, depth, .. } => {
+                        body.child(child_row(
+                            ws,
+                            &row,
+                            child,
+                            depth.saturating_sub(1),
+                            t,
+                            cx,
+                        ))
+                    }
+                };
+            }
+        }
+        section = section.child(body);
+    }
+    section
+}
+
+/// A word on a small tinted pill: an agent's `working`, `paused`.
+fn status_tag(text: &'static str, color: gpui::Hsla, size: Type) -> Div {
+    div()
+        .flex_shrink_0()
+        .px(sp(1.75))
+        .rounded(radius::FULL)
+        .border_1()
+        .border_color(color.opacity(0.4))
+        .bg(color.opacity(0.1))
+        .typeset(size)
+        .text_color(color)
+        .child(text)
 }
 
 /// A heading in the sidebar, with an action at its end.

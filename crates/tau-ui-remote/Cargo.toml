@@ -31,6 +31,7 @@ tau-direnv = { path = "../plugins/tau-direnv", default-features = false }
 tau-goal.workspace = true
 tau-watcher.workspace = true
 tau-luau-plugins.workspace = true
+tau-agents.workspace = true
 tau-skills = { path = "../plugins/tau-skills", default-features = false }
 tau-mcp.workspace = true
 tau-memory.workspace = true
