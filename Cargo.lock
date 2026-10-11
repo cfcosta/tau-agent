@@ -9339,6 +9339,7 @@ dependencies = [
  "ashpd",
  "gpui-pre",
  "gpui-pre-platform",
+ "tau-agents-host",
  "tau-codemode-host",
  "tau-luau-plugins-host",
  "tau-ui",
