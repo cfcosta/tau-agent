@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO spend (run_id, at, cost_usd)\n                 VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "8700fc07ba9e009302eff29f17681b709c38541b35397fe3657d286edc417a39"
+}

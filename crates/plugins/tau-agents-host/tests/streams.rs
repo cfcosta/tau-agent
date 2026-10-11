@@ -14,7 +14,6 @@
 )]
 
 use std::{
-    collections::BTreeMap,
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -85,11 +84,12 @@ impl Env for Host {
         Box::pin(async { Ok(()) })
     }
 
-    fn costs(
+    fn spent_since(
         &self,
         _agent: &str,
-    ) -> HostFuture<'_, anyhow::Result<BTreeMap<String, f64>>> {
-        Box::pin(async { Ok(BTreeMap::new()) })
+        _since: i64,
+    ) -> HostFuture<'_, anyhow::Result<f64>> {
+        Box::pin(async { Ok(0.0) })
     }
 
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {

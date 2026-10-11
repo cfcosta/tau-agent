@@ -44,3 +44,13 @@ CREATE TABLE plugin_costs (
   cost_usd      REAL    NOT NULL DEFAULT 0,
   PRIMARY KEY (run_id, plugin)
 ) STRICT;
+
+-- What each write added to a run's cost, and when: the run's turns, its
+-- compactions and what its plugins charged. A day's spend is a sum over
+-- it (an agent's daily cap, ADR 0037).
+CREATE TABLE spend (
+  run_id   TEXT NOT NULL REFERENCES runs (id),
+  at       TEXT NOT NULL,
+  cost_usd REAL NOT NULL
+) STRICT;
+CREATE INDEX spend_by_run ON spend (run_id, at);

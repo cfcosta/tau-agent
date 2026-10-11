@@ -91,6 +91,19 @@ pub fn midnight(clock: &dyn Clock, at: i64) -> i64 {
     local_days(at, clock.offset(at)) * DAY - offset
 }
 
+/// `at` as the store writes times, in UTC
+/// (`2026-10-11T00:00:00.000Z`): what its spend is counted from.
+pub fn stamp(at: i64) -> String {
+    let (year, month, day) = civil(at.div_euclid(DAY));
+    let second = at.rem_euclid(DAY);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.000Z",
+        second / 3600,
+        second % 3600 / 60,
+        second % 60
+    )
+}
+
 /// The weekday `at` falls on locally, Monday 0 to Sunday 6.
 pub fn weekday(clock: &dyn Clock, at: i64) -> usize {
     // 1970-01-01 was a Thursday, 3 days after a Monday.
@@ -133,6 +146,13 @@ mod tests {
         let west = FakeClock::new(at, -3 * 3600);
         assert_eq!(day(&west, at), "2026-10-11");
         assert_eq!(midnight(&west, at), at - 20 * 3600 - 1800);
+    }
+
+    #[test]
+    fn stamps_are_utc_as_the_store_writes_them() {
+        assert_eq!(stamp(0), "1970-01-01T00:00:00.000Z");
+        // 2026-10-11T23:30:00Z.
+        assert_eq!(stamp(1_791_761_400), "2026-10-11T23:30:00.000Z");
     }
 
     #[test]

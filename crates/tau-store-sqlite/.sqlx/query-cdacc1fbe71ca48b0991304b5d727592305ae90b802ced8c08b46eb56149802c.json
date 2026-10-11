@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(sum(cost_usd), 0.0) AS \"usd!: f64\"\n               FROM spend\n               WHERE run_id IN (SELECT value FROM json_each(?1)) AND at >= ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "usd!: f64",
+        "ordinal": 0,
+        "type_info": "Float",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cdacc1fbe71ca48b0991304b5d727592305ae90b802ced8c08b46eb56149802c"
+}

@@ -621,6 +621,14 @@ impl StoreMachine {
             Vec::new(),
             "no run started after"
         );
+        // Every write's cost, plugins' charges among it, is spent since
+        // the epoch; none of it later.
+        let ids: Vec<String> =
+            model.runs.keys().map(|id| (*id).to_owned()).collect();
+        let total: f64 = model.runs.values().map(|m| m.cost).sum();
+        let spent = store.spent_since(&ids, "1970").await.unwrap();
+        assert!((spent - total).abs() < 1e-9, "{spent} != {total}");
+        assert_eq!(store.spent_since(&ids, "9999").await.unwrap(), 0.0);
         for workflow in ["wf_1", "wf_2"] {
             let mut expected: BTreeMap<&str, (i64, f64)> = BTreeMap::new();
             for m in
@@ -757,6 +765,43 @@ fn large_token_counts_add_exactly() {
         let run = store.run("r").await.unwrap().unwrap();
         assert_eq!(run.input_tokens, 3 * i64::from(u32::MAX));
         assert_eq!(run.output_tokens, 3 * i64::from(u32::MAX));
+    });
+}
+
+/// What runs spent since a time: each write's cost from then on, its
+/// plugins' charges among it, and only the runs asked about.
+#[test]
+fn spend_counts_the_runs_asked_from_a_time_on() {
+    block_on_io(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        for id in ["main", "chat", "other"] {
+            store.create_run(&new_run(id)).await.unwrap();
+        }
+        let cost = |usd: f64| TurnUsage {
+            cost_usd: usd,
+            ..TurnUsage::default()
+        };
+        store.append_turn("main", &[], cost(1.0)).await.unwrap();
+        // Writes are stamped to the millisecond.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let since = store
+            .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", 1)
+            .await
+            .unwrap()
+            .rows[0][0]
+            .clone();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        store.append_turn("main", &[], cost(0.25)).await.unwrap();
+        // A plugin's charge (a compaction, a check) is part of the cost.
+        store
+            .append_charged("chat", &[], cost(0.5), &[("jev", cost(0.5))])
+            .await
+            .unwrap();
+        store.append_turn("other", &[], cost(8.0)).await.unwrap();
+        let ours = ["main".to_owned(), "chat".to_owned()];
+        assert_eq!(store.spent_since(&ours, &since).await.unwrap(), 0.75);
+        assert_eq!(store.spent_since(&ours, "1970").await.unwrap(), 1.75);
+        assert_eq!(store.spent_since(&[], "1970").await.unwrap(), 0.0);
     });
 }
 

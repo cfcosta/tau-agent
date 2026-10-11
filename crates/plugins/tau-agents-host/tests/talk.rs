@@ -71,7 +71,8 @@ return tau.agent {
 struct Host {
     running: AtomicBool,
     turns: Mutex<Vec<Turn>>,
-    costs: Mutex<BTreeMap<String, f64>>,
+    /// What each agent spent today.
+    spent: Mutex<BTreeMap<String, f64>>,
     secrets: std::sync::OnceLock<SecretStore>,
 }
 
@@ -112,19 +113,13 @@ impl Env for HostEnv {
         Box::pin(async { Ok(()) })
     }
 
-    fn costs(
+    fn spent_since(
         &self,
         agent: &str,
-    ) -> HostFuture<'_, anyhow::Result<BTreeMap<String, f64>>> {
-        let costs: BTreeMap<String, f64> = self
-            .0
-            .costs
-            .lock()
-            .unwrap()
-            .get(agent)
-            .map(|cost| BTreeMap::from([(format!("run-of-{agent}"), *cost)]))
-            .unwrap_or_default();
-        Box::pin(async move { Ok(costs) })
+        _since: i64,
+    ) -> HostFuture<'_, anyhow::Result<f64>> {
+        let spent = self.0.spent.lock().unwrap().get(agent).copied();
+        Box::pin(async move { Ok(spent.unwrap_or(0.0)) })
     }
 
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {
@@ -377,10 +372,8 @@ fn a_message_reaches_an_agent_that_hears_them_and_no_other() {
 #[test]
 fn a_message_spends_the_receivers_day() {
     let f = Fixture::new();
-    f.host.costs.lock().unwrap().insert("triage".into(), 0.0);
-    // The day's count starts here; then triage spends its dollar.
-    block_on_io(f.agents.tick());
-    f.host.costs.lock().unwrap().insert("triage".into(), 1.5);
+    // triage spent its dollar today.
+    f.host.spent.lock().unwrap().insert("triage".into(), 1.5);
     block_on_io(f.agents.send("digest", "triage", "look at #412", 1)).unwrap();
     assert!(f.tick_past_window().is_empty());
     let triage = f.agent("triage");

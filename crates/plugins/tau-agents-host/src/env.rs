@@ -2,7 +2,7 @@
 //! what its runs cost, and its conversation. [`HostEnv`] is the host's;
 //! tests give their own.
 
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use serde_json::Value;
 use tau_agents::{NAME, Settings};
@@ -32,13 +32,14 @@ pub trait Env: Send + Sync {
         settings: Settings,
     ) -> HostFuture<'_, anyhow::Result<()>>;
 
-    /// What each run in `agent`'s repository has cost so far, in
-    /// dollars, by run: its turns, its sub-agents', what its plugins
-    /// charged.
-    fn costs(
+    /// What everything in `agent`'s repository cost from `since` (in
+    /// seconds since the epoch) on, in dollars: its runs' turns, its
+    /// sub-agents', its compactions and what its plugins charged.
+    fn spent_since(
         &self,
         agent: &str,
-    ) -> HostFuture<'_, anyhow::Result<BTreeMap<String, f64>>>;
+        since: i64,
+    ) -> HostFuture<'_, anyhow::Result<f64>>;
 
     /// The host's conversations, when it lets them be driven.
     fn conversations(&self) -> Option<Arc<dyn Conversations>>;
@@ -109,10 +110,11 @@ impl Env for HostEnv {
         })
     }
 
-    fn costs(
+    fn spent_since(
         &self,
         agent: &str,
-    ) -> HostFuture<'_, anyhow::Result<BTreeMap<String, f64>>> {
+        since: i64,
+    ) -> HostFuture<'_, anyhow::Result<f64>> {
         let agent = agent.to_owned();
         Box::pin(async move {
             let mut runs: Vec<String> = self
@@ -126,16 +128,11 @@ impl Env for HostEnv {
                 })
                 .map(|(run, _)| run.0.to_string())
                 .collect();
-            runs.sort();
-            runs.dedup();
-            let mut costs = BTreeMap::new();
             // A run's sub-agents, and theirs, are its repository's too.
+            let mut seen = std::collections::BTreeSet::new();
             while let Some(run) = runs.pop() {
-                if costs.contains_key(&run) {
+                if !seen.insert(run.clone()) {
                     continue;
-                }
-                if let Some(record) = self.0.store.run(&run).await? {
-                    costs.insert(run.clone(), record.cost_usd);
                 }
                 runs.extend(
                     self.0
@@ -146,7 +143,12 @@ impl Env for HostEnv {
                         .map(|child| child.id),
                 );
             }
-            Ok(costs)
+            let runs: Vec<String> = seen.into_iter().collect();
+            Ok(self
+                .0
+                .store
+                .spent_since(&runs, &crate::clock::stamp(since))
+                .await?)
         })
     }
 

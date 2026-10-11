@@ -522,11 +522,12 @@ impl Agents {
         poll::items(found)
     }
 
-    /// Counts what `agent` spent today: what each of its runs cost since
-    /// the day began, the first count of a day being where it starts.
+    /// Counts what `agent` spent today: everything in its repository
+    /// since the host's local midnight.
     async fn count_spend(&self, agent: &str, now: i64) -> f64 {
-        let costs = match self.0.env.costs(agent).await {
-            Ok(costs) => costs,
+        let since = clock::midnight(self.0.clock.as_ref(), now);
+        let spend = match self.0.env.spent_since(agent, since).await {
+            Ok(spend) => spend,
             Err(error) => {
                 eprintln!("{NAME}: cannot count {agent}'s spend: {error:#}");
                 return self
@@ -538,22 +539,6 @@ impl Agents {
                     .map_or(0.0, |(spend, _)| *spend);
             }
         };
-        let day = clock::day(self.0.clock.as_ref(), now);
-        let spend = self
-            .with_kept(agent, |kept| {
-                if kept.day.as_deref() != Some(day.as_str()) {
-                    kept.day = Some(day);
-                    kept.base = costs.clone();
-                }
-                costs
-                    .iter()
-                    .map(|(run, cost)| {
-                        (cost - kept.base.get(run).copied().unwrap_or(0.0))
-                            .max(0.0)
-                    })
-                    .sum::<f64>()
-            })
-            .await;
         self.0
             .spend
             .lock()

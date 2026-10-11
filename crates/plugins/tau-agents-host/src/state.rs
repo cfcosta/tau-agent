@@ -28,10 +28,6 @@ pub struct Kept {
     /// The person paused it: events queue, and no turn starts.
     pub paused: bool,
     pub last: Option<Last>,
-    /// The day, `YYYY-MM-DD`, its spend is counted for.
-    pub day: Option<String>,
-    /// What each of its runs had cost as that day began, by run.
-    pub base: BTreeMap<String, f64>,
     /// When to try again a turn that did not start.
     pub retry_at: Option<i64>,
     /// Each poll's keys and when it polls next, by trigger.

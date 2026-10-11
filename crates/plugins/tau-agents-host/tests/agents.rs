@@ -93,7 +93,8 @@ struct Host {
     conversation: Arc<Conversation>,
     secrets: std::sync::OnceLock<SecretStore>,
     settings: Mutex<BTreeMap<String, Settings>>,
-    costs: Mutex<BTreeMap<String, f64>>,
+    /// What the agent's repository was charged, and when.
+    charges: Mutex<Vec<(i64, f64)>>,
     /// What each tool answers next, in turn; none is a failure.
     answers: Mutex<BTreeMap<String, VecDeque<Result<Value, String>>>>,
     /// The tools called outside a run: where, which, with what.
@@ -137,12 +138,20 @@ impl Env for Host {
         Box::pin(async { Ok(()) })
     }
 
-    fn costs(
+    fn spent_since(
         &self,
         _agent: &str,
-    ) -> HostFuture<'_, anyhow::Result<BTreeMap<String, f64>>> {
-        let costs = self.costs.lock().unwrap().clone();
-        Box::pin(async move { Ok(costs) })
+        since: i64,
+    ) -> HostFuture<'_, anyhow::Result<f64>> {
+        let spent = self
+            .charges
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(at, _)| *at >= since)
+            .map(|(_, usd)| usd)
+            .sum();
+        Box::pin(async move { Ok(spent) })
     }
 
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {
@@ -428,11 +437,15 @@ fn a_turn_that_does_not_start_keeps_its_events_and_tries_again() {
 #[test]
 fn at_its_cap_it_waits_until_the_person_allows_more() {
     let f = Fixture::new();
-    f.host.costs.lock().unwrap().insert("run-1".into(), 4.0);
-    // The day's first count is where its spend starts.
+    // What it spent before the day began does not count.
+    f.host
+        .charges
+        .lock()
+        .unwrap()
+        .push((MONDAY_EIGHT - 9 * 3600, 4.0));
     f.tick();
     assert_eq!(f.agent().spend_today, 0.0);
-    f.host.costs.lock().unwrap().insert("run-1".into(), 5.25);
+    f.host.charges.lock().unwrap().push((MONDAY_EIGHT, 1.25));
     f.command("ada");
     f.clock.advance(30);
     f.tick();
