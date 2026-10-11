@@ -72,10 +72,9 @@ return tau.agent {
 - Durations are a number and a unit: `s`, `m`, `h` or `d`, at least a
   minute. `at` is `HH:MM` in the host's local time; `days` are `Mon` to
   `Sun`, and every day when left out.
-- **This version of tau fires schedules, commands, polls and
-  messages.** Streams and MCP resources load and their tests run, but
-  they do not fire yet: declare them only when the person asks for
-  them, and say they start once tau supports them.
+- **Every trigger fires**: schedules, commands, polls, streams, MCP
+  resources and messages. Webhooks (a URL services call) do not exist
+  yet: a poll or a stream does their job.
 - A poll's `key` is a field of each item, or a function of it; its
   first poll only records what is there, and tau keeps the last 10 000
   keys it saw. `items = function(result)` picks the list from a result
@@ -93,6 +92,16 @@ return tau.agent {
 - `parse` reads one frame (`{ event, data, id }`) and returns the event
   it is, or `nil` for a frame that is not one, like a keep-alive. It
   reads; it does not judge whether an event matters: you do.
+- An `mcp` trigger watches one resource of one of your MCP servers
+  (`server` is its name in your `.tau/mcp.json` or the person's). Each
+  time the server says it changed, tau reads it, and fires when what it
+  reads differs from the last read; the event's data is what it read
+  (JSON when the resource says it is). The first read only records
+  what is there. A read that changed while tau was closed fires when
+  tau starts.
+- Only a server that says it can (`resources.subscribe`) tells tau of
+  changes. One that cannot shows on your page as "does not say when a
+  resource changes": read it with a poll instead, through its tools.
 - `tau.secret("name")` stands for a key from tau's secret store, in a
   request's headers or body. You never see its value.
 
@@ -187,6 +196,10 @@ end)
 ### A stream, parsed
 
 {{build-watch}}
+
+### An MCP resource, watched
+
+{{main-status}}
 
 ### Messages from other agents
 

@@ -1,6 +1,7 @@
 # 0037: Agents: a conversation that never ends, and rewrites itself
 
-- Status: proposed. Where it says `bash`, read `exec_command` and
+- Status: accepted; the four steps of its order of work are built.
+  Where it says `bash`, read `exec_command` and
   `write_stdin` ([0038](0038-commands-run-in-the-background.md)): the
   sandbox is their launcher. Builds on [0018](0018-codemode-and-mcp.md),
   [0025](0025-agent-commands-run-in-an-environment-plugins-give.md),
@@ -174,8 +175,14 @@ return tau.agent {
   server gave one. The host holds the connection; Luau never does.
 - **MCP subscriptions** are new to tau-mcp: it subscribes while an
   active agent names the resource and the server can
-  (`resources.subscribe`). A server that cannot is shown on the page;
-  a poll is the way round it.
+  (`resources.subscribe`), on 2026-07-28 through a
+  `subscriptions/listen` of the resource's own, before through
+  `resources/subscribe`; agents that watch one resource share the
+  subscription. Each change the server tells of is read, and fires
+  when what it reads differs from the last read: the event's id is the
+  URI and a digest of the read, its data the read. The first read only
+  records, as a poll's first call does. A server that cannot is shown
+  on the page; a poll is the way round it.
 - **Commands** reach every composer through `Manifest::listed_commands`,
   as tau-mcp's prompts do. Sending one starts no run where it was
   typed: the composer says "sent to pr-triage" and the event goes to

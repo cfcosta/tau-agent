@@ -12,7 +12,7 @@ const TEMPLATE: &str = include_str!("../skill/SKILL.md");
 
 /// The worked agents: each one's name and files, by their paths in its
 /// repository.
-pub const EXAMPLES: [(&str, &[(&str, &str)]); 4] = [
+pub const EXAMPLES: [(&str, &[(&str, &str)]); 5] = [
     (
         "morning-digest",
         &[
@@ -57,6 +57,21 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 4] = [
             (
                 "tests/parse.luau",
                 include_str!("../skill/examples/build-watch/tests/parse.luau"),
+            ),
+        ],
+    ),
+    (
+        "main-status",
+        &[
+            (
+                "agent.luau",
+                include_str!("../skill/examples/main-status/agent.luau"),
+            ),
+            (
+                "tests/triggers.luau",
+                include_str!(
+                    "../skill/examples/main-status/tests/triggers.luau"
+                ),
             ),
         ],
     ),
