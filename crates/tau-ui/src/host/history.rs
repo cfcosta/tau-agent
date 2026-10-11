@@ -20,6 +20,7 @@ pub(super) async fn stored_view(
             }
             Entry::Plugin { plugin, body }
                 if plugin == LANDING_RECORD
+                    || plugin == crate::view::TAU_MESSAGE_RECORD
                     || crate::plugins::registry().get(&plugin).is_some() =>
             {
                 serde_json::from_str(&body)

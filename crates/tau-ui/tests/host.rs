@@ -564,6 +564,44 @@ fn on_main(host: &Host, prompt: &str) -> tau_agent::tool::RunId {
     main
 }
 
+/// A message tau started a turn with (a report, an agent's events) is
+/// tau's in the stored run too, not the person's: reloaded, it reads as
+/// it did live.
+#[test]
+fn tau_s_message_is_tau_s_in_a_stored_run() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hi"))
+        .turn(|t| t.text("noted"))
+        .turn(|t| t.text("again"));
+    let (host, mut events) = host(llm);
+    let main = on_main(&host, "hello");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let report = "Two chats landed on main.";
+    host.block_on(host.resume_by_tau(&main, report, &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    // The person's words, even the same ones, stay theirs.
+    host.block_on(host.resume(&main, report, &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+
+    let history = host.block_on(host.history()).unwrap();
+    let stored = history.iter().find(|view| view.id == main).unwrap();
+    let said: Vec<(bool, &str)> = stored
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::User(text) => Some((false, text.as_str())),
+            Item::Tau(text) => Some((true, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(said, [(false, "hello"), (true, report), (false, report)]);
+}
+
 fn wait_until_done(host: &Host, run: &tau_agent::tool::RunId) {
     let deadline = std::time::Instant::now() + WAIT;
     while host.is_running(run) && std::time::Instant::now() < deadline {

@@ -214,7 +214,21 @@ fn item_view(
         Item::ForkReady { fork } => {
             fork_ready(ws, run, fork, t, compact, cx).into_any_element()
         }
-        Item::Tau(text) => tau_message(text, t).into_any_element(),
+        // tau's own message, unless a plugin reads it as its own (an
+        // agent's events).
+        Item::Tau(text) => ws
+            .contributions(
+                tau_ui_plugin::points::USER_MESSAGE,
+                &tau_ui_plugin::points::AtMessage {
+                    run: run.info(),
+                    text: text.clone(),
+                    index,
+                },
+                cx,
+            )
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| tau_message(text, t).into_any_element()),
         // The plugin that named its rewrite draws it.
         Item::Rewrite {
             plugin,

@@ -106,7 +106,7 @@ impl Host {
         let choice = self.session_of(run).choice.unwrap_or_else(|| {
             ModelChoice::new(record.model.clone(), Effort::Auto)
         });
-        self.resume(run, CUT_OFF, &choice).await
+        self.resume_by_tau(run, CUT_OFF, &choice).await
     }
 
     /// Finishes what the last tau left as it closed, before updates move

@@ -47,7 +47,14 @@ use tau_tools_host::{
     path::Root,
     plugin::{CodingTools, Tool},
 };
-use tau_ui_plugin::{HOST_RECORD, HostRecord, Services, TurnCommit, TurnHooks};
+use tau_ui_plugin::{
+    By,
+    HOST_RECORD,
+    HostRecord,
+    Services,
+    TurnCommit,
+    TurnHooks,
+};
 use tau_vcs_host::{
     ChangeKind,
     DEFAULT_WORKSPACE,
@@ -98,6 +105,7 @@ use crate::{
         Origin,
         RunView,
         Stored,
+        TAU_MESSAGE_RECORD,
     },
     workspace::{Workspace, WorkspaceEvent},
 };
@@ -1219,23 +1227,51 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<()> {
-        self.resume_as(run, prompt, choice, false).await
+        self.resume_as(run, prompt, choice, By::Person, false).await
     }
 
-    /// [`Host::resume`]; `resolving` for tau's turn resolving what a
-    /// landing left in conflict on a main chat, whose stop is held once
-    /// while conflicts remain.
+    /// [`Host::resume`] with a message of tau's, not the person's (a
+    /// report, an agent's events, a run cut off): a stored run shows it
+    /// as tau's, as the live one does.
+    pub async fn resume_by_tau(
+        &self,
+        run: &RunId,
+        prompt: &str,
+        choice: &ModelChoice,
+    ) -> anyhow::Result<()> {
+        self.resume_as(run, prompt, choice, By::Tau, false).await
+    }
+
+    /// [`Host::resume`], by `by`; `resolving` for tau's turn resolving
+    /// what a landing left in conflict on a main chat, whose stop is held
+    /// once while conflicts remain.
     async fn resume_as(
         &self,
         run: &RunId,
         prompt: &str,
         choice: &ModelChoice,
+        by: By,
         resolving: bool,
     ) -> anyhow::Result<()> {
         if self.is_running(run) {
             anyhow::bail!("The run is still going; steer it instead");
         }
         self.refuse_ended(run).await?;
+        // Its message is tau's: the record says so before the turn
+        // stores it.
+        if by == By::Tau {
+            self.store
+                .append_turn(
+                    &run.0,
+                    &[Entry::Plugin {
+                        plugin: TAU_MESSAGE_RECORD.to_owned(),
+                        body: serde_json::json!({ "prompt": prompt })
+                            .to_string(),
+                    }],
+                    TurnUsage::default(),
+                )
+                .await?;
+        }
         // It goes on from its transcript as an idle compaction left it.
         self.stop_compacting(run).await;
         let repo = self.slot_of_run(run).await?;

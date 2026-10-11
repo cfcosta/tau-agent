@@ -158,8 +158,9 @@ pub const RUN_ROW: Point<AtRun, RowNote> = Point::new("tau.sidebar.run.row");
 /// The run's row says the run asks, and a notification shows the
 /// question while tau's window is not focused.
 pub const ASKS: Point<AtRun, String> = Point::new("tau.run.asks");
-/// A message the person sent, drawn by the plugin that reads it as its
-/// own (a `/goal`); the first contribution draws it.
+/// A message the person sent, or tau did, drawn by the plugin that reads
+/// it as its own (a `/goal`, an agent's events); the first contribution
+/// draws it.
 pub const USER_MESSAGE: Point<AtMessage> = Point::new("tau.run.user_message");
 /// The sidebar's own entries, above the repositories.
 pub const SIDEBAR: Point<AtApp, NavEntry> = Point::new("tau.sidebar");

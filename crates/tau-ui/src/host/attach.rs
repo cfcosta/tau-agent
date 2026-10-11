@@ -419,7 +419,14 @@ fn start_turn(
     on_host(
         host,
         workspace,
-        async move |host| host.resume(&main, &turn.text, &choice).await,
+        async move |host| match turn.by {
+            tau_ui_plugin::By::Tau => {
+                host.resume_by_tau(&main, &turn.text, &choice).await
+            }
+            tau_ui_plugin::By::Person => {
+                host.resume(&main, &turn.text, &choice).await
+            }
+        },
         move |_, (), _| done.send(Ok(())),
         move |ws, error, cx| {
             if by == tau_ui_plugin::By::Tau {

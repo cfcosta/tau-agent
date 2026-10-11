@@ -217,6 +217,12 @@ pub const LANDING_RECORD: &str = "landing";
 /// and takes no more messages.
 pub const DROPPED_RECORD: &str = "dropped";
 
+/// The plugin name of the record stored as tau starts a turn with a
+/// message of its own (a report, an agent's events): `{ "prompt": … }`.
+/// The message that follows with those words is tau's, not the person's,
+/// in a stored run as in a live one.
+pub const TAU_MESSAGE_RECORD: &str = "tau-message";
+
 pub use tau_vcs::ui::landed::{LandedCard, LandingRecord};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -747,6 +753,8 @@ impl RunView {
         let mut during: Vec<(&str, &Value)> = Vec::new();
         // Whether the turn the records in `during` belong to has begun.
         let mut begun = false;
+        // The words of a message tau is about to send, as it said them.
+        let mut tau_prompt: Option<String> = None;
         let flush = |view: &mut Self, during: &mut Vec<(&str, &Value)>| {
             for (plugin, body) in during.drain(..) {
                 view.report(plugin, body);
@@ -784,6 +792,11 @@ impl RunView {
                     flush(&mut view, &mut during);
                     view.report(plugin, body);
                 }
+                Stored::Record { plugin, body }
+                    if plugin == TAU_MESSAGE_RECORD =>
+                {
+                    tau_prompt = body["prompt"].as_str().map(str::to_owned);
+                }
                 // A child landed between turns: its card follows the
                 // turn it came after.
                 Stored::Record { plugin, body } if plugin == LANDING_RECORD => {
@@ -812,7 +825,17 @@ impl RunView {
                         Message::Assistant(_) => begun = true,
                         Message::ToolResult(_) => {}
                     }
-                    view.push_message(message);
+                    match message {
+                        Message::User(user)
+                            if tau_prompt.as_deref()
+                                == Some(&*user_words(&user.content)) =>
+                        {
+                            tau_prompt = None;
+                            view.items
+                                .push(Item::Tau(user_words(&user.content)));
+                        }
+                        _ => view.push_message(message),
+                    }
                     if matches!(message, Message::User(_)) {
                         for (plugin, body) in starting.drain(..) {
                             view.report(plugin, body);
