@@ -14,7 +14,8 @@ fn event(tc: &hegel::TestCase) -> Event {
         trigger: tc.draw(gs::from_regex("[a-z_]{1,12}")),
         kind: tc.draw(gs::sampled_from(Kind::ALL.to_vec()).print_as_debug()),
         id: tc.draw(gs::from_regex("[a-z]{1,8}:[0-9a-z]{1,10}")),
-        at: tc.draw(gs::integers::<i64>().min_value(0).max_value(4_000_000_000)),
+        at: tc
+            .draw(gs::integers::<i64>().min_value(0).max_value(4_000_000_000)),
         data: match tc.draw(gs::integers::<u8>().max_value(2)) {
             0 => Value::Null,
             1 => json!({ "text": tc.draw(gs::text().max_size(40)) }),
@@ -29,9 +30,14 @@ fn event(tc: &hegel::TestCase) -> Event {
 fn an_event_message_reads_back_as_its_events(tc: hegel::TestCase) {
     let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(5));
     let events: Vec<Event> = (0..count).map(|_| event(&tc)).collect();
-    let offset =
-        tc.draw(gs::integers::<i32>().min_value(-14 * 3600).max_value(14 * 3600));
-    let batch = Batch { events: events.clone() };
+    let offset = tc.draw(
+        gs::integers::<i32>()
+            .min_value(-14 * 3600)
+            .max_value(14 * 3600),
+    );
+    let batch = Batch {
+        events: events.clone(),
+    };
     let message = Message::parse(&batch.message(offset))
         .expect("an event message reads back");
     assert_eq!(message.events.len(), events.len());
@@ -71,7 +77,9 @@ fn an_event_message_reads_as_the_decision_shows() {
          - evening · schedule · evening:64800 · 19:00:00\n  {\"due\":64800}\n\
          - triage · command · cmd:1 · 19:00:30\n  {\"args\":\"412\"}"
     );
-    let one = Batch { events: batch.events[..1].to_vec() };
+    let one = Batch {
+        events: batch.events[..1].to_vec(),
+    };
     assert!(one.message(0).starts_with("[events · 1 · 18:00:00]\n"));
 }
 
@@ -131,7 +139,8 @@ fn names_are_lower_case_words_with_dashes() {
         assert!(valid_name(name), "{name}");
     }
     let long = "a".repeat(41);
-    for name in ["", "Triage", "2fast", "-x", "a b", "a/b", "a_b", "é", &long] {
+    for name in ["", "Triage", "2fast", "-x", "a b", "a/b", "a_b", "é", &long]
+    {
         assert!(!valid_name(name), "{name}");
     }
 }

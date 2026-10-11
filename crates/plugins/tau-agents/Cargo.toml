@@ -7,14 +7,19 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7" }
 serde.workspace = true
 serde_json.workspace = true
 # The default model for a new agent: the plan's newest small one.
 tau-ai.workspace = true
 # An agent's tests come out as a Luau plugin's do.
 tau-luau-plugins.workspace = true
+# A run's id, to open an agent's conversation.
+tau-agent.workspace = true
 # Its UI (ADR 0017).
+tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true
+tau-ui-plugin = { workspace = true, features = ["testing"] }

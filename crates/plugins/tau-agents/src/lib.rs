@@ -14,6 +14,7 @@
 
 pub mod event;
 pub mod repository;
+pub mod shown;
 pub mod ui;
 
 /// The directory under tau's data directory where agents live, one
@@ -172,6 +173,10 @@ pub struct Agent {
     pub last: Option<Last>,
     pub model: String,
     pub effort: String,
+    /// The id of its main chat, which is the agent's conversation, once
+    /// made: what its row and its card open.
+    #[serde(default)]
+    pub main: Option<String>,
 }
 
 /// The agents as the host last read them.

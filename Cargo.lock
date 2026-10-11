@@ -9374,11 +9374,14 @@ dependencies = [
 name = "tau-agents"
 version = "0.1.0"
 dependencies = [
+ "gpui-pre",
  "hegeltest",
  "serde",
  "serde_json",
+ "tau-agent",
  "tau-ai",
  "tau-luau-plugins",
+ "tau-ui-kit",
  "tau-ui-plugin",
 ]
 
@@ -10179,6 +10182,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tau-agent",
+ "tau-agents",
  "tau-ai",
  "tau-ask",
  "tau-codemode",
