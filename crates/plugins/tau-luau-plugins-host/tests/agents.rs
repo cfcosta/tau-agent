@@ -87,8 +87,21 @@ async fn an_agent_declares_what_wakes_it() {
             { "name": "evening", "kind": { "kind": "schedule", "at": "18:00", "days": ["Mon", "Fri"] } },
             { "name": "hourly", "kind": { "kind": "schedule", "every": "1h", "days": [] } },
             { "name": "inbox", "kind": { "kind": "message" } },
-            { "name": "pull_requests", "kind": { "kind": "poll", "source": "tool mcp__github__list_pull_requests", "every": "10m" } },
-            { "name": "releases", "kind": { "kind": "poll", "source": "https://example.com/releases", "every": "1h" } },
+            { "name": "pull_requests", "kind": {
+                "kind": "poll", "source": "tool mcp__github__list_pull_requests", "every": "10m",
+                "tool": "mcp__github__list_pull_requests", "args": { "state": "open" },
+            } },
+            // The whole request goes to the host, its secrets as markers.
+            { "name": "releases", "kind": {
+                "kind": "poll", "source": "https://example.com/releases", "every": "1h",
+                "http": {
+                    "url": "https://example.com/releases",
+                    "headers": {
+                        "authorization": { "$secret": "github", "prefix": "Bearer " },
+                        "x-ci": { "$secret": "ci" },
+                    },
+                },
+            } },
             { "name": "triage", "kind": { "kind": "command", "command": "pr-triage", "hint": "<number>" } },
         ])
     );
@@ -102,6 +115,22 @@ async fn a_trigger_that_is_not_one_says_why() {
         ("{ every = \"1h\", command = \"x\" }", "must be one of"),
         ("{}", "must be one of"),
         ("{ poll = { tool = \"t\" }, every = \"1m\" }", "needs `key`"),
+        (
+            "{ poll = { tool = \"t\" }, every = \"1m\", key = 1 }",
+            "needs `key`",
+        ),
+        (
+            "{ poll = { tool = \"t\", args = 1 }, every = \"1m\", key = \"id\" }",
+            "`args` is a table",
+        ),
+        (
+            "{ poll = { http = {} }, every = \"1m\", key = \"id\" }",
+            "`http` is a request",
+        ),
+        (
+            "{ poll = { tool = \"t\" }, every = \"1m\", key = \"id\", items = 1 }",
+            "`items` is a function",
+        ),
         ("{ at = \"09:00\", days = { \"Funday\" } }", "not a day"),
         ("{ stream = { sse = \"u\" } }", "needs `parse`"),
     ];
@@ -198,4 +227,72 @@ async fn an_agents_folder_reads_from_its_paths() {
     let mut taken = agent(TRIAGE);
     taken.libs.insert("agent".into(), "return {}".into());
     assert!(taken.modules().unwrap_err().contains("taken"));
+}
+
+async fn poll_items(
+    source: &str,
+    name: &str,
+    result: Value,
+) -> Result<Value, String> {
+    let modules = Arc::new(agent(source).modules()?);
+    let script = format!(
+        "local tau = require(\"tau\")\n\
+         return tau._poll_items(require(\"agent\"), {name:?}, json.decode({result:?}))\n",
+        result = result.to_string(),
+    );
+    evaluate(
+        "pr-triage",
+        modules,
+        script,
+        Duration::from_secs(2),
+        CancellationToken::new(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_poll_s_items_carry_their_keys_as_text() {
+    let found = poll_items(
+        TRIAGE,
+        "pull_requests",
+        json!([{ "number": 412 }, { "title": "no number" }, { "number": 413 }]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        found,
+        json!([
+            { "key": "412", "item": { "number": 412 } },
+            { "key": "413", "item": { "number": 413 } },
+        ])
+    );
+    let none = poll_items(TRIAGE, "releases", json!([])).await.unwrap();
+    assert_eq!(none, json!([]));
+}
+
+#[tokio::test]
+async fn a_poll_s_items_may_be_picked_from_its_result() {
+    let source = r#"
+local tau = require("tau")
+return tau.agent {
+  name = "pr-triage",
+  triggers = {
+    issues = {
+      poll = { http = { url = "https://example.com/issues" } },
+      every = "1h",
+      key = "id",
+      items = function(result) return result.items end,
+    },
+  },
+}
+"#;
+    let found =
+        poll_items(source, "issues", json!({ "items": [{ "id": "a" }] }))
+            .await
+            .unwrap();
+    assert_eq!(found, json!([{ "key": "a", "item": { "id": "a" } }]));
+    let wrong = poll_items(source, "issues", json!({ "items": 3 }))
+        .await
+        .unwrap_err();
+    assert!(wrong.contains("a list"), "{wrong}");
 }

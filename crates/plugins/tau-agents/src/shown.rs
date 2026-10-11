@@ -96,7 +96,7 @@ impl Trigger {
                 Some(hint) => format!("/{command} {hint}"),
                 None => format!("/{command}"),
             },
-            TriggerKind::Poll { source, every } => {
+            TriggerKind::Poll { source, every, .. } => {
                 format!("{source} every {every}")
             }
             TriggerKind::Stream { url } => url.clone(),

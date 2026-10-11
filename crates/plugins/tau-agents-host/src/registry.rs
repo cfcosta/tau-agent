@@ -411,11 +411,18 @@ async fn load(
         ));
     }
     for trigger in &declared.triggers {
-        if matches!(trigger.kind, TriggerKind::Schedule { .. }) {
-            Schedule::of(&trigger.kind).map_err(|error| {
-                format!("{}: trigger `{}`: {error}", AGENT.file, trigger.name)
-            })?;
-        }
+        let checked = match &trigger.kind {
+            TriggerKind::Schedule { .. } => {
+                Schedule::of(&trigger.kind).map(|_| ())
+            }
+            TriggerKind::Poll { every, .. } => {
+                crate::poll::every(every).map(|_| ())
+            }
+            _ => Ok(()),
+        };
+        checked.map_err(|error| {
+            format!("{}: trigger `{}`: {error}", AGENT.file, trigger.name)
+        })?;
     }
     Ok((files, modules, declared))
 }

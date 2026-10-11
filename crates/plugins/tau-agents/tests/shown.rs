@@ -19,6 +19,7 @@ fn trigger(kind: TriggerKind) -> Trigger {
         kind,
         last: None,
         next: None,
+        error: None,
     }
 }
 

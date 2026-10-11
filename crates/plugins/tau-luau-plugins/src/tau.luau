@@ -294,11 +294,32 @@ local function trigger_kind(name, trigger)
 		if type(trigger.every) ~= "string" then
 			error("trigger `" .. name .. "`: a poll needs `every`", 0)
 		end
-		if trigger.key == nil then
+		if type(trigger.key) ~= "string" and type(trigger.key) ~= "function" then
 			error("trigger `" .. name .. "`: a poll needs `key`, a field or a function of an item", 0)
 		end
-		local source = poll.tool and ("tool " .. tostring(poll.tool)) or tostring(poll.http.url)
-		return { kind = "poll", source = source, every = trigger.every }
+		if trigger.items ~= nil and type(trigger.items) ~= "function" then
+			error("trigger `" .. name .. "`: `items` is a function of the poll's result", 0)
+		end
+		if poll.tool ~= nil then
+			if type(poll.tool) ~= "string" or poll.tool == "" then
+				error("trigger `" .. name .. "`: `tool` is a tool's name", 0)
+			end
+			if poll.args ~= nil and type(poll.args) ~= "table" then
+				error("trigger `" .. name .. "`: `args` is a table", 0)
+			end
+			return {
+				kind = "poll",
+				source = "tool " .. poll.tool,
+				every = trigger.every,
+				tool = poll.tool,
+				args = poll.args or {},
+			}
+		end
+		if type(poll.http) ~= "table" or type(poll.http.url) ~= "string" then
+			error("trigger `" .. name .. "`: `http` is a request, `{ url = ..., headers = ... }`", 0)
+		end
+		-- The whole request, secrets' markers and all: the host makes it.
+		return { kind = "poll", source = poll.http.url, every = trigger.every, http = poll.http }
 	end
 	if trigger.stream ~= nil then
 		local stream = trigger.stream
@@ -354,6 +375,45 @@ local function trigger_kind(name, trigger)
 		error("trigger `" .. name .. "`: `at` is a time of day, like \"09:00\"", 0)
 	end
 	return { kind = "schedule", every = trigger.every, at = trigger.at, days = days }
+end
+
+-- How many keys a poll keeps: the host's too.
+local POLL_KEYS = 10000
+
+-- A poll's key of `item`: a field, or what a function of it gives.
+local function poll_key(trigger, item)
+	local key = trigger.key
+	if type(key) == "function" then
+		return key(item)
+	end
+	if type(item) ~= "table" then
+		return nil
+	end
+	return item[key]
+end
+
+-- What one result of the poll `name` holds, as the host reads it: each
+-- item with its key, in order; an item without a key is left out.
+function tau._poll_items(agent, name, result)
+	local trigger = (agent.triggers or {})[name]
+	if type(trigger) ~= "table" or trigger.poll == nil then
+		error("the agent has no poll `" .. tostring(name) .. "`", 0)
+	end
+	local items = result
+	if trigger.items ~= nil then
+		items = trigger.items(result)
+	end
+	if type(items) ~= "table" then
+		error("trigger `" .. name .. "`: the poll's items are a list, not " .. type(items), 0)
+	end
+	local out = array({})
+	for _, item in ipairs(items) do
+		local key = poll_key(trigger, item)
+		if key ~= nil then
+			table.insert(out, { key = tostring(key), item = item })
+		end
+	end
+	return out
 end
 
 -- What the host reads of an agent: its name and what wakes it.
@@ -575,15 +635,6 @@ local function the_agent()
 	return test._agent or error("no agent under test", 3)
 end
 
--- A poll's key of `item`: a field, or what a function of it gives.
-local function poll_key(trigger, item)
-	local key = trigger.key
-	if type(key) == "function" then
-		return key(item)
-	end
-	return item[key]
-end
-
 -- A fake agent for tests (ADR 0037): `spec` may give `state`, by
 -- trigger. Its methods run its triggers' Luau as the host would, with
 -- no network.
@@ -614,29 +665,28 @@ function test.agent(spec)
 	-- The events a poll's result makes: one per item whose key it has
 	-- not seen; the first poll only records keys.
 	function fake:poll(name, result)
-		local t = trigger(name)
-		local items = result
-		if type(t.items) == "function" then
-			items = t.items(result)
-		end
+		trigger(name)
 		local state = fake.state[name] or {}
 		fake.state[name] = state
 		local first = state.seen == nil
 		local seen = {}
 		for _, key in ipairs(state.seen or {}) do
-			seen[key] = true
+			seen[tostring(key)] = true
 		end
 		state.seen = state.seen or {}
 		local events = array({})
-		for _, item in ipairs(items or {}) do
-			local key = poll_key(t, item)
-			if key ~= nil and not seen[key] then
-				seen[key] = true
-				table.insert(state.seen, key)
+		for _, found in ipairs(tau._poll_items(agent, name, result)) do
+			if not seen[found.key] then
+				seen[found.key] = true
+				table.insert(state.seen, found.key)
 				if not first then
-					table.insert(events, { id = name .. ":" .. tostring(key), data = item })
+					table.insert(events, { id = name .. ":" .. found.key, data = found.item })
 				end
 			end
+		end
+		-- The host keeps the last 10 000 keys.
+		while #state.seen > POLL_KEYS do
+			table.remove(state.seen, 1)
 		end
 		return events
 	end

@@ -8,6 +8,7 @@
 //!   delivered to their conversations, and what the interface reads.
 //! - `registry`: each agent's versions, and the one that is live.
 //! - `schedule`: when a schedule comes due.
+//! - `poll`: what a poll fires, once per new item.
 //! - `state`: each agent's queue and schedules, kept across restarts.
 //! - `env`: what the agents reach of the host.
 //! - `clock`: the host's time, and its local days.
@@ -17,6 +18,7 @@ mod agents;
 pub mod clock;
 pub mod env;
 mod half;
+pub mod poll;
 pub mod registry;
 pub mod schedule;
 pub mod skill;

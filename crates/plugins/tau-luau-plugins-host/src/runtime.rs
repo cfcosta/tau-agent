@@ -555,7 +555,7 @@ pub async fn run_tests(
 }
 
 /// `text` as a Luau long string, at a level `text` cannot close.
-fn long_string(text: &str) -> String {
+pub fn long_string(text: &str) -> String {
     let mut level = 0;
     while text.contains(&format!("]{}]", "=".repeat(level))) {
         level += 1;

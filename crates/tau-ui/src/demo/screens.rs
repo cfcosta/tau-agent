@@ -898,6 +898,7 @@ fn agents(
         kind,
         last,
         next,
+        error: None,
     };
     let tests = |passed: usize, failed: usize| {
         (0..passed + failed)
@@ -967,6 +968,11 @@ fn agents(
                         TriggerKind::Poll {
                             source: "mcp__github__list_pull_requests".into(),
                             every: "5m".into(),
+                            tool: Some(
+                                "mcp__github__list_pull_requests".into(),
+                            ),
+                            args: None,
+                            http: None,
                         },
                         Some(now - 240),
                         Some(now + 60),

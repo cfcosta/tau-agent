@@ -403,6 +403,7 @@ impl Agents {
                         .schedules
                         .get(&declared.name)
                         .map(|due| due.next),
+                    error: None,
                 })
                 .collect();
             let main = conversations

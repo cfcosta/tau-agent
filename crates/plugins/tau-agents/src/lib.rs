@@ -76,6 +76,10 @@ pub struct Trigger {
     /// When it fires next, for a schedule or a poll.
     #[serde(default)]
     pub next: Option<i64>,
+    /// Why it did not fire when it last tried: a poll whose request or
+    /// whose `key` failed.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// What kind of thing wakes an agent (ADR 0037's table). Step 1 fires
@@ -102,7 +106,19 @@ pub enum TriggerKind {
         hint: Option<String>,
     },
     /// A tool or an HTTP request, every interval, once per new item.
-    Poll { source: String, every: String },
+    /// `source` names it for a person; `tool` and `args`, or `http`,
+    /// are what the host calls.
+    Poll {
+        source: String,
+        every: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        args: Option<serde_json::Value>,
+        /// The request, its secrets as markers (`{ "$secret": name }`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        http: Option<serde_json::Value>,
+    },
     /// A stream it keeps open: server-sent events or a websocket.
     Stream { url: String },
     /// An MCP server's resource, through `resources/subscribe`.
