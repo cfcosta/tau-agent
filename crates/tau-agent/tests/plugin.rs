@@ -1926,7 +1926,10 @@ fn an_idle_compaction_starts_only_the_plugins_that_take_part() {
         let model = ScriptedModel::new()
             .turn(|t| t.text("first"))
             .turn(|t| t.text("done"))
-            .turn(|t| t.text("the summary").cost(0.25));
+            .turn(|t| t.text("the summary").cost(0.25))
+            // The run that is still going: it waits until cancelled, so
+            // it cannot end before the compaction it refuses.
+            .turn(|t| t.text("never").delay(std::time::Duration::from_secs(600)));
         let probe = Probe::named("probe");
         let idle = IdleSummary::default();
         let store = tau_store_sqlite::memory().await.unwrap();
