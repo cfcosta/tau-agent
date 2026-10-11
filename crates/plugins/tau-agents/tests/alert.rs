@@ -1,6 +1,7 @@
 //! When the person hears of their agents while they are away (ADR 0037):
 //! once per note or question an agent leaves, once each time it reaches
-//! its cap, and never for what was there when tau first saw it.
+//! its cap, and once, in one alert, for what was there when tau first
+//! saw it.
 
 use tau_agents::{
     Agent,
@@ -44,14 +45,32 @@ fn of(agents: Vec<Agent>) -> Overview {
 }
 
 #[test]
-fn what_was_there_first_alerts_nothing() {
+fn what_was_there_first_alerts_once_in_one_alert() {
     let mut watch = Watch::default();
     let first = of(vec![agent(
         Status::AtCap,
-        vec![notice("n1", "old news", None)],
+        vec![
+            notice("n1", "old news", None),
+            notice("n2", "Close #398?", Some(Vec::new())),
+        ],
     )]);
+    let alerts = watch.observe(&first);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].kind, AlertKind::Question);
+    assert_eq!(alerts[0].title, "triage needs you");
+    assert_eq!(
+        alerts[0].body,
+        "While you were away: 1 question, 1 note, it spent its $1.00 for today"
+    );
+    assert_eq!(alerts[0].main.as_deref(), Some("main-of-triage"));
     assert!(watch.observe(&first).is_empty());
-    assert!(watch.observe(&first).is_empty());
+    // An agent with nothing waiting alerts nothing.
+    let mut quiet = Watch::default();
+    assert!(
+        quiet
+            .observe(&of(vec![agent(Status::Waiting, Vec::new())]))
+            .is_empty()
+    );
 }
 
 #[test]
@@ -105,5 +124,8 @@ fn an_agent_gone_and_back_starts_over() {
     )]);
     watch.observe(&of(vec![agent(Status::Waiting, Vec::new())]));
     watch.observe(&of(Vec::new()));
+    // Back, it is seen for the first time again: what it has alerts
+    // once, as at start, and then not again.
+    assert_eq!(watch.observe(&with_note).len(), 1);
     assert!(watch.observe(&with_note).is_empty());
 }

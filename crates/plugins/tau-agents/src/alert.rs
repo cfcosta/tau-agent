@@ -32,7 +32,9 @@ pub struct Alert {
 }
 
 /// Decides when to alert: once for each note or question an agent
-/// leaves, and once each time it reaches its cap.
+/// leaves, and once each time it reaches its cap. What an agent has
+/// when first seen, as tau starts, was left while no one was told: it
+/// alerts once, in one alert for the agent.
 #[derive(Debug, Default)]
 pub struct Watch {
     /// What each agent had when last seen.
@@ -47,8 +49,9 @@ struct Seen {
 
 impl Watch {
     /// Takes in the agents as they are now, and says what is new since
-    /// they were last seen. An agent seen for the first time alerts
-    /// nothing: what it has was there before. One no longer there is
+    /// they were last seen. An agent seen for the first time alerts once
+    /// for all it has waiting, if anything: it was left while tau was
+    /// closed, or before this window looked. One no longer there is
     /// forgotten.
     pub fn observe(&mut self, overview: &Overview) -> Vec<Alert> {
         let mut alerts = Vec::new();
@@ -62,14 +65,55 @@ impl Watch {
                     .collect(),
                 at_cap: agent.status == Status::AtCap,
             };
-            if let Some(before) = self.seen.get(&agent.name) {
-                alerts.extend(new_since(agent, before));
+            match self.seen.get(&agent.name) {
+                Some(before) => alerts.extend(new_since(agent, before)),
+                None => alerts.extend(waiting(agent)),
             }
             seen.insert(agent.name.clone(), now);
         }
         self.seen = seen;
         alerts
     }
+}
+
+/// One alert for all `agent` has waiting, when first seen: its notes,
+/// its questions, its cap.
+fn waiting(agent: &Agent) -> Option<Alert> {
+    let questions = agent.notices.iter().filter(|notice| notice.asks()).count();
+    let notes = agent.notices.len() - questions;
+    let at_cap = agent.status == Status::AtCap;
+    let count = |n: usize, one: &str, many: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {one}")),
+        n => Some(format!("{n} {many}")),
+    };
+    let mut parts: Vec<String> = [
+        count(questions, "question", "questions"),
+        count(notes, "note", "notes"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if at_cap {
+        parts.push(format!("it spent its {} for today", usd(agent.cap_today)));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let kind = if questions > 0 {
+        AlertKind::Question
+    } else if notes > 0 {
+        AlertKind::Note
+    } else {
+        AlertKind::AtCap
+    };
+    Some(Alert {
+        agent: agent.name.clone(),
+        main: agent.main.clone(),
+        kind,
+        title: format!("{} needs you", agent.name),
+        body: format!("While you were away: {}", parts.join(", ")),
+    })
 }
 
 /// What `agent` has that it did not have `before`.

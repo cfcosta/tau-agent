@@ -333,7 +333,9 @@ return tau.agent {
   for when its app is closed is new work, left for later. The desktop
   and the phone decide when the same way (`tau_agents::alert::Watch`):
   once for each note or question, once each time an agent reaches its
-  cap, and never for what was there when they first saw the agent.
+  cap, and, for what an agent has waiting when they first see it (left
+  while tau was closed, or before the phone connected), once, in one
+  alert for the agent.
 
 ### Creating one, and where it shows
 
