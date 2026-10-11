@@ -9379,6 +9379,7 @@ dependencies = [
  "serde_json",
  "tau-ai",
  "tau-luau-plugins",
+ "tau-ui-plugin",
 ]
 
 [[package]]

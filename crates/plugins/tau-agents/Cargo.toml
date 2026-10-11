@@ -13,6 +13,8 @@ serde_json.workspace = true
 tau-ai.workspace = true
 # An agent's tests come out as a Luau plugin's do.
 tau-luau-plugins.workspace = true
+# Its UI (ADR 0017).
+tau-ui-plugin.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true

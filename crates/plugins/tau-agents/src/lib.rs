@@ -14,6 +14,7 @@
 
 pub mod event;
 pub mod repository;
+pub mod ui;
 
 /// The directory under tau's data directory where agents live, one
 /// repository each.
@@ -21,6 +22,7 @@ pub use repository::ROOT;
 use serde::{Deserialize, Serialize};
 /// One case of an agent's tests, as a Luau plugin's come out.
 pub use tau_luau_plugins::TestResult;
+pub use ui::AgentsUi;
 
 /// The host plugin's name, for both its halves.
 pub const NAME: &str = "tau-agents";
@@ -268,4 +270,15 @@ pub enum Act {
     Pause { agent: String },
     /// Starts turns for `agent` again.
     Resume { agent: String },
+    /// The person sent `/command args` in a composer: fires `agent`'s
+    /// command trigger of that name. `from` is the run it was typed in,
+    /// if any.
+    Command {
+        agent: String,
+        command: String,
+        #[serde(default)]
+        args: String,
+        #[serde(default)]
+        from: Option<String>,
+    },
 }
