@@ -113,6 +113,11 @@ impl Trigger {
         }
     }
 
+    /// For a stream, whether it is open, in a word: `open` or `closed`.
+    pub fn connection(&self) -> Option<&'static str> {
+        self.live.map(|open| if open { "open" } else { "closed" })
+    }
+
     /// Its kind, as a tag says it.
     pub fn kind_label(&self) -> &'static str {
         match self.kind {

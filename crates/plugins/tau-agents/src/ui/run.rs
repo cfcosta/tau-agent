@@ -176,13 +176,23 @@ pub(super) fn panel(
                 .triggers
                 .iter()
                 .map(|trigger| {
+                    // A stream says whether it is open; the rest, when
+                    // they fire next or fired last.
                     let when = trigger
-                        .next
-                        .map(|next| relative(next, now))
+                        .connection()
+                        .map(str::to_owned)
+                        .or_else(|| {
+                            trigger.next.map(|next| relative(next, now))
+                        })
                         .or_else(|| {
                             trigger.last.map(|last| relative(last, now))
                         })
                         .unwrap_or_default();
+                    let when_color = if trigger.live == Some(true) {
+                        t.green
+                    } else {
+                        t.dim
+                    };
                     let row = div()
                         .flex()
                         .items_center()
@@ -210,10 +220,10 @@ pub(super) fn panel(
                         .child(
                             div()
                                 .typeset(Type::MICRO)
-                                .text_color(t.dim)
+                                .text_color(when_color)
                                 .child(when),
                         );
-                    // A poll that failed says why, under it.
+                    // A poll or a stream that failed says why, under it.
                     div().flex().flex_col().gap(sp(0.5)).child(row).children(
                         trigger.error.clone().map(|error| {
                             div()

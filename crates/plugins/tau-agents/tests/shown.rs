@@ -161,3 +161,19 @@ fn an_agent_needs_the_person_at_its_cap_or_broken() {
     agent.spend_today = 3.0;
     assert_eq!(agent.spent_share(), 1.0);
 }
+
+#[test]
+fn a_stream_says_whether_it_is_open() {
+    let mut stream = trigger(TriggerKind::Stream {
+        url: "https://ci.example.com/events".into(),
+        via: tau_agents::StreamVia::Sse,
+        headers: None,
+    });
+    assert_eq!(stream.label(), "https://ci.example.com/events");
+    assert_eq!(stream.kind_label(), "stream");
+    assert_eq!(stream.connection(), None);
+    stream.live = Some(true);
+    assert_eq!(stream.connection(), Some("open"));
+    stream.live = Some(false);
+    assert_eq!(stream.connection(), Some("closed"));
+}
