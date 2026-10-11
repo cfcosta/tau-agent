@@ -952,6 +952,13 @@ fn agents(
                     error: None,
                 }],
                 spend_today: 0.08,
+                notices: vec![tau_agents::Notice {
+                    id: "n3".into(),
+                    at: now - 40 * 60,
+                    text: "Which repositories should the digest leave out?"
+                        .into(),
+                    choices: Some(Vec::new()),
+                }],
                 last: Some(Last {
                     at: now - 6 * 3600,
                     line: "caught up at 08:41: tau was closed at 08:30".into(),
@@ -1026,6 +1033,28 @@ fn agents(
                 ],
                 spend_today: 0.41,
                 queued: 2,
+                notices: vec![
+                    tau_agents::Notice {
+                        id: "n1".into(),
+                        at: now - 25 * 60,
+                        text: "#409 rotates refresh tokens on every use; the \
+                               sub-agent found no test for a token reused \
+                               after rotation."
+                            .into(),
+                        choices: None,
+                    },
+                    tau_agents::Notice {
+                        id: "n2".into(),
+                        at: now - 8 * 60,
+                        text: "Close #398 as a duplicate of #377? Same stack \
+                               trace and the same failing test."
+                            .into(),
+                        choices: Some(vec![
+                            "Close it".into(),
+                            "Leave it open".into(),
+                        ]),
+                    },
+                ],
                 last: Some(Last {
                     at: now - 240,
                     line: "labelled #412; reviewing #409".into(),

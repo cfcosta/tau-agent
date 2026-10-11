@@ -6,6 +6,7 @@
 //! What it shows comes from the host as the [`Overview`]; what the
 //! person asks goes back as an [`Act`].
 
+mod notices;
 mod page;
 mod pane;
 mod run;
@@ -75,6 +76,8 @@ pub struct Ui {
     /// drawn as dots and cleared once sent.
     pub(crate) secret_name: Entity<TextInput>,
     pub(crate) secret_value: Entity<TextInput>,
+    /// The answer to an agent's question that offers no choices.
+    pub(crate) answer: Entity<TextInput>,
 }
 
 impl Ui {
@@ -150,6 +153,30 @@ impl Ui {
         cx.notify();
     }
 
+    /// Answers `agent`'s question `notice` with what the answer field
+    /// holds, and clears it.
+    pub(crate) fn send_answer(
+        &mut self,
+        agent: &str,
+        notice: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = self.answer.read(cx).text().trim().to_owned();
+        if answer.is_empty() {
+            return;
+        }
+        self.handle.act(
+            Act::Answer {
+                agent: agent.to_owned(),
+                notice: notice.to_owned(),
+                answer,
+            },
+            cx,
+        );
+        self.answer.update(cx, |input, cx| input.clear(cx));
+        cx.notify();
+    }
+
     /// Clears the form once its agent's conversation opened.
     fn reset(&mut self, cx: &mut Context<Self>) {
         self.making = None;
@@ -184,10 +211,13 @@ impl PluginUi for Ui {
             cx.new(|cx| TextInput::new("its value", cx).masked());
         cx.observe(&secret_name, |_, _, cx| cx.notify()).detach();
         cx.observe(&secret_value, |_, _, cx| cx.notify()).detach();
+        let answer = cx.new(|cx| TextInput::new("Your answer", cx));
+        cx.observe(&answer, |_, _, cx| cx.notify()).detach();
         let defaults = Settings::default();
         Self {
             secret_name,
             secret_value,
+            answer,
             handle,
             name,
             purpose,

@@ -445,7 +445,12 @@ fn agents_section(
         let active = on_run
             && repo.main.is_some()
             && current.as_ref() == repo.main.as_ref();
+        let waits = agent.map_or(0, tau_agents::Agent::waits_on_you);
         let end: Option<AnyElement> = match agent.map(|agent| &agent.status) {
+            // What it left the person, or its spent day, comes first.
+            _ if waits > 0 => {
+                Some(need_you_pill(waits, Type::MICRO, t).into_any_element())
+            }
             _ if live => Some(
                 status_tag("working", t.roles.live, Type::MICRO)
                     .into_any_element(),
@@ -454,9 +459,6 @@ fn agents_section(
                 status_tag("working", t.roles.live, Type::MICRO)
                     .into_any_element(),
             ),
-            Some(
-                tau_agents::Status::AtCap | tau_agents::Status::Broken { .. },
-            ) => Some(need_you_pill(1, Type::MICRO, t).into_any_element()),
             Some(tau_agents::Status::Paused) => Some(
                 status_tag("paused", t.roles.waiting, Type::MICRO)
                     .into_any_element(),

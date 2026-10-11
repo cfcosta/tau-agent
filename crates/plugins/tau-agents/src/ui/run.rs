@@ -227,6 +227,7 @@ pub(super) fn panel(
                 .collect()
         });
     let keys = secrets(&agent, view, &t);
+    let left = super::notices::rows(&agent, view, &t);
     let versions = section("Versions", &t).children(
         agent
             .versions
@@ -237,6 +238,9 @@ pub(super) fn panel(
         div()
             .flex()
             .flex_col()
+            .when(!left.is_empty(), |panel| {
+                panel.child(section("For you", &t).gap(sp(3.)).children(left))
+            })
             .child(today)
             .child(wakes)
             .child(keys)

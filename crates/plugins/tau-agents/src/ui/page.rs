@@ -181,6 +181,38 @@ fn needs_you(
             )
             .children(action)
     });
+    let rows: Vec<Div> = rows.collect();
+    // What each agent left for the person: its notes and questions.
+    let left: Vec<Div> = agents
+        .iter()
+        .filter(|agent| !agent.notices.is_empty())
+        .map(|agent| {
+            div()
+                .flex()
+                .items_start()
+                .gap(sp(3.))
+                .px(sp(4.))
+                .py(sp(3.))
+                .border_b_1()
+                .border_color(t.border)
+                .child(mark(&agent.name, 20., t))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(rems(14.))
+                        .flex()
+                        .flex_col()
+                        .gap(sp(3.))
+                        .child(mono(
+                            agent.name.clone(),
+                            Type::CAPTION,
+                            t.text_soft,
+                        ))
+                        .children(super::notices::rows(agent, view, t)),
+                )
+        })
+        .collect();
+    let count: usize = agents.iter().map(|agent| agent.waits_on_you()).sum();
     div()
         .flex()
         .flex_col()
@@ -201,10 +233,15 @@ fn needs_you(
                     div()
                         .typeset(Type::CAPTION)
                         .text_color(t.dim)
-                        .child(agents.len().to_string()),
+                        .child(count.to_string()),
                 ),
         )
-        .child(card(t).border_color(t.blue_border).children(rows))
+        .child(
+            card(t)
+                .border_color(t.blue_border)
+                .children(rows)
+                .children(left),
+        )
 }
 
 /// `n events`, said as a count.
