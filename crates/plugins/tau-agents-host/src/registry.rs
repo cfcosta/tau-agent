@@ -50,6 +50,9 @@ pub struct Declared {
     pub description: String,
     #[serde(default)]
     pub triggers: Vec<Declaration>,
+    /// The secrets its triggers name.
+    #[serde(default)]
+    pub secrets: Vec<String>,
 }
 
 /// One trigger as an agent declares it: its name and what it is.

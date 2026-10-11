@@ -32,7 +32,7 @@ return tau.agent {
       key = function(pr) return pr.number end,
     },
     releases = {
-      poll = { http = { url = "https://example.com/releases", headers = { authorization = tau.secret("github") } } },
+      poll = { http = { url = "https://example.com/releases", headers = { authorization = "Bearer " .. tau.secret("github"), ["x-ci"] = tau.secret("ci") } } },
       every = "1h",
       key = "id",
     },
@@ -92,6 +92,7 @@ async fn an_agent_declares_what_wakes_it() {
             { "name": "triage", "kind": { "kind": "command", "command": "pr-triage", "hint": "<number>" } },
         ])
     );
+    assert_eq!(described["secrets"], json!(["ci", "github"]));
 }
 
 #[tokio::test]

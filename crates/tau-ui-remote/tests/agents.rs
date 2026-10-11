@@ -41,6 +41,7 @@ fn agent(name: &str, status: Status, triggers: Vec<Trigger>) -> Agent {
         model: "gpt-6-luna".into(),
         effort: "low".into(),
         main: None,
+        secrets: Vec::new(),
     }
 }
 

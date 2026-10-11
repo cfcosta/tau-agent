@@ -177,6 +177,19 @@ pub struct Agent {
     /// made: what its row and its card open.
     #[serde(default)]
     pub main: Option<String>,
+    /// The secrets its live version's triggers name, and whether tau's
+    /// secret store holds each: its page asks the person for the rest.
+    #[serde(default)]
+    pub secrets: Vec<SecretState>,
+}
+
+/// A secret an agent names, by name only: its value never leaves tau's
+/// secret store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretState {
+    pub name: String,
+    /// The store holds a value for it.
+    pub set: bool,
 }
 
 /// The agents as the host last read them.
@@ -275,6 +288,11 @@ pub enum Act {
     Pause { agent: String },
     /// Starts turns for `agent` again.
     Resume { agent: String },
+    /// Saves `value` as the secret `name` in tau's secret store, for
+    /// every agent's requests. Its value is never shown back.
+    SetSecret { name: String, value: String },
+    /// Forgets the secret `name`.
+    RemoveSecret { name: String },
     /// The person sent `/command args` in a composer: fires `agent`'s
     /// command trigger of that name. `from` is the run it was typed in,
     /// if any.

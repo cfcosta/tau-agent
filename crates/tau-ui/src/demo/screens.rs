@@ -923,6 +923,7 @@ fn agents(
         model: tau_agents::default_model(),
         effort: tau_agents::DEFAULT_EFFORT.into(),
         main: Some(main(name).0.to_string()),
+        secrets: Vec::new(),
     };
     let overview = Overview {
         agents: vec![
@@ -1021,6 +1022,16 @@ fn agents(
                     at: now - 240,
                     line: "labelled #412; reviewing #409".into(),
                 }),
+                secrets: vec![
+                    tau_agents::SecretState {
+                        name: "ci".into(),
+                        set: false,
+                    },
+                    tau_agents::SecretState {
+                        name: "github".into(),
+                        set: true,
+                    },
+                ],
                 ..agent(
                     "pr-triage",
                     "Labels new pull requests on tau-agent, says what each one \

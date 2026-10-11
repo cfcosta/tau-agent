@@ -16,6 +16,8 @@ tau-agents.workspace = true
 tau-luau-plugins-host.workspace = true
 # Where the skill tau ships is installed.
 tau-skills = { path = "../tau-skills", default-features = false }
+# tau's secret store, which an agent's requests name keys from.
+tau-tools-host.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tau-vcs-host.workspace = true

@@ -22,6 +22,7 @@ use serde_json::json;
 use tau_agents::{Act, Settings, Status, event::Message};
 use tau_agents_host::{Agents, clock::FakeClock, env::Env};
 use tau_testing::block_on_io;
+use tau_tools_host::secrets::SecretStore;
 use tau_ui_plugin::{By, Conversations, Turn, registry::HostFuture};
 use tau_vcs_host::{Identity, ProjectRepo};
 
@@ -36,6 +37,12 @@ return tau.agent {
     hourly = { every = "1h" },
     morning = { at = "09:00" },
     hello = { command = "hello", hint = "<who>" },
+    releases = {
+      poll = { http = { url = "https://example.com/releases",
+                        headers = { authorization = "Bearer " .. tau.secret("github") } } },
+      every = "1h",
+      key = "id",
+    },
   },
 }
 "#;
@@ -79,6 +86,7 @@ impl Conversations for Conversation {
 #[derive(Default)]
 struct Host {
     conversation: Arc<Conversation>,
+    secrets: std::sync::OnceLock<SecretStore>,
     settings: Mutex<BTreeMap<String, Settings>>,
     costs: Mutex<BTreeMap<String, f64>>,
 }
@@ -118,6 +126,10 @@ impl Env for Host {
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {
         Some(self.conversation.clone())
     }
+
+    fn secrets(&self) -> SecretStore {
+        self.secrets.get().expect("the fixture sets it").clone()
+    }
 }
 
 struct Fixture {
@@ -139,6 +151,9 @@ impl Fixture {
         .unwrap();
         let clock = Arc::new(FakeClock::new(MONDAY_EIGHT, 0));
         let host = Arc::new(Host::default());
+        host.secrets
+            .set(SecretStore::in_dir(&home.path().join("config")))
+            .unwrap();
         let agents = open(home.path(), &clock, &host);
         block_on_io(agents.registry().scan());
         Self {
@@ -466,4 +481,38 @@ fn a_version_that_fails_is_heard_as_an_event() {
     let message = Message::parse(&turns[0].text).unwrap();
     assert_eq!(message.events[0].kind, tau_agents::event::Kind::Version);
     assert_eq!(message.events[0].trigger, "agent.luau");
+}
+
+#[test]
+fn an_agent_names_its_secrets_and_the_person_fills_them() {
+    let f = Fixture::new();
+    let names = |f: &Fixture| -> Vec<(String, bool)> {
+        f.agent()
+            .secrets
+            .into_iter()
+            .map(|secret| (secret.name, secret.set))
+            .collect()
+    };
+    assert_eq!(names(&f), [("github".to_owned(), false)]);
+    block_on_io(f.agents.act(Act::SetSecret {
+        name: "github".into(),
+        value: "a-value-never-shown".into(),
+    }))
+    .unwrap();
+    assert_eq!(names(&f), [("github".to_owned(), true)]);
+    // The overview holds names, never values.
+    let shown = serde_json::to_string(&f.agent()).unwrap();
+    assert!(!shown.contains("a-value-never-shown"));
+    block_on_io(f.agents.act(Act::RemoveSecret {
+        name: "github".into(),
+    }))
+    .unwrap();
+    assert_eq!(names(&f), [("github".to_owned(), false)]);
+    assert!(
+        block_on_io(f.agents.act(Act::SetSecret {
+            name: "not a name".into(),
+            value: "x".into(),
+        }))
+        .is_err()
+    );
 }

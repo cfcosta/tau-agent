@@ -25,6 +25,7 @@ use tau_agents::{
     Last,
     Overview,
     SKILL,
+    SecretState,
     Settings,
     Status,
     Trigger,
@@ -360,6 +361,12 @@ impl Agents {
         let now = self.0.clock.now();
         let day = clock::day(self.0.clock.as_ref(), now);
         let conversations = self.0.env.conversations();
+        // Names only: the values stay in the store.
+        let stored =
+            self.0.env.secrets().names().await.unwrap_or_else(|error| {
+                eprintln!("{NAME}: cannot read tau's secret store: {error}");
+                Vec::new()
+            });
         let mut agents = Vec::new();
         for (name, read) in self.0.registry.agents().await {
             let settings = self.0.env.settings(&name);
@@ -401,8 +408,18 @@ impl Agents {
             let main = conversations
                 .as_ref()
                 .and_then(|conversations| conversations.main_of(&name));
+            let secrets = read
+                .live
+                .iter()
+                .flat_map(|live| &live.declared.secrets)
+                .map(|secret| SecretState {
+                    name: secret.clone(),
+                    set: stored.contains(secret),
+                })
+                .collect();
             agents.push(Agent {
                 main,
+                secrets,
                 name,
                 purpose: read.purpose.clone(),
                 status,
@@ -456,6 +473,16 @@ impl Agents {
                     settings.extra_today = amount;
                 }
                 self.0.env.save_settings(&agent, settings).await?;
+            }
+            Act::SetSecret { name, value } => {
+                anyhow::ensure!(
+                    tau_tools_host::secrets::valid_name(&name),
+                    "`{name}` cannot name a secret: letters, digits, `_`, `-` and `.`"
+                );
+                self.0.env.secrets().set(&name, &value).await?;
+            }
+            Act::RemoveSecret { name } => {
+                self.0.env.secrets().remove(&name).await?;
             }
             Act::Pause { agent } => {
                 self.with_kept(&agent, |kept| kept.paused = true).await;

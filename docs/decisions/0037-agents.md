@@ -246,17 +246,25 @@ return tau.agent {
 
 ### Codemode gains `http` and secrets by name
 
-- In an agent's runs, and in its triggers, codemode has
+- In an agent's runs, codemode has
   `http.request { method, url, headers, body, timeout }`, which returns
-  `{ status, headers, body }`. A body over codemode's limits comes back
-  as an artifact reference (0018, M4). Other runs do not get `http`.
+  `{ status, headers, body, json, artifact, truncated }`. It calls
+  `http`, a nested tool of the coding tools that tau-ui adds to an
+  agent's runs only, so a request goes through the loop like any call.
+  A body over 64 KiB comes back as an artifact reference (0018, M4).
+  Other runs do not get `http`. An agent's polls do not run it in
+  Luau: the host makes the request its trigger declares
+  (`tau_tools_host::http::fetch`).
 - **Secrets by name.** tau keeps them in a new store,
   `~/.config/tau/secrets.json` (mode 0600, like `mcp-auth.json`),
-  filled from the agent's page. `tau.secret("github")` is an opaque
-  value that only `http`'s headers and body accept; the host puts the
-  real value in as the request leaves. Responses, logs and errors are
-  scrubbed of every secret's value, as tau-mcp's `secrets_filter` does
-  for its logs. The raw value never reaches Luau or the conversation.
+  filled from the agent's page. `http.secret("github")` in a script and
+  `tau.secret("github")` in `agent.luau` are a marker,
+  `{ ["$secret"] = "github" }`, that only a request's headers and body
+  accept; `"Bearer " .. http.secret("github")` puts text before the
+  value. The host puts the real value in as the request leaves, and
+  redirects are not followed. Responses and errors are scrubbed of
+  every secret's value. The raw value never reaches Luau or the
+  conversation.
 - The sandbox does not see the secrets file.
 
 ### Agents talk to each other

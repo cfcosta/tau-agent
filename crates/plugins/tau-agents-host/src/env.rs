@@ -5,6 +5,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use tau_agents::{NAME, Settings};
+use tau_tools_host::secrets::SecretStore;
 use tau_ui_plugin::{
     Conversations,
     HOST_RECORD,
@@ -38,6 +39,9 @@ pub trait Env: Send + Sync {
 
     /// The host's conversations, when it lets them be driven.
     fn conversations(&self) -> Option<Arc<dyn Conversations>>;
+
+    /// tau's secret store, which agents' requests name keys from.
+    fn secrets(&self) -> SecretStore;
 }
 
 /// The host's [`Env`], over what it gives every plugin.
@@ -106,5 +110,13 @@ impl Env for HostEnv {
 
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {
         self.0.conversations()
+    }
+
+    fn secrets(&self) -> SecretStore {
+        let dir = self.0.config_dir().map_or_else(
+            || self.0.dir.join("config"),
+            std::path::Path::to_path_buf,
+        );
+        SecretStore::in_dir(&dir)
     }
 }

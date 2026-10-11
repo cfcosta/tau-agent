@@ -16,7 +16,7 @@ use gpui::{
 };
 use tau_ui_kit::{
     assets::Icon,
-    components::{ButtonKind, bar, button, icon, mono},
+    components::{ButtonKind, bar, button, field, icon, mono},
     format::usd,
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
 };
@@ -216,6 +216,7 @@ pub(super) fn panel(
                 })
                 .collect()
         });
+    let keys = secrets(&agent, view, &t);
     let versions = section("Versions", &t).children(
         agent
             .versions
@@ -228,6 +229,7 @@ pub(super) fn panel(
             .flex_col()
             .child(today)
             .child(wakes)
+            .child(keys)
             .when(!agent.versions.is_empty(), |panel| panel.child(versions))
             .when_some(broken(&agent), |panel, error| {
                 panel.child(section("Broken", &t).child(
@@ -236,6 +238,77 @@ pub(super) fn panel(
             })
             .into_any_element(),
     )
+}
+
+/// The secrets `agent` names, by name, and a way to save one: tau's
+/// secret store holds the values, which never come back here.
+fn secrets(agent: &Agent, view: &mut ViewCx<'_, AgentsUi>, t: &Theme) -> Div {
+    let rows = agent.secrets.iter().map(|secret| {
+        let (state, tone) = if secret.set {
+            ("set", t.green)
+        } else {
+            ("missing", t.roles.waiting)
+        };
+        let remove = secret.set.then(|| {
+            let handle = view.handle.clone();
+            let name = secret.name.clone();
+            div()
+                .id(SharedString::from(format!(
+                    "secret-remove-{}",
+                    secret.name
+                )))
+                .typeset(Type::MICRO)
+                .text_color(t.dim)
+                .cursor_pointer()
+                .child("Remove")
+                .on_click(move |_, _, cx| {
+                    handle.act(Act::RemoveSecret { name: name.clone() }, cx)
+                })
+        });
+        div()
+            .flex()
+            .items_center()
+            .gap(sp(2.))
+            .child(div().flex_1().min_w(rems(0.)).truncate().child(mono(
+                secret.name.clone(),
+                Type::CAPTION,
+                t.text_soft,
+            )))
+            .child(div().typeset(Type::MICRO).text_color(tone).child(state))
+            .children(remove)
+    });
+    let ui = view.ui.read(view.cx);
+    let (name, value) = (ui.secret_name.clone(), ui.secret_value.clone());
+    let ready = !name.read(view.cx).text().trim().is_empty()
+        && !value.read(view.cx).text().is_empty();
+    let save = {
+        let ui = view.ui.clone();
+        button("Save", ButtonKind::Secondary, t)
+            .id("secret-save")
+            .when(!ready, |button| button.opacity(0.5))
+            .on_click(move |_, _, cx| {
+                ui.update(cx, |ui, cx| ui.save_secret(cx))
+            })
+    };
+    section("Keys", t)
+        .children(rows)
+        .when(agent.secrets.is_empty(), |section| {
+            section.child(
+                div()
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child("Its agent.luau names none yet."),
+            )
+        })
+        .child(
+            div()
+                .typeset(Type::CAPTION)
+                .text_color(t.dim)
+                .child("Kept in tau's secret store for every agent. Requests name them; no one reads them back."),
+        )
+        .child(field(&name, true, t))
+        .child(field(&value, true, t))
+        .child(save)
 }
 
 /// Why nothing wakes `agent`, when nothing does.

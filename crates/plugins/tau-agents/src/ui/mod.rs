@@ -71,6 +71,10 @@ pub struct Ui {
     pub(crate) making: Option<String>,
     /// Why the host could not make it.
     pub(crate) error: Option<String>,
+    /// A secret to save from an agent's panel: its name, and its value,
+    /// drawn as dots and cleared once sent.
+    pub(crate) secret_name: Entity<TextInput>,
+    pub(crate) secret_value: Entity<TextInput>,
 }
 
 impl Ui {
@@ -133,6 +137,19 @@ impl Ui {
         cx.notify();
     }
 
+    /// Saves the secret the panel's fields hold, and forgets its value.
+    pub(crate) fn save_secret(&mut self, cx: &mut Context<Self>) {
+        let name = self.secret_name.read(cx).text().trim().to_owned();
+        let value = self.secret_value.read(cx).text().to_owned();
+        if name.is_empty() || value.is_empty() {
+            return;
+        }
+        self.handle.act(Act::SetSecret { name, value }, cx);
+        self.secret_name.update(cx, |input, cx| input.clear(cx));
+        self.secret_value.update(cx, |input, cx| input.clear(cx));
+        cx.notify();
+    }
+
     /// Clears the form once its agent's conversation opened.
     fn reset(&mut self, cx: &mut Context<Self>) {
         self.making = None;
@@ -162,8 +179,15 @@ impl PluginUi for Ui {
             cx.notify();
         })
         .detach();
+        let secret_name = cx.new(|cx| TextInput::new("github", cx));
+        let secret_value =
+            cx.new(|cx| TextInput::new("its value", cx).masked());
+        cx.observe(&secret_name, |_, _, cx| cx.notify()).detach();
+        cx.observe(&secret_value, |_, _, cx| cx.notify()).detach();
         let defaults = Settings::default();
         Self {
+            secret_name,
+            secret_value,
             handle,
             name,
             purpose,

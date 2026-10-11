@@ -35,12 +35,26 @@ end
 
 -- A secret by name, from tau's secret store: what an HTTP request's
 -- headers or body may hold. The host puts the value in as the request
--- leaves; Luau never sees it.
-function tau.secret(name)
+-- leaves; Luau never sees it. `"Bearer " .. tau.secret("github")` is the
+-- secret with that text before its value, as is
+-- `tau.secret("github", "Bearer ")`.
+local Secret = {}
+
+function tau.secret(name, prefix)
 	if type(name) ~= "string" or name == "" then
 		error("tau.secret takes a secret's name", 2)
 	end
-	return { ["$secret"] = name }
+	if prefix ~= nil and type(prefix) ~= "string" then
+		error("tau.secret's prefix is text", 2)
+	end
+	return setmetatable({ ["$secret"] = name, prefix = prefix }, Secret)
+end
+
+Secret.__concat = function(left, right)
+	if type(left) == "string" and getmetatable(right) == Secret then
+		return tau.secret(right["$secret"], left .. (right.prefix or ""))
+	end
+	error('a secret can only follow text, as in "Bearer " .. tau.secret("github")', 2)
 end
 
 -- What `before_tool` answers.
@@ -356,10 +370,31 @@ function tau._describe_agent(agent)
 	for _, name in ipairs(names) do
 		table.insert(triggers, { name = name, kind = trigger_kind(name, agent.triggers[name]) })
 	end
+	-- The secrets its triggers name, for its page: the person fills them.
+	local secrets, seen = array({}), {}
+	local function walk(value, depth)
+		if type(value) ~= "table" or depth > 16 then
+			return
+		end
+		local name = rawget(value, "$secret")
+		if type(name) == "string" then
+			if not seen[name] then
+				seen[name] = true
+				table.insert(secrets, name)
+			end
+			return
+		end
+		for _, inner in pairs(value) do
+			walk(inner, depth + 1)
+		end
+	end
+	walk(agent.triggers, 0)
+	table.sort(secrets)
 	return {
 		name = agent.name,
 		description = agent.description or "",
 		triggers = triggers,
+		secrets = secrets,
 	}
 end
 
