@@ -11,6 +11,7 @@
 //! - `poll`: what a poll fires, once per new item.
 //! - `state`: each agent's queue and schedules, kept across restarts.
 //! - `env`: what the agents reach of the host.
+//! - `sandbox`: where an agent's commands run.
 //! - `clock`: the host's time, and its local days.
 //! - `skill`: the `tau-agents` skill tau ships.
 
@@ -20,6 +21,7 @@ pub mod env;
 mod half;
 pub mod poll;
 pub mod registry;
+pub mod sandbox;
 pub mod schedule;
 pub mod skill;
 pub mod state;

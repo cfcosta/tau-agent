@@ -92,6 +92,10 @@ struct Inner {
     polled: Mutex<BTreeSet<(String, String)>>,
     /// The polls' tasks.
     tasks: Mutex<JoinSet<()>>,
+    /// Where each agent's home is kept, one directory each.
+    homes: PathBuf,
+    /// The `bwrap` its commands run in; with none, they have no `bash`.
+    bwrap: Option<PathBuf>,
 }
 
 impl PluginHost for Agents {
@@ -153,7 +157,44 @@ impl Agents {
             polling: Mutex::default(),
             polled: Mutex::default(),
             tasks: Mutex::default(),
+            homes: dir.join("homes"),
+            bwrap: crate::sandbox::find_bwrap(),
         }))
+    }
+
+    /// The same agents, their commands run in `bwrap`, or with no
+    /// `bash` when there is none. Before it is shared.
+    pub fn with_bwrap(mut self, bwrap: Option<PathBuf>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("set before the agents are shared")
+            .bwrap = bwrap;
+        self
+    }
+
+    /// What the commands of the repository at `checkout` run in, when it
+    /// is an agent's: its sandbox, or nothing when there is no `bwrap`
+    /// (its runs then have no `bash`).
+    pub fn sandbox(
+        &self,
+        name: &str,
+        checkout: &std::path::Path,
+    ) -> Option<crate::sandbox::Sandbox> {
+        if checkout.parent() != Some(self.0.root.as_path()) {
+            return None;
+        }
+        Some(crate::sandbox::Sandbox {
+            bwrap: self.0.bwrap.clone()?,
+            home: self.0.homes.join(name),
+        })
+    }
+
+    /// Why an agent's commands cannot run, if they cannot.
+    pub fn sandbox_problem(&self) -> Option<String> {
+        self.0.bwrap.is_none().then(|| {
+            "bash is off: bwrap (bubblewrap) is not installed, and an \
+             agent's commands never run outside it"
+                .to_owned()
+        })
     }
 
     /// Each agent's versions.
@@ -638,6 +679,7 @@ impl Agents {
             agents.push(Agent {
                 main,
                 secrets,
+                sandbox: self.sandbox_problem(),
                 name,
                 purpose: read.purpose.clone(),
                 status,

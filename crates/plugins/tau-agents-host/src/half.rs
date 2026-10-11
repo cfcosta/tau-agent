@@ -1,10 +1,20 @@
 //! tau-agents' host half (ADR 0030).
 
+use std::sync::Arc;
+
 use serde_json::Value;
-use tau_agent::plugin::Plugin;
+use tau_agent::{launch::Launcher, plugin::Plugin};
 use tau_agents::{Act, AgentsUi, Overview, Settings, Status};
 use tau_ui_kit::theme::Tone;
-use tau_ui_plugin::{CatalogEntry, HostCx, HostHalf, Note, PluginInfo, RunCtx};
+use tau_ui_plugin::{
+    CatalogEntry,
+    HostCx,
+    HostHalf,
+    Note,
+    PluginInfo,
+    RepoCtx,
+    RunCtx,
+};
 
 use crate::Agents;
 
@@ -25,6 +35,19 @@ impl HostHalf for AgentsHost {
         _settings: &Settings,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         Ok(Vec::new())
+    }
+
+    /// An agent's commands, and its stdio MCP servers, run in its
+    /// sandbox; without `bwrap` there is none, and its runs have no
+    /// `bash` (the host leaves it out).
+    async fn launcher(
+        &self,
+        host: &Agents,
+        repo: &RepoCtx,
+        _settings: &Settings,
+    ) -> Option<Arc<dyn Launcher>> {
+        host.sandbox(&repo.name, &repo.checkout)
+            .map(|sandbox| Arc::new(sandbox) as Arc<dyn Launcher>)
     }
 
     async fn catalog(

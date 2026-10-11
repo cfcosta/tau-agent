@@ -826,3 +826,36 @@ fn an_http_poll_that_fails_says_why_without_its_secret() {
     assert!(error.contains("[secret:github]"), "{error}");
     assert!(!error.contains("tok-value-1234"), "{error}");
 }
+
+/// An agent's commands run in its sandbox, with its home under tau's
+/// data; a repository that is not an agent's gets none.
+#[test]
+fn an_agents_commands_run_in_its_sandbox() {
+    let f = Fixture::new();
+    let agents = open(f._home.path(), &f.clock, &f.host)
+        .with_bwrap(Some("/bin/bwrap".into()));
+    let checkout = f._home.path().join("agents").join("greet");
+    let sandbox = agents.sandbox("greet", &checkout).unwrap();
+    assert_eq!(sandbox.bwrap, Path::new("/bin/bwrap"));
+    assert_eq!(sandbox.home, f._home.path().join("state/homes/greet"));
+    assert!(
+        agents
+            .sandbox("tau-agent", Path::new("/src/tau-agent"))
+            .is_none()
+    );
+    block_on_io(agents.registry().scan());
+    assert_eq!(block_on_io(agents.overview()).agents[0].sandbox, None);
+}
+
+/// Without `bwrap` an agent has no sandbox, so no `bash`, and its page
+/// says why.
+#[test]
+fn without_bwrap_an_agent_has_no_bash_and_says_so() {
+    let f = Fixture::new();
+    let agents = open(f._home.path(), &f.clock, &f.host).with_bwrap(None);
+    let checkout = f._home.path().join("agents").join("greet");
+    assert!(agents.sandbox("greet", &checkout).is_none());
+    block_on_io(agents.registry().scan());
+    let problem = block_on_io(agents.overview()).agents[0].sandbox.clone();
+    assert!(problem.unwrap().contains("bwrap"));
+}

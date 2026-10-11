@@ -42,6 +42,7 @@ fn agent(name: &str, status: Status, triggers: Vec<Trigger>) -> Agent {
         effort: "low".into(),
         main: None,
         secrets: Vec::new(),
+        sandbox: None,
     }
 }
 

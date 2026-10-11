@@ -925,6 +925,7 @@ fn agents(
         effort: tau_agents::DEFAULT_EFFORT.into(),
         main: Some(main(name).0.to_string()),
         secrets: Vec::new(),
+        sandbox: None,
     };
     let overview = Overview {
         agents: vec![
