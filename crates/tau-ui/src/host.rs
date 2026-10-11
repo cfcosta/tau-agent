@@ -201,6 +201,9 @@ pub struct Host {
     /// How tau-memory searches notes: by meaning in the app, by keywords
     /// in tests, where no model is loaded.
     memory_search: tau_memory_host::Search,
+    /// The tools plugins offer outside any run: an agent's polls call
+    /// them (ADR 0037).
+    outside_tools: tau_ui_plugin::OutsideTools,
     store: Store,
     config: HostConfig,
     /// The repositories of this session, in the list's order. Removed
@@ -495,6 +498,7 @@ impl Host {
             jev: None,
             jev_meter: Arc::default(),
             memory_search: tau_memory_host::Search::Keywords,
+            outside_tools: tau_ui_plugin::OutsideTools::default(),
             store,
             settings: Arc::new(Mutex::new(settings)),
             config,

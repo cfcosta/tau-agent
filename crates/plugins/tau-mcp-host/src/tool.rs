@@ -8,6 +8,7 @@ use tau_agent::{
     output::Spill,
     tool::{AgentTool, Exposure, ToolCtx, ToolError, ToolOutput},
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     connection::{CallFailure, Connection, Progress, ToolInfo},
@@ -81,6 +82,34 @@ impl McpTool {
     /// The server's name.
     pub fn server(&self) -> &str {
         self.connection.name()
+    }
+
+    /// Calls the tool outside any run, as an agent's poll does (ADR
+    /// 0037). The answer is the result's `structuredContent`, else its
+    /// one text block read as JSON, else that text; a result that is an
+    /// error, or a call that fails, is the error's text.
+    pub async fn call_outside(
+        &self,
+        args: Value,
+        cancel: &CancellationToken,
+    ) -> Result<Value, String> {
+        let result = self
+            .connection
+            .call(&self.info.name, args, &|_| {}, cancel)
+            .await
+            .map_err(|failure| failure.to_string())?;
+        let mapped =
+            map_result(self.server(), &self.info.name, &result, &self.spill);
+        if mapped.is_error {
+            return Err(mapped.output.text_content());
+        }
+        if let Some(structured) = result.get("structuredContent")
+            && !structured.is_null()
+        {
+            return Ok(structured.clone());
+        }
+        let text = mapped.output.text_content();
+        Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
     }
 
     /// The tool as the server lists it.

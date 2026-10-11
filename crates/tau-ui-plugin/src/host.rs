@@ -300,6 +300,59 @@ pub trait Conversations: Send + Sync {
     ) -> crate::registry::HostFuture<'_, anyhow::Result<()>>;
 }
 
+/// One plugin's tools that run outside any run: what an agent's polls
+/// call (ADR 0037). A plugin whose tools need no run offers them in the
+/// host's [`OutsideTools`].
+pub trait ToolSource: Send + Sync {
+    /// Calls `name` with `args` for the repository checked out at
+    /// `checkout`, when `name` is one of this source's tools; `None`
+    /// when it is not. The answer is what a script would get: the
+    /// tool's structured value, else its text.
+    fn call<'a>(
+        &'a self,
+        checkout: &'a Path,
+        name: &'a str,
+        args: Value,
+    ) -> Option<crate::registry::HostFuture<'a, Result<Value, String>>>;
+}
+
+/// The tools a host half may call outside any run, from the plugins
+/// that offer them. The host puts one in [`HostCx::services`]; clones
+/// share it.
+#[derive(Clone, Default)]
+pub struct OutsideTools(Arc<std::sync::Mutex<Vec<Arc<dyn ToolSource>>>>);
+
+impl OutsideTools {
+    /// Adds `source`'s tools.
+    pub fn offer(&self, source: Arc<dyn ToolSource>) {
+        self.0.lock().expect("not poisoned").push(source);
+    }
+
+    /// Calls `name` with `args` for the repository at `checkout`,
+    /// through the first source that has it.
+    pub async fn call(
+        &self,
+        checkout: &Path,
+        name: &str,
+        args: Value,
+    ) -> Result<Value, String> {
+        let sources = self.0.lock().expect("not poisoned").clone();
+        for source in &sources {
+            if let Some(call) = source.call(checkout, name, args.clone()) {
+                return call.await;
+            }
+        }
+        Err(format!("no tool `{name}` can be called outside a run here"))
+    }
+}
+
+impl std::fmt::Debug for OutsideTools {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sources = self.0.lock().map_or(0, |sources| sources.len());
+        write!(f, "OutsideTools({sources} sources)")
+    }
+}
+
 /// The host's services, the only part of the host a plugin reaches.
 #[derive(Clone)]
 pub struct HostCx {
@@ -490,6 +543,12 @@ impl HostCx {
     /// (ADR 0037).
     pub fn conversations(&self) -> Option<Arc<dyn Conversations>> {
         self.services.get::<Arc<dyn Conversations>>().cloned()
+    }
+
+    /// The tools a host half may call outside any run, when the host
+    /// keeps them.
+    pub fn outside_tools(&self) -> Option<&OutsideTools> {
+        self.services.get::<OutsideTools>()
     }
 
     /// Asks the interface to draw the catalog again.

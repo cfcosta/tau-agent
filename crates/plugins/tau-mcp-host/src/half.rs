@@ -951,10 +951,55 @@ impl Plugin for RunServers {
 impl PluginHost for Host {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         let refresher = cx.clone();
+        if let Some(outside) = cx.outside_tools() {
+            outside.offer(Arc::new(Outside {
+                host: Host::new(
+                    cx.runtime.clone(),
+                    cx.config_dir().map(Path::to_owned),
+                ),
+                cx: cx.clone(),
+            }));
+        }
         Ok(
             Host::new(cx.runtime.clone(), cx.config_dir().map(Path::to_owned))
                 .with_refresh(Arc::new(move || refresher.refresh())),
         )
+    }
+}
+
+/// The servers' tools outside any run, for an agent's polls (ADR 0037):
+/// a host of their own, whose connections are not the runs'.
+struct Outside {
+    host: Host,
+    cx: HostCx,
+}
+
+impl tau_ui_plugin::ToolSource for Outside {
+    fn call<'a>(
+        &'a self,
+        checkout: &'a Path,
+        name: &'a str,
+        args: Value,
+    ) -> Option<tau_ui_plugin::registry::HostFuture<'a, Result<Value, String>>>
+    {
+        if !name.starts_with("mcp__") {
+            return None;
+        }
+        Some(Box::pin(async move {
+            let settings: Settings = self.cx.settings(NAME);
+            let plugin = self.host.plugin(Some(checkout), &settings);
+            // A server that only now started lists its tools once it
+            // connects.
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let settling = join_all(
+                plugin.connections().iter().map(|c| c.settled(&cancel)),
+            );
+            let _ = tokio::time::timeout(crate::STARTUP_WAIT, settling).await;
+            let tool = plugin.tool(name).ok_or_else(|| {
+                format!("no MCP server offers `{name}` to this repository")
+            })?;
+            tool.call_outside(args, &cancel).await
+        }))
     }
 }
 

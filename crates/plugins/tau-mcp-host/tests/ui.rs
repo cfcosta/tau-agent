@@ -1774,3 +1774,33 @@ fn the_page_is_drawn_again_when_connections_change() {
         .any(|tool| tool.tool == "late");
     assert!(listed, "the new tool is listed");
 }
+
+/// Outside any run (ADR 0037), a server's tool answers what an agent's
+/// poll reads: its structured value; a result that is an error fails.
+#[test]
+fn a_tool_called_outside_a_run_answers_its_structured_value() {
+    let fixture = Fixture::new(None, None);
+    let server = common::State::new(false);
+    fixture.host().set_servers(vec![ServerConfig::new(
+        "srv",
+        Transport::Stream(server.dial()),
+    )]);
+    let plugin = fixture.host().plugin(None, &Settings::default());
+    let cancel = tokio_util::sync::CancellationToken::new();
+    fixture.cx.runtime.block_on(async {
+        for connection in plugin.connections() {
+            connection.settled(&cancel).await;
+        }
+    });
+    let echo = plugin.tool("mcp__srv__echo").expect("the server's echo");
+    let answer = fixture.cx.runtime.block_on(
+        echo.call_outside(serde_json::json!({ "text": "hi" }), &cancel),
+    );
+    assert_eq!(answer, Ok(serde_json::json!({ "echo": "hi" })));
+    let fail = plugin.tool("mcp__srv__fail").expect("the server's fail");
+    let failed = fixture
+        .cx
+        .runtime
+        .block_on(fail.call_outside(serde_json::json!({}), &cancel));
+    assert!(failed.is_err(), "{failed:?}");
+}
