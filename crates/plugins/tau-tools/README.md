@@ -1,7 +1,8 @@
 # tau-tools
 
 The interface half of the coding tools. It draws the cards that `read`,
-`bash`, `edit`, `write`, `grep`, `find` and `ls` leave in a run's
+`exec_command`, `write_stdin`, `edit`, `write`, `grep`, `find` and `ls`
+leave in a run's
 transcript, and it holds the shapes those cards read. It does not run
 any tool. A phone links this crate to draw the cards of a run that a
 desktop host is running.
@@ -10,7 +11,7 @@ desktop host is running.
 
 | Item                          | What it is                                                                     |
 | ----------------------------- | ------------------------------------------------------------------------------ |
-| `ToolsUi`                     | The plugin's `UiPlugin`: the cards of the seven tools                          |
+| `ToolsUi`                     | The plugin's `UiPlugin`: the cards of the eight tools                          |
 | `ui::NAME`                    | `"tau-tools"`, the name both halves go by                                      |
 | `ui::State`                   | The fold of the run's artifact grants, the same live and reloaded              |
 | `ui::Action`, `ActionReply`   | What a card asks the host half (a range of a granted artifact), and the answer |
@@ -19,12 +20,12 @@ desktop host is running.
 | `ui::diff_of`                 | The diff an `edit` or `write` call made                                        |
 | `ui::output_lines`            | A call's output lines: its result, or the output so far                        |
 | `ui::listing`, `listing_card` | `DirListing`, the parsed `ls` details, and its card                            |
-| `ui::term`                    | `TermOutput`: a `bash` call's terminal stream, as the card reads it            |
-| `ui::term_card`               | `TermCards`: `bash` output drawn as a terminal (feature `terminal`)            |
+| `ui::term`                    | `TermOutput`: a command call's terminal stream, as the card reads it           |
+| `ui::term_card`               | `TermCards`: command output drawn as a terminal (feature `terminal`)           |
 | `details`                     | `Listing`, `Entry`, `EntryKind`: what `ls` puts in its result's details        |
 | `artifact_grant`              | `ArtifactGrant`, `ArtifactMetadata`, `ArtifactRecord` and `fold_grants`        |
 
-`bash` cards show the command's terminal, or its last lines. `edit` and
+Command cards show the call's terminal, or its last lines. `edit` and
 `write` cards show the diff they made. `ls` cards show the directory.
 
 ## How it fits
@@ -56,9 +57,9 @@ A host then gives it its half, in its place, with
 
 | Feature    | Default | Effect                                                                                    |
 | ---------- | ------- | ----------------------------------------------------------------------------------------- |
-| `terminal` | off     | Draws `bash` output as a terminal through `tau-terminal` (libghostty-vt): `ui::term_card` |
+| `terminal` | off     | Draws command output as a terminal through `tau-terminal` (libghostty-vt): `ui::term_card` |
 
-Without `terminal`, `bash` cards show the last lines of the output and
+Without `terminal`, command cards show the last lines of the output and
 `tau-terminal` is not built. `tau-ui` and `tau-ui-remote` turn it on.
 
 ## Testing
@@ -78,6 +79,6 @@ Hegel property tests.
 - [Plugins: a plugin's UI](../../../docs/reference/plugins.md)
 - [Code Mode artifact ranges](../../../docs/reference/codemode-artifact-ranges.md)
 - [0004: Coding tools live in an optional crate](../../../docs/decisions/0004-coding-tools-optional.md)
-- [0010: bash output is a terminal, emulated by libghostty-vt](../../../docs/decisions/0010-terminal-rendering.md)
+- [0010: command output is a terminal, emulated by libghostty-vt](../../../docs/decisions/0010-terminal-rendering.md)
 - [0017: Plugins bring their own UI](../../../docs/decisions/0017-plugins-bring-their-ui.md)
 - [0030: Host halves are crates](../../../docs/decisions/0030-host-halves-are-crates.md)

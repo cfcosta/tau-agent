@@ -265,11 +265,12 @@ async fn screens_show_progress() {
 /// control character reaches it as the terminal's signal.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_interactive_program_reads_its_input() {
-    let mut run = sh("read line; echo got:$line; trap 'echo int; exit 3' INT; \
+    let mut run =
+        sh("read line; echo got:$line; trap 'echo int; exit 3' INT; \
                       while :; do sleep 0.05; done")
-    .interactive(true)
-    .spawn()
-    .unwrap();
+        .interactive(true)
+        .spawn()
+        .unwrap();
     let input = run.input().expect("interactive");
     input.write(b"hello\n").await.unwrap();
     let mut seen = String::new();
@@ -278,7 +279,8 @@ async fn an_interactive_program_reads_its_input() {
     let mut interrupted = false;
     while finished.is_none() {
         assert!(Instant::now() < deadline, "{seen:?}");
-        let event = tokio::time::timeout(Duration::from_millis(500), run.next());
+        let event =
+            tokio::time::timeout(Duration::from_millis(500), run.next());
         match event.await {
             Ok(Some(Event::Output(bytes))) => {
                 seen.push_str(&String::from_utf8_lossy(&bytes));

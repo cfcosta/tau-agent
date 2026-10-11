@@ -1,10 +1,11 @@
-//! A `bash` command's terminal, from the `term` details of its updates
-//! and result (`docs/reference/tools.md`, "bash: terminal mode").
+//! A command's terminal, from the `term` details of its updates and
+//! result (`docs/reference/tools.md`, "exec_command and write_stdin").
 
 use serde_json::Value;
 
-/// A command's terminal, from the `term` details of `bash`'s updates and
-/// result (`docs/reference/tools.md`, "bash: terminal mode").
+/// What one call of `exec_command` or `write_stdin` saw of a command's
+/// terminal, from the `term` details of its updates and result
+/// (`docs/reference/tools.md`, "exec_command and write_stdin").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TermOutput {
     pub cols: u16,
@@ -15,7 +16,7 @@ pub struct TermOutput {
     pub bytes: std::sync::Arc<Vec<u8>>,
     /// The `seq` the next chunk must carry.
     pub next_seq: u64,
-    /// How the command ended; `None` while it runs.
+    /// How the call ended; `None` while it runs.
     pub end: Option<TermEnd>,
     /// The text the model got: the result's text, pruned or not.
     pub seen: String,
@@ -26,7 +27,7 @@ pub struct TermOutput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TermEnd {
     pub status: TermStatus,
-    /// The exit code; `None` on a timeout or a cancel.
+    /// The exit code; `None` while the command still runs.
     pub exit_code: Option<i32>,
     /// Whether `bytes` is a VT snapshot of the final screen, rather
     /// than the whole raw output.
@@ -36,8 +37,9 @@ pub struct TermEnd {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TermStatus {
     Exited,
-    TimedOut,
-    Cancelled,
+    /// The call returned with the command still running, to go on with
+    /// `write_stdin`.
+    Running,
 }
 
 impl TermOutput {
@@ -111,8 +113,7 @@ impl TermOutput {
         };
         let status = match term.get("status").and_then(Value::as_str)? {
             "exited" => TermStatus::Exited,
-            "timedOut" => TermStatus::TimedOut,
-            "cancelled" => TermStatus::Cancelled,
+            "running" => TermStatus::Running,
             _ => return None,
         };
         Some(Self {
@@ -136,8 +137,8 @@ impl TermOutput {
         })
     }
 
-    /// What the card's header says of how it ended: `exit 100`, `timed
-    /// out`, `cancelled`; `None` for a clean exit.
+    /// What the card's header says of how it ended: `exit 100`; `None`
+    /// for a clean exit, and for a command still running.
     pub fn failure(&self) -> Option<String> {
         let end = self.end?;
         match end.status {
@@ -146,8 +147,7 @@ impl TermOutput {
                 Some(code) => Some(format!("exit {code}")),
                 None => Some("exited".into()),
             },
-            TermStatus::TimedOut => Some("timed out".into()),
-            TermStatus::Cancelled => Some("cancelled".into()),
+            TermStatus::Running => None,
         }
     }
 }

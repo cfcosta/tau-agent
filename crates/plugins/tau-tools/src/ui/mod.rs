@@ -1,6 +1,6 @@
 //! tau-tools' UI (ADR 0017): the cards of its tools in a run's
-//! transcript. `bash` shows its terminal, or the last lines of its
-//! output; `edit` and `write`, the diff they made; `ls`, the directory.
+//! transcript. `exec_command` and `write_stdin` show their terminal, or
+//! the last lines of their output; `edit` and `write`, the diff they made; `ls`, the directory.
 //!
 //! The host builds the plugin's tools on the run's workspace, where they
 //! act (`tau-tools-host`); this UI draws what they return.
@@ -356,7 +356,7 @@ pub fn diff_of(data: &CallData) -> Option<Vec<diff::DiffLine>> {
     Some(diff::parse(text))
 }
 
-/// What a `bash` call printed, line by line: the text the model got
+/// What an `exec_command` or `write_stdin` call printed, line by line: the text the model got
 /// once it ended, else its output so far.
 pub fn output_lines(data: &CallData) -> Vec<String> {
     let text = match &data.result {
@@ -534,7 +534,7 @@ impl UiPlugin for ToolsUi {
             .contribute_at(points::STATUS, -20, |_: &AtRun, _| {
                 Some(PluginStatus {
                     name: NAME.into(),
-                    state: "7 tools".into(),
+                    state: "8 tools".into(),
                     tone: Tone::Quiet,
                 })
             })
@@ -547,7 +547,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
     let compact = view.compact;
     let data = &at.data;
     match at.tool.as_str() {
-        "bash" => {
+        "exec_command" | "write_stdin" => {
             #[cfg(feature = "terminal")]
             if let Some(view) = terminal(at, view, &t, compact) {
                 return Some(view);
@@ -556,20 +556,9 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                 Some(_) => tail(output_lines(data), 4),
                 None => tail(output_lines(data), 6),
             };
-            let artifact = artifact_error(data);
             Some(CardView {
-                body: (!lines.is_empty() || artifact.is_some()).then(|| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .when(!lines.is_empty(), |body| {
-                            body.child(output(&lines, &t))
-                        })
-                        .when_some(artifact.as_ref(), |body, status| {
-                            body.child(artifact_line(status, &t))
-                        })
-                        .into_any_element()
-                }),
+                body: (!lines.is_empty())
+                    .then(|| output(&lines, &t).into_any_element()),
                 ..CardView::default()
             })
         }
@@ -709,9 +698,6 @@ fn terminal(
                     compact,
                     view.cx,
                 ))
-                .when_some(artifact_error(&at.data).as_ref(), |body, status| {
-                    body.child(artifact_line(status, t))
-                })
                 .into_any_element(),
         ),
         inset: true,

@@ -1,6 +1,6 @@
 //! `exec_command` and `write_stdin`: run a shell command, and go on
 //! with it (`docs/reference/tools.md`, "exec_command and write_stdin";
-//! `docs/decisions/0037-commands-run-in-the-background.md`), as Codex's
+//! `docs/decisions/0038-commands-run-in-the-background.md`), as Codex's
 //! unified exec does.
 //!
 //! `exec_command` starts a command under a pseudo-terminal and waits up
@@ -245,15 +245,14 @@ impl AgentTool for ExecCommand {
             .env
             .iter()
             .fold(command, |command, (key, value)| command.env(key, value));
-        let process = self
-            .processes
-            .start(command, args.cmd.clone())
-            .map_err(|error| {
+        let process = self.processes.start(command, args.cmd.clone()).map_err(
+            |error| {
                 ToolError::from(format!(
                     "failed to start {}: {error}",
                     shell.display()
                 ))
-            })?;
+            },
+        )?;
         report(&self.processes, &process, &ctx, window).await
     }
 }
@@ -618,4 +617,3 @@ fn exit_code_of(status: std::process::ExitStatus) -> i32 {
         .or_else(|| status.signal().map(|signal| 128 + signal))
         .unwrap_or(1)
 }
-

@@ -136,7 +136,10 @@ async fn the_command_runs_in_the_workdir() {
     std::fs::create_dir(t.dir.path().join("sub")).unwrap();
     let output = t
         .exec
-        .call(json!({ "cmd": "basename \"$PWD\"", "workdir": "sub" }), ctx())
+        .call(
+            json!({ "cmd": "basename \"$PWD\"", "workdir": "sub" }),
+            ctx(),
+        )
         .await
         .unwrap();
     assert_eq!(text_of(&output).trim(), "sub");
@@ -290,7 +293,10 @@ async fn control_c_interrupts_a_tty_process() {
         )
         .await
         .unwrap_err();
-    assert!(failed(&error).contains("Command exited with code 130"), "{error}");
+    assert!(
+        failed(&error).contains("Command exited with code 130"),
+        "{error}"
+    );
     assert!(t.processes.is_empty());
 }
 
@@ -301,10 +307,8 @@ async fn a_cancelled_call_leaves_the_process_running() {
     let t = tools();
     let (ctx, cancel, _updates) = ctx_with_updates();
     let call = tokio::spawn({
-        let exec = ExecCommand::new(
-            Root::new(t.dir.path()),
-            t.processes.clone(),
-        );
+        let exec =
+            ExecCommand::new(Root::new(t.dir.path()), t.processes.clone());
         async move {
             exec.call(
                 json!({ "cmd": "echo before; sleep 1; echo after",
@@ -350,7 +354,12 @@ async fn dropping_the_processes_kills_them() {
         .unwrap();
     assert!(alive(pid));
     assert!(first.structured.unwrap()["running"].as_bool().unwrap());
-    let Tools { processes, exec, write, .. } = t;
+    let Tools {
+        processes,
+        exec,
+        write,
+        ..
+    } = t;
     drop((exec, write));
     processes.terminate_all();
     wait_until_dead(pid).await;
@@ -364,10 +373,8 @@ async fn the_store_keeps_a_limited_number_of_processes() {
     let t = tools();
     let mut calls = Vec::new();
     for _ in 0..(MAX_PROCESSES + 6) {
-        let exec = ExecCommand::new(
-            Root::new(t.dir.path()),
-            t.processes.clone(),
-        );
+        let exec =
+            ExecCommand::new(Root::new(t.dir.path()), t.processes.clone());
         calls.push(tokio::spawn(async move {
             exec.call(json!({ "cmd": "sleep 30", "yield_time_ms": 250 }), ctx())
                 .await
@@ -424,7 +431,10 @@ async fn too_much_output_is_cut_to_the_last_lines() {
         .await
         .unwrap();
     let text = text_of(&output).replace("\r\n", "\n");
-    assert!(text.starts_with("[output cut to the last 2000 of"), "{text}");
+    assert!(
+        text.starts_with("[output cut to the last 2000 of"),
+        "{text}"
+    );
     assert!(text.ends_with("\n5000"), "{}", &text[text.len() - 20..]);
     assert!(output.structured.unwrap()["truncated"].as_bool().unwrap());
 }

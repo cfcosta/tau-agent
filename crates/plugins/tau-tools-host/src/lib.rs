@@ -14,15 +14,15 @@
 //! tau-terminal (libghostty-vt), and streams their raw output in the
 //! results' details (`exec`; `docs/decisions/0010-terminal-rendering.md`).
 //! A command that outlives its call keeps running, and `write_stdin`
-//! goes on with it (`docs/decisions/0037-commands-run-in-the-background.md`).
+//! goes on with it (`docs/decisions/0038-commands-run-in-the-background.md`).
 
 pub mod artifact_grant;
 pub mod artifact_read;
 pub mod edit;
+pub mod errno;
 /// Unix only: it runs commands in their own process group.
 #[cfg(unix)]
 pub mod exec;
-pub mod errno;
 pub mod find;
 pub mod grep;
 mod half;

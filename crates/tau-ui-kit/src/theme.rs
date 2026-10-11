@@ -234,7 +234,7 @@ impl Roles {
             "grep" | "find" => self.tool_search,
             "read" | "vcs_show" | "vcs_diff" => self.tool_read,
             "edit" | "write" => self.tool_edit,
-            "bash" | "codemode" => self.tool_run,
+            "exec_command" | "write_stdin" | "codemode" => self.tool_run,
             _ if name.starts_with("mcp__") => self.mcp,
             _ if name.starts_with("memory") => self.memory,
             _ => self.tool_other,

@@ -37,9 +37,10 @@ impl HostHalf for ToolsHost {
         _settings: &(),
     ) -> PluginInfo {
         PluginInfo {
-            description: "read, bash, edit, write, grep, find and ls on the \
-                          run's workspace"
-                .into(),
+            description:
+                "read, exec_command, write_stdin, edit, write, grep, find \
+                          and ls on the run's workspace"
+                    .into(),
             seams: vec![Seam::Tools],
             page: None,
             ..Default::default()

@@ -2,7 +2,7 @@
 
 A terminal for tool output. It emulates a terminal with libghostty-vt,
 runs a command under a pseudo-terminal, and draws the result in a GPUI
-view. tau uses it so that `bash` output looks like a real terminal (colors,
+view. tau uses it so that command output looks like a real terminal (colors,
 progress bars, redraws) in the interface, while the model reads plain text.
 The crate depends on no other tau crate, so any GPUI app can use it.
 
@@ -13,9 +13,9 @@ The crate depends on no other tau crate, so any GPUI app can use it.
 | `Terminal`                           | The emulator. Feed bytes with `write`; read `text` (plain), `vt` (replayable) or `snapshot`  |
 | `Options`, `Size`, `Scroll`          | How to create a `Terminal`, its size in cells (`Size::TOOL` is 120×40), and viewport scrolls |
 | `Screen`, `Line`, `TextRun`, `Style` | A styled snapshot of the terminal, as plain data that crosses threads                        |
-| `Command`                            | A builder that runs a program under a pseudo-terminal; `spawn` returns a `Run`               |
+| `Command`                            | A builder that runs a program under a pseudo-terminal (`interactive` puts stdin on it)       |
 | `Run`, `Event`, `Finished`, `Replay` | A running command, its ordered events (`Output`, `Text`, `Screen`, `Exit`) and how it ended  |
-| `Killer`                             | Kills a run's whole process group, from any thread                                           |
+| `Killer`, `Input`                    | Kill a run's whole process group, or write to an interactive command's terminal, from any thread |
 | `TerminalView`, `ViewOptions`        | A GPUI entity: feed it bytes while a program runs, `freeze` it when it ends                  |
 | `TerminalEvent`, `view::bind_keys`   | What the view emits, and the key bindings for copy                                           |
 | `Palette`                            | The colors the view draws in                                                                 |
@@ -31,10 +31,11 @@ everything a `Run` produces are plain data. The runner keeps its own
 
 ## How it fits
 
-No tau crate is below it. `tau-tools` and `tau-tools-host` use it behind
-their `terminal` feature: `bash` runs commands through `Command`, and its
-card draws them with `TerminalView`. `tau-ui-kit` carries the terminal
-palette in its theme, and `tau-ui-remote` draws `bash` cards with the view.
+No tau crate is below it. `tau-tools-host` runs `exec_command`'s commands
+through `Command` (interactive ones too, for `write_stdin`), and
+`tau-tools` draws their cards with `TerminalView` behind its `terminal`
+feature. `tau-ui-kit` carries the terminal palette in its theme, and
+`tau-ui-remote` draws command cards with the view.
 
 libghostty-vt comes from the Nix flake through pkg-config, never from git
 and Zig at build time. Build inside the dev shell (`nix develop`).
@@ -90,6 +91,6 @@ example tests for redraws, colors, wide characters, scrollback and replay.
 
 - [docs/reference/terminal.md](../../docs/reference/terminal.md): the view
   and its pure parts
-- [docs/reference/tools.md](../../docs/reference/tools.md): `bash` in
-  terminal mode
+- [docs/reference/tools.md](../../docs/reference/tools.md): `exec_command` and
+  `write_stdin`
 - [docs/decisions/0010-terminal-rendering.md](../../docs/decisions/0010-terminal-rendering.md)

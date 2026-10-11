@@ -327,8 +327,8 @@ fn rotation_jitter() -> RunView {
     s.tool(
         0,
         "j4",
-        "bash",
-        json!({ "command": "cargo nextest run -p tau-ai ws::" }),
+        "exec_command",
+        json!({ "cmd": "cargo nextest run -p tau-ai ws::" }),
         term_output(
             &format!(
                 "{}{MAGENTA}     Summary{RESET} [   4.200s] 52 tests run: 52 {GREEN}passed{RESET}, 0 skipped\n",
@@ -448,8 +448,8 @@ fn backoff_fork() -> RunView {
     s.turn();
     s.start_tool(
         "f2",
-        "bash",
-        json!({ "command": "cargo nextest run -p tau-ai ws::" }),
+        "exec_command",
+        json!({ "cmd": "cargo nextest run -p tau-ai ws::" }),
     );
     s.fail_tool(
         0,
@@ -1633,7 +1633,7 @@ impl Script {
         );
     }
 
-    /// Ends a call that failed, keeping its output (a `bash` command
+    /// Ends a call that failed, keeping its output (a command
     /// that exited non-zero).
     fn fail_tool(&mut self, millis: u64, id: &str, output: ToolOutput) {
         self.event(
@@ -1716,7 +1716,7 @@ fn plain(ansi: &str) -> String {
     out
 }
 
-/// What `bash` returns for a command run under a 120×40 terminal that
+/// What `exec_command` returns for a command run under a 120×40 terminal that
 /// wrote `ansi` and exited with `code`: the plain text for the model
 /// (or `seen`, when output pruning replaced it), and the raw output in
 /// its details.
@@ -2548,20 +2548,20 @@ pub fn script() -> Vec<Step> {
     // The first test run fails: the date parser is not wired in yet.
     s.start_tool(
         "c5t",
-        "bash",
-        json!({ "command": "cargo nextest run -p tau-ai" }),
+        "exec_command",
+        json!({ "cmd": "cargo nextest run -p tau-ai" }),
     );
     s.fail_tool(900, "c5t", term_output(&failing_tests(), 100, 4, None));
     s.start_tool(
         "c6",
-        "bash",
-        json!({ "command": "rm -rf target/debug/incremental" }),
+        "exec_command",
+        json!({ "cmd": "rm -rf target/debug/incremental" }),
     );
-    s.checked(Some(("c6", "bash")), &[("R1", 0.41)]);
+    s.checked(Some(("c6", "exec_command")), &[("R1", 0.41)]);
     s.verdict(json!({
         "kind": "flagged", "rule": "R1", "score": 0.41,
         "text": "Never delete outside target/ or rewrite published history.",
-        "call_id": "c6", "tool": "bash",
+        "call_id": "c6", "tool": "exec_command",
     }));
     s.end_tool(600, "c6", ToolOutput::text(""));
     s.at(
@@ -2591,8 +2591,8 @@ pub fn script() -> Vec<Step> {
     // Output pruning trims the test run's log before the model sees it.
     s.start_tool(
         "c7",
-        "bash",
-        json!({ "command": "cargo nextest run --workspace" }),
+        "exec_command",
+        json!({ "cmd": "cargo nextest run --workspace" }),
     );
     let archive = "/home/you/.local/share/tau/repos/tau-agent-3f2a91c0/\
                    archive/tau-output-41822-1790716482-0.txt";
@@ -2666,8 +2666,8 @@ pub fn script() -> Vec<Step> {
                 decision("c2", "grep", "keep", (0.64, 0.22)),
                 decision("c3", "read", "drop_result", (0.71, 0.18)),
                 decision("c5", "edit", "keep", (0.94, 0.88)),
-                decision("c6", "bash", "keep", (0.18, 0.04)),
-                decision("c7", "bash", "keep", (0.62, 0.03)),
+                decision("c6", "exec_command", "keep", (0.18, 0.04)),
+                decision("c7", "exec_command", "keep", (0.62, 0.03)),
                 decision("c8", "read", "drop_result", (0.52, 0.09)),
                 decision("c9", "read", "drop_result", (0.58, 0.11)),
             ],
@@ -2718,8 +2718,8 @@ pub fn script() -> Vec<Step> {
     s.tool(150, STATUS_CALL, "vcs_status", json!({}), change_status());
     s.start_tool(
         "c11",
-        "bash",
-        json!({ "command": "cargo nextest run -p tau-ai retry::" }),
+        "exec_command",
+        json!({ "cmd": "cargo nextest run -p tau-ai retry::" }),
     );
     let mut log = compiling("tau-ai", "crates/tau-ai");
     log.push_str(&format!(

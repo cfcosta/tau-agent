@@ -1,4 +1,4 @@
-//! A `bash` card's terminal: its screen in the card, under a strip.
+//! A command card's terminal: its screen in the card, under a strip.
 //!
 //! The screen is a [`TerminalView`] per card, kept by [`TermCards`]:
 //! live while the command runs (fed the `term` chunks as they arrive),
@@ -53,7 +53,7 @@ struct Folded {
     ended: bool,
 }
 
-/// The screens of the `bash` cards shown so far, and how each is open.
+/// The screens of the command cards shown so far, and how each is open.
 #[derive(Default)]
 pub struct TermCards {
     screens: HashMap<Key, Screen>,

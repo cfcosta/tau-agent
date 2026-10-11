@@ -224,9 +224,7 @@ impl Cleaner {
 
     /// Whether anything unread is waiting.
     pub fn has_unread(&self) -> bool {
-        self.dropped > 0
-            || !self.done.is_empty()
-            || self.partial().is_some()
+        self.dropped > 0 || !self.done.is_empty() || self.partial().is_some()
     }
 
     /// The line being written, when it says something not said yet.
@@ -280,7 +278,59 @@ impl Cleaner {
 
 #[cfg(test)]
 mod tests {
+    use hegel::{TestCase, generators as gs};
+
     use super::*;
+
+    /// Property inventory: the text read is the same however the bytes
+    /// are cut into chunks, and a take between chunks, joined, says
+    /// the same as one take at the end once every line ended.
+    /// Generator: pieces of terminal output (text, a multi-byte
+    /// character, line ends, redraws, backspace, erase in line, color,
+    /// a title), cut at arbitrary points, including inside a character or
+    /// an escape sequence. The workspace hegel.toml supplies case counts.
+    #[hegel::test]
+    fn the_text_does_not_depend_on_how_the_bytes_are_cut(tc: TestCase) {
+        let pieces: Vec<&[u8]> = tc.draw(
+            gs::vecs(gs::sampled_from(vec![
+                "abc".as_bytes(),
+                "é世".as_bytes(),
+                b"\r\n",
+                b"\n",
+                b"\r",
+                b"\x08",
+                b"\t",
+                b"\x1b[K",
+                b"\x1b[2K",
+                b"\x1b[31m",
+                b"\x1b[0m",
+                b"\x1b]0;title\x07",
+                b"\x1b(B",
+                b"x",
+            ]))
+            .max_size(40),
+        );
+        let mut bytes: Vec<u8> = pieces.concat();
+        // Every line ends, so what a take said of a line half written
+        // does not matter.
+        bytes.extend_from_slice(b"\r\n");
+        let mut cuts: Vec<usize> = tc.draw(
+            gs::vecs(
+                gs::integers::<usize>().min_value(0).max_value(bytes.len()),
+            )
+            .max_size(10),
+        );
+        cuts.sort_unstable();
+        let mut whole = Cleaner::default();
+        whole.feed(&bytes);
+        let mut cut = Cleaner::default();
+        let mut start = 0;
+        for end in cuts.into_iter().chain([bytes.len()]) {
+            cut.feed(&bytes[start..end]);
+            start = end;
+        }
+        assert_eq!(cut.take().text, whole.take().text);
+    }
 
     fn text(chunks: &[&[u8]]) -> String {
         let mut cleaner = Cleaner::default();
@@ -300,10 +350,7 @@ mod tests {
 
     #[test]
     fn a_progress_bar_leaves_its_last_frame() {
-        assert_eq!(
-            text(&[b"10%\r50%\r100%\r\ndone\r\n"]),
-            "100%\ndone"
-        );
+        assert_eq!(text(&[b"10%\r50%\r100%\r\ndone\r\n"]), "100%\ndone");
         assert_eq!(text(&[b"long line\r\x1b[Kshort\r\n"]), "short");
     }
 
@@ -349,7 +396,11 @@ mod tests {
             cleaner.feed(line.as_bytes());
         }
         let taken = cleaner.take();
-        assert!(taken.dropped > 0 && taken.dropped < 100, "{}", taken.dropped);
+        assert!(
+            taken.dropped > 0 && taken.dropped < 100,
+            "{}",
+            taken.dropped
+        );
         assert!(taken.text.len() <= MAX_UNREAD + 1024);
     }
 }

@@ -355,7 +355,7 @@ fn branch(
 ) -> impl IntoElement {
     let (stop_color, stop) = status_look(&run.status, t);
     let tests = run.items.iter().rev().find_map(|item| match item {
-        crate::view::Item::Tool(card) if card.tool == "bash" => {
+        crate::view::Item::Tool(card) if card.tool == "exec_command" => {
             card.data.result.as_ref()?;
             let lines = tau_tools::ui::output_lines(&card.data);
             lines

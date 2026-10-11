@@ -7,7 +7,7 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-# `bash` cards draw their output as a terminal, with tau-terminal
+# `exec_command` and `write_stdin` cards draw their output as a terminal, with tau-terminal
 # (libghostty-vt) (docs/decisions/0010-terminal-rendering.md). Off, they
 # show its last lines, and neither is pulled in.
 terminal = ["dep:tau-terminal"]

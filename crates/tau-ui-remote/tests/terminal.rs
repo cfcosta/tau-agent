@@ -1,4 +1,4 @@
-//! `bash` cards under a terminal: tau-tools builds a card's terminal
+//! Command cards under a terminal: tau-tools builds a card's terminal
 //! from the `term` chunks and the result's details the view keeps, live
 //! and from history; the workspace draws it and copies it.
 
@@ -57,7 +57,7 @@ fn started() -> RunView {
     view.apply(&RunEvent::ToolStart {
         run: run(),
         call_id: "c1".into(),
-        tool: "bash".into(),
+        tool: "exec_command".into(),
         args: json!({"command": "cargo test"}),
         parent: None,
     });
@@ -139,12 +139,13 @@ fn the_result_ends_the_terminal() {
     assert_eq!(term.size_label(), "120×40");
 }
 
-/// A timeout says so; a clean exit is done.
+/// A failed exit says so; a clean exit is done, and so is a call that
+/// left its command running.
 #[test]
 fn how_a_command_ended_shows_on_its_card() {
     for (code, status, failure) in [
-        (None, "timedOut", Some("timed out")),
-        (None, "cancelled", Some("cancelled")),
+        (Some(100), "exited", Some("exit 100")),
+        (None, "running", None),
         (Some(0), "exited", None),
     ] {
         let mut view = started();
@@ -155,7 +156,7 @@ fn how_a_command_ended_shows_on_its_card() {
                 details: Some(result_details(b"ok\r\n", code, status)),
                 ..ToolOutput::text("ok")
             }),
-            is_error: code != Some(0),
+            is_error: !matches!(code, Some(0) | None),
             parent: None,
         });
         assert_eq!(term(&view).unwrap().failure().as_deref(), failure);
@@ -192,7 +193,7 @@ fn history(result: Value) -> RunView {
                 "role": "assistant", "api": "responses", "provider": "openai",
                 "model": "m", "usage": usage, "stopReason": "toolUse",
                 "timestamp": 0,
-                "content": [{"type": "toolCall", "id": "c1", "name": "bash",
+                "content": [{"type": "toolCall", "id": "c1", "name": "exec_command",
                              "arguments": {"command": "cargo test"}}],
             }))),
             Stored::Message(message(result)),
@@ -206,7 +207,7 @@ fn history(result: Value) -> RunView {
 fn a_stored_result_rebuilds_the_terminal() {
     let bytes = b"\x1b[32mok\x1b[0m\r\n";
     let view = history(json!({
-        "role": "toolResult", "toolCallId": "c1", "toolName": "bash",
+        "role": "toolResult", "toolCallId": "c1", "toolName": "exec_command",
         "content": [{"type": "text", "text": "ok"}],
         "details": result_details(bytes, Some(0), "exited"),
         "isError": false, "timestamp": 0
@@ -214,7 +215,7 @@ fn a_stored_result_rebuilds_the_terminal() {
     assert_eq!(term(&view).expect("a terminal").bytes.as_slice(), bytes);
 
     let old = history(json!({
-        "role": "toolResult", "toolCallId": "c1", "toolName": "bash",
+        "role": "toolResult", "toolCallId": "c1", "toolName": "exec_command",
         "content": [{"type": "text", "text": "a\nb"}],
         "isError": false, "timestamp": 0
     }));

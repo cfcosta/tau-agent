@@ -43,6 +43,7 @@ use tau_artifacts::{Bytes, Quotas};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_tools_host::{
+    exec::Processes,
     path::Root,
     plugin::{CodingTools, Tool},
 };
@@ -231,6 +232,10 @@ pub struct Host {
     /// Each repository's main chat's sub-agents, which run beside it
     /// and outlive its turns (ADR 0026), by repository.
     sub_agents: Mutex<HashMap<String, tau_vcs_host::SubAgents>>,
+    /// The commands each workspace's runs started and left running
+    /// (`exec_command`), by directory: they outlive a turn, and a
+    /// workspace that closes ends them.
+    processes: Arc<Mutex<HashMap<PathBuf, Processes>>>,
     /// What each run going on was steered with and has not read yet.
     unread: Arc<Mutex<HashMap<RunId, Vec<String>>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
@@ -360,7 +365,7 @@ fn coder(
 const INSTRUCTIONS: &str = "You are tau, a coding agent working in the \
     user's repository. Use the tools to read and change files and to run \
     commands, and the vcs tools for version control, never `git` or `jj` \
-    in bash. Nothing is committed for you: your commits are how your work \
+    in `exec_command`. Nothing is committed for you: your commits are how your work \
     is reviewed and landed, so commit with `vcs_commit` wherever a \
     reviewer would want a boundary, each with a Conventional Commits \
     message, and commit everything before you finish. Be concise, and say \
@@ -518,6 +523,7 @@ impl Host {
             jobs: Arc::default(),
             runs: Arc::default(),
             sub_agents: Mutex::default(),
+            processes: Arc::default(),
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
@@ -832,7 +838,7 @@ impl Host {
         let project = repo.project().await?;
         // What the plugins give the run's commands: an environment. An
         // agent's commands run only in its sandbox: without one, its runs
-        // have no `bash` (ADR 0037).
+        // have no `exec_command` (ADR 0037).
         let launcher = self.launcher_of(repo).await;
         let no_bash =
             launcher.is_none() && self.config.is_agent_path(&repo.path);
@@ -845,6 +851,7 @@ impl Host {
                 &self.config.credentials.dir,
             )
         });
+        let processes = self.processes.clone();
         // A run and its sub-agents work the same way, each in its own
         // workspace: tools, then what plugins add, which hear each turn's
         // commit. Every run declares the same tools, in the same order,
@@ -874,10 +881,18 @@ impl Host {
                     Some(refusal) => vcs.refusing_landing(refusal),
                 };
                 let dir = workspace.dir();
+                // The commands it leaves running stay for its next turn.
+                let running = processes
+                    .lock()
+                    .expect("not poisoned")
+                    .entry(dir.clone())
+                    .or_default()
+                    .clone();
                 let tools = CodingTools::new(Root::new(dir.clone()))
-                    .with_artifacts(artifacts.clone());
+                    .with_artifacts(artifacts.clone())
+                    .with_processes(running);
                 let tools = if no_bash {
-                    tools.without(Tool::Bash)
+                    tools.without(Tool::ExecCommand).without(Tool::WriteStdin)
                 } else {
                     tools
                 };

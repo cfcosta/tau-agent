@@ -589,8 +589,8 @@ fn crew(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         (
             "crew-tests",
             2,
-            "bash",
-            serde_json::json!({ "command": "cargo nextest run --release -p tau-ui" }),
+            "exec_command",
+            serde_json::json!({ "cmd": "cargo nextest run --release -p tau-ui" }),
         ),
     ] {
         let run = RunId(Arc::from(run));
@@ -732,7 +732,7 @@ fn yours(
                     ..Default::default()
                 },
                 Uses {
-                    tools: vec!["bash".into()],
+                    tools: vec!["exec_command".into()],
                     ..Default::default()
                 },
                 Some(json!({
@@ -743,7 +743,7 @@ fn yours(
                     "default": { "protected": "main, release/*", "own_bookmarks": true },
                 })),
                 Standing::Waiting {
-                    grown: vec!["the `bash` tool".into()],
+                    grown: vec!["the `exec_command` tool".into()],
                 },
                 vec![
                     test("push", "refuses a forced push to main", None),
@@ -1332,7 +1332,7 @@ fn rules_at(
         .map(|run| run.cards())
         .unwrap_or_default()
         .into_iter()
-        .filter(|card| card.tool == "bash")
+        .filter(|card| card.tool == "exec_command")
         .map(|card| (card.tool, card.args))
         .collect();
     tau_constitution_host::demo::open(name, &ui, "tau-agent", calls, cx);

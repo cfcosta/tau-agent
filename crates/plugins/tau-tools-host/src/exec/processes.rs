@@ -279,8 +279,7 @@ impl Processes {
             shared.touch();
         });
         let pruned = {
-            let mut processes =
-                self.0.processes.lock().expect("not poisoned");
+            let mut processes = self.0.processes.lock().expect("not poisoned");
             let pruned = prune(&mut processes);
             processes.insert(process.id, process.clone());
             pruned
@@ -294,9 +293,7 @@ impl Processes {
 /// Removes the process to make room for one more, when the store is
 /// full: the least recently used that is not among the newest
 /// [`PROTECTED`], one that exited first.
-fn prune(
-    processes: &mut HashMap<i32, Arc<Process>>,
-) -> Option<Arc<Process>> {
+fn prune(processes: &mut HashMap<i32, Arc<Process>>) -> Option<Arc<Process>> {
     if processes.len() < MAX_PROCESSES {
         return None;
     }

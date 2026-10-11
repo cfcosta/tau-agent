@@ -1699,8 +1699,15 @@ fn event_run(event: &RunEvent) -> &RunId {
 /// Picks the argument a person would want to see first.
 pub fn summarize_args(args: &Value) -> String {
     let text = |key: &str| args.get(key).and_then(Value::as_str);
-    if let Some(command) = text("command") {
+    if let Some(command) = text("cmd") {
         return command.to_owned();
+    }
+    // `write_stdin` reads as the process and what it was typed.
+    if let Some(process) = args.get("process_id").and_then(Value::as_i64) {
+        return match text("chars").filter(|chars| !chars.is_empty()) {
+            Some(chars) => format!("#{process} ← {}", chars.escape_debug()),
+            None => format!("#{process}"),
+        };
     }
     // grep and find read best as `"pattern" path`.
     match (text("pattern"), text("path")) {
@@ -1918,8 +1925,8 @@ mod tests {
         view.apply(&RunEvent::ToolStart {
             run: run(),
             call_id: "c1".into(),
-            tool: "bash".into(),
-            args: json!({"command": "cargo build"}),
+            tool: "exec_command".into(),
+            args: json!({"cmd": "cargo build"}),
             parent: None,
         });
         view.apply(&RunEvent::PluginReport {
@@ -1949,8 +1956,8 @@ mod tests {
         view.apply(&RunEvent::ToolStart {
             run: run(),
             call_id: "c1".into(),
-            tool: "bash".into(),
-            args: json!({"command": "cargo build"}),
+            tool: "exec_command".into(),
+            args: json!({"cmd": "cargo build"}),
             parent: None,
         });
         view.apply(&RunEvent::PluginReport {
@@ -1996,13 +2003,13 @@ mod tests {
                     body: output_report(true),
                 },
                 Stored::Message(assistant(
-                    json!([{"type": "toolCall", "id": "c1", "name": "bash",
-                            "arguments": {"command": "cargo build"}}]),
+                    json!([{"type": "toolCall", "id": "c1", "name": "exec_command",
+                            "arguments": {"cmd": "cargo build"}}]),
                     "toolUse",
                 )),
                 Stored::Message(message(json!({
                     "role": "toolResult", "toolCallId": "c1",
-                    "toolName": "bash",
+                    "toolName": "exec_command",
                     "content": [{"type": "text", "text": "pruned"}],
                     "isError": false, "timestamp": 0
                 }))),
@@ -2360,8 +2367,8 @@ mod tests {
         view.apply(&RunEvent::ToolStart {
             run: run(),
             call_id: "c1".into(),
-            tool: "bash".into(),
-            args: json!({"command": "rm -rf /"}),
+            tool: "exec_command".into(),
+            args: json!({"cmd": "rm -rf /"}),
             parent: None,
         });
         let anchors = view.items.len();
@@ -2369,7 +2376,7 @@ mod tests {
             tau_constitution::NAME,
             &[json!({
                 "kind": "blocked", "rule": "R1", "text": "No rm.",
-                "score": 0.95, "call_id": "c1", "tool": "bash",
+                "score": 0.95, "call_id": "c1", "tool": "exec_command",
                 "reason": "rule R1"
             })],
         );
@@ -2392,14 +2399,14 @@ mod tests {
             run: run(),
             call_id: "c1".into(),
             tool: "codemode".into(),
-            args: json!({"code": "tools.bash({ command = 'rm -rf /' })"}),
+            args: json!({"code": "tools.exec_command({ cmd = 'rm -rf /' })"}),
             parent: None,
         });
         view.apply(&RunEvent::ToolStart {
             run: run(),
             call_id: "c1/1".into(),
-            tool: "bash".into(),
-            args: json!({"command": "rm -rf /"}),
+            tool: "exec_command".into(),
+            args: json!({"cmd": "rm -rf /"}),
             parent: Some("c1".into()),
         });
         view.apply(&RunEvent::PluginReport {
@@ -2407,7 +2414,7 @@ mod tests {
             plugin: tau_constitution::NAME.into(),
             body: json!({
                 "kind": "blocked", "rule": "R1", "text": "No rm.",
-                "score": 0.95, "call_id": "c1/1", "tool": "bash",
+                "score": 0.95, "call_id": "c1/1", "tool": "exec_command",
                 "reason": "rule R1"
             }),
         });
@@ -2744,9 +2751,14 @@ mod tests {
             "\"retry\" src"
         );
         assert_eq!(
-            summarize_args(&json!({ "command": "cargo test" })),
+            summarize_args(&json!({ "cmd": "cargo test" })),
             "cargo test"
         );
+        assert_eq!(
+            summarize_args(&json!({ "process_id": 3, "chars": "y\n" })),
+            "#3 ← y\\n"
+        );
+        assert_eq!(summarize_args(&json!({ "process_id": 3 })), "#3");
     }
 
     #[test]
