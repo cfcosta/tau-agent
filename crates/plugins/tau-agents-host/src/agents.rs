@@ -574,6 +574,44 @@ impl Agents {
         spend
     }
 
+    /// `events` as `agent`'s message holds them: the data of each too
+    /// large for it kept as an artifact its main chat may read, and
+    /// named in its place ([`crate::artifacts`]). One that cannot be
+    /// kept stays, and the message cuts it.
+    async fn keep_large(
+        &self,
+        agent: &str,
+        mut events: Vec<Event>,
+        conversations: &dyn tau_ui_plugin::Conversations,
+    ) -> Vec<Event> {
+        let Some(main) = conversations.main_of(agent) else {
+            return events;
+        };
+        let repo = self.0.root.join(agent);
+        for event in &mut events {
+            if !crate::artifacts::too_large(&event.data) {
+                continue;
+            }
+            let env = self.0.env.clone();
+            let kept =
+                crate::artifacts::keep(&repo, &main, &event.data, |record| {
+                    let main = main.clone();
+                    async move { env.grant(&main, record).await }
+                })
+                .await;
+            match kept {
+                Ok(reference) => event.data = reference,
+                Err(error) => {
+                    eprintln!(
+                        "{NAME}: {agent}'s {} event: {error}",
+                        event.trigger
+                    );
+                }
+            }
+        }
+        events
+    }
+
     /// Starts a turn of `agent` on the events that waited long enough,
     /// if it may take one now. Whether anything changed.
     async fn deliver(&self, agent: &str, now: i64) -> bool {
@@ -602,10 +640,10 @@ impl Agents {
             return false;
         }
         let batch = self.with_kept(agent, |kept| kept.queue.clone()).await;
-        let text = Batch {
-            events: batch.clone(),
-        }
-        .message(self.0.clock.offset(now));
+        let events = self
+            .keep_large(agent, batch.clone(), conversations.as_ref())
+            .await;
+        let text = Batch { events }.message(self.0.clock.offset(now));
         let started = conversations
             .turn(Turn {
                 repo: agent.to_owned(),

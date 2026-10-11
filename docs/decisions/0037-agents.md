@@ -93,8 +93,12 @@ What is missing:
 
   Each event is its trigger's name, its kind, its id, when it came, and
   its data as JSON. Data over 8 KiB is stored as a codemode artifact
-  (0018, M4) and the line holds its reference, so a large payload never
-  fills the conversation.
+  (0018, M4) of the agent's repository, granted to its main chat, and
+  the line holds `{ artifact, size_bytes, read_with, head }`: its
+  reference and its first KiB, so a large payload never fills the
+  conversation. A message to another agent may be long for the same
+  reason (up to a million characters); notes and questions, which the
+  person reads, stay under 4000.
 
 - **At least once.** An event leaves the queue when the turn it is in
   has started and its message is stored. tau closed in between delivers

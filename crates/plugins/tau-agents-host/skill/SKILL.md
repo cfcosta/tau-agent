@@ -127,6 +127,11 @@ one message; events that come while you work arrive at your next turn.
   not act again.
 - A schedule that came due while tau was closed fires once when tau
   starts, with the first time it missed as `due`.
+- An event's data over 8 KiB is not in the message: its line holds
+  `{"artifact": id, "size_bytes": n, "read_with": "artifact_read",
+"head": "…"}`, the first KiB and where the rest is. Read it from a
+  script, a page at a time: `tools.artifact_read { id = id, offset =
+0 }`, then each `next_offset`.
 - When an event needs nothing from you, say so in a line and stop. A
   turn costs money; short turns on routine events keep you under your
   cap.

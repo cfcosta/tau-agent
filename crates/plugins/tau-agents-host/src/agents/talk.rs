@@ -18,8 +18,13 @@ use super::Agents;
 /// a new one comes. Questions stay until answered.
 const NOTES: usize = 20;
 
-/// The longest note, question, choice or message, in characters.
+/// The longest note, question or choice, in characters: the person
+/// reads them.
 pub const MAX_TEXT: usize = 4000;
+
+/// The longest message to another agent, in characters. One over its
+/// message's inline data reaches it as an artifact (ADR 0037).
+pub const MAX_MESSAGE: usize = 1_000_000;
 
 /// How far a message may go, agent to agent, through turns that only
 /// messages woke (ADR 0037's guard against ping-pong).
@@ -176,8 +181,8 @@ impl Agents {
         if text.is_empty() {
             return Err("Say something".into());
         }
-        if text.chars().count() > MAX_TEXT {
-            return Err(format!("Keep it under {MAX_TEXT} characters"));
+        if text.chars().count() > MAX_MESSAGE {
+            return Err(format!("Keep it under {MAX_MESSAGE} characters"));
         }
         if to == from {
             return Err("That is you: keep what you would tell yourself \

@@ -24,8 +24,13 @@ tau-ai.workspace = true
 tau-luau-plugins-host.workspace = true
 # Where the skill tau ships is installed.
 tau-skills = { path = "../tau-skills", default-features = false }
-# tau's secret store, which an agent's requests name keys from.
+# tau's secret store, which an agent's requests name keys from, and the
+# grants its runs read artifacts by.
 tau-tools-host.workspace = true
+# Whose records those grants are.
+tau-tools.workspace = true
+# An event's data too large for its message.
+tau-artifacts.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tau-vcs-host.workspace = true

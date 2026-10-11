@@ -17,9 +17,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The most of an event's data a message holds inline. ADR 0037 keeps a
+/// The most of an event's data a message holds inline. The host keeps a
 /// larger payload as a codemode artifact and puts its reference in the
-/// line; until agents have artifacts, the data is cut here and the line
+/// line (ADR 0037); data it could not keep is cut here, and the line
 /// says how much there was.
 pub const INLINE_DATA: usize = 8 * 1024;
 

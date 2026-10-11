@@ -99,6 +99,8 @@ struct Host {
     answers: Mutex<BTreeMap<String, VecDeque<Result<Value, String>>>>,
     /// The tools called outside a run: where, which, with what.
     called: Mutex<Vec<(PathBuf, String, Value)>>,
+    /// The artifact grants stored, by run.
+    grants: Mutex<Vec<(String, Value)>>,
     /// Whether requests go out; else they fail, offline.
     online: AtomicBool,
 }
@@ -156,6 +158,15 @@ impl Env for Host {
 
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {
         Some(self.conversation.clone())
+    }
+
+    fn grant<'a>(
+        &'a self,
+        run: &'a str,
+        record: Value,
+    ) -> HostFuture<'a, anyhow::Result<()>> {
+        self.grants.lock().unwrap().push((run.to_owned(), record));
+        Box::pin(async { Ok(()) })
     }
 
     fn secrets(&self, agent: &str) -> SecretStore {
@@ -958,4 +969,49 @@ fn an_agent_s_servers_start_in_its_sandbox_or_not_at_all() {
     let without = open(f._home.path(), &f.clock, &f.host).with_bwrap(None);
     let why = without.unattended(&checkout).unwrap().sandbox.unwrap_err();
     assert!(why.contains("bwrap"), "{why}");
+}
+
+/// An event's data too large for its message is kept whole as an
+/// artifact of the agent's repository, granted to its main chat, and
+/// the message names it with its first bytes (ADR 0037).
+#[test]
+fn data_too_large_for_a_message_is_kept_as_an_artifact() {
+    let f = Fixture::new();
+    f.tick();
+    let long = "x".repeat(tau_agents::event::INLINE_DATA + 100);
+    f.command(&long);
+    f.clock.advance(30);
+    f.tick();
+    let turns = f.turns();
+    assert_eq!(turns.len(), 1);
+    assert!(
+        turns[0].text.len() < tau_agents::event::INLINE_DATA,
+        "{}",
+        turns[0].text.len()
+    );
+    let heard = heard(&turns[0]);
+    let reference: Value = serde_json::from_str(&heard[0].1).unwrap();
+    let id = reference["artifact"].as_str().unwrap().to_owned();
+    assert_eq!(reference["read_with"], "artifact_read");
+    assert!(
+        reference["head"]
+            .as_str()
+            .unwrap()
+            .starts_with("{\"args\":\"xxx")
+    );
+    // Granted to its main chat, as tau-tools' record, which
+    // `artifact_read` folds.
+    let grants = f.host.grants.lock().unwrap().clone();
+    assert_eq!(grants.len(), 1);
+    assert_eq!(grants[0].0, "main-of-greet");
+    let folded =
+        tau_tools_host::artifact_grant::fold_grants(&[grants[0].1.clone()])
+            .unwrap();
+    let grant = &folded[&id];
+    assert_eq!(grant.owner_run_id, "main-of-greet");
+    // The bytes are the event's data, whole.
+    let whole = json!({ "args": long, "from": "run-1" }).to_string();
+    assert_eq!(grant.artifact.size_bytes, whole.len() as u64);
+    let objects = f._home.path().join("agents/greet/artifacts");
+    assert!(objects.exists(), "{}", objects.display());
 }

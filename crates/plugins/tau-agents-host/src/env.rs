@@ -79,6 +79,17 @@ pub trait Env: Send + Sync {
         })
     }
 
+    /// Stores `record`, a grant of tau-tools' (`artifact_read` reads its
+    /// grants from them), with the run `run`: an agent's main chat, so
+    /// its runs read the artifact an event's data was kept as.
+    fn grant<'a>(
+        &'a self,
+        _run: &'a str,
+        _record: Value,
+    ) -> HostFuture<'a, anyhow::Result<()>> {
+        Box::pin(async { anyhow::bail!("this host grants no artifacts") })
+    }
+
     /// Reads the MCP resource `uri` of `server` for the agent checked
     /// out at `checkout`: its `ReadResourceResult` as JSON.
     fn read_resource<'a>(
@@ -189,6 +200,17 @@ impl Env for HostEnv {
     ) -> HostFuture<'a, Result<Value, String>> {
         Box::pin(async move {
             crate::poll::fetch(&self.secrets(agent), &spec).await
+        })
+    }
+
+    fn grant<'a>(
+        &'a self,
+        run: &'a str,
+        record: Value,
+    ) -> HostFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            let run = tau_agent::tool::RunId(run.into());
+            self.0.publish(&run, tau_tools::ui::NAME, &record).await
         })
     }
 

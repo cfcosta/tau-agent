@@ -13,12 +13,14 @@
 //! - `state`: each agent's queue and schedules, kept across restarts.
 //! - `tools`: what an agent's runs have to reach the person and other
 //!   agents.
+//! - `artifacts`: an event's data too large for its message.
 //! - `env`: what the agents reach of the host.
 //! - `sandbox`: where an agent's commands run.
 //! - `clock`: the host's time, and its local days.
 //! - `skill`: the `tau-agents` skill tau ships.
 
 mod agents;
+pub mod artifacts;
 pub mod clock;
 pub mod env;
 mod half;
@@ -34,7 +36,7 @@ pub mod tools;
 
 pub use agents::{
     Agents,
-    talk::{MAX_HOPS, MAX_TEXT, hops_of},
+    talk::{MAX_HOPS, MAX_MESSAGE, MAX_TEXT, hops_of},
 };
 pub use half::AgentsHost;
 pub use tau_agents::{NAME, ROOT, SKILL};
