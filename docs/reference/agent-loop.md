@@ -79,7 +79,7 @@ pi, a note says so.
   `is_error = true`. Its text is the error message. A
   `ToolError::Output` carries a whole output instead: the result is
   that output, content and `details`, with `is_error = true` (a failed
-  `bash` command keeps its terminal this way).
+  `exec_command` keeps its terminal this way).
 - **After each tool:** the plugins' `after_tool_result` seams may patch
   the output field by field.
 - **Updates after completion:** a tool that sends updates after its

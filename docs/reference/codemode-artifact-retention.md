@@ -2,12 +2,10 @@
 
 ## Inspection
 
-Finished `read` and `bash` cards report the artifact ID, SHA-256 digest, byte
-size, source, and observed source completeness. A failed publication reports
-its error; an empty `bash` output reports that it has no artifact. A terminal
-card keeps its rendered terminal view while its artifact refers to the raw PTY
-byte stream. The model and card receive bounded output, not the complete
-artifact bytes.
+Finished `read` cards report the artifact ID, SHA-256 digest, byte size,
+source, and observed source completeness. A failed publication reports its
+error. The model and card receive bounded output, not the complete artifact
+bytes. Command output is not published as an artifact.
 
 The run inspector lists the run's scoped grants from its serialized `tau-tools`
 state. Live record folding and reloaded record folding use the same serde
@@ -21,9 +19,7 @@ the grant state without the filesystem artifact crate.
 
 `source_complete` describes the observed source boundary. For `read`, `true`
 means the display reader reached its selected range and continuation boundary;
-it does not establish that immutable bytes were published. For `bash`, it
-describes the captured stream drain and does not indicate command exit success.
-Only an artifact reference with a persisted grant identifies readable bytes.
+it does not establish that immutable bytes were published. Only an artifact reference with a persisted grant identifies readable bytes.
 `artifact_error` is authoritative when publication fails, including missing
 storage or a file changed after display. New grants store source completeness;
 older grants without the field show completion as unknown.

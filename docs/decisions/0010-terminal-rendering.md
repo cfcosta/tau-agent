@@ -1,6 +1,6 @@
 # 0010: bash output is a terminal, emulated by libghostty-vt
 
-- Status: accepted
+- Status: accepted. Amended by [0038](0038-commands-run-in-the-background.md): `bash` is `exec_command` and `write_stdin`, and the model reads its own plain text of the output.
 - Date: 2026-09-29
 - Research: [terminal-rendering.md](../research/terminal-rendering.md),
   which recommended `alacritty_terminal` and `vt100` instead

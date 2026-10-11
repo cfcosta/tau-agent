@@ -75,5 +75,5 @@ the file's size against the grant metadata. A missing file or changed size
 fails explicitly, including after a storage restart. The range call does not
 rehash the whole file; hosts must protect the private storage directory from
 untrusted writes. With artifact storage configured, `read` publishes a
-full-file artifact through this API; `bash` does not. See
+full-file artifact through this API; command tools do not. See
 [full-file artifacts](codemode-artifact-files.md).

@@ -5,7 +5,7 @@ depends on no other tau crate
 ([0010](../decisions/0010-terminal-rendering.md)). This page covers the
 view and its pure parts. The emulator (`Terminal`) and the runner
 (`Command`) are covered in the crate docs and in
-[tools.md](tools.md), "bash: terminal mode".
+[tools.md](tools.md), "exec_command and write_stdin".
 
 Try it with the example, which runs a command under a pseudo-terminal
 and shows it:
@@ -134,19 +134,22 @@ These are testable without a window:
 - `Terminal::lines(range)`, `total_rows()`, `history_rows()`: styled
   rows of the whole scrollback. Freezing is built from these.
 
-## In tau-ui: the `bash` card
+## In tau-ui: the command card
 
-A `bash` result with `term` details (see [tools.md](tools.md)) is a
+An `exec_command` or `write_stdin` result with `term` details (see [tools.md](tools.md)) is a
 `ToolBody::Terminal(TermOutput)` in the view model (`view.rs`):
 
 - While the command runs, each progress update's chunk is appended in
   `seq` order. Repeated or early chunks are dropped.
 - The result replaces the chunks with its replay bytes and records how
-  the command ended (`exit N`, `timed out` or `cancelled`, shown in red
-  on the card).
+  the call ended (`exit N`, shown in red on the card; a command left
+  running is not a failure).
+- A call returns while its command may go on, so a card shows what that
+  call read, not the whole terminal: the next `write_stdin` card shows
+  the next part.
 - A run reopened from the store builds the same body from the stored
   result's details.
-- Results without `term` details (pipe mode) keep the plain lines.
+- Results without `term` details keep the plain lines.
 
 `ui/term_card.rs` keeps one `TerminalView` per card that has been shown:
 

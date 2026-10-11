@@ -470,7 +470,7 @@ settings)` gives what commands in a repository start through: a
   words to put before the program and the variables to set (`Launch`),
   and may wait first (an environment loading). The host joins every
   plugin's in the registry's order (`Launchers`) and hands the result
-  to tau-tools' `bash` (`CodingTools::with_launcher`) and, through
+  to tau-tools' `exec_command` (`CodingTools::with_launcher`) and, through
   `RunCtx::services`, to tau-mcp, which starts the repository's stdio
   servers through it in the main workspace (`RepoLauncher`). With none,
   commands start as they are. tau-direnv is the first such plugin
@@ -748,7 +748,7 @@ Built: `crates/plugins/tau-constitution`, with its host half in
 - **Constitution:** a list of rules, each with an id, its text, and
   where it applies:
   - named tools and argument fields, such as `edit.newText`,
-    `write.content` or `bash.command`;
+    `write.content` or `exec_command.cmd`;
   - or the final answer.
 - **How:**
   1. For a call a rule applies to, put the relevant argument fields
@@ -776,7 +776,7 @@ Built: `crates/plugins/tau-fast-compaction`. Its reference is
 - **Seams:** `rewrite_context` (turn ends, starts and overflows; it
   leaves an idle run to tau-compaction, since pruning first would
   change what that summary reads from cache), `start` to restore
-  its ledger, and `after_tool_result` to prune a large `bash` output
+  its ledger, and `after_tool_result` to prune a large `exec_command` output
   before the model first sees it.
 - **How** (after `joelhooks/pi-fast-jev-compaction`):
   1. Past a share of the window (default 60%), and outside a token

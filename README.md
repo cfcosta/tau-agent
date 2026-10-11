@@ -38,8 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   upgrades will not work.
 - **Embedded storage.** Runs, messages, forks and costs go to a SQLite
   file through `sqlx`, in `tau-store-sqlite`.
-- **Coding tools are optional.** `read`, `bash`, `edit`, `write`, `grep`,
-  `find` and `ls` live in the separate `tau-tools-host` crate.
+- **Coding tools are optional.** `read`, `exec_command`, `write_stdin`,
+  `edit`, `write`, `grep`, `find` and `ls` live in the separate `tau-tools-host` crate.
 
 The agent loop, event model, tool validation, compaction and WebSocket
 continuation logic are ported from [pi](https://github.com/earendil-works/pi)
@@ -333,8 +333,8 @@ struct NoRmRun;
 #[async_trait]
 impl PluginRun for NoRmRun {
     async fn before_tool(&mut self, call: &mut ToolCall, _ctx: &PluginCtx) -> Result<Decision, PluginError> {
-        let command = call.args["command"].as_str().unwrap_or("");
-        if call.name == "bash" && command.contains("rm -rf") {
+        let command = call.args["cmd"].as_str().unwrap_or("");
+        if call.name == "exec_command" && command.contains("rm -rf") {
             return Ok(Decision::Block("rm -rf is not allowed".into()));
         }
         Ok(Decision::Allow)
@@ -441,16 +441,16 @@ let coder = Agent::new(llm.clone())
     .name("coder")
     .plugin(CodingTools::new(Root::new("/path/to/repo")));
 
-// Or a subset: `.only(&[Tool::Read, Tool::Grep])`, `.without(Tool::Bash)`.
+// Or a subset: `.only(&[Tool::Read, Tool::Grep])`, `.without(Tool::ExecCommand)`.
 ```
 
 `CodingTools` is a plugin that only adds tools; `tau_tools_host::coding_tools`
-returns the same seven for `Agent::tools`. `bash`, and so both, is
+returns the same eight for `Agent::tools`. `exec_command`, and so both, is
 Unix-only. The search tools run in-process: no `rg` or `fd` binary is
 needed.
 
 The root sets where relative paths go. It is not a sandbox: absolute
-paths and `bash` can reach the rest of the machine. Use a plugin to limit
+paths and commands can reach the rest of the machine. Use a plugin to limit
 what the tools may do.
 
 ### Testing your agents

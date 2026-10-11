@@ -443,7 +443,7 @@ A hand-written renderer over `serde_json::Value`, after pi's
   order they were made.
 - **On failure** a last text item: `Script error:` and the error with
   its line, then
-  `Tool calls made before the failure (they are not undone): read (ok), bash (error)`
+  `Tool calls made before the failure (they are not undone): read (ok), exec_command (error)`
   (`, and N more` past the rows' cap) or `No tool calls were made.`
   Heads for other failures:
   `Script timed out: it ran past its timeout_ms of N ms.`,

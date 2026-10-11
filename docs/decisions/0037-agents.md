@@ -1,6 +1,8 @@
 # 0037: Agents: a conversation that never ends, and rewrites itself
 
-- Status: proposed. Builds on [0018](0018-codemode-and-mcp.md),
+- Status: proposed. Where it says `bash`, read `exec_command` and
+  `write_stdin` ([0038](0038-commands-run-in-the-background.md)): the
+  sandbox is their launcher. Builds on [0018](0018-codemode-and-mcp.md),
   [0025](0025-agent-commands-run-in-an-environment-plugins-give.md),
   [0026](0026-sub-agents-run-detached.md),
   [0027](0027-luau-plugins.md), [0031](0031-the-main-chat-orchestrates.md)

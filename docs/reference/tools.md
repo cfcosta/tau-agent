@@ -2,8 +2,7 @@
 
 Related artifact references: [storage](codemode-artifact-storage.md),
 [file artifacts](codemode-artifact-files.md),
-[ranges](codemode-artifact-ranges.md),
-[command artifacts](codemode-command-artifacts.md), and
+[ranges](codemode-artifact-ranges.md), and
 [retention](codemode-artifact-retention.md). The offline
 [evaluation matrix](codemode-evaluation.md) exercises owned grants and pages.
 
@@ -34,10 +33,10 @@ The truncation helpers:
 A tool that fails returns `Err`, and the loop marks the result
 `is_error`. Every tool takes a root directory (`tau_tools_host::path::Root`)
 at construction, and all paths resolve against it.
-`tau_tools_host::plugin::CodingTools::new(root)` adds all seven to an agent
+`tau_tools_host::plugin::CodingTools::new(root)` adds all eight to an agent
 as a plugin (`Agent::plugin`); `only` and `without` pick a subset, which
 keeps pi's order. `tau_tools_host::coding_tools(&root)` returns the same
-seven, for `Agent::tools`. `bash`, and so both, is unix-only.
+eight, for `Agent::tools`. `exec_command`, and so both, is unix-only.
 
 ## read: `{ path, offset?, limit? }`
 
@@ -63,134 +62,122 @@ seven, for `Agent::tools`. `bash`, and so both, is unix-only.
 - **Deliberate difference from pi:** tau-agent reads only the requested
   range. pi reads the whole file even when an offset is given.
 
-## bash: `{ command, timeout? }`
+## exec_command and write_stdin
 
-- `timeout` is in seconds. There is no default.
-- **Shell:** a configured shell path if one is set; otherwise
-  `/bin/bash`, then `bash` on `PATH`, then `sh`. The command runs as
-  `-c <command>`, and stdin is closed.
+Run a command, and go on with it ([0038](../decisions/0038-commands-run-in-the-background.md)).
+They follow Codex's unified exec, not pi's `bash`: a command that is not
+done when the call returns keeps running, and a second tool reads it.
+
+### exec_command: `{ cmd, workdir?, yield_time_ms?, tty? }`
+
+- `cmd` runs as `<shell> -c <cmd>` on a pseudo-terminal, in `workdir`
+  (relative to the working directory; an error when it is not a
+  directory) or the working directory.
+- `yield_time_ms` is how long the call waits for the command to end:
+  10000 by default, between 250 and 30000. A command that ends sooner
+  answers at once.
+- `tty` puts the command's stdin on the terminal, so `write_stdin` can
+  send it input. Off by default: stdin is `/dev/null`, and a program
+  that reads it gets end of file.
+- **Shell:** `/bin/bash`, then `bash` on `PATH`, then `sh`
+  (`exec::choose_shell`).
 - **Environment:** the command inherits tau-ui's environment, and starts
-  through what plugins give the repository, when one does: words
-  before the shell and variables over its environment, such as
-  `direnv exec <workspace>` from tau-direnv
-  ([environment.md](environment.md),
+  through what plugins give the repository, when one does: words before
+  the shell and variables over its environment, such as `direnv exec
+  <workspace>` from tau-direnv ([environment.md](environment.md),
   [0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md)).
-  The first command may wait for it; the wait counts against
-  `timeout`, past which the call times out with "Command timed out
-  waiting for the repository's environment to load" and nothing ran.
-- **Process group:** the child runs in its own process group (`setsid`
-  or `process_group(0)`). On cancel or timeout, the whole group gets
-  SIGKILL. Exit code 128 + N is reported for signal N.
-- **Late output:** after the child exits, keep reading until the pipes
-  have been idle for 100 ms. Grandchildren that still hold the pipes
-  would otherwise lose output.
-- **Output:**
-  - stdout and stderr are merged in arrival order;
-  - a rolling tail of at least 2 × `MAX_BYTES` is kept. It is trimmed
-    back to 2 × `MAX_BYTES` when it passes 4 × `MAX_BYTES`, and the cut
-    moves back to a UTF-8 boundary;
-  - the result is `truncate_tail` of the full output. When the rolling
-    tail starts inside a line, that line still counts at its full
-    length. If it is the last line, its end shows after `…`, so `cat`
-    of a one-line minified file shows the file's end;
-  - **Deliberate difference from pi:** pi's `OutputAccumulator` drops a
-    partial first line of the rolling tail, so that output shows as
-    empty;
-  - when output was truncated, the full output is written to
-    `$TMPDIR/tau-bash-<hex>.log`, and the notice says
-    `Full output: <path>`.
-- **Errors:** a non-zero exit, a timeout or an abort returns `Err`, for
-  example `Command exited with code N`.
-- **Progress:** partial output is sent as `ToolUpdate`, throttled.
-- **Artifact:** with artifact storage configured, a run with observed
-  output bytes publishes the complete captured stream when its source
-  reaches the drain boundary. `artifact` contains its grant, digest,
-  byte size, and source. Publication failure leaves `artifact: null`
-  and sets `artifact_error`; an incomplete source cannot grant its
-  captured bytes. A complete run with zero output bytes has
-  `artifact: null` and `artifact_error: null`. The result's details
-  carry the same `artifact`, `artifact_error` and `source_complete`,
-  with pipes or a terminal, so the card can show them.
+  The first command may wait for it; a cancel while it waits ends the
+  call before anything ran.
+- **The terminal:** 120 columns by 40 rows, fixed. stdout and stderr are
+  the terminal. The command leads its own session and process group,
+  with the terminal as its controlling terminal, and starts with
+  `SIGHUP` ignored. `TERM=xterm-256color`, `PAGER=cat`, `GIT_PAGER=cat`,
+  `MANPAGER=cat`, `LESS=-FRX`. Reading `/dev/tty` of a command without
+  `tty` gets end of file at once.
 
-### bash: terminal mode (the `terminal` feature)
+### write_stdin: `{ process_id, chars?, yield_time_ms? }`
 
-With tau-tools-host's `terminal` feature (tau-ui turns it on), `bash` runs
-commands under a pseudo-terminal by default
-([0010](../decisions/0010-terminal-rendering.md));
-`Bash::with_terminal(false)` goes back to the pipes above. Everything
-above holds, except as follows.
+- `process_id` is the id a still running answer named.
+- `chars` is written to the process's terminal as typed: `\n` ends a
+  line, `\u0003` is `^C`, which the terminal turns into `SIGINT`, and
+  `\u0004` is end of input. A process started without `tty` has no
+  input: the call fails, saying so.
+- Without `chars`, the call only polls, and waits at least 5 seconds
+  (5000 to 300000). With them it waits 1000 by default (250 to 30000).
+- It answers with what the process wrote since the last call, as
+  `exec_command` does. An unknown id fails: `No process N: it ended and
+  was reported, or was never started.`
 
-- **The terminal:** 120 columns by 40 rows, fixed, so the text never
-  depends on a window. stdout and stderr are the terminal; stdin stays
-  `/dev/null`. The command leads its own session (and process group),
-  with the terminal as its controlling terminal. It starts with
-  `SIGHUP` ignored, so a background job outlives the shell as it does
-  with pipes.
-- **Environment:** `TERM=xterm-256color`, `PAGER=cat`,
-  `GIT_PAGER=cat`, `MANPAGER=cat`, `LESS=-FRX`.
-- **Prompts:** reading stdin gets end of file. Reading `/dev/tty` gets
-  end of file once too (an EOF character waits in the terminal's input),
-  so a password prompt fails at once instead of waiting.
-- **The model's text** is the terminal's plain text (tau-terminal,
-  libghostty-vt): each row once, in order, as it scrolls off, then what
-  is left on screen, down to the cursor. It goes through the same
-  accumulator as with pipes: the same `truncate_tail` limits, and the
-  same spill file, holding this plain text. So:
-  - output with no control characters but newlines reads exactly as
-    it does with pipes (a property test holds this);
-  - the terminal's `\r\n` line ends read as `\n`, and soft-wrapped
-    lines are joined back;
-  - a `\r` redraw (a progress bar) leaves only its last frame;
-  - escape sequences are applied, never shown; a tab becomes the spaces
-    up to the next tab stop;
-  - what a program draws on the alternate screen is gone once it leaves
-    it.
-- **Progress updates** carry the text so far as their content, as with
-  pipes, and the raw output in their details:
+### The answer
+
+- **Text:** what the process wrote since the last call that read it,
+  once. A call that waited for nothing new says `(no new output)`, and
+  a command that ended without output `(no output)`.
+- **Still running:** the text ends with `[process N is still running:
+  write_stdin with process_id N ...]`, and the call succeeds.
+- **Ended:** zero exit is the output alone. A non-zero exit returns
+  `Err` whose text is the output, then `Command exited with code N`
+  (128 + N for signal N). The process leaves once its end is reported.
+- **Plain text:** the terminal's bytes become the model's text through
+  `exec::clean::Cleaner`: `\r\n` reads as a line end, a `\r` redraw
+  (a progress bar) or an erase in line leaves only its last frame,
+  backspace and tab move the cursor, colors, titles and other escape
+  sequences are dropped. A line still being written is said as far as
+  it is, and not said again once it ends. **Deliberate difference from
+  0010:** this is not the screen's own text, which cannot be read
+  incrementally between calls.
+- **Limits:** the answer is `truncate_tail` of the new text (2000 lines
+  or 50 KiB), headed by `[output cut to the last N of M lines]` when it
+  cut. At most 1 MiB of unread text is kept per process, the oldest
+  lines going first, and a note says how many.
+- **`structured`** (for codemode): `{ process_id, running, exit_code,
+  output, truncated, dropped_lines }`.
+- **Progress:** each burst of output is sent as a `ToolUpdate`, the raw
+  bytes in its details:
 
   ```json
   { "term": { "seq": 0, "bytes": "<base64>" } }
   ```
 
-  `seq` counts from 0 with no gaps. The chunks, decoded and joined in
-  order, are every byte the command wrote, escape sequences included
-  (with the terminal's `\r\n` line ends). Chunks are coalesced (at most
-  16 ms or 64 KiB waiting) and never dropped, and the last one is sent
-  before the tool returns. An update without details carries only new
-  text.
-
-- **Result details**, on success and on failure (a failed result is a
-  `ToolError::Output`, which keeps them):
+  `seq` counts the call's chunks from 0. The chunks, decoded and joined,
+  are every byte the call read, escape sequences included.
+- **Result details**, on success and on failure:
 
   ```json
   {
     "term": {
       "cols": 120,
       "rows": 40,
-      "status": "exited",
-      "exitCode": 0,
+      "status": "running",
+      "exitCode": null,
+      "process": 3,
       "chunks": 12,
       "outputBytes": 5120,
       "replay": "stream",
+      "lost": false,
       "bytes": "<base64>"
     }
   }
   ```
 
-  - `status`: `exited`, `timedOut` or `cancelled`. `exitCode`: the
-    exit code, 128 + N for signal N; `null` on a timeout or a cancel.
-  - `chunks` and `outputBytes`: how many chunks the updates carried,
-    and how many bytes.
-  - `replay`: `stream` when `bytes` is the whole raw output (up to
-    4 MiB), `snapshot` when it is larger and `bytes` is the final
-    screen and scrollback as VT sequences instead. Either way, `bytes`
-    written to a new `cols` by `rows` terminal shows the finished
-    command.
-  - The details are stored with the tool result, so a reopened run
-    rebuilds its terminal from the store.
+  `status` is `running` or `exited`; `exitCode` is the exit code once
+  it exited. `bytes` is the raw output this call read, the newest 4 MiB
+  of it (`lost` says some was dropped), and `outputBytes` counts all the
+  process wrote so far. tau-ui draws it as the card's terminal screen
+  ([terminal.md](terminal.md), "In tau-ui: the command card").
 
-tau-ui draws these as the card's terminal screen
-([terminal.md](terminal.md), "In tau-ui: the `bash` card").
+### Processes
+
+- A run's processes live in its `exec::Processes`, which the host keeps
+  per workspace so they outlive a turn. A task per process reads its
+  terminal as it writes, so output is kept between calls.
+- **Cancel:** a cancelled call does not stop the process. It fails with
+  `Operation aborted` and says the process goes on; what it wrote
+  meanwhile is the next call's.
+- **Limit:** 64 processes. Past it, the least recently used goes (one
+  that exited first), and the 8 most recently used stay.
+- **End:** dropping the processes, or closing the workspace they ran
+  in, kills each process group (`SIGKILL`). Nothing outlives tau.
 
 ## edit: `{ path, edits: [{ oldText, newText }] }`
 
@@ -351,10 +338,11 @@ gave it. `N`, `M` and `K` are numbers.
 | `edit` | overlapping edits              | `edits[J] and edits[K] overlap in <path>. Merge them into one edit or target disjoint regions.`                                                                     |
 | `edit` | no change, one edit            | `No changes made to <path>. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.` |
 | `edit` | no change, several edits       | `No changes made to <path>. The replacements produced identical content.`                                                                                           |
-| `bash` | non-zero exit                  | output, then `Command exited with code N`                                                                                                                           |
-| `bash` | timeout                        | output, then `Command timed out after N seconds`                                                                                                                    |
-| `bash` | cancelled                      | output, then `Command aborted`                                                                                                                                      |
-| `bash` | bad `timeout` argument         | `Invalid timeout: must be a finite number of seconds`                                                                                                               |
+| `exec_command`, `write_stdin` | non-zero exit | output, then `Command exited with code N`                                                                                                                    |
+| `exec_command` | `workdir` not a directory     | `workdir is not a directory: <path>`                                                                                                                                |
+| `write_stdin` | unknown process                | `No process N: it ended and was reported, or was never started.`                                                                                                    |
+| `write_stdin` | input to a process without `tty` | `Process N has no input: its stdin is closed. Start it with `tty: true` to send it input.`                                                                        |
 
 Taken from pi at `2b0a123`: `edit.ts:181`, `edit-diff.ts:253-347`,
-`bash.ts:28-372`, `read.ts:143`.
+`read.ts:143`. The command tools follow Codex's unified exec
+(`codex-rs/core/src/unified_exec`).

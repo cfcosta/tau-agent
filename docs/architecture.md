@@ -45,7 +45,7 @@ tau-agent/
 │       ├── tau-reasoning/        # picks a run's reasoning effort
 │       ├── tau-skills/           # instructions an agent loads when a task
 │       │                         # calls for them
-│       ├── tau-tools/            # read, bash, edit, write, grep, find, ls
+│       ├── tau-tools/            # read, exec_command, write_stdin, edit, ...
 │       ├── tau-tree-compaction/  # compaction into a tree of summaries the
 │       │                         # agent zooms into, after OptChat
 │       ├── tau-vcs/              # version control on jj-lib, and landing runs
@@ -64,9 +64,10 @@ Dependency direction:
 - `tau-ui-kit` depends on GPUI and `tau-terminal` (the theme's terminal
   palette), and on no other tau crate.
 - `tau-terminal` depends on no tau crate. `tau-tools-host` uses it to
-  run `bash` under a pseudo-terminal, and `tau-tools` to draw `bash`
-  cards, each only with its `terminal` feature, which `tau-ui` turns on
-  ([0010](decisions/0010-terminal-rendering.md)).
+  run commands under a pseudo-terminal, and `tau-tools` to draw their
+  cards, the latter only with its `terminal` feature, which `tau-ui`
+  turns on ([0010](decisions/0010-terminal-rendering.md),
+  [0038](decisions/0038-commands-run-in-the-background.md)).
 - `tau-ui-remote` draws runs and starts none: it depends on the
   plugins' crates, not on their host halves, and lists the plugins
   without them. `tau-ui` brings the host halves (the `tau-*-host`

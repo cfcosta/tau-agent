@@ -13,7 +13,7 @@
 The model reaches version control only through these tools. It never
 runs `jj` or `git` in a shell. The tools work on a jj repository, so
 there is no staging area, and file edits made with `write`, `edit` or
-`bash` are recorded when the next vcs tool snapshots the working copy.
+`exec_command` are recorded when the next vcs tool snapshots the working copy.
 
 ## Setup
 
@@ -883,4 +883,4 @@ the UI"):
 - **Operation log.** Browsing it, restoring an arbitrary operation, and
   updating a workspace a concurrent operation left stale.
 - **Guarding the shell.** A `before_tool` hook that blocks `git` and
-  `jj` in `bash` is not built.
+  `jj` in `exec_command` is not built.

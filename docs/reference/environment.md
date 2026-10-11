@@ -17,11 +17,9 @@ them in the repository's direnv environment. Crates: `tau-agent`
   tau-ui's host joins every plugin's in the registry's order
   (`Host::launcher_of`).
 - Consumers:
-  - `bash` (`CodingTools::with_launcher`), with pipes and under a
-    terminal (`tau_terminal::Command::through`). The command's timeout
-    counts the wait: past it, the result is `timed_out` with "Command
-    timed out waiting for the repository's environment to load", and
-    nothing ran. A cancel while waiting is `Command aborted`.
+  - `exec_command` (`CodingTools::with_launcher`), under a terminal
+    (`tau_terminal::Command::through`). A cancel while waiting ends the
+    call (`Operation aborted`), and nothing ran.
   - tau-mcp: the run's services carry the repository's `RepoLauncher`
     (the joined launcher and the main workspace); the repository
     scope's pool keeps it, and each stdio server starts through it, in
@@ -123,10 +121,9 @@ no other plugin's: its commands, and its stdio MCP servers, start inside
 
 - `tau-agent`: `Launch::argv`, and `Launchers` joining in order.
 - `tau-terminal`: a launcher's words run before the program.
-- `tau-tools-host` (`tests/bash_launch.rs`): the words and variables reach
-  the command, pipes and terminal; no launcher, or a direct one,
-  changes nothing; a held command starts once answered; the wait
-  counts against the timeout; a cancel ends it.
+- `tau-tools-host` (`tests/exec_launch.rs`): the words and variables
+  reach the command; no launcher, or a direct one, changes nothing; a
+  held command starts once answered; a cancel ends the wait.
 - `tau-mcp-host` (`tests/stdio.rs`): a stdio server starts through the
   launcher, asked for the main workspace.
 - `tau-direnv`: the `direnv.toml` merge (every key kept, the person's

@@ -34,7 +34,7 @@ evaluator has no supported live transport and rejects live mode before use.
 - [x] **06:** Add [structured paths and completeness](reference/codemode-find.md) to `find`.
 - [x] **07:** Add [structured matches and context](reference/codemode-grep.md) to `grep`.
 - [x] **08:** Add [structured text and ranges](reference/codemode-read.md) to `read`.
-- [x] **09:** Add [structured exit status and output metadata](reference/codemode-bash.md) to `bash`.
+- [x] **09:** Add structured exit status and output metadata to `bash` (since replaced by [`exec_command`](reference/codemode-exec.md)).
 
 Tasks 05 through 08 depend on the result contracts, but not on each other.
 M1 keeps existing display limits. It does not yet provide complete access
@@ -69,7 +69,7 @@ correctness and evaluation, not on assumed token savings.
 - [x] **25:** Store [immutable artifact bytes with quotas and atomic publication](reference/codemode-artifact-storage.md).
 - [x] **26:** Add [scoped references and bounded byte range reads](reference/codemode-artifact-ranges.md) with explicit decoding and completeness.
 - [x] **27:** Let [file reads produce scoped complete artifacts](reference/codemode-artifact-files.md), or explicit publication errors.
-- [x] **28:** Connect [verified complete observed command-output spills](reference/codemode-command-artifacts.md) to scoped artifacts, without conflating EOF with command success.
+- [x] **28:** Connect verified complete observed command-output spills to scoped artifacts (removed with `bash`, ADR 0037), without conflating EOF with command success.
 - [x] **29:** Add [scoped artifact inspection and explicit history-aware retention](reference/codemode-artifact-retention.md), protecting publication-to-grant races and failing closed on incomplete roots.
 - [x] **30:** [Evaluate production module/artifact workflows on original and changed inputs](reference/codemode-evaluation.md), with independent goldens, scoped paging, bounded summaries and honest development/maintenance amortization; real provider measurements remain unmeasured.
 

@@ -430,23 +430,20 @@ store, so cases do not share state.
 | Per-path lock (state machine, paused time): overlapping `edit`/`write` calls on one file, or on a file and a symlink to it, never interleave their read-modify-write                   | Model        |
 | Path resolution: for a generated name, a file created under a macOS variant (NNBSP before AM/PM in either case, NFD, curly apostrophe) is found from the typed form                    | Differential |
 | Images: for a generated size, a PNG built in the test comes back within 2000×2000 and 4.5 MB, with its aspect ratio kept; the format is detected by magic bytes whatever the extension | Invariant    |
-| `bash` output re-chunked at any byte boundary, including inside a multi-byte character, gives the same result                                                                          | Metamorphic  |
-| `bash` keeps `truncate_tail` of the full output, and the spill file holds the full output, whether the limit hit was lines or bytes                                                    | Differential |
-| `bash` progress updates stay under a fixed bound however many chunks arrive                                                                                                            | Invariant    |
-| Terminal mode: plain output (no escapes, no `\r`), in reads of any size, gives the model the text, the "was it cut" flag, the totals and the spill that pipes give                     | Differential |
+| Command output (`exec::clean::Cleaner`) cut into chunks at any byte boundary, including inside a multi-byte character or an escape sequence, reads the same as the whole                | Metamorphic  |
 
-`bash` also has example tests:
-
-- the 100 ms idle window, at 99 ms and 100 ms, under paused time; each
-  new chunk restarts the window;
-- `kill -KILL $$` and `kill -TERM $$` report exit codes 137 and 143, and
-  keep the output printed before the kill;
-- a grandchild process is killed with its group on cancel and timeout.
-
-In terminal mode (the `terminal` feature), example tests cover the byte
-stream (every byte once, in `seq` order, before the tool returns), the
-result's details on success, failure, timeout and cancel, and their
-round trip through the store.
+The command tools also have example tests, on real processes (normal,
+unpaused runtime): a command that ends answers with its output and
+code; a failing one is an error with both; one still running answers
+with a process id, `write_stdin` reads the rest once and the process
+leaves; output is neither lost nor repeated across calls; `tty` input
+and `^C` reach the process; a process without `tty` refuses input; a
+cancelled call leaves the process running with its output for the
+next call; dropping the processes kills them; the store keeps at most 64;
+the raw bytes stream in `details.term`; output over the limit is cut to
+its last lines. With a launcher, its words and variables reach the
+command, a held command starts once answered, and a cancel ends the wait.
+`tau-terminal` tests an interactive command's input.
 
 ### `tau-terminal`
 
@@ -597,7 +594,6 @@ Seed the suite with these cases from pi at `2b0a123`:
 | Compaction | no reported usage anywhere                                                                                         | #8328                                                                               |
 | Compaction | the summary stream drops and is retried; cancel during the summary                                                 | #6647, #9340                                                                        |
 | Compaction | a length-stopped summary is rejected                                                                               | #7048                                                                               |
-| `bash`     | output still arriving at the end of the idle window; output after the result                                       | #5303, #5208                                                                        |
 | `find`     | a nested `.gitignore` applies only to its subtree; a glob with `/` matches the full path; search from `/`          | #3303, #3302, #6104                                                                 |
 | Paths      | lowercase `am`/`pm`; `~draft.md` and `@~draft.md` stay literal                                                     | `path-utils.test.ts:20`, `:159`                                                     |
 | Images     | a JPEG with EXIF orientation after an XMP segment; a 1×1 BMP; magic bytes against a wrong extension                | `image-processing.test.ts:75`, `tools.test.ts:49`, `:200`                           |

@@ -6,7 +6,7 @@ never summarizes: what stays is verbatim, and what goes is archived or
 can be re-run. When pruning cannot free enough, summarizing compaction
 takes over.
 
-- **Output pruning** trims a large `bash` result to the lines the task
+- **Output pruning** trims a large `exec_command` or `write_stdin` result to the lines the task
   still needs, the moment it is produced, before the model first sees
   it. It changes nothing already sent, so it costs no resend.
 - **History pruning** drops or cuts stale tool calls and results
@@ -45,21 +45,17 @@ had seen when it made the call ([plugins.md](plugins.md)).
 
 ### Which outputs
 
-- Only a **successful `bash` result** of text. A failed command comes
-  back as an error, and errors are left as they are.
+- Only a **successful `exec_command` or `write_stdin` result** of text.
+  A failed command comes back as an error, and errors are left as they are.
 - Only a call the model made. A nested call (one a tool made with
   `ToolCtx::call`, such as a Codemode script's) goes back to that tool,
   never to the model, and is left as it is.
-- `bash` keeps the last 2,000 lines or 50 KB of an output. When it
-  truncates, it spills the full output to `tau-bash-<hex>.log` in the
-  temporary directory and ends the result with `Full output: <path>`.
-  Then the **full output is read from that file** and judged whole, so
-  an error in the middle of a long build is not lost with the head.
+- The output is the result's text, which those tools already cut to
+  the last 2,000 lines or 50 KB.
 - Only an output estimated over `min_output_tokens` (10,000) is touched.
   Anything smaller passes untouched: no Jev call, no archive, no
   history read.
-- An output holding a NUL byte, a spilled file that is not valid UTF-8,
-  or an output over 64 MB is left as it is.
+- An output holding a NUL byte, or over 64 MB, is left as it is.
 
 ### What it does
 
@@ -102,18 +98,12 @@ had seen when it made the call ([plugins.md](plugins.md)).
    omissions are marked; the kept chunks, verbatim and in order; one
    `[N lines omitted]` for each run of dropped lines; and a footer
    naming the archive, `[full output: <path> (read or grep it if
-needed)]`. The archive is the file `bash` spilled to, or else a new
+needed)]`. The archive is a new
    file in `Settings::archive_dir` (the temporary directory) that only
    its owner can read.
 7. **Replaces** the result only when the rendered text is estimated at
-   least `min_reduction_ratio` (10%) smaller than the **whole output**,
-   and no larger than the result the model would otherwise see.
-   Otherwise the result stays, and no archive is written. The whole
-   output is the measure because the pruned text is cut from it, not
-   from `bash`'s tail: a pruned build log that keeps an error from the
-   head is worth more than a tail of the same size. The second bound
-   keeps pruning from growing the context past `bash`'s own limits when
-   Jev keeps much of a long output.
+   least `min_reduction_ratio` (10%) smaller than the output.
+   Otherwise the result stays, and no archive is written.
 
 Whenever Jev was asked, a `PluginReport` with `kind: "output"` says how
 it went: the call, the output's lines, the chunks and how many stayed,
@@ -121,7 +111,7 @@ the lines dropped, the segments, the requests, the estimated tokens
 before and after, whether the result was replaced, the archive, and
 what Jev cost (`cost`, also charged to the run). The same body is
 stored with the run as a record, so an interface can show it again when
-it reloads the run from history. tau-ui's `bash` card shows a pruned
+it reloads the run from history. tau-ui's `exec_command` card shows a pruned
 output as two tabs, the terminal and the text the model saw
 ([terminal.md](terminal.md)), with the lines kept and the tokens before
 and after; the Ledger screen adds up what pruned outputs saved.
@@ -158,7 +148,7 @@ and is reported as a `PluginError` event. The run goes on.
   estimated tokens, $0.0035 to $0.0076 each output. At those rates the
   allowance of 12 covers outputs of about 150,000 tokens, at most about
   $0.013; past it, the chunks left unasked stay, and the result is
-  replaced only if it still comes out no larger than `bash`'s tail.
+  replaced only if it still saves `min_reduction_ratio`.
 
 ### Evaluation
 
@@ -175,19 +165,21 @@ lines the task needs, each in the output exactly once.
 | `summary-line`        | npm's totals line, with post-install noise after it                                             |
 | `structured-json`     | one service's record in a large JSON registry                                                   |
 | `all-noise`           | none: pruning should cut most of it                                                             |
-| `spilled-middle`      | a failed step above the 2,000-line tail `bash` keeps                                            |
+| `cut-middle`          | a failed step above the 2,000-line tail `exec_command` keeps                                    |
 | `multi-needle`        | three failing tests far apart                                                                   |
 | `earlier-requirement` | a checksum only an earlier `read` of a large runbook asks for, so the history comes in segments |
 
 The runner drives the real plugin through the agent loop, as the app
 does: a scripted model makes the workload's calls, fake tools answer,
-and the fake `bash` truncates and spills like tau's (or, with
-`--whole`, returns every output whole). Per trial it records:
+and the fake `exec_command` cuts its output to the tail like tau's (or,
+with `--whole`, returns every output whole). Pruning sees only the text
+the call returned, so a needle the cut removed is gone. Per trial it
+records:
 
 - **recall**: needles in the result the model saw, each as a whole line
   (a needle only in the archive does not count), and the same for what
-  `bash` alone would have shown (**tail recall**);
-- estimated tokens before (what `bash` alone shows) and after, and the
+  `exec_command` alone would have shown (**tail recall**);
+- estimated tokens before (what `exec_command` alone shows) and after, and the
   **reduction**;
 - the reduction against the whole output too (**of whole**);
 - whether the result was replaced, Jev requests, input tokens, cost,
@@ -209,7 +201,11 @@ eight cost about $0.13. Without `TYPESAFE_API_KEY` it refuses to run.
 Its tests use fake Jevs and need no key.
 
 Results against the real Jev, three seeds of each workload (24 outputs
-of 21,000 to 96,000 estimated tokens, 3–8 requests each):
+of 21,000 to 96,000 estimated tokens, 3–8 requests each). They were
+measured with `bash`, which spilled the whole output to a file for
+pruning to read ([0038](../decisions/0038-commands-run-in-the-background.md)
+removed that), under the old `spilled-middle` workload; they have not
+been run again on `exec_command`:
 
 | Workload              | Recall | Tail recall | Reduction | Of whole | Replaced | Cost    |
 | --------------------- | ------ | ----------- | --------- | -------- | -------- | ------- |

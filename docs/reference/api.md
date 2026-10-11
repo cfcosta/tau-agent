@@ -151,7 +151,7 @@ and a `String` or `&str` message into it; anything else goes in with
 `ToolError::other`. The model reads its `Display` as the tool result.
 `ToolError::output(ToolOutput)` fails with a whole output: its text is
 the error the model reads, and its `details` stay on the result, as
-`bash` does for a command that exits non-zero.
+`exec_command` does for a command that exits non-zero.
 Plugins return a `PluginError` the same way, which also
 converts store errors and `PluginCtx::ask`'s `AskError`; the loop
 reports it as `RunEvent::PluginError`, with its chain of sources.
@@ -267,8 +267,8 @@ struct NoProdWritesRun;
 #[async_trait]
 impl PluginRun for NoProdWritesRun {
     async fn before_tool(&mut self, call: &mut ToolCall, _: &PluginCtx) -> Result<Decision, PluginError> {
-        let prod = call.args["command"].as_str().is_some_and(|c| c.contains("--env prod"));
-        if call.name == "bash" && prod { return Ok(Decision::Block("no production commands".into())); }
+        let prod = call.args["cmd"].as_str().is_some_and(|c| c.contains("--env prod"));
+        if call.name == "exec_command" && prod { return Ok(Decision::Block("no production commands".into())); }
         Ok(Decision::Allow)
     }
 }
