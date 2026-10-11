@@ -286,6 +286,9 @@ pub trait Conversations: Send + Sync {
         name: &str,
     ) -> crate::registry::HostFuture<'_, anyhow::Result<()>>;
 
+    /// The id of `repo`'s main chat, once it is made.
+    fn main_of(&self, repo: &str) -> Option<String>;
+
     /// Whether `repo`'s main chat has a turn going.
     fn running(&self, repo: &str) -> bool;
 

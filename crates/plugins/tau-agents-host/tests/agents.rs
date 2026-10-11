@@ -54,6 +54,10 @@ impl Conversations for Conversation {
         Box::pin(async { Ok(()) })
     }
 
+    fn main_of(&self, repo: &str) -> Option<String> {
+        Some(format!("main-of-{repo}"))
+    }
+
     fn running(&self, _repo: &str) -> bool {
         self.running.load(Ordering::SeqCst)
     }
@@ -200,6 +204,7 @@ fn a_schedule_fires_and_its_turn_hears_it_after_the_window() {
     f.tick();
     let agent = f.agent();
     assert_eq!(agent.status, Status::Waiting);
+    assert_eq!(agent.main.as_deref(), Some("main-of-greet"));
     let next = |name: &str| {
         f.agent()
             .triggers
@@ -250,7 +255,10 @@ fn a_schedule_missed_while_tau_was_closed_fires_once() {
     let again = f.restarted();
     block_on_io(again.tick());
     let overview = block_on_io(again.overview());
-    assert_eq!(overview.agents[0].queued, 2, "hourly and morning, once each");
+    assert_eq!(
+        overview.agents[0].queued, 2,
+        "hourly and morning, once each"
+    );
     f.clock.advance(30);
     block_on_io(again.tick());
     let turns = f.turns();
@@ -401,10 +409,7 @@ fn making_an_agent_lists_it_and_starts_its_conversation() {
     }))
     .unwrap();
     assert_eq!(answer, Some(json!({ "repo": "pr-triage" })));
-    assert_eq!(
-        *f.host.conversation.listed.lock().unwrap(),
-        ["pr-triage"]
-    );
+    assert_eq!(*f.host.conversation.listed.lock().unwrap(), ["pr-triage"]);
     let settings = f.host.settings("pr-triage");
     assert_eq!(settings.daily_cap, 2.5);
     assert_eq!(settings.window_secs, 30);

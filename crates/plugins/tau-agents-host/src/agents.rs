@@ -398,7 +398,11 @@ impl Agents {
                         .map(|due| due.next),
                 })
                 .collect();
+            let main = conversations
+                .as_ref()
+                .and_then(|conversations| conversations.main_of(&name));
             agents.push(Agent {
+                main,
                 name,
                 purpose: read.purpose.clone(),
                 status,

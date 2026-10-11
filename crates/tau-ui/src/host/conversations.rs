@@ -54,16 +54,18 @@ impl Conversations for HostConversations {
         self.ask(move |done| Ask::ListAgent { name, done })
     }
 
-    fn running(&self, repo: &str) -> bool {
-        let main = self
-            .list
+    fn main_of(&self, repo: &str) -> Option<String> {
+        self.list
             .lock()
             .expect("not poisoned")
             .repos
             .iter()
             .find(|listed| listed.name == repo)
-            .and_then(|listed| listed.main.clone());
-        main.is_some_and(|main| {
+            .and_then(|listed| listed.main.clone())
+    }
+
+    fn running(&self, repo: &str) -> bool {
+        self.main_of(repo).is_some_and(|main| {
             self.runs
                 .lock()
                 .expect("not poisoned")
