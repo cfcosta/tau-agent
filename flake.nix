@@ -198,10 +198,16 @@
                 # GPUI opens Vulkan, Wayland and X11 with dlopen, so the
                 # binary needs them on its library path. jj-lib's push
                 # runs `git`, the one thing tau runs it for (ADR 0023).
+                # An agent's commands run in `bwrap` (ADR 0037).
                 postFixup = ''
                   wrapProgram $out/bin/tau \
                     --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibs} \
-                    --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
+                    --prefix PATH : ${
+                      pkgs.lib.makeBinPath [
+                        pkgs.git
+                        pkgs.bubblewrap
+                      ]
+                    }
                 '';
 
                 meta = {
@@ -404,6 +410,9 @@
                 jq
                 sqlx-cli
               ]
+              # An agent's commands run in `bwrap` (ADR 0037); its tests
+              # run real ones.
+              ++ pkgs.lib.optional pkgs.stdenv.isLinux pkgs.bubblewrap
               ++ guiLibs
               ++ [ libghostty-vt ];
 
