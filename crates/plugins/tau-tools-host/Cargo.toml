@@ -1,18 +1,10 @@
 [package]
 name = "tau-tools-host"
-description = "Optional coding tools for tau agents: read, bash, edit, write, grep, find and ls; tau-tools' host half."
+description = "Optional coding tools for tau agents: read, exec_command, write_stdin, edit, write, grep, find and ls; tau-tools' host half."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
 publish.workspace = true
-
-[features]
-# `bash` runs commands under a pseudo-terminal, with tau-terminal
-# (libghostty-vt) turning the output into the model's text, and streams
-# the raw bytes in its details for a terminal view
-# (docs/decisions/0010-terminal-rendering.md). Off, `bash` uses pipes
-# and pulls in neither.
-terminal = ["dep:tau-terminal"]
 
 [dependencies]
 anyhow.workspace = true
@@ -35,7 +27,7 @@ similar.workspace = true
 tau-agent.workspace = true
 tau-artifacts.workspace = true
 tau-ai.workspace = true
-tau-terminal = { workspace = true, optional = true }
+tau-terminal.workspace = true
 tau-tools.workspace = true
 tau-ui-plugin.workspace = true
 thiserror.workspace = true

@@ -1,8 +1,10 @@
 //! The coding tools as a plugin (`docs/reference/plugins.md`), for
 //! `Agent::plugin`.
 //!
-//! The plugin adds tools and nothing else: it keeps no state per run.
-//! The per-path locks that `edit` and `write` hold stay process-wide
+//! The plugin adds tools and nothing else. The commands `exec_command`
+//! starts live in its [`Processes`], which the host can share between
+//! the plugin's instances, so a run's processes outlive a turn. The
+//! per-path locks that `edit` and `write` hold stay process-wide
 //! ([`crate::lock`]), so two agents on one directory still take turns
 //! on a file.
 
@@ -13,8 +15,8 @@ use tau_artifacts::Bytes;
 
 use crate::{
     artifact_read,
-    bash,
     edit,
+    exec::{self, Processes},
     find,
     grep,
     http,
@@ -29,7 +31,8 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Tool {
     Read,
-    Bash,
+    ExecCommand,
+    WriteStdin,
     Edit,
     Write,
     Grep,
@@ -39,9 +42,10 @@ pub enum Tool {
 
 impl Tool {
     /// Every tool, in pi's order.
-    pub const ALL: [Tool; 7] = [
+    pub const ALL: [Tool; 8] = [
         Tool::Read,
-        Tool::Bash,
+        Tool::ExecCommand,
+        Tool::WriteStdin,
         Tool::Edit,
         Tool::Write,
         Tool::Grep,
@@ -53,7 +57,8 @@ impl Tool {
     pub fn name(self) -> &'static str {
         match self {
             Tool::Read => "read",
-            Tool::Bash => "bash",
+            Tool::ExecCommand => "exec_command",
+            Tool::WriteStdin => "write_stdin",
             Tool::Edit => "edit",
             Tool::Write => "write",
             Tool::Grep => "grep",
@@ -62,11 +67,20 @@ impl Tool {
         }
     }
 
-    pub(crate) fn build(self, root: &Root) -> Arc<dyn AgentTool> {
+    pub(crate) fn build(
+        self,
+        root: &Root,
+        processes: &Processes,
+    ) -> Arc<dyn AgentTool> {
         let root = root.clone();
         match self {
             Tool::Read => Arc::new(read::Read::new(root)),
-            Tool::Bash => Arc::new(bash::Bash::new(root)),
+            Tool::ExecCommand => {
+                Arc::new(exec::ExecCommand::new(root, processes.clone()))
+            }
+            Tool::WriteStdin => {
+                Arc::new(exec::WriteStdin::new(processes.clone()))
+            }
             Tool::Edit => Arc::new(edit::Edit::new(root)),
             Tool::Write => Arc::new(write::Write::new(root)),
             Tool::Grep => Arc::new(grep::Grep::new(root)),
@@ -76,7 +90,7 @@ impl Tool {
     }
 }
 
-/// The coding tools on one root, as a plugin. All seven by default;
+/// The coding tools on one root, as a plugin. All eight by default;
 /// [`only`](Self::only) and [`without`](Self::without) pick a subset.
 /// The tools are offered in pi's order, whatever order they were picked
 /// in.
@@ -87,6 +101,7 @@ pub struct CodingTools {
     artifacts: Option<Bytes>,
     launcher: Option<Arc<dyn Launcher>>,
     http: Option<SecretStore>,
+    processes: Processes,
 }
 
 impl std::fmt::Debug for CodingTools {
@@ -109,6 +124,7 @@ impl CodingTools {
             artifacts: None,
             launcher: None,
             http: None,
+            processes: Processes::new(),
         }
     }
 
@@ -119,7 +135,14 @@ impl CodingTools {
         self
     }
 
-    /// Starts `bash`'s commands through `launcher`: the environment
+    /// Keeps the commands `exec_command` starts in `processes`, which
+    /// outlive this plugin: a run's next turn finds them there.
+    pub fn with_processes(mut self, processes: Processes) -> Self {
+        self.processes = processes;
+        self
+    }
+
+    /// Starts `exec_command`'s commands through `launcher`: the environment
     /// plugins give the run (`tau_agent::launch`).
     pub fn with_launcher(mut self, launcher: Arc<dyn Launcher>) -> Self {
         self.launcher = Some(launcher);
@@ -156,15 +179,14 @@ impl Plugin for CodingTools {
     }
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
-        let bash = || {
-            let bash = bash::Bash::new(self.root.clone());
-            let bash = match &self.artifacts {
-                Some(bytes) => bash.with_artifacts(bytes.clone()),
-                None => bash,
-            };
+        let exec = || {
+            let exec = exec::ExecCommand::new(
+                self.root.clone(),
+                self.processes.clone(),
+            );
             match &self.launcher {
-                Some(launcher) => bash.with_launcher(launcher.clone()),
-                None => bash,
+                Some(launcher) => exec.with_launcher(launcher.clone()),
+                None => exec,
             }
         };
         let mut tools: Vec<Arc<dyn AgentTool>> = self
@@ -176,8 +198,10 @@ impl Plugin for CodingTools {
                         .with_artifacts(bytes.clone()),
                 )
                     as Arc<dyn AgentTool>,
-                (Tool::Bash, _) => Arc::new(bash()) as Arc<dyn AgentTool>,
-                _ => tool.build(&self.root),
+                (Tool::ExecCommand, _) => {
+                    Arc::new(exec()) as Arc<dyn AgentTool>
+                }
+                _ => tool.build(&self.root, &self.processes),
             })
             .collect();
         tools.push(Arc::new(artifact_read::ArtifactRead::new(

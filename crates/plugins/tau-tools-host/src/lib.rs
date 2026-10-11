@@ -1,5 +1,6 @@
-//! Optional coding tools for tau agents: read, bash, edit, write, grep,
-//! find and ls (`docs/reference/tools.md`): tau-tools' host half. Their
+//! Optional coding tools for tau agents: read, exec_command,
+//! write_stdin, edit, write, grep, find and ls
+//! (`docs/reference/tools.md`): tau-tools' host half. Their
 //! cards, and the shapes they read, are `tau-tools`'s (ADR 0030).
 //!
 //! Every tool takes a [`path::Root`] at construction, and every path it
@@ -9,18 +10,18 @@
 //! [`plugin::CodingTools`] adds them to an agent as a plugin:
 //! `Agent::plugin(CodingTools::new(root))`.
 //!
-//! The `terminal` feature runs `bash` under a pseudo-terminal, through
-//! tau-terminal (libghostty-vt), and streams its raw output in the
-//! results' details (`bash::terminal`;
-//! `docs/decisions/0010-terminal-rendering.md`). Without it, `bash` uses
-//! pipes and neither is built.
+//! `exec_command` runs commands under a pseudo-terminal, through
+//! tau-terminal (libghostty-vt), and streams their raw output in the
+//! results' details (`exec`; `docs/decisions/0010-terminal-rendering.md`).
+//! A command that outlives its call keeps running, and `write_stdin`
+//! goes on with it (`docs/decisions/0037-commands-run-in-the-background.md`).
 
 pub mod artifact_grant;
 pub mod artifact_read;
+pub mod edit;
 /// Unix only: it runs commands in their own process group.
 #[cfg(unix)]
-pub mod bash;
-pub mod edit;
+pub mod exec;
 pub mod errno;
 pub mod find;
 pub mod grep;
@@ -62,14 +63,16 @@ impl From<SearchError> for tau_agent::tool::ToolError {
     }
 }
 
-/// All seven tools on `root`, in pi's order, for `Agent::tools`. The
-/// same tools [`plugin::CodingTools`] adds.
+/// All eight tools on `root`, in pi's order, for `Agent::tools`. The
+/// same tools [`plugin::CodingTools`] adds. The commands they start
+/// share one [`exec::Processes`].
 #[cfg(unix)]
 pub fn coding_tools(
     root: &path::Root,
 ) -> Vec<std::sync::Arc<dyn tau_agent::tool::AgentTool>> {
+    let processes = exec::Processes::new();
     plugin::Tool::ALL
         .iter()
-        .map(|tool| tool.build(root))
+        .map(|tool| tool.build(root, &processes))
         .collect()
 }

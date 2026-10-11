@@ -39,7 +39,7 @@ fn a_run_uses_every_tool() {
                 .tool_call("find", json!({"pattern": "*.txt"}))
                 .tool_call("ls", json!({"path": "notes"}))
                 .tool_call("grep", json!({"pattern": "tau"}))
-                .tool_call("bash", json!({"command": "cat notes/a.txt"}))
+                .tool_call("exec_command", json!({"cmd": "cat notes/a.txt"}))
         })
         .turn(|t| t.text("done"));
     let outcome = tokio::runtime::Builder::new_multi_thread()
@@ -71,7 +71,16 @@ fn a_run_uses_every_tool() {
         .collect();
     assert_eq!(
         names,
-        ["read", "bash", "edit", "write", "grep", "find", "ls"]
+        [
+            "read",
+            "exec_command",
+            "write_stdin",
+            "edit",
+            "write",
+            "grep",
+            "find",
+            "ls"
+        ]
     );
 
     let results: Vec<(String, bool, String)> = entries
@@ -104,7 +113,7 @@ fn a_run_uses_every_tool() {
         ("find", "notes/a.txt"),
         ("ls", "a.txt"),
         ("grep", "notes/a.txt:1: hello tau"),
-        ("bash", "hello tau"),
+        ("exec_command", "hello tau"),
     ];
     assert_eq!(results.len(), expect.len(), "{results:?}");
     for ((name, is_error, text), (want_name, want_text)) in
@@ -139,7 +148,8 @@ fn the_plugin_picks_tools_in_pis_order() {
         tool_names(&all.tools()),
         [
             "read",
-            "bash",
+            "exec_command",
+            "write_stdin",
             "edit",
             "write",
             "grep",
@@ -180,7 +190,9 @@ fn the_plugin_picks_tools_in_pis_order() {
         tool_names(&picked.tools()),
         ["read", "grep", "ls", "artifact_read"]
     );
-    let no_shell = CodingTools::new(root).without(Tool::Bash);
+    let no_shell = CodingTools::new(root)
+        .without(Tool::ExecCommand)
+        .without(Tool::WriteStdin);
     assert_eq!(
         tool_names(&no_shell.tools()),
         [
