@@ -9,6 +9,7 @@
 //! - `registry`: each agent's versions, and the one that is live.
 //! - `schedule`: when a schedule comes due.
 //! - `poll`: what a poll fires, once per new item.
+//! - `stream`: a stream's connection and its frames.
 //! - `state`: each agent's queue and schedules, kept across restarts.
 //! - `tools`: what an agent's runs have to reach the person and other
 //!   agents.
@@ -27,6 +28,7 @@ pub mod sandbox;
 pub mod schedule;
 pub mod skill;
 pub mod state;
+pub mod stream;
 pub mod tools;
 
 pub use agents::{

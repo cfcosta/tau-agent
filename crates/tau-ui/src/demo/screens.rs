@@ -899,6 +899,7 @@ fn agents(
         last,
         next,
         error: None,
+        live: None,
     };
     let tests = |passed: usize, failed: usize| {
         (0..passed + failed)

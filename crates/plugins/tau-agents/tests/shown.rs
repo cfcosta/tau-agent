@@ -20,6 +20,7 @@ fn trigger(kind: TriggerKind) -> Trigger {
         last: None,
         next: None,
         error: None,
+        live: None,
     }
 }
 

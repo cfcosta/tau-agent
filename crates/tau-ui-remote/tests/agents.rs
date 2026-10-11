@@ -63,6 +63,7 @@ fn overview() -> Overview {
                     last: None,
                     next: None,
                     error: None,
+                    live: None,
                 }],
             ),
         ],

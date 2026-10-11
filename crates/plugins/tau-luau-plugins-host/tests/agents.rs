@@ -37,7 +37,7 @@ return tau.agent {
       key = "id",
     },
     builds = {
-      stream = { sse = "https://ci.example.com/events" },
+      stream = { sse = "https://ci.example.com/events", headers = { authorization = "Bearer " .. tau.secret("ci") } },
       parse = function(frame, state)
         if frame.event == "ping" then return nil end
         local build = json.decode(frame.data)
@@ -82,7 +82,11 @@ async fn an_agent_declares_what_wakes_it() {
     assert_eq!(
         described["triggers"],
         json!([
-            { "name": "builds", "kind": { "kind": "stream", "url": "https://ci.example.com/events" } },
+            // A stream's headers go to the host as a poll's do.
+            { "name": "builds", "kind": {
+                "kind": "stream", "url": "https://ci.example.com/events", "via": "sse",
+                "headers": { "authorization": { "$secret": "ci", "prefix": "Bearer " } },
+            } },
             { "name": "ci_status", "kind": { "kind": "mcp", "server": "ci", "uri": "ci://tau-agent/main" } },
             { "name": "evening", "kind": { "kind": "schedule", "at": "18:00", "days": ["Mon", "Fri"] } },
             { "name": "hourly", "kind": { "kind": "schedule", "every": "1h", "days": [] } },
@@ -132,7 +136,27 @@ async fn a_trigger_that_is_not_one_says_why() {
             "`items` is a function",
         ),
         ("{ at = \"09:00\", days = { \"Funday\" } }", "not a day"),
-        ("{ stream = { sse = \"u\" } }", "needs `parse`"),
+        ("{ stream = { sse = \"https://u\" } }", "needs `parse`"),
+        (
+            "{ stream = { sse = \"wss://u\" }, parse = print }",
+            "an http or https URL",
+        ),
+        (
+            "{ stream = { websocket = \"https://u\" }, parse = print }",
+            "a ws or wss URL",
+        ),
+        (
+            "{ stream = { sse = \"https://u\", websocket = \"wss://u\" }, parse = print }",
+            "`{ sse = url }` or `{ websocket = url }`",
+        ),
+        (
+            "{ stream = { sse = \"https://u\", every = 1 }, parse = print }",
+            "a stream has no `every`",
+        ),
+        (
+            "{ stream = { sse = \"https://u\", headers = 1 }, parse = print }",
+            "`headers` is a table",
+        ),
     ];
     for (trigger, why) in cases {
         let source = format!(
@@ -295,4 +319,64 @@ return tau.agent {
         .await
         .unwrap_err();
     assert!(wrong.contains("a list"), "{wrong}");
+}
+
+const COUNTER: &str = r#"
+local tau = require("tau")
+
+return tau.agent {
+  name = "counter",
+  triggers = {
+    ticks = {
+      stream = { websocket = "wss://example.com/ticks" },
+      parse = function(frame, state)
+        state.seen = (state.seen or 0) + 1
+        if frame.data == "skip" then return nil end
+        if frame.data == "bad" then return { data = 1 } end
+        return { id = state.seen, data = { text = frame.data, seen = state.seen } }
+      end,
+    },
+  },
+}
+"#;
+
+async fn parse_frame(frame: Value, state: Value) -> Result<Value, String> {
+    let modules = Arc::new(agent(COUNTER).modules()?);
+    evaluate(
+        "counter",
+        modules,
+        format!(
+            "local tau = require(\"tau\")\n\
+             return tau._parse_frame(require(\"agent\"), \"ticks\", \
+             json.decode({frame:?}), json.decode({state:?}))\n",
+            frame = frame.to_string(),
+            state = state.to_string(),
+        ),
+        Duration::from_secs(2),
+        CancellationToken::new(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_frame_is_an_event_or_nothing_and_its_state_carries_on() {
+    let parsed = parse_frame(json!({ "data": "hi" }), json!({ "seen": 4 }))
+        .await
+        .unwrap();
+    // The id comes back as text, whatever `parse` gave.
+    assert_eq!(
+        parsed,
+        json!({
+            "event": { "id": "5", "data": { "text": "hi", "seen": 5 } },
+            "state": { "seen": 5 },
+        })
+    );
+    let skipped = parse_frame(json!({ "data": "skip" }), json!({}))
+        .await
+        .unwrap();
+    assert_eq!(skipped, json!({ "event": null, "state": { "seen": 1 } }));
+    let error = parse_frame(json!({ "data": "bad" }), json!({}))
+        .await
+        .unwrap_err();
+    assert!(error.contains("needs an `id`"), "{error}");
 }

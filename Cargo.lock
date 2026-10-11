@@ -9392,11 +9392,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.23.1",
+ "futures-util",
  "libc",
+ "reqwest 0.13.5",
  "serde",
  "serde_json",
  "tau-agent",
  "tau-agents",
+ "tau-ai",
  "tau-luau-plugins-host",
  "tau-skills",
  "tau-testing",
@@ -9406,6 +9410,7 @@ dependencies = [
  "tau-vcs-host",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
 ]
 

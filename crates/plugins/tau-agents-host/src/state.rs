@@ -1,6 +1,7 @@
 //! What tau keeps of each agent across restarts (ADR 0037): the events
 //! waiting for its next turn, when its schedules and polls are due,
-//! what each poll saw, and what its day's spend is counted from.
+//! what each poll saw, where each stream was, and what its day's spend
+//! is counted from.
 //!
 //! Each agent's is a JSON file of its own in tau-agents' directory,
 //! written whole each time it changes. An agent's queue is short: a
@@ -40,6 +41,9 @@ pub struct Kept {
     pub notices: Vec<Notice>,
     /// How many notices it ever left: the next one's id.
     pub noticed: u64,
+    /// Each stream's last id, the ids it fired and its `parse`'s state,
+    /// by trigger.
+    pub streams: BTreeMap<String, crate::stream::Streamed>,
 }
 
 /// When a schedule is due next, and what it was when that was worked

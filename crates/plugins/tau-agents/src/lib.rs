@@ -78,9 +78,13 @@ pub struct Trigger {
     #[serde(default)]
     pub next: Option<i64>,
     /// Why it did not fire when it last tried: a poll whose request or
-    /// whose `key` failed.
+    /// whose `key` failed, a stream that lost its connection or whose
+    /// `parse` failed.
     #[serde(default)]
     pub error: Option<String>,
+    /// For a stream, whether its connection is open now.
+    #[serde(default)]
+    pub live: Option<bool>,
 }
 
 /// What kind of thing wakes an agent (ADR 0037's table). Step 1 fires
@@ -120,12 +124,34 @@ pub enum TriggerKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         http: Option<serde_json::Value>,
     },
-    /// A stream it keeps open: server-sent events or a websocket.
-    Stream { url: String },
+    /// A stream it keeps open: server-sent events or a websocket. Its
+    /// `parse` turns each frame into an event, or into nothing.
+    Stream {
+        url: String,
+        #[serde(default)]
+        via: StreamVia,
+        /// Sent as it opens, its secrets as markers
+        /// (`{ "$secret": name }`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        headers: Option<serde_json::Value>,
+    },
     /// An MCP server's resource, through `resources/subscribe`.
     Mcp { server: String, uri: String },
     /// Another agent's messages.
     Message,
+}
+
+/// What a stream trigger reads.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamVia {
+    /// Server-sent events (`text/event-stream`), over HTTP.
+    #[default]
+    Sse,
+    /// A websocket's messages.
+    Websocket,
 }
 
 /// A version of an agent's `agent.luau`: a commit of its trunk.

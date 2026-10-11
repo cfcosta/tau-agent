@@ -107,7 +107,7 @@ impl Trigger {
             TriggerKind::Poll { source, every, .. } => {
                 format!("{source} every {every}")
             }
-            TriggerKind::Stream { url } => url.clone(),
+            TriggerKind::Stream { url, .. } => url.clone(),
             TriggerKind::Mcp { server, uri } => format!("{server} {uri}"),
             TriggerKind::Message => "messages from agents".to_owned(),
         }

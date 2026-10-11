@@ -10,6 +10,8 @@
 //!
 //! Polls run beside the ticks, each in a task of its own, so a slow one
 //! holds up nothing else; what one finds joins the queue when it ends.
+//! Streams are kept open in tasks of their own (`streams`), one per
+//! stream a live version declares.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -56,6 +58,8 @@ use crate::{
 
 pub(crate) mod talk;
 
+mod streams;
+
 /// How often schedules and queues are looked at.
 const TICK: Duration = Duration::from_secs(1);
 
@@ -98,6 +102,8 @@ struct Inner {
     homes: PathBuf,
     /// The `bwrap` its commands run in; with none, they have no command tools.
     bwrap: Option<PathBuf>,
+    /// The streams kept open, by agent and trigger.
+    streams: streams::Streams,
 }
 
 impl PluginHost for Agents {
@@ -161,6 +167,7 @@ impl Agents {
             tasks: Mutex::default(),
             homes: dir.join("homes"),
             bwrap: crate::sandbox::find_bwrap(),
+            streams: streams::Streams::default(),
         }))
     }
 
@@ -219,7 +226,9 @@ impl Agents {
         }
         // Let go of the polls that ended.
         while self.0.tasks.lock().await.try_join_next().is_some() {}
+        let mut streams = Vec::new();
         for (name, read) in self.0.registry.agents().await {
+            streams.push((name.clone(), streams::declared(&read)));
             changed |= self.fire_schedules(&name, &read, now).await;
             changed |= self.start_polls(&name, &read, now).await;
             let counted = self.0.spend.lock().await.get(&name).copied();
@@ -229,6 +238,7 @@ impl Agents {
             }
             changed |= self.deliver(&name, now).await;
         }
+        changed |= self.keep_streams(streams).await;
         if changed {
             self.0.env.refresh();
         }
@@ -619,6 +629,7 @@ impl Agents {
                 eprintln!("{NAME}: cannot read tau's secret store: {error}");
                 Vec::new()
             });
+        let open = self.0.streams.open().await;
         let mut agents = Vec::new();
         for (name, read) in self.0.registry.agents().await {
             let settings = self.0.env.settings(&name);
@@ -663,7 +674,19 @@ impl Agents {
                     error: kept
                         .polls
                         .get(&declared.name)
-                        .and_then(|polled| polled.error.clone()),
+                        .and_then(|polled| polled.error.clone())
+                        .or_else(|| {
+                            kept.streams
+                                .get(&declared.name)
+                                .and_then(|streamed| streamed.error.clone())
+                        }),
+                    live: matches!(declared.kind, TriggerKind::Stream { .. })
+                        .then(|| {
+                            open.contains(&(
+                                name.clone(),
+                                declared.name.clone(),
+                            ))
+                        }),
                 })
                 .collect();
             let main = conversations

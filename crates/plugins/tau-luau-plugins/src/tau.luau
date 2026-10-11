@@ -323,14 +323,39 @@ local function trigger_kind(name, trigger)
 	end
 	if trigger.stream ~= nil then
 		local stream = trigger.stream
-		local url = type(stream) == "table" and (stream.sse or stream.websocket)
+		local shape = "trigger `" .. name .. "`: `stream` is `{ sse = url }` or `{ websocket = url }`"
+		if type(stream) ~= "table" or (stream.sse == nil) == (stream.websocket == nil) then
+			error(shape, 0)
+		end
+		for key in pairs(stream) do
+			if key ~= "sse" and key ~= "websocket" and key ~= "headers" then
+				error("trigger `" .. name .. "`: a stream has no `" .. tostring(key) .. "`", 0)
+			end
+		end
+		local via = stream.sse ~= nil and "sse" or "websocket"
+		local url = stream.sse or stream.websocket
 		if type(url) ~= "string" then
-			error("trigger `" .. name .. "`: `stream` is `{ sse = url }` or `{ websocket = url }`", 0)
+			error(shape, 0)
+		end
+		local scheme = string.match(url, "^(%a+)://")
+		local schemes = via == "sse" and { http = true, https = true } or { ws = true, wss = true }
+		if not schemes[scheme] then
+			error(
+				"trigger `"
+					.. name
+					.. "`: "
+					.. (via == "sse" and "server-sent events come from an http or https URL" or "a websocket is a ws or wss URL"),
+				0
+			)
+		end
+		if stream.headers ~= nil and type(stream.headers) ~= "table" then
+			error("trigger `" .. name .. "`: `headers` is a table of names to values", 0)
 		end
 		if type(trigger.parse) ~= "function" then
 			error("trigger `" .. name .. "`: a stream needs `parse`, a function of a frame", 0)
 		end
-		return { kind = "stream", url = url }
+		-- The headers, secrets' markers and all: the host opens it.
+		return { kind = "stream", url = url, via = via, headers = stream.headers }
 	end
 	if trigger.mcp ~= nil then
 		local mcp = trigger.mcp
@@ -414,6 +439,33 @@ function tau._poll_items(agent, name, result)
 		end
 	end
 	return out
+end
+
+-- The event the stream `name`'s frame is, or nil, as `parse` gives it
+-- and the host reads it: `{ id, data }`, the id as text.
+local function parse_frame(name, trigger, frame, state)
+	local event = trigger.parse(frame, state)
+	if event == nil then
+		return nil
+	end
+	if type(event) ~= "table" then
+		error("trigger `" .. name .. "`: `parse` gives `{ id = ..., data = ... }` or nil, not " .. type(event), 0)
+	end
+	if type(event.id) ~= "string" and type(event.id) ~= "number" then
+		error("trigger `" .. name .. "`: an event from `parse` needs an `id`", 0)
+	end
+	return { id = tostring(event.id), data = event.data }
+end
+
+-- What one frame of the stream `name` is, for the host: the event, if
+-- any, and the stream's state as `parse` left it.
+function tau._parse_frame(agent, name, frame, state)
+	local trigger = (agent.triggers or {})[name]
+	if type(trigger) ~= "table" or type(trigger.parse) ~= "function" then
+		error("the agent has no stream `" .. tostring(name) .. "`", 0)
+	end
+	local event = parse_frame(name, trigger, frame, state)
+	return { event = event or json.null, state = state }
 end
 
 -- What the host reads of an agent: its name and what wakes it.
@@ -653,14 +705,15 @@ function test.agent(spec)
 	function fake:describe()
 		return tau._describe_agent(agent)
 	end
-	-- The event a stream's frame is, or nil.
+	-- The event a stream's frame is, or nil, as the host reads it: its
+	-- id as text. The stream's state carries on from frame to frame.
 	function fake:parse(name, frame)
 		local t = trigger(name)
 		if type(t.parse) ~= "function" then
 			error("trigger `" .. name .. "` has no `parse`", 2)
 		end
 		fake.state[name] = fake.state[name] or {}
-		return t.parse(frame, fake.state[name])
+		return parse_frame(name, t, frame, fake.state[name])
 	end
 	-- The events a poll's result makes: one per item whose key it has
 	-- not seen; the first poll only records keys.

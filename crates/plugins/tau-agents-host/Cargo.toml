@@ -9,10 +9,17 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+# A websocket's binary messages reach `parse` in base64.
+base64.workspace = true
+futures-util.workspace = true
+# Server-sent events, over tau's TLS.
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tau-agent.workspace = true
 tau-agents.workspace = true
+# tau's TLS, which a `wss` stream dials through.
+tau-ai.workspace = true
 # An agent's folder is read, built and tested as a Luau plugin's is.
 tau-luau-plugins-host.workspace = true
 # Where the skill tau ships is installed.
@@ -22,7 +29,9 @@ tau-tools-host.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tau-vcs-host.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
+# Websocket streams.
+tokio-tungstenite.workspace = true
 tokio-util.workspace = true
 # The host's offset from UTC, for schedules in its local time.
 libc.workspace = true
@@ -30,4 +39,10 @@ libc.workspace = true
 [dev-dependencies]
 tau-testing.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "time",
+] }
