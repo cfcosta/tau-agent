@@ -1479,6 +1479,7 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
         [
             "/goal",
             "/plugin",
+            "/agent",
             "/code-review",
             "/release-notes",
             "/tau-plugins",
@@ -1493,7 +1494,7 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     assert_eq!(names(composer_slash(&workspace, &mut cx, "/fo")), ["/fork"]);
     workspace
         .update(&mut cx, |ws, cx| ws.navigate(Route::Run(done.clone()), cx));
-    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 9);
+    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 10);
     assert!(names(composer_slash(&workspace, &mut cx, "/fo")).is_empty());
     // Not a command: a message.
     assert_eq!(

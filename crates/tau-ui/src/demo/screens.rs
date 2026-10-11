@@ -45,6 +45,17 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("plugins-yours-entry", |ws, host, cx| {
         yours(ws, host, Some("no-force-push"), cx)
     }),
+    // Agents (ADR 0037): the Agents page, one agent's conversation,
+    // and the New agent form.
+    ("agents", |ws, host, cx| {
+        agents(ws, host, AgentsAt::Overview, cx)
+    }),
+    ("agent", |ws, host, cx| {
+        agents(ws, host, AgentsAt::Conversation, cx)
+    }),
+    ("agent-new", |ws, host, cx| {
+        agents(ws, host, AgentsAt::New, cx)
+    }),
     ("ledger", |ws, _, cx| {
         let run = run_id().0.to_string();
         let page = Route::Plugin {
@@ -837,6 +848,365 @@ fn yours(
         },
         cx,
     );
+}
+
+/// Which of the agents' screens to open.
+enum AgentsAt {
+    Overview,
+    Conversation,
+    New,
+}
+
+/// Three agents (ADR 0037): pr-triage at work, with a sub-agent and an
+/// event message in its conversation; morning-digest waiting for its
+/// schedule; release-notes at its cap. Then the screen `at` names.
+fn agents(
+    ws: &mut Workspace,
+    host: &DemoHost,
+    at: AgentsAt,
+    cx: &mut Context<Workspace>,
+) {
+    use tau_agents::{
+        Agent,
+        Last,
+        Overview,
+        Status,
+        TestResult,
+        Trigger,
+        TriggerKind,
+        Version,
+        event::{Batch, Event, Kind},
+    };
+    use tau_ai::message::{
+        AssistantBlock,
+        AssistantMessage,
+        Message,
+        StopReason,
+        TextContent,
+        Usage,
+        UserContent,
+        UserMessage,
+    };
+    use tau_ui_plugin::Group;
+
+    let now = tau_agents::shown::now();
+    let trigger = |name: &str,
+                   kind: TriggerKind,
+                   last: Option<i64>,
+                   next: Option<i64>| Trigger {
+        name: name.into(),
+        kind,
+        last,
+        next,
+    };
+    let tests = |passed: usize, failed: usize| {
+        (0..passed + failed)
+            .map(|n| TestResult {
+                file: "triggers".into(),
+                name: format!("case {n}"),
+                passed: n < passed,
+                error: (n >= passed).then(|| "expected 1 event, got 2".into()),
+            })
+            .collect::<Vec<_>>()
+    };
+    let main = |name: &str| RunId(format!("agent-{name}").into());
+    let agent = |name: &str, purpose: &str, status: Status| Agent {
+        name: name.into(),
+        purpose: purpose.into(),
+        status,
+        triggers: Vec::new(),
+        versions: Vec::new(),
+        spend_today: 0.0,
+        cap_today: 1.0,
+        queued: 0,
+        last: None,
+        model: tau_agents::default_model(),
+        effort: tau_agents::DEFAULT_EFFORT.into(),
+        main: Some(main(name).0.to_string()),
+    };
+    let overview = Overview {
+        agents: vec![
+            Agent {
+                triggers: vec![
+                    trigger(
+                        "evening",
+                        TriggerKind::Schedule {
+                            every: None,
+                            at: Some("08:30".into()),
+                            days: Vec::new(),
+                        },
+                        Some(now - 30 * 3600),
+                        Some(now + 17 * 3600),
+                    ),
+                    trigger("runs", TriggerKind::Message, None, None),
+                ],
+                versions: vec![Version {
+                    commit: "9c1d2e0a".into(),
+                    summary: "Group the digest by repository".into(),
+                    tests: tests(4, 0),
+                    live: true,
+                    error: None,
+                }],
+                spend_today: 0.08,
+                last: Some(Last {
+                    at: now - 6 * 3600,
+                    line: "caught up at 08:41: tau was closed at 08:30".into(),
+                }),
+                ..agent(
+                    "morning-digest",
+                    "Each morning, a page of what landed yesterday across my \
+                     repositories, what failed, and the chats I left half way.",
+                    Status::Waiting,
+                )
+            },
+            Agent {
+                triggers: vec![
+                    trigger(
+                        "pulls",
+                        TriggerKind::Poll {
+                            source: "mcp__github__list_pull_requests".into(),
+                            every: "5m".into(),
+                        },
+                        Some(now - 240),
+                        Some(now + 60),
+                    ),
+                    trigger(
+                        "triage",
+                        TriggerKind::Command {
+                            command: "triage".into(),
+                            hint: Some("<number>".into()),
+                        },
+                        Some(now - 86_400),
+                        None,
+                    ),
+                    trigger(
+                        "evening",
+                        TriggerKind::Schedule {
+                            every: None,
+                            at: Some("18:00".into()),
+                            days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
+                                .map(Into::into)
+                                .to_vec(),
+                        },
+                        None,
+                        Some(now + 4 * 3600),
+                    ),
+                ],
+                versions: vec![
+                    Version {
+                        commit: "7f3a2c91".into(),
+                        summary: "Poll every 5 min in work hours".into(),
+                        tests: tests(11, 0),
+                        live: true,
+                        error: None,
+                    },
+                    Version {
+                        commit: "51be09d4".into(),
+                        summary: "Parse the review stream".into(),
+                        tests: tests(9, 2),
+                        live: false,
+                        error: Some("2 tests fail".into()),
+                    },
+                    Version {
+                        commit: "0a77c3f2".into(),
+                        summary: "Its own triage module".into(),
+                        tests: tests(9, 0),
+                        live: false,
+                        error: None,
+                    },
+                ],
+                spend_today: 0.41,
+                queued: 2,
+                last: Some(Last {
+                    at: now - 240,
+                    line: "labelled #412; reviewing #409".into(),
+                }),
+                ..agent(
+                    "pr-triage",
+                    "Labels new pull requests on tau-agent, says what each one \
+                     touches, and sends a sub-agent to review any that change \
+                     auth or storage.",
+                    Status::Working,
+                )
+            },
+            Agent {
+                triggers: vec![trigger(
+                    "notes",
+                    TriggerKind::Command {
+                        command: "release-notes".into(),
+                        hint: None,
+                    },
+                    None,
+                    None,
+                )],
+                spend_today: 1.0,
+                queued: 3,
+                last: Some(Last {
+                    at: now - 2 * 3600,
+                    line: "reached its $1.00 for today".into(),
+                }),
+                ..agent(
+                    "release-notes",
+                    "Keeps a draft of the next release's notes from every \
+                     landing on main, and turns it into a changelog entry on \
+                     /release-notes.",
+                    Status::AtCap,
+                )
+            },
+        ],
+    };
+    let mut catalog = ws.catalog().clone();
+    let info = crate::catalog::PluginInfo {
+        name: tau_agents::NAME.into(),
+        description: "Agents that keep going on their own".into(),
+        group: Group::Tools,
+        page: Some(tau_ui_plugin::Link::page(tau_agents::ui::OVERVIEW)),
+        seams: Vec::new(),
+        spend: 0.0,
+        note: None,
+        entries: Vec::new(),
+        settings: true,
+    };
+    let data = PluginValue::typed(overview.clone());
+    catalog.plugins.retain(|plugin| plugin.name != info.name);
+    catalog.plugins.push(info.clone());
+    catalog
+        .plugin_data
+        .insert(tau_agents::NAME.into(), data.clone());
+    host.pin(info, data);
+    for agent in &overview.agents {
+        if catalog.repo(&agent.name).is_none() {
+            catalog.repos.push(crate::catalog::Repo {
+                name: agent.name.clone(),
+                main: Some(main(&agent.name)),
+                own: Some(crate::catalog::Own::Agent),
+                ..Default::default()
+            });
+        }
+    }
+    ws.set_catalog(catalog, cx);
+
+    // pr-triage's conversation: a batch of events, and its answer.
+    let event =
+        |trigger: &str, kind: Kind, id: &str, ago: i64, data: Value| Event {
+            trigger: trigger.into(),
+            kind,
+            id: id.into(),
+            at: now - ago,
+            data,
+        };
+    let batch = Batch {
+        events: vec![
+            event(
+                "pulls",
+                Kind::Poll,
+                "pulls:412",
+                75,
+                serde_json::json!({
+                    "number": 412,
+                    "title": "Fold the plugins tree on narrow windows",
+                    "author": "cfcosta",
+                }),
+            ),
+            event(
+                "pulls",
+                Kind::Poll,
+                "pulls:409",
+                62,
+                serde_json::json!({
+                    "number": 409,
+                    "title": "Rotate refresh tokens on every use",
+                    "author": "a-contributor",
+                }),
+            ),
+            event(
+                "triage",
+                Kind::Command,
+                "cmd:9f2c",
+                48,
+                serde_json::json!({
+                    "args": "398",
+                    "from": "tau-agent",
+                }),
+            ),
+        ],
+    };
+    let text = |text: &str| {
+        Message::Assistant(AssistantMessage {
+            content: vec![AssistantBlock::Text(TextContent {
+                text: text.into(),
+                text_signature: None,
+            })],
+            model: tau_agents::default_model(),
+            response_id: None,
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        })
+    };
+    let user = |text: String| {
+        Message::User(UserMessage {
+            content: UserContent::Text(text),
+            timestamp: 0,
+        })
+    };
+    let messages = [
+        user(
+            "Watch new pull requests on tau-agent, label them, and tell me \
+              when one touches auth."
+                .into(),
+        ),
+        text(
+            "Set up: `agent.luau` polls `list_pull_requests` every 10 minutes \
+              and answers `/triage <number>`. My instructions are in AGENTS.md.",
+        ),
+        user(batch.message(0)),
+        text(
+            "#412 is small and UI only: labelled `area/ui` and `size/s`. #409 \
+              rotates refresh tokens, so a sub-agent is reviewing it now. #398 \
+              looks like a duplicate of #377: same stack trace and failing test.",
+        ),
+    ];
+    let conversation = RunView::from_messages(
+        main("pr-triage"),
+        "pr-triage",
+        "coder",
+        tau_agents::default_model(),
+        &messages,
+    )
+    .in_repo("pr-triage");
+    ws.apply(HostUpdate::Run(Box::new(conversation)), cx);
+    let review = RunView::new(
+        RunId("agent-pr-triage-review".into()),
+        "Review #409's token rotation",
+        "coder",
+        tau_agents::default_model(),
+    )
+    .in_repo("pr-triage")
+    .with_origin(crate::view::Origin::SubAgent {
+        parent: main("pr-triage"),
+    });
+    ws.apply(HostUpdate::Run(Box::new(review)), cx);
+    for name in ["morning-digest", "release-notes"] {
+        let mut run = RunView::new(
+            main(name),
+            name,
+            "coder",
+            tau_agents::default_model(),
+        )
+        .in_repo(name);
+        run.finish_stored(tau_agent::event::StopReason::Stop, 0.0, 0.0);
+        ws.apply(HostUpdate::Run(Box::new(run)), cx);
+    }
+    ws.toggle_agent_open("pr-triage", cx);
+    match at {
+        AgentsAt::Overview => {
+            ws.navigate(Route::agents(tau_agents::ui::OVERVIEW), cx)
+        }
+        AgentsAt::Conversation => ws.open_agent("pr-triage", cx),
+        AgentsAt::New => ws.navigate(Route::agents(tau_agents::ui::NEW), cx),
+    }
 }
 
 fn plugin_page(
