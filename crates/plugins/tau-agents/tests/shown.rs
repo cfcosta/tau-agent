@@ -191,3 +191,21 @@ fn an_mcp_trigger_says_whether_it_watches() {
     watch.live = Some(false);
     assert_eq!(watch.connection(), Some("not watching"));
 }
+
+#[test]
+fn an_agent_is_its_main_chat_only() {
+    let overview = Overview {
+        agents: vec![Agent {
+            main: Some("its-main".into()),
+            ..agent("pr-triage", Vec::new())
+        }],
+    };
+    assert!(overview.agent_of_main("pr-triage", "its-main").is_some());
+    // A sub-agent or chat in its repository is not the agent.
+    assert!(overview.agent_of_main("pr-triage", "a-sub-agent").is_none());
+    // Before the host names its main chat, no run is the agent.
+    let unnamed = Overview {
+        agents: vec![agent("pr-triage", Vec::new())],
+    };
+    assert!(unnamed.agent_of_main("pr-triage", "its-main").is_none());
+}

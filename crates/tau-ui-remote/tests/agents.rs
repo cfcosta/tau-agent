@@ -9,7 +9,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use tau_agent::tool::RunId;
 use tau_agents::{Agent, Overview, Status, Trigger, TriggerKind};
-use tau_ui_plugin::PluginValue;
+use tau_ui_plugin::{PluginValue, points};
 use tau_ui_remote::{
     Workspace,
     catalog::{Catalog, Own, Repo},
@@ -51,21 +51,24 @@ fn overview() -> Overview {
     Overview {
         agents: vec![
             agent(NEW, Status::Waiting, Vec::new()),
-            agent(
-                AGENT,
-                Status::Working,
-                vec![Trigger {
-                    name: "triage".into(),
-                    kind: TriggerKind::Command {
-                        command: "triage".into(),
-                        hint: Some("<number>".into()),
-                    },
-                    last: None,
-                    next: None,
-                    error: None,
-                    live: None,
-                }],
-            ),
+            Agent {
+                main: Some("agent-main".into()),
+                ..agent(
+                    AGENT,
+                    Status::Working,
+                    vec![Trigger {
+                        name: "triage".into(),
+                        kind: TriggerKind::Command {
+                            command: "triage".into(),
+                            hint: Some("<number>".into()),
+                        },
+                        last: None,
+                        next: None,
+                        error: None,
+                        live: None,
+                    }],
+                )
+            },
         ],
     }
 }
@@ -262,4 +265,29 @@ fn slash_agent_opens_the_new_agent_form(cx: &mut TestAppContext) {
             .any(|event| matches!(event, WorkspaceEvent::Say { .. })),
         "nothing is sent to the chat it was typed in"
     );
+}
+
+#[gpui::test]
+fn only_the_agent_s_main_chat_shows_it(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let shown = |ws: &Workspace, run: &str, cx: &mut gpui::App| {
+            let at = points::AtRun {
+                run: ws.run(&id(run)).unwrap().info(),
+            };
+            let banners = ws
+                .contributions_of(tau_agents::NAME, points::RUN_BANNER, &at, cx)
+                .len();
+            let statuses = ws
+                .contributions_of(tau_agents::NAME, points::STATUS, &at, cx)
+                .len();
+            (banners, statuses)
+        };
+        assert_eq!(shown(ws, "agent-main", cx), (1, 1));
+        // Its sub-agent works in the agent's repository but is not the
+        // agent: no banner, no status of the agent's.
+        assert_eq!(shown(ws, "review", cx), (0, 0));
+        // Nor is a run in the person's repository.
+        assert_eq!(shown(ws, "main", cx), (0, 0));
+    });
 }

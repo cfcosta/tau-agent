@@ -278,6 +278,13 @@ impl Overview {
     pub fn agent(&self, name: &str) -> Option<&Agent> {
         self.agents.iter().find(|agent| agent.name == name)
     }
+
+    /// The agent whose conversation the run `run` of the repository
+    /// `repo` is: its main chat, not a chat or sub-agent beside it.
+    pub fn agent_of_main(&self, repo: &str, run: &str) -> Option<&Agent> {
+        self.agent(repo)
+            .filter(|agent| agent.main.as_deref() == Some(run))
+    }
 }
 
 /// What the person set for an agent: tau-agents' settings, each agent's

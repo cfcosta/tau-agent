@@ -40,7 +40,10 @@ pub(super) fn banner(
     at: &AtRun,
     view: &mut ViewCx<'_, AgentsUi>,
 ) -> Option<AnyElement> {
-    let agent = view.data.agent(&at.run.repo)?.clone();
+    let agent = view
+        .data
+        .agent_of_main(&at.run.repo, &at.run.id.to_string())?
+        .clone();
     let t = view.theme().clone();
     let paused = agent.status == Status::Paused;
     let toggle = {
@@ -121,7 +124,10 @@ pub(super) fn panel(
     at: &AtRun,
     view: &mut ViewCx<'_, AgentsUi>,
 ) -> Option<AnyElement> {
-    let agent = view.data.agent(&at.run.repo)?.clone();
+    let agent = view
+        .data
+        .agent_of_main(&at.run.repo, &at.run.id.to_string())?
+        .clone();
     let t = view.theme().clone();
     let now = now();
     let allow = (agent.status == Status::AtCap).then(|| {

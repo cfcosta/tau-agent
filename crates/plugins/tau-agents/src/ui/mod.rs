@@ -279,7 +279,9 @@ impl UiPlugin for AgentsUi {
             )
             .listed_commands(|overview, _| commands(overview), fire)
             .contribute(points::STATUS, |at: &AtRun, view| {
-                let agent = view.data.agent(&at.run.repo)?;
+                let agent = view
+                    .data
+                    .agent_of_main(&at.run.repo, &at.run.id.to_string())?;
                 Some(PluginStatus {
                     name: NAME.into(),
                     state: agent.status.label().into(),
