@@ -1,7 +1,9 @@
 # 0036: The plugins repository is in the sidebar
 
 - Status: accepted. Amends [0027](0027-luau-plugins.md): its chats are
-  no longer only on the Plugins page.
+  no longer only on the Plugins page. Amended by
+  [0037](0037-agents.md): Agents get a section of their own, between
+  Repositories and Everywhere.
 - Date: 2026-10-10
 
 ## Context

@@ -8,7 +8,10 @@
   GitHub. Amended by [0033](0033-plugins-are-live.md): plugins are
   live in runs already going, and in the chat that writes them. And by
   [0034](0034-plugin-chats-land-themselves.md): a chat there lands by
-  itself once its plugins pass, and goes on.
+  itself once its plugins pass, and goes on. Extended by
+  [0037](0037-agents.md): agents, each a conversation in a repository
+  of its own, declare what wakes them in Luau and rewrite themselves
+  without an Allow.
 - Date: 2026-10-05
 
 ## Context
