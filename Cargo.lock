@@ -9871,6 +9871,7 @@ dependencies = [
  "log",
  "qrcode",
  "rqrr",
+ "tau-agents",
  "tau-remote",
  "tau-ui-remote",
 ]

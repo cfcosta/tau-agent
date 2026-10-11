@@ -9,6 +9,11 @@
 //! until one holds a tau pairing code. It asks for the camera the first
 //! time; without it, the address and code can be typed instead.
 //!
+//! While connected, what the computer's agents leave the person (a note,
+//! a question) and an agent that reaches its cap show as Android
+//! notifications, through `TauNotices` (ADR 0037). There is no push: a
+//! phone that is not connected hears nothing until it is.
+//!
 //! To build the APK, from the repository's root:
 //!
 //! ```text

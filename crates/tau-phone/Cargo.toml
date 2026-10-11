@@ -31,5 +31,7 @@ android-activity = { version = "0.6", features = ["native-activity"] }
 android_logger = "0.15"
 log = "0.4"
 tau-ui-remote.workspace = true
+# When an agent's notes, questions and spent day notify.
+tau-agents.workspace = true
 # gpui-pre-mobile's version, to call tau's own Java.
 jni = "0.22"

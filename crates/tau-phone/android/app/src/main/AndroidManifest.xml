@@ -3,6 +3,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Agents' notes and questions, and an agent at its cap, show as
+         notifications while the phone is connected (ADR 0037); asked
+         for when the first one comes. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- tau's viewfinder reads the pairing code off the camera's
          preview; asked for when it first opens. -->
     <uses-permission android:name="android.permission.CAMERA" />

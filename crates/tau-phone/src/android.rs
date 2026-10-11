@@ -22,6 +22,9 @@ use crate::qr::{self, Frame};
 /// tau's own Java, in the APK beside gpui-pre-mobile's.
 const SCANNER: &str = "dev.cfcosta.tau.TauScanner";
 
+/// What shows agents' notices as Android notifications.
+const NOTICES: &str = "dev.cfcosta.tau.TauNotices";
+
 /// Called by `android-activity` on its own thread once NativeActivity
 /// loads this library. Returns when the activity is gone.
 #[unsafe(no_mangle)]
@@ -72,6 +75,7 @@ fn android_main(app: android_activity::AndroidApp) {
                         name: device_name(),
                     };
                     remote::connect(platform, &workspace, cx);
+                    follow_agents(&workspace, cx);
                 }
                 Err(error) => {
                     log::error!("tau: could not open a window: {error:#}")
@@ -131,6 +135,52 @@ pub extern "system" fn Java_dev_cfcosta_tau_TauViewfinder_decode<'caller>(
         })
     })
     .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Shows what the computer's agents leave the person as Android
+/// notifications, while the phone is connected (ADR 0037): each note or
+/// question, and each agent that reaches its cap, once.
+fn follow_agents(workspace: &gpui::Entity<Workspace>, cx: &mut App) {
+    let mut watch = tau_agents::alert::Watch::default();
+    cx.observe(workspace, move |workspace, cx| {
+        let overview = workspace.read(cx).agents().cloned().unwrap_or_default();
+        for alert in watch.observe(&overview) {
+            let tag = format!("{}:{:?}", alert.agent, alert.kind);
+            if let Err(error) = show(&tag, &alert.title, &alert.body) {
+                log::error!("tau: cannot show a notification: {error}");
+            }
+        }
+    })
+    .detach();
+}
+
+/// Shows one notification, `tag` its own: the same tag again replaces it.
+fn show(tag: &str, title: &str, body: &str) -> Result<(), String> {
+    mobile::with_env(|env| {
+        let activity = mobile::activity(env)?;
+        let class = mobile::find_app_class(env, NOTICES)?;
+        let tag = env.new_string(tag).map_err(|error| error.to_string())?;
+        let title = env.new_string(title).map_err(|error| error.to_string())?;
+        let body = env.new_string(body).map_err(|error| error.to_string())?;
+        env.call_static_method(
+            &class,
+            jni::jni_str!("show"),
+            jni::jni_sig!(
+                "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"
+            ),
+            &[
+                JValue::Object(&activity),
+                JValue::Object(&tag),
+                JValue::Object(&title),
+                JValue::Object(&body),
+            ],
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            env.exception_clear();
+            error.to_string()
+        })
+    })
 }
 
 /// The phone's model, as the computer lists it.
