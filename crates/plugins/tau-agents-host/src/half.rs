@@ -1,7 +1,8 @@
 //! tau-agents' host half (ADR 0030).
 
+use serde_json::Value;
 use tau_agent::plugin::Plugin;
-use tau_agents::{AgentsUi, Overview, Settings, Status};
+use tau_agents::{Act, AgentsUi, Overview, Settings, Status};
 use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{CatalogEntry, HostCx, HostHalf, Note, PluginInfo, RunCtx};
 
@@ -29,10 +30,10 @@ impl HostHalf for AgentsHost {
     async fn catalog(
         &self,
         host: &Agents,
-        cx: &HostCx,
+        _cx: &HostCx,
         _settings: &Settings,
     ) -> PluginInfo {
-        let overview = host.overview(cx).await;
+        let overview = host.overview().await;
         let description = match overview.agents.len() {
             0 => "Agents, each a conversation of its own: none yet".to_owned(),
             1 => "Agents, each a conversation of its own: 1".to_owned(),
@@ -45,8 +46,20 @@ impl HostHalf for AgentsHost {
         }
     }
 
-    async fn data(&self, host: &Agents, cx: &HostCx) -> Overview {
-        host.overview(cx).await
+    async fn data(&self, host: &Agents, _cx: &HostCx) -> Overview {
+        host.overview().await
+    }
+
+    /// What the interface asks: an agent made, more spend allowed, an
+    /// agent paused or resumed, a command sent to it. Making one answers
+    /// `{ "repo": name }`.
+    async fn act(
+        &self,
+        host: &Agents,
+        action: Value,
+        _cx: &HostCx,
+    ) -> anyhow::Result<Option<Value>> {
+        host.act(serde_json::from_value::<Act>(action)?).await
     }
 }
 

@@ -27,7 +27,7 @@ use tau_vcs_host::{Identity, Project};
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use crate::{AGENT, clock::Clock};
+use crate::{AGENT, clock::Clock, schedule::Schedule};
 
 /// How often each agent's trunk is read for a change.
 const POLL: Duration = Duration::from_secs(2);
@@ -406,6 +406,13 @@ async fn load(
             "{}: the agent is named `{}`, but its repository is `{name}`",
             AGENT.file, declared.name
         ));
+    }
+    for trigger in &declared.triggers {
+        if matches!(trigger.kind, TriggerKind::Schedule { .. }) {
+            Schedule::of(&trigger.kind).map_err(|error| {
+                format!("{}: trigger `{}`: {error}", AGENT.file, trigger.name)
+            })?;
+        }
     }
     Ok((files, modules, declared))
 }

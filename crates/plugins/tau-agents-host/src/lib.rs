@@ -4,16 +4,23 @@
 //! tested, and what wakes it. What every interface shows of an agent is
 //! `tau-agents`'.
 //!
-//! - [`Agents`]: the agents on this host, as the interface reads them.
+//! - [`Agents`]: the agents on this host: their events, queued and
+//!   delivered to their conversations, and what the interface reads.
 //! - `registry`: each agent's versions, and the one that is live.
+//! - `schedule`: when a schedule comes due.
+//! - `state`: each agent's queue and schedules, kept across restarts.
+//! - `env`: what the agents reach of the host.
 //! - `clock`: the host's time, and its local days.
 //! - `skill`: the `tau-agents` skill tau ships.
 
 mod agents;
 pub mod clock;
+pub mod env;
 mod half;
 pub mod registry;
+pub mod schedule;
 pub mod skill;
+pub mod state;
 
 pub use agents::Agents;
 pub use half::AgentsHost;
