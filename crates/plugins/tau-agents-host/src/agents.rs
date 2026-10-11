@@ -610,6 +610,11 @@ impl Agents {
         true
     }
 
+    /// What the person set for `agent`: its model, effort and cap.
+    pub fn settings_of(&self, agent: &str) -> Settings {
+        self.0.env.settings(agent)
+    }
+
     /// The agents as every interface shows them.
     pub async fn overview(&self) -> Overview {
         let now = self.0.clock.now();

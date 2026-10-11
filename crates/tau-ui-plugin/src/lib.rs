@@ -42,6 +42,7 @@ pub use host::{
     HOST_RECORD,
     HostCx,
     HostRecord,
+    ModelPick,
     OutsideResources,
     OutsideTools,
     Push,
@@ -447,6 +448,17 @@ pub trait HostHalf: Send + Sync + 'static {
         _workspace: &std::path::Path,
     ) -> impl Future<Output = bool> + Send {
         std::future::ready(false)
+    }
+
+    /// The model and effort the person's messages in `repo` go to unless
+    /// they pick others, when the plugin sets them: an agent's own (ADR
+    /// 0037). The first plugin that answers sets them.
+    fn conversation_model(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+    ) -> impl Future<Output = Option<ModelPick>> + Send {
+        std::future::ready(None)
     }
 
     /// Its entry on the Plugins screen. The registry sets its name.

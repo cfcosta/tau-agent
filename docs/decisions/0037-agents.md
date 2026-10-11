@@ -68,7 +68,9 @@ What is missing:
   triggers keep (cursors, seen keys), stored as records of the agent.
 - **Model and effort are per agent**, set by the person on its page.
   A new agent starts on the plan's newest small model (the `luna`
-  family of `PLAN_FAMILIES`, `gpt-6-luna` today) at low effort.
+  family of `PLAN_FAMILIES`, `gpt-6-luna` today) at low effort. The
+  person's own messages in its chats go to them too, unless they pick
+  others in the composer (`HostHalf::conversation_model`).
 
 ### Events are messages in its conversation
 

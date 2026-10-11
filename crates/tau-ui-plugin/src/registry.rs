@@ -139,6 +139,11 @@ pub trait ErasedPlugin: Send + Sync {
         repo: &'a RepoCtx,
         workspace: &'a std::path::Path,
     ) -> HostFuture<'a, bool>;
+    fn conversation_model<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+    ) -> HostFuture<'a, Option<crate::ModelPick>>;
     fn act<'a>(
         &'a self,
         host: &'a HostState,
@@ -394,6 +399,14 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         workspace: &'a std::path::Path,
     ) -> HostFuture<'a, bool> {
         Box::pin(self.half.lands_itself(self.host_of(host), repo, workspace))
+    }
+
+    fn conversation_model<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+    ) -> HostFuture<'a, Option<crate::ModelPick>> {
+        Box::pin(self.half.conversation_model(self.host_of(host), repo))
     }
 
     fn act<'a>(

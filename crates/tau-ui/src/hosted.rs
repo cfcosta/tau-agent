@@ -136,6 +136,22 @@ pub async fn repo_data(
     data
 }
 
+/// The model and effort `repo`'s conversations go to by default, as the
+/// first plugin that sets them says.
+pub async fn conversation_model(
+    hosted: &[Hosted],
+    repo: &RepoCtx,
+) -> Option<tau_ui_plugin::ModelPick> {
+    for hosted in hosted {
+        if let Some(pick) =
+            hosted.plugin.conversation_model(&hosted.state, repo).await
+        {
+            return Some(pick);
+        }
+    }
+    None
+}
+
 /// Carries out what `plugin`'s UI asked; its answer, if any, goes back
 /// to the UI.
 pub async fn act(

@@ -1675,7 +1675,7 @@ impl Workspace {
             run.id.clone(),
             turn.clamp(1, Self::last_fork_turn(run).max(1)),
         );
-        let model = Self::model_of(run);
+        let model = self.default_of(run);
         if !matches!(self.route, Route::Run(_) | Route::Home) {
             self.navigate(Route::Run(id.clone()), cx);
         }
@@ -1828,7 +1828,7 @@ impl Workspace {
         let Some(on) = self
             .run(run)
             .filter(|view| view.ending.is_none())
-            .map(Self::model_of)
+            .map(|view| self.default_of(view))
         else {
             return;
         };

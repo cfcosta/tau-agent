@@ -754,6 +754,7 @@ impl Host {
                 repo.trunk = trunk;
             }
             repo.plugins = self.registered_repo_data(slot).await;
+            repo.model = self.conversation_model(slot).await;
             repos.push(repo);
         }
         // The plugins with their UI, with their data and settings.

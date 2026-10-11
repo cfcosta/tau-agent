@@ -39,6 +39,16 @@ impl Workspace {
         ModelChoice::new(run.model.clone(), effort)
     }
 
+    /// The model and effort `run`'s next message goes to unless someone
+    /// picks others: its repository's own, when a plugin sets one (an
+    /// agent's, ADR 0037), else what its plan says ([`Self::model_of`]).
+    pub fn default_of(&self, run: &RunView) -> ModelChoice {
+        self.catalog
+            .repo(&run.repo)
+            .and_then(|repo| repo.model.clone())
+            .unwrap_or_else(|| Self::model_of(run))
+    }
+
     /// What a picker for `target` starts from.
     pub fn choice_for(&self, target: &PickerTarget) -> ModelChoice {
         match target {
@@ -46,8 +56,10 @@ impl Workspace {
             PickerTarget::Fork => self.fork_model.clone(),
             PickerTarget::Run(run) => {
                 self.run_models.get(run).cloned().unwrap_or_else(|| {
-                    self.run(run)
-                        .map_or_else(|| self.next_model.clone(), Self::model_of)
+                    self.run(run).map_or_else(
+                        || self.next_model.clone(),
+                        |run| self.default_of(run),
+                    )
                 })
             }
             PickerTarget::Default(agent) => {

@@ -872,3 +872,45 @@ fn without_bwrap_an_agent_has_no_commands_and_says_so() {
     let problem = block_on_io(agents.overview()).agents[0].sandbox.clone();
     assert!(problem.unwrap().contains("bwrap"));
 }
+
+/// The person's messages to an agent go to the model and effort set for
+/// it; another repository's are not the agents' to set.
+#[test]
+fn the_person_s_messages_go_to_the_agent_s_model() {
+    use tau_ui_plugin::{HostHalf as _, ModelPick, RepoCtx};
+    let f = Fixture::new();
+    f.host.settings.lock().unwrap().insert(
+        "greet".into(),
+        Settings {
+            model: Some("gpt-6-sol".into()),
+            effort: Some("high".into()),
+            ..Settings::default()
+        },
+    );
+    let at = |checkout: PathBuf| RepoCtx {
+        name: "greet".into(),
+        checkout,
+        dir: PathBuf::new(),
+        workspaces: PathBuf::new(),
+    };
+    let agents = f._home.path().join("agents");
+    assert_eq!(
+        block_on_io(
+            tau_agents_host::AgentsHost
+                .conversation_model(&f.agents, &at(agents.join("greet")),)
+        ),
+        Some(ModelPick {
+            model: "gpt-6-sol".into(),
+            effort: "high".into(),
+        })
+    );
+    assert_eq!(
+        block_on_io(
+            tau_agents_host::AgentsHost.conversation_model(
+                &f.agents,
+                &at(f._home.path().join("code")),
+            )
+        ),
+        None
+    );
+}

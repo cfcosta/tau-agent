@@ -376,6 +376,23 @@ impl Host {
             .await
     }
 
+    /// The model and effort the person's messages in the repository in
+    /// `slot` go to unless they pick others, when a plugin sets them.
+    pub(super) async fn conversation_model(
+        &self,
+        slot: &RepoSlot,
+    ) -> Option<ModelChoice> {
+        hosted::conversation_model(&self.hosted, &self.repo_ctx(slot))
+            .await
+            .map(|pick| {
+                ModelChoice::new(
+                    pick.model,
+                    Effort::parse(&pick.effort).unwrap_or(Effort::Auto),
+                )
+                .fitted()
+            })
+    }
+
     /// Carries out what `plugin`'s UI asked; its answer, if any, goes
     /// back to the UI.
     pub async fn plugin_act(

@@ -174,6 +174,10 @@ pub struct Repo {
     /// search and pickers do not list it.
     #[serde(default)]
     pub own: Option<Own>,
+    /// The model and effort its conversations go to unless the person
+    /// picks others, when a plugin sets them: an agent's own (ADR 0037).
+    #[serde(default)]
+    pub model: Option<crate::models::ModelChoice>,
 }
 
 /// Which of tau's own repositories a repository is.

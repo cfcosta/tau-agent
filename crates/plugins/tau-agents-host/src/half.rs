@@ -10,6 +10,7 @@ use tau_ui_plugin::{
     CatalogEntry,
     HostCx,
     HostHalf,
+    ModelPick,
     Note,
     PluginInfo,
     RepoCtx,
@@ -56,6 +57,20 @@ impl HostHalf for AgentsHost {
     ) -> Option<Arc<dyn Launcher>> {
         host.sandbox(&repo.name, &repo.checkout)
             .map(|sandbox| Arc::new(sandbox) as Arc<dyn Launcher>)
+    }
+
+    /// The person's messages to an agent go to its model and effort,
+    /// unless they pick others.
+    async fn conversation_model(
+        &self,
+        host: &Agents,
+        repo: &RepoCtx,
+    ) -> Option<ModelPick> {
+        let settings = host.settings_of(&host.agent_at(&repo.checkout)?);
+        Some(ModelPick {
+            model: settings.model(),
+            effort: settings.effort().to_owned(),
+        })
     }
 
     async fn catalog(

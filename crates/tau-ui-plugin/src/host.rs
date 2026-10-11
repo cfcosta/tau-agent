@@ -274,6 +274,15 @@ pub struct Turn {
     pub effort: String,
 }
 
+/// The model and effort a repository's conversations go to by default,
+/// as a plugin sets it ([`crate::HostHalf::conversation_model`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelPick {
+    pub model: String,
+    /// `auto`, `low` and so on.
+    pub effort: String,
+}
+
 /// The host's conversations, which a plugin's host half may drive: an
 /// agent's repository and its main chat, a conversation that never ends
 /// (ADR 0037). The host puts it in [`HostCx::services`] as an
