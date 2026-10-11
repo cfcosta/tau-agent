@@ -29,7 +29,7 @@ pub fn acts() -> Vec<Act> {
         add(
             "tau-agent",
             "Never delete outside target/ or rewrite published history.",
-            &["bash.command"],
+            &["exec_command.cmd"],
             0.30,
             0.60,
         ),
@@ -72,7 +72,7 @@ pub fn acts() -> Vec<Act> {
         add(
             "docbert",
             "Never rebuild the whole index to fix one document.",
-            &["bash.command"],
+            &["exec_command.cmd"],
             0.30,
             0.70,
         ),
@@ -122,7 +122,7 @@ pub fn open(
         "rule-editor" => ui.update(cx, |ui, cx| {
             ui.open_editor(repo, None, cx);
             ui.set_rule_text(RULE, cx);
-            ui.toggle_place("bash.command", cx);
+            ui.toggle_place("exec_command.cmd", cx);
             ui.try_rule(calls, Vec::new(), cx);
         }),
         "rule-missing" => ui.update(cx, |ui, cx| {

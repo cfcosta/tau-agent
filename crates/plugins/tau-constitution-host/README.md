@@ -68,7 +68,7 @@ let jev: Arc<dyn Jev> = Arc::new(TypeSafe::from_env()?);
 let mut rules = Constitution::default();
 rules.add(
     "Never force-push.",
-    &["bash.command".into()],
+    &["exec_command.cmd".into()],
     0.3,
     0.8,
 )?;

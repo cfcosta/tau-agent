@@ -29,11 +29,11 @@ fn target() -> impl PrintableGenerator<String> {
     gs::sampled_from(vec![
         "edit.newText",
         "write.content",
-        " bash.command ",
+        " exec_command.cmd ",
         "a.b.c",
         "final answer",
         "Final Answer",
-        "bash",
+        "exec_command",
         ".x",
         "x.",
         "",

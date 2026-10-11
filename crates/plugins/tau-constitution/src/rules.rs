@@ -438,7 +438,7 @@ mod tests {
                 .contains("applies nowhere")
         );
         assert!(
-            bad(vec![rule("A", "t", &["bash"], 0.5, 0.8)], "allow")
+            bad(vec![rule("A", "t", &["exec_command"], 0.5, 0.8)], "allow")
                 .contains("names no target")
         );
         assert!(
@@ -475,7 +475,7 @@ mod tests {
         );
         assert!(
             constitution
-                .for_call("bash", &json!({"command": "ls"}))
+                .for_call("exec_command", &json!({"cmd": "ls"}))
                 .is_empty()
         );
         assert!(
@@ -490,11 +490,15 @@ mod tests {
     fn rules_added_are_checked() {
         let mut constitution = example();
         let id = constitution
-            .add("Never force-push.", &["bash.command".into()], 0.2, 0.6)
+            .add("Never force-push.", &["exec_command.cmd".into()], 0.2, 0.6)
             .unwrap();
         assert_eq!(id, "R1");
         assert!(constitution.add("x", &[], 0.5, 0.8).is_err());
-        assert!(constitution.add("x", &["bash".into()], 0.5, 0.8).is_err());
+        assert!(
+            constitution
+                .add("x", &["exec_command".into()], 0.5, 0.8)
+                .is_err()
+        );
         assert!(constitution.add("x", &["a.b".into()], 0.9, 0.1).is_err());
         assert!(constitution.remove("R2"));
         assert!(!constitution.remove("R2"));

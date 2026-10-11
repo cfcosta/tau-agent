@@ -539,7 +539,7 @@ fn constitution_unprinted(tc: &TestCase) -> Constitution {
         let on: Vec<String> = tc.draw(
             gs::vecs(gs::sampled_from(vec![
                 "write.content".to_owned(),
-                "bash.command".to_owned(),
+                "exec_command.cmd".to_owned(),
                 "final answer".to_owned(),
             ]))
             .min_size(1)
@@ -702,7 +702,7 @@ fn a_rule_is_tried_on_what_a_check_would_show() {
     let calls = vec![
         ("write".to_owned(), write("x.unwrap()")),
         // Not about write.content: skipped.
-        ("bash".to_owned(), json!({ "command": "ls" })),
+        ("exec_command".to_owned(), json!({ "cmd": "ls" })),
         ("write".to_owned(), write("Ok(x)")),
     ];
     let answers = vec!["Done.".to_owned()];

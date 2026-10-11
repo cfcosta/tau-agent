@@ -156,7 +156,7 @@ fn question_id(n: usize) -> String {
 }
 
 /// The question a check asks about `rule` on `what` (such as "the
-/// `command` of this `bash` call").
+/// `cmd` of this `exec_command` call").
 fn question(rule: &Rule, what: &str) -> Question {
     Question::Noul {
         instructions: format!(

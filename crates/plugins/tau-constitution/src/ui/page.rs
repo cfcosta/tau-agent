@@ -43,7 +43,7 @@ use crate::{Trial, VerdictKind, rules::Target};
 
 /// The places the editor offers, with what each reads.
 pub const PLACES: [(&str, &str); 4] = [
-    ("bash.command", "the shell command"),
+    ("exec_command.cmd", "the shell command"),
     ("edit.newText", "each replacement"),
     ("write.content", "the whole file"),
     ("final answer", "sent back when broken"),

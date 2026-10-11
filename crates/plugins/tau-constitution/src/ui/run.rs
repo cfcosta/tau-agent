@@ -329,7 +329,7 @@ pub fn inspector(
                     .line_height(relative(1.5))
                     .child(
                         "Only the fields the model wrote are checked, such as \
-                         edit.newText or bash.command. Tool output never goes \
+                         edit.newText or exec_command.cmd. Tool output never goes \
                          to Jev.",
                     ),
             )

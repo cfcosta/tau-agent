@@ -5,7 +5,7 @@
 //! `tau-constitution`'s (ADR 0030).
 //!
 //! - **Before a tool call**, the rules that name one of the call's
-//!   arguments (`edit.newText`, `bash.command`) are checked, all in one
+//!   arguments (`edit.newText`, `exec_command.cmd`) are checked, all in one
 //!   request. Jev sees only those arguments, as the model wrote them,
 //!   never tool output or file content. A rule at or past its `block`
 //!   probability refuses the call, and the reason (the rule, quoted)

@@ -37,7 +37,7 @@ fn card(call_id: &str, tool: &str, summary: &str) -> CardInfo {
     CardInfo {
         call_id: call_id.into(),
         tool: tool.into(),
-        args: json!({ "command": summary }),
+        args: json!({ "cmd": summary }),
         summary: summary.into(),
         size: 40,
         turn: 1,
@@ -109,7 +109,7 @@ fn loading_a_run_does_not_change_the_totals(tc: hegel::TestCase) {
 fn the_fold_marks_what_the_checks_decided(tc: hegel::TestCase) {
     let bodies: Vec<Value> = tc.draw(gs::vecs(record()).max_size(8));
     let mut run = FakeRun {
-        cards: vec![card("c1", "bash", "rm -rf /")],
+        cards: vec![card("c1", "exec_command", "rm -rf /")],
         turn: 1,
         ..FakeRun::default()
     };
@@ -136,7 +136,7 @@ fn the_fold_marks_what_the_checks_decided(tc: hegel::TestCase) {
 fn a_verdict_marks_its_call() {
     let mut run = FakeRun {
         cards: vec![
-            card("c1", "bash", "rm -rf /"),
+            card("c1", "exec_command", "rm -rf /"),
             card("c2", "write", "a.rs"),
         ],
         turn: 1,
@@ -145,7 +145,7 @@ fn a_verdict_marks_its_call() {
     let mut state = State::default();
     for body in [
         json!({"kind": "blocked", "rule": "R1", "text": "No deletes.", "score": 0.95,
-               "call_id": "c1", "tool": "bash", "reason": "Rule R1 forbids it"}),
+               "call_id": "c1", "tool": "exec_command", "reason": "Rule R1 forbids it"}),
         json!({"kind": "flagged", "rule": "R2", "text": "No unwrap.", "score": 0.55,
                "call_id": "c2", "tool": "write"}),
         json!({"kind": "checked", "call_id": "c2", "tool": "write",
@@ -223,7 +223,7 @@ fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
         );
         assert!(ui.draft().unwrap().tried_to_save);
         // Places are picked, and any tool's field can be added by name.
-        ui.toggle_place("bash.command", cx);
+        ui.toggle_place("exec_command.cmd", cx);
         ui.set_rule_on("not a field", cx);
         assert!(!ui.add_other_place(cx));
         ui.set_rule_on("grep.pattern", cx);
@@ -247,7 +247,7 @@ fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
         [Act::Add {
             repo: "docbert".into(),
             text: "Never delete an index.".into(),
-            on: vec!["bash.command".into(), "grep.pattern".into()],
+            on: vec!["exec_command.cmd".into(), "grep.pattern".into()],
             review: 0.3,
             block: 0.65,
         }]
@@ -256,7 +256,7 @@ fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
     let rule = RuleInfo {
         id: "D4".into(),
         text: "Never delete an index.".into(),
-        applies_to: vec!["bash.command".into(), "grep.pattern".into()],
+        applies_to: vec!["exec_command.cmd".into(), "grep.pattern".into()],
         review: 0.3,
         block: 0.65,
     };
@@ -264,7 +264,7 @@ fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
         ui.open_editor("docbert", Some(rule), cx);
         let draft = ui.draft().unwrap();
         assert_eq!(draft.editing.as_deref(), Some("D4"));
-        assert_eq!(draft.places, ["bash.command", "grep.pattern"]);
+        assert_eq!(draft.places, ["exec_command.cmd", "grep.pattern"]);
         ui.toggle_place("grep.pattern", cx);
         ui.save(cx);
         ui.remove("docbert", "D4", cx);
@@ -276,7 +276,7 @@ fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
                 repo: "docbert".into(),
                 id: "D4".into(),
                 text: "Never delete an index.".into(),
-                on: vec!["bash.command".into()],
+                on: vec!["exec_command.cmd".into()],
                 review: 0.3,
                 block: 0.65,
             },
@@ -291,11 +291,12 @@ fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_rule_is_tried_and_says_what_it_would_do(cx: &mut TestAppContext) {
     let (ui, asked) = ui(cx);
-    let calls = vec![("bash".to_owned(), json!({ "command": "psql prod" }))];
+    let calls =
+        vec![("exec_command".to_owned(), json!({ "cmd": "psql prod" }))];
     ui.update(cx, |ui, cx| {
         ui.open_editor("tau-agent", None, cx);
         ui.set_rule_text("Never touch the production database.", cx);
-        ui.toggle_place("bash.command", cx);
+        ui.toggle_place("exec_command.cmd", cx);
         ui.try_rule(calls.clone(), Vec::new(), cx);
         assert_eq!(ui.draft().unwrap().trying, Trying::Asking);
     });
@@ -310,10 +311,10 @@ fn a_rule_is_tried_and_says_what_it_would_do(cx: &mut TestAppContext) {
     };
     assert_eq!(
         (sent, answers, on),
-        (calls, Vec::new(), vec!["bash.command".into()])
+        (calls, Vec::new(), vec!["exec_command.cmd".into()])
     );
     // What the host answers goes back to the editor.
-    let reply = json!({ "Ok": [[{ "tool": "bash", "shown": "psql prod", "score": 0.9 }], 0.001] });
+    let reply = json!({ "Ok": [[{ "tool": "exec_command", "shown": "psql prod", "score": 0.9 }], 0.001] });
     ui.update(cx, |ui, cx| ConstitutionUi.reply(ui, reply, cx));
     ui.read_with(cx, |ui, _| {
         let Trying::Done { trials, .. } = &ui.draft().unwrap().trying else {
@@ -413,7 +414,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
     let (ui, _) = ui(cx);
     let mut run = FakeRun {
         cards: vec![
-            card("c1", "bash", "rm -rf /"),
+            card("c1", "exec_command", "rm -rf /"),
             card("c2", "write", "a.rs"),
         ],
         last_text: Some("Done.".into()),
