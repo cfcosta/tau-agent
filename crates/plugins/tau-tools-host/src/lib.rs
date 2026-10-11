@@ -25,6 +25,7 @@ pub mod errno;
 pub mod find;
 pub mod grep;
 mod half;
+pub mod http;
 pub mod image;
 pub mod lock;
 pub mod ls;
@@ -32,6 +33,7 @@ pub mod path;
 #[cfg(unix)]
 pub mod plugin;
 pub mod read;
+pub mod secrets;
 pub mod truncate;
 pub mod write;
 

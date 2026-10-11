@@ -17,9 +17,11 @@ use crate::{
     edit,
     find,
     grep,
+    http,
     ls,
     path::Root,
     read,
+    secrets::SecretStore,
     write,
 };
 
@@ -84,6 +86,7 @@ pub struct CodingTools {
     tools: Vec<Tool>,
     artifacts: Option<Bytes>,
     launcher: Option<Arc<dyn Launcher>>,
+    http: Option<SecretStore>,
 }
 
 impl std::fmt::Debug for CodingTools {
@@ -93,6 +96,7 @@ impl std::fmt::Debug for CodingTools {
             .field("tools", &self.tools)
             .field("artifacts", &self.artifacts)
             .field("launcher", &self.launcher.is_some())
+            .field("http", &self.http)
             .finish()
     }
 }
@@ -104,7 +108,15 @@ impl CodingTools {
             tools: Tool::ALL.to_vec(),
             artifacts: None,
             launcher: None,
+            http: None,
         }
+    }
+
+    /// Adds `http` (ADR 0037), for scripts only, its secrets from
+    /// `store`: an agent's runs have it, no others.
+    pub fn with_http(mut self, store: SecretStore) -> Self {
+        self.http = Some(store);
+        self
     }
 
     /// Starts `bash`'s commands through `launcher`: the environment
@@ -171,6 +183,13 @@ impl Plugin for CodingTools {
         tools.push(Arc::new(artifact_read::ArtifactRead::new(
             self.artifacts.clone(),
         )));
+        if let Some(store) = &self.http {
+            let http = http::Http::new(store.clone());
+            tools.push(Arc::new(match &self.artifacts {
+                Some(bytes) => http.with_artifacts(bytes.clone()),
+                None => http,
+            }));
+        }
         tools
     }
 }

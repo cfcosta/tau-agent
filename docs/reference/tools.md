@@ -293,6 +293,44 @@ file held, or from nothing for a new file or one that was not text),
   the rules `find` and `grep` walk by). With `tau-vcs`, each entry that
   differs in `@` also gets a `change` (`vcs.md`, "ls").
 
+## http: `{ method?, url, headers?, body?, timeout? }` (an agent's runs)
+
+- Added by `CodingTools::with_http(store)`, which tau-ui calls for the
+  runs of an agent's repository only (ADR 0037). It is `Nested`:
+  scripts call it as `http.request` ([codemode.md](codemode.md),
+  "HTTP"); the model is never declared it.
+- A header is a string or a secret's marker, `{ "$secret": name,
+"prefix"?: text }`. The body is a string sent as it is, a marker sent
+  as its value, or any JSON value sent as `application/json` with its
+  markers put in. A secret the store lacks fails the call, naming the
+  secret, and nothing is sent.
+- `timeout` is in seconds: 30 by default, at most 60. Methods: `GET`
+  (default), `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`. Only
+  `http` and `https`. Redirects are not followed: a 3xx comes back as
+  it is, so a secret never reaches a host the request did not name.
+- **Result:** `{ status, headers, body, json, artifact, truncated }`.
+  Headers are joined by `, ` when repeated. A body of at most 64 KiB is
+  `body`, its bytes as UTF-8 (lossy); `json` is it decoded when the
+  answer says it is JSON and it is at most 1 MiB, else null. A longer
+  body is an artifact (`artifact`: `{ id, digest, size_bytes }`, read
+  with `artifact_read`) when the run has artifact storage, else cut at
+  64 KiB with `truncated` set. At most 16 MiB is read; past it,
+  `truncated` is set too.
+- **Scrubbing:** every value in tau's secret store of at least 4 bytes
+  is replaced by `[secret:<name>]` in the status's headers, the body
+  (and the artifact's bytes) and every error, whether or not the
+  request named it.
+- **The store** is `secrets.json` in tau's configuration directory,
+  `{ name: value }`, owner-only (0600, its directory 0700), replaced
+  whole in one rename (`tau_tools_host::secrets::SecretStore`). Names
+  are 1 to 64 letters, digits, `_`, `-` and `.`. An agent's page lists
+  the names its `agent.luau` uses and saves or removes values
+  (`Act::SetSecret`, `Act::RemoveSecret`); no interface reads a value
+  back.
+- `tau_tools_host::http::fetch` is the same request for the host
+  itself, without a run (an agent's polls): scrubbed, its body whole as
+  text (to 16 MiB) and decoded when it is JSON.
+
 ## Error strings
 
 These strings are part of the spec. `<path>` is the path as the model
