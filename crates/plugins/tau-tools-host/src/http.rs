@@ -178,24 +178,7 @@ impl Request {
                 url.scheme()
             ));
         }
-        let headers = match fields.get("headers") {
-            None | Some(Value::Null) => Vec::new(),
-            Some(Value::Object(headers)) => headers
-                .iter()
-                .map(|(name, value)| match value {
-                    Value::String(_) => Ok((name.clone(), value.clone())),
-                    _ if Marker::of(value).is_some() => {
-                        Ok((name.clone(), value.clone()))
-                    }
-                    _ => Err(format!(
-                        "the header `{name}` is a string or a secret"
-                    )),
-                })
-                .collect::<Result<_, _>>()?,
-            Some(_) => {
-                return Err("`headers` is a table of names to values".into());
-            }
-        };
+        let headers = header_specs(fields.get("headers"))?;
         let timeout = match fields.get("timeout") {
             None | Some(Value::Null) => DEFAULT_TIMEOUT,
             Some(seconds) => {
@@ -227,21 +210,7 @@ impl Request {
         &self,
         secrets: &BTreeMap<String, String>,
     ) -> Result<Ready, String> {
-        let mut headers = reqwest::header::HeaderMap::new();
-        for (name, value) in &self.headers {
-            let value = match Marker::of(value) {
-                Some(marker) => marker.resolve(secrets)?,
-                None => value.as_str().unwrap_or_default().to_owned(),
-            };
-            let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
-                .map_err(|_| format!("`{name}` cannot name a header"))?;
-            let mut value = reqwest::header::HeaderValue::from_str(&value)
-                .map_err(|_| {
-                    format!("the header `{name}` holds what a header cannot")
-                })?;
-            value.set_sensitive(true);
-            headers.insert(name, value);
-        }
+        let mut headers = header_map(&self.headers, secrets)?;
         let body = match &self.body {
             None => None,
             Some(Value::String(text)) => Some(text.clone().into_bytes()),
@@ -272,6 +241,61 @@ impl Request {
             timeout: self.timeout,
         })
     }
+}
+
+/// A request's `headers`, each a string or a secret's marker.
+fn header_specs(
+    headers: Option<&Value>,
+) -> Result<Vec<(String, Value)>, String> {
+    match headers {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Object(headers)) => headers
+            .iter()
+            .map(|(name, value)| match value {
+                Value::String(_) => Ok((name.clone(), value.clone())),
+                _ if Marker::of(value).is_some() => {
+                    Ok((name.clone(), value.clone()))
+                }
+                _ => {
+                    Err(format!("the header `{name}` is a string or a secret"))
+                }
+            })
+            .collect(),
+        Some(_) => Err("`headers` is a table of names to values".into()),
+    }
+}
+
+/// `headers` as they leave, their secrets' values put in and marked
+/// sensitive.
+fn header_map(
+    headers: &[(String, Value)],
+    secrets: &BTreeMap<String, String>,
+) -> Result<reqwest::header::HeaderMap, String> {
+    let mut map = reqwest::header::HeaderMap::new();
+    for (name, value) in headers {
+        let value = match Marker::of(value) {
+            Some(marker) => marker.resolve(secrets)?,
+            None => value.as_str().unwrap_or_default().to_owned(),
+        };
+        let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| format!("`{name}` cannot name a header"))?;
+        let mut value = reqwest::header::HeaderValue::from_str(&value)
+            .map_err(|_| {
+                format!("the header `{name}` holds what a header cannot")
+            })?;
+        value.set_sensitive(true);
+        map.insert(name, value);
+    }
+    Ok(map)
+}
+
+/// The headers a stream opens with (an agent's stream trigger), read as
+/// a request's are, their secrets' values put in.
+pub fn stream_headers(
+    headers: Option<&Value>,
+    secrets: &BTreeMap<String, String>,
+) -> Result<reqwest::header::HeaderMap, String> {
+    header_map(&header_specs(headers)?, secrets)
 }
 
 /// `value` with each marker in it replaced by its secret's value.
@@ -391,7 +415,7 @@ pub async fn send(
 }
 
 /// reqwest's error, with its causes, never its request's headers.
-fn error_text(error: reqwest::Error) -> String {
+pub fn error_text(error: reqwest::Error) -> String {
     let mut text = if error.is_timeout() {
         "the request timed out".to_owned()
     } else if error.is_connect() {
