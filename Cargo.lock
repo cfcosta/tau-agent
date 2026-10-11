@@ -9383,6 +9383,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-agents-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-agents",
+ "tau-luau-plugins-host",
+ "tau-skills",
+ "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tau-vcs-host",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "tau-ai"
 version = "0.1.0"
 dependencies = [

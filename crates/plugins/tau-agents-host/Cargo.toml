@@ -1,0 +1,30 @@
+[package]
+name = "tau-agents-host"
+description = "tau-agents' host half: each agent's agent.luau read from its repository's trunk, its events queued and delivered to its conversation (ADR 0037)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-agents.workspace = true
+# An agent's folder is read, built and tested as a Luau plugin's is.
+tau-luau-plugins-host.workspace = true
+# Where the skill tau ships is installed.
+tau-skills = { path = "../tau-skills", default-features = false }
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
+tau-vcs-host.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+# The host's offset from UTC, for schedules in its local time.
+libc.workspace = true
+
+[dev-dependencies]
+tau-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

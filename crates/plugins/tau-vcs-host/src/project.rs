@@ -610,6 +610,20 @@ impl ProjectRepo {
         Ok(commit.parent_ids().next().map(|id| id.to_string()))
     }
 
+    /// The description of `commit` (a full id in hex): its message.
+    pub fn description_of(&self, commit: &str) -> Result<String, VcsError> {
+        let repo = self.git()?;
+        let id =
+            gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
+                VcsError::BadCommitHex {
+                    commit: commit.to_owned(),
+                    source,
+                }
+            })?;
+        let commit = repo.find_object(id)?.try_into_commit()?;
+        Ok(String::from_utf8_lossy(commit.message_raw_sloppy()).into_owned())
+    }
+
     /// The source's default branch, as `origin/HEAD` names it.
     pub fn default_branch(&self) -> Option<String> {
         let repo = self.git().ok()?;
