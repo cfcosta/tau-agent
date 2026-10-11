@@ -242,13 +242,19 @@ return tau.agent {
 
 - `bash` in an agent's runs starts through a launcher (0025) that the
   agents' host half gives its repositories: `bwrap` (bubblewrap) with
-  the run's workspace read-write, `/nix/store` and the system's
-  read-only paths, a private `/tmp` and `$HOME`, and the network. The
-  person's home, other repositories and tau's own data are not there.
+  the run's workspace read-write, `/nix`, `/etc` and the system's other
+  read-only paths, a private `/tmp`, a home of the agent's own (kept
+  under tau's data, so what it installs or caches stays), and the
+  network. The person's home, other repositories, `/run/user` and
+  tau's own data are not there, nor tau's environment variables but
+  the few a command needs (`PATH`, locale, terminal, certificates).
+  Reference: [environment.md](../reference/environment.md).
 - It is 0025's extension point, used for a wall rather than an
   environment: the launcher adds words before the program, as
-  tau-direnv's does. Without `bwrap` on `PATH`, an agent's `bash` is
-  off, and its page says so; it never falls back to running unsandboxed.
+  tau-direnv's does. An agent's repository takes tau-agents' launcher
+  alone, so nothing of another plugin's (direnv's `.envrc`) runs
+  outside it. Without `bwrap` on `PATH`, an agent's runs have no `bash`,
+  and its page says so; it never falls back to running unsandboxed.
 - The agent's stdio MCP servers start through the same launcher.
 
 ### Codemode gains `http` and secrets by name

@@ -92,6 +92,33 @@ prefix`. A file that does not parse fails the loads.
 - The person's allow and deny records (`$XDG_DATA_HOME/direnv`) are
   read by direnv as always and never written by tau.
 
+## Agents' sandbox
+
+An agent's repository (ADR 0037) takes one launcher, tau-agents', and
+no other plugin's: its commands, and its stdio MCP servers, start inside
+`bwrap` (`tau_agents_host::sandbox`), one sandbox per command.
+
+- **Seen:** the command's workspace, read-write, where it starts;
+  `/nix`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`,
+  `/run/current-system` and `/run/systemd/resolve`, read-only, where
+  they exist; a private `/tmp`, `/dev` and `/proc`; the agent's home,
+  `<data>/plugins/tau-agents/homes/<agent>`, at `/home/agent`.
+- **Not seen:** the person's home, their other repositories, tau's data
+  and settings (secrets included), `/run/user`.
+- **Shared:** the network only (`--unshare-all --share-net`). The
+  command dies with tau (`--die-with-parent`) and has a session of its
+  own (`--new-session`).
+- **Variables:** tau's own are dropped (`--unsetenv`) but for `PATH`,
+  `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `TZDIR`, `TERM`, `COLORTERM`, the
+  pagers, `SHELL`, `USER`, `LOGNAME`, `LOCALE_ARCHIVE` and the
+  certificate files. `HOME` is `/home/agent` and `TMPDIR` `/tmp`. What a
+  command sets for itself (its terminal's) passes.
+- `/etc` is there whole: it holds nothing the person's own processes
+  cannot read, and DNS, certificates and users need it.
+- **Without `bwrap`** on `PATH` there is no launcher, the host gives the
+  agent's runs no `bash`, and the agent's page says why. tau's Nix
+  package puts `bwrap` on its `PATH`; the dev shell has it.
+
 ## Tests
 
 - `tau-agent`: `Launch::argv`, and `Launchers` joining in order.
@@ -109,3 +136,9 @@ prefix`. A file that does not parse fails the loads.
   directory.
 - `tau-ui`: `tests/direnv.rs` (the host with the fake first on `PATH`)
   and `tests/direnv_ui.rs` (the question, cards and menu entry).
+- `tau-agents-host` (`tests/sandbox.rs`): `bwrap`'s words, the variables
+  dropped and kept, and a real command in a real sandbox when `bwrap`
+  is on `PATH`; (`tests/agents.rs`) a sandbox for agents' repositories
+  only, and none, said why, without `bwrap`.
+- `tau-ui` (`tests/host.rs`): an agent's runs without a sandbox declare
+  no `bash`; the person's keep it.
