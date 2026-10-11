@@ -621,11 +621,13 @@ impl Host {
             .collect()
     }
 
-    /// Waits for a run whose `RunEnd` went by to finish storing its
-    /// outcome, or a sub-agent's to have its work checked, a moment at
-    /// most. A run still working is not waited on.
+    /// Waits for a run whose `RunEnd` went by to finish: storing its
+    /// outcome and its plugins' finishing, which may call a model and
+    /// take longer than any fixed wait; or a sub-agent's work to be
+    /// checked. The marks that say so go with the run, so the wait ends
+    /// with it. A run still working is not waited on.
     async fn settle(&self, run: &RunId) {
-        for _ in 0..500 {
+        loop {
             let ending =
                 self.ending.lock().expect("not poisoned").contains(run)
                     || self.sub_agent_ending(run);

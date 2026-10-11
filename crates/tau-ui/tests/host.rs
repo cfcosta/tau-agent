@@ -1444,6 +1444,118 @@ fn changes_nothing_and_is_reported(without_bookmark: bool) {
     child_llm.assert_exhausted();
 }
 
+/// Plugins that finish a run slowly, as one that asks a model does: its
+/// end went by, and main is still not done for longer than any wait.
+struct SlowFinish(Duration);
+
+#[async_trait::async_trait]
+impl tau_agent::plugin::Plugin for SlowFinish {
+    fn name(&self) -> &str {
+        "slow-finish"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut tau_agent::plugin::RunPlan,
+        _ctx: &tau_agent::plugin::PluginCtx,
+    ) -> Result<
+        Box<dyn tau_agent::plugin::PluginRun>,
+        tau_agent::plugin::PluginError,
+    > {
+        Ok(Box::new(SlowFinishRun(self.0)))
+    }
+}
+
+struct SlowFinishRun(Duration);
+
+#[async_trait::async_trait]
+impl tau_agent::plugin::PluginRun for SlowFinishRun {
+    async fn finish(
+        &mut self,
+        run: &tau_agent::plugin::FinishedRun<'_>,
+        _ctx: &tau_agent::plugin::PluginCtx,
+    ) {
+        // Only tau's turn reporting a sub-agent is slow.
+        if format!("{:?}", run.transcript).contains("your sub-agents came back")
+        {
+            tokio::time::sleep(self.0).await;
+        }
+    }
+}
+
+/// tau's turn reporting a sub-agent ends, but its plugins take their
+/// time finishing it: what waited meanwhile still lands, and is reported,
+/// after it.
+#[test]
+fn what_waits_lands_after_a_main_turn_that_finishes_slowly() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = tau_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("spawn", serde_json::json!({ "task": "read one" }))
+                .tool_call("spawn", serde_json::json!({ "task": "read two" }))
+        })
+        .turn(|t| t.text("they read"))
+        // tau's turns with the reports.
+        .turn(|t| t.text("first is in"))
+        .turn(|t| t.text("second is in"));
+    let child_llm = ScriptedModel::new()
+        .turn(|t| t.text("answer one"))
+        .turn(|t| t.text("answer two"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(Routed {
+        main: main_llm.clone(),
+        child: child_llm.clone(),
+    })
+    .plugin(SlowFinish(Duration::from_secs(7)))
+    .name("coder");
+    let (host, mut events) = host_of(runtime, store, agent, src.path());
+    let host = host.with_repo(REPO, project);
+    let main = on_main(&host, "read both");
+    let mut ended = Vec::new();
+    while ended.len() < 3 {
+        for event in until_end(&mut events) {
+            if let RunEvent::RunEnd { run, .. } = event {
+                ended.push(run);
+            }
+        }
+    }
+    wait_until_done(&host, &main);
+    let children: Vec<_> =
+        ended.into_iter().filter(|run| *run != main).collect();
+    assert_eq!(children.len(), 2);
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let first = host
+        .block_on(host.sub_agent_ended(&children[0], Vec::new()))
+        .unwrap();
+    let prompt = first.resolve.expect("tau's turn reports the first");
+    let second = host
+        .block_on(host.sub_agent_ended(&children[1], Vec::new()))
+        .unwrap();
+    assert_eq!(second.queue.len(), 1, "{second:?}");
+    host.block_on(host.start_resolving(&main, &prompt)).unwrap();
+    until_end(&mut events);
+    // Its end went by; its plugins are still finishing it.
+    let after = host.block_on(host.main_turn_ended(&main)).unwrap();
+    assert!(after.queue.is_empty(), "{after:?}");
+    assert!(after.resolve.is_some(), "the second is reported: {after:?}");
+}
+
 /// A sub-agent that fails still comes back from history, under the run
 /// that called it, with how it ended.
 #[test]
