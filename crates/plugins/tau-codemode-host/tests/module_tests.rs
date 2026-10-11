@@ -142,20 +142,21 @@ impl AgentTool for LiveTool {
 }
 
 #[test]
-fn fake_infer_and_bash_stay_isolated_and_versions_do_not_transfer_tests() {
+fn fake_infer_and_exec_command_stay_isolated_and_versions_do_not_transfer_tests()
+ {
     block_on_io(async {
         let calls = Arc::new(AtomicUsize::new(0));
         let store = tau_store_sqlite::memory().await.unwrap();
         let scripted = model(&[r#"
 local old = tools.module_define({name='m',source='return {value=1}'})
 local newer = tools.module_define({name='m',source='return {value=2}'})
-local code = "assert(require('m').value == 1); assert(tools.infer({task='x',context={}}) == 'fake'); assert(tools.bash({command='x'}) == 'fake')"
-local report = tools.module_test({name='m',version=old.version,code=code,tools={{name='infer',args={task='x',context={}},value='fake'},{name='bash',args={command='x'},value='fake'}}})
+local code = "assert(require('m').value == 1); assert(tools.infer({task='x',context={}}) == 'fake'); assert(tools.exec_command({cmd='x'}) == 'fake')"
+local report = tools.module_test({name='m',version=old.version,code=code,tools={{name='infer',args={task='x',context={}},value='fake'},{name='exec_command',args={cmd='x'},value='fake'}}})
 return {report=report,old=tools.module_inspect({name='m',version=old.version}),newer=tools.module_inspect({name='m',version=newer.version})}
 "#]);
         let agent = Agent::new(scripted.clone())
             .tool(LiveTool {
-                name: "bash",
+                name: "exec_command",
                 calls: calls.clone(),
                 schema: json!({"type":"object"}),
             })

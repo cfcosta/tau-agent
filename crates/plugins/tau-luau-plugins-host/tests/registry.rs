@@ -34,7 +34,7 @@ return tau.plugin {
   description = "Says hello, and blocks rm.",
   tools = { hello = { description = "Hello.", call = function() return "hi" end } },
   before_tool = function(call, ctx)
-    if call.name == "bash" then return tau.block("no") end
+    if call.name == "exec_command" then return tau.block("no") end
   end,
 }
 "#;

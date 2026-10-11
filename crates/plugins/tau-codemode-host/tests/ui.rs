@@ -870,7 +870,12 @@ fn a_call_that_never_ran_says_why() {
 #[test]
 fn verdicts_mark_their_rows() {
     let mut data = CallData::default();
-    data.nested_start("call_1/1", CALL, "bash", &json!({ "command": "rm" }));
+    data.nested_start(
+        "call_1/1",
+        CALL,
+        "exec_command",
+        &json!({ "cmd": "rm" }),
+    );
     data.mark_nested(
         "call_1/1",
         "tau-constitution",
@@ -887,7 +892,7 @@ fn verdicts_mark_their_rows() {
     data.result = Some(CallResult {
         text: "Script completed\nWall time 0.0 seconds\nOutput:\n".into(),
         details: Some(json!({
-            "calls": [{ "id": "call_1/1", "name": "bash", "args": "{}",
+            "calls": [{ "id": "call_1/1", "name": "exec_command", "args": "{}",
                         "status": "error", "ms": 3, "error": "blocked",
                         "cost": null }],
             "complete": true, "store": null, "usage": {}, "wall_ms": 12,
@@ -1127,7 +1132,7 @@ fn draw(
 /// runs, folded to its header once it ended, and red when it failed.
 #[gpui::test]
 fn the_card_shows_the_script_as_it_goes(cx: &mut TestAppContext) {
-    assert!(draw(cx, &at_card("bash", CallData::default())).is_none());
+    assert!(draw(cx, &at_card("exec_command", CallData::default())).is_none());
     let mut data = CallData {
         args: json!({ "code": "-- @options: {}\nreturn tools.read({ path = 'a' })" }),
         ..CallData::default()

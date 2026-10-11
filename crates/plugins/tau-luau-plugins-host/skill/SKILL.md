@@ -62,7 +62,7 @@ local ui = tau.ui
 return tau.plugin {
   name = "...",              -- the folder's name
   description = "...",       -- one line, for the Plugins screen
-  uses = { tools = { "bash" }, jev = false, infer = false },
+  uses = { tools = { "exec_command" }, jev = false, infer = false },
   settings = { schema = { ... }, default = { ... }, view = function(settings, ctx) end },
   tools = { name = { description, parameters, call, card } },
   before_tool = function(call, ctx) end,
@@ -185,7 +185,7 @@ t.case("what it checks", function()
     state = { ... },               -- else {}
     tools = { read = "text" },     -- what ctx.tools give: a value, or a function of the args
   }
-  t.equal(run:before_tool { name = "bash", args = { command = "ls" } }, nil)
+  t.equal(run:before_tool { name = "exec_command", args = { cmd = "ls" } }, nil)
 end)
 ```
 

@@ -28,8 +28,8 @@ return tau.plugin {
 		end,
 	},
 	before_tool = function(call, ctx)
-		local command = call.args.command
-		if call.name == "bash" and type(command) == "string" and command:find("deploy") then
+		local command = call.args.cmd
+		if call.name == "exec_command" and type(command) == "string" and command:find("deploy") then
 			if tau.contains(ctx.settings.days, ctx.now.weekday) then
 				return tau.block("No deploys on " .. ctx.now.weekday .. ".")
 			end

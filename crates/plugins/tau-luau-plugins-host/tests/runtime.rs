@@ -31,7 +31,7 @@ local days = require("days")
 return tau.plugin {
   name = "no-friday-deploys",
   description = "Blocks deploy commands on Fridays.",
-  uses = { tools = { "bash" } },
+  uses = { tools = { "exec_command" } },
   settings = {
     schema = { type = "object" },
     default = { days = { "Friday" } },
@@ -48,9 +48,9 @@ return tau.plugin {
     },
     run_it = {
       description = "Runs a command.",
-      parameters = { type = "object", properties = { command = { type = "string" } } },
+      parameters = { type = "object", properties = { cmd = { type = "string" } } },
       call = function(args, ctx)
-        return ctx.tools.bash({ command = args.command })
+        return ctx.tools.exec_command({ cmd = args.cmd })
       end,
     },
     sneak = {
@@ -61,7 +61,7 @@ return tau.plugin {
     },
   },
   before_tool = function(call, ctx)
-    if call.name == "bash" and call.args.command:find("deploy") and days.blocked(ctx) then
+    if call.name == "exec_command" and call.args.cmd:find("deploy") and days.blocked(ctx) then
       return tau.block("No deploys on " .. ctx.now.weekday .. ".")
     end
   end,
@@ -121,7 +121,7 @@ async fn a_plugin_declares_what_it_is() {
     assert_eq!(
         declared.uses,
         Uses {
-            tools: vec!["bash".into()],
+            tools: vec!["exec_command".into()],
             jev: false,
             infer: false,
         }
@@ -172,7 +172,7 @@ async fn hooks_answer_as_the_plugin_says() {
                 .await
         }
     };
-    let deploy = json!({ "id": "c1", "name": "bash", "args": { "command": "make deploy" } });
+    let deploy = json!({ "id": "c1", "name": "exec_command", "args": { "cmd": "make deploy" } });
     let blocked = call("Friday", Hook::BeforeTool, deploy.clone()).await;
     assert_eq!(blocked.error, None);
     assert_eq!(
@@ -256,14 +256,14 @@ async fn state_carries_from_hook_to_hook() {
     assert_eq!(reset.state, json!({ "turns": 0 }));
 }
 
-/// Answers `bash` with what it was asked; has `read` too, which the
+/// Answers `exec_command` with what it was asked; has `read` too, which the
 /// plugin does not use.
 struct Shell;
 
 #[async_trait]
 impl Reach for Shell {
     fn tools(&self) -> Vec<ToolEntry> {
-        ["bash", "read"]
+        ["exec_command", "read"]
             .into_iter()
             .map(|name| ToolEntry {
                 name: name.into(),
@@ -279,7 +279,7 @@ impl Reach for Shell {
     async fn call(&self, call: ToolCall) -> Result<ToolReply, String> {
         Ok(ToolReply::success(json!(format!(
             "ran {}",
-            call.args["command"]
+            call.args["cmd"]
         ))))
     }
 }
@@ -291,7 +291,7 @@ async fn a_tool_reaches_only_what_it_uses() {
     let ran = loaded
         .call(
             &Hook::Tool("run_it".into()),
-            json!({ "command": "ls" }),
+            json!({ "cmd": "ls" }),
             &ctx,
             Arc::new(Shell),
             CancellationToken::new(),
@@ -348,7 +348,7 @@ return tau.plugin {
     let looped = loaded
         .call(
             &Hook::BeforeTool,
-            json!({ "name": "bash" }),
+            json!({ "name": "exec_command" }),
             &ctx,
             no_reach(),
             CancellationToken::new(),
@@ -395,13 +395,13 @@ local t = tau.test
 
 t.case("blocks deploys on Friday", function()
   local run = t.run { now = "2026-10-09T10:00:00Z" }
-  t.equal(run:before_tool { name = "bash", args = { command = "make deploy" } },
+  t.equal(run:before_tool { name = "exec_command", args = { cmd = "make deploy" } },
     tau.block("No deploys on Friday."))
 end)
 
 t.case("lets them through on Monday", function()
   local run = t.run { now = "2026-10-05T10:00:00Z" }
-  t.equal(run:before_tool { name = "bash", args = { command = "make deploy" } }, nil)
+  t.equal(run:before_tool { name = "exec_command", args = { cmd = "make deploy" } }, nil)
 end)
 
 t.case("the card says when to wait", function()
@@ -421,8 +421,8 @@ t.case("turns are counted, and the view shows them", function()
 end)
 
 t.case("a tool calls the fake tools it is given", function()
-  local run = t.run { tools = { bash = function(args) return "ran " .. args.command end } }
-  t.equal(run:tool("run_it", { command = "ls" }), "ran ls")
+  local run = t.run { tools = { exec_command = function(args) return "ran " .. args.cmd end } }
+  t.equal(run:tool("run_it", { cmd = "ls" }), "ran ls")
 end)
 
 t.case("this one is wrong on purpose", function()

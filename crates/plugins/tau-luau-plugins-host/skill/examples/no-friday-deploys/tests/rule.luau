@@ -5,7 +5,7 @@ local FRIDAY = "2026-10-09T10:00:00Z"
 local MONDAY = "2026-10-05T10:00:00Z"
 
 local function deploy(run)
-	return run:before_tool({ name = "bash", args = { command = "make deploy" } })
+	return run:before_tool({ name = "exec_command", args = { cmd = "make deploy" } })
 end
 
 t.case("blocks deploys on Friday", function()
@@ -23,7 +23,7 @@ end)
 
 t.case("leaves other commands alone", function()
 	local run = t.run({ now = FRIDAY })
-	t.equal(run:before_tool({ name = "bash", args = { command = "make test" } }), nil)
+	t.equal(run:before_tool({ name = "exec_command", args = { cmd = "make test" } }), nil)
 	t.equal(run:before_tool({ name = "read", args = { path = "deploy.md" } }), nil)
 end)
 

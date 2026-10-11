@@ -35,7 +35,7 @@ local ui = tau.ui
 
 return tau.plugin {
   name = "no-deploys",
-  uses = { tools = { "bash" } },
+  uses = { tools = { "exec_command" } },
   settings = { default = { days = { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" } } },
   tools = {
     deploy_window = {
@@ -49,7 +49,7 @@ return tau.plugin {
     },
   },
   before_tool = function(call, ctx)
-    if call.name == "bash" and call.args.command:find("deploy") then
+    if call.name == "exec_command" and call.args.cmd:find("deploy") then
       return tau.block("No deploys on " .. ctx.now.weekday .. ".")
     end
   end,
@@ -67,13 +67,13 @@ return tau.plugin {
 }
 "#;
 
-/// `bash`, answering with what it ran.
-struct Bash;
+/// `exec_command`, answering with what it ran.
+struct ExecCommand;
 
 #[async_trait]
-impl AgentTool for Bash {
+impl AgentTool for ExecCommand {
     fn name(&self) -> &str {
-        "bash"
+        "exec_command"
     }
 
     fn description(&self) -> &str {
@@ -91,7 +91,7 @@ impl AgentTool for Bash {
         args: Value,
         _ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
-        Ok(ToolOutput::text(format!("ran {}", args["command"])))
+        Ok(ToolOutput::text(format!("ran {}", args["cmd"])))
     }
 }
 
@@ -118,7 +118,7 @@ fn records(store: &Store, run: &RunId) -> Vec<Record> {
 fn a_plugin_takes_part_in_a_run() {
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("deploy_window", json!({})))
-        .turn(|t| t.tool_call("bash", json!({ "command": "make deploy" })))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "make deploy" })))
         .turn(|t| t.text("done"))
         .turn(|t| t.text("ran the tests"));
     let store = block_on_io(tau_store_sqlite::memory()).unwrap();
@@ -127,7 +127,7 @@ fn a_plugin_takes_part_in_a_run() {
         json!({ "kind": "main", "repo": "r", "model": "m" }),
         None,
     );
-    let agent = Agent::new(llm.clone()).tool(Bash).plugin(plugins);
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
     let (outcome, events) = block_on_io(async {
         let mut run = agent.start("deploy it", &store);
         let events: Vec<RunEvent> = run.events().collect().await;
@@ -191,15 +191,15 @@ return tau.plugin {
 }
 "#;
     let llm = ScriptedModel::new()
-        .turn(|t| t.tool_call("bash", json!({ "command": "a" })))
-        .turn(|t| t.tool_call("bash", json!({ "command": "b" })))
-        .turn(|t| t.tool_call("bash", json!({ "command": "c" })))
-        .turn(|t| t.tool_call("bash", json!({ "command": "d" })))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "a" })))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "b" })))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "c" })))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "d" })))
         .turn(|t| t.text("done"));
     let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let plugins =
         LuauPlugins::new(vec![active("broken", broken)], json!({}), None);
-    let agent = Agent::new(llm.clone()).tool(Bash).plugin(plugins);
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
     let outcome = block_on_io(agent.run("go", &store)).unwrap();
     assert_eq!(outcome.text, "done");
     // Every call ran: a failing hook allows.
