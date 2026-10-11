@@ -48,11 +48,16 @@ use rmcp::{
         ProtocolVersion,
         ReadResourceRequest,
         ReadResourceRequestParams,
+        ResourceUpdatedNotificationParam,
         Root,
         ServerJsonRpcMessage,
         ServerNotification,
         ServerResult,
+        SubscribeRequest,
+        SubscribeRequestParams,
         SubscriptionFilter,
+        UnsubscribeRequest,
+        UnsubscribeRequestParams,
     },
     service::{
         ClientInitializeError,
@@ -100,6 +105,9 @@ use crate::{
 /// How long the process group of a closed stdio server has between
 /// SIGTERM and SIGKILL.
 const KILL_GRACE: Duration = Duration::from_secs(2);
+
+/// How long a `resources/unsubscribe` may take; nothing waits for it.
+const UNSUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Where a server is, its configuration resolved: variables and `~/`
 /// expanded, `cwd` made absolute.
@@ -153,6 +161,8 @@ pub(crate) enum SessionEvent {
     ResourcesChanged,
     /// Its prompts changed.
     PromptsChanged,
+    /// A resource the session subscribes to changed: read it again.
+    ResourceUpdated(String),
     /// The connection ended.
     Closed,
 }
@@ -383,6 +393,14 @@ impl ClientHandler for Handler {
         let _ = self.events.send(SessionEvent::PromptsChanged);
     }
 
+    async fn on_resource_updated(
+        &self,
+        params: ResourceUpdatedNotificationParam,
+        _context: NotificationContext<RoleClient>,
+    ) {
+        let _ = self.events.send(SessionEvent::ResourceUpdated(params.uri));
+    }
+
     async fn on_logging_message(
         &self,
         params: LoggingMessageNotificationParam,
@@ -445,13 +463,63 @@ pub(crate) struct Session {
     instructions: Option<String>,
     features: Features,
     protocol: Option<String>,
+    /// Where its subscriptions' updates go, as the handler's do.
+    events: mpsc::UnboundedSender<SessionEvent>,
+    /// On 2026-07-28: a subscription is a `subscriptions/listen` of its
+    /// own, not `resources/subscribe`.
+    listens: bool,
 }
 
 /// What a server offers besides tools, from its capabilities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Features {
     pub resources: bool,
+    /// It says when a resource changes, to a client subscribed to it.
+    pub subscribe: bool,
     pub prompts: bool,
+}
+
+/// A session's subscription to one resource: its updates come as
+/// [`SessionEvent::ResourceUpdated`] while it is held, and dropping it
+/// unsubscribes.
+pub(crate) struct ResourceSub {
+    ends: Option<SubEnd>,
+}
+
+enum SubEnd {
+    /// The task reading a `subscriptions/listen`: aborting it drops the
+    /// subscription, which cancels the request.
+    Listen(tokio::task::AbortHandle),
+    /// A `resources/subscribe`, undone by `resources/unsubscribe`.
+    Legacy(Peer<RoleClient>, String),
+}
+
+impl Drop for ResourceSub {
+    fn drop(&mut self) {
+        match self.ends.take() {
+            Some(SubEnd::Listen(task)) => task.abort(),
+            Some(SubEnd::Legacy(peer, uri)) => {
+                if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                    runtime.spawn(async move {
+                        let request = ClientRequest::UnsubscribeRequest(
+                            UnsubscribeRequest::new(
+                                UnsubscribeRequestParams::new(uri),
+                            ),
+                        );
+                        let _ = peer
+                            .send_request_with_option(
+                                request,
+                                PeerRequestOptions::with_timeout(
+                                    UNSUBSCRIBE_TIMEOUT,
+                                ),
+                            )
+                            .await;
+                    });
+                }
+            }
+            None => {}
+        }
+    }
 }
 
 impl Session {
@@ -528,6 +596,10 @@ impl Session {
         let capabilities = info.as_ref().map(|info| &info.capabilities);
         let features = Features {
             resources: capabilities.is_some_and(|c| c.resources.is_some()),
+            subscribe: capabilities
+                .and_then(|c| c.resources.as_ref())
+                .and_then(|resources| resources.subscribe)
+                .unwrap_or(false),
             prompts: capabilities.is_some_and(|c| c.prompts.is_some()),
         };
         // On 2026-07-28 list changes come only through
@@ -554,6 +626,7 @@ impl Session {
         };
         let stop = service.cancellation_token();
         let (done_tx, done) = watch::channel(false);
+        let subscription_events = events.clone();
         tokio::spawn(async move {
             let _ = service.waiting().await;
             if let Some(group) = group {
@@ -573,7 +646,74 @@ impl Session {
             instructions,
             features,
             protocol,
+            events: subscription_events,
+            listens,
         })
+    }
+
+    /// Subscribes to the resource `uri`: on 2026-07-28 through a
+    /// `subscriptions/listen` of its own, before through
+    /// `resources/subscribe`. Its updates come as
+    /// [`SessionEvent::ResourceUpdated`] while the subscription is held.
+    /// A server that does not take `uri` fails it.
+    pub async fn subscribe_resource(
+        &self,
+        uri: &str,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<ResourceSub, CallError> {
+        if self.listens {
+            let filter = SubscriptionFilter::builder()
+                .resource_subscription(uri)
+                .build();
+            let listening = tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Err(CallError::Cancelled),
+                listening = tokio::time::timeout(timeout, self.peer.listen(filter)) => listening,
+            };
+            let mut subscription = listening
+                .map_err(|_| CallError::Timeout(timeout))?
+                .map_err(call_error)?;
+            let accepted = subscription
+                .acknowledged()
+                .resource_subscriptions
+                .as_ref()
+                .is_some_and(|uris| uris.iter().any(|taken| taken == uri));
+            if !accepted {
+                return Err(CallError::Protocol(format!(
+                    "the server does not say when {uri} changes"
+                )));
+            }
+            let (events, watched) = (self.events.clone(), uri.to_owned());
+            let task = tokio::spawn(async move {
+                while let Ok(Some(notification)) = subscription.next().await {
+                    if let ServerNotification::ResourceUpdatedNotification(
+                        update,
+                    ) = notification
+                        && update.params.uri == watched
+                        && events
+                            .send(SessionEvent::ResourceUpdated(
+                                watched.clone(),
+                            ))
+                            .is_err()
+                    {
+                        return;
+                    }
+                }
+            });
+            return Ok(ResourceSub {
+                ends: Some(SubEnd::Listen(task.abort_handle())),
+            });
+        }
+        let request = ClientRequest::SubscribeRequest(SubscribeRequest::new(
+            SubscribeRequestParams::new(uri),
+        ));
+        match self.request(request, timeout, cancel).await? {
+            ServerResult::EmptyResult(_) => Ok(ResourceSub {
+                ends: Some(SubEnd::Legacy(self.peer.clone(), uri.to_owned())),
+            }),
+            other => Err(unexpected(&other, "a subscription")),
+        }
     }
 
     /// The protocol version the session runs on, as the server gave it.

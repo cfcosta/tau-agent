@@ -8,6 +8,7 @@
 //! after 250 ms and 1 s; tool calls are never retried.
 
 use std::{
+    collections::BTreeMap,
     fmt,
     path::PathBuf,
     sync::{
@@ -33,6 +34,7 @@ use crate::{
         Endpoint,
         Features,
         HttpAuth,
+        ResourceSub,
         Session,
         SessionEvent,
     },
@@ -400,6 +402,77 @@ pub struct Connection {
     auth: Mutex<(Option<AuthNeed>, Option<String>)>,
     /// Bumped whenever anything [`Self::watch`] reports changes.
     revision: watch::Sender<u64>,
+    /// The resources watched, by URI: one subscription each, however
+    /// many watch it.
+    watched: Mutex<BTreeMap<String, Watched>>,
+    /// Held while a watch subscribes, so two watches of one resource
+    /// share a subscription.
+    subscribing: tokio::sync::Mutex<()>,
+    /// Names each watch.
+    watches: AtomicU64,
+}
+
+/// One resource's subscription, on one session, and who watches it.
+struct Watched {
+    session: Arc<Session>,
+    _subscription: ResourceSub,
+    watchers: BTreeMap<u64, mpsc::UnboundedSender<()>>,
+}
+
+/// A watch on one of a server's resources (ADR 0037): it says each time
+/// the resource changes. It ends when the connection does; watching
+/// again connects again. Dropping it stops watching, and the last one
+/// unsubscribes.
+pub struct ResourceWatch {
+    updates: mpsc::UnboundedReceiver<()>,
+    _unwatch: Unwatch,
+}
+
+impl ResourceWatch {
+    /// Waits until the resource changes: `false` once the watch ended,
+    /// as its connection did.
+    pub async fn changed(&mut self) -> bool {
+        self.updates.recv().await.is_some()
+    }
+}
+
+impl fmt::Debug for ResourceWatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResourceWatch")
+            .field("uri", &self._unwatch.uri)
+            .finish()
+    }
+}
+
+/// Why a resource cannot be watched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchError {
+    /// The server does not say when its resources change: only a poll
+    /// can follow it.
+    Unsupported(String),
+    /// Anything else, such as no connection: watching again may work.
+    Failed(String),
+}
+
+impl fmt::Display for WatchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported(why) | Self::Failed(why) => f.write_str(why),
+        }
+    }
+}
+
+/// Stops one watch when it drops.
+struct Unwatch {
+    connection: Arc<Connection>,
+    uri: String,
+    id: u64,
+}
+
+impl Drop for Unwatch {
+    fn drop(&mut self) {
+        self.connection.unwatch(&self.uri, self.id);
+    }
 }
 
 impl Drop for Connection {
@@ -442,6 +515,9 @@ impl Connection {
             started: AtomicBool::new(false),
             auth: Mutex::default(),
             revision: watch::channel(0).0,
+            watched: Mutex::default(),
+            subscribing: tokio::sync::Mutex::default(),
+            watches: AtomicU64::new(0),
         })
     }
 
@@ -983,6 +1059,122 @@ impl Connection {
         }
     }
 
+    /// Watches the resource `uri`, connecting first when there is no
+    /// session: each time the server says it changed, the watch says so.
+    /// Watches of one resource share one subscription.
+    pub async fn watch_resource(
+        self: &Arc<Self>,
+        uri: &str,
+        cancel: &CancellationToken,
+    ) -> Result<ResourceWatch, WatchError> {
+        let server = self.config.name.clone();
+        let session = self.session(cancel).await.map_err(|error| {
+            WatchError::Failed(format!(
+                "MCP server {server} is not connected: {error}"
+            ))
+        })?;
+        let features = session.features();
+        if !features.resources {
+            return Err(WatchError::Unsupported(format!(
+                "MCP server {server} offers no resources"
+            )));
+        }
+        if !features.subscribe {
+            return Err(WatchError::Unsupported(format!(
+                "MCP server {server} does not say when a resource changes: \
+                 a poll can read it instead"
+            )));
+        }
+        let id = self.watches.fetch_add(1, Ordering::SeqCst);
+        let (sender, updates) = mpsc::unbounded_channel();
+        let _subscribing = self.subscribing.lock().await;
+        let joined = {
+            let mut watched = self.watched.lock().expect("watch lock");
+            match watched.get_mut(uri) {
+                Some(watched) if Arc::ptr_eq(&watched.session, &session) => {
+                    watched.watchers.insert(id, sender.clone());
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !joined {
+            let subscription = session
+                .subscribe_resource(uri, self.config.timeout(), cancel)
+                .await
+                .map_err(|error| {
+                    WatchError::Failed(match error {
+                        CallError::Disconnected => format!(
+                            "MCP server {server} closed the connection as it \
+                             subscribed to {uri}"
+                        ),
+                        CallError::Timeout(after) => format!(
+                            "MCP server {server} gave no answer to the \
+                             subscription to {uri} in {} s",
+                            after.as_secs_f64()
+                        ),
+                        CallError::Cancelled => {
+                            format!("the subscription to {uri} was cancelled")
+                        }
+                        CallError::Protocol(message) => format!(
+                            "MCP server {server} would not subscribe to \
+                             {uri}: {message}"
+                        ),
+                    })
+                })?;
+            // A session lost meanwhile already ended its watches.
+            if session.is_closed() {
+                return Err(WatchError::Failed(format!(
+                    "MCP server {server} closed the connection"
+                )));
+            }
+            self.watched.lock().expect("watch lock").insert(
+                uri.to_owned(),
+                Watched {
+                    session,
+                    _subscription: subscription,
+                    watchers: BTreeMap::from([(id, sender)]),
+                },
+            );
+        }
+        Ok(ResourceWatch {
+            updates,
+            _unwatch: Unwatch {
+                connection: self.clone(),
+                uri: uri.to_owned(),
+                id,
+            },
+        })
+    }
+
+    /// How many resources it subscribes to now.
+    pub fn subscriptions(&self) -> usize {
+        self.watched.lock().expect("watch lock").len()
+    }
+
+    /// Tells `uri`'s watches on `session` that it changed.
+    fn resource_updated(&self, session: &Arc<Session>, uri: &str) {
+        let mut watched = self.watched.lock().expect("watch lock");
+        if let Some(watched) = watched.get_mut(uri)
+            && Arc::ptr_eq(&watched.session, session)
+        {
+            watched
+                .watchers
+                .retain(|_, watcher| watcher.send(()).is_ok());
+        }
+    }
+
+    /// Ends the watch `id` of `uri`; the last one unsubscribes.
+    fn unwatch(&self, uri: &str, id: u64) {
+        let mut watched = self.watched.lock().expect("watch lock");
+        if let Some(entry) = watched.get_mut(uri) {
+            entry.watchers.remove(&id);
+            if entry.watchers.is_empty() {
+                watched.remove(uri);
+            }
+        }
+    }
+
     /// Waits until the connection is not connecting, or `cancel`.
     pub async fn settled(&self, cancel: &CancellationToken) {
         let mut status = self.status.subscribe();
@@ -995,6 +1187,12 @@ impl Connection {
     /// Forgets `session` after it failed under a call: the next call
     /// connects again.
     pub(crate) fn lost(&self, session: &Arc<Session>) {
+        // Its subscriptions went with it: their watches end, and watch
+        // again on a new one.
+        self.watched
+            .lock()
+            .expect("watch lock")
+            .retain(|_, watched| !Arc::ptr_eq(&watched.session, session));
         let mut inner = self.inner.lock().expect("connection lock");
         if inner
             .session
@@ -1014,6 +1212,7 @@ impl Connection {
 
     /// Closes the connection for good.
     pub async fn shutdown(&self) {
+        self.watched.lock().expect("watch lock").clear();
         let session = {
             let mut inner = self.inner.lock().expect("connection lock");
             self.set_status(State::Closed, None);
@@ -1141,6 +1340,9 @@ async fn watch_session(
             }
             SessionEvent::PromptsChanged => {
                 connection.relist_prompts(&session).await
+            }
+            SessionEvent::ResourceUpdated(uri) => {
+                connection.resource_updated(&session, &uri);
             }
             SessionEvent::Closed => {
                 connection.lost(&session);

@@ -20,6 +20,10 @@
 //!   tau leaves out; the template `file:///notes/{name}`, and an app's;
 //! - `greet {name, style?}` and `summary`, whose messages hold text, an
 //!   embedded resource, a resource link and an image.
+//!
+//! Built with [`State::subscribable`], it also says when a resource
+//! changes, to a client subscribed to it: `file:///status` reads what
+//! [`State::set_status`] last set, and tells its subscribers.
 #![allow(dead_code)]
 
 use std::{
@@ -56,11 +60,14 @@ use rmcp::{
         ReadResourceRequestParams,
         ReadResourceResponse,
         ReadResourceResult,
+        ResourceUpdatedNotificationParam,
         ServerCapabilities,
         ServerConfig,
+        SubscribeRequestParams,
         SubscriptionFilter,
         Tool,
         ToolAnnotations,
+        UnsubscribeRequestParams,
     },
     service::{
         NotificationContext,
@@ -90,6 +97,14 @@ pub struct State {
     pub prompts: Mutex<Vec<Value>>,
     /// Every `resources/read`, by URI.
     pub reads: Mutex<Vec<String>>,
+    /// Says when a resource changes.
+    pub subscribable: bool,
+    /// What `file:///status` reads.
+    pub status: Mutex<String>,
+    /// The `resources/subscribe`s that are on, by URI, with their peer.
+    pub subscribed: Mutex<Vec<(String, Peer<RoleServer>)>>,
+    /// Every `resources/unsubscribe`, by URI.
+    pub unsubscribed: Mutex<Vec<String>>,
     peers: Mutex<Vec<Peer<RoleServer>>>,
     sinks: Mutex<Vec<SubscriptionSink>>,
     /// Stops the current connection's server.
@@ -198,11 +213,68 @@ impl State {
             templates: Mutex::new(default_templates()),
             prompts: Mutex::new(default_prompts()),
             reads: Mutex::default(),
+            subscribable: false,
+            status: Mutex::new("green".into()),
+            subscribed: Mutex::default(),
+            unsubscribed: Mutex::default(),
             peers: Mutex::default(),
             sinks: Mutex::default(),
             stop: Mutex::new(CancellationToken::new()),
             gate: watch::channel(true).0,
         })
+    }
+
+    /// A server that offers resources and says when one changes.
+    pub fn subscribable(legacy: bool) -> Arc<Self> {
+        let state = Self::with_features(legacy);
+        let mut state = Arc::try_unwrap(state).ok().expect("not shared");
+        state.subscribable = true;
+        Arc::new(state)
+    }
+
+    /// Sets what `file:///status` reads, and tells its subscribers.
+    pub async fn set_status(&self, text: &str) {
+        text.clone_into(&mut self.status.lock().unwrap());
+        let uri = "file:///status";
+        let peers: Vec<Peer<RoleServer>> = self
+            .subscribed
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(subscribed, _)| subscribed == uri)
+            .map(|(_, peer)| peer.clone())
+            .collect();
+        for peer in peers {
+            let _ = peer
+                .notify_resource_updated(ResourceUpdatedNotificationParam::new(
+                    uri,
+                ))
+                .await;
+        }
+        let sinks = self.sinks.lock().unwrap().clone();
+        for sink in sinks {
+            let _ = sink.notify_resource_updated(uri).await;
+        }
+    }
+
+    /// The `resources/subscribe`s on now.
+    pub fn subscriptions(&self) -> usize {
+        self.subscribed.lock().unwrap().len()
+    }
+
+    /// The open `subscriptions/listen`s that take `uri`'s updates.
+    pub fn listening_to(&self, uri: &str) -> usize {
+        self.sinks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|sink| {
+                sink.accepted()
+                    .resource_subscriptions
+                    .as_ref()
+                    .is_some_and(|uris| uris.iter().any(|u| u == uri))
+            })
+            .count()
     }
 
     /// Opens or closes the gate dials wait at.
@@ -318,8 +390,18 @@ impl State {
 #[derive(Clone)]
 pub struct Server(pub Arc<State>);
 
-fn capabilities(features: bool) -> ServerCapabilities {
-    if features {
+fn capabilities(features: bool, subscribable: bool) -> ServerCapabilities {
+    if features && subscribable {
+        ServerCapabilities::builder()
+            .enable_tools()
+            .enable_tool_list_changed()
+            .enable_resources()
+            .enable_resources_list_changed()
+            .enable_resources_subscribe()
+            .enable_prompts()
+            .enable_prompts_list_changed()
+            .build()
+    } else if features {
         ServerCapabilities::builder()
             .enable_tools()
             .enable_tool_list_changed()
@@ -357,8 +439,11 @@ fn page<T: serde::de::DeserializeOwned>(
 
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerConfig {
-        let config = ServerConfig::new(capabilities(self.0.features))
-            .with_server_info(Implementation::new("test-server", "1.0.0"));
+        let config = ServerConfig::new(capabilities(
+            self.0.features,
+            self.0.subscribable,
+        ))
+        .with_server_info(Implementation::new("test-server", "1.0.0"));
         match &self.0.instructions {
             Some(text) => config.with_instructions(text.clone()),
             None => config,
@@ -381,15 +466,56 @@ impl ServerHandler for Server {
         &self,
         requested: &SubscriptionFilter,
     ) -> Option<SubscriptionFilter> {
-        Some(requested.supported_by(&capabilities(self.0.features)))
+        Some(
+            requested.supported_by(&capabilities(
+                self.0.features,
+                self.0.subscribable,
+            )),
+        )
     }
 
     async fn listen(
         &self,
         context: SubscriptionContext,
     ) -> Result<(), rmcp::ErrorData> {
-        self.0.sinks.lock().unwrap().push(context.sink().clone());
+        let sink = context.sink().clone();
+        self.0.sinks.lock().unwrap().push(sink.clone());
         context.cancelled().await;
+        self.0
+            .sinks
+            .lock()
+            .unwrap()
+            .retain(|open| open.id() != sink.id());
+        Ok(())
+    }
+
+    #[allow(deprecated, reason = "2025-11-25 servers still subscribe")]
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), rmcp::ErrorData> {
+        self.0
+            .subscribed
+            .lock()
+            .unwrap()
+            .push((request.uri, context.peer));
+        Ok(())
+    }
+
+    #[allow(deprecated, reason = "2025-11-25 servers still unsubscribe")]
+    async fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<(), rmcp::ErrorData> {
+        let mut subscribed = self.0.subscribed.lock().unwrap();
+        if let Some(at) =
+            subscribed.iter().position(|(uri, _)| *uri == request.uri)
+        {
+            subscribed.remove(at);
+        }
+        self.0.unsubscribed.lock().unwrap().push(request.uri);
         Ok(())
     }
 
@@ -453,6 +579,10 @@ impl ServerHandler for Server {
         let contents = match uri.as_str() {
             "file:///notes.txt" => {
                 json!([{"uri": uri, "mimeType": "text/plain", "text": "Remember the milk."}])
+            }
+            "file:///status" => {
+                let status = self.0.status.lock().unwrap().clone();
+                json!([{"uri": uri, "mimeType": "application/json", "text": json!({"build": status}).to_string()}])
             }
             "file:///logo.png" => {
                 json!([{"uri": uri, "mimeType": "image/png", "blob": blob(LOGO)}])
