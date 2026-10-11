@@ -24,11 +24,34 @@ public final class TauNotices {
     /** Asked once a run of the app, the first time a notice comes. */
     private static volatile boolean asked;
 
+    /** The extra a notice's tap carries: the agent it is about. */
+    private static final String AGENT = "dev.cfcosta.tau.agent";
+
+    /** The agent whose notice the person tapped, until tau takes it. */
+    private static volatile String opened;
+
+    /** Notes the agent `intent` was opened for, if a notice's tap
+     *  opened it. The activity calls it as it starts and as it is
+     *  brought back. */
+    public static void heard(Intent intent) {
+        String agent = intent == null ? null : intent.getStringExtra(AGENT);
+        if (agent != null) opened = agent;
+    }
+
+    /** The agent whose notice was tapped since tau last asked, or null;
+     *  asking clears it. */
+    public static String takeOpened() {
+        String agent = opened;
+        opened = null;
+        return agent;
+    }
+
     /** Shows `title` and `body` as a notification; `tag` keeps one per
      *  notice, so the same one shown again replaces itself. Tapping it
-     *  opens tau. Without the person's leave to notify, it asks for it
-     *  once and shows nothing this time. */
-    public static void show(Activity activity, String tag, String title, String body) {
+     *  opens tau on `agent`'s conversation. Without the person's leave
+     *  to notify, it asks for it once and shows nothing this time. */
+    public static void show(
+            Activity activity, String tag, String agent, String title, String body) {
         if (activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
             if (!asked) {
@@ -44,9 +67,12 @@ public final class TauNotices {
         manager.createNotificationChannel(new NotificationChannel(
                 CHANNEL, "Agents", NotificationManager.IMPORTANCE_DEFAULT));
         Intent open = new Intent(activity, activity.getClass())
-                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(AGENT, agent);
+        // Each notice its own request, so its tap keeps its own agent.
         PendingIntent tap = PendingIntent.getActivity(
-                activity, 0, open, PendingIntent.FLAG_IMMUTABLE);
+                activity, tag.hashCode(), open,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification notice = new Notification.Builder(activity, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_notify_chat)
                 .setContentTitle(title)

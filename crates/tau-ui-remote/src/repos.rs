@@ -446,6 +446,24 @@ impl Workspace {
         }
     }
 
+    /// Opens an agent's conversation once the window knows it: for a
+    /// notification tapped before the computer said what its agents are.
+    /// Whether it opened; nothing changes until it can.
+    pub fn open_agent_once_known(
+        &mut self,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let known = self
+            .catalog
+            .repo(name)
+            .is_some_and(|repo| repo.main.is_some());
+        if known {
+            self.open_agent(name, cx);
+        }
+        known
+    }
+
     /// Opens or closes a repository in the sidebar, and selects it.
     pub fn toggle_repo_open(&mut self, name: &str, cx: &mut Context<Self>) {
         if !self.open_repos.remove(name) {

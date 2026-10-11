@@ -440,37 +440,10 @@ fn agents_section(
         let name = repo.name.clone();
         let agent = overview.and_then(|overview| overview.agent(&name));
         let open = ws.open_agents.contains(&name);
-        let main = repo.main.as_ref().and_then(|id| ws.run(id));
-        let live = main.is_some_and(|main| main.status.is_live());
         let active = on_run
             && repo.main.is_some()
             && current.as_ref() == repo.main.as_ref();
-        let waits = agent.map_or(0, tau_agents::Agent::waits_on_you);
-        let end: Option<AnyElement> = match agent.map(|agent| &agent.status) {
-            // What it left the person, or its spent day, comes first.
-            _ if waits > 0 => {
-                Some(need_you_pill(waits, Type::MICRO, t).into_any_element())
-            }
-            _ if live => Some(
-                status_tag("working", t.roles.live, Type::MICRO)
-                    .into_any_element(),
-            ),
-            Some(tau_agents::Status::Working) => Some(
-                status_tag("working", t.roles.live, Type::MICRO)
-                    .into_any_element(),
-            ),
-            Some(tau_agents::Status::Paused) => Some(
-                status_tag("paused", t.roles.waiting, Type::MICRO)
-                    .into_any_element(),
-            ),
-            _ => agent.and_then(|agent| agent.next()).map(|next| {
-                div()
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child(tau_agents::shown::relative(next, now))
-                    .into_any_element()
-            }),
-        };
+        let end = agent_tag(ws, repo, agent, now, Type::MICRO, t);
         let fold = {
             let name = name.clone();
             div()
@@ -599,6 +572,46 @@ fn agents_section(
         section = section.child(body);
     }
     section
+}
+
+/// Where an agent stands, on its row's end: what it left the person
+/// first, then whether it works or is paused, else when it wakes next.
+fn agent_tag(
+    ws: &Workspace,
+    repo: &crate::catalog::Repo,
+    agent: Option<&tau_agents::Agent>,
+    now: i64,
+    size: Type,
+    t: &Theme,
+) -> Option<AnyElement> {
+    let live = repo
+        .main
+        .as_ref()
+        .and_then(|id| ws.run(id))
+        .is_some_and(|main| main.status.is_live());
+    let waits = agent.map_or(0, tau_agents::Agent::waits_on_you);
+    match agent.map(|agent| &agent.status) {
+        // What it left the person, or its spent day, comes first.
+        _ if waits > 0 => {
+            Some(need_you_pill(waits, size, t).into_any_element())
+        }
+        _ if live => {
+            Some(status_tag("working", t.roles.live, size).into_any_element())
+        }
+        Some(tau_agents::Status::Working) => {
+            Some(status_tag("working", t.roles.live, size).into_any_element())
+        }
+        Some(tau_agents::Status::Paused) => {
+            Some(status_tag("paused", t.roles.waiting, size).into_any_element())
+        }
+        _ => agent.and_then(|agent| agent.next()).map(|next| {
+            div()
+                .typeset(Type::CAPTION)
+                .text_color(t.dim)
+                .child(tau_agents::shown::relative(next, now))
+                .into_any_element()
+        }),
+    }
 }
 
 /// A word on a small tinted pill: an agent's `working`, `paused`.
@@ -1440,6 +1453,69 @@ pub fn phone_run_list(
                 t,
             ))
         })
+        .children(phone_agents(ws, t, cx))
+}
+
+/// The phone's agents (ADR 0037), under the repositories: one row each,
+/// opening its conversation, with where it stands.
+fn phone_agents(
+    ws: &Workspace,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Option<impl IntoElement> {
+    let agents: Vec<&crate::catalog::Repo> = ws.catalog.agents().collect();
+    if agents.is_empty() {
+        return None;
+    }
+    let overview = ws.agents();
+    let now = tau_agents::shown::now();
+    let heading = div()
+        .px(sp(4.))
+        .pt(sp(5.))
+        .pb(sp(2.))
+        .typeset(Type::CAPTION)
+        .text_color(t.dim)
+        .child("Agents");
+    let rows = agents.into_iter().map(|repo| {
+        let name = repo.name.clone();
+        let agent = overview.and_then(|overview| overview.agent(&name));
+        div()
+            .id(SharedString::from(format!("phone-agent-{name}")))
+            .flex()
+            .items_center()
+            .gap(sp(3.))
+            .min_h(rems(3.25))
+            .px(sp(4.))
+            .chrome(Edge::Top, t)
+            .cursor_pointer()
+            .child(tau_agents::ui::mark(&name, 26., t))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(rems(0.))
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .truncate()
+                            .typeset(Type::SUBTITLE)
+                            .font_weight(weight::STRONG)
+                            .child(name.clone()),
+                    )
+                    .children(agent.and_then(|agent| agent.last.as_ref()).map(
+                        |last| {
+                            div()
+                                .truncate()
+                                .typeset(Type::CAPTION)
+                                .text_color(t.dim)
+                                .child(last.line.clone())
+                        },
+                    )),
+            )
+            .children(agent_tag(ws, repo, agent, now, Type::CAPTION, t))
+            .on_click(cx.listener(move |ws, _, _, cx| ws.open_agent(&name, cx)))
+    });
+    Some(div().flex().flex_col().child(heading).children(rows))
 }
 
 fn phone_group(

@@ -56,6 +56,10 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("agent-new", |ws, host, cx| {
         agents(ws, host, AgentsAt::New, cx)
     }),
+    // Home with the agents: on a phone, the run list and its Agents.
+    ("agents-home", |ws, host, cx| {
+        agents(ws, host, AgentsAt::Home, cx)
+    }),
     ("ledger", |ws, _, cx| {
         let run = run_id().0.to_string();
         let page = Route::Plugin {
@@ -855,6 +859,7 @@ enum AgentsAt {
     Overview,
     Conversation,
     New,
+    Home,
 }
 
 /// Three agents (ADR 0037): pr-triage at work, with a sub-agent and an
@@ -1269,6 +1274,7 @@ fn agents(
         }
         AgentsAt::Conversation => ws.open_agent("pr-triage", cx),
         AgentsAt::New => ws.navigate(Route::agents(tau_agents::ui::NEW), cx),
+        AgentsAt::Home => ws.navigate(Route::Home, cx),
     }
 }
 

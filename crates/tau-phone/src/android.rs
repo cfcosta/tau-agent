@@ -139,38 +139,94 @@ pub extern "system" fn Java_dev_cfcosta_tau_TauViewfinder_decode<'caller>(
 
 /// Shows what the computer's agents leave the person as Android
 /// notifications, while the phone is connected (ADR 0037): each note or
-/// question, and each agent that reaches its cap, once.
+/// question, and each agent that reaches its cap, once. Tapping one
+/// opens that agent's conversation.
 fn follow_agents(workspace: &gpui::Entity<Workspace>, cx: &mut App) {
     let mut watch = tau_agents::alert::Watch::default();
     cx.observe(workspace, move |workspace, cx| {
         let overview = workspace.read(cx).agents().cloned().unwrap_or_default();
         for alert in watch.observe(&overview) {
             let tag = format!("{}:{:?}", alert.agent, alert.kind);
-            if let Err(error) = show(&tag, &alert.title, &alert.body) {
+            if let Err(error) =
+                show(&tag, &alert.agent, &alert.title, &alert.body)
+            {
                 log::error!("tau: cannot show a notification: {error}");
+            }
+        }
+    })
+    .detach();
+    // A tapped notice opens its agent's conversation, once the window
+    // knows the agent: the app may have started from the tap.
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let mut pending: Option<String> = None;
+        loop {
+            cx.background_executor().timer(TAPS_EVERY).await;
+            match take_opened() {
+                Ok(Some(agent)) => pending = Some(agent),
+                Ok(None) => {}
+                Err(error) => {
+                    log::error!("tau: cannot read a tapped notice: {error}")
+                }
+            }
+            let Some(agent) = pending.clone() else {
+                continue;
+            };
+            let opened = workspace
+                .update(cx, |ws, cx| ws.open_agent_once_known(&agent, cx));
+            match opened {
+                Ok(true) => pending = None,
+                Ok(false) => {}
+                Err(_) => return,
             }
         }
     })
     .detach();
 }
 
+/// How often the app looks for a notice the person tapped.
+const TAPS_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// The agent whose notice was tapped since the last look, if any.
+fn take_opened() -> Result<Option<String>, String> {
+    mobile::with_env(|env| {
+        let class = mobile::find_app_class(env, NOTICES)?;
+        let agent = env
+            .call_static_method(
+                &class,
+                jni::jni_str!("takeOpened"),
+                jni::jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )
+            .and_then(|value| value.l())
+            .map_err(|error| {
+                env.exception_clear();
+                error.to_string()
+            })?;
+        Ok((!agent.is_null()).then(|| mobile::get_string(env, &agent)))
+    })
+}
+
 /// Shows one notification, `tag` its own: the same tag again replaces it.
-fn show(tag: &str, title: &str, body: &str) -> Result<(), String> {
+/// Tapping it opens `agent`'s conversation.
+fn show(tag: &str, agent: &str, title: &str, body: &str) -> Result<(), String> {
     mobile::with_env(|env| {
         let activity = mobile::activity(env)?;
         let class = mobile::find_app_class(env, NOTICES)?;
         let tag = env.new_string(tag).map_err(|error| error.to_string())?;
+        let agent = env.new_string(agent).map_err(|error| error.to_string())?;
         let title = env.new_string(title).map_err(|error| error.to_string())?;
         let body = env.new_string(body).map_err(|error| error.to_string())?;
         env.call_static_method(
             &class,
             jni::jni_str!("show"),
             jni::jni_sig!(
-                "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"
+                "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"
             ),
             &[
                 JValue::Object(&activity),
                 JValue::Object(&tag),
+                JValue::Object(&agent),
                 JValue::Object(&title),
                 JValue::Object(&body),
             ],

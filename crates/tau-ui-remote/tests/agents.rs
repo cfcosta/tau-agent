@@ -302,3 +302,19 @@ fn only_the_agent_s_main_chat_shows_it(cx: &mut TestAppContext) {
         assert_eq!(shown(ws, "main", cx), (0, 0));
     });
 }
+
+#[gpui::test]
+fn a_tapped_notice_opens_its_agent_once_the_window_knows_it(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, _) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(id("main")), cx);
+        // The host has not made deps-watch's conversation yet: the tap
+        // waits, and the window stays where it is.
+        assert!(!ws.open_agent_once_known(NEW, cx));
+        assert_eq!(ws.route(), &Route::Run(id("main")));
+        assert!(ws.open_agent_once_known(AGENT, cx));
+        assert_eq!(ws.route(), &Route::Run(id("agent-main")));
+    });
+}

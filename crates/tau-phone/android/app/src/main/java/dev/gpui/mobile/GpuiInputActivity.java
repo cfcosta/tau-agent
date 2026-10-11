@@ -33,6 +33,15 @@ public class GpuiInputActivity extends NativeActivity {
             throw new IllegalStateException(error);
         }
         super.onCreate(state);
+        // tau: a tapped agent notice that started the app.
+        dev.cfcosta.tau.TauNotices.heard(getIntent());
+    }
+
+    // tau: a tapped agent notice that brought the app back.
+    @Override protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        dev.cfcosta.tau.TauNotices.heard(intent);
     }
 
     public void gpuiShowKeyboard(int keyboardType, long session) {
