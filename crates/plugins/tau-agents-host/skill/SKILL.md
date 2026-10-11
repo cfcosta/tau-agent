@@ -102,8 +102,9 @@ return tau.agent {
 - Only a server that says it can (`resources.subscribe`) tells tau of
   changes. One that cannot shows on your page as "does not say when a
   resource changes": read it with a poll instead, through its tools.
-- `tau.secret("name")` stands for a key from tau's secret store, in a
-  request's headers or body. You never see its value.
+- `tau.secret("name")` stands for a key from your own secret store,
+  in a request's headers or body. You never see its value, and no
+  other agent reaches your keys.
 
 ## Events
 

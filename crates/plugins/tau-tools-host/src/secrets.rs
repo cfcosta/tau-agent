@@ -1,7 +1,9 @@
 //! tau's secret store: keys an agent's HTTP requests name and never
-//! see (ADR 0037). `~/.config/tau/secrets.json` holds `{ name: value }`,
-//! owner-only, replaced whole in one rename. The person fills it from an
-//! agent's page; [`crate::http`] puts the values in as a request leaves,
+//! see (ADR 0037). Each agent has its own file,
+//! `~/.config/tau/secrets/<agent>.json` ([`SecretStore::of_agent`]),
+//! holding `{ name: value }`, owner-only, replaced whole in one rename:
+//! an agent's requests reach its own keys and no other agent's. The
+//! person fills it from the agent's page; [`crate::http`] puts the values in as a request leaves,
 //! and [`Scrub`] takes them out of everything that comes back.
 
 use std::{
@@ -15,6 +17,10 @@ use serde_json::Value;
 
 /// The store's file in tau's configuration directory.
 pub const SECRETS_FILE: &str = "secrets.json";
+
+/// The directory, in tau's configuration directory, of each agent's
+/// own store.
+pub const AGENTS_DIR: &str = "secrets";
 
 /// The shortest value [`Scrub`] takes out of text: shorter ones would
 /// take out ordinary words.
@@ -48,6 +54,13 @@ impl SecretStore {
     /// `<dir>/secrets.json`.
     pub fn in_dir(dir: &Path) -> Self {
         Self::new(dir.join(SECRETS_FILE))
+    }
+
+    /// The agent `agent`'s own store in tau's configuration directory
+    /// `dir`: `<dir>/secrets/<agent>.json`. An agent's name is a
+    /// directory's name already, so it makes a file's.
+    pub fn of_agent(dir: &Path, agent: &str) -> Self {
+        Self::new(dir.join(AGENTS_DIR).join(format!("{agent}.json")))
     }
 
     pub fn path(&self) -> &Path {

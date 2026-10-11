@@ -145,8 +145,12 @@ impl Env for Host {
         Some(self.conversation.clone())
     }
 
-    fn secrets(&self) -> SecretStore {
-        self.secrets.clone()
+    fn secrets(&self, agent: &str) -> SecretStore {
+        let store = self.secrets.clone();
+        SecretStore::of_agent(
+            store.path().parent().expect("a directory"),
+            agent,
+        )
     }
 
     fn call_tool<'a>(
@@ -158,7 +162,11 @@ impl Env for Host {
         Box::pin(async { Err("no tools here".into()) })
     }
 
-    fn fetch(&self, _spec: Value) -> HostFuture<'_, Result<Value, String>> {
+    fn fetch<'a>(
+        &'a self,
+        _agent: &'a str,
+        _spec: Value,
+    ) -> HostFuture<'a, Result<Value, String>> {
         Box::pin(async { Err("no requests here".into()) })
     }
 

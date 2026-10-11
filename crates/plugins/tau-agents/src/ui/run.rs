@@ -286,6 +286,7 @@ fn secrets(agent: &Agent, view: &mut ViewCx<'_, AgentsUi>, t: &Theme) -> Div {
         let remove = secret.set.then(|| {
             let handle = view.handle.clone();
             let name = secret.name.clone();
+            let agent = agent.name.clone();
             div()
                 .id(SharedString::from(format!(
                     "secret-remove-{}",
@@ -296,7 +297,13 @@ fn secrets(agent: &Agent, view: &mut ViewCx<'_, AgentsUi>, t: &Theme) -> Div {
                 .cursor_pointer()
                 .child("Remove")
                 .on_click(move |_, _, cx| {
-                    handle.act(Act::RemoveSecret { name: name.clone() }, cx)
+                    handle.act(
+                        Act::RemoveSecret {
+                            agent: agent.clone(),
+                            name: name.clone(),
+                        },
+                        cx,
+                    )
                 })
         });
         div()
@@ -317,11 +324,12 @@ fn secrets(agent: &Agent, view: &mut ViewCx<'_, AgentsUi>, t: &Theme) -> Div {
         && !value.read(view.cx).text().is_empty();
     let save = {
         let ui = view.ui.clone();
+        let agent = agent.name.clone();
         button("Save", ButtonKind::Secondary, t)
             .id("secret-save")
             .when(!ready, |button| button.opacity(0.5))
             .on_click(move |_, _, cx| {
-                ui.update(cx, |ui, cx| ui.save_secret(cx))
+                ui.update(cx, |ui, cx| ui.save_secret(&agent, cx))
             })
     };
     section("Keys", t)
@@ -338,7 +346,7 @@ fn secrets(agent: &Agent, view: &mut ViewCx<'_, AgentsUi>, t: &Theme) -> Div {
             div()
                 .typeset(Type::CAPTION)
                 .text_color(t.dim)
-                .child("Kept in tau's secret store for every agent. Requests name them; no one reads them back."),
+                .child("Kept in this agent's own secret store. Its requests name them; no one reads them back."),
         )
         .child(field(&name, true, t))
         .child(field(&value, true, t))

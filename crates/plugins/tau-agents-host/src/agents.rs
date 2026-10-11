@@ -439,7 +439,7 @@ impl Agents {
             }
             TriggerKind::Poll {
                 http: Some(spec), ..
-            } => self.0.env.fetch(spec.clone()).await,
+            } => self.0.env.fetch(agent, spec.clone()).await,
             _ => Err("this poll names no tool and no request".to_owned()),
         };
         let items = match result {
@@ -620,18 +620,22 @@ impl Agents {
         let now = self.0.clock.now();
         let day = clock::day(self.0.clock.as_ref(), now);
         let conversations = self.0.env.conversations();
-        // Names only: the values stay in the store.
-        let stored =
-            self.0.env.secrets().names().await.unwrap_or_else(|error| {
-                eprintln!("{NAME}: cannot read tau's secret store: {error}");
-                Vec::new()
-            });
         let open = self.0.streams.open().await;
         let watching = self.0.resources.open().await;
         let mut agents = Vec::new();
         for (name, read) in self.0.registry.agents().await {
             let settings = self.0.env.settings(&name);
             let kept = self.with_kept(&name, |kept| kept.clone()).await;
+            // Names only: the values stay in its store.
+            let stored =
+                self.0.env.secrets(&name).names().await.unwrap_or_else(
+                    |error| {
+                        eprintln!(
+                            "{NAME}: cannot read {name}'s secret store: {error}"
+                        );
+                        Vec::new()
+                    },
+                );
             let spend = self
                 .0
                 .spend
@@ -764,15 +768,23 @@ impl Agents {
                 }
                 self.0.env.save_settings(&agent, settings).await?;
             }
-            Act::SetSecret { name, value } => {
+            Act::SetSecret { agent, name, value } => {
+                anyhow::ensure!(
+                    tau_agents::valid_name(&agent),
+                    "`{agent}` cannot name an agent"
+                );
                 anyhow::ensure!(
                     tau_tools_host::secrets::valid_name(&name),
                     "`{name}` cannot name a secret: letters, digits, `_`, `-` and `.`"
                 );
-                self.0.env.secrets().set(&name, &value).await?;
+                self.0.env.secrets(&agent).set(&name, &value).await?;
             }
-            Act::RemoveSecret { name } => {
-                self.0.env.secrets().remove(&name).await?;
+            Act::RemoveSecret { agent, name } => {
+                anyhow::ensure!(
+                    tau_agents::valid_name(&agent),
+                    "`{agent}` cannot name an agent"
+                );
+                self.0.env.secrets(&agent).remove(&name).await?;
             }
             Act::Answer {
                 agent,

@@ -858,10 +858,11 @@ impl Host {
         let artifacts =
             Bytes::new(project.root().join("artifacts"), Quotas::default())?;
         // An agent's runs reach the network with `http`, its keys named
-        // from tau's secret store (ADR 0037); no other run does.
+        // from its own secret store (ADR 0037); no other run does.
         let http = self.config.is_agent_path(&repo.path).then(|| {
-            tau_tools_host::secrets::SecretStore::in_dir(
+            tau_tools_host::secrets::SecretStore::of_agent(
                 &self.config.credentials.dir,
+                &repo.name,
             )
         });
         let processes = self.processes.clone();

@@ -275,8 +275,8 @@ b` appends each value that is not `nil`. A return value JSON cannot
   ([tools.md](tools.md), "http"). `method` is `GET` when left out;
   `timeout` is in seconds, 30 by default and at most 60. Only `http` and
   `https` URLs; redirects are answered, not followed.
-- `http.secret(name, prefix?)` names a secret from tau's secret store
-  (`~/.config/tau/secrets.json`). It is a table, `{ ["$secret"] = name,
+- `http.secret(name, prefix?)` names a secret from the agent's own
+  secret store (`~/.config/tau/secrets/<agent>.json`). It is a table, `{ ["$secret"] = name,
 prefix = prefix }`, that a header or the body may hold, at any depth
   of a JSON body. `"Bearer " .. http.secret("github")` is the same as
   `http.secret("github", "Bearer ")`; a secret can follow text, nothing

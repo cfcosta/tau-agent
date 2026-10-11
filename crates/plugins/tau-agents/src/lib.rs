@@ -363,11 +363,15 @@ pub enum Act {
     Pause { agent: String },
     /// Starts turns for `agent` again.
     Resume { agent: String },
-    /// Saves `value` as the secret `name` in tau's secret store, for
-    /// every agent's requests. Its value is never shown back.
-    SetSecret { name: String, value: String },
-    /// Forgets the secret `name`.
-    RemoveSecret { name: String },
+    /// Saves `value` as the secret `name` in `agent`'s own secret store,
+    /// for its requests alone. Its value is never shown back.
+    SetSecret {
+        agent: String,
+        name: String,
+        value: String,
+    },
+    /// Forgets `agent`'s secret `name`.
+    RemoveSecret { agent: String, name: String },
     /// The person answered `agent`'s question `notice`: it hears the
     /// answer as an event, and the question goes.
     Answer {

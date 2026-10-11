@@ -84,7 +84,7 @@ done when the call returns keeps running, and a second tool reads it.
 - **Environment:** the command inherits tau-ui's environment, and starts
   through what plugins give the repository, when one does: words before
   the shell and variables over its environment, such as `direnv exec
-  <workspace>` from tau-direnv ([environment.md](environment.md),
+<workspace>` from tau-direnv ([environment.md](environment.md),
   [0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md)).
   The first command may wait for it; a cancel while it waits ends the
   call before anything ran.
@@ -106,7 +106,7 @@ done when the call returns keeps running, and a second tool reads it.
   (5000 to 300000). With them it waits 1000 by default (250 to 30000).
 - It answers with what the process wrote since the last call, as
   `exec_command` does. An unknown id fails: `No process N: it ended and
-  was reported, or was never started.`
+was reported, or was never started.`
 
 ### The answer
 
@@ -114,7 +114,7 @@ done when the call returns keeps running, and a second tool reads it.
   once. A call that waited for nothing new says `(no new output)`, and
   a command that ended without output `(no output)`.
 - **Still running:** the text ends with `[process N is still running:
-  write_stdin with process_id N ...]`, and the call succeeds.
+write_stdin with process_id N ...]`, and the call succeeds.
 - **Ended:** zero exit is the output alone. A non-zero exit returns
   `Err` whose text is the output, then `Command exited with code N`
   (128 + N for signal N). The process leaves once its end is reported.
@@ -131,7 +131,7 @@ done when the call returns keeps running, and a second tool reads it.
   cut. At most 1 MiB of unread text is kept per process, the oldest
   lines going first, and a note says how many.
 - **`structured`** (for codemode): `{ process_id, running, exit_code,
-  output, truncated, dropped_lines }`.
+output, truncated, dropped_lines }`.
 - **Progress:** each burst of output is sent as a `ToolUpdate`, the raw
   bytes in its details:
 
@@ -141,6 +141,7 @@ done when the call returns keeps running, and a second tool reads it.
 
   `seq` counts the call's chunks from 0. The chunks, decoded and joined,
   are every byte the call read, escape sequences included.
+
 - **Result details**, on success and on failure:
 
   ```json
@@ -303,16 +304,18 @@ file held, or from nothing for a new file or one that was not text),
   with `artifact_read`) when the run has artifact storage, else cut at
   64 KiB with `truncated` set. At most 16 MiB is read; past it,
   `truncated` is set too.
-- **Scrubbing:** every value in tau's secret store of at least 4 bytes
+- **Scrubbing:** every value in the agent's secret store of at least 4 bytes
   is replaced by `[secret:<name>]` in the status's headers, the body
   (and the artifact's bytes) and every error, whether or not the
   request named it.
-- **The store** is `secrets.json` in tau's configuration directory,
-  `{ name: value }`, owner-only (0600, its directory 0700), replaced
-  whole in one rename (`tau_tools_host::secrets::SecretStore`). Names
+- **The store** is the agent's own, `secrets/<agent>.json` in tau's
+  configuration directory (`SecretStore::of_agent`): `{ name: value }`,
+  owner-only (0600, its directory 0700), replaced whole in one rename
+  (`tau_tools_host::secrets::SecretStore`). An agent's requests reach
+  its own keys and no other agent's. Names
   are 1 to 64 letters, digits, `_`, `-` and `.`. An agent's page lists
   the names its `agent.luau` uses and saves or removes values
-  (`Act::SetSecret`, `Act::RemoveSecret`); no interface reads a value
+  (`Act::SetSecret`, `Act::RemoveSecret`, each naming the agent); no interface reads a value
   back.
 - `tau_tools_host::http::fetch` is the same request for the host
   itself, without a run (an agent's polls): scrubbed, its body whole as
@@ -323,25 +326,25 @@ file held, or from nothing for a new file or one that was not text),
 These strings are part of the spec. `<path>` is the path as the model
 gave it. `N`, `M` and `K` are numbers.
 
-| Tool   | Condition                      | Message                                                                                                                                                             |
-| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| all    | cancelled                      | `Operation aborted`                                                                                                                                                 |
-| `read` | offset past the end            | `Offset N is beyond end of file (M lines total)`                                                                                                                    |
-| `edit` | file missing or not accessible | `Could not edit file: <path>. Error code: <CODE>.` (for example `ENOENT`, `EACCES`)                                                                                 |
-| `edit` | no edits                       | `Edit tool input is invalid. edits must contain at least one replacement.`                                                                                          |
-| `edit` | empty `oldText`, one edit      | `oldText must not be empty in <path>.`                                                                                                                              |
-| `edit` | empty `oldText`, several edits | `edits[K].oldText must not be empty in <path>.`                                                                                                                     |
-| `edit` | not found, one edit            | `Could not find the exact text in <path>. The old text must match exactly including all whitespace and newlines.`                                                   |
-| `edit` | not found, several edits       | `Could not find edits[K] in <path>. The oldText must match exactly including all whitespace and newlines.`                                                          |
-| `edit` | not unique, one edit           | `Found N occurrences of the text in <path>. The text must be unique. Please provide more context to make it unique.`                                                |
-| `edit` | not unique, several edits      | `Found N occurrences of edits[K] in <path>. Each oldText must be unique. Please provide more context to make it unique.`                                            |
-| `edit` | overlapping edits              | `edits[J] and edits[K] overlap in <path>. Merge them into one edit or target disjoint regions.`                                                                     |
-| `edit` | no change, one edit            | `No changes made to <path>. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.` |
-| `edit` | no change, several edits       | `No changes made to <path>. The replacements produced identical content.`                                                                                           |
-| `exec_command`, `write_stdin` | non-zero exit | output, then `Command exited with code N`                                                                                                                    |
-| `exec_command` | `workdir` not a directory     | `workdir is not a directory: <path>`                                                                                                                                |
-| `write_stdin` | unknown process                | `No process N: it ended and was reported, or was never started.`                                                                                                    |
-| `write_stdin` | input to a process without `tty` | `Process N has no input: its stdin is closed. Start it with `tty: true` to send it input.`                                                                        |
+| Tool                          | Condition                        | Message                                                                                                                                                             |
+| ----------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| all                           | cancelled                        | `Operation aborted`                                                                                                                                                 |
+| `read`                        | offset past the end              | `Offset N is beyond end of file (M lines total)`                                                                                                                    |
+| `edit`                        | file missing or not accessible   | `Could not edit file: <path>. Error code: <CODE>.` (for example `ENOENT`, `EACCES`)                                                                                 |
+| `edit`                        | no edits                         | `Edit tool input is invalid. edits must contain at least one replacement.`                                                                                          |
+| `edit`                        | empty `oldText`, one edit        | `oldText must not be empty in <path>.`                                                                                                                              |
+| `edit`                        | empty `oldText`, several edits   | `edits[K].oldText must not be empty in <path>.`                                                                                                                     |
+| `edit`                        | not found, one edit              | `Could not find the exact text in <path>. The old text must match exactly including all whitespace and newlines.`                                                   |
+| `edit`                        | not found, several edits         | `Could not find edits[K] in <path>. The oldText must match exactly including all whitespace and newlines.`                                                          |
+| `edit`                        | not unique, one edit             | `Found N occurrences of the text in <path>. The text must be unique. Please provide more context to make it unique.`                                                |
+| `edit`                        | not unique, several edits        | `Found N occurrences of edits[K] in <path>. Each oldText must be unique. Please provide more context to make it unique.`                                            |
+| `edit`                        | overlapping edits                | `edits[J] and edits[K] overlap in <path>. Merge them into one edit or target disjoint regions.`                                                                     |
+| `edit`                        | no change, one edit              | `No changes made to <path>. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.` |
+| `edit`                        | no change, several edits         | `No changes made to <path>. The replacements produced identical content.`                                                                                           |
+| `exec_command`, `write_stdin` | non-zero exit                    | output, then `Command exited with code N`                                                                                                                           |
+| `exec_command`                | `workdir` not a directory        | `workdir is not a directory: <path>`                                                                                                                                |
+| `write_stdin`                 | unknown process                  | `No process N: it ended and was reported, or was never started.`                                                                                                    |
+| `write_stdin`                 | input to a process without `tty` | `Process N has no input: its stdin is closed. Start it with `tty: true` to send it input.`                                                                          |
 
 Taken from pi at `2b0a123`: `edit.ts:181`, `edit-diff.ts:253-347`,
 `read.ts:143`. The command tools follow Codex's unified exec

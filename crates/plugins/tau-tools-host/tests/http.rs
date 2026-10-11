@@ -509,3 +509,17 @@ fn scrubbed_text_never_holds_a_secret(tc: TestCase) {
     let bytes = Scrub::new(&secrets).bytes(text.as_bytes());
     assert_eq!(bytes, pieces.join("[secret:key]").into_bytes());
 }
+
+/// Each agent's keys are a file of its own: one agent's store never
+/// holds another's (ADR 0037).
+#[test]
+fn each_agent_s_keys_are_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let mine = SecretStore::of_agent(&config, "triage");
+    let theirs = SecretStore::of_agent(&config, "digest");
+    block_on(mine.set("github", "mine-value-1234")).unwrap();
+    assert_eq!(mine.path(), config.join("secrets").join("triage.json"));
+    assert_eq!(block_on(mine.names()).unwrap(), ["github"]);
+    assert!(block_on(theirs.names()).unwrap().is_empty());
+}

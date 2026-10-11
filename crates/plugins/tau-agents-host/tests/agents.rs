@@ -158,8 +158,12 @@ impl Env for Host {
         Some(self.conversation.clone())
     }
 
-    fn secrets(&self) -> SecretStore {
-        self.secrets.get().expect("the fixture sets it").clone()
+    fn secrets(&self, agent: &str) -> SecretStore {
+        let store = self.secrets.get().expect("the fixture sets it").clone();
+        SecretStore::of_agent(
+            store.path().parent().expect("a directory"),
+            agent,
+        )
     }
 
     fn call_tool<'a>(
@@ -183,12 +187,16 @@ impl Env for Host {
         Box::pin(async move { answer })
     }
 
-    fn fetch(&self, spec: Value) -> HostFuture<'_, Result<Value, String>> {
+    fn fetch<'a>(
+        &'a self,
+        agent: &'a str,
+        spec: Value,
+    ) -> HostFuture<'a, Result<Value, String>> {
         Box::pin(async move {
             if !self.online.load(Ordering::SeqCst) {
                 return Err("offline".into());
             }
-            tau_agents_host::poll::fetch(&self.secrets(), &spec).await
+            tau_agents_host::poll::fetch(&self.secrets(agent), &spec).await
         })
     }
 }
@@ -577,7 +585,16 @@ fn an_agent_names_its_secrets_and_the_person_fills_them() {
             .collect()
     };
     assert_eq!(names(&f), [("github".to_owned(), false)]);
+    // Another agent's key of the same name is not this one's.
     block_on_io(f.agents.act(Act::SetSecret {
+        agent: "other".into(),
+        name: "github".into(),
+        value: "another-agents-value".into(),
+    }))
+    .unwrap();
+    assert_eq!(names(&f), [("github".to_owned(), false)]);
+    block_on_io(f.agents.act(Act::SetSecret {
+        agent: "greet".into(),
         name: "github".into(),
         value: "a-value-never-shown".into(),
     }))
@@ -587,16 +604,24 @@ fn an_agent_names_its_secrets_and_the_person_fills_them() {
     let shown = serde_json::to_string(&f.agent()).unwrap();
     assert!(!shown.contains("a-value-never-shown"));
     block_on_io(f.agents.act(Act::RemoveSecret {
+        agent: "greet".into(),
         name: "github".into(),
     }))
     .unwrap();
     assert_eq!(names(&f), [("github".to_owned(), false)]);
     assert!(
         block_on_io(f.agents.act(Act::SetSecret {
+            agent: "greet".into(),
             name: "not a name".into(),
             value: "x".into(),
         }))
         .is_err()
+    );
+    // The other agent's key is still its own.
+    let other = block_on_io(f.host.secrets("other").read()).unwrap();
+    assert_eq!(
+        other.get("github").map(String::as_str),
+        Some("another-agents-value")
     );
 }
 
@@ -801,7 +826,8 @@ fn an_http_poll_sends_its_secret_and_fires_what_is_new() {
     ]);
     let f = Fixture::with(&http_agent(&server.url));
     f.host.online.store(true, Ordering::SeqCst);
-    block_on_io(f.host.secrets().set("github", "tok-value-1234")).unwrap();
+    block_on_io(f.host.secrets("greet").set("github", "tok-value-1234"))
+        .unwrap();
     f.tick();
     assert_eq!(f.trigger("releases").error, None);
     let sent = server.seen.lock().unwrap().clone();
@@ -832,7 +858,8 @@ fn an_http_poll_that_fails_says_why_without_its_secret() {
     )]);
     let f = Fixture::with(&http_agent(&server.url));
     f.host.online.store(true, Ordering::SeqCst);
-    block_on_io(f.host.secrets().set("github", "tok-value-1234")).unwrap();
+    block_on_io(f.host.secrets("greet").set("github", "tok-value-1234"))
+        .unwrap();
     f.tick();
     let error = f.trigger("releases").error.unwrap();
     assert!(error.contains("500"), "{error}");

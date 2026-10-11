@@ -199,7 +199,7 @@ impl Agents {
         let secrets = self
             .0
             .env
-            .secrets()
+            .secrets(agent)
             .read()
             .await
             .map_err(|error| format!("tau's secret store: {error}"))?;

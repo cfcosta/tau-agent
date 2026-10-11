@@ -140,14 +140,16 @@ impl Ui {
         cx.notify();
     }
 
-    /// Saves the secret the panel's fields hold, and forgets its value.
-    pub(crate) fn save_secret(&mut self, cx: &mut Context<Self>) {
+    /// Saves the secret the panel's fields hold as `agent`'s, and
+    /// forgets its value.
+    pub(crate) fn save_secret(&mut self, agent: &str, cx: &mut Context<Self>) {
         let name = self.secret_name.read(cx).text().trim().to_owned();
         let value = self.secret_value.read(cx).text().to_owned();
         if name.is_empty() || value.is_empty() {
             return;
         }
-        self.handle.act(Act::SetSecret { name, value }, cx);
+        let agent = agent.to_owned();
+        self.handle.act(Act::SetSecret { agent, name, value }, cx);
         self.secret_name.update(cx, |input, cx| input.clear(cx));
         self.secret_value.update(cx, |input, cx| input.clear(cx));
         cx.notify();

@@ -279,9 +279,10 @@ return tau.agent {
   Other runs do not get `http`. An agent's polls do not run it in
   Luau: the host makes the request its trigger declares
   (`tau_tools_host::http::fetch`).
-- **Secrets by name.** tau keeps them in a new store,
-  `~/.config/tau/secrets.json` (mode 0600, like `mcp-auth.json`),
-  filled from the agent's page. `http.secret("github")` in a script and
+- **Secrets by name.** Each agent has its own store,
+  `~/.config/tau/secrets/<agent>.json` (mode 0600, like
+  `mcp-auth.json`), filled from the agent's page: its requests reach
+  its own keys and no other agent's. `http.secret("github")` in a script and
   `tau.secret("github")` in `agent.luau` are a marker,
   `{ ["$secret"] = "github" }`, that only a request's headers and body
   accept; `"Bearer " .. http.secret("github")` puts text before the

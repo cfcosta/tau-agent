@@ -44,8 +44,8 @@ pub trait Env: Send + Sync {
     /// The host's conversations, when it lets them be driven.
     fn conversations(&self) -> Option<Arc<dyn Conversations>>;
 
-    /// tau's secret store, which agents' requests name keys from.
-    fn secrets(&self) -> SecretStore;
+    /// `agent`'s own secret store, which its requests name keys from.
+    fn secrets(&self, agent: &str) -> SecretStore;
 
     /// Calls the tool `name` with `args` outside any run, for the agent
     /// checked out at `checkout`: what its poll reads.
@@ -56,9 +56,13 @@ pub trait Env: Send + Sync {
         args: Value,
     ) -> HostFuture<'a, Result<Value, String>>;
 
-    /// Makes the HTTP request `spec`, its secrets from [`Self::secrets`]:
-    /// what its poll reads ([`crate::poll::fetch`]).
-    fn fetch(&self, spec: Value) -> HostFuture<'_, Result<Value, String>>;
+    /// Makes `agent`'s HTTP request `spec`, its secrets from its own
+    /// [`Self::secrets`]: what its poll reads ([`crate::poll::fetch`]).
+    fn fetch<'a>(
+        &'a self,
+        agent: &'a str,
+        spec: Value,
+    ) -> HostFuture<'a, Result<Value, String>>;
 
     /// Watches the MCP resource `uri` of `server` for the agent checked
     /// out at `checkout`: what its `mcp` trigger follows.
@@ -156,12 +160,12 @@ impl Env for HostEnv {
         self.0.conversations()
     }
 
-    fn secrets(&self) -> SecretStore {
+    fn secrets(&self, agent: &str) -> SecretStore {
         let dir = self.0.config_dir().map_or_else(
             || self.0.dir.join("config"),
             std::path::Path::to_path_buf,
         );
-        SecretStore::in_dir(&dir)
+        SecretStore::of_agent(&dir, agent)
     }
 
     fn call_tool<'a>(
@@ -178,10 +182,14 @@ impl Env for HostEnv {
         })
     }
 
-    fn fetch(&self, spec: Value) -> HostFuture<'_, Result<Value, String>> {
-        Box::pin(
-            async move { crate::poll::fetch(&self.secrets(), &spec).await },
-        )
+    fn fetch<'a>(
+        &'a self,
+        agent: &'a str,
+        spec: Value,
+    ) -> HostFuture<'a, Result<Value, String>> {
+        Box::pin(async move {
+            crate::poll::fetch(&self.secrets(agent), &spec).await
+        })
     }
 
     fn watch_resource<'a>(
