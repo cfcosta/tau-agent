@@ -475,6 +475,18 @@ pub trait ResourceSource: Send + Sync {
     ) -> Option<
         crate::registry::HostFuture<'a, Result<ResourceWatch, WatchError>>,
     >;
+
+    /// Waits until `server`'s connection for the repository at
+    /// `checkout` changes: it connects again, or what it offers changes,
+    /// so a watch it could not take may be tried again. `None` when
+    /// `server` is not one of this source's there.
+    fn changed<'a>(
+        &'a self,
+        _checkout: &'a Path,
+        _server: &'a str,
+    ) -> Option<crate::registry::HostFuture<'a, ()>> {
+        None
+    }
 }
 
 /// The MCP resources a host half may read and watch outside any run,
@@ -525,6 +537,18 @@ impl OutsideResources {
             }
         }
         Err(WatchError::Failed(no_server(server)))
+    }
+
+    /// Waits until `server`'s connection for the repository at
+    /// `checkout` changes, through the first source that has the
+    /// server; with none, it never does.
+    pub async fn changed(&self, checkout: &Path, server: &str) {
+        for source in &self.sources() {
+            if let Some(changed) = source.changed(checkout, server) {
+                return changed.await;
+            }
+        }
+        std::future::pending().await
     }
 }
 

@@ -172,12 +172,16 @@ impl Agents {
                 watched = self.watch_once(agent, trigger, kind, server, uri, &mut failures) => watched,
             };
             self.0.resources.open.lock().await.remove(&key);
-            // A server that cannot subscribe will not soon learn to.
+            // A server that cannot subscribe will not soon learn to: it
+            // tries again when its connection changes, or after the
+            // longest wait.
             let mut wait = None;
+            let mut unsupported = false;
             if let Err(error) = watched {
                 failures += 1;
                 if matches!(error, WatchError::Unsupported(_)) {
                     wait = Some(longest);
+                    unsupported = true;
                 }
                 eprintln!("{NAME}: {agent}'s watch {trigger}: {error}");
                 self.with_kept(agent, |kept| {
@@ -193,10 +197,19 @@ impl Agents {
             let wait = wait.unwrap_or_else(|| {
                 stream::wait(failures.max(1), first, longest, stream::jitter())
             });
+            let checkout = self.0.root.join(agent);
+            let changed = async {
+                if unsupported {
+                    self.0.env.server_changed(&checkout, server).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
             tokio::select! {
                 biased;
                 () = cancel.cancelled() => break,
                 () = tokio::time::sleep(wait) => {}
+                () = changed => {}
             }
         }
         self.0.resources.open.lock().await.remove(&key);

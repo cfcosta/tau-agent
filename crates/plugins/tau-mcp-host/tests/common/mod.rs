@@ -105,6 +105,9 @@ pub struct State {
     pub subscribed: Mutex<Vec<(String, Peer<RoleServer>)>>,
     /// Every `resources/unsubscribe`, by URI.
     pub unsubscribed: Mutex<Vec<String>>,
+    /// Each `resources/subscribe` and `resources/unsubscribe`, in the
+    /// order they came.
+    pub order: Mutex<Vec<&'static str>>,
     peers: Mutex<Vec<Peer<RoleServer>>>,
     sinks: Mutex<Vec<SubscriptionSink>>,
     /// Stops the current connection's server.
@@ -217,6 +220,7 @@ impl State {
             status: Mutex::new("green".into()),
             subscribed: Mutex::default(),
             unsubscribed: Mutex::default(),
+            order: Mutex::default(),
             peers: Mutex::default(),
             sinks: Mutex::default(),
             stop: Mutex::new(CancellationToken::new()),
@@ -500,6 +504,7 @@ impl ServerHandler for Server {
             .lock()
             .unwrap()
             .push((request.uri, context.peer));
+        self.0.order.lock().unwrap().push("subscribe");
         Ok(())
     }
 
@@ -516,6 +521,7 @@ impl ServerHandler for Server {
             subscribed.remove(at);
         }
         self.0.unsubscribed.lock().unwrap().push(request.uri);
+        self.0.order.lock().unwrap().push("unsubscribe");
         Ok(())
     }
 

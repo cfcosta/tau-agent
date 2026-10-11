@@ -79,6 +79,17 @@ pub trait Env: Send + Sync {
         })
     }
 
+    /// Waits until the MCP server `server`'s connection for the agent
+    /// checked out at `checkout` changes, so a watch it could not take is
+    /// tried again. It never does by default.
+    fn server_changed<'a>(
+        &'a self,
+        _checkout: &'a Path,
+        _server: &'a str,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(std::future::pending())
+    }
+
     /// Stores `record`, a grant of tau-tools' (`artifact_read` reads its
     /// grants from them), with the run `run`: an agent's main chat, so
     /// its runs read the artifact an event's data was kept as.
@@ -200,6 +211,19 @@ impl Env for HostEnv {
     ) -> HostFuture<'a, Result<Value, String>> {
         Box::pin(async move {
             crate::poll::fetch(&self.secrets(agent), &spec).await
+        })
+    }
+
+    fn server_changed<'a>(
+        &'a self,
+        checkout: &'a Path,
+        server: &'a str,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(async move {
+            match self.0.outside_resources() {
+                Some(resources) => resources.changed(checkout, server).await,
+                None => std::future::pending().await,
+            }
         })
     }
 

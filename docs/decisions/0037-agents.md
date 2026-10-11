@@ -192,7 +192,9 @@ return tau.agent {
   when what it reads differs from the last read: the event's id is the
   URI and a digest of the read, its data the read. The first read only
   records, as a poll's first call does. A server that cannot is shown
-  on the page; a poll is the way round it.
+  on the page; a poll is the way round it. Its watch is tried again
+  when its connection changes (it connects again, or what it offers
+  changes), and at the latest after the longest wait.
 - **Commands** reach every composer through `Manifest::listed_commands`,
   as tau-mcp's prompts do. Sending one starts no run where it was
   typed: the composer says "sent to pr-triage" and the event goes to

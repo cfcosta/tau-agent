@@ -519,7 +519,13 @@ An agent's `mcp` trigger (ADR 0037) watches one resource:
   and `notifications/resources/updated` reaches the client's handler.
 - **Shared:** watches of one resource on one connection share one
   subscription; the last one to drop cancels the listen or sends
-  `resources/unsubscribe`.
+  `resources/unsubscribe`. A subscribe to the same resource waits for
+  that unsubscribe's answer first, so it cannot reach the server
+  first and be undone.
+- **Tried again on a change:** `ResourceSource::changed` (the
+  `OutsideResources` service's `changed`) waits until the server's
+  connection changes, so a watch refused as unsupported is tried again
+  when the server connects again or says what it offers changed.
 - **Tied to the session:** a session that ends ends its watches
   (`changed()` is `false`). Watching again connects again and
   subscribes on the new session; the watcher reads the resource again,

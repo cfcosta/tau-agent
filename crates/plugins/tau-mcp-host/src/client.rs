@@ -468,7 +468,15 @@ pub(crate) struct Session {
     /// On 2026-07-28: a subscription is a `subscriptions/listen` of its
     /// own, not `resources/subscribe`.
     listens: bool,
+    /// Each resource's `resources/unsubscribe` still going: a subscribe
+    /// to the same resource waits for it, so it cannot reach the server
+    /// first and be undone.
+    unsubscribing: Unsubscribing,
 }
+
+/// The `resources/unsubscribe` requests going, by resource.
+type Unsubscribing =
+    Arc<Mutex<std::collections::BTreeMap<String, tokio::task::JoinHandle<()>>>>;
 
 /// What a server offers besides tools, from its capabilities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -490,31 +498,41 @@ enum SubEnd {
     /// The task reading a `subscriptions/listen`: aborting it drops the
     /// subscription, which cancels the request.
     Listen(tokio::task::AbortHandle),
-    /// A `resources/subscribe`, undone by `resources/unsubscribe`.
-    Legacy(Peer<RoleClient>, String),
+    /// A `resources/subscribe`, undone by `resources/unsubscribe`, which
+    /// goes in the session's [`Unsubscribing`].
+    Legacy(Peer<RoleClient>, String, Unsubscribing),
 }
 
 impl Drop for ResourceSub {
     fn drop(&mut self) {
         match self.ends.take() {
             Some(SubEnd::Listen(task)) => task.abort(),
-            Some(SubEnd::Legacy(peer, uri)) => {
+            Some(SubEnd::Legacy(peer, uri, unsubscribing)) => {
                 if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                    runtime.spawn(async move {
-                        let request = ClientRequest::UnsubscribeRequest(
-                            UnsubscribeRequest::new(
-                                UnsubscribeRequestParams::new(uri),
-                            ),
-                        );
-                        let _ = peer
+                    let request = ClientRequest::UnsubscribeRequest(
+                        UnsubscribeRequest::new(UnsubscribeRequestParams::new(
+                            uri.clone(),
+                        )),
+                    );
+                    // Until the server answers: a subscribe after it is
+                    // then one the server keeps.
+                    let going = runtime.spawn(async move {
+                        if let Ok(sent) = peer
                             .send_request_with_option(
                                 request,
                                 PeerRequestOptions::with_timeout(
                                     UNSUBSCRIBE_TIMEOUT,
                                 ),
                             )
-                            .await;
+                            .await
+                        {
+                            let _ = sent.await_response().await;
+                        }
                     });
+                    unsubscribing
+                        .lock()
+                        .expect("unsubscribing lock")
+                        .insert(uri, going);
                 }
             }
             None => {}
@@ -648,6 +666,7 @@ impl Session {
             protocol,
             events: subscription_events,
             listens,
+            unsubscribing: Unsubscribing::default(),
         })
     }
 
@@ -705,12 +724,30 @@ impl Session {
                 ends: Some(SubEnd::Listen(task.abort_handle())),
             });
         }
+        // An unsubscribe from `uri` still going goes first: sent after
+        // it, the subscribe is the one the server keeps.
+        let going = self
+            .unsubscribing
+            .lock()
+            .expect("unsubscribing lock")
+            .remove(uri);
+        if let Some(going) = going {
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => return Err(CallError::Cancelled),
+                _ = going => {}
+            }
+        }
         let request = ClientRequest::SubscribeRequest(SubscribeRequest::new(
             SubscribeRequestParams::new(uri),
         ));
         match self.request(request, timeout, cancel).await? {
             ServerResult::EmptyResult(_) => Ok(ResourceSub {
-                ends: Some(SubEnd::Legacy(self.peer.clone(), uri.to_owned())),
+                ends: Some(SubEnd::Legacy(
+                    self.peer.clone(),
+                    uri.to_owned(),
+                    self.unsubscribing.clone(),
+                )),
             }),
             other => Err(unexpected(&other, "a subscription")),
         }

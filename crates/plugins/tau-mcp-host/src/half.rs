@@ -1098,6 +1098,21 @@ impl tau_ui_plugin::ResourceSource for Outside {
             connection.watch_resource(uri, &cancel).await
         }))
     }
+
+    /// When the connection changes: its state, or what it offers. One
+    /// dropped meanwhile never changes again.
+    fn changed<'a>(
+        &'a self,
+        checkout: &'a Path,
+        server: &'a str,
+    ) -> Option<tau_ui_plugin::registry::HostFuture<'a, ()>> {
+        let mut changes = self.connection(checkout, server)?.watch();
+        Some(Box::pin(async move {
+            if changes.changed().await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        }))
+    }
 }
 
 /// The repository's servers, started on its first run, when it has

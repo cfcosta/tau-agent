@@ -63,7 +63,9 @@ impl Conversations for Conversation {
 /// The server `ci`: what its resource holds, and its watches.
 struct Server {
     /// It says when its resources change.
-    subscribes: bool,
+    subscribes: std::sync::atomic::AtomicBool,
+    /// Its connection changed: a watch it refused may be tried again.
+    reconnected: tokio::sync::Notify,
     build: Mutex<String>,
     watchers: Mutex<Vec<mpsc::UnboundedSender<()>>>,
     /// Watches held now.
@@ -75,7 +77,8 @@ struct Server {
 impl Server {
     fn new(subscribes: bool) -> Arc<Self> {
         Arc::new(Self {
-            subscribes,
+            subscribes: std::sync::atomic::AtomicBool::new(subscribes),
+            reconnected: tokio::sync::Notify::new(),
             build: Mutex::new("green".into()),
             watchers: Mutex::default(),
             watching: Arc::default(),
@@ -182,7 +185,7 @@ impl Env for Host {
                 server.to_owned(),
                 uri.to_owned(),
             ));
-            if !self.server.subscribes {
+            if !self.server.subscribes.load(Ordering::SeqCst) {
                 return Err(WatchError::Unsupported(
                     "MCP server ci does not say when a resource changes: a \
                      poll can read it instead"
@@ -197,6 +200,14 @@ impl Env for Host {
                 Held(self.server.watching.clone()),
             ))
         })
+    }
+
+    fn server_changed<'a>(
+        &'a self,
+        _checkout: &'a Path,
+        _server: &'a str,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(self.server.reconnected.notified())
     }
 
     fn read_resource<'a>(
@@ -435,4 +446,35 @@ async fn a_new_version_without_the_trigger_stops_watching() {
     })
     .await;
     assert_eq!(f.trigger().await, None);
+}
+
+/// A server that could not subscribe is tried again as soon as its
+/// connection changes, not only after the longest wait.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_that_could_not_subscribe_is_tried_again_when_it_changes() {
+    let server = Server::new(false);
+    let mut f = Fixture::new(server.clone()).await;
+    // The longest wait is longer than the test.
+    f.agents.close_watches().await;
+    f.agents = Agents::at(
+        f.home.path().join("agents"),
+        f.home.path().join("state"),
+        f.host.clone(),
+        Arc::new(FakeClock::new(1_791_792_000, 0)),
+    )
+    .with_watch_waits(Duration::from_millis(20), Duration::from_secs(600));
+    f.agents.registry().scan().await;
+    f.until("it says why", || async {
+        f.trigger().await.unwrap().error.is_some()
+    })
+    .await;
+    // It learns to, and its connection says so.
+    server.subscribes.store(true, Ordering::SeqCst);
+    server.reconnected.notify_one();
+    f.until("it watches", || async {
+        f.trigger().await.unwrap().live == Some(true)
+    })
+    .await;
+    assert_eq!(f.trigger().await.unwrap().error, None);
+    f.agents.close_watches().await;
 }

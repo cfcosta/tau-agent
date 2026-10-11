@@ -190,3 +190,26 @@ async fn a_watch_ends_with_its_connection_2026() {
 async fn a_watch_ends_with_its_connection_2025() {
     a_watch_ends_with_its_connection(true).await;
 }
+
+/// On 2025-11-25, a watch dropped and a new one taken at once: the
+/// unsubscribe the first sends reaches the server before the second's
+/// subscribe, so the server ends subscribed, as the connection thinks.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_watch_taken_as_the_last_goes_stays_subscribed() {
+    let fixture = Fixture::subscribable(true);
+    let connection = connected(&fixture).await;
+    let cancel = CancellationToken::new();
+    let mut watch = connection.watch_resource(STATUS, &cancel).await.unwrap();
+    for _ in 0..20 {
+        drop(watch);
+        watch = connection.watch_resource(STATUS, &cancel).await.unwrap();
+    }
+    eventually(|| fixture.order.lock().unwrap().len() == 41).await;
+    let order = fixture.order.lock().unwrap().clone();
+    for (n, pair) in order.windows(2).enumerate() {
+        assert_ne!(pair[0], pair[1], "at {n}: {order:?}");
+    }
+    assert_eq!(fixture.subscriptions(), 1);
+    fixture.set_status("red").await;
+    assert!(hears(&mut watch).await);
+}
