@@ -11,7 +11,8 @@
 //! Polls run beside the ticks, each in a task of its own, so a slow one
 //! holds up nothing else; what one finds joins the queue when it ends.
 //! Streams are kept open in tasks of their own (`streams`), one per
-//! stream a live version declares.
+//! stream a live version declares, and so are watches on MCP resources
+//! (`resources`), one per `mcp` trigger.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -58,6 +59,7 @@ use crate::{
 
 pub(crate) mod talk;
 
+mod resources;
 mod streams;
 
 /// How often schedules and queues are looked at.
@@ -104,6 +106,8 @@ struct Inner {
     bwrap: Option<PathBuf>,
     /// The streams kept open, by agent and trigger.
     streams: streams::Streams,
+    /// The MCP resources watched, by agent and trigger.
+    resources: resources::Resources,
 }
 
 impl PluginHost for Agents {
@@ -168,6 +172,7 @@ impl Agents {
             homes: dir.join("homes"),
             bwrap: crate::sandbox::find_bwrap(),
             streams: streams::Streams::default(),
+            resources: resources::Resources::default(),
         }))
     }
 
@@ -226,9 +231,10 @@ impl Agents {
         }
         // Let go of the polls that ended.
         while self.0.tasks.lock().await.try_join_next().is_some() {}
-        let mut streams = Vec::new();
+        let (mut streams, mut watches) = (Vec::new(), Vec::new());
         for (name, read) in self.0.registry.agents().await {
             streams.push((name.clone(), streams::declared(&read)));
+            watches.push((name.clone(), resources::declared(&read)));
             changed |= self.fire_schedules(&name, &read, now).await;
             changed |= self.start_polls(&name, &read, now).await;
             let counted = self.0.spend.lock().await.get(&name).copied();
@@ -239,6 +245,7 @@ impl Agents {
             changed |= self.deliver(&name, now).await;
         }
         changed |= self.keep_streams(streams).await;
+        changed |= self.keep_watches(watches).await;
         if changed {
             self.0.env.refresh();
         }
@@ -630,6 +637,7 @@ impl Agents {
                 Vec::new()
             });
         let open = self.0.streams.open().await;
+        let watching = self.0.resources.open().await;
         let mut agents = Vec::new();
         for (name, read) in self.0.registry.agents().await {
             let settings = self.0.env.settings(&name);
@@ -679,14 +687,20 @@ impl Agents {
                             kept.streams
                                 .get(&declared.name)
                                 .and_then(|streamed| streamed.error.clone())
+                        })
+                        .or_else(|| {
+                            kept.resources
+                                .get(&declared.name)
+                                .and_then(|watched| watched.error.clone())
                         }),
-                    live: matches!(declared.kind, TriggerKind::Stream { .. })
-                        .then(|| {
-                            open.contains(&(
-                                name.clone(),
-                                declared.name.clone(),
-                            ))
-                        }),
+                    live: match declared.kind {
+                        TriggerKind::Stream { .. } => Some(&open),
+                        TriggerKind::Mcp { .. } => Some(&watching),
+                        _ => None,
+                    }
+                    .map(|open| {
+                        open.contains(&(name.clone(), declared.name.clone()))
+                    }),
                 })
                 .collect();
             let main = conversations

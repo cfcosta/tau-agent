@@ -24,6 +24,7 @@ pub mod env;
 mod half;
 pub mod poll;
 pub mod registry;
+pub mod resource;
 pub mod sandbox;
 pub mod schedule;
 pub mod skill;

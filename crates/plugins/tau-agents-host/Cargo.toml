@@ -29,6 +29,8 @@ tau-tools-host.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tau-vcs-host.workspace = true
+# What an `mcp` trigger read last, as a digest.
+sha2.workspace = true
 tokio = { workspace = true, features = ["net"] }
 # Websocket streams.
 tokio-tungstenite.workspace = true

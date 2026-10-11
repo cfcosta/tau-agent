@@ -12,6 +12,8 @@ use tau_ui_plugin::{
     HOST_RECORD,
     HostCx,
     HostRecord,
+    ResourceWatch,
+    WatchError,
     registry::HostFuture,
 };
 
@@ -56,6 +58,32 @@ pub trait Env: Send + Sync {
     /// Makes the HTTP request `spec`, its secrets from [`Self::secrets`]:
     /// what its poll reads ([`crate::poll::fetch`]).
     fn fetch(&self, spec: Value) -> HostFuture<'_, Result<Value, String>>;
+
+    /// Watches the MCP resource `uri` of `server` for the agent checked
+    /// out at `checkout`: what its `mcp` trigger follows.
+    fn watch_resource<'a>(
+        &'a self,
+        _checkout: &'a Path,
+        _server: &'a str,
+        _uri: &'a str,
+    ) -> HostFuture<'a, Result<ResourceWatch, WatchError>> {
+        Box::pin(async {
+            Err(WatchError::Failed(
+                "this host watches no MCP resources".into(),
+            ))
+        })
+    }
+
+    /// Reads the MCP resource `uri` of `server` for the agent checked
+    /// out at `checkout`: its `ReadResourceResult` as JSON.
+    fn read_resource<'a>(
+        &'a self,
+        _checkout: &'a Path,
+        _server: &'a str,
+        _uri: &'a str,
+    ) -> HostFuture<'a, Result<Value, String>> {
+        Box::pin(async { Err("this host reads no MCP resources".into()) })
+    }
 }
 
 /// The host's [`Env`], over what it gives every plugin.
@@ -152,5 +180,35 @@ impl Env for HostEnv {
         Box::pin(
             async move { crate::poll::fetch(&self.secrets(), &spec).await },
         )
+    }
+
+    fn watch_resource<'a>(
+        &'a self,
+        checkout: &'a Path,
+        server: &'a str,
+        uri: &'a str,
+    ) -> HostFuture<'a, Result<ResourceWatch, WatchError>> {
+        Box::pin(async move {
+            match self.0.outside_resources() {
+                Some(resources) => resources.watch(checkout, server, uri).await,
+                None => Err(WatchError::Failed(
+                    "this host watches no MCP resources".into(),
+                )),
+            }
+        })
+    }
+
+    fn read_resource<'a>(
+        &'a self,
+        checkout: &'a Path,
+        server: &'a str,
+        uri: &'a str,
+    ) -> HostFuture<'a, Result<Value, String>> {
+        Box::pin(async move {
+            match self.0.outside_resources() {
+                Some(resources) => resources.read(checkout, server, uri).await,
+                None => Err("this host reads no MCP resources".into()),
+            }
+        })
     }
 }

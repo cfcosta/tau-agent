@@ -113,9 +113,17 @@ impl Trigger {
         }
     }
 
-    /// For a stream, whether it is open, in a word: `open` or `closed`.
+    /// For a stream, whether it is open, in a word: `open` or `closed`;
+    /// for an `mcp` trigger, whether its server is watched for changes:
+    /// `watching` or `not watching`.
     pub fn connection(&self) -> Option<&'static str> {
-        self.live.map(|open| if open { "open" } else { "closed" })
+        let watch = matches!(self.kind, TriggerKind::Mcp { .. });
+        self.live.map(|open| match (watch, open) {
+            (false, true) => "open",
+            (false, false) => "closed",
+            (true, true) => "watching",
+            (true, false) => "not watching",
+        })
     }
 
     /// Its kind, as a tag says it.

@@ -177,3 +177,17 @@ fn a_stream_says_whether_it_is_open() {
     stream.live = Some(false);
     assert_eq!(stream.connection(), Some("closed"));
 }
+
+#[test]
+fn an_mcp_trigger_says_whether_it_watches() {
+    let mut watch = trigger(TriggerKind::Mcp {
+        server: "ci".into(),
+        uri: "ci://tau-agent/main".into(),
+    });
+    assert_eq!(watch.label(), "ci ci://tau-agent/main");
+    assert_eq!(watch.kind_label(), "mcp");
+    watch.live = Some(true);
+    assert_eq!(watch.connection(), Some("watching"));
+    watch.live = Some(false);
+    assert_eq!(watch.connection(), Some("not watching"));
+}
