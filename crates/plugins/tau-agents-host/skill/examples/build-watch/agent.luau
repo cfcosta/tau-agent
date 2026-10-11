@@ -1,6 +1,8 @@
 local tau = require("tau")
 
--- The CI's events as they happen; only failed builds are events.
+-- The CI's events as they happen. `parse` only reads frames: a
+-- keep-alive is not an event, every build is, and the agent decides in
+-- its conversation which ones need looking into.
 return tau.agent {
   name = "build-watch",
   description = "Looks into each failed build of main and says why it failed.",
@@ -12,9 +14,6 @@ return tau.agent {
           return nil
         end
         local build = json.decode(frame.data)
-        if build.state ~= "failed" then
-          return nil
-        end
         return { id = "build:" .. build.number, data = build }
       end,
     },
