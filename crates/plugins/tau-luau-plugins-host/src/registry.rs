@@ -298,7 +298,8 @@ impl Registry {
         };
         for (name, paths) in folders {
             let earlier = before.get(&name).cloned();
-            let loaded = match Files::from_paths(&paths) {
+            let loaded = match Files::from_paths(&paths, crate::runtime::PLUGIN)
+            {
                 Ok(files) => {
                     state.trunk.insert(name.clone(), files.digest());
                     load(&name, files).await
@@ -459,7 +460,10 @@ fn plugin_folders(dir: &Path) -> Vec<(String, Files)> {
             if name.starts_with('.') {
                 return None;
             }
-            Some((name, Files::read(&entry.path()).ok()?))
+            Some((
+                name,
+                Files::read(&entry.path(), crate::runtime::PLUGIN).ok()?,
+            ))
         })
         .collect();
     folders.sort_by(|a, b| a.0.cmp(&b.0));

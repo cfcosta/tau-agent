@@ -5,6 +5,10 @@
 //! plugin, builds `ctx` from what the host sends, calls the hook, and
 //! returns the hook's answer with the state it left. The plugin's files
 //! are codemode modules: `tau`, `plugin`, and one per file under `lib/`.
+//!
+//! An agent's repository (ADR 0037) is a folder of the same shape whose
+//! [`Root`] is `agent.luau`: [`Files`], [`evaluate`] and [`run_tests`]
+//! serve both.
 
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
@@ -31,17 +35,41 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Declaration, TAU_MODULE, TestResult};
 
+/// The file a folder starts from, the module it is required as, and
+/// the field of `tau.test` its tests find it in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Root {
+    pub file: &'static str,
+    pub module: &'static str,
+    pub subject: &'static str,
+}
+
+/// A plugin's folder: `plugin.luau`, required as `plugin`.
+pub const PLUGIN: Root = Root {
+    file: "plugin.luau",
+    module: "plugin",
+    subject: "_plugin",
+};
+
+impl Default for Root {
+    fn default() -> Self {
+        PLUGIN
+    }
+}
+
 /// The file a plugin's folder starts from.
-pub const PLUGIN_FILE: &str = "plugin.luau";
+pub const PLUGIN_FILE: &str = PLUGIN.file;
 
-/// Module names a plugin's `lib/` files cannot take.
-const RESERVED: [&str; 2] = ["tau", "plugin"];
+/// A folder's modules, by name: what its scripts run against.
+pub type Modules = BTreeMap<String, Definition>;
 
-/// What a plugin's folder holds.
+/// What a plugin's folder holds, or an agent's.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Files {
-    /// `plugin.luau`.
-    pub plugin: String,
+    /// Which file it starts from.
+    pub root: Root,
+    /// That file: `plugin.luau`.
+    pub source: String,
     /// `lib/<name>.luau`, by name.
     pub libs: BTreeMap<String, String>,
     /// `tests/<name>.luau`, by name.
@@ -50,9 +78,9 @@ pub struct Files {
 }
 
 impl Files {
-    /// Reads a plugin's folder. It blocks: call it from
+    /// Reads a folder starting from `root`. It blocks: call it from
     /// `spawn_blocking`.
-    pub fn read(dir: &Path) -> Result<Self, String> {
+    pub fn read(dir: &Path, root: Root) -> Result<Self, String> {
         let read = |path: &Path| {
             std::fs::read_to_string(path)
                 .map_err(|error| format!("{}: {error}", path.display()))
@@ -79,22 +107,30 @@ impl Files {
                 Ok(found)
             };
         Ok(Self {
-            plugin: read(&dir.join(PLUGIN_FILE))?,
+            root,
+            source: read(&dir.join(root.file))?,
             libs: luau_files("lib")?,
             tests: luau_files("tests")?,
             readme: std::fs::read_to_string(dir.join("README.md")).ok(),
         })
     }
 
-    /// A plugin's folder from its files at a commit, by their paths in
-    /// the folder (`plugin.luau`, `lib/x.luau`): what trunk holds.
-    pub fn from_paths(paths: &[(String, Vec<u8>)]) -> Result<Self, String> {
+    /// A folder starting from `root` from its files at a commit, by
+    /// their paths in the folder (`plugin.luau`, `lib/x.luau`): what
+    /// trunk holds.
+    pub fn from_paths(
+        paths: &[(String, Vec<u8>)],
+        root: Root,
+    ) -> Result<Self, String> {
         let text = |path: &str, bytes: &[u8]| {
             String::from_utf8(bytes.to_vec())
                 .map_err(|_| format!("{path} is not UTF-8"))
         };
-        let mut files = Self::default();
-        let mut has_plugin = false;
+        let mut files = Self {
+            root,
+            ..Self::default()
+        };
+        let mut has_root = false;
         for (path, bytes) in paths {
             let luau = |sub: &str| {
                 path.strip_prefix(sub)
@@ -102,9 +138,9 @@ impl Files {
                     .filter(|stem| !stem.contains('/'))
                     .map(str::to_owned)
             };
-            if path == PLUGIN_FILE {
-                files.plugin = text(path, bytes)?;
-                has_plugin = true;
+            if path == root.file {
+                files.source = text(path, bytes)?;
+                has_root = true;
             } else if path == "README.md" {
                 files.readme = Some(text(path, bytes)?);
             } else if let Some(stem) = luau("lib/") {
@@ -113,8 +149,8 @@ impl Files {
                 files.tests.insert(stem, text(path, bytes)?);
             }
         }
-        if !has_plugin {
-            return Err(format!("the folder has no {PLUGIN_FILE}"));
+        if !has_root {
+            return Err(format!("the folder has no {}", root.file));
         }
         Ok(files)
     }
@@ -128,7 +164,7 @@ impl Files {
             hasher.update(text.as_bytes());
             hasher.update([0]);
         };
-        add(PLUGIN_FILE, &self.plugin);
+        add(self.root.file, &self.source);
         for (name, text) in &self.libs {
             add(&format!("lib/{name}.luau"), text);
         }
@@ -146,9 +182,10 @@ impl Files {
     }
 
     /// The codemode modules the folder makes: `tau`, each `lib/` file
-    /// (which may require `tau`), and `plugin` (which may require them
-    /// all).
-    fn modules(&self) -> Result<BTreeMap<String, Definition>, String> {
+    /// (which may require `tau`), and its root, `plugin` (which may
+    /// require them all).
+    pub fn modules(&self) -> Result<Modules, String> {
+        let (file, module) = (self.root.file, self.root.module);
         let tau = Definition::new(
             "tau".into(),
             TAU_MODULE.into(),
@@ -159,7 +196,7 @@ impl Files {
         let mut plugin_deps =
             BTreeMap::from([("tau".to_owned(), tau.version().to_owned())]);
         for (name, source) in &self.libs {
-            if RESERVED.contains(&name.as_str()) {
+            if name == "tau" || name == module {
                 return Err(format!("lib/{name}.luau: `{name}` is taken"));
             }
             let lib = Definition::new(
@@ -172,14 +209,14 @@ impl Files {
             plugin_deps.insert(name.clone(), lib.version().to_owned());
             modules.insert(name.clone(), lib);
         }
-        let plugin = Definition::new(
-            "plugin".into(),
-            self.plugin.clone(),
+        let root = Definition::new(
+            module.into(),
+            self.source.clone(),
             json!({}),
             plugin_deps,
         )
-        .map_err(|error| format!("{PLUGIN_FILE}: {error}"))?;
-        modules.insert("plugin".into(), plugin);
+        .map_err(|error| format!("{file}: {error}"))?;
+        modules.insert(module.into(), root);
         modules.insert("tau".into(), tau);
         Ok(modules)
     }
@@ -307,7 +344,7 @@ pub struct Loaded {
     /// [`Files::digest`].
     pub digest: String,
     pub declaration: Declaration,
-    modules: Arc<BTreeMap<String, Definition>>,
+    modules: Arc<Modules>,
 }
 
 impl std::fmt::Debug for Loaded {
@@ -326,18 +363,14 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
     let script = "local tau = require(\"tau\")\n\
                   local p = require(\"plugin\")\n\
                   return tau._describe(p)\n";
-    let (value, error) = run(
+    let value = evaluate(
+        folder,
         modules.clone(),
-        Arc::new(NoReach),
-        &empty_declaration(folder),
         script.into(),
         Duration::from_secs(2),
         CancellationToken::new(),
     )
-    .await;
-    if let Some(error) = error {
-        return Err(error);
-    }
+    .await?;
     let declaration: Declaration = serde_json::from_value(value)
         .map_err(|error| format!("{PLUGIN_FILE}: {error}"))?;
     if declaration.name != folder {
@@ -371,19 +404,6 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
         declaration,
         modules,
     })
-}
-
-/// A declaration that reaches nothing, for reading one.
-fn empty_declaration(name: &str) -> Declaration {
-    Declaration {
-        name: name.into(),
-        description: String::new(),
-        uses: Default::default(),
-        settings: None,
-        tools: Vec::new(),
-        hooks: Default::default(),
-        actions: Vec::new(),
-    }
 }
 
 impl Loaded {
@@ -423,7 +443,7 @@ impl Loaded {
         let (value, error) = run(
             self.modules.clone(),
             reach,
-            &self.declaration,
+            Reaches::of(&self.declaration),
             script,
             hook.limit(),
             cancel,
@@ -468,49 +488,70 @@ impl Loaded {
     /// runs, reaching nothing. A file that fails outside its cases is one
     /// failed result, named after the file.
     pub async fn test(&self, cancel: CancellationToken) -> Vec<TestResult> {
-        let mut results = Vec::new();
-        for (file, source) in &self.files.tests {
-            // The file runs as a function, from the script's first line,
-            // so its errors keep their line numbers.
-            let script = format!(
-                "local __test = function() {source}\nend\n\
-                 require(\"tau\").test._plugin = require(\"plugin\")\n\
-                 __test()\n\
-                 return require(\"tau\")._run_tests()\n"
-            );
-            let (value, error) = run(
-                self.modules.clone(),
-                Arc::new(NoReach),
-                &self.declaration,
-                script,
-                TEST_LIMIT,
-                cancel.clone(),
-            )
-            .await;
-            if let Some(error) = error {
-                results.push(TestResult {
-                    file: file.clone(),
-                    name: format!("tests/{file}.luau"),
-                    passed: false,
-                    error: Some(error),
-                });
-                continue;
-            }
-            let cases: Vec<TestResult> = value
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|case| TestResult {
-                    file: file.clone(),
-                    name: case["name"].as_str().unwrap_or_default().to_owned(),
-                    passed: case["passed"] == true,
-                    error: case["error"].as_str().map(str::to_owned),
-                })
-                .collect();
-            results.extend(cases);
-        }
-        results
+        run_tests(
+            &self.declaration.name,
+            self.modules.clone(),
+            &self.files,
+            cancel,
+        )
+        .await
     }
+}
+
+/// Runs `files`' tests against `modules`, each file in a fresh VM,
+/// reaching nothing; `name` names the folder. A file that fails outside
+/// its cases is one failed result, named after the file.
+pub async fn run_tests(
+    name: &str,
+    modules: Arc<Modules>,
+    files: &Files,
+    cancel: CancellationToken,
+) -> Vec<TestResult> {
+    let Root {
+        module, subject, ..
+    } = files.root;
+    let mut results = Vec::new();
+    for (file, source) in &files.tests {
+        // The file runs as a function, from the script's first line, so
+        // its errors keep their line numbers.
+        let script = format!(
+            "local __test = function() {source}\nend\n\
+             require(\"tau\").test.{subject} = require(\"{module}\")\n\
+             __test()\n\
+             return require(\"tau\")._run_tests()\n"
+        );
+        let (value, error) = run(
+            modules.clone(),
+            Arc::new(NoReach),
+            Reaches::none(name),
+            script,
+            TEST_LIMIT,
+            cancel.clone(),
+        )
+        .await;
+        if let Some(error) = error {
+            results.push(TestResult {
+                file: file.clone(),
+                name: format!("tests/{file}.luau"),
+                passed: false,
+                error: Some(error),
+            });
+            continue;
+        }
+        let cases: Vec<TestResult> = value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|case| TestResult {
+                file: file.clone(),
+                name: case["name"].as_str().unwrap_or_default().to_owned(),
+                passed: case["passed"] == true,
+                error: case["error"].as_str().map(str::to_owned),
+            })
+            .collect();
+        results.extend(cases);
+    }
+    results
 }
 
 /// `text` as a Luau long string, at a level `text` cannot close.
@@ -523,12 +564,66 @@ fn long_string(text: &str) -> String {
     format!("[{equals}[{text}]{equals}]")
 }
 
+/// Runs `script` against `modules`, reaching nothing, and gives back
+/// the value it returned, or why it failed; `name` names the folder.
+pub async fn evaluate(
+    name: &str,
+    modules: Arc<Modules>,
+    script: String,
+    limit: Duration,
+    cancel: CancellationToken,
+) -> Result<Value, String> {
+    let (value, error) = run(
+        modules,
+        Arc::new(NoReach),
+        Reaches::none(name),
+        script,
+        limit,
+        cancel,
+    )
+    .await;
+    match error {
+        Some(error) => Err(error),
+        None => Ok(value),
+    }
+}
+
+/// What a script may reach of what [`Reach`] gives: what a plugin's
+/// `uses` names.
+struct Reaches {
+    /// The folder's name, for the call's id.
+    name: String,
+    tools: Vec<String>,
+    infer: bool,
+    jev: bool,
+}
+
+impl Reaches {
+    fn of(declaration: &Declaration) -> Self {
+        Self {
+            name: declaration.name.clone(),
+            tools: declaration.uses.tools.clone(),
+            infer: declaration.uses.infer,
+            jev: declaration.uses.jev,
+        }
+    }
+
+    fn none(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            tools: Vec::new(),
+            infer: false,
+            jev: false,
+        }
+    }
+}
+
 /// Runs `script` and gives back the table it returned, or why it
 /// failed.
 async fn run(
-    modules: Arc<BTreeMap<String, Definition>>,
+    modules: Arc<Modules>,
     reach: Arc<dyn Reach>,
-    declaration: &Declaration,
+    reaches: Reaches,
     script: String,
     limit: Duration,
     cancel: CancellationToken,
@@ -536,12 +631,12 @@ async fn run(
     let host = Arc::new(PluginHost {
         modules,
         reach,
-        tools: declaration.uses.tools.clone(),
-        infer: declaration.uses.infer,
-        jev: declaration.uses.jev,
+        tools: reaches.tools,
+        infer: reaches.infer,
+        jev: reaches.jev,
     });
     let request = Request {
-        call_id: format!("plugin:{}", declaration.name),
+        call_id: format!("plugin:{}", reaches.name),
         source: Source {
             options: Options {
                 max_output_tokens: None,
@@ -582,7 +677,7 @@ fn failure_text(failure: &Failure) -> String {
 /// The codemode host a hook runs against: the plugin's modules, and what
 /// it may reach.
 struct PluginHost {
-    modules: Arc<BTreeMap<String, Definition>>,
+    modules: Arc<Modules>,
     reach: Arc<dyn Reach>,
     /// The tools `uses` names.
     tools: Vec<String>,

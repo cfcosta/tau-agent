@@ -1,6 +1,7 @@
--- The `tau` module every Luau plugin requires (ADR 0027): the plugin's
--- declaration, the answers its hooks give, the view pieces, and what
--- the host uses to read a plugin and call its hooks.
+-- The `tau` module every Luau plugin and agent requires (ADR 0027,
+-- ADR 0037): a plugin's or an agent's declaration, the answers a
+-- plugin's hooks give, the view pieces, and what the host uses to read
+-- them and call their hooks.
 
 local tau = {}
 local ui = {}
@@ -15,6 +16,31 @@ function tau.plugin(spec)
 		error("a plugin needs a name", 2)
 	end
 	return spec
+end
+
+-- An agent (ADR 0037): its table, checked. What wakes it is its
+-- `triggers`, each by the name its events carry.
+function tau.agent(spec)
+	if type(spec) ~= "table" then
+		error("tau.agent takes a table", 2)
+	end
+	if type(spec.name) ~= "string" or spec.name == "" then
+		error("an agent needs a name", 2)
+	end
+	if spec.triggers ~= nil and type(spec.triggers) ~= "table" then
+		error("an agent's `triggers` is a table of triggers by name", 2)
+	end
+	return spec
+end
+
+-- A secret by name, from tau's secret store: what an HTTP request's
+-- headers or body may hold. The host puts the value in as the request
+-- leaves; Luau never sees it.
+function tau.secret(name)
+	if type(name) ~= "string" or name == "" then
+		error("tau.secret takes a secret's name", 2)
+	end
+	return { ["$secret"] = name }
 end
 
 -- What `before_tool` answers.
@@ -221,6 +247,122 @@ function tau._describe(plugin)
 	}
 end
 
+local WEEKDAYS = { Mon = true, Tue = true, Wed = true, Thu = true, Fri = true, Sat = true, Sun = true }
+
+-- One trigger of an agent as the host reads it, or why it is not one.
+local function trigger_kind(name, trigger)
+	if type(trigger) ~= "table" then
+		error("trigger `" .. name .. "` is not a table", 0)
+	end
+	-- A poll has its own `every`; a schedule is `every` or `at`.
+	local kinds = 0
+	if trigger.poll ~= nil or trigger.every ~= nil or trigger.at ~= nil then
+		kinds += 1
+	end
+	for _, key in ipairs({ "command", "stream", "mcp", "message" }) do
+		if trigger[key] ~= nil then
+			kinds += 1
+		end
+	end
+	if kinds ~= 1 then
+		error(
+			"trigger `"
+				.. name
+				.. "` must be one of: a schedule (`every` or `at`), `command`, `poll`, `stream`, `mcp` or `message`",
+			0
+		)
+	end
+	if trigger.poll ~= nil then
+		local poll = trigger.poll
+		if type(poll) ~= "table" or (poll.tool == nil) == (poll.http == nil) then
+			error("trigger `" .. name .. "`: `poll` is `{ tool = ..., args = ... }` or `{ http = { url = ... } }`", 0)
+		end
+		if type(trigger.every) ~= "string" then
+			error("trigger `" .. name .. "`: a poll needs `every`", 0)
+		end
+		if trigger.key == nil then
+			error("trigger `" .. name .. "`: a poll needs `key`, a field or a function of an item", 0)
+		end
+		local source = poll.tool and ("tool " .. tostring(poll.tool)) or tostring(poll.http.url)
+		return { kind = "poll", source = source, every = trigger.every }
+	end
+	if trigger.stream ~= nil then
+		local stream = trigger.stream
+		local url = type(stream) == "table" and (stream.sse or stream.websocket)
+		if type(url) ~= "string" then
+			error("trigger `" .. name .. "`: `stream` is `{ sse = url }` or `{ websocket = url }`", 0)
+		end
+		if type(trigger.parse) ~= "function" then
+			error("trigger `" .. name .. "`: a stream needs `parse`, a function of a frame", 0)
+		end
+		return { kind = "stream", url = url }
+	end
+	if trigger.mcp ~= nil then
+		local mcp = trigger.mcp
+		if type(mcp) ~= "table" or type(mcp.server) ~= "string" or type(mcp.uri) ~= "string" then
+			error("trigger `" .. name .. "`: `mcp` is `{ server = ..., uri = ... }`", 0)
+		end
+		return { kind = "mcp", server = mcp.server, uri = mcp.uri }
+	end
+	if trigger.message ~= nil then
+		if trigger.message ~= true then
+			error("trigger `" .. name .. "`: `message` is `true`", 0)
+		end
+		return { kind = "message" }
+	end
+	if trigger.command ~= nil then
+		if type(trigger.command) ~= "string" or trigger.command == "" then
+			error("trigger `" .. name .. "`: `command` is the command's name", 0)
+		end
+		return {
+			kind = "command",
+			command = trigger.command,
+			hint = trigger.hint and tostring(trigger.hint) or nil,
+		}
+	end
+	local days = array({})
+	for _, day in ipairs(trigger.days or {}) do
+		if not WEEKDAYS[day] then
+			error("trigger `" .. name .. "`: `" .. tostring(day) .. "` is not a day: Mon to Sun", 0)
+		end
+		table.insert(days, day)
+	end
+	if trigger.every ~= nil and trigger.at ~= nil then
+		error("trigger `" .. name .. "`: a schedule is `every` or `at`, not both", 0)
+	end
+	if trigger.every ~= nil and trigger.days ~= nil then
+		error("trigger `" .. name .. "`: `days` go with `at`", 0)
+	end
+	if trigger.every ~= nil and type(trigger.every) ~= "string" then
+		error("trigger `" .. name .. "`: `every` is a duration, like \"15m\"", 0)
+	end
+	if trigger.at ~= nil and type(trigger.at) ~= "string" then
+		error("trigger `" .. name .. "`: `at` is a time of day, like \"09:00\"", 0)
+	end
+	return { kind = "schedule", every = trigger.every, at = trigger.at, days = days }
+end
+
+-- What the host reads of an agent: its name and what wakes it.
+function tau._describe_agent(agent)
+	local names = {}
+	for name in pairs(agent.triggers or {}) do
+		if type(name) ~= "string" then
+			error("a trigger's name is a string", 0)
+		end
+		table.insert(names, name)
+	end
+	table.sort(names)
+	local triggers = array({})
+	for _, name in ipairs(names) do
+		table.insert(triggers, { name = name, kind = trigger_kind(name, agent.triggers[name]) })
+	end
+	return {
+		name = agent.name,
+		description = agent.description or "",
+		triggers = triggers,
+	}
+end
+
 -- The `ctx` a hook gets, from what the host sends; a test gives its own
 -- tools.
 function tau._ctx(data, with_tools)
@@ -391,6 +533,79 @@ function test.run(spec)
 		end, { call = c, result = result })
 	end
 	return run
+end
+
+-- The agent the tests are of, as the test script hands it over.
+local function the_agent()
+	return test._agent or error("no agent under test", 3)
+end
+
+-- A poll's key of `item`: a field, or what a function of it gives.
+local function poll_key(trigger, item)
+	local key = trigger.key
+	if type(key) == "function" then
+		return key(item)
+	end
+	return item[key]
+end
+
+-- A fake agent for tests (ADR 0037): `spec` may give `state`, by
+-- trigger. Its methods run its triggers' Luau as the host would, with
+-- no network.
+function test.agent(spec)
+	spec = spec or {}
+	local agent = the_agent()
+	local fake = { state = spec.state or {} }
+	local function trigger(name)
+		local found = (agent.triggers or {})[name]
+		if found == nil then
+			error("the agent has no trigger `" .. tostring(name) .. "`", 3)
+		end
+		return found
+	end
+	-- What it declares, as the host reads it.
+	function fake:describe()
+		return tau._describe_agent(agent)
+	end
+	-- The event a stream's frame is, or nil.
+	function fake:parse(name, frame)
+		local t = trigger(name)
+		if type(t.parse) ~= "function" then
+			error("trigger `" .. name .. "` has no `parse`", 2)
+		end
+		fake.state[name] = fake.state[name] or {}
+		return t.parse(frame, fake.state[name])
+	end
+	-- The events a poll's result makes: one per item whose key it has
+	-- not seen; the first poll only records keys.
+	function fake:poll(name, result)
+		local t = trigger(name)
+		local items = result
+		if type(t.items) == "function" then
+			items = t.items(result)
+		end
+		local state = fake.state[name] or {}
+		fake.state[name] = state
+		local first = state.seen == nil
+		local seen = {}
+		for _, key in ipairs(state.seen or {}) do
+			seen[key] = true
+		end
+		state.seen = state.seen or {}
+		local events = array({})
+		for _, item in ipairs(items or {}) do
+			local key = poll_key(t, item)
+			if key ~= nil and not seen[key] then
+				seen[key] = true
+				table.insert(state.seen, key)
+				if not first then
+					table.insert(events, { id = name .. ":" .. tostring(key), data = item })
+				end
+			end
+		end
+		return events
+	end
+	return fake
 end
 
 -- Runs every case, each on its own: what passed, and why the rest

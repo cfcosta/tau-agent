@@ -22,7 +22,9 @@ fn the_skills_plugins_pass_their_tests() {
                 ((*path).to_owned(), source.as_bytes().to_vec())
             })
             .collect();
-        let files = Files::from_paths(&paths).unwrap();
+        let files =
+            Files::from_paths(&paths, tau_luau_plugins_host::runtime::PLUGIN)
+                .unwrap();
         let loaded = block_on_io(load(name, files))
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         let tests = block_on_io(loaded.test(CancellationToken::new()));

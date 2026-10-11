@@ -121,9 +121,11 @@ async fn test(
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<TestResult>, ToolError> {
     let folder = dir.join(plugin);
-    let files = tokio::task::spawn_blocking(move || Files::read(&folder))
-        .await
-        .map_err(|error| error.to_string())??;
+    let files = tokio::task::spawn_blocking(move || {
+        Files::read(&folder, crate::runtime::PLUGIN)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     let loaded = load(plugin, files)
         .await
         .map_err(|error| format!("{plugin} does not load: {error}"))?;

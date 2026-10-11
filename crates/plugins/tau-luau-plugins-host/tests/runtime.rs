@@ -94,7 +94,7 @@ return {
 
 fn files(plugin: &str) -> Files {
     Files {
-        plugin: plugin.into(),
+        source: plugin.into(),
         libs: BTreeMap::from([("days".into(), DAYS.into())]),
         ..Files::default()
     }
@@ -380,7 +380,7 @@ return tau.plugin { name = "x", tools = { ["no good"] = { call = function() end 
     assert!(error.contains("not a tool name"), "{error}");
 
     let taken = Files {
-        plugin: "return {}".into(),
+        source: "return {}".into(),
         libs: BTreeMap::from([("tau".into(), "return {}".into())]),
         ..Files::default()
     };

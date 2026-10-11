@@ -97,7 +97,7 @@ impl AgentTool for Bash {
 
 fn active(name: &str, source: &str) -> Active {
     let files = Files {
-        plugin: source.into(),
+        source: source.into(),
         libs: BTreeMap::new(),
         ..Files::default()
     };
