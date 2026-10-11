@@ -6,13 +6,13 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use tau_agents_host::{
     AGENT,
     skill::{self, EXAMPLES},
 };
-use tau_luau_plugins_host::runtime::{Files, run_tests};
+use tau_luau_plugins_host::runtime::{Files, evaluate, run_tests};
 use tau_testing::block_on_io;
 use tokio_util::sync::CancellationToken;
 
@@ -31,6 +31,18 @@ fn the_skills_agents_pass_their_tests() {
                 .modules()
                 .unwrap_or_else(|error| panic!("{name}: {error}")),
         );
+        // It declares what the host reads.
+        let described = block_on_io(evaluate(
+            name,
+            modules.clone(),
+            "local tau = require(\"tau\")\n\
+             return tau._describe_agent(require(\"agent\"))\n"
+                .into(),
+            Duration::from_secs(2),
+            CancellationToken::new(),
+        ))
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(described["name"], name);
         let tests = block_on_io(run_tests(
             name,
             modules,

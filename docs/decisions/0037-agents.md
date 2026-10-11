@@ -160,7 +160,14 @@ return tau.agent {
   keep-alive is `nil`, a payload is an event. Deciding whether an event
   matters is the model's.
 - **Polls** keep the last 10 000 keys in the agent's state. A poll's
-  result must be a list, or `items = function(result)` picks it.
+  result must be a list, or `items = function(result)` picks it. A
+  `tool` poll calls a tool outside any run, through tools plugins offer
+  the host for that (`OutsideTools`): today an MCP server's, whose
+  result is its structured content, else its text read as JSON. An
+  `http` poll's result is the answer read as JSON, else its text; one
+  that is not a success fires nothing. A poll that fails shows why on
+  its trigger, and after three in a row waits four intervals, at most
+  an hour.
 - **Streams** reconnect with back-off and send `Last-Event-ID` when the
   server gave one. The host holds the connection; Luau never does.
 - **MCP subscriptions** are new to tau-mcp: it subscribes while an

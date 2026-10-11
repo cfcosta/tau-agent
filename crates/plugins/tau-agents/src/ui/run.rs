@@ -183,7 +183,7 @@ pub(super) fn panel(
                             trigger.last.map(|last| relative(last, now))
                         })
                         .unwrap_or_default();
-                    div()
+                    let row = div()
                         .flex()
                         .items_center()
                         .gap(sp(2.))
@@ -212,7 +212,17 @@ pub(super) fn panel(
                                 .typeset(Type::MICRO)
                                 .text_color(t.dim)
                                 .child(when),
-                        )
+                        );
+                    // A poll that failed says why, under it.
+                    div().flex().flex_col().gap(sp(0.5)).child(row).children(
+                        trigger.error.clone().map(|error| {
+                            div()
+                                .typeset(Type::MICRO)
+                                .text_color(t.red)
+                                .line_clamp(2)
+                                .child(error)
+                        }),
+                    )
                 })
                 .collect()
         });

@@ -250,6 +250,8 @@ fn agent_card(
         t.tone(super::tone(&agent.status))
     };
     let triggers = agent.triggers.iter().map(|trigger| {
+        // A poll that fails shows red; its page says why.
+        let failing = trigger.error.is_some();
         div()
             .flex()
             .items_center()
@@ -259,11 +261,11 @@ fn agent_card(
             .rounded(radius::CONTROL)
             .bg(t.raised)
             .typeset(Type::MICRO)
-            .text_color(t.text_soft)
+            .text_color(if failing { t.red } else { t.text_soft })
             .child(icon(
                 trigger_icon(trigger.kind_label()),
                 IconSize::TINY,
-                t.dim,
+                if failing { t.red } else { t.dim },
             ))
             .child(trigger.label())
     });

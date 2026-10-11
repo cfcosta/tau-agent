@@ -64,6 +64,7 @@ return tau.agent {
 | schedule | `{ every = "15m" }`, or `{ at = "09:00", days = { "Mon" } }`     | at each interval, or at the host's local time on those days |
 | command  | `{ command = "name", hint = "<args>" }`                          | when the person sends `/name args` in any chat              |
 | poll     | `{ poll = { tool = ..., args = ... }, every = "1h", key = ... }` | once per item whose `key` it has not seen                   |
+| poll     | `{ poll = { http = { url = ..., headers = ... } }, every, key }` | the same, for an HTTP request                               |
 | stream   | `{ stream = { sse = url }, parse = function(frame, state) }`     | once per frame `parse` turns into `{ id, data }`            |
 | mcp      | `{ mcp = { server = ..., uri = ... } }`                          | when an MCP server says the resource changed                |
 | message  | `{ message = true }`                                             | when another agent sends you a message                      |
@@ -71,13 +72,24 @@ return tau.agent {
 - Durations are a number and a unit: `s`, `m`, `h` or `d`, at least a
   minute. `at` is `HH:MM` in the host's local time; `days` are `Mon` to
   `Sun`, and every day when left out.
-- **This version of tau fires schedules and commands.** Polls, streams,
+- **This version of tau fires schedules, commands and polls.** Streams,
   MCP resources and messages load and their tests run, but they do not
   fire yet: declare them only when the person asks for them, and say
   they start once tau supports them.
 - A poll's `key` is a field of each item, or a function of it; its
-  first poll only records what is there. `items = function(result)`
-  picks the list from a result that is not one.
+  first poll only records what is there, and tau keeps the last 10 000
+  keys it saw. `items = function(result)` picks the list from a result
+  that is not one, or leaves out items that should not fire yet.
+- A `tool` poll calls an MCP server's tool, by its name in your runs
+  (`mcp__<server>__<tool>`), with `args`. Its result is the tool's
+  structured content, else its text read as JSON, else the text.
+- An `http` poll makes the request: `url`, and `method`, `headers`,
+  `body` and `timeout` (seconds, at most 60) if you need them. Its
+  result is the answer read as JSON, else its text. An answer that is
+  not a success (2xx) fires nothing.
+- Every poll runs once when tau starts. One that fails fires nothing:
+  your page shows why, and after three failures in a row it waits four
+  intervals, at most an hour.
 - `parse` reads one frame (`{ event, data, id }`) and returns the event
   it is, or `nil` for a frame that is not one, like a keep-alive. It
   reads; it does not judge whether an event matters: you do.
@@ -134,8 +146,9 @@ end)
   each trigger's state by its name, as a poll keeps `seen` keys.
 - `agent:describe()` is what tau reads of `agent.luau`: `name`,
   `description` and `triggers`, sorted by name, each `{ name, kind }`.
-- `agent:parse(trigger, frame)` and `agent:poll(trigger, items)` run
-  that trigger's Luau as tau will.
+- `agent:parse(trigger, frame)` and `agent:poll(trigger, result)` run
+  that trigger's Luau as tau will: `poll` gives the events a result
+  makes, given what `state` says it saw.
 - `t.equal(got, want)` compares tables by what they hold.
 
 ## Worked agents
@@ -144,7 +157,7 @@ end)
 
 {{morning-digest}}
 
-### A poll, with a module of its own
+### Polls: an MCP tool and an HTTP request, with a module of its own
 
 {{release-watch}}
 
