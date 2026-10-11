@@ -245,6 +245,17 @@ fn an_agent_s_command_goes_to_it_and_starts_nothing(cx: &mut TestAppContext) {
             "from": "main",
         })]
     );
+    drop(events);
+    // The composer says where it went, for a moment.
+    workspace.update(&mut cx, |ws, _| {
+        assert_eq!(ws.composer_note(), Some("/triage sent to pr-triage"));
+    });
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(5));
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, _| {
+        assert_eq!(ws.composer_note(), None);
+    });
 }
 
 #[gpui::test]

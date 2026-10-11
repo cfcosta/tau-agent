@@ -117,6 +117,24 @@ impl Workspace {
                     ),
                 )
             })
+            .when_some(self.composer_note(), |bar, text| {
+                bar.child(
+                    div()
+                        .id("composer-note")
+                        .flex()
+                        .items_center()
+                        .gap(sp(2.))
+                        .px(sp(3.))
+                        .py(sp(1.75))
+                        .rounded(radius::CONTROL)
+                        .bg(t.green_soft)
+                        .border_1()
+                        .border_color(t.green.opacity(0.4))
+                        .typeset(Type::CAPTION)
+                        .child(ui::icon(Icon::Check, IconSize::COMPACT, t.green))
+                        .child(div().flex_1().truncate().text_color(t.text_soft).child(text.to_owned())),
+                )
+            })
             .when_some(queued, |bar, text| {
                 bar.child(
                     div()

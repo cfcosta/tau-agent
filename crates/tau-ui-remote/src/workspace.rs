@@ -394,6 +394,9 @@ pub enum PickerTarget {
     Default(String),
 }
 
+/// How long a plugin's note stays over the composer.
+const COMPOSER_NOTE_FOR: Duration = Duration::from_secs(4);
+
 pub struct Workspace {
     pub(crate) name: String,
     pub(crate) runs: Vec<RunView>,
@@ -576,6 +579,9 @@ pub struct Workspace {
     pub(crate) plugin_requests: crate::plugins::Requests,
     /// What a plugin asked to give the keys to, as the window draws.
     pub(crate) plugin_focus: Option<gpui::FocusHandle>,
+    /// A plugin's note over the composer, and the task that takes it
+    /// away again (`Request::Note`).
+    pub(crate) composer_note: Option<(gpui::SharedString, Task<()>)>,
     /// The Plugins screen: what is selected, its tab, and the scope its
     /// settings show (ADR 0029).
     pub(crate) plugins_screen: crate::ui::screens::plugins::Selection,
@@ -806,6 +812,7 @@ impl Workspace {
             },
             plugin_requests,
             plugin_focus: None,
+            composer_note: None,
             plugins_screen: Default::default(),
             inspector_plugin: None,
             inspector_everywhere: false,
@@ -1737,6 +1744,29 @@ impl Workspace {
 
     pub fn composer_text<'a>(&self, cx: &'a gpui::App) -> &'a str {
         self.composer.read(cx).text()
+    }
+
+    /// The note a plugin left over the composer, while it shows.
+    pub fn composer_note(&self) -> Option<&str> {
+        self.composer_note.as_ref().map(|(text, _)| text.as_ref())
+    }
+
+    /// Shows `text` over the composer for a few seconds, in place of any
+    /// note before it.
+    pub(crate) fn show_composer_note(
+        &mut self,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
+        let gone = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(COMPOSER_NOTE_FOR).await;
+            let _ = this.update(cx, |ws, cx| {
+                ws.composer_note = None;
+                cx.notify();
+            });
+        });
+        self.composer_note = Some((text.into(), gone));
+        cx.notify();
     }
 
     /// Puts `text` in the composer, as if typed.

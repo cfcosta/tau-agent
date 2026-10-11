@@ -261,6 +261,7 @@ impl Workspace {
                 cx.notify();
             }
             Request::Cancel(run) => cx.emit(WorkspaceEvent::Cancel { run }),
+            Request::Note(text) => self.show_composer_note(text, cx),
         }
         cx.notify();
     }

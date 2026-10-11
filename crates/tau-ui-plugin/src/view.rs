@@ -195,6 +195,9 @@ pub enum Request {
     Focus(gpui::FocusHandle),
     /// Cancels a run going on, as its Cancel button does.
     Cancel(RunId),
+    /// Shows `text` over the composer for a moment: what a command did
+    /// when it started nothing where it was typed.
+    Note(String),
 }
 
 /// Where a [`Handle`]'s requests go: the interface, which carries out
@@ -342,6 +345,11 @@ impl Handle {
 
     pub fn refresh(&self, cx: &mut App) {
         self.request(Request::Refresh, cx);
+    }
+
+    /// Shows `text` over the composer for a moment.
+    pub fn note(&self, text: impl Into<String>, cx: &mut App) {
+        self.request(Request::Note(text.into()), cx);
     }
 
     pub fn open_run(&self, run: &RunId, cx: &mut App) {

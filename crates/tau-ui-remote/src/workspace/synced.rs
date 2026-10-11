@@ -170,6 +170,8 @@ impl Workspace {
             plugin_ui: _,
             plugin_requests: _,
             plugin_focus: _,
+            // A note over the composer is the window's own.
+            composer_note: _,
             // Where each window is on the Plugins screen is its own.
             plugins_screen: _,
             inspector_plugin: _,

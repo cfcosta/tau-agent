@@ -339,7 +339,9 @@ fn fire(
         args: args.to_owned(),
         from: view.run.map(|run| run.id.to_string()),
     };
+    let sent = format!("/{command} sent to {}", agent.name);
     view.handle.act(act, view.cx);
+    view.handle.note(sent, view.cx);
 }
 
 /// Opens `agent`'s conversation: its main chat, or, before the host
