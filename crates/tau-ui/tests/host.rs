@@ -3712,3 +3712,74 @@ fn a_new_agent_is_a_repository_of_tau_s_own_with_a_main_chat() {
     assert!(host.block_on(host.list_agent("triage")).is_err());
     assert!(host.block_on(host.list_agent("Not An Agent")).is_err());
 }
+
+/// Calls `http` as a script would, and keeps what came of it.
+struct ProbeHttp(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+#[async_trait::async_trait]
+impl tau_agent::tool::AgentTool for ProbeHttp {
+    fn name(&self) -> &str {
+        "probe_http"
+    }
+
+    fn description(&self) -> &str {
+        "Calls http."
+    }
+
+    fn parameters(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> =
+            std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| serde_json::json!({ "type": "object" }))
+    }
+
+    async fn call(
+        &self,
+        _args: serde_json::Value,
+        ctx: tau_agent::tool::ToolCtx,
+    ) -> Result<tau_agent::tool::ToolOutput, tau_agent::error::ToolError> {
+        // Nothing listens on port 1: the call fails either way, and how
+        // says whether the run has `http`.
+        let came = match ctx
+            .call("http", serde_json::json!({ "url": "http://127.0.0.1:1/" }))
+            .await
+        {
+            Ok(_) => "answered".to_owned(),
+            Err(error) => error.to_string(),
+        };
+        self.0.lock().unwrap().push(came);
+        Ok(tau_agent::tool::ToolOutput::text("probed"))
+    }
+}
+
+/// Only an agent's runs reach the network with `http` (ADR 0037): a
+/// run in the agent's repository finds the tool; one in the person's
+/// repository does not.
+#[test]
+fn only_an_agent_s_runs_have_http() {
+    let came = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let llm = ScriptedModel::new()
+        .turn(|turn| turn.tool_call("probe_http", serde_json::json!({})))
+        .turn(|turn| turn.text("done"))
+        .turn(|turn| turn.tool_call("probe_http", serde_json::json!({})))
+        .turn(|turn| turn.text("done"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(llm).name("coder").tool(ProbeHttp(came.clone()));
+    let (host, mut events) =
+        host_of(runtime, store, agent, &tempfile::tempdir().unwrap().keep());
+    host.block_on(host.list_agent("triage")).unwrap();
+    for repo in ["triage", REPO] {
+        let run = host
+            .block_on(host.start("probe", &ModelChoice::default(), repo))
+            .unwrap();
+        until_end(&mut events);
+        wait_until_done(&host, &run.id);
+    }
+    let came = came.lock().unwrap().clone();
+    assert_eq!(came.len(), 2, "{came:?}");
+    assert!(came[0].contains("could not connect"), "{came:?}");
+    assert!(came[1].contains("Tool http not found"), "{came:?}");
+}

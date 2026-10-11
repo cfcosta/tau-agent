@@ -825,6 +825,13 @@ impl Host {
         let launcher = self.launcher_of(repo).await;
         let artifacts =
             Bytes::new(project.root().join("artifacts"), Quotas::default())?;
+        // An agent's runs reach the network with `http`, its keys named
+        // from tau's secret store (ADR 0037); no other run does.
+        let http = self.config.is_agent_path(&repo.path).then(|| {
+            tau_tools_host::secrets::SecretStore::in_dir(
+                &self.config.credentials.dir,
+            )
+        });
         // A run and its sub-agents work the same way, each in its own
         // workspace: tools, then what plugins add, which hear each turn's
         // commit. Every run declares the same tools, in the same order,
@@ -858,6 +865,10 @@ impl Host {
                     .with_artifacts(artifacts.clone());
                 let tools = match &launcher {
                     Some(launcher) => tools.with_launcher(launcher.clone()),
+                    None => tools,
+                };
+                let tools = match &http {
+                    Some(store) => tools.with_http(store.clone()),
                     None => tools,
                 };
                 let services = Services::default()
