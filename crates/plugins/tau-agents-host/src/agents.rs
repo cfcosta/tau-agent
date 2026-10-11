@@ -94,7 +94,7 @@ struct Inner {
     tasks: Mutex<JoinSet<()>>,
     /// Where each agent's home is kept, one directory each.
     homes: PathBuf,
-    /// The `bwrap` its commands run in; with none, they have no `bash`.
+    /// The `bwrap` its commands run in; with none, they have no command tools.
     bwrap: Option<PathBuf>,
 }
 
@@ -163,7 +163,7 @@ impl Agents {
     }
 
     /// The same agents, their commands run in `bwrap`, or with no
-    /// `bash` when there is none. Before it is shared.
+    /// command tools when there is none. Before it is shared.
     pub fn with_bwrap(mut self, bwrap: Option<PathBuf>) -> Self {
         Arc::get_mut(&mut self.0)
             .expect("set before the agents are shared")
@@ -173,7 +173,7 @@ impl Agents {
 
     /// What the commands of the repository at `checkout` run in, when it
     /// is an agent's: its sandbox, or nothing when there is no `bwrap`
-    /// (its runs then have no `bash`).
+    /// (its runs then have no `exec_command`).
     pub fn sandbox(
         &self,
         name: &str,
@@ -191,7 +191,7 @@ impl Agents {
     /// Why an agent's commands cannot run, if they cannot.
     pub fn sandbox_problem(&self) -> Option<String> {
         self.0.bwrap.is_none().then(|| {
-            "bash is off: bwrap (bubblewrap) is not installed, and an \
+            "commands are off: bwrap (bubblewrap) is not installed, and an \
              agent's commands never run outside it"
                 .to_owned()
         })

@@ -840,7 +840,7 @@ impl Host {
         // agent's commands run only in its sandbox: without one, its runs
         // have no `exec_command` (ADR 0037).
         let launcher = self.launcher_of(repo).await;
-        let no_bash =
+        let no_commands =
             launcher.is_none() && self.config.is_agent_path(&repo.path);
         let artifacts =
             Bytes::new(project.root().join("artifacts"), Quotas::default())?;
@@ -891,7 +891,7 @@ impl Host {
                 let tools = CodingTools::new(Root::new(dir.clone()))
                     .with_artifacts(artifacts.clone())
                     .with_processes(running);
-                let tools = if no_bash {
+                let tools = if no_commands {
                     tools.without(Tool::ExecCommand).without(Tool::WriteStdin)
                 } else {
                     tools

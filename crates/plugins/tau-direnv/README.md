@@ -4,7 +4,7 @@ Runs an agent's commands in the repository's direnv environment, as
 they would run in the person's shell. When a workspace has an `.envrc`,
 the person is asked once per repository whether tau loads it. Once
 allowed, each workspace's environment loads in the background, and
-`bash`'s commands and the repository's MCP servers start through
+`exec_command`'s commands and the repository's MCP servers start through
 `direnv exec <workspace>`. tau never runs `direnv allow` or edits the
 person's own direnv files: it writes a configuration of its own that
 whitelists the repositories the person allowed.
@@ -39,7 +39,7 @@ it with `default-features = false` (decisions 0017, 0030).
   `tau-ui-remote`, which lists `tau_direnv::DirenvUi`.
 
 The host half gives a repository a `tau_agent::launch::Launcher` through
-`HostHalf::launcher`. The host hands it to tau-tools' `bash`
+`HostHalf::launcher`. The host hands it to tau-tools' `exec_command`
 (`CodingTools::with_launcher`) and to tau-mcp's stdio servers. Commands
 wait while the person is asked and while the environment loads. A
 failed load, a `direnv deny` or a "no" runs commands as they are.

@@ -68,7 +68,7 @@ fn pi_read(
     let first = start + 1;
     Ok(if t.first_line_exceeds_limit {
         format!(
-            "[Line {first} is {}, exceeds {} limit. Use bash: sed -n '{first}p' {path} | head -c {MAX_BYTES}]",
+            "[Line {first} is {}, exceeds {} limit. Use exec_command: sed -n '{first}p' {path} | head -c {MAX_BYTES}]",
             format_size(all[start].len()),
             format_size(MAX_BYTES)
         )
@@ -421,7 +421,7 @@ fn a_first_line_over_the_limit_points_to_sed() {
         call(&Root::new(dir.path()), json!({"path": "f.txt"})).unwrap();
     assert_eq!(
         text_of(&output),
-        "[Line 1 is 58.6KB, exceeds 50.0KB limit. Use bash: sed -n '1p' f.txt | head -c 51200]"
+        "[Line 1 is 58.6KB, exceeds 50.0KB limit. Use exec_command: sed -n '1p' f.txt | head -c 51200]"
     );
     let structured = output.structured.unwrap();
     assert_eq!(structured["text"], "");

@@ -2351,10 +2351,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         .into_iter()
         .find(|plugin| plugin.name == tau_fast_compaction::NAME)
         .expect("fast compaction runs with Jev");
-    assert!(
-        status.description.contains("command outputs"),
-        "{status:?}"
-    );
+    assert!(status.description.contains("command outputs"), "{status:?}");
 
     let mut view = host
         .block_on(host.start("build it", &ModelChoice::default(), REPO))

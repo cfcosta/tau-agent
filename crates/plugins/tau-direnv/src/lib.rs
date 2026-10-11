@@ -6,7 +6,7 @@
 //! starts in such a repository, the person says whether tau loads it
 //! (in the composer's place); the answer is kept per repository and
 //! changes on the repository's menu. Once allowed, each workspace's
-//! environment loads in the background, and `bash`'s commands and the
+//! environment loads in the background, and `exec_command`'s commands and the
 //! repository's MCP servers start through `direnv exec <workspace>`.
 //!
 //! - [`Record`]: what the plugin publishes about a run's workspace,

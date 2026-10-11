@@ -299,9 +299,9 @@ mod tests {
     /// gains a seam that blocks; dropping any of them is not growth.
     #[test]
     fn growth_is_what_a_version_newly_reaches() {
-        let before = declaring(&["bash"], false, false);
+        let before = declaring(&["exec_command"], false, false);
         assert!(before.grown_from(&before).is_empty());
-        let after = declaring(&["bash", "read"], true, true);
+        let after = declaring(&["exec_command", "read"], true, true);
         assert_eq!(
             after.grown_from(&before),
             ["the `read` tool", "Jev", "`before_tool`"]

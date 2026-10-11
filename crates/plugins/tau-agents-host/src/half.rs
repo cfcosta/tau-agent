@@ -39,7 +39,7 @@ impl HostHalf for AgentsHost {
 
     /// An agent's commands, and its stdio MCP servers, run in its
     /// sandbox; without `bwrap` there is none, and its runs have no
-    /// `bash` (the host leaves it out).
+    /// its command tools (the host leaves them out).
     async fn launcher(
         &self,
         host: &Agents,

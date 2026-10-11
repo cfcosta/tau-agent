@@ -847,10 +847,10 @@ fn an_agents_commands_run_in_its_sandbox() {
     assert_eq!(block_on_io(agents.overview()).agents[0].sandbox, None);
 }
 
-/// Without `bwrap` an agent has no sandbox, so no `bash`, and its page
+/// Without `bwrap` an agent has no sandbox, so no command tools, and its page
 /// says why.
 #[test]
-fn without_bwrap_an_agent_has_no_bash_and_says_so() {
+fn without_bwrap_an_agent_has_no_commands_and_says_so() {
     let f = Fixture::new();
     let agents = open(f._home.path(), &f.clock, &f.host).with_bwrap(None);
     let checkout = f._home.path().join("agents").join("greet");

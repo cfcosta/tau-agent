@@ -505,7 +505,7 @@ fn read_text(
     });
     let text = if truncation.first_line_exceeds_limit {
         format!(
-            "[Line {first} is {}, exceeds {} limit. Use bash: sed -n '{first}p' {shown_path} | head -c {MAX_BYTES}]",
+            "[Line {first} is {}, exceeds {} limit. Use exec_command: sed -n '{first}p' {shown_path} | head -c {MAX_BYTES}]",
             format_size(kept[0].len),
             format_size(MAX_BYTES)
         )

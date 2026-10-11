@@ -1,6 +1,6 @@
 //! Where an agent's commands run: inside `bwrap` (bubblewrap), which
 //! shows them their workspace, the system's programs and the network,
-//! and nothing of the person's (ADR 0037, "`bash` runs in a sandbox").
+//! and nothing of the person's (ADR 0037, "commands run in a sandbox").
 //!
 //! Each command gets a sandbox of its own:
 //!

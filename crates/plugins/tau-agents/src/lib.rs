@@ -197,8 +197,8 @@ pub struct Agent {
     /// secret store holds each: its page asks the person for the rest.
     #[serde(default)]
     pub secrets: Vec<SecretState>,
-    /// Why its commands cannot run, when they cannot: its `bash` is off
-    /// without a sandbox to run in.
+    /// Why its commands cannot run, when they cannot: its command tools
+    /// are off without a sandbox to run in.
     #[serde(default)]
     pub sandbox: Option<String>,
 }
