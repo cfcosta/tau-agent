@@ -118,10 +118,12 @@ impl std::fmt::Debug for TurnHooks {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigDir(pub PathBuf);
 
-type ReadSettings = Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>;
+type ReadSettings =
+    Arc<dyn Fn(&str, Option<&str>) -> Option<Value> + Send + Sync>;
 type SaveSettings = Arc<
     dyn Fn(
             &str,
+            Option<&str>,
             Value,
         ) -> crate::registry::HostFuture<'static, anyhow::Result<()>>
         + Send
@@ -140,11 +142,14 @@ pub struct SavedSettings {
 
 impl SavedSettings {
     /// `read` gives a plugin's saved settings, if it has any; `save`
-    /// replaces them, by plugin name.
+    /// replaces them, by plugin name. With a repository, they are that
+    /// repository's copy (ADR 0029): `read` falls back to the plugin's
+    /// own when the repository keeps none.
     pub fn new(
-        read: impl Fn(&str) -> Option<Value> + Send + Sync + 'static,
+        read: impl Fn(&str, Option<&str>) -> Option<Value> + Send + Sync + 'static,
         save: impl Fn(
             &str,
+            Option<&str>,
             Value,
         )
             -> crate::registry::HostFuture<'static, anyhow::Result<()>>
@@ -161,31 +166,43 @@ impl SavedSettings {
     /// Settings kept in memory only: for tests, and hosts that save
     /// nothing.
     pub fn in_memory() -> Self {
-        let saved: Arc<
-            std::sync::Mutex<std::collections::BTreeMap<String, Value>>,
-        > = Arc::default();
+        type Kept = std::collections::BTreeMap<(String, Option<String>), Value>;
+        let saved: Arc<std::sync::Mutex<Kept>> = Arc::default();
         let read = saved.clone();
         Self::new(
-            move |plugin| {
-                read.lock().expect("not poisoned").get(plugin).cloned()
+            move |plugin, repo| {
+                let kept = read.lock().expect("not poisoned");
+                repo.and_then(|repo| {
+                    kept.get(&(plugin.to_owned(), Some(repo.to_owned())))
+                })
+                .or_else(|| kept.get(&(plugin.to_owned(), None)))
+                .cloned()
             },
-            move |plugin, value| {
-                saved
-                    .lock()
-                    .expect("not poisoned")
-                    .insert(plugin.to_owned(), value);
+            move |plugin, repo, value| {
+                saved.lock().expect("not poisoned").insert(
+                    (plugin.to_owned(), repo.map(str::to_owned)),
+                    value,
+                );
                 Box::pin(std::future::ready(Ok(())))
             },
         )
     }
 
-    pub fn read(&self, plugin: &str) -> Option<Value> {
-        (self.read)(plugin)
+    /// `plugin`'s saved settings: `repo`'s copy when given and it keeps
+    /// one, else the plugin's own.
+    pub fn read(&self, plugin: &str, repo: Option<&str>) -> Option<Value> {
+        (self.read)(plugin, repo)
     }
 
-    /// Saves `plugin`'s settings; the host writes them on its runtime.
-    pub async fn save(&self, plugin: &str, value: Value) -> anyhow::Result<()> {
-        (self.save)(plugin, value).await
+    /// Saves `plugin`'s settings, as `repo`'s copy when given; the host
+    /// writes them on its runtime.
+    pub async fn save(
+        &self,
+        plugin: &str,
+        repo: Option<&str>,
+        value: Value,
+    ) -> anyhow::Result<()> {
+        (self.save)(plugin, repo, value).await
     }
 }
 
@@ -234,6 +251,50 @@ pub struct HostRecord {
     /// The directory of the workspace it worked in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
+}
+
+/// Who a turn's message is from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum By {
+    /// The person: what they asked for, said for them.
+    Person,
+    /// tau: shown as tau's, not the person's.
+    Tau,
+}
+
+/// A turn a host half starts on a repository's main chat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Turn {
+    pub repo: String,
+    /// What the turn starts with.
+    pub text: String,
+    pub by: By,
+    pub model: String,
+    /// `auto`, `low` and so on.
+    pub effort: String,
+}
+
+/// The host's conversations, which a plugin's host half may drive: an
+/// agent's repository and its main chat, a conversation that never ends
+/// (ADR 0037). The host puts it in [`HostCx::services`] as an
+/// `Arc<dyn Conversations>`.
+pub trait Conversations: Send + Sync {
+    /// Makes the agent `name`'s repository, lists it as tau's own and
+    /// makes its main chat.
+    fn list_agent(
+        &self,
+        name: &str,
+    ) -> crate::registry::HostFuture<'_, anyhow::Result<()>>;
+
+    /// Whether `repo`'s main chat has a turn going.
+    fn running(&self, repo: &str) -> bool;
+
+    /// Starts a turn of `repo`'s main chat with `turn.text`. It refuses
+    /// while a turn is going: what comes then waits for the next one.
+    fn turn(
+        &self,
+        turn: Turn,
+    ) -> crate::registry::HostFuture<'_, anyhow::Result<()>>;
 }
 
 /// The host's services, the only part of the host a plugin reaches.
@@ -358,9 +419,27 @@ impl HostCx {
     /// `plugin`'s saved settings, or their default when it has none, or
     /// they no longer read as `T`.
     pub fn settings<T: DeserializeOwned + Default>(&self, plugin: &str) -> T {
+        self.read_settings(plugin, None)
+    }
+
+    /// `plugin`'s settings for the repository `repo`: its copy when it
+    /// keeps one (ADR 0029), else the plugin's own, else their default.
+    pub fn settings_in<T: DeserializeOwned + Default>(
+        &self,
+        plugin: &str,
+        repo: &str,
+    ) -> T {
+        self.read_settings(plugin, Some(repo))
+    }
+
+    fn read_settings<T: DeserializeOwned + Default>(
+        &self,
+        plugin: &str,
+        repo: Option<&str>,
+    ) -> T {
         self.services
             .get::<SavedSettings>()
-            .and_then(|saved| saved.read(plugin))
+            .and_then(|saved| saved.read(plugin, repo))
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default()
     }
@@ -373,13 +452,41 @@ impl HostCx {
         plugin: &str,
         settings: &impl Serialize,
     ) -> anyhow::Result<()> {
+        self.write_settings(plugin, None, settings).await
+    }
+
+    /// Saves `settings` as the repository `repo`'s copy of `plugin`'s
+    /// (ADR 0029), and asks the interface to draw the catalog again.
+    pub async fn save_settings_in(
+        &self,
+        plugin: &str,
+        repo: &str,
+        settings: &impl Serialize,
+    ) -> anyhow::Result<()> {
+        self.write_settings(plugin, Some(repo), settings).await
+    }
+
+    async fn write_settings(
+        &self,
+        plugin: &str,
+        repo: Option<&str>,
+        settings: &impl Serialize,
+    ) -> anyhow::Result<()> {
         let saved = self
             .services
             .get::<SavedSettings>()
             .ok_or_else(|| anyhow::anyhow!("This host saves no settings"))?;
-        saved.save(plugin, serde_json::to_value(settings)?).await?;
+        saved
+            .save(plugin, repo, serde_json::to_value(settings)?)
+            .await?;
         self.refresh();
         Ok(())
+    }
+
+    /// The host's conversations, when it lets a host half drive them
+    /// (ADR 0037).
+    pub fn conversations(&self) -> Option<Arc<dyn Conversations>> {
+        self.services.get::<Arc<dyn Conversations>>().cloned()
     }
 
     /// Asks the interface to draw the catalog again.
@@ -482,5 +589,33 @@ mod tests {
         assert_eq!(cx.settings::<Vec<u32>>("c"), Vec::<u32>::new());
         assert_eq!(pushes.lock().unwrap().len(), saves.len() + 1);
         assert_eq!(cx.config_dir(), Some(Path::new("/config/tau")));
+    }
+
+    /// A repository's copy of a plugin's settings is its own; one that
+    /// keeps none reads the plugin's.
+    #[test]
+    fn a_repositorys_settings_fall_back_to_the_plugins() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+        let cx = HostCx::new(
+            store,
+            runtime.handle().clone(),
+            Services::default().with(SavedSettings::in_memory()),
+            PathBuf::from("/data/tau"),
+            Vec::new(),
+            Arc::new(|_| {}),
+        );
+        runtime.block_on(cx.save_settings("a", &1u32)).unwrap();
+        runtime
+            .block_on(cx.save_settings_in("a", "x", &2u32))
+            .unwrap();
+        assert_eq!(cx.settings::<u32>("a"), 1);
+        assert_eq!(cx.settings_in::<u32>("a", "x"), 2);
+        assert_eq!(cx.settings_in::<u32>("a", "y"), 1);
+        assert_eq!(cx.settings_in::<u32>("b", "x"), 0);
+        assert!(cx.conversations().is_none());
     }
 }

@@ -174,7 +174,7 @@ fn the_person_is_asked_once_then_commands_run_in_the_environment() {
     assert_eq!(run(&launch, &first, "echo $TAU_PROBE"), "1");
     assert_eq!(host.status(&first), Status::Ready);
     assert_eq!(
-        fixture.saved.read(NAME),
+        fixture.saved.read(NAME, None),
         Some(json!({ "repos": { "repo": true } }))
     );
 

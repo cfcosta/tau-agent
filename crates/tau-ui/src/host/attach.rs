@@ -332,6 +332,128 @@ pub(super) fn tau_turn<F>(
     );
 }
 
+/// Answers what a plugin's host half asked of the conversations (ADR
+/// 0037): an agent made and listed, its main chat shown; or a turn of a
+/// main chat started, shown first.
+fn answer(
+    host: &Arc<Host>,
+    ask: conversations::Ask,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    match ask {
+        conversations::Ask::ListAgent { name, done } => {
+            let done = Answer::new(done);
+            let failed = done.clone();
+            on_host(
+                host,
+                workspace,
+                async move |host| {
+                    let repo = host.list_agent(&name).await?;
+                    let view = host.main_view(&repo).await?;
+                    host.catalog_changed();
+                    Ok(view)
+                },
+                move |ws, view, cx| {
+                    if let Some(view) = view {
+                        ws.apply(HostUpdate::Run(Box::new(view)), cx);
+                    }
+                    done.send(Ok(()));
+                },
+                move |_, error, _| failed.send(Err(anyhow::anyhow!(error))),
+                cx,
+            );
+        }
+        conversations::Ask::Turn { turn, done } => {
+            let done = Answer::new(done);
+            let failed = done.clone();
+            let starter = host.clone();
+            let repo = turn.repo.clone();
+            on_host(
+                host,
+                workspace,
+                async move |host| host.main_of(&repo).await,
+                move |ws, main, cx| {
+                    // Its message shows before its turn's events: tau's
+                    // as tau's, the person's as theirs.
+                    ws.apply(
+                        match turn.by {
+                            tau_ui_plugin::By::Tau => HostUpdate::TauTurn {
+                                run: main.clone(),
+                                prompt: turn.text.clone(),
+                            },
+                            tau_ui_plugin::By::Person => {
+                                HostUpdate::Event(RunEvent::Steered {
+                                    run: main.clone(),
+                                    text: turn.text.clone(),
+                                })
+                            }
+                        },
+                        cx,
+                    );
+                    let workspace = cx.entity();
+                    cx.defer(move |cx| {
+                        start_turn(&starter, main, turn, done, &workspace, cx)
+                    });
+                },
+                move |_, error, _| failed.send(Err(anyhow::anyhow!(error))),
+                cx,
+            );
+        }
+    }
+}
+
+/// Starts `turn` on `main`, then answers.
+fn start_turn(
+    host: &Arc<Host>,
+    main: RunId,
+    turn: tau_ui_plugin::Turn,
+    done: Answer,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let failed = done.clone();
+    let (failed_run, by) = (main.clone(), turn.by);
+    let effort = Effort::parse(&turn.effort).unwrap_or(Effort::Auto);
+    let choice = ModelChoice::new(turn.model.clone(), effort);
+    on_host(
+        host,
+        workspace,
+        async move |host| host.resume(&main, &turn.text, &choice).await,
+        move |_, (), _| done.send(Ok(())),
+        move |ws, error, cx| {
+            if by == tau_ui_plugin::By::Tau {
+                ws.apply(HostUpdate::ResumeFailed(failed_run), cx);
+            }
+            failed.send(Err(anyhow::anyhow!(error)));
+        },
+        cx,
+    );
+}
+
+/// Where a host half's answer goes, once: from whichever of a job's
+/// outcomes comes.
+#[derive(Clone)]
+struct Answer(
+    std::rc::Rc<
+        std::cell::RefCell<
+            Option<tokio::sync::oneshot::Sender<anyhow::Result<()>>>,
+        >,
+    >,
+);
+
+impl Answer {
+    fn new(done: tokio::sync::oneshot::Sender<anyhow::Result<()>>) -> Self {
+        Self(std::rc::Rc::new(std::cell::RefCell::new(Some(done))))
+    }
+
+    fn send(&self, result: anyhow::Result<()>) {
+        if let Some(done) = self.0.borrow_mut().take() {
+            let _ = done.send(result);
+        }
+    }
+}
+
 /// Updates repository `name` on the host, saying so in the status bar.
 /// An update the user asked for says what went wrong in a dialog; one
 /// at startup only in the status bar.
@@ -1063,6 +1185,20 @@ impl Host {
             },
         )
         .detach();
+        // What plugins' host halves ask of the conversations (ADR 0037).
+        if let Some(mut asked) = host.asked.lock().expect("not poisoned").take()
+        {
+            let (host, workspace) = (host.clone(), workspace.downgrade());
+            cx.spawn(async move |cx| {
+                while let Some(ask) = asked.recv().await {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return;
+                    };
+                    cx.update(|cx| answer(&host, ask, &workspace, cx));
+                }
+            })
+            .detach();
+        }
         // What plugins' host halves tell the interface.
         if let Some(mut pushed) =
             host.pushed.lock().expect("not poisoned").take()

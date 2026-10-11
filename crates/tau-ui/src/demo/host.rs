@@ -96,11 +96,12 @@ impl DemoHost {
             .collect::<anyhow::Result<Vec<_>>>()?;
         let settings: Arc<Mutex<BTreeMap<String, Value>>> = Arc::default();
         let (read, save) = (settings.clone(), settings.clone());
+        // The demo keeps no repository's own copy: one is the plugin's.
         let saved = SavedSettings::new(
-            move |plugin| {
+            move |plugin, _repo| {
                 read.lock().expect("not poisoned").get(plugin).cloned()
             },
-            move |plugin, value| {
+            move |plugin, _repo, value| {
                 save.lock()
                     .expect("not poisoned")
                     .insert(plugin.to_owned(), value);

@@ -36,7 +36,9 @@ pub mod view;
 
 use gpui::Context;
 pub use host::{
+    By,
     ConfigDir,
+    Conversations,
     HOST_RECORD,
     HostCx,
     HostRecord,
@@ -46,6 +48,7 @@ pub use host::{
     RunCtx,
     RunKind,
     SavedSettings,
+    Turn,
     TurnCommit,
     TurnHooks,
     WorkspaceDir,

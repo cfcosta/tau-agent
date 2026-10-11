@@ -274,6 +274,10 @@ pub struct Host {
     /// end until [`Self::attach`] takes it.
     pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
     pushed: Mutex<Option<mpsc::UnboundedReceiver<tau_ui_plugin::Push>>>,
+    /// What plugins' host halves ask of the host's conversations (ADR
+    /// 0037), and its receiving end until [`Self::attach`] takes it.
+    asks: mpsc::UnboundedSender<conversations::Ask>,
+    asked: Mutex<Option<mpsc::UnboundedReceiver<conversations::Ask>>>,
 }
 
 /// What the host knows of one run of this session: the repository it
@@ -287,6 +291,7 @@ struct SessionRun {
 
 mod attach;
 mod config;
+mod conversations;
 mod forecast;
 mod history;
 mod hosted;
@@ -467,6 +472,7 @@ impl Host {
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
         let (pushes, pushed) = mpsc::unbounded_channel();
+        let (asks, asked) = mpsc::unbounded_channel();
         // Runs the last tau left running were cut off as it closed: this
         // one runs none of them.
         if let Err(error) = runtime.block_on(store.interrupt_running()) {
@@ -521,6 +527,8 @@ impl Host {
             idle: Arc::default(),
             pushes,
             pushed: Mutex::new(Some(pushed)),
+            asks,
+            asked: Mutex::new(Some(asked)),
         };
         host.host_plugins();
         (host, receiver)

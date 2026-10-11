@@ -37,19 +37,30 @@ impl Host {
         );
         let read = settings.clone();
         let saved = SavedSettings::new(
-            move |plugin| {
-                read.lock()
-                    .expect("not poisoned")
-                    .plugins
-                    .get(plugin)
-                    .cloned()
+            move |plugin, repo| {
+                let settings = read.lock().expect("not poisoned");
+                repo.and_then(|repo| {
+                    settings.repo_plugins.get(repo)?.get(plugin)
+                })
+                .or_else(|| settings.plugins.get(plugin))
+                .cloned()
             },
-            move |plugin, value| {
-                settings
-                    .lock()
-                    .expect("not poisoned")
-                    .plugins
-                    .insert(plugin.to_owned(), value);
+            move |plugin, repo, value| {
+                {
+                    let mut settings = settings.lock().expect("not poisoned");
+                    match repo {
+                        Some(repo) => {
+                            settings
+                                .repo_plugins
+                                .entry(repo.to_owned())
+                                .or_default()
+                                .insert(plugin.to_owned(), value);
+                        }
+                        None => {
+                            settings.plugins.insert(plugin.to_owned(), value);
+                        }
+                    }
+                }
                 let (settings, path, saving) =
                     (settings.clone(), path.clone(), saving.clone());
                 Box::pin(async move {
@@ -72,6 +83,13 @@ impl Host {
         if let Some(jev) = self.jev() {
             services = services.with(jev);
         }
+        let conversations: Arc<dyn tau_ui_plugin::Conversations> =
+            Arc::new(super::conversations::HostConversations {
+                runs: self.runs.clone(),
+                list: self.list.clone(),
+                asks: self.asks.clone(),
+            });
+        services = services.with(conversations);
         let repos = self
             .repos
             .lock()
@@ -132,6 +150,14 @@ impl Host {
                 .map(|effort| effort.as_str().to_owned()),
             services,
         }
+    }
+
+    /// This host's conversations, as plugins' host halves drive them
+    /// (ADR 0037).
+    pub fn conversations(&self) -> Arc<dyn tau_ui_plugin::Conversations> {
+        self.host_cx()
+            .conversations()
+            .expect("the host gives its conversations to every plugin")
     }
 
     /// Where `plugin` keeps its own files on this host.

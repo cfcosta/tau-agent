@@ -3386,3 +3386,124 @@ fn a_phone_shows_the_reasoning_the_computer_timed(cx: &mut TestAppContext) {
         computer.update(&mut computer_cx, |ws, _| ws.synced()),
     );
 }
+
+/// What a plugin's host half asks of the conversations (ADR 0037): an
+/// agent made, its main chat shown, and a turn of it started as tau's.
+#[gpui::test]
+fn a_host_half_makes_an_agent_and_starts_its_turns(cx: &mut TestAppContext) {
+    use tau_testing::scripted::ScriptedModel;
+    use tau_ui::{
+        accounts::Credentials,
+        host::{Host, HostConfig},
+    };
+    use tau_ui_plugin::{By, Turn};
+
+    cx.executor().allow_parking();
+    let (workspace, mut cx, _) = open(cx);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let model = ScriptedModel::new()
+        .turn(|turn| turn.text("Noted."))
+        .turn(|turn| turn.text("Hello."));
+    let agent = tau_agent::agent::Agent::new(model).name("coder");
+    let dir = tempfile::tempdir().unwrap().keep();
+    let config = HostConfig {
+        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
+        credentials: Credentials::new(dir.join("config")),
+        model: Some("gpt-5.5".into()),
+        store: dir.join("unused.db"),
+        repos: dir.join("repos"),
+        settings: dir.join("models.json"),
+        repo_list: dir.join("repos.json"),
+        skills: std::env::temp_dir().join("tau-test-skills-none"),
+    };
+    let (host, events) = Host::with_agent(runtime, agent, store, config);
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
+    let host = cx.update(|_, cx| host.attach(&workspace, events, cx));
+    let conversations = host.conversations();
+
+    // What a host half waits for, on a thread of its own, while the
+    // interface answers.
+    let wait = |ask: Box<dyn FnOnce() -> anyhow::Result<()> + Send>| {
+        let asked = std::thread::spawn(ask);
+        while !asked.is_finished() {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        asked.join().unwrap()
+    };
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    let listing = conversations.clone();
+    wait(Box::new(move || block_on(listing.list_agent("greet")))).unwrap();
+    assert!(dir.join("agents").join("greet").is_dir());
+    let main = host.block_on(host.main_of("greet")).unwrap();
+    assert!(!conversations.running("greet"));
+    let again = conversations.clone();
+    let error = wait(Box::new(move || block_on(again.list_agent("greet"))))
+        .unwrap_err();
+    assert!(error.to_string().contains("already"), "{error}");
+
+    let text = "[events · 1 · 09:00:00]\n- morning · schedule · morning:1 · 09:00:00\n  {\"due\":1}";
+    let starting = conversations.clone();
+    wait(Box::new(move || {
+        block_on(starting.turn(Turn {
+            repo: "greet".into(),
+            text: text.into(),
+            by: By::Tau,
+            model: "gpt-5.5".into(),
+            effort: "auto".into(),
+        }))
+    }))
+    .unwrap();
+    workspace.read_with(&cx, |ws, _| {
+        let view = ws.run(&main).expect("the agent's main chat is shown");
+        assert!(
+            view.items
+                .iter()
+                .any(|item| *item == Item::Tau(text.to_owned())),
+            "{:?}",
+            view.items
+        );
+    });
+
+    // Once that turn is over, the person's words start the next, as
+    // theirs.
+    while conversations.running("greet") {
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let person = conversations.clone();
+    wait(Box::new(move || {
+        block_on(person.turn(Turn {
+            repo: "greet".into(),
+            text: "/tau-agents say hello".into(),
+            by: By::Person,
+            model: "gpt-5.5".into(),
+            effort: "auto".into(),
+        }))
+    }))
+    .unwrap();
+    workspace.read_with(&cx, |ws, _| {
+        let view = ws.run(&main).unwrap();
+        assert!(
+            view.items
+                .iter()
+                .any(|item| *item == Item::User("/tau-agents say hello".into())),
+            "{:?}",
+            view.items
+        );
+    });
+}
