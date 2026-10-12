@@ -102,6 +102,7 @@ pub struct CodingTools {
     launcher: Option<Arc<dyn Launcher>>,
     http: Option<SecretStore>,
     processes: Processes,
+    notifier: Option<exec::Notifier>,
 }
 
 impl std::fmt::Debug for CodingTools {
@@ -125,7 +126,15 @@ impl CodingTools {
             launcher: None,
             http: None,
             processes: Processes::new(),
+            notifier: None,
         }
+    }
+
+    /// Tells `notifier` when a command started with `notify` ends and no
+    /// call had reported it.
+    pub fn with_notifier(mut self, notifier: exec::Notifier) -> Self {
+        self.notifier = Some(notifier);
+        self
     }
 
     /// Adds `http` (ADR 0037), for scripts only, its secrets from
@@ -184,6 +193,10 @@ impl Plugin for CodingTools {
                 self.root.clone(),
                 self.processes.clone(),
             );
+            let exec = match &self.notifier {
+                Some(notifier) => exec.with_notifier(notifier.clone()),
+                None => exec,
+            };
             match &self.launcher {
                 Some(launcher) => exec.with_launcher(launcher.clone()),
                 None => exec,

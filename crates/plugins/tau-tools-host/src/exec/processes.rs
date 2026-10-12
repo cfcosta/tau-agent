@@ -16,7 +16,7 @@ use std::{
         Arc,
         Mutex,
         MutexGuard,
-        atomic::{AtomicI32, Ordering},
+        atomic::{AtomicBool, AtomicI32, Ordering},
     },
     time::Instant,
 };
@@ -95,6 +95,9 @@ pub struct Process {
     killer: Killer,
     input: Option<Input>,
     last_used: Mutex<Instant>,
+    /// Whether its end was handed over: to a call that reported it, or
+    /// to the notice that wakes the model.
+    end_taken: AtomicBool,
     /// One call at a time reads or writes it.
     pub(super) turn: tokio::sync::Mutex<()>,
 }
@@ -129,6 +132,49 @@ impl Process {
             Some(input) => input.write(chars.as_bytes()).await,
             None => Err(std::io::Error::other("no input")),
         }
+    }
+
+    /// Takes the right to tell of its end: true once, for whoever asks
+    /// first.
+    pub fn take_end(&self) -> bool {
+        !self.end_taken.swap(true, Ordering::SeqCst)
+    }
+
+    /// Calls `notify` once if the process ends and no call reported it
+    /// first. A process the store let go of, or killed, is not told of.
+    pub fn watch_end(
+        self: &Arc<Self>,
+        processes: &Processes,
+        notify: impl FnOnce(&Process, Exit) + Send + 'static,
+    ) {
+        let weak = Arc::downgrade(self);
+        let mut changes = self.changes();
+        let processes = processes.clone();
+        tokio::spawn(async move {
+            loop {
+                {
+                    // Not held across a wait: the store may let it go.
+                    let Some(process) = weak.upgrade() else {
+                        return;
+                    };
+                    let exit = process.shared.state().exit;
+                    if let Some(exit) = exit {
+                        // A call reading it now reports the end itself.
+                        drop(process.turn.lock().await);
+                        let kept = processes
+                            .get(process.id)
+                            .is_some_and(|kept| Arc::ptr_eq(&kept, &process));
+                        if kept && process.take_end() {
+                            notify(&process, exit);
+                        }
+                        return;
+                    }
+                }
+                if changes.changed().await.is_err() {
+                    return;
+                }
+            }
+        });
     }
 
     pub fn has_exited(&self) -> bool {
@@ -243,6 +289,7 @@ impl Processes {
             killer: run.killer(),
             input: run.input(),
             last_used: Mutex::new(Instant::now()),
+            end_taken: AtomicBool::new(false),
             turn: tokio::sync::Mutex::new(()),
         });
         tokio::spawn(async move {

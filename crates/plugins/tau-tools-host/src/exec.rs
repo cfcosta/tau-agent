@@ -53,7 +53,7 @@ use tau_agent::{
 };
 use tau_terminal::Command;
 
-pub use self::processes::Processes;
+pub use self::processes::{Exit, Processes};
 use self::processes::{MAX_RAW, Process, Read};
 use crate::{
     path::Root,
@@ -87,7 +87,9 @@ returns its output and exit code. A command still running then is kept \
 going in the background: the result says `process <id> is still running`, \
 and `write_stdin` with that id reads more of its output, or sends it \
 input. Output is cut to the last 2000 lines or 50KB per call. Set `tty` \
-to true for a command that reads input; otherwise its stdin is closed.";
+to true for a command that reads input; otherwise its stdin is closed. Set \
+`notify` to true on a long command (a build, a test run) to be told when it \
+ends instead of polling.";
 
 const WRITE_DESCRIPTION: &str = "Send input to a process `exec_command` \
 left running, or read its new output. `chars` is written to its terminal \
@@ -97,7 +99,18 @@ least 5 seconds for output. Returns the output since the last call and \
 whether the process is still running. The process needs `tty: true` to \
 take input.";
 
-/// `{ cmd, workdir?, yield_time_ms?, tty? }`.
+/// A process that left running ended, and nothing had reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ended {
+    pub process: i32,
+    pub command: String,
+    pub code: i32,
+}
+
+/// Told when a process started with `notify` ends.
+pub type Notifier = Arc<dyn Fn(Ended) + Send + Sync>;
+
+/// `{ cmd, workdir?, yield_time_ms?, tty?, notify? }`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecArgs {
     /// Shell command to execute
@@ -111,6 +124,9 @@ pub struct ExecArgs {
     /// Run it with its stdin on the terminal, so `write_stdin` can send it
     /// input (optional, false: stdin is closed)
     pub tty: Option<bool>,
+    /// If it is still running when this call returns, wake you when it
+    /// ends, without a poll (optional, false)
+    pub notify: Option<bool>,
 }
 
 /// `{ process_id, chars?, yield_time_ms? }`.
@@ -137,6 +153,8 @@ pub struct ExecCommand {
     /// repository's environment (`docs/reference/environment.md`).
     launcher: Option<Arc<dyn Launcher>>,
     processes: Processes,
+    /// Who hears of a `notify` process ending, when the host gives one.
+    notifier: Option<Notifier>,
 }
 
 impl ExecCommand {
@@ -149,7 +167,15 @@ impl ExecCommand {
             output_schema: output_schema(),
             launcher: None,
             processes,
+            notifier: None,
         }
+    }
+
+    /// Tells `notifier` when a process started with `notify` ends
+    /// unreported.
+    pub fn with_notifier(mut self, notifier: Notifier) -> Self {
+        self.notifier = Some(notifier);
+        self
     }
 
     /// Uses `path` as the shell instead of the default search order.
@@ -253,7 +279,21 @@ impl AgentTool for ExecCommand {
                 ))
             },
         )?;
-        report(&self.processes, &process, &ctx, window).await
+        let result = report(&self.processes, &process, &ctx, window).await;
+        // Still kept: it goes on after this call.
+        if args.notify.unwrap_or(false)
+            && let Some(notifier) = self.notifier.clone()
+            && self.processes.get(process.id).is_some()
+        {
+            process.watch_end(&self.processes, move |process, exit| {
+                notifier(Ended {
+                    process: process.id,
+                    command: process.command.clone(),
+                    code: exit.code,
+                })
+            });
+        }
+        result
     }
 }
 
@@ -418,6 +458,7 @@ async fn report(
     }
     // Reported once its end is: nothing more to poll.
     if seen.exit.is_some() {
+        process.take_end();
         processes.remove(process.id);
     }
     answer(process, seen, seq)

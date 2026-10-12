@@ -68,7 +68,7 @@ Run a command, and go on with it ([0038](../decisions/0038-commands-run-in-the-b
 They follow Codex's unified exec, not pi's `bash`: a command that is not
 done when the call returns keeps running, and a second tool reads it.
 
-### exec_command: `{ cmd, workdir?, yield_time_ms?, tty? }`
+### exec_command: `{ cmd, workdir?, yield_time_ms?, tty?, notify? }`
 
 - `cmd` runs as `<shell> -c <cmd>` on a pseudo-terminal, in `workdir`
   (relative to the working directory; an error when it is not a
@@ -79,6 +79,12 @@ done when the call returns keeps running, and a second tool reads it.
 - `tty` puts the command's stdin on the terminal, so `write_stdin` can
   send it input. Off by default: stdin is `/dev/null`, and a program
   that reads it gets end of file.
+- `notify` (off by default) asks to be told when a command that is still
+  running when the call returns ends: tau starts a turn on the run, or
+  steers the one going, with `Process N (`cmd`) exited with code C.
+  `write_stdin` then reads its output. Nothing is told when a call
+  reported the end first, when the store pruned or killed the process
+  (workspace closed, `^C` aside), or on a sub-agent's run.
 - **Shell:** `/bin/bash`, then `bash` on `PATH`, then `sh`
   (`exec::choose_shell`).
 - **Environment:** the command inherits tau-ui's environment, and starts

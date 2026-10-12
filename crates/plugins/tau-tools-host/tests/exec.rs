@@ -21,7 +21,7 @@ use tau_agent::{
 };
 use tau_ai::message::InputBlock;
 use tau_tools_host::{
-    exec::{ExecCommand, Processes, WriteStdin},
+    exec::{Ended, ExecCommand, Processes, WriteStdin},
     path::Root,
 };
 use tokio::sync::mpsc;
@@ -437,4 +437,100 @@ async fn too_much_output_is_cut_to_the_last_lines() {
     );
     assert!(text.ends_with("\n5000"), "{}", &text[text.len() - 20..]);
     assert!(output.structured.unwrap()["truncated"].as_bool().unwrap());
+}
+
+/// A notifier on `t`'s `exec_command`, and where its notices arrive.
+fn notified(t: Tools) -> (Tools, mpsc::UnboundedReceiver<Ended>) {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let exec = t.exec.with_notifier(std::sync::Arc::new(move |ended| {
+        let _ = sender.send(ended);
+    }));
+    (Tools { exec, ..t }, receiver)
+}
+
+/// A process left running with `notify` tells when it ends, once, and
+/// the output is still there for `write_stdin`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_notify_process_tells_when_it_ends() {
+    let (t, mut ended) = notified(tools());
+    let first = t
+        .exec
+        .call(
+            json!({ "cmd": "sleep 1; echo done; exit 3", "notify": true,
+                    "yield_time_ms": 250 }),
+            ctx(),
+        )
+        .await
+        .unwrap();
+    let id = process_of(&first);
+    let notice = tokio::time::timeout(Duration::from_secs(10), ended.recv())
+        .await
+        .expect("told in time")
+        .unwrap();
+    assert_eq!(notice.process, id);
+    assert_eq!(notice.code, 3);
+    assert_eq!(notice.command, "sleep 1; echo done; exit 3");
+
+    let rest = t
+        .write
+        .call(json!({ "process_id": id }), ctx())
+        .await
+        .unwrap_err();
+    assert!(failed(&rest).contains("done"), "{}", failed(&rest));
+    assert!(ended.try_recv().is_err(), "told once");
+}
+
+/// Without `notify`, nothing is told; and a call that reports the end
+/// first leaves nothing to tell.
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_is_told_without_notify_or_after_a_report() {
+    let (t, mut ended) = notified(tools());
+    t.exec
+        .call(json!({ "cmd": "sleep 1", "yield_time_ms": 250 }), ctx())
+        .await
+        .unwrap();
+    t.exec
+        .call(
+            json!({ "cmd": "echo quick", "notify": true,
+                    "yield_time_ms": 5000 }),
+            ctx(),
+        )
+        .await
+        .unwrap();
+    let polled = t
+        .exec
+        .call(
+            json!({ "cmd": "sleep 1", "notify": true, "yield_time_ms": 250 }),
+            ctx(),
+        )
+        .await
+        .unwrap();
+    // The poll that sees the end reports it, so nobody is woken for it.
+    t.write
+        .call(
+            json!({ "process_id": process_of(&polled),
+                    "yield_time_ms": 5000 }),
+            ctx(),
+        )
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(ended.try_recv().is_err());
+}
+
+/// A process the store kills is not told of.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_killed_process_is_not_told_of() {
+    let (t, mut ended) = notified(tools());
+    t.exec
+        .call(
+            json!({ "cmd": "sleep 30", "notify": true,
+                    "yield_time_ms": 250 }),
+            ctx(),
+        )
+        .await
+        .unwrap();
+    t.processes.terminate_all();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(ended.try_recv().is_err());
 }

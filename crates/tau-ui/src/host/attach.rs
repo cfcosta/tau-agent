@@ -232,6 +232,51 @@ pub(super) fn show_drain(
     }
 }
 
+/// Tells `run` that a command it left running ended: read in its turn if
+/// one is going, else in one tau starts.
+fn wake(
+    host: &Arc<Host>,
+    run: RunId,
+    text: String,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let (job_run, job_text) = (run.clone(), text.clone());
+    let goer = host.clone();
+    on_host(
+        host,
+        workspace,
+        async move |host| host.steer(&job_run, &job_text).await,
+        move |ws, delivery, cx| match delivery {
+            Delivery::Steered => {
+                ws.apply(HostUpdate::Steered { run, text }, cx);
+            }
+            Delivery::GoOn => {
+                let workspace = cx.entity();
+                cx.defer(move |cx| {
+                    tau_turn(
+                        &goer,
+                        &run,
+                        text,
+                        async move |host, run, prompt| {
+                            let choice = host.choice_of(&run);
+                            host.resume(&run, &prompt, &choice).await
+                        },
+                        "Could not wake the run",
+                        |_| {},
+                        &workspace,
+                        cx,
+                    )
+                });
+            }
+            // A run that landed or was dropped hears nothing.
+            Delivery::ToMain { .. } => {}
+        },
+        |_, _, _| {},
+        cx,
+    );
+}
+
 /// Runs `job`, which drains a main chat's queue, on the host, then shows
 /// what it did; a failure is an alert titled `failed`.
 fn drain_on_host<F>(
@@ -1202,6 +1247,24 @@ impl Host {
                         return;
                     };
                     cx.update(|cx| answer(&host, ask, &workspace, cx));
+                }
+            })
+            .detach();
+        }
+        // A command a run left running ended, and the run asked to be
+        // told: its next turn reads it, or the one running reads it.
+        if let Some(mut woken) = host.woken.lock().expect("not poisoned").take()
+        {
+            let (host, workspace) = (host.clone(), workspace.downgrade());
+            cx.spawn(async move |cx| {
+                while let Some((name, text)) = woken.recv().await {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return;
+                    };
+                    let Some(run) = host.run_in(&name) else {
+                        continue;
+                    };
+                    cx.update(|cx| wake(&host, run, text, &workspace, cx));
                 }
             })
             .detach();

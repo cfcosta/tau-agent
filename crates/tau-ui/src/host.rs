@@ -298,6 +298,11 @@ pub struct Host {
     /// end until [`Self::attach`] takes it.
     pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
     pushed: Mutex<Option<mpsc::UnboundedReceiver<tau_ui_plugin::Push>>>,
+    /// Background commands that ended, with the name of the workspace of
+    /// the run that asked to be told (`exec_command`'s `notify`), and the receiving end until
+    /// [`Self::attach`] takes it.
+    wakes: mpsc::UnboundedSender<(String, String)>,
+    woken: Mutex<Option<mpsc::UnboundedReceiver<(String, String)>>>,
     /// What plugins' host halves ask of the host's conversations (ADR
     /// 0037), and its receiving end until [`Self::attach`] takes it.
     asks: mpsc::UnboundedSender<conversations::Ask>,
@@ -496,6 +501,7 @@ impl Host {
     ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
         let (events, receiver) = mpsc::unbounded_channel();
         let (pushes, pushed) = mpsc::unbounded_channel();
+        let (wakes, woken) = mpsc::unbounded_channel();
         let (asks, asked) = mpsc::unbounded_channel();
         // Runs the last tau left running were cut off as it closed: this
         // one runs none of them.
@@ -555,6 +561,8 @@ impl Host {
             idle: Arc::default(),
             pushes,
             pushed: Mutex::new(Some(pushed)),
+            wakes,
+            woken: Mutex::new(Some(woken)),
             asks,
             asked: Mutex::new(Some(asked)),
         };
@@ -869,6 +877,7 @@ impl Host {
             )
         });
         let processes = self.processes.clone();
+        let wakes = self.wakes.clone();
         // A run and its sub-agents work the same way, each in its own
         // workspace: tools, then what plugins add, which hear each turn's
         // commit. Every run declares the same tools, in the same order,
@@ -881,7 +890,8 @@ impl Host {
         let on_workspace =
             move |agent: Agent,
                   workspace: RunWorkspace,
-                  refusal: Option<&'static str>| {
+                  refusal: Option<&'static str>,
+                  wake: Option<String>| {
                 let hooks = TurnHooks::default();
                 let workspace = {
                     let hooks = hooks.clone();
@@ -908,6 +918,18 @@ impl Host {
                 let tools = CodingTools::new(Root::new(dir.clone()))
                     .with_artifacts(artifacts.clone())
                     .with_processes(running);
+                // A command left running that ends wakes the run that
+                // asked to be told; a sub-agent's is not told, as it ends
+                // and lands.
+                let tools = match wake {
+                    Some(workspace) => {
+                        let wakes = wakes.clone();
+                        tools.with_notifier(Arc::new(move |ended| {
+                            let _ = wakes.send((workspace.clone(), ended_note(&ended)));
+                        }))
+                    }
+                    None => tools,
+                };
                 let tools = if no_commands {
                     tools.without(Tool::ExecCommand).without(Tool::WriteStdin)
                 } else {
@@ -970,6 +992,7 @@ impl Host {
                         agent,
                         child,
                         Some(SUB_AGENTS_DO_NOT_LAND),
+                        None,
                     );
                     let built = registered(
                         agent,
@@ -991,7 +1014,12 @@ impl Host {
         let hold = (main && resolving).then(|| lanes::ResolveHold {
             vcs: workspace.vcs().clone(),
         });
-        let (agent, services) = on_workspace(agent, workspace, refusal);
+        let (agent, services) = on_workspace(
+            agent,
+            workspace,
+            refusal,
+            Some(name.clone()),
+        );
         let agent = match hold {
             Some(hold) => agent.plugin(hold),
             None => agent,
@@ -1610,6 +1638,16 @@ impl Host {
     }
 
     /// The model `run` last ran on.
+    /// The run working in the workspace called `workspace`.
+    pub fn run_in(&self, workspace: &str) -> Option<RunId> {
+        self.sessions
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .find(|(_, session)| session.workspace.as_deref() == Some(workspace))
+            .map(|(run, _)| run.clone())
+    }
+
     pub fn choice_of(&self, run: &RunId) -> ModelChoice {
         self.session_of(run).choice.unwrap_or_else(|| {
             ModelChoice::new(self.config.default_model(), Effort::Auto)
@@ -1700,6 +1738,20 @@ impl Drop for Job {
     fn drop(&mut self) {
         self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// What a background command's end tells the run that asked to be told.
+fn ended_note(ended: &tau_tools_host::exec::Ended) -> String {
+    let how = if ended.code == 0 {
+        "exited with code 0".to_owned()
+    } else {
+        format!("exited with code {}", ended.code)
+    };
+    format!(
+        "Process {} (`{}`) {how}. write_stdin with process_id {} reads \
+         its output.",
+        ended.process, ended.command, ended.process
+    )
 }
 
 #[cfg(test)]

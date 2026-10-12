@@ -19,8 +19,9 @@ terminal and waits a short yield time. If it ended, the call answers with
 its output. If not, the call answers with what it wrote and a process id,
 and the process goes on in a store that outlives the call and the turn.
 `write_stdin` takes the id: it sends input or only polls, waits, and
-answers the same way. Nothing wakes the model when a process ends; it
-polls. The store holds at most 64 processes and prunes the least recently
+answers the same way. By default nothing wakes the model when a process
+ends; it polls. With `notify: true` on the call, the end of a process
+left running wakes it (below). The store holds at most 64 processes and prunes the least recently
 used, and ends them with the session. We match Codex here because its
 models have been trained on exactly this contract.
 
@@ -79,9 +80,12 @@ models have been trained on exactly this contract.
 - **A `background: true` flag on `bash`.** A call that is sometimes
   blocking and sometimes not, and no way to read or feed the process
   afterwards.
-- **Start a turn when a process ends**, as tau does for sub-agents
+- **Start a turn whenever a process ends**, as tau does for sub-agents
   (0031). Codex does not, and a process the model forgot about would
-  start turns nobody asked for. Polling is the model's choice.
+  start turns nobody asked for. So the wake is opt-in per command
+  (`notify`): the model asks for it for a build or a test run, not for a
+  server. It goes through the host (`Host::steer`, then a tau turn if the
+  run is idle) and is told once, only if no call had reported the end.
 - **Feed the emulator's text across calls.** Screen rows repeat or are
   withheld, as above.
 
@@ -89,8 +93,8 @@ models have been trained on exactly this contract.
 
 - A dev server or a watcher can run while the model works on, and its
   output is read when the model asks.
-- The model must poll; a process that ends unreported waits in the
-  store, and one never read is killed with the workspace.
+- The model polls, or sets `notify`; a process that ends unreported
+  waits in the store, and one never read is killed with the workspace.
 - Commands that expect input need `tty: true`, which the tool's
   description says.
 - `bash`'s timeout is gone: a stuck command is interrupted with
