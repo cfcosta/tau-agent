@@ -42,6 +42,28 @@ project, where the main model, holding the file by its own scripts, judges
 each document against the whole. `codemode_wide` made no `infer` calls, so
 its edge over `codemode` is noise.
 
+## GPT-6.1 Sol
+
+The same `docs` (two trials) and `count` at 4000 lines (one trial) on
+`gpt-6.1-sol`, about US$3.40 in all.
+
+| Task    | Arm             | Exact | Score | `infer` | Cost (US$) | Time |
+| ------- | --------------- | ----: | ----: | ------: | ---------: | ---: |
+| `docs`  | `plain`         |  2/2  |  1.00 |       0 |       0.07 |  37s |
+| `docs`  | `codemode`      |  2/2  |  1.00 |       0 |       0.09 |  34s |
+| `docs`  | `codemode_wide` |  2/2  |  1.00 |       0 |       0.09 |  44s |
+| `docs`  | `rlm`           |  0/2  |  0.89 |     187 |       1.01 | 251s |
+| `count` | `plain`         |  1/1  |  1.00 |       0 |       0.03 |  34s |
+| `count` | `codemode`      |  1/1  |  1.00 |       0 |       0.04 |  28s |
+| `count` | `codemode_wide` |  1/1  |  1.00 |       0 |       0.06 |  40s |
+| `count` | `rlm`           |  0/1  |  1.00 |      40 |       0.78 | 144s |
+
+The stronger model gets every question right with the coding tools or
+plain codemode, in half a minute for a few cents, and never reaches for
+`infer` unless told to. The `rlm` arm, told to, is 15 to 25 times dearer
+and misses (26 and 22 of 27; 889 of 892). The gap in cost against the
+other arms grew with the model's strength.
+
 ## What it shows
 
 - **Nothing here needed recursion.** The model with only the coding
@@ -55,6 +77,7 @@ its edge over `codemode` is noise.
   435k input tokens at 4000 lines.
 - **The default `infer` limits did not bind** (7 calls at most, under
   the 16).
+- A stronger model (above) widened the gap rather than closing it.
 - One trial per cell is noise: the 1000-line `plain` miss was 200 for
   213.
 
