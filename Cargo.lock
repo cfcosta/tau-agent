@@ -9927,6 +9927,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-rlm-eval"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-codemode-host",
+ "tau-compaction",
+ "tau-store",
+ "tau-store-sqlite",
+ "tau-tools-host",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "tau-skills"
 version = "0.1.0"
 dependencies = [

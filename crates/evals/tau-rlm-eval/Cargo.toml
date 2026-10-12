@@ -1,0 +1,25 @@
+[package]
+name = "tau-rlm-eval"
+description = "Long-context tasks with known answers, under plain tools, codemode, and codemode with a recursive-language-model strategy."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+tau-store-sqlite.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+tau-codemode-host.workspace = true
+tau-compaction.workspace = true
+tau-store.workspace = true
+tau-tools-host.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+hegeltest.workspace = true
