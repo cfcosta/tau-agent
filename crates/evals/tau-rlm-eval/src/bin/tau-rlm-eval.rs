@@ -24,7 +24,7 @@ the paper's strategy in the instructions). It makes real model calls.
 
 Usage: tau-rlm-eval [options]
 
-  --task NAME       count, top, needle (repeat, or comma-separated)
+  --task NAME       count, top, needle, docs (repeat, or comma-separated)
   --arm NAME        plain, codemode, codemode_wide, rlm
   --lines N         input sizes in lines (repeat, or comma-separated;
                     default 1000,6000)
@@ -34,6 +34,7 @@ Usage: tau-rlm-eval [options]
   --json PATH       also write every trial and summary to PATH
   --chatgpt ID      use this ChatGPT account's plan
   --max-turns N     turns a run may take (default 40)
+  --docs DIR        the documents for the docs task (default: docs)
   --work DIR        where inputs are made (default: the temp dir)
   --help            print this
 ";
@@ -58,6 +59,7 @@ fn run() -> Result<(), String> {
     let (mut trials, mut max_turns) = (1u32, 40u32);
     let (mut model, mut budget, mut json, mut chatgpt, mut work) =
         (None, None, None::<PathBuf>, None, None::<PathBuf>);
+    let mut docs = None::<PathBuf>;
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or(format!("{arg} takes a value"));
         match arg.as_str() {
@@ -108,6 +110,7 @@ fn run() -> Result<(), String> {
                 );
             }
             "--work" => work = Some(value()?.into()),
+            "--docs" => docs = Some(value()?.into()),
             "--help" | "-h" => {
                 print!("{USAGE}");
                 return Ok(());
@@ -137,6 +140,9 @@ fn run() -> Result<(), String> {
     }
     if !sizes.is_empty() {
         config.sizes = sizes;
+    }
+    if let Some(docs) = docs {
+        config.docs = docs;
     }
     config.trials = trials;
     config.max_turns = max_turns;

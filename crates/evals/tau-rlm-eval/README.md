@@ -20,6 +20,7 @@ another (a message asking for a refund *button* is a feature request).
 | `count`  | how many messages are billing messages      | every line classified (OOLONG) |
 | `top`    | which category has the most messages        | every line, five counts       |
 | `needle` | the passphrase hidden in one line           | a `grep`: the control         |
+| `docs`   | how many of tau's documents are about codemode | real text, not templates |
 
 The answer is the last `ANSWER:` line of the reply. `exact` is a match;
 `score` is 1 for a match and, for `count`, 1 minus the relative error

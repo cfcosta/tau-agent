@@ -271,16 +271,20 @@ pub enum Kind {
     Count,
     Top,
     Needle,
+    /// Real text: how many of a project's documents are about codemode.
+    Docs,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 3] = [Kind::Count, Kind::Top, Kind::Needle];
+    pub const ALL: [Kind; 4] =
+        [Kind::Count, Kind::Top, Kind::Needle, Kind::Docs];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Count => "count",
             Self::Top => "top",
             Self::Needle => "needle",
+            Self::Docs => "docs",
         }
     }
 
@@ -308,7 +312,7 @@ fn pool(category: usize) -> &'static [&'static str] {
 fn weights(kind: Kind) -> [usize; 5] {
     match kind {
         Kind::Top => [180, 170, 300, 190, 160],
-        Kind::Count | Kind::Needle => [220, 200, 200, 190, 190],
+        Kind::Count | Kind::Needle | Kind::Docs => [220, 200, 200, 190, 190],
     }
 }
 
@@ -378,6 +382,7 @@ pub fn generate(
     std::fs::write(&path, &out)?;
 
     let (prompt, expected) = match kind {
+        Kind::Docs => unreachable!("documents are made by `generate_docs`"),
         Kind::Count => (
             format!(
                 "{} How many messages are billing messages? Finish \
@@ -421,6 +426,73 @@ pub fn generate(
     })
 }
 
+/// The corpus of `docs`: every Markdown file under `root`, in an order
+/// the seed shuffles, each under a `### DOCUMENT k` line with its first
+/// heading removed, so a title does not give its subject away. The
+/// answer is how many are about codemode, by their path.
+pub fn generate_docs(
+    root: &Path,
+    seed: u64,
+    dir: &Path,
+) -> std::io::Result<Instance> {
+    fn walk(
+        dir: &Path,
+        out: &mut Vec<std::path::PathBuf>,
+    ) -> std::io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                walk(&path, out)?;
+            } else if path.extension().is_some_and(|ext| ext == "md") {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(root, &mut files)?;
+    files.sort();
+    let mut rng = Rng::new(seed);
+    for at in (1..files.len()).rev() {
+        files.swap(at, rng.range(0, at + 1));
+    }
+    let mut out = String::new();
+    let mut about = 0;
+    for (n, path) in files.iter().enumerate() {
+        let text = std::fs::read_to_string(path)?;
+        let body = match text.split_once('\n') {
+            Some((first, rest)) if first.starts_with('#') => rest,
+            _ => &text,
+        };
+        if path.to_string_lossy().to_lowercase().contains("codemode") {
+            about += 1;
+        }
+        out.push_str(&format!("### DOCUMENT {}\n{}\n\n", n + 1, body.trim()));
+    }
+    let path = dir.join(FILE);
+    std::fs::create_dir_all(path.parent().expect("a file has a parent"))?;
+    std::fs::write(&path, &out)?;
+    let prompt = format!(
+        "The file `{FILE}` holds {} technical documents from one software \
+         project (about {} KB), each under a line `### DOCUMENT <number>`; \
+         the title line of each has been removed. How many of the documents \
+         are about codemode, the project's Luau scripting tool: its sandbox, \
+         globals, modules, inference, evaluation, or how scripts read \
+         artifacts and call tools? A document that only mentions codemode in \
+         passing, as one tool among others, does not count. Finish your \
+         reply with a line `ANSWER: <integer>`.",
+        files.len(),
+        out.len() / 1000
+    );
+    Ok(Instance {
+        kind: Kind::Docs,
+        lines: out.lines().count(),
+        bytes: out.len(),
+        prompt,
+        expected: about.to_string(),
+    })
+}
+
 fn intro(lines: usize, bytes: usize) -> String {
     format!(
         "The file `{FILE}` holds {lines} customer support messages, one per \
@@ -461,10 +533,11 @@ pub fn score(kind: Kind, expected: &str, reply: &str) -> Score {
         };
     };
     let exact = given.eq_ignore_ascii_case(expected)
-        || (kind == Kind::Count && given.replace(',', "").trim() == expected);
+        || (matches!(kind, Kind::Count | Kind::Docs)
+            && given.replace(',', "").trim() == expected);
     let score = if exact {
         1.0
-    } else if kind == Kind::Count {
+    } else if matches!(kind, Kind::Count | Kind::Docs) {
         match (
             given.replace(',', "").trim().parse::<f64>(),
             expected.parse::<f64>(),
@@ -542,6 +615,24 @@ mod tests {
         let one = generate(Kind::Needle, 400, 5, dir.path()).unwrap();
         let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
         assert_eq!(text.matches(&one.expected).count(), 1);
+    }
+
+    #[test]
+    fn the_docs_corpus_hides_titles_and_counts_codemode_paths() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("sub")).unwrap();
+        for (path, text) in [
+            ("a.md", "# Alpha title\nabout things"),
+            ("codemode-x.md", "# Secret title\nscripts"),
+            ("sub/codemode-y.md", "# Another\nmore scripts"),
+        ] {
+            std::fs::write(root.path().join(path), text).unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let one = generate_docs(root.path(), 1, dir.path()).unwrap();
+        assert_eq!(one.expected, "2");
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        assert!(!text.contains("title") && text.contains("### DOCUMENT 3"));
     }
 
     #[test]

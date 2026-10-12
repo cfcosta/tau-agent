@@ -23,6 +23,25 @@ harness, tasks and arms are in `crates/evals/tau-rlm-eval/README.md`.
 (An earlier 1000-line run, on an input with only 60 distinct messages,
 had `plain` exact for US$0.12 and `rlm` exact for US$1.13.)
 
+## Real text: `docs`, tau's own documents
+
+96 Markdown files (about 300k tokens), shuffled into one file under
+`### DOCUMENT k` lines, titles removed; the question is how many are
+about codemode (27, by path). Two trials per arm; 27 is exact.
+
+| Arm             | Answers          | Mean score | `infer` | Cost (US$) | Time |
+| --------------- | ---------------- | ---------: | ------: | ---------: | ---: |
+| `plain`         | 28, 28           |       0.96 |       0 |       0.62 | 115s |
+| `codemode`      | 30, 27           |       0.94 |       1 |       0.57 | 122s |
+| `codemode_wide` | 27, 27           |       1.00 |       0 |       0.43 |  71s |
+| `rlm`           | 21, 25           |       0.85 |     118 |       2.71 | 182s |
+
+The `rlm` arm is the worst and about five times dearer: a sub-model sees
+one slice at a time and judges "about codemode" without the rest of the
+project, where the main model, holding the file by its own scripts, judges
+each document against the whole. `codemode_wide` made no `infer` calls, so
+its edge over `codemode` is noise.
+
 ## What it shows
 
 - **Nothing here needed recursion.** The model with only the coding
@@ -39,10 +58,19 @@ had `plain` exact for US$0.12 and `rlm` exact for US$1.13.)
 - One trial per cell is noise: the 1000-line `plain` miss was 200 for
   213.
 
+## Decision
+
+The parts of the paper not built (recursion below `infer`, script
+variables kept across calls, the strategy as standing instructions) are
+not built: on both inputs the arm that used them was dearer and no better,
+and the one with the strategy in its instructions was worse on real text.
+The worked example stays out of the codemode description for that reason.
+Revisit with a task that scripts cannot reduce (pairs of lines, the
+paper's OOLONG-Pairs, or a corpus where a document's class depends on its
+whole text), and with more than two trials.
+
 ## Not yet shown
 
-An input that does not compress: real text where a message's class is
-not a few phrases, and tasks over pairs of lines (the paper's
-OOLONG-Pairs), where a script cannot cluster its way out. Until
-there is one, this does not say whether the RLM parts are worth their
-cost, only that for classification of templated data they are not.
+Tasks over pairs of lines (the paper's OOLONG-Pairs), where a script
+cannot cluster its way out; `top` and `needle` (built, not run); more than
+one or two trials per cell; other models.

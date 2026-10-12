@@ -28,6 +28,8 @@ pub struct Config {
     pub trials: u32,
     pub budget_usd: Option<f64>,
     pub work: PathBuf,
+    /// The documents the `docs` task reads.
+    pub docs: PathBuf,
     pub max_turns: u32,
     pub timeout: Duration,
 }
@@ -42,6 +44,7 @@ impl Config {
             trials: 1,
             budget_usd: None,
             work: work.into(),
+            docs: PathBuf::from("docs"),
             max_turns: 40,
             timeout: Duration::from_secs(20 * 60),
         }
@@ -84,7 +87,11 @@ pub async fn evaluate(
                 let dir = tempfile::Builder::new()
                     .prefix("rlm-")
                     .tempdir_in(&config.work)?;
-                let instance = task::generate(kind, lines, seed, dir.path())?;
+                let instance = if kind == Kind::Docs {
+                    task::generate_docs(&config.docs, seed, dir.path())?
+                } else {
+                    task::generate(kind, lines, seed, dir.path())?
+                };
                 for &arm in &config.arms {
                     if let Some(limit) = config.budget_usd
                         && spent >= limit
