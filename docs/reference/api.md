@@ -53,13 +53,16 @@ impl Agent {
 }
 ```
 
-`Input` is the run's first user message, and optionally the workflow it
-belongs to. Strings convert into it.
+`Input` is the run's first user message, the images sent with it, and
+optionally the workflow it belongs to. Strings convert into it. The
+images follow the text (and any context plugins put before it) in the
+run's first user message.
 
 ```rust
-pub struct Input { pub text: String, pub workflow: Option<String> }
+pub struct Input { pub text: String, pub images: Vec<ImageContent>, pub workflow: Option<String> }
 impl Input {
     pub fn new(text: impl Into<String>) -> Self;
+    pub fn images(self, images: Vec<ImageContent>) -> Self;
     pub fn workflow(self, id: impl Into<String>) -> Self;  // groups runs for Store::workflow_cost
 }
 ```
@@ -93,7 +96,7 @@ run keeps its path, so it goes back to its connection.
 impl Run {
     pub fn id(&self) -> RunId;
     pub fn events(&mut self) -> impl Stream<Item = RunEvent> + '_;
-    pub fn steer(&self, msg: impl Into<String>);
+    pub fn steer(&self, msg: impl Into<Prompt>);  // Prompt { text, images }; strings convert
     pub fn cancel(&self);
     pub async fn outcome(self) -> Result<Outcome>;
 }

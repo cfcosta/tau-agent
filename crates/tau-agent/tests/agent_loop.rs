@@ -666,6 +666,77 @@ fn steering_lands_after_the_batch() {
     });
 }
 
+fn picture(data: &str) -> tau_ai::message::ImageContent {
+    tau_ai::message::ImageContent {
+        data: data.into(),
+        mime_type: "image/png".into(),
+    }
+}
+
+/// The images of the stored user message at `at`, by their data.
+fn images_at(transcript: &[Message], at: usize) -> Vec<String> {
+    let Message::User(user) = &transcript[at] else {
+        panic!("message {at} is the user's");
+    };
+    match &user.content {
+        tau_ai::message::UserContent::Blocks(blocks) => blocks
+            .iter()
+            .filter_map(|block| match block {
+                tau_ai::message::InputBlock::Image(image) => {
+                    Some(image.data.clone())
+                }
+                _ => None,
+            })
+            .collect(),
+        tau_ai::message::UserContent::Text(_) => Vec::new(),
+    }
+}
+
+/// Images sent with the input follow its text in the first user message,
+/// and the model's first request carries them; images sent with a
+/// steered message go with it.
+#[test]
+fn images_go_with_the_input_and_with_steering() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("probe", json!({"ms": 100})))
+        .turn(|t| t.text("seen"));
+    block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone()).tool(Probe::new(
+            "probe",
+            ExecutionMode::Parallel,
+            log,
+        ));
+        let input = tau_agent::agent::Input::new("what is this?")
+            .images(vec![picture("AAAA"), picture("BBBB")]);
+        let run = agent.start(input, &store);
+        let id = run.id();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        run.steer(
+            tau_agent::agent::Prompt::new("and this")
+                .images(vec![picture("CCCC")]),
+        );
+        run.outcome().await.unwrap();
+        let transcript = stored(&store, &id.0).await;
+        assert_eq!(images_at(&transcript, 0), ["AAAA", "BBBB"]);
+        assert_eq!(images_at(&transcript, 3), ["CCCC"]);
+        let first =
+            serde_json::to_string(&llm.requests()[0].transcript).unwrap();
+        assert!(first.contains("what is this?") && first.contains("BBBB"));
+        // Text alone stays plain text.
+        let Message::User(user) = &transcript[0] else {
+            unreachable!()
+        };
+        let tau_ai::message::UserContent::Blocks(blocks) = &user.content else {
+            panic!("text and images are blocks");
+        };
+        assert!(
+            matches!(&blocks[0], tau_ai::message::InputBlock::Text(t) if t.text == "what is this?")
+        );
+    });
+}
+
 /// A steered message cuts a response short while it streams (Codex's
 /// instant interrupt): the tool call that finished in it runs, the text
 /// streamed so far stays, and the next request carries the message,

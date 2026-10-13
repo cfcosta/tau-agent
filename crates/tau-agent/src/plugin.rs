@@ -394,6 +394,9 @@ pub struct FinishedRun<'a> {
 pub struct RunPlan {
     /// The user's input.
     pub input: String,
+    /// The images sent with the input, which follow it in the run's
+    /// first user message.
+    pub images: Vec<tau_ai::message::ImageContent>,
     /// Texts put before the input, in the run's first user message, in
     /// order. Unlike the instructions, they differ from run to run
     /// without costing the prompt cache the instructions.
@@ -454,6 +457,7 @@ impl RunPlan {
     ) -> Self {
         Self {
             input,
+            images: Vec::new(),
             context: Vec::new(),
             instructions,
             reasoning,

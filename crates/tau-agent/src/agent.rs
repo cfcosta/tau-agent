@@ -20,6 +20,7 @@ use tau_ai::{
     message::{
         AssistantBlock,
         AssistantMessage,
+        ImageContent,
         InputBlock,
         Message,
         TextContent,
@@ -99,12 +100,15 @@ pub enum SubAgentError {
     },
 }
 
-/// What a run starts from: the user's message, and optionally the
-/// workflow the run belongs to. Runs started by a run (sub-agents)
-/// inherit its workflow; so do forks, unless their input names one.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What a run starts from: the user's message, the images sent with it,
+/// and optionally the workflow the run belongs to. Runs started by a run
+/// (sub-agents) inherit its workflow; so do forks, unless their input
+/// names one.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Input {
     pub text: String,
+    /// Images that go to the model with the text, after it.
+    pub images: Vec<ImageContent>,
     pub workflow: Option<String>,
 }
 
@@ -112,14 +116,28 @@ impl Input {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            images: Vec::new(),
             workflow: None,
         }
+    }
+
+    /// Sends `images` with the text.
+    pub fn images(mut self, images: Vec<ImageContent>) -> Self {
+        self.images = images;
+        self
     }
 
     /// Groups the run under `id`, for [`Store::workflow_cost`].
     pub fn workflow(mut self, id: impl Into<String>) -> Self {
         self.workflow = Some(id.into());
         self
+    }
+
+    fn prompt(&self) -> Prompt {
+        Prompt {
+            text: self.text.clone(),
+            images: self.images.clone(),
+        }
     }
 }
 
@@ -136,6 +154,72 @@ impl From<&str> for Input {
 }
 
 impl From<&String> for Input {
+    fn from(text: &String) -> Self {
+        Self::new(text.clone())
+    }
+}
+
+/// A message from the person to a run going on: text, and the images
+/// sent with it ([`Run::steer`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Prompt {
+    pub text: String,
+    pub images: Vec<ImageContent>,
+}
+
+impl Prompt {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            images: Vec::new(),
+        }
+    }
+
+    /// Sends `images` with the text.
+    pub fn images(mut self, images: Vec<ImageContent>) -> Self {
+        self.images = images;
+        self
+    }
+
+    /// The user message the run reads: the texts in order, then the
+    /// images. Text alone, it is plain text.
+    pub(crate) fn content(
+        texts: Vec<String>,
+        images: Vec<ImageContent>,
+    ) -> UserContent {
+        if images.is_empty() && texts.len() == 1 {
+            return UserContent::Text(
+                texts.into_iter().next().unwrap_or_default(),
+            );
+        }
+        UserContent::Blocks(
+            texts
+                .into_iter()
+                .map(|text| {
+                    InputBlock::Text(TextContent {
+                        text,
+                        text_signature: None,
+                    })
+                })
+                .chain(images.into_iter().map(InputBlock::Image))
+                .collect(),
+        )
+    }
+}
+
+impl From<String> for Prompt {
+    fn from(text: String) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<&str> for Prompt {
+    fn from(text: &str) -> Self {
+        Self::new(text)
+    }
+}
+
+impl From<&String> for Prompt {
     fn from(text: &String) -> Self {
         Self::new(text.clone())
     }
@@ -383,7 +467,11 @@ impl Agent {
     /// Starts a run on `input`. Must be called inside a tokio runtime.
     pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run {
         let input = input.into();
-        self.launch(Launch::root(input.workflow.as_deref()), input.text, store)
+        self.launch(
+            Launch::root(input.workflow.as_deref()),
+            input.prompt(),
+            store,
+        )
     }
 
     /// Runs `input` to the end and returns the outcome.
@@ -409,7 +497,8 @@ impl Agent {
         let input = input.into();
         let mut launch = Launch::root(input.workflow.as_deref());
         launch.text_format = Some(text_format::<T>()?);
-        let outcome = self.launch(launch, input.text, store).outcome().await?;
+        let outcome =
+            self.launch(launch, input.prompt(), store).outcome().await?;
         parse_output(outcome)
     }
 
@@ -466,7 +555,7 @@ impl Agent {
     }
 
     /// Starts a run as `launch` describes it.
-    fn launch(&self, launch: Launch, input: String, store: &Store) -> Run {
+    fn launch(&self, launch: Launch, input: Prompt, store: &Store) -> Run {
         let id = launch
             .resume
             .clone()
@@ -518,7 +607,8 @@ impl Forked {
     /// the fork joins the workflow of the run it forks from.
     pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run {
         let input = input.into();
-        self.agent.launch(self.launch(&input), input.text, store)
+        self.agent
+            .launch(self.launch(&input), input.prompt(), store)
     }
 
     /// Runs the fork to the end. Takes the fork by value, so
@@ -544,7 +634,7 @@ impl Forked {
         launch.text_format = Some(text_format::<T>()?);
         let outcome = self
             .agent
-            .launch(launch, input.text, store)
+            .launch(launch, input.prompt(), store)
             .outcome()
             .await?;
         parse_output(outcome)
@@ -575,7 +665,7 @@ impl Resumed {
         let input = input.into();
         let mut launch = Launch::root(input.workflow.as_deref());
         launch.resume = Some(self.run.clone());
-        self.agent.launch(launch, input.text, store)
+        self.agent.launch(launch, input.prompt(), store)
     }
 
     /// Runs it to the end.
@@ -793,7 +883,7 @@ impl SubAgent {
             prelude,
             call: Some(scope.call.clone()),
         };
-        Ok(self.agent.launch(launch, input.into(), &scope.store))
+        Ok(self.agent.launch(launch, Prompt::new(input), &scope.store))
     }
 
     /// Runs the child to its end, and answers with its last text.
@@ -830,7 +920,7 @@ impl SubAgent {
         };
         let outcome = self
             .agent
-            .launch(launch, input, &scope.store)
+            .launch(launch, Prompt::new(input), &scope.store)
             .outcome()
             .await?;
         *scope.children.lock().expect("not poisoned") += &outcome.usage;
@@ -956,11 +1046,11 @@ fn parse_output<T: DeserializeOwned>(
 async fn run_task(
     agent: Agent,
     id: RunId,
-    input: String,
+    input: Prompt,
     store: Store,
     launch: Launch,
     events: Option<mpsc::Sender<RunEvent>>,
-    steering: mpsc::UnboundedReceiver<String>,
+    steering: mpsc::UnboundedReceiver<Prompt>,
 ) -> Result<Outcome, AgentError> {
     let mut tools = Vec::with_capacity(agent.0.tools.len());
     for (tool, owner) in &agent.0.tools {
@@ -1055,7 +1145,7 @@ async fn run_task(
     keep_own_reasoning(&mut history, &agent.0.model);
     keep_own_reasoning(&mut prelude, &agent.0.model);
     let mut plan = RunPlan::new(
-        input,
+        input.text,
         agent.0.instructions.clone(),
         agent.0.reasoning,
         agent.0.model.clone(),
@@ -1129,7 +1219,8 @@ async fn run_task(
             return Err(fail(&store, &id, AgentError::Llm(error)).await);
         }
     };
-    let first = first_message(plan.context, plan.input);
+    plan.images = input.images;
+    let first = first_message(plan.context, plan.input, plan.images);
     let result = Runner {
         run: id.clone(),
         parent: launch.parent,
@@ -1204,23 +1295,17 @@ async fn fail(store: &Store, run: &RunId, error: AgentError) -> AgentError {
     }
 }
 
-/// The run's first user message: the plan's context, then its input. With
-/// no context, it is the input alone, as plain text.
-fn first_message(context: Vec<String>, input: String) -> UserContent {
-    if context.is_empty() {
-        return UserContent::Text(input);
-    }
-    UserContent::Blocks(
-        context
-            .into_iter()
-            .chain(std::iter::once(input))
-            .map(|text| {
-                InputBlock::Text(TextContent {
-                    text,
-                    text_signature: None,
-                })
-            })
-            .collect(),
+/// The run's first user message: the plan's context, then its input,
+/// then the images sent with it. With no context and no images, it is
+/// the input alone, as plain text.
+fn first_message(
+    context: Vec<String>,
+    input: String,
+    images: Vec<ImageContent>,
+) -> UserContent {
+    Prompt::content(
+        context.into_iter().chain(std::iter::once(input)).collect(),
+        images,
     )
 }
 
@@ -1329,7 +1414,7 @@ fn messages(
 pub struct Run {
     id: RunId,
     events: Option<mpsc::Receiver<RunEvent>>,
-    steer: mpsc::UnboundedSender<String>,
+    steer: mpsc::UnboundedSender<Prompt>,
     cancel: CancellationToken,
     task: JoinHandle<Result<Outcome, AgentError>>,
 }
@@ -1347,10 +1432,11 @@ impl Run {
         })
     }
 
-    /// Queues a user message for the run. A response being streamed is
-    /// cut short for it (what had finished is kept, and its tool calls
-    /// run); otherwise it is added after the current tool batch.
-    pub fn steer(&self, message: impl Into<String>) {
+    /// Queues a user message for the run, with any images sent with it.
+    /// A response being streamed is cut short for it (what had finished
+    /// is kept, and its tool calls run); otherwise it is added after the
+    /// current tool batch.
+    pub fn steer(&self, message: impl Into<Prompt>) {
         let _ = self.steer.send(message.into());
     }
 
@@ -1385,7 +1471,7 @@ impl Run {
 #[derive(Clone)]
 pub struct RunControl {
     id: RunId,
-    steer: mpsc::UnboundedSender<String>,
+    steer: mpsc::UnboundedSender<Prompt>,
     cancel: CancellationToken,
 }
 
@@ -1395,7 +1481,7 @@ impl RunControl {
     }
 
     /// Like [`Run::steer`].
-    pub fn steer(&self, message: impl Into<String>) {
+    pub fn steer(&self, message: impl Into<Prompt>) {
         let _ = self.steer.send(message.into());
     }
 

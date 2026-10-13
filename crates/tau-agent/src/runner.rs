@@ -153,7 +153,7 @@ pub(crate) struct Runner {
     pub session: Box<dyn LlmSession>,
     pub store: Store,
     pub events: Option<mpsc::Sender<RunEvent>>,
-    pub steering: mpsc::UnboundedReceiver<String>,
+    pub steering: mpsc::UnboundedReceiver<crate::agent::Prompt>,
     pub cancel: CancellationToken,
     pub clock: Clock,
     /// Messages the run inherits (a fork's), before its input.
@@ -181,7 +181,7 @@ pub(crate) struct Runner {
     pub turns_before: u32,
     /// The steering message that cut the response being streamed short:
     /// it is the next one the run reads.
-    pub preempted: Option<String>,
+    pub preempted: Option<crate::agent::Prompt>,
 }
 
 /// How a run ended.
@@ -348,13 +348,13 @@ impl Runner {
                 .preempted
                 .take()
                 .or_else(|| self.steering.try_recv().ok());
-            if let Some(text) = &steered {
+            if let Some(prompt) = steered.clone() {
                 self.emit(RunEvent::Steered {
                     run: self.run.clone(),
-                    text: text.clone(),
+                    text: prompt.text.clone(),
                 })
                 .await;
-                let message = self.user(text.clone());
+                let message = self.said(prompt);
                 self.persist(std::slice::from_ref(&message), &Usage::default())
                     .await?;
                 transcript.push(message);
@@ -559,6 +559,18 @@ impl Runner {
     fn user(&self, text: String) -> Message {
         Message::User(UserMessage {
             content: UserContent::Text(text),
+            timestamp: (self.clock)(),
+        })
+    }
+
+    /// What the person said while the run went on, its images after its
+    /// text.
+    fn said(&self, prompt: crate::agent::Prompt) -> Message {
+        Message::User(UserMessage {
+            content: crate::agent::Prompt::content(
+                vec![prompt.text],
+                prompt.images,
+            ),
             timestamp: (self.clock)(),
         })
     }

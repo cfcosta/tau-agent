@@ -15,7 +15,7 @@ Compaction is not in this crate; it is a plugin, in `tau-compaction`.
 
 | Module       | What it holds                                                                              |
 | ------------ | ------------------------------------------------------------------------------------------ |
-| `agent`      | `Agent` (the builder), `Run`, `RunControl`, `Outcome`, `Typed`, `Checkpoint`, `Input`      |
+| `agent`      | `Agent` (the builder), `Run`, `RunControl`, `Outcome`, `Typed`, `Checkpoint`, `Input`, `Prompt` |
 |              | `Forked` and `Resumed` (from `Agent::fork` and `Agent::resume`), `SubAgent` (`as_tool`)    |
 | `tool`       | `AgentTool`, `TypedTool` and `typed`, `ToolCtx`, `ToolOutput`, `Exposure`, `ExecutionMode` |
 | `plugin`     | `Plugin`, `PluginRun`, `RunPlan`, `PluginCtx`, `Decision`, `Rewrite`, `StopDecision`       |
