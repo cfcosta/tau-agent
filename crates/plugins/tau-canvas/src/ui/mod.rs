@@ -4,7 +4,9 @@
 //! The pane shows the item revised last, at its latest revision, until
 //! the person picks another; whatever comes next takes its place again.
 //! Images are not in the records: the pane fetches each from the host
-//! half once per window, by its blob.
+//! half once per window, by its blob. The answer reaches phones only if
+//! they are there as it comes, so one still waiting after [`RETRY`] is
+//! asked for again.
 
 mod card;
 mod pane;
@@ -76,11 +78,14 @@ pub struct Pick {
     pub fresh: u64,
 }
 
+/// How long an image asked for waits before it is asked for again.
+pub const RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// An image, as far as the window has it.
 #[derive(Clone)]
 pub enum Loaded {
-    /// Asked for; its type, to decode it with.
-    Waiting(String),
+    /// Asked for at an instant; its type, to decode it with.
+    Waiting(String, std::time::Instant),
     Ready(Arc<gpui::Image>),
     Failed(String),
 }
@@ -112,10 +117,12 @@ fn image(
     blob: &Blob,
     mime: &str,
 ) -> Loaded {
-    if let Some(loaded) = view.read_ui().images.get(&blob.id) {
-        return loaded.clone();
+    match view.read_ui().images.get(&blob.id) {
+        Some(Loaded::Waiting(_, at)) if at.elapsed() >= RETRY => {}
+        Some(loaded) => return loaded.clone(),
+        None => {}
     }
-    let waiting = Loaded::Waiting(mime.to_owned());
+    let waiting = Loaded::Waiting(mime.to_owned(), std::time::Instant::now());
     view.ui.update(view.cx, |ui, _| {
         ui.images.insert(blob.id.clone(), waiting.clone());
     });
@@ -177,7 +184,8 @@ impl UiPlugin for CanvasUi {
         let Ok(fetched) = serde_json::from_value::<Fetched>(reply) else {
             return;
         };
-        let Some(Loaded::Waiting(mime)) = ui.images.get(&fetched.id).cloned()
+        let Some(Loaded::Waiting(mime, _)) =
+            ui.images.get(&fetched.id).cloned()
         else {
             return;
         };

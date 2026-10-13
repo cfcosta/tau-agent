@@ -121,7 +121,7 @@ pub(super) fn picture(loaded: &Loaded, t: &Theme) -> Div {
                 .size_full()
                 .object_fit(ObjectFit::Contain),
         ),
-        Loaded::Waiting(_) => frame
+        Loaded::Waiting(..) => frame
             .rounded(radius::CARD)
             .bg(t.raised)
             .child(ui::text("Loading the image…", Type::CAPTION, t.dim)),
