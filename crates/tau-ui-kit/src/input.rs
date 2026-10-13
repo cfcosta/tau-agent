@@ -126,12 +126,21 @@ pub struct TextInput {
     /// Keep the text when enter is pressed, for fields that are part of
     /// a form rather than a prompt.
     keep_on_submit: bool,
+    /// Pasting an image emits [`PastedImage`].
+    takes_images: bool,
 }
+
+/// An image pasted into a field that takes them
+/// ([`TextInput::takes_images`]): the composer attaches it.
+#[derive(Debug, Clone)]
+pub struct PastedImage(pub gpui::Image);
 
 /// What a masked field draws for each character.
 const MASK: char = '•';
 
 impl EventEmitter<InputEvent> for TextInput {}
+
+impl EventEmitter<PastedImage> for TextInput {}
 
 impl TextInput {
     pub fn new(
@@ -153,6 +162,7 @@ impl TextInput {
             is_selecting: false,
             masked: false,
             keep_on_submit: false,
+            takes_images: false,
         }
     }
 
@@ -170,6 +180,13 @@ impl TextInput {
 
     pub fn keep_on_submit(mut self) -> Self {
         self.keep_on_submit = true;
+        self
+    }
+
+    /// A field an image can be pasted into: it emits [`PastedImage`]
+    /// for each, and pastes the clipboard's text, if any, as well.
+    pub fn takes_images(mut self) -> Self {
+        self.takes_images = true;
         self
     }
 
@@ -386,9 +403,17 @@ impl TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(text) =
-            cx.read_from_clipboard().and_then(|item| item.text())
-        {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        if self.takes_images {
+            for entry in item.entries() {
+                if let gpui::ClipboardEntry::Image(image) = entry {
+                    cx.emit(PastedImage(image.clone()));
+                }
+            }
+        }
+        if let Some(text) = item.text() {
             let text = text.replace("\r\n", "\n");
             let text = if self.multiline {
                 text

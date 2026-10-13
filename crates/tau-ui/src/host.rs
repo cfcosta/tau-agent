@@ -25,7 +25,7 @@ use futures_util::StreamExt;
 use gpui::{App, Entity};
 use serde::{Deserialize, Serialize};
 use tau_agent::{
-    agent::{Agent, Checkpoint, RunControl},
+    agent::{Agent, Checkpoint, Input, Prompt, RunControl},
     error::PluginError,
     event::{RunEvent, StopReason},
     limits::Limits,
@@ -103,6 +103,7 @@ use crate::{
         LANDING_RECORD,
         LandingRecord,
         Origin,
+        Picture,
         RunView,
         Stored,
         TAU_MESSAGE_RECORD,
@@ -250,7 +251,7 @@ pub struct Host {
     /// workspace that closes ends them.
     processes: Arc<Mutex<HashMap<PathBuf, Processes>>>,
     /// What each run going on was steered with and has not read yet.
-    unread: Arc<Mutex<HashMap<RunId, Vec<String>>>>,
+    unread: Arc<Mutex<HashMap<RunId, Vec<Prompt>>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
     /// stored: they stop in a moment.
     ending: Arc<Mutex<HashSet<RunId>>>,
@@ -335,6 +336,7 @@ pub mod queue;
 mod repos;
 mod startup;
 mod sub_agents;
+mod uploads;
 
 pub use self::{
     config::HostConfig,
@@ -1098,10 +1100,11 @@ impl Host {
     /// to be pushed into the workspace before its first event arrives.
     pub async fn start(
         &self,
-        prompt: &str,
+        prompt: impl Into<Prompt>,
         choice: &ModelChoice,
         repo: &str,
     ) -> anyhow::Result<RunView> {
+        let prompt = prompt.into();
         let repo = self
             .slot(repo)
             .ok_or_else(|| anyhow::anyhow!("No repository {repo}"))?;
@@ -1112,7 +1115,8 @@ impl Host {
             Some((source, seq, link)) => (source, seq, link.turn),
             None => (main, -1, 0),
         };
-        self.fork_at(&repo, source, seq, turn, prompt, choice).await
+        self.fork_at(&repo, source, seq, turn, &prompt, choice)
+            .await
     }
 
     /// Forks `run` after `turn` (its latest turn when `None`): a new run
@@ -1122,9 +1126,10 @@ impl Host {
         &self,
         run: &RunId,
         turn: Option<u32>,
-        prompt: &str,
+        prompt: impl Into<Prompt>,
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
+        let prompt = prompt.into();
         let repo = self.slot_of_run(run).await?;
         // Runs nest one level (ADR 0016): only a main chat has runs
         // under it.
@@ -1146,7 +1151,7 @@ impl Host {
                     "The run has no finished turn to fork from yet"
                 ),
             })?;
-        self.fork_at(&repo, source, seq, link.turn, prompt, choice)
+        self.fork_at(&repo, source, seq, link.turn, &prompt, choice)
             .await
     }
 
@@ -1158,23 +1163,27 @@ impl Host {
         source: RunId,
         seq: i64,
         turn: u32,
-        prompt: &str,
+        prompt: &Prompt,
         choice: &ModelChoice,
     ) -> anyhow::Result<RunView> {
+        self.keep_uploads(&prompt.images).await;
         let state = self.repo_state(&repo.name);
         let _starting = state.starting.lock().await;
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         // Named after what it was asked, so the workspace says what it is
         // for.
-        let name = workspace_name(&branch_slug(prompt));
+        let name = workspace_name(&branch_slug(&prompt.text));
         // A fork is a chat under the main chat: it spawns none.
         let (agent, workspace) =
             self.agent_for_run(choice, repo, name, false, false).await?;
         let forked = agent
             .fork(&Checkpoint::at(source.clone(), seq))
             .after_turn(turn)
-            .start(prompt, &self.store);
+            .start(
+                Input::new(&prompt.text).images(prompt.images.clone()),
+                &self.store,
+            );
         let id = self.track(forked, workspace, choice, &repo.name);
         // What each plugin's state is as the fork inherits it: a goal set
         // in the main chat, which tau-goal goes on checking; then what it
@@ -1257,10 +1266,11 @@ impl Host {
     pub async fn resume(
         &self,
         run: &RunId,
-        prompt: &str,
+        prompt: impl Into<Prompt>,
         choice: &ModelChoice,
     ) -> anyhow::Result<()> {
-        self.resume_as(run, prompt, choice, By::Person, false).await
+        self.resume_as(run, prompt.into(), choice, By::Person, false)
+            .await
     }
 
     /// [`Host::resume`] with a message of tau's, not the person's (a
@@ -1272,7 +1282,8 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<()> {
-        self.resume_as(run, prompt, choice, By::Tau, false).await
+        self.resume_as(run, Prompt::new(prompt), choice, By::Tau, false)
+            .await
     }
 
     /// [`Host::resume`], by `by`; `resolving` for tau's turn resolving
@@ -1281,11 +1292,12 @@ impl Host {
     async fn resume_as(
         &self,
         run: &RunId,
-        prompt: &str,
+        prompt: Prompt,
         choice: &ModelChoice,
         by: By,
         resolving: bool,
     ) -> anyhow::Result<()> {
+        self.keep_uploads(&prompt.images).await;
         if self.is_running(run) {
             anyhow::bail!("The run is still going; steer it instead");
         }
@@ -1298,7 +1310,7 @@ impl Host {
                     &run.0,
                     &[Entry::Plugin {
                         plugin: TAU_MESSAGE_RECORD.to_owned(),
-                        body: serde_json::json!({ "prompt": prompt })
+                        body: serde_json::json!({ "prompt": prompt.text })
                             .to_string(),
                     }],
                     TurnUsage::default(),
@@ -1335,12 +1347,14 @@ impl Host {
         let choice = &choice.clone().fitted();
         // A run without a workspace yet gets one, named after the
         // message.
-        let workspace =
-            workspace.unwrap_or_else(|| workspace_name(&branch_slug(prompt)));
+        let workspace = workspace
+            .unwrap_or_else(|| workspace_name(&branch_slug(&prompt.text)));
         let (agent, workspace) = self
             .agent_for_run(choice, &repo, workspace, main, resolving)
             .await?;
-        let resumed = agent.resume(run).start(prompt, &self.store);
+        let resumed = agent
+            .resume(run)
+            .start(Input::new(prompt.text).images(prompt.images), &self.store);
         self.track(resumed, workspace, choice, &repo.name);
         // Nothing lands on a main chat while it works.
         if main {
@@ -1539,19 +1553,25 @@ impl Host {
         id
     }
 
-    async fn view(&self, id: RunId, prompt: &str, repo: &RepoSlot) -> RunView {
+    async fn view(
+        &self,
+        id: RunId,
+        prompt: &Prompt,
+        repo: &RepoSlot,
+    ) -> RunView {
         let choice = self.session_of(&id).choice.unwrap_or_else(|| {
             ModelChoice::new(self.config.default_model(), Effort::Auto)
         });
         let mut view = RunView::new(
             id,
-            crate::titles::placeholder(prompt),
+            crate::titles::placeholder(&prompt.text),
             "coder",
             &choice.model,
         )
         .in_repo(repo.name.clone())
         .started("just now");
-        view.push_user(prompt);
+        view.push_user(prompt.text.clone());
+        view.push_pictures(prompt.images.iter().map(Picture::of).collect());
         // What plugins say as it starts.
         let run = self.run_ctx(tau_ui_plugin::RunKind::Chat, repo, &choice);
         for (plugin, body) in self.starting(&run).await {
@@ -1587,8 +1607,9 @@ impl Host {
     pub async fn steer(
         &self,
         run: &RunId,
-        text: &str,
+        prompt: impl Into<Prompt>,
     ) -> anyhow::Result<Delivery> {
+        let prompt = prompt.into();
         self.refuse_ended(run).await?;
         // A run whose end went by reads nothing more.
         self.settle(run).await;
@@ -1599,7 +1620,7 @@ impl Host {
                 return Ok(Delivery::GoOn);
             }
             let main = self.parent_of(run).await?;
-            let unread = [text.to_owned()];
+            let unread = [prompt.text.clone()];
             let sub_agents::Forwarded { text, steered } =
                 Box::pin(self.forward_unread(&main, run, &unread)).await?;
             return Ok(Delivery::ToMain {
@@ -1608,28 +1629,28 @@ impl Host {
                 steered,
             });
         };
-        control.steer(text);
+        self.keep_uploads(&prompt.images).await;
+        control.steer(prompt.clone());
         self.unread
             .lock()
             .expect("not poisoned")
             .entry(run.clone())
             .or_default()
-            .push(text.to_owned());
+            .push(prompt);
         Ok(Delivery::Steered)
     }
 
-    /// `run` read `text` it was steered with.
-    pub fn steer_read(&self, run: &RunId, text: &str) {
+    /// `run` read `text` it was steered with: the message, with its
+    /// images.
+    pub fn steer_read(&self, run: &RunId, text: &str) -> Option<Prompt> {
         let mut unread = self.unread.lock().expect("not poisoned");
-        if let Some(texts) = unread.get_mut(run)
-            && let Some(at) = texts.iter().position(|unread| unread == text)
-        {
-            texts.remove(at);
-        }
+        let prompts = unread.get_mut(run)?;
+        let at = prompts.iter().position(|unread| unread.text == text)?;
+        Some(prompts.remove(at))
     }
 
     /// What `run`, which stopped, was steered with and never read.
-    pub fn take_unread(&self, run: &RunId) -> Vec<String> {
+    pub fn take_unread(&self, run: &RunId) -> Vec<Prompt> {
         self.unread
             .lock()
             .expect("not poisoned")

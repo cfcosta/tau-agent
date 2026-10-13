@@ -118,6 +118,23 @@ pub enum HostUpdate {
         run: RunId,
         prompt: String,
         model: ModelChoice,
+        /// The images sent with it.
+        #[serde(default)]
+        pictures: Vec<crate::view::Picture>,
+    },
+    /// The images sent with the message `run` just read, as it was
+    /// steered with it: they show under it.
+    Pictures {
+        run: RunId,
+        pictures: Vec<crate::view::Picture>,
+    },
+    /// What the host has of a picture an interface asked for
+    /// (`WorkspaceEvent::Picture`): its bytes in base64, or why it has
+    /// none. Phones get it unnumbered, and not again once back.
+    Picture {
+        picture: crate::view::Picture,
+        data: Option<String>,
+        error: Option<String>,
     },
     /// A run asked to go on could not.
     ResumeFailed(RunId),

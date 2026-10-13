@@ -92,6 +92,7 @@ fn workspace_events_round_trip() {
             run: demo::run_id(),
             text: "honor retry-after".into(),
             model: Default::default(),
+            images: Vec::new(),
         },
         WorkspaceEvent::Cancel {
             run: demo::run_id(),

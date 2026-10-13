@@ -18,6 +18,8 @@ tempfile.workspace = true
 # tau-ui's, and a phone runs none. Cargo cannot turn a workspace
 # dependency's defaults off, so those name their paths.
 [dependencies]
+base64.workspace = true
+sha2.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 serde.workspace = true
 serde_json.workspace = true

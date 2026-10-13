@@ -169,13 +169,18 @@ fn serving(
     }
     show(&bridge, workspace, cx);
 
-    // What the host applies goes to every phone.
+    // What the host applies goes to every phone; an answer to a request
+    // goes to the phones there now, unnumbered and not kept.
     let echo = bridge.clone();
     cx.subscribe(workspace, move |_, update: &HostUpdate, _| {
         if let Some(server) = &echo.borrow().server
             && let Some(body) = to_phones(update)
         {
-            server.broadcast(body);
+            if transient(update) {
+                server.broadcast_transient(body);
+            } else {
+                server.broadcast(body);
+            }
         }
     })
     .detach();
@@ -200,6 +205,16 @@ pub fn to_phones(update: &HostUpdate) -> Option<Value> {
             eprintln!("tau-ui: cannot send an update: {error}")
         })
         .ok()
+}
+
+/// Whether `update` answers a request, which a phone that missed it
+/// asks again: an image's bytes, a plugin's reply. Not kept for phones
+/// that come back, so the feed holds no image.
+pub fn transient(update: &HostUpdate) -> bool {
+    matches!(
+        update,
+        HostUpdate::Picture { .. } | HostUpdate::PluginReply { .. }
+    )
 }
 
 /// What a phone that needs everything is sent: what `workspace` shows.

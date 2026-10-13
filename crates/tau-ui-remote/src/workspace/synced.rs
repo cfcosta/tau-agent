@@ -114,6 +114,7 @@ impl Workspace {
             inspector_shown: _,
             // How this window is laid out and filtered.
             details_open: _,
+            pictures: _,
             pane_open: _,
             pane_seen: _,
             pane_title: _,

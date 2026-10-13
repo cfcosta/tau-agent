@@ -71,13 +71,28 @@ fn show_catalogs(
     .detach();
 }
 
+/// Messages a run never read, as the one it goes on with: their texts,
+/// a paragraph each, and all their images.
+fn joined(unread: Vec<Prompt>) -> Prompt {
+    let text = unread
+        .iter()
+        .map(|prompt| prompt.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let images = unread
+        .into_iter()
+        .flat_map(|prompt| prompt.images)
+        .collect();
+    Prompt::new(text).images(images)
+}
+
 /// Goes on with `run`, a finished chat, on `prompt`: it shows first,
 /// so it comes before what the run does, and is taken back if the run
 /// cannot go on.
 fn go_on(
     host: &Arc<Host>,
     run: &RunId,
-    prompt: &str,
+    prompt: &Prompt,
     model: &ModelChoice,
     workspace: &Entity<Workspace>,
     cx: &mut App,
@@ -85,19 +100,20 @@ fn go_on(
     workspace.update(cx, |ws, cx| {
         let resumed = HostUpdate::Resumed {
             run: run.clone(),
-            prompt: prompt.to_owned(),
+            prompt: prompt.text.clone(),
             model: model.clone(),
+            pictures: prompt.images.iter().map(Picture::of).collect(),
         };
         ws.apply(resumed, cx)
     });
     let (job_run, job_prompt, job_model) =
-        (run.clone(), prompt.to_owned(), model.clone());
+        (run.clone(), prompt.clone(), model.clone());
     let (run, failed_run) = (run.clone(), run.clone());
     on_host(
         host,
         workspace,
         async move |host| {
-            host.resume(&job_run, &job_prompt, &job_model).await?;
+            host.resume(&job_run, job_prompt, &job_model).await?;
             // A message opens a closed conversation again.
             let _ = host.set_closed(&job_run, false).await;
             Ok(host.starting_of(&job_run, &job_model).await)
@@ -848,14 +864,15 @@ impl Host {
                     prompt,
                     model,
                     repo,
+                    images,
                 } => {
-                    let (job_prompt, model, repo) =
-                        (prompt.clone(), model.clone(), repo.clone());
+                    let job_prompt = Prompt::new(prompt).images(images.clone());
+                    let (model, repo) = (model.clone(), repo.clone());
                     start_on_host(
                         &handler,
                         prompt,
                         async move |host| {
-                            host.start(&job_prompt, &model, &repo).await
+                            host.start(job_prompt, &model, &repo).await
                         },
                         "Could not start the run",
                         &workspace,
@@ -978,6 +995,36 @@ impl Host {
                         cx,
                     );
                 }
+                WorkspaceEvent::Picture { run, picture } => {
+                    let (job_run, job_picture) = (run.clone(), picture.clone());
+                    let (picture, failed) = (picture.clone(), picture.clone());
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| host.picture(&job_run, &job_picture).await,
+                        move |ws, data, cx| {
+                            ws.apply(
+                                HostUpdate::Picture {
+                                    picture,
+                                    data: Some(data),
+                                    error: None,
+                                },
+                                cx,
+                            )
+                        },
+                        move |ws, error, cx| {
+                            ws.apply(
+                                HostUpdate::Picture {
+                                    picture: failed,
+                                    data: None,
+                                    error: Some(error),
+                                },
+                                cx,
+                            )
+                        },
+                        cx,
+                    );
+                }
                 WorkspaceEvent::PluginAct { plugin, action } => {
                     // On the host: an action may ask Jev, or the store.
                     let (job_plugin, plugin, action) =
@@ -1045,14 +1092,15 @@ impl Host {
                     });
                     workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Closed(run.clone()), cx));
                 }
-                WorkspaceEvent::Say { run, text, model } => {
-                    let (job_run, job_text) = (run.clone(), text.clone());
+                WorkspaceEvent::Say { run, text, model, images } => {
+                    let said = Prompt::new(text).images(images.clone());
+                    let (job_run, job_said) = (run.clone(), said.clone());
                     let (run, text, model) = (run.clone(), text.clone(), model.clone());
                     let goer = handler.clone();
                     on_host(
                         &handler,
                         &workspace,
-                        async move |host| host.steer(&job_run, &job_text).await,
+                        async move |host| host.steer(&job_run, job_said).await,
                         move |ws, delivery, cx| match delivery {
                             Delivery::Steered => {
                                 ws.apply(HostUpdate::Steered { run, text }, cx);
@@ -1060,7 +1108,7 @@ impl Host {
                             Delivery::GoOn => {
                                 let workspace = cx.entity();
                                 cx.defer(move |cx| {
-                                    go_on(&goer, &run, &text, &model, &workspace, cx)
+                                    go_on(&goer, &run, &said, &model, &workspace, cx)
                                 });
                             }
                             // The sub-agent ended before reading it: main
@@ -1106,14 +1154,15 @@ impl Host {
                     turn,
                     prompt,
                     model,
+                    images,
                 } => {
-                    let (run, turn, job_prompt, model) =
-                        (run.clone(), *turn, prompt.clone(), model.clone());
+                    let job_prompt = Prompt::new(prompt).images(images.clone());
+                    let (run, turn, model) = (run.clone(), *turn, model.clone());
                     start_on_host(
                         &handler,
                         prompt,
                         async move |host| {
-                            host.fork(&run, turn, &job_prompt, &model).await
+                            host.fork(&run, turn, job_prompt, &model).await
                         },
                         "Could not fork the run",
                         &workspace,
@@ -1390,9 +1439,21 @@ impl Host {
                     } => host.refusal(),
                     _ => None,
                 };
-                if let RunEvent::Steered { run, text } = &event {
-                    host.steer_read(run, text);
-                }
+                // What it read was sent with images: they show under it.
+                let steered = match &event {
+                    RunEvent::Steered { run, text } => host
+                        .steer_read(run, text)
+                        .filter(|prompt| !prompt.images.is_empty())
+                        .map(|prompt| HostUpdate::Pictures {
+                            run: run.clone(),
+                            pictures: prompt
+                                .images
+                                .iter()
+                                .map(Picture::of)
+                                .collect(),
+                        }),
+                    _ => None,
+                };
                 // What the run was steered with too late to read: a run
                 // that stopped on its own goes on with it; a cancelled one
                 // was stopped on purpose.
@@ -1400,7 +1461,14 @@ impl Host {
                 // what it did not read goes to main (ADR 0026).
                 let sub_agent_ended = match &event {
                     RunEvent::RunEnd { run, .. } if host.is_sub_agent(run) => {
-                        Some((run.clone(), host.take_unread(run)))
+                        let unread = host.take_unread(run);
+                        Some((
+                            run.clone(),
+                            unread
+                                .into_iter()
+                                .map(|prompt| prompt.text)
+                                .collect(),
+                        ))
                     }
                     _ => None,
                 };
@@ -1411,7 +1479,7 @@ impl Host {
                     RunEvent::RunEnd { run, stop, .. } => {
                         let unread = host.take_unread(run);
                         (*stop != StopReason::Cancelled && !unread.is_empty())
-                            .then(|| (run.clone(), unread.join("\n\n")))
+                            .then(|| (run.clone(), joined(unread)))
                     }
                     _ => None,
                 };
@@ -1446,6 +1514,9 @@ impl Host {
                 };
                 let applied = workspace.update(cx, |ws, cx| {
                     ws.apply_streamed(event.clone(), cx);
+                    if let Some(pictures) = steered {
+                        ws.apply(pictures, cx);
+                    }
                     if let Some(refusal) = &refusal {
                         ws.apply(HostUpdate::PlanRefusal(refusal.clone()), cx);
                     }

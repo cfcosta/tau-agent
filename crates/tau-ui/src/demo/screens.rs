@@ -334,6 +334,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("canvas-document", |ws, host, cx| {
         canvas(ws, host, Some((2, 0)), cx)
     }),
+    // Uploads: a message the person sent with a picture, and another
+    // image attached in the composer.
+    ("uploads", |ws, _, cx| uploads(ws, cx)),
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),
     ("ask-note", |ws, _, cx| ask(ws, "ask-note", cx)),
     ("ask-review", |ws, _, cx| ask(ws, "ask-review", cx)),
@@ -1547,6 +1550,34 @@ fn canvas(
         });
     }
     workspace.open_pane(cx);
+}
+
+/// The demo run steered with a message and a picture, and an image
+/// attached to the next message.
+fn uploads(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    use tau_agent::event::RunEvent;
+    let run = run_id();
+    workspace.navigate(Route::Run(run.clone()), cx);
+    workspace.apply_event(
+        &RunEvent::Steered {
+            run: run.clone(),
+            text: "This is what the dashboard shows after the change: the \
+                   p99 still climbs on the third attempt."
+                .into(),
+        },
+        cx,
+    );
+    workspace.apply(
+        HostUpdate::Pictures {
+            run,
+            pictures: vec![super::upload()],
+        },
+        cx,
+    );
+    let shot = std::env::temp_dir().join("tau-demo-dashboard.png");
+    if std::fs::write(&shot, tau_canvas::demo::chart(640, 360)).is_ok() {
+        workspace.attach_path(&shot, cx);
+    }
 }
 
 /// The live demo run waiting on tau-ask's questions, its panel in the

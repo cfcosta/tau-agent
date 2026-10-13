@@ -35,6 +35,7 @@ Where it keeps its files (`HostConfig`):
 | Path                                  | What                                                  |
 | ------------------------------------- | ----------------------------------------------------- |
 | `$XDG_DATA_HOME/tau/runs.db`          | The run store                                         |
+| `$XDG_DATA_HOME/tau/uploads`          | The images the person sent, by key, for interfaces    |
 | `$XDG_DATA_HOME/tau/repos`            | The projects                                          |
 | `$XDG_DATA_HOME/tau/repos.json`       | The repositories tau lists                            |
 | `$XDG_CONFIG_HOME/tau/models.json`    | The person's model choices                            |

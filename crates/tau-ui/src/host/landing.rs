@@ -552,8 +552,14 @@ impl Host {
         let choice = self.session_of(run).choice.unwrap_or_else(|| {
             ModelChoice::new(self.config.default_model(), Effort::Auto)
         });
-        self.resume_as(run, prompt, &choice, By::Tau, self.is_main(run))
-            .await
+        self.resume_as(
+            run,
+            Prompt::new(prompt),
+            &choice,
+            By::Tau,
+            self.is_main(run),
+        )
+        .await
     }
 
     /// Drops `child`: abandons its own changes, the ones its parent does

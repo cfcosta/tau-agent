@@ -158,6 +158,9 @@ fn item_view(
             .unwrap_or_else(|| {
                 user(text, t, compact, room, window).into_any_element()
             }),
+        Item::Pictures(pictures) => {
+            self::pictures(ws, run, pictures, t, compact, cx).into_any_element()
+        }
         Item::Text(text) => div()
             .w_full()
             .text_color(t.text_soft)
@@ -364,6 +367,67 @@ fn user(
                     }),
                 ))
             }),
+    )
+}
+
+/// How tall a picture the person sent is drawn in the transcript.
+const PICTURE: f32 = 12.;
+
+/// The images the person sent with the message above, under its bubble
+/// at its side: each as the window has it, fetched from the host the
+/// first time.
+fn pictures(
+    ws: &Workspace,
+    run: &RunView,
+    pictures: &[crate::view::Picture],
+    t: &Theme,
+    compact: bool,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let height = rems(if compact { PICTURE * 0.75 } else { PICTURE });
+    div().flex().justify_end().child(
+        div().flex().flex_wrap().justify_end().gap(sp(2.)).children(
+            pictures.iter().map(|picture| {
+                let frame = div()
+                    .h(height)
+                    .rounded(radius::CARD)
+                    .overflow_hidden()
+                    .border_1()
+                    .border_color(t.border);
+                match ws.picture(&run.id, picture, cx) {
+                    crate::pictures::Shown::Ready(image) => frame.child(
+                        gpui::img(image)
+                            .h(height)
+                            .max_w(rems(if compact { 18. } else { 28. }))
+                            .object_fit(gpui::ObjectFit::Contain),
+                    ),
+                    crate::pictures::Shown::Waiting(_) => frame
+                        .w(height)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(t.raised)
+                        .child(icon(Icon::Image, IconSize::XLARGE, t.dim)),
+                    crate::pictures::Shown::Failed(why) => frame
+                        .w(height)
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap(sp(1.))
+                        .p(sp(2.))
+                        .bg(t.raised)
+                        .child(icon(Icon::Image, IconSize::XLARGE, t.dim))
+                        .child(
+                            div()
+                                .typeset(Type::MICRO)
+                                .text_color(t.muted)
+                                .text_center()
+                                .child(format!("Not available: {why}")),
+                        ),
+                }
+            }),
+        ),
     )
 }
 

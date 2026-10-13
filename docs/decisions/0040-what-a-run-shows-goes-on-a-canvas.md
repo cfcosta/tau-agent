@@ -88,5 +88,8 @@ reply within one WebSocket message to a phone.
   bounds one, not their number.
 - The person cannot edit a document in the pane yet; they ask the
   model.
-- The person's own uploads are the other half of this, and come next:
-  images the person attaches go to the model as input.
+- The person's own uploads are the other half of this: images the
+  person attaches go to the model as input
+  ([0041](0041-the-person-sends-images.md)). Its transient answers
+  carry the canvas's image fetches too, so no image stays in the phones'
+  replay feed.

@@ -123,7 +123,9 @@ fn host_of(
             fresh_repo_list().with_extension("config"),
         ),
         model: Some("gpt-6-luna".into()),
-        store: std::env::temp_dir().join("unused.db"),
+        // Unused but for its directory, where the person's images are
+        // kept: the test's own.
+        store: fresh_repo_list().with_extension("db"),
         // Tau's directory for repositories, where memory lives too: the
         // test's own.
         repos: fresh_repo_list().with_extension("repos"),
@@ -503,6 +505,142 @@ fn a_stored_run_shows_the_plan_it_ran_with() {
         view.plugins.iter().any(|status| status.name == "workspace")
     };
     assert_eq!(workspace(stored), workspace(&live));
+}
+
+/// A PNG of `n`×1 pixels: a different image for each `n`.
+fn png(n: u32) -> tau_ai::message::ImageContent {
+    use base64::Engine as _;
+    let mut bytes = Vec::new();
+    image::RgbImage::new(n, 1)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    tau_ai::message::ImageContent {
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        mime_type: "image/png".into(),
+    }
+}
+
+/// Images the person sends go to the model with the message, show in
+/// the run's view by reference, and the host gives their bytes back:
+/// kept, or found again in the run's messages once the kept file is
+/// gone. A steered message's images go with it; history shows them all.
+#[test]
+fn images_go_to_the_model_and_come_back_by_reference() {
+    use tau_agent::agent::Prompt;
+    use tau_ui_remote::view::Picture;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("A red square."))
+        .turn(|t| t.text("And a wider one."));
+    let (host, mut events) = host(llm.clone());
+    let (first, second) = (png(3), png(5));
+    let mut view = host
+        .block_on(host.start(
+            Prompt::new("what is this?").images(vec![first.clone()]),
+            &ModelChoice::default(),
+            REPO,
+        ))
+        .unwrap();
+    let picture = Picture::of(&first);
+    assert_eq!(
+        view.items[..2],
+        [
+            Item::User("what is this?".into()),
+            Item::Pictures(vec![picture.clone()]),
+        ]
+    );
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+    let sent = serde_json::to_string(&llm.requests()[0].transcript).unwrap();
+    assert!(sent.contains(&first.data), "the model got the image");
+    assert_eq!(
+        host.block_on(host.picture(&view.id, &picture)).unwrap(),
+        first.data
+    );
+
+    // A finished chat goes on with the next message, images and all.
+    host.block_on(host.resume(
+        &view.id,
+        Prompt::new("and this?").images(vec![second.clone()]),
+        &ModelChoice::default(),
+    ))
+    .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+    let sent = serde_json::to_string(&llm.requests()[1].transcript).unwrap();
+    assert!(sent.contains(&second.data));
+
+    // History shows each message's pictures under it.
+    let history = host.block_on(host.history()).unwrap();
+    let stored = history.iter().find(|run| run.id == view.id).unwrap();
+    let pictures: Vec<&Item> = stored
+        .items
+        .iter()
+        .filter(|item| matches!(item, Item::Pictures(_)))
+        .collect();
+    assert_eq!(
+        pictures,
+        [
+            &Item::Pictures(vec![picture.clone()]),
+            &Item::Pictures(vec![Picture::of(&second)]),
+        ]
+    );
+
+    // The kept file gone, the run's messages still hold it.
+    let kept = host.uploads_dir().join(&picture.key);
+    assert!(kept.exists(), "the image was kept");
+    std::fs::remove_file(&kept).unwrap();
+    assert_eq!(
+        host.block_on(host.picture(&view.id, &picture)).unwrap(),
+        first.data
+    );
+    assert!(kept.exists(), "and it is kept again");
+    // A key that is no image's is refused, and so is one the run lacks.
+    let wrong = Picture {
+        key: "../runs.db".into(),
+        mime: "image/png".into(),
+    };
+    assert!(host.block_on(host.picture(&view.id, &wrong)).is_err());
+    let other = Picture::of(&png(9));
+    assert!(host.block_on(host.picture(&view.id, &other)).is_err());
+}
+
+/// A message steered into a live run goes with its images: the model's
+/// next request has them, and the host gives the message back, images
+/// and all, as the run reads it.
+#[test]
+fn a_steered_message_goes_with_its_images() {
+    use tau_agent::agent::Prompt;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("Looking.").delay(Duration::from_millis(300)))
+        .turn(|t| t.text("Seen."));
+    let (host, mut events) = host(llm.clone());
+    let view = host
+        .block_on(host.start("look at the logs", &ModelChoice::default(), REPO))
+        .unwrap();
+    let shot = png(7);
+    let delivery = host
+        .block_on(host.steer(
+            &view.id,
+            Prompt::new("this one").images(vec![shot.clone()]),
+        ))
+        .unwrap();
+    assert!(matches!(delivery, Delivery::Steered));
+    let read = until_end(&mut events)
+        .into_iter()
+        .find_map(|event| match event {
+            RunEvent::Steered { run, text } => host.steer_read(&run, &text),
+            _ => None,
+        })
+        .expect("the run read it");
+    assert_eq!(read.images, std::slice::from_ref(&shot));
+    wait_until_done(&host, &view.id);
+    let sent = serde_json::to_string(&llm.requests()[1].transcript).unwrap();
+    assert!(sent.contains(&shot.data));
 }
 
 #[test]

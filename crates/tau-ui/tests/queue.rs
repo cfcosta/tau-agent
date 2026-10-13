@@ -150,6 +150,7 @@ impl Setup {
                 prompt: prompt.to_owned(),
                 model: ws.next_model().clone(),
                 repo: ws.selected_repo().unwrap_or_default().to_owned(),
+                images: Vec::new(),
             });
         });
         let workspace = self.workspace.clone();

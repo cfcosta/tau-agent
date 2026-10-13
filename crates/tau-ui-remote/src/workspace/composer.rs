@@ -78,6 +78,15 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap(sp(2.))
+            // Files dropped on it are attached: images as images.
+            .on_drop(cx.listener(|ws, paths: &gpui::ExternalPaths, _, cx| {
+                for path in paths.paths() {
+                    ws.attach_path(path, cx);
+                }
+            }))
+            .drag_over::<gpui::ExternalPaths>(|style, _, _, _| {
+                style.opacity(0.7)
+            })
             .children(self.slash_popover(compact, t, cx))
             .px(sp(if compact { 3. } else { 6. }))
             .pt(sp(if compact { 2.5 } else { 3. }))
@@ -93,6 +102,18 @@ impl Workspace {
                 bar.child(
                     div().flex().flex_wrap().gap(sp(1.5)).children(
                         self.attachments.iter().enumerate().map(|(n, file)| {
+                            // An image shows itself; a file, its name.
+                            let glyph = match &file.content {
+                                crate::attach::Attached::Image { shown, .. } => gpui::img(shown.clone())
+                                    .h(rems(2.5))
+                                    .max_w(rems(5.))
+                                    .rounded(radius::SMALL)
+                                    .object_fit(gpui::ObjectFit::Cover)
+                                    .into_any_element(),
+                                crate::attach::Attached::Text(_) => {
+                                    ui::icon(Icon::Paperclip, IconSize::SMALL, t.muted).into_any_element()
+                                }
+                            };
                             div()
                                 .flex()
                                 .items_center()
@@ -102,7 +123,7 @@ impl Workspace {
                                 .rounded(radius::CONTROL)
                                 .key(t)
                                 .typeset(Type::CAPTION)
-                                .child(ui::icon(Icon::Paperclip, IconSize::SMALL, t.muted))
+                                .child(glyph)
                                 .child(file.name.clone())
                                 .child(
                                     div()
@@ -193,8 +214,7 @@ impl Workspace {
                             .border_1()
                             .border_color(t.border_strong)
                             .rounded(if compact { radius::FULL } else { radius::TILE })
-                            .when(!compact, |field| {
-                                field.child(
+                            .child({
                                     // As tall as the chip, so it lines up
                                     // with the first line of text.
                                     div()
@@ -206,8 +226,7 @@ impl Workspace {
                                         .child(ui::icon(Icon::Paperclip, IconSize::BASE, t.muted))
                                         .on_click(cx.listener(|ws, _, _, cx| {
                                             ws.pick_attachments(cx)
-                                        })),
-                                )
+                                        }))
                             })
                             // Its first line level with the chip beside it.
                             .child(

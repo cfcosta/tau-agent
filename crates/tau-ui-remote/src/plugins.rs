@@ -238,6 +238,7 @@ impl Workspace {
                     prompt: text,
                     model: self.next_model.clone(),
                     repo,
+                    images: Vec::new(),
                 });
             }
             Request::Composer(text) => {

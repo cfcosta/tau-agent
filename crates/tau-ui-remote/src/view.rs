@@ -150,10 +150,57 @@ impl RunStatus {
     }
 }
 
+/// An image the person sent, as a transcript refers to it: by `key`,
+/// the SHA-256 of its base64, which the host keeps it under. An
+/// interface fetches the bytes once (`WorkspaceEvent::Picture`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Picture {
+    pub key: String,
+    /// `image/png`, ...
+    pub mime: String,
+}
+
+impl Picture {
+    pub fn of(image: &tau_ai::message::ImageContent) -> Self {
+        use sha2::Digest as _;
+        let digest = sha2::Sha256::digest(image.data.as_bytes());
+        Self {
+            key: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+            mime: image.mime_type.clone(),
+        }
+    }
+
+    /// Whether `key` could be a picture's: 64 lowercase hex digits, so
+    /// it can never name a path.
+    pub fn is_key(key: &str) -> bool {
+        key.len() == 64
+            && key
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+}
+
+/// The images in a user message.
+pub fn pictures(content: &UserContent) -> Vec<Picture> {
+    match content {
+        UserContent::Text(_) => Vec::new(),
+        UserContent::Blocks(blocks) => blocks
+            .iter()
+            .filter_map(|block| match block {
+                InputBlock::Image(image) => Some(Picture::of(image)),
+                InputBlock::Text(_) => None,
+            })
+            .collect(),
+    }
+}
+
 /// One entry of the transcript, in the order it happened.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Item {
     User(String),
+    /// The images the person sent with the message before it, by
+    /// reference: the bytes stay on the host ([`Picture`]).
+    Pictures(Vec<Picture>),
     /// Assistant text; deltas append to the last one.
     Text(String),
     /// What the model reasoned, and how long it took once it ended: the
@@ -876,7 +923,10 @@ impl RunView {
     fn push_message(&mut self, message: &Message) {
         let view = self;
         match message {
-            Message::User(user) => view.push_user(user_words(&user.content)),
+            Message::User(user) => {
+                view.push_user(user_words(&user.content));
+                view.push_pictures(pictures(&user.content));
+            }
             Message::Assistant(reply) => {
                 // A turn is a reply and the results of its calls; the
                 // next reply starts the next one.
@@ -1198,6 +1248,13 @@ impl RunView {
     /// plugin that reads it as its own draws it (a `/goal`).
     pub fn push_user(&mut self, text: impl Into<String>) {
         self.items.push(Item::User(text.into()));
+    }
+
+    /// The images sent with the message just pushed; none adds nothing.
+    pub fn push_pictures(&mut self, pictures: Vec<Picture>) {
+        if !pictures.is_empty() {
+            self.items.push(Item::Pictures(pictures));
+        }
     }
 
     pub fn push_note(&mut self, note: PluginNote) {

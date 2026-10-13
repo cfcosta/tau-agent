@@ -139,5 +139,49 @@ fn a_phone_pairs_and_steers_the_computer(cx: &mut TestAppContext) {
             ws.alert() == Some(("Could not cancel", "it had ended"))
         })
     });
+
+    // A picture the phone asks for reaches the computer, and the answer
+    // the phone, unnumbered: what the phone had of the feed is as before.
+    let picture = tau_ui_remote::view::Picture {
+        key: "cd".repeat(32),
+        mime: "image/png".into(),
+    };
+    let asked_for = WorkspaceEvent::Picture {
+        run: run.clone(),
+        picture: picture.clone(),
+    };
+    phone.update(&mut phone_cx, |_, cx| cx.emit(asked_for.clone()));
+    until(&mut desktop_cx, "the phone's picture request", |_| {
+        asked.borrow().contains(&asked_for)
+    });
+    let png = {
+        use base64::Engine as _;
+        let mut bytes = Vec::new();
+        image::RgbImage::new(2, 2)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    };
+    desktop.update(&mut desktop_cx, |ws, cx| {
+        ws.apply(
+            HostUpdate::Picture {
+                picture: picture.clone(),
+                data: Some(png),
+                error: None,
+            },
+            cx,
+        )
+    });
+    until(&mut phone_cx, "the picture", |cx| {
+        phone.update(cx, |ws, _| ws.has_picture(&picture.key))
+    });
+    assert!(phone_server::transient(&HostUpdate::Picture {
+        picture,
+        data: None,
+        error: None,
+    }));
     drop(runtime);
 }

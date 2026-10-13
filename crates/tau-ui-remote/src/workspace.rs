@@ -163,6 +163,9 @@ pub enum WorkspaceEvent {
         prompt: String,
         model: ModelChoice,
         repo: String,
+        /// Images that go with the prompt.
+        #[serde(default)]
+        images: Vec<tau_ai::message::ImageContent>,
     },
     /// The repositories the sidebar shows open, to open them the same
     /// way next time.
@@ -211,6 +214,16 @@ pub enum WorkspaceEvent {
         run: RunId,
         text: String,
         model: ModelChoice,
+        /// Images that go with the text.
+        #[serde(default)]
+        images: Vec<tau_ai::message::ImageContent>,
+    },
+    /// The bytes of an image the person sent `run`, which an interface
+    /// draws ([`crate::pictures`]). The host answers with
+    /// [`HostUpdate::Picture`].
+    Picture {
+        run: RunId,
+        picture: crate::view::Picture,
     },
     Cancel {
         run: RunId,
@@ -222,6 +235,9 @@ pub enum WorkspaceEvent {
         turn: Option<u32>,
         prompt: String,
         model: ModelChoice,
+        /// Images that go with the prompt.
+        #[serde(default)]
+        images: Vec<tau_ai::message::ImageContent>,
     },
     /// Make `choice` `agent`'s model when a run does not pick one.
     SetDefaultModel {
@@ -454,6 +470,10 @@ pub struct Workspace {
     /// Whether the person opened the run's details: the inspector,
     /// beside the transcript. Closed, the transcript has the width.
     pub(crate) details_open: bool,
+    /// The person's images this window has drawn, or asked the host for,
+    /// by key ([`crate::pictures`]).
+    pub(crate) pictures:
+        std::cell::RefCell<HashMap<String, crate::pictures::Shown>>,
     /// Runs whose pane ([`tau_ui_plugin::points::PANE`]) is open.
     pane_open: HashSet<RunId>,
     /// How fresh each run's pane was when last drawn: it opens once it
@@ -625,8 +645,11 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         let plugin_requests = crate::plugins::Requests::default();
-        let composer =
-            cx.new(|cx| TextInput::new("Start a new run", cx).multiline());
+        let composer = cx.new(|cx| {
+            TextInput::new("Start a new run", cx)
+                .multiline()
+                .takes_images()
+        });
         let history_filter = cx.new(|cx| {
             TextInput::new("Filter by run, repository, model or stop", cx)
         });
@@ -683,6 +706,13 @@ impl Workspace {
                     InputEvent::Submit(text) => {
                         ws.submit_in(text.clone(), Some(window), cx)
                     }
+                },
+            ),
+            // An image pasted into it is attached.
+            cx.subscribe(
+                &composer,
+                |ws, _, pasted: &tau_ui_kit::input::PastedImage, cx| {
+                    ws.attach_pasted(&pasted.0, cx)
                 },
             ),
             // Its popover follows what is typed.
@@ -765,6 +795,7 @@ impl Workspace {
             run_models: HashMap::new(),
             inspector_shown: false,
             details_open: false,
+            pictures: std::cell::RefCell::new(HashMap::new()),
             pane_open: HashSet::new(),
             pane_seen: HashMap::new(),
             pane_title: None,
@@ -1012,9 +1043,30 @@ impl Workspace {
                 self.queued.entry(run).or_default().push(text);
                 cx.notify();
             }
-            HostUpdate::Resumed { run, prompt, model } => {
-                self.resumed(&run, prompt, &model, cx)
+            HostUpdate::Resumed {
+                run,
+                prompt,
+                model,
+                pictures,
+            } => self.resumed(&run, prompt, pictures, &model, cx),
+            HostUpdate::Pictures { run, pictures } => {
+                if let Some(view) =
+                    self.runs.iter_mut().find(|view| view.id == run)
+                {
+                    view.push_pictures(pictures);
+                }
+                cx.notify();
             }
+            HostUpdate::Picture {
+                picture,
+                data,
+                error,
+            } => self.picture_came(
+                &picture,
+                data.as_deref(),
+                error.as_deref(),
+                cx,
+            ),
             HostUpdate::ResumeFailed(run) => self.resume_failed(&run, cx),
             HostUpdate::PluginRecord { run, plugin, body }
             | HostUpdate::PluginFold { run, plugin, body } => {
@@ -1876,13 +1928,14 @@ impl Workspace {
     }
 
     pub(crate) fn send(&mut self, text: String, cx: &mut Context<Self>) {
-        let text = self.with_attachments(text);
+        let (text, images) = self.take_attachments(text);
         if let Some((run, turn)) = self.forking.take() {
             cx.emit(WorkspaceEvent::Fork {
                 run,
                 turn: Some(turn),
                 prompt: text,
                 model: self.fork_model.clone(),
+                images,
             });
             self.sync_placeholder(cx);
             cx.notify();
@@ -1891,9 +1944,9 @@ impl Workspace {
         match self.current().filter(|_| self.route != Route::NewRun) {
             Some(run) => {
                 let run = run.id.clone();
-                self.say(&run, text, cx);
+                self.say_with(&run, text, images, cx);
             }
-            _ => self.start_in_repo(text, cx),
+            _ => self.start_in_repo_with(text, images, cx),
         }
         cx.notify();
     }
@@ -1905,19 +1958,30 @@ impl Workspace {
         text: String,
         cx: &mut Context<Self>,
     ) {
+        self.start_in_repo_with(text, Vec::new(), cx);
+    }
+
+    /// [`Self::start_in_repo`], with `images` going with the text.
+    fn start_in_repo_with(
+        &mut self,
+        text: String,
+        images: Vec<tau_ai::message::ImageContent>,
+        cx: &mut Context<Self>,
+    ) {
         let repo = self.selected_repo().unwrap_or_default().to_owned();
         if let Some(main) = self.fresh_main(&repo) {
             // The model picked for the new run.
             self.run_models
                 .insert(main.clone(), self.next_model.clone());
             self.navigate(Route::Run(main.clone()), cx);
-            self.say(&main, text, cx);
+            self.say_with(&main, text, images, cx);
             return;
         }
         cx.emit(WorkspaceEvent::NewRun {
             prompt: text,
             model: self.next_model.clone(),
             repo,
+            images,
         });
     }
 
@@ -1929,6 +1993,17 @@ impl Workspace {
         &mut self,
         run: &RunId,
         text: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.say_with(run, text, Vec::new(), cx);
+    }
+
+    /// [`Self::say`], with `images` going with the text.
+    fn say_with(
+        &mut self,
+        run: &RunId,
+        text: String,
+        images: Vec<tau_ai::message::ImageContent>,
         cx: &mut Context<Self>,
     ) {
         // A chat that landed or was dropped takes no more messages.
@@ -1945,6 +2020,7 @@ impl Workspace {
             run: run.clone(),
             text,
             model,
+            images,
         });
     }
 
@@ -1954,6 +2030,7 @@ impl Workspace {
         &mut self,
         run: &RunId,
         prompt: String,
+        pictures: Vec<crate::view::Picture>,
         model: &ModelChoice,
         cx: &mut Context<Self>,
     ) {
@@ -1965,6 +2042,7 @@ impl Workspace {
         self.closed.remove(run);
         self.resuming.insert(run.clone(), view.status.clone());
         view.push_user(prompt);
+        view.push_pictures(pictures);
         view.status = RunStatus::Planning;
         self.runs.insert(0, view);
         self.after_update(cx);
@@ -1998,6 +2076,10 @@ impl Workspace {
         };
         if let Some(view) = self.runs.iter_mut().find(|view| &view.id == run) {
             view.status = status;
+            if matches!(view.items.last(), Some(crate::view::Item::Pictures(_)))
+            {
+                view.items.pop();
+            }
             if matches!(view.items.last(), Some(crate::view::Item::User(_))) {
                 view.items.pop();
             }

@@ -66,6 +66,22 @@ mod screens;
 /// One scripted update, and how long to wait before it.
 pub type Step = (Duration, RunUpdate);
 
+/// The base64 of the image the demo's uploads screen sent: tau-canvas's
+/// chart, small.
+pub fn upload_data() -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .encode(tau_canvas::demo::chart(900, 480))
+}
+
+/// The picture the demo's uploads screen sent.
+pub fn upload() -> crate::view::Picture {
+    crate::view::Picture::of(&tau_ai::message::ImageContent {
+        data: upload_data(),
+        mime_type: "image/png".into(),
+    })
+}
+
 pub fn run_id() -> RunId {
     RunId(Arc::from("retry-after"))
 }
@@ -1078,6 +1094,7 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 turn,
                 prompt,
                 model,
+                ..
             } => {
                 use std::sync::atomic::{AtomicU32, Ordering};
                 static FORKS: AtomicU32 = AtomicU32::new(0);
@@ -1093,6 +1110,18 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                     ws.apply(HostUpdate::Run(Box::new(view)), cx);
                     ws.replay(id, steps, cx);
                 });
+            }
+            // The demo's one picture: the chart its uploads screen sent.
+            WorkspaceEvent::Picture { picture, .. } => {
+                let data = (picture.key == upload().key).then(upload_data);
+                let update = HostUpdate::Picture {
+                    picture: picture.clone(),
+                    error: data
+                        .is_none()
+                        .then(|| "the demo has no such image".to_owned()),
+                    data,
+                };
+                workspace.update(cx, |ws, cx| ws.apply(update, cx));
             }
             // Off the UI thread, as on a host: an action may ask Jev.
             WorkspaceEvent::PluginAct { plugin, action } => {
@@ -1181,7 +1210,12 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 }),
             // A message steers a run that is going; a finished one goes
             // on with one more turn.
-            WorkspaceEvent::Say { run, text, model } => {
+            WorkspaceEvent::Say {
+                run,
+                text,
+                model,
+                images,
+            } => {
                 workspace.update(cx, |ws, cx| {
                     let Some(view) = ws.run(run).cloned() else {
                         return;
@@ -1195,6 +1229,10 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                         run: run.clone(),
                         prompt: text.clone(),
                         model: model.clone(),
+                        pictures: images
+                            .iter()
+                            .map(crate::view::Picture::of)
+                            .collect(),
                     };
                     ws.apply(resumed, cx);
                     let steps = resume_script(&view, text);

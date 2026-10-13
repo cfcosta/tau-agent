@@ -178,6 +178,7 @@ fn fork_mode_sends_the_chosen_turn(cx: &mut TestAppContext) {
             prompt: "try a longer backoff".into(),
             // A fork starts on its run's model and effort.
             model: ModelChoice::new("gpt-5.5", Effort::Auto),
+            images: Vec::new(),
         })
     );
     // The next message is an ordinary one again: it goes on with the
@@ -245,6 +246,7 @@ fn forking_from_a_turn_sends_that_turn(cx: &mut TestAppContext) {
             turn: Some(2),
             prompt: "go another way".into(),
             model: ModelChoice::new("gpt-5.5", Effort::Auto),
+            images: Vec::new(),
         })
     );
     workspace.read_with(&cx, |ws, _| {
@@ -481,6 +483,7 @@ fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
             prompt: "fix it".into(),
             model: ModelChoice::new("gpt-6-luna", Effort::Low),
             repo: "tau-agent".into(),
+            images: Vec::new(),
         })
     );
 }
@@ -1117,8 +1120,12 @@ fn host_resumes(
     cx: &mut VisualTestContext,
     events: &Events,
 ) {
-    let Some(WorkspaceEvent::Say { run, text, model }) =
-        events.borrow().last().cloned()
+    let Some(WorkspaceEvent::Say {
+        run,
+        text,
+        model,
+        images: _,
+    }) = events.borrow().last().cloned()
     else {
         panic!("no message was sent");
     };
@@ -1127,6 +1134,7 @@ fn host_resumes(
             run,
             prompt: text,
             model,
+            pictures: Vec::new(),
         };
         ws.apply(resumed, cx)
     });
@@ -1163,6 +1171,7 @@ fn a_message_to_a_finished_run_goes_on_with_it(cx: &mut TestAppContext) {
             run: run.clone(),
             text: "now add a test for it".into(),
             model: ModelChoice::new("gpt-5.5", Effort::Auto),
+            images: Vec::new(),
         })
     );
     // The host took it: no new chat, the same run back to work, at the
@@ -1183,6 +1192,7 @@ fn a_message_to_a_finished_run_goes_on_with_it(cx: &mut TestAppContext) {
                 run: run.clone(),
                 prompt: "and the docs".into(),
                 model: ModelChoice::new("gpt-5.5", Effort::Auto),
+                pictures: Vec::new(),
             },
             cx,
         );
@@ -1428,7 +1438,7 @@ fn attached_files_go_with_the_next_message(cx: &mut TestAppContext) {
         // A file that is not text is refused, saying why.
         ws.attach_path(&binary, cx);
         assert_eq!(ws.attachments().len(), 1);
-        assert!(ws.alert().unwrap().1.contains("not text"));
+        assert!(ws.alert().unwrap().1.contains("neither text nor"));
         ws.submit_prompt("use the notes".into(), cx);
         assert!(ws.attachments().is_empty(), "they went with the message");
     });
@@ -1444,6 +1454,118 @@ fn attached_files_go_with_the_next_message(cx: &mut TestAppContext) {
         ),
         "{prompt}"
     );
+}
+
+/// A PNG file in `dir`, `n` pixels wide.
+fn png_file(dir: &std::path::Path, n: u32) -> std::path::PathBuf {
+    let path = dir.join(format!("shot-{n}.png"));
+    image::RgbImage::new(n, 2).save(&path).unwrap();
+    path
+}
+
+/// The pictures the workspace asked the host for.
+fn fetched(
+    events: &std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>,
+) -> usize {
+    events
+        .borrow()
+        .iter()
+        .filter(|event| matches!(event, WorkspaceEvent::Picture { .. }))
+        .count()
+}
+
+/// An image attached goes with the message as an image, not as text;
+/// the window that sent it draws it without asking the host, and one it
+/// never had it asks for once, however often it draws.
+#[gpui::test]
+fn attached_images_go_as_images_and_are_fetched_once(cx: &mut TestAppContext) {
+    use tau_ui_remote::{update::HostUpdate, view::Picture};
+    let dir = tempfile::tempdir().unwrap();
+    let shot = png_file(dir.path(), 4);
+    let (workspace, mut cx, events) = open(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::NewRun, cx);
+        ws.attach_path(&shot, cx);
+        assert_eq!(ws.attachments().len(), 1);
+        ws.submit_prompt("what is wrong here?".into(), cx);
+        assert!(ws.attachments().is_empty());
+    });
+    let Some(WorkspaceEvent::NewRun { prompt, images, .. }) =
+        events.borrow().last().cloned()
+    else {
+        panic!("a new run")
+    };
+    assert_eq!(
+        prompt, "what is wrong here?",
+        "no attached tag for an image"
+    );
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].mime_type, "image/png");
+    let sent = Picture::of(&images[0]);
+
+    // The host's view of the new run shows it: drawn from what the
+    // window kept.
+    let run = tau_agent::tool::RunId("with-shot".into());
+    let mut view = tau_ui_remote::view::RunView::new(
+        run.clone(),
+        "with-shot",
+        "coder",
+        "gpt-5.5",
+    )
+    .in_repo("tau-agent");
+    view.push_user("what is wrong here?");
+    view.push_pictures(vec![sent.clone()]);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply(HostUpdate::Run(Box::new(view)), cx);
+        ws.navigate(Route::Run(run.clone()), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(fetched(&events), 0, "the sender had it");
+
+    // Another's picture, steered in: asked for once.
+    let theirs = Picture {
+        key: "ab".repeat(32),
+        mime: "image/png".into(),
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply(
+            HostUpdate::Pictures {
+                run: run.clone(),
+                pictures: vec![theirs.clone()],
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert_eq!(fetched(&events), 1);
+    let Some(WorkspaceEvent::Picture {
+        run: asked,
+        picture,
+    }) = events
+        .borrow()
+        .iter()
+        .rev()
+        .find(|event| matches!(event, WorkspaceEvent::Picture { .. }))
+        .cloned()
+    else {
+        unreachable!()
+    };
+    assert_eq!((asked, picture), (run.clone(), theirs.clone()));
+    // Its bytes came: no more asking.
+    workspace.update(&mut cx, |ws, cx| {
+        ws.apply(
+            HostUpdate::Picture {
+                picture: theirs,
+                data: Some(images[0].data.clone()),
+                error: None,
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert_eq!(fetched(&events), 1);
 }
 
 fn composer_slash(
@@ -2180,6 +2302,7 @@ fn a_chat_goes_on_on_another_model(cx: &mut TestAppContext) {
             run: run.clone(),
             text: "go on".into(),
             model: ModelChoice::new("gpt-6-luna", Effort::Auto),
+            images: Vec::new(),
         })
     );
     // The pick was spent: the next message stays on gpt-6-luna from the
