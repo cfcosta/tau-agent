@@ -1015,3 +1015,326 @@ fn data_too_large_for_a_message_is_kept_as_an_artifact() {
     let objects = f._home.path().join("agents/greet/artifacts");
     assert!(objects.exists(), "{}", objects.display());
 }
+
+/// An agent that only a command wakes, so what it schedules is all that
+/// comes due.
+const QUIET: &str = r#"
+local tau = require("tau")
+return tau.agent {
+  name = "greet",
+  triggers = { hello = { command = "hello" } },
+}
+"#;
+
+fn plan(name: &str, when: Value) -> tau_agents_host::Plan {
+    let mut args = json!({ "name": name, "note": format!("{name}, then") });
+    args.as_object_mut()
+        .unwrap()
+        .extend(when.as_object().unwrap().clone());
+    serde_json::from_value(args).unwrap()
+}
+
+/// What a turn's events carried, as JSON.
+fn heard_data(turn: &Turn) -> Vec<(String, Value)> {
+    heard(turn)
+        .into_iter()
+        .map(|(trigger, data)| (trigger, serde_json::from_str(&data).unwrap()))
+        .collect()
+}
+
+#[test]
+fn an_agent_schedules_itself_once_and_hears_its_note() {
+    let f = Fixture::with(QUIET);
+    let made = block_on_io(
+        f.agents
+            .schedule("greet", plan("check-pr-412", json!({ "in": "2h" }))),
+    )
+    .unwrap();
+    assert!(!made.replaced);
+    assert_eq!(made.scheduled.next, MONDAY_EIGHT + 2 * 3600);
+    let shown = f.agent().scheduled;
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].name, "check-pr-412");
+    assert_eq!(f.agent().next(), Some(MONDAY_EIGHT + 2 * 3600));
+
+    f.clock.set(MONDAY_EIGHT + 2 * 3600 - 1);
+    f.tick();
+    assert_eq!(f.agent().queued, 0);
+    f.clock.advance(1);
+    f.tick();
+    assert_eq!(f.agent().queued, 1);
+    assert!(f.agent().scheduled.is_empty(), "once, then it goes");
+    f.clock.advance(30);
+    f.tick();
+    let turns = f.turns();
+    assert_eq!(turns.len(), 1);
+    let message = Message::parse(&turns[0].text).unwrap();
+    assert_eq!(message.events[0].kind, tau_agents::event::Kind::Scheduled);
+    assert_eq!(
+        heard_data(&turns[0]),
+        [(
+            "check-pr-412".to_owned(),
+            json!({
+                "note": "check-pr-412, then",
+                "due": MONDAY_EIGHT + 2 * 3600,
+                "repeats": false,
+            })
+        )]
+    );
+}
+
+#[test]
+fn once_on_a_local_date_and_time() {
+    let f = Fixture::with(QUIET);
+    let made = block_on_io(f.agents.schedule(
+        "greet",
+        plan("tomorrow", json!({ "on": "2026-10-13 09:00" })),
+    ))
+    .unwrap();
+    assert_eq!(made.scheduled.next, MONDAY_EIGHT + 86_400 + 3600);
+    assert_eq!(f.agents.local_time(made.scheduled.next), "2026-10-13 09:00");
+}
+
+#[test]
+fn what_it_schedules_again_and_again_moves_on_and_catches_up_once() {
+    let f = Fixture::with(QUIET);
+    block_on_io(
+        f.agents
+            .schedule("greet", plan("sweep", json!({ "every": "1h" }))),
+    )
+    .unwrap();
+    block_on_io(f.agents.schedule(
+        "greet",
+        plan("standup", json!({ "at": "09:30", "days": ["Mon", "Wed"] })),
+    ))
+    .unwrap();
+    let next = |f: &Fixture| -> Vec<(String, i64)> {
+        f.agent()
+            .scheduled
+            .into_iter()
+            .map(|scheduled| (scheduled.name, scheduled.next))
+            .collect()
+    };
+    assert_eq!(
+        next(&f),
+        [
+            ("sweep".to_owned(), MONDAY_EIGHT + 3600),
+            ("standup".to_owned(), MONDAY_EIGHT + 5400),
+        ],
+        "soonest first"
+    );
+    f.clock.set(MONDAY_EIGHT + 3600);
+    f.tick();
+    assert_eq!(next(&f)[0], ("standup".to_owned(), MONDAY_EIGHT + 5400));
+    assert_eq!(next(&f)[1], ("sweep".to_owned(), MONDAY_EIGHT + 7200));
+
+    // tau closes until Tuesday noon: each fires once, and moves past now.
+    f.clock.set(MONDAY_EIGHT + 86_400 + 4 * 3600);
+    let again = f.restarted();
+    block_on_io(again.tick());
+    // The first sweep waited long enough: one turn hears it, and what
+    // came due while tau was closed, once each.
+    let turns = f.turns();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        heard_data(&turns[0])
+            .into_iter()
+            .map(|(trigger, data)| (trigger, data["due"].as_i64().unwrap()))
+            .collect::<Vec<_>>(),
+        [
+            ("sweep".to_owned(), MONDAY_EIGHT + 3600),
+            ("standup".to_owned(), MONDAY_EIGHT + 5400),
+            ("sweep".to_owned(), MONDAY_EIGHT + 7200),
+        ]
+    );
+    let overview = block_on_io(again.overview());
+    assert_eq!(
+        overview.agents[0]
+            .scheduled
+            .iter()
+            .map(|scheduled| (scheduled.name.as_str(), scheduled.next))
+            .collect::<Vec<_>>(),
+        [
+            ("sweep", MONDAY_EIGHT + 86_400 + 5 * 3600),
+            ("standup", MONDAY_EIGHT + 2 * 86_400 + 5400),
+        ]
+    );
+}
+
+#[test]
+fn a_schedule_it_cannot_keep_is_refused_and_says_why() {
+    let f = Fixture::with(QUIET);
+    let refused = |name: &str, when: Value| {
+        block_on_io(f.agents.schedule("greet", plan(name, when))).unwrap_err()
+    };
+    assert!(refused("Check", json!({ "in": "1h" })).contains("cannot name"));
+    assert!(
+        refused("hello", json!({ "in": "1h" })).contains("trigger of yours")
+    );
+    assert!(refused("x", json!({})).contains("Say when"));
+    assert!(
+        refused("x", json!({ "in": "1h", "every": "1h" })).contains("Say when")
+    );
+    assert!(refused("x", json!({ "in": "30s" })).contains("soonest"));
+    assert!(
+        refused("x", json!({ "on": "2026-10-12 07:00" })).contains("soonest")
+    );
+    assert!(
+        refused("x", json!({ "on": "tomorrow" }))
+            .contains("like \"2026-10-13 08:00\"")
+    );
+    assert!(refused("x", json!({ "in": "400d" })).contains("year"));
+    assert!(refused("x", json!({ "every": "400d" })).contains("year"));
+    assert!(refused("x", json!({ "every": "30s" })).contains("minute"));
+    assert!(
+        refused("x", json!({ "at": "09:00", "days": ["Someday"] }))
+            .contains("not a day")
+    );
+    let empty: tau_agents_host::Plan =
+        serde_json::from_value(json!({ "name": "x", "note": " ", "in": "1h" }))
+            .unwrap();
+    assert!(
+        block_on_io(f.agents.schedule("greet", empty))
+            .unwrap_err()
+            .contains("note")
+    );
+    assert!(f.agent().scheduled.is_empty());
+}
+
+#[test]
+fn at_most_a_hundred_and_a_name_again_replaces_it() {
+    let f = Fixture::with(QUIET);
+    for n in 0..tau_agents_host::MAX_SCHEDULED {
+        block_on_io(
+            f.agents.schedule(
+                "greet",
+                plan(&format!("s{n}"), json!({ "in": "1h" })),
+            ),
+        )
+        .unwrap();
+    }
+    let error = block_on_io(
+        f.agents
+            .schedule("greet", plan("one-more", json!({ "in": "1h" }))),
+    )
+    .unwrap_err();
+    assert!(error.contains("the most you may"), "{error}");
+    let again = block_on_io(
+        f.agents
+            .schedule("greet", plan("s7", json!({ "in": "3h" }))),
+    )
+    .unwrap();
+    assert!(again.replaced);
+    assert_eq!(f.agent().scheduled.len(), tau_agents_host::MAX_SCHEDULED);
+    assert_eq!(
+        f.agent()
+            .scheduled
+            .last()
+            .map(|scheduled| (scheduled.name.clone(), scheduled.next)),
+        Some(("s7".to_owned(), MONDAY_EIGHT + 3 * 3600))
+    );
+}
+
+#[test]
+fn the_agent_or_the_person_cancels_what_it_scheduled() {
+    let f = Fixture::with(QUIET);
+    for name in ["one", "two"] {
+        block_on_io(
+            f.agents
+                .schedule("greet", plan(name, json!({ "in": "1h" }))),
+        )
+        .unwrap();
+    }
+    assert!(block_on_io(f.agents.unschedule("greet", "one")));
+    assert!(!block_on_io(f.agents.unschedule("greet", "one")));
+    block_on_io(f.agents.act(Act::Unschedule {
+        agent: "greet".into(),
+        name: "two".into(),
+    }))
+    .unwrap();
+    assert!(
+        block_on_io(f.agents.act(Act::Unschedule {
+            agent: "greet".into(),
+            name: "two".into(),
+        }))
+        .is_err()
+    );
+    f.clock.advance(2 * 3600);
+    f.tick();
+    assert_eq!(f.agent().queued, 0, "nothing fires once cancelled");
+}
+
+/// Calls the agent `greet`'s tool `name` as its run would.
+fn call(f: &Fixture, name: &str, args: Value) -> Result<String, String> {
+    use tau_agent::{
+        plugin::Plugin,
+        tool::{RunId, ToolCtx, ToolUpdates},
+    };
+    let tools = tau_agents_host::tools::AgentTools::new(
+        f.agents.clone(),
+        "greet".into(),
+    )
+    .tools();
+    let tool = tools.iter().find(|tool| tool.name() == name).unwrap();
+    let (updates, _) = ToolUpdates::channel("call_1");
+    let ctx = ToolCtx::new(
+        tokio_util::sync::CancellationToken::new(),
+        updates,
+        RunId("run_1".into()),
+    );
+    block_on_io(tool.call(args, ctx))
+        .map(|output| output.text_content())
+        .map_err(|error| error.to_string())
+}
+
+#[test]
+fn the_tools_say_what_was_scheduled_in_local_time() {
+    let f = Fixture::with(QUIET);
+    assert_eq!(
+        call(&f, "scheduled", json!({})).unwrap(),
+        "It is 2026-10-12 08:00. Nothing is scheduled."
+    );
+    assert_eq!(
+        call(
+            &f,
+            "schedule",
+            json!({ "name": "recheck", "note": "Did #412 merge?", "in": "90m" })
+        )
+        .unwrap(),
+        "Scheduled `recheck`: once, next 2026-10-12 09:30. It comes as an \
+         event `recheck · scheduled`."
+    );
+    assert_eq!(
+        call(
+            &f,
+            "schedule",
+            json!({ "name": "recheck", "note": "Did #412 merge?", "at": "17:00",
+                    "days": ["Mon", "Fri"] })
+        )
+        .unwrap(),
+        "Replaced `recheck`: 17:00 Mon Fri, next 2026-10-12 17:00. It comes \
+         as an event `recheck · scheduled`."
+    );
+    assert_eq!(
+        call(&f, "scheduled", json!({})).unwrap(),
+        "It is 2026-10-12 08:00. 1 of the 100 you may have:\n\
+         - recheck · 17:00 Mon Fri · next 2026-10-12 17:00 · Did #412 merge?"
+    );
+    assert!(
+        call(
+            &f,
+            "schedule",
+            json!({ "name": "x", "note": "n", "when": "1h" })
+        )
+        .is_err(),
+        "an argument it does not know"
+    );
+    assert_eq!(
+        call(&f, "unschedule", json!({ "name": "recheck" })).unwrap(),
+        "Cancelled `recheck`."
+    );
+    assert_eq!(
+        call(&f, "unschedule", json!({ "name": "recheck" })).unwrap(),
+        "Nothing is scheduled as `recheck`."
+    );
+}

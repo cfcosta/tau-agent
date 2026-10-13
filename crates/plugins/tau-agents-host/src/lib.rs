@@ -11,6 +11,7 @@
 //! - `poll`: what a poll fires, once per new item.
 //! - `stream`: a stream's connection and its frames.
 //! - `state`: each agent's queue and schedules, kept across restarts.
+//! - [`Plan`]: what an agent schedules for itself from its conversation.
 //! - `tools`: what an agent's runs have to reach the person and other
 //!   agents.
 //! - `artifacts`: an event's data too large for its message.
@@ -37,6 +38,7 @@ pub mod tools;
 pub use agents::{
     Agents,
     SAVE_SOON,
+    scheduled::{MAX_SCHEDULED, Made, Plan},
     talk::{MAX_HOPS, MAX_MESSAGE, MAX_TEXT, hops_of},
 };
 pub use half::AgentsHost;

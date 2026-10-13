@@ -38,10 +38,12 @@ pub enum Kind {
     Version,
     /// The person's answer to one of its questions (`ask`).
     Answer,
+    /// What it scheduled for itself from its conversation came due.
+    Scheduled,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 8] = [
+    pub const ALL: [Kind; 9] = [
         Kind::Schedule,
         Kind::Command,
         Kind::Poll,
@@ -50,6 +52,7 @@ impl Kind {
         Kind::Message,
         Kind::Version,
         Kind::Answer,
+        Kind::Scheduled,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -62,6 +65,7 @@ impl Kind {
             Kind::Message => "message",
             Kind::Version => "version",
             Kind::Answer => "answer",
+            Kind::Scheduled => "scheduled",
         }
     }
 

@@ -344,7 +344,15 @@ fn only_an_agents_runs_have_its_tools() {
     };
     assert_eq!(
         tools(&f.home.path().join("agents/triage")),
-        ["notify", "ask", "pending_asks", "agent_send"]
+        [
+            "notify",
+            "ask",
+            "pending_asks",
+            "agent_send",
+            "schedule",
+            "scheduled",
+            "unschedule",
+        ]
     );
     assert!(tools(Path::new("/src/tau-agent")).is_empty());
 }

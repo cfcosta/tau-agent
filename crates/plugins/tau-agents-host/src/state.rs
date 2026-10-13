@@ -1,5 +1,6 @@
 //! What tau keeps of each agent across restarts (ADR 0037): the events
 //! waiting for its next turn, when its schedules and polls are due,
+//! what it scheduled for itself,
 //! what each poll saw, where each stream was, what each watched resource
 //! read last, and what its day's spend is counted from.
 //!
@@ -13,7 +14,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tau_agents::{Last, Notice, TriggerKind, event::Event};
+use tau_agents::{Last, Notice, Scheduled, TriggerKind, event::Event};
 
 /// One agent's.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -42,6 +43,8 @@ pub struct Kept {
     pub streams: BTreeMap<String, crate::stream::Streamed>,
     /// What each `mcp` trigger read last, by trigger.
     pub resources: BTreeMap<String, crate::resource::Watched>,
+    /// What it scheduled for itself from its conversation, by name.
+    pub scheduled: BTreeMap<String, Scheduled>,
 }
 
 /// When a schedule is due next, and what it was when that was worked

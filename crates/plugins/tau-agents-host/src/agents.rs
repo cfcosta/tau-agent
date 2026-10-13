@@ -1,8 +1,9 @@
 //! The agents on this host (ADR 0037): what wakes each one, the events
 //! that wait for its next turn, and the turns that hear them.
 //!
-//! Every second each agent's schedules that came due fire, and its
-//! queue is looked at. Its events wait a coalescing window from the
+//! Every second each agent's schedules that came due fire, those its
+//! `agent.luau` declares and those it scheduled itself (`scheduled`),
+//! and its queue is looked at. Its events wait a coalescing window from the
 //! oldest, then go to its conversation as one message from tau, unless
 //! a turn of it is going (they wait for the next), the person paused it,
 //! or it spent its day's cap. An event leaves the queue once the turn
@@ -57,6 +58,7 @@ use crate::{
     state::{Due, Kept, Store},
 };
 
+pub(crate) mod scheduled;
 pub(crate) mod talk;
 
 mod resources;
@@ -271,6 +273,7 @@ impl Agents {
             streams.push((name.clone(), streams::declared(&read)));
             watches.push((name.clone(), resources::declared(&read)));
             changed |= self.fire_schedules(&name, &read, now).await;
+            changed |= self.fire_scheduled(&name, now).await;
             changed |= self.start_polls(&name, &read, now).await;
             let counted = self.0.spend.lock().await.get(&name).copied();
             if counted.is_none_or(|(_, at)| now - at >= SPEND_FOR) {
@@ -843,6 +846,9 @@ impl Agents {
             let main = conversations
                 .as_ref()
                 .and_then(|conversations| conversations.main_of(&name));
+            let mut scheduled: Vec<_> =
+                kept.scheduled.values().cloned().collect();
+            scheduled.sort_by(|a, b| (a.next, &a.name).cmp(&(b.next, &b.name)));
             let secrets = read
                 .live
                 .iter()
@@ -857,6 +863,7 @@ impl Agents {
                 secrets,
                 sandbox: self.sandbox_problem(),
                 notices: kept.notices.clone(),
+                scheduled,
                 name,
                 purpose: read.purpose.clone(),
                 status,
@@ -936,6 +943,12 @@ impl Agents {
             } => self.answer(&agent, &notice, &answer).await?,
             Act::Dismiss { agent, notice } => {
                 self.dismiss(&agent, &notice).await?;
+            }
+            Act::Unschedule { agent, name } => {
+                anyhow::ensure!(
+                    self.unschedule(&agent, &name).await,
+                    "{agent} has nothing scheduled as {name}"
+                );
             }
             Act::Pause { agent } => {
                 self.with_kept(&agent, |kept| kept.paused = true).await;

@@ -939,6 +939,7 @@ fn agents(
         secrets: Vec::new(),
         sandbox: None,
         notices: Vec::new(),
+        scheduled: Vec::new(),
     };
     let overview = Overview {
         agents: vec![
@@ -1045,6 +1046,29 @@ fn agents(
                 ],
                 spend_today: 0.41,
                 queued: 2,
+                scheduled: vec![
+                    tau_agents::Scheduled {
+                        name: "recheck-409".into(),
+                        note: "See whether #409 gained a test for a reused \
+                               refresh token; if not, comment on it."
+                            .into(),
+                        when: tau_agents::When::Once { at: now + 3 * 3600 },
+                        next: now + 3 * 3600,
+                        last: None,
+                    },
+                    tau_agents::Scheduled {
+                        name: "stale-sweep".into(),
+                        note: "Ping the authors of pull requests idle for a \
+                               week."
+                            .into(),
+                        when: tau_agents::When::Daily {
+                            at: "10:00".into(),
+                            days: vec!["Fri".into()],
+                        },
+                        next: now + 3 * 86_400,
+                        last: None,
+                    },
+                ],
                 notices: vec![
                     tau_agents::Notice {
                         id: "n1".into(),

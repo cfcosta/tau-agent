@@ -232,6 +232,46 @@ pub struct Agent {
     /// its notes and its questions, oldest first.
     #[serde(default)]
     pub notices: Vec<Notice>,
+    /// What it scheduled for itself from its conversation, soonest
+    /// first.
+    #[serde(default)]
+    pub scheduled: Vec<Scheduled>,
+}
+
+/// A schedule an agent made itself with its `schedule` tool (ADR 0037),
+/// kept in tau's state rather than its `agent.luau`: once, or again and
+/// again. It fires an event from the trigger `name`, of kind
+/// [`event::Kind::Scheduled`], with its note.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Scheduled {
+    /// Its own among the agent's schedules and triggers: what an event
+    /// from it, and cancelling it, name.
+    pub name: String,
+    /// What the agent left itself for then.
+    pub note: String,
+    pub when: When,
+    /// When it fires next, in seconds since the epoch.
+    pub next: i64,
+    /// When it last fired, for one that repeats.
+    #[serde(default)]
+    pub last: Option<i64>,
+}
+
+/// When a [`Scheduled`] fires.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum When {
+    /// Once, at this time, in seconds since the epoch; then it goes.
+    Once { at: i64 },
+    /// Every interval, like `"15m"`.
+    Every { every: String },
+    /// At a local time, like `"09:00"`, on some days of the week (`Mon`
+    /// to `Sun`); empty is every day.
+    Daily {
+        at: String,
+        #[serde(default)]
+        days: Vec<String>,
+    },
 }
 
 /// Something an agent left for the person (ADR 0037): a note
@@ -388,6 +428,8 @@ pub enum Act {
     },
     /// The person read `agent`'s note `notice`: it goes.
     Dismiss { agent: String, notice: String },
+    /// The person cancelled what `agent` scheduled as `name`.
+    Unschedule { agent: String, name: String },
     /// The person sent `/command args` in a composer: fires `agent`'s
     /// command trigger of that name. `from` is the run it was typed in,
     /// if any.

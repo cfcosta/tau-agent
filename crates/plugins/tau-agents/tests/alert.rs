@@ -28,6 +28,7 @@ fn agent(status: Status, notices: Vec<Notice>) -> Agent {
         secrets: Vec::new(),
         sandbox: None,
         notices,
+        scheduled: Vec::new(),
     }
 }
 

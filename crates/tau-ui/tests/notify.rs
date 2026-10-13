@@ -258,6 +258,7 @@ fn agent_with(
             secrets: Vec::new(),
             sandbox: None,
             notices,
+            scheduled: Vec::new(),
         }],
     }
 }

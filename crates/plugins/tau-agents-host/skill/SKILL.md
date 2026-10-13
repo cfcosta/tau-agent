@@ -136,6 +136,29 @@ one message; events that come while you work arrive at your next turn.
   turn costs money; short turns on routine events keep you under your
   cap.
 
+## Scheduling yourself
+
+What always wakes you belongs in `agent.luau`. What comes up as you
+work (check back on a pull request in two hours, look at a release
+on Friday, a routine you took on for the person) you schedule from
+your conversation, without a commit:
+
+- `schedule { name, note, in | on | every | at, days? }` wakes you
+  once, `in` a while (`"2h"`) or `on` a local date and time
+  (`"2026-10-13 09:00"`), or again and again, `every` interval
+  (`"6h"`) or `at` a local time (`"09:00"`) on some `days`. It reaches
+  you as an event from the trigger `name`, kind `scheduled`:
+  `{"note": "...", "due": 1791873000, "repeats": false}`. Write the
+  note for yourself then: what to look at and what to do.
+- Scheduling a `name` again replaces it, so an event that comes twice
+  does not schedule twice. A name cannot be one of your triggers'.
+- `scheduled {}` lists what is still to come, and the host's local
+  time now; `unschedule { name }` cancels one.
+- A minute ahead is the soonest, a year the furthest, and you may
+  have 100 at once. The person sees them on your page and may cancel
+  any. One that came due while tau was closed fires once when it
+  starts.
+
 ## Reaching the person and other agents
 
 The person is usually not watching. These tools reach out:

@@ -110,6 +110,60 @@ pub fn weekday(clock: &dyn Clock, at: i64) -> usize {
     (local_days(at, clock.offset(at)) + 3).rem_euclid(7) as usize
 }
 
+/// `at` as the host's local date and time, `YYYY-MM-DD HH:MM`: how an
+/// agent reads and writes a time of its own schedules.
+pub fn local(clock: &dyn Clock, at: i64) -> String {
+    let local = at + i64::from(clock.offset(at));
+    let (year, month, day) = civil(local.div_euclid(DAY));
+    let second = local.rem_euclid(DAY);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
+        second / 3600,
+        second % 3600 / 60
+    )
+}
+
+/// `YYYY-MM-DD HH:MM`, the host's local time, in seconds since the
+/// epoch.
+pub fn parse_local(clock: &dyn Clock, text: &str) -> Option<i64> {
+    let (date, time) = text.trim().split_once(' ')?;
+    let mut parts = date.split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: u32 = parts.next()?.parse().ok()?;
+    let day: u32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let days = days_from_civil(year, month, day)?;
+    let wall = days * DAY + crate::schedule::time_of_day(time)?;
+    // The offset is the one at that time, not now's: across a change
+    // of the clocks, the first guess is an hour out.
+    let guess = wall - i64::from(clock.offset(wall));
+    Some(wall - i64::from(clock.offset(guess)))
+}
+
+/// The days from 1970-01-01 to a calendar date, if it is one: the
+/// inverse of [`civil`].
+fn days_from_civil(year: i64, month: u32, day: u32) -> Option<i64> {
+    let long = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if !(1..=long).contains(&day) {
+        return None;
+    }
+    let year = year - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let yoe = year.rem_euclid(400);
+    let mp = i64::from((month + 9) % 12);
+    let doy = (153 * mp + 2) / 5 + i64::from(day) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
 /// The calendar date `days` after 1970-01-01, as Howard Hinnant's
 /// `civil_from_days` gives it.
 fn civil(days: i64) -> (i64, u32, u32) {
@@ -161,6 +215,25 @@ mod tests {
         assert_eq!(civil(-1), (1969, 12, 31));
         assert_eq!(civil(11_016), (2000, 2, 29));
         assert_eq!(civil(20_737), (2026, 10, 11));
+    }
+
+    #[test]
+    fn local_times_read_back_as_they_were_written() {
+        // 2026-10-11T23:30:00Z: Monday 02:30 three hours east.
+        let at = 1_791_761_400;
+        let east = FakeClock::new(at, 3 * 3600);
+        assert_eq!(local(&east, at), "2026-10-12 02:30");
+        assert_eq!(parse_local(&east, "2026-10-12 02:30"), Some(at));
+        assert_eq!(parse_local(&east, " 2026-10-12 02:30 "), Some(at));
+        assert_eq!(parse_local(&east, "2026-02-29 09:00"), None);
+        assert!(parse_local(&east, "2028-02-29 09:00").is_some());
+        assert_eq!(parse_local(&east, "2026-13-01 09:00"), None);
+        assert_eq!(parse_local(&east, "2026-10-12"), None);
+        assert_eq!(parse_local(&east, "2026-10-12 25:00"), None);
+        for days in [-1, 0, 11_016, 20_737] {
+            let (year, month, day) = civil(days);
+            assert_eq!(days_from_civil(year, month, day), Some(days));
+        }
     }
 
     #[test]

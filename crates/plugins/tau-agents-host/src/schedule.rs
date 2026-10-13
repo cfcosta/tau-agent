@@ -5,12 +5,16 @@
 //! fires once, with that time as `due`, and moves past now: a schedule
 //! that came due several times while tau was closed fires once.
 
-use tau_agents::TriggerKind;
+use tau_agents::{TriggerKind, When};
 
 use crate::clock::{self, Clock};
 
 /// The shortest interval a schedule may have: an event costs a turn.
 pub const SHORTEST: i64 = 60;
+
+/// The longest an agent may schedule ahead, or between two times one
+/// of its schedules fires.
+pub const LONGEST: i64 = 366 * DAY;
 
 const DAY: i64 = 86_400;
 
@@ -32,6 +36,28 @@ impl Schedule {
         let TriggerKind::Schedule { every, at, days } = kind else {
             return Err("not a schedule".into());
         };
+        Self::read(every.as_deref(), at.as_deref(), days)
+    }
+
+    /// What an agent scheduled for itself as a schedule, if it repeats;
+    /// `None` for one that fires once.
+    pub fn repeating(when: &When) -> Result<Option<Self>, String> {
+        match when {
+            When::Once { .. } => Ok(None),
+            When::Every { every } => {
+                Self::read(Some(every), None, &[]).map(Some)
+            }
+            When::Daily { at, days } => {
+                Self::read(None, Some(at), days).map(Some)
+            }
+        }
+    }
+
+    fn read(
+        every: Option<&str>,
+        at: Option<&str>,
+        days: &[String],
+    ) -> Result<Self, String> {
         match (every, at) {
             (Some(every), None) => {
                 let seconds = duration(every).ok_or_else(|| {

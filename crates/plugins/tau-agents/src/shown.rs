@@ -1,7 +1,7 @@
 //! How every interface words an agent: its state, what wakes it, and
 //! when, said relative to now so no window needs the host's time zone.
 
-use crate::{Agent, Status, Trigger, TriggerKind, valid_name};
+use crate::{Agent, Status, Trigger, TriggerKind, When, valid_name};
 
 /// Now, in seconds since the epoch.
 pub fn now() -> i64 {
@@ -54,11 +54,13 @@ impl Agent {
         self.notices.len() + usize::from(state)
     }
 
-    /// When the first of its triggers fires next, if any says.
+    /// When the first of its triggers, or of what it scheduled itself,
+    /// fires next, if any says.
     pub fn next(&self) -> Option<i64> {
         self.triggers
             .iter()
             .filter_map(|trigger| trigger.next)
+            .chain(self.scheduled.iter().map(|scheduled| scheduled.next))
             .min()
     }
 
@@ -80,6 +82,18 @@ impl Agent {
                 }
                 _ => None,
             })
+    }
+}
+
+impl When {
+    /// How often, in a few words: `once`, `every 15m`, `09:00 Mon Fri`.
+    pub fn label(&self) -> String {
+        match self {
+            When::Once { .. } => "once".to_owned(),
+            When::Every { every } => format!("every {every}"),
+            When::Daily { at, days } if days.is_empty() => at.clone(),
+            When::Daily { at, days } => format!("{at} {}", days.join(" ")),
+        }
     }
 }
 

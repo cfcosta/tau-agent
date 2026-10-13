@@ -1,6 +1,7 @@
 # 0037: Agents: a conversation that never ends, and rewrites itself
 
-- Status: accepted; the four steps of its order of work are built.
+- Status: accepted; the four steps of its order of work are built,
+  and agents schedule themselves (2026-10-12).
   Where it says `bash`, read `exec_command` and
   `write_stdin` ([0038](0038-commands-run-in-the-background.md)): the
   sandbox is their launcher. Builds on [0018](0018-codemode-and-mcp.md),
@@ -345,6 +346,37 @@ return tau.agent {
   while tau was closed, or before the phone connected), once, in one
   alert for the agent.
 
+### It schedules itself
+
+`agent.luau` holds what always wakes an agent. What comes up as it
+works (check back on a pull request in two hours, look at a release on
+Friday, a routine the person asked for in passing) would cost a commit
+and a reload each, and stay in its code after it is done. So its runs
+have three more tools:
+
+- `schedule { name, note, in | on | every | at, days? }` wakes it once,
+  `in` a duration or `on` a local date and time
+  (`"2026-10-13 09:00"`), or again and again, `every` interval or `at`
+  a local time on some `days`, as a schedule trigger does. When it
+  comes due, an event from the trigger `name`, kind `scheduled`,
+  carries `{ note, due, repeats }`: the note is what the agent left
+  itself for then. One that fires once goes when it fires.
+- Scheduling a name again replaces it, so an event delivered twice
+  does not schedule twice. A name cannot be one of its triggers'.
+- `scheduled` lists what is still to come, with the host's local time
+  now; `unschedule { name }` cancels one.
+- They are kept in tau's state beside its queue, not in its
+  repository: they are not versions, and a version that fails does not
+  touch them.
+- A minute ahead is the soonest, a year the furthest, and it may have
+  100 at once: an agent scheduling in a loop stops there rather than at
+  its cap. Each turn they cause counts against the cap as any does.
+- The person sees them on its page, under what wakes it, with their
+  notes, and may cancel any (`Act::Unschedule`). The agent learns of
+  that from `scheduled`, not from an event.
+- One that came due while tau was closed fires once on start, as a
+  declared schedule does.
+
 ### Creating one, and where it shows
 
 - **`/agent <purpose>`** from any composer makes its repository and
@@ -361,7 +393,7 @@ return tau.agent {
   its sub-agents at work folded under it.
 - **The agent's page is its conversation.** Event messages draw as
   compact cards in it. A side panel holds what wakes it (each trigger,
-  its last and next firing), its spend against its cap, its model,
+  its last and next firing, and what it scheduled itself), its spend against its cap, its model,
   its memory, its state, its versions of `agent.luau` with their
   tests, and its secrets by name.
 
@@ -371,7 +403,8 @@ There is no daemon yet (0013 left `tau-host` for later). On start,
 each agent catches up from what it stored:
 
 - a schedule that came due while tau was closed fires once, with the
-  first missed time as `due`, however many it missed;
+  first missed time as `due`, however many it missed, whether
+  `agent.luau` declares it or the agent scheduled it itself;
 - every poll runs at once;
 - streams reconnect, with `Last-Event-ID` where the server gave one;
 - MCP subscriptions subscribe again and read each resource once,
@@ -414,6 +447,9 @@ for it.
   convention a command can break. `bwrap` makes it a wall.
 - **Incoming webhooks now.** They need a public URL, a tunnel or a
   relay. Polls and streams cover most services until then.
+- **Scheduling only through `agent.luau`.** One place for what wakes
+  an agent, versioned; but a reminder costs a commit, a reload and a
+  test run, and the agent has to remember to take it out again.
 - **A daemon now.** Agents would run with the app closed, but the
   daemon is a larger change (0013), and catching up on start covers
   most of what it would.

@@ -179,14 +179,17 @@ pub(super) fn panel(
                 .child("At its cap it stops and waits. Only you can raise it."),
         )
         .children(allow);
-    let wakes =
-        section("What wakes it", &t).children(if agent.triggers.is_empty() {
-            vec![
-                div()
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child("Nothing yet: it declares this in its agent.luau."),
-            ]
+    let scheduled = scheduled(&agent, view, &t, now);
+    let wakes = section("What wakes it", &t)
+        .children(if agent.triggers.is_empty() {
+            if scheduled.is_empty() {
+                vec![div().typeset(Type::CAPTION).text_color(t.dim).child(
+                    "Nothing yet: it declares this in its agent.luau, or \
+                     schedules it from its conversation.",
+                )]
+            } else {
+                Vec::new()
+            }
         } else {
             agent
                 .triggers
@@ -251,7 +254,8 @@ pub(super) fn panel(
                     )
                 })
                 .collect()
-        });
+        })
+        .children(scheduled);
     let keys = secrets(&agent, view, &t);
     let left = super::notices::rows(&agent, view, &t);
     let versions = section("Versions", &t).children(
@@ -288,6 +292,94 @@ pub(super) fn panel(
             })
             .into_any_element(),
     )
+}
+
+/// What `agent` scheduled for itself, soonest first: what and when, the
+/// note it left itself under, and a way for the person to cancel it.
+fn scheduled(
+    agent: &Agent,
+    view: &mut ViewCx<'_, AgentsUi>,
+    t: &Theme,
+    now: i64,
+) -> Vec<Div> {
+    agent
+        .scheduled
+        .iter()
+        .map(|scheduled| {
+            let handle = view.handle.clone();
+            let (name, key) = (agent.name.clone(), scheduled.name.clone());
+            let cancel = div()
+                .id(SharedString::from(format!(
+                    "scheduled-{}-{}-cancel",
+                    agent.name, scheduled.name
+                )))
+                .size(rems(1.25))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(radius::SMALL)
+                .cursor_pointer()
+                .hover(|style| style.bg(t.raised))
+                .child(icon(Icon::Close, IconSize::SMALL, t.dim))
+                .on_click(move |_, _, cx| {
+                    handle.act(
+                        Act::Unschedule {
+                            agent: name.clone(),
+                            name: key.clone(),
+                        },
+                        cx,
+                    )
+                });
+            let repeats = !matches!(scheduled.when, crate::When::Once { .. });
+            let row = div()
+                .flex()
+                .items_center()
+                .gap(sp(2.))
+                .child(
+                    mono(
+                        if repeats { "repeats" } else { "once" },
+                        Type::MICRO,
+                        t.text_soft,
+                    )
+                    .px(sp(1.5))
+                    .py(sp(0.25))
+                    .rounded(radius::SMALL)
+                    .bg(t.raised),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .truncate()
+                        .typeset(Type::CAPTION)
+                        .text_color(t.text_soft)
+                        .child(if repeats {
+                            format!(
+                                "{} · {}",
+                                scheduled.name,
+                                scheduled.when.label()
+                            )
+                        } else {
+                            scheduled.name.clone()
+                        }),
+                )
+                .child(
+                    div()
+                        .typeset(Type::MICRO)
+                        .text_color(t.dim)
+                        .child(relative(scheduled.next, now)),
+                )
+                .child(cancel);
+            div().flex().flex_col().gap(sp(0.5)).child(row).child(
+                div()
+                    .typeset(Type::MICRO)
+                    .text_color(t.dim)
+                    .line_clamp(2)
+                    .child(scheduled.note.clone()),
+            )
+        })
+        .collect()
 }
 
 /// The secrets `agent` names, by name, and a way to save one: tau's
