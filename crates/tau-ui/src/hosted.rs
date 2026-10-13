@@ -39,6 +39,7 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_watcher::WatcherHost)
         .host(tau_schedule::ScheduleHost)
         .host(tau_ask::AskHost)
+        .host(tau_canvas::CanvasHost)
         .host(tau_direnv::DirenvHost)
         .host(tau_mcp_host::McpHost)
         .host(tau_skills::SkillsHost)

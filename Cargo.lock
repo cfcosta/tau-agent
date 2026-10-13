@@ -9481,6 +9481,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-canvas"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "futures-util",
+ "gpui-pre",
+ "hegeltest",
+ "image",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-artifacts",
+ "tau-store",
+ "tau-store-sqlite",
+ "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "tau-codemode"
 version = "0.1.0"
 dependencies = [
@@ -10146,6 +10174,7 @@ dependencies = [
  "tau-ai",
  "tau-artifacts",
  "tau-ask",
+ "tau-canvas",
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",
@@ -10239,6 +10268,7 @@ dependencies = [
  "tau-agents",
  "tau-ai",
  "tau-ask",
+ "tau-canvas",
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",

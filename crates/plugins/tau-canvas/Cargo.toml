@@ -1,0 +1,52 @@
+[package]
+name = "tau-canvas"
+description = "Lets a tau agent show the person images and write documents on a canvas beside the run, as a plugin."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The agent half: the canvas tools, and the storage that keeps the
+# images they show. The records, the fold and the views build without it.
+host = [
+  "dep:async-trait",
+  "dep:image",
+  "dep:schemars",
+  "dep:tau-artifacts",
+  "dep:tokio",
+  "dep:tokio-util",
+]
+# What tau-ui's demo puts on a canvas.
+demo = ["host"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait = { workspace = true, optional = true }
+base64.workspace = true
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+image = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-artifacts = { workspace = true, optional = true }
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+tracing = "0.1"
+
+[dev-dependencies]
+futures-util.workspace = true
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+hegeltest.workspace = true
+image = { workspace = true, features = ["png"] }
+tau-ai.workspace = true
+tau-store.workspace = true
+tau-store-sqlite.workspace = true
+tau-testing.workspace = true
+tau-ui-plugin = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

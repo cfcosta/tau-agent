@@ -324,6 +324,16 @@ pub static SCREENS: &[(&str, Screen)] = &[
             cx,
         )
     }),
+    // tau-canvas: a chart and a plan on the demo run's canvas, its
+    // pane open on the plan, on the chart, then on the plan's earlier
+    // revision.
+    ("canvas", |ws, host, cx| canvas(ws, host, None, cx)),
+    ("canvas-image", |ws, host, cx| {
+        canvas(ws, host, Some((1, 0)), cx)
+    }),
+    ("canvas-document", |ws, host, cx| {
+        canvas(ws, host, Some((2, 0)), cx)
+    }),
     ("ask", |ws, _, cx| ask(ws, "ask", cx)),
     ("ask-note", |ws, _, cx| ask(ws, "ask-note", cx)),
     ("ask-review", |ws, _, cx| ask(ws, "ask-review", cx)),
@@ -1465,6 +1475,78 @@ fn goal_at(
         };
         workspace.apply(HostUpdate::Event(event), cx);
     }
+}
+
+/// The demo run with tau-canvas's calls replayed on it, the chart kept
+/// in the repository's canvas storage, and its pane open: on the item
+/// revised last, or on `pick`'s item and revision.
+fn canvas(
+    workspace: &mut Workspace,
+    host: &DemoHost,
+    pick: Option<(u32, usize)>,
+    cx: &mut Context<Workspace>,
+) {
+    use tau_agent::{event::RunEvent, tool::ToolOutput};
+    let run = run_id();
+    let Some(repo) = host.repo("tau-agent") else {
+        return;
+    };
+    let calls = match host.block_on(tau_canvas::demo::seed(&repo.dir)) {
+        Ok(calls) => calls,
+        Err(error) => {
+            eprintln!("the demo's canvas: {error:#}");
+            return;
+        }
+    };
+    workspace.navigate(Route::Run(run.clone()), cx);
+    let fresh = calls.len() as u64;
+    for call in calls {
+        workspace.apply_event(
+            &RunEvent::ToolStart {
+                run: run.clone(),
+                call_id: call.id.into(),
+                tool: Arc::from(call.tool),
+                args: call.args,
+                parent: None,
+            },
+            cx,
+        );
+        workspace.apply(
+            HostUpdate::PluginFold {
+                run: run.clone(),
+                plugin: tau_canvas::NAME.into(),
+                body: serde_json::to_value(&call.record)
+                    .expect("a record serializes"),
+            },
+            cx,
+        );
+        workspace.apply_event(
+            &RunEvent::ToolEnd {
+                run: run.clone(),
+                call_id: call.id.into(),
+                output: Arc::new(ToolOutput::text(call.text)),
+                is_error: false,
+                parent: None,
+            },
+            cx,
+        );
+    }
+    if let Some((item, revision)) = pick
+        && let Some(ui) =
+            workspace.plugin_ui::<tau_canvas::ui::Ui>(tau_canvas::NAME)
+    {
+        ui.update(cx, |ui, _| {
+            ui.pick(
+                &run,
+                tau_canvas::ui::Pick {
+                    item,
+                    revision,
+                    fresh,
+                },
+            )
+        });
+    }
+    workspace.open_pane(cx);
 }
 
 /// The live demo run waiting on tau-ask's questions, its panel in the

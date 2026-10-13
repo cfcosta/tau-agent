@@ -27,6 +27,7 @@ tau-codemode.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true
 tau-ask = { path = "../plugins/tau-ask", default-features = false }
+tau-canvas = { path = "../plugins/tau-canvas", default-features = false }
 tau-direnv = { path = "../plugins/tau-direnv", default-features = false }
 tau-goal.workspace = true
 tau-schedule = { path = "../plugins/tau-schedule", default-features = false }

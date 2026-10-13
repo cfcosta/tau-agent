@@ -223,6 +223,17 @@ impl DemoHost {
         catalog
     }
 
+    /// The repository listed as `name`, as its host halves see it.
+    pub fn repo(&self, name: &str) -> Option<&RepoCtx> {
+        self.cx.repo(name)
+    }
+
+    /// Runs `future` on the demo's runtime: a screen putting in place
+    /// what a host half would have, such as an image the canvas kept.
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+
     /// Carries out what `plugin`'s UI asked, as a host would.
     pub fn act(
         &self,

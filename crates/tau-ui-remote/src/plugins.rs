@@ -92,6 +92,9 @@ pub fn plugins() -> Registry {
         // Questions the agent asks the person, answered in the
         // composer's place.
         .with(tau_ask::AskUi)
+        // What the agent shows the person: images and documents, in a
+        // pane beside the run.
+        .with(tau_canvas::CanvasUi)
         // Agent commands in the repository's direnv environment, once
         // the person allows it.
         .with(tau_direnv::DirenvUi)

@@ -27,6 +27,7 @@ tau-compaction.workspace = true
 tau-constitution.workspace = true
 tau-constitution-host = { workspace = true, features = ["demo"] }
 tau-ask.workspace = true
+tau-canvas = { workspace = true, features = ["demo"] }
 tau-skills = { workspace = true, features = ["demo"] }
 tau-direnv.workspace = true
 tau-schedule.workspace = true

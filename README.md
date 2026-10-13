@@ -120,6 +120,7 @@ cards and shapes every interface draws, which a phone links, and a
 | `tau-watcher`           | Every 6th step, rarely, a note on what you likely missed (off by default) |
 | `tau-reasoning`         | Picks a run's reasoning effort from its task, with Jev                    |
 | `tau-ask`               | The `ask` tool: structured questions to the person                        |
+| `tau-canvas`            | Images and documents the agent shows you, in a pane beside the run        |
 | `tau-skills`            | Skills from `~/.agents/skills`, loaded with the `skill` tool              |
 | `tau-direnv`            | Runs commands in the repository's direnv environment, once allowed        |
 | `tau-schedule`          | A chat wakes itself later, once, with a note to itself                    |
