@@ -65,6 +65,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("agent-details", |ws, host, cx| {
         agents(ws, host, AgentsAt::Details, cx)
     }),
+    // A chat that woke on what it scheduled (ADR 0039), with more to
+    // come in its inspector.
+    ("scheduled", |ws, host, cx| scheduled(ws, host, cx)),
     ("ledger", |ws, _, cx| {
         let run = run_id().0.to_string();
         let page = Route::Plugin {
@@ -1980,4 +1983,123 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     // On main; a phone shows its list of runs.
     workspace.navigate(Route::Run(main), cx);
     workspace.navigate(Route::Home, cx);
+}
+
+/// A chat that scheduled itself a look at a review, woke on it, and has
+/// two more waiting.
+fn scheduled(ws: &mut Workspace, host: &DemoHost, cx: &mut Context<Workspace>) {
+    use tau_ai::message::{
+        AssistantBlock,
+        AssistantMessage,
+        Message,
+        StopReason,
+        TextContent,
+        Usage,
+        UserContent,
+        UserMessage,
+    };
+    use tau_schedule::{Overview, Wake, Woken};
+    use tau_ui_plugin::Group;
+
+    let now = tau_agents::shown::now();
+    let run = RunId("scheduled-review".into());
+    let wake = |name: &str, at: i64, note: &str| Wake {
+        run: run.0.to_string(),
+        name: name.into(),
+        note: note.into(),
+        at,
+        made: now - 2 * 3600,
+    };
+    let overview = Overview {
+        wakes: vec![
+            wake(
+                "recheck-415",
+                now + 2 * 3600,
+                "If #415 has its second approval, land it; if CI is red, \
+                 read the failing job before touching anything.",
+            ),
+            wake(
+                "release-notes",
+                now + 26 * 3600,
+                "Tomorrow's release: check the notes mention the plugins \
+                 tree change from #412.",
+            ),
+        ],
+    };
+    let mut catalog = ws.catalog().clone();
+    let info = crate::catalog::PluginInfo {
+        name: tau_schedule::NAME.into(),
+        description: "Chats wake themselves later, with a note".into(),
+        group: Group::Tools,
+        page: None,
+        seams: Vec::new(),
+        spend: 0.0,
+        note: None,
+        entries: Vec::new(),
+        settings: false,
+    };
+    let data = PluginValue::typed(overview);
+    catalog.plugins.retain(|plugin| plugin.name != info.name);
+    catalog.plugins.push(info.clone());
+    catalog
+        .plugin_data
+        .insert(tau_schedule::NAME.into(), data.clone());
+    host.pin(info, data);
+    ws.set_catalog(catalog, cx);
+
+    let text = |text: &str| {
+        Message::Assistant(AssistantMessage {
+            content: vec![AssistantBlock::Text(TextContent {
+                text: text.into(),
+                text_signature: None,
+            })],
+            model: "gpt-6-sol".into(),
+            response_id: None,
+            usage: Usage::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        })
+    };
+    let user = |text: String| {
+        Message::User(UserMessage {
+            content: UserContent::Text(text),
+            timestamp: 0,
+        })
+    };
+    let messages = [
+        user(
+            "Open a PR for the retry jitter fix and keep an eye on its \
+             review."
+                .into(),
+        ),
+        text(
+            "Opened #415. Reviews here take a few hours, so I scheduled \
+             myself a look at 14:00.",
+        ),
+        user(tau_schedule::message(&[Woken {
+            name: "look-at-415".into(),
+            due: "2026-10-12 14:00".into(),
+            note: "Read #415's review. Answer what you can; if a change \
+                   is asked for, make it and push."
+                .into(),
+        }])),
+        text(
+            "One approval, and a question on the jitter's upper bound: I \
+             answered with the numbers from the backoff test and pushed a \
+             comment on the constant. CI is running; I will look again in \
+             two hours.",
+        ),
+    ];
+    let view = RunView::from_messages(
+        run.clone(),
+        "Retry jitter fix",
+        "coder",
+        "gpt-6-sol",
+        &messages,
+    )
+    .in_repo("tau-agent");
+    ws.apply(HostUpdate::Run(Box::new(view)), cx);
+    ws.navigate(Route::Run(run), cx);
+    ws.toggle_details(cx);
 }

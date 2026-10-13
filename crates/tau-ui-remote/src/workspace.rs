@@ -1627,7 +1627,7 @@ impl Workspace {
     }
 
     /// Opens or closes the run's details beside the transcript.
-    pub(crate) fn toggle_details(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_details(&mut self, cx: &mut Context<Self>) {
         self.details_open = !self.details_open;
         cx.notify();
     }
