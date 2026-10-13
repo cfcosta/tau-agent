@@ -8,6 +8,8 @@
 use tau_agents::{TriggerKind, When};
 
 use crate::clock::{self, Clock};
+/// Durations and times of day, as tau-schedule reads them for chats too.
+pub use crate::clock::{duration, time_of_day};
 
 /// The shortest interval a schedule may have: an event costs a turn.
 pub const SHORTEST: i64 = 60;
@@ -119,30 +121,6 @@ impl Schedule {
             Self::At { .. } => self.first_after(now.max(due), clock),
         }
     }
-}
-
-/// `text` as seconds: a number, then `s`, `m`, `h` or `d`.
-pub fn duration(text: &str) -> Option<i64> {
-    let text = text.trim();
-    let unit = text.chars().last()?;
-    let number: i64 = text[..text.len() - unit.len_utf8()].parse().ok()?;
-    let scale = match unit {
-        's' => 1,
-        'm' => 60,
-        'h' => 3600,
-        'd' => DAY,
-        _ => return None,
-    };
-    (number > 0).then(|| number.checked_mul(scale)).flatten()
-}
-
-/// `HH:MM` as seconds into the day.
-pub fn time_of_day(text: &str) -> Option<i64> {
-    let (hours, minutes) = text.trim().split_once(':')?;
-    let (hours, minutes): (i64, i64) =
-        (hours.parse().ok()?, minutes.parse().ok()?);
-    ((0..24).contains(&hours) && (0..60).contains(&minutes))
-        .then_some(hours * 3600 + minutes * 60)
 }
 
 #[cfg(test)]

@@ -87,6 +87,8 @@ pub fn plugins() -> Registry {
         .with(tau_luau_plugins::LuauPluginsUi)
         // Agents: their pages, and what their conversations show.
         .with(tau_agents::AgentsUi)
+        // A chat's wake-ups, which it schedules for itself.
+        .with(tau_schedule::ScheduleUi)
         // Questions the agent asks the person, answered in the
         // composer's place.
         .with(tau_ask::AskUi)

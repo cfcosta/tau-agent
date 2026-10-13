@@ -1,0 +1,36 @@
+[package]
+name = "tau-schedule"
+description = "A tau chat wakes itself later, once, with a note to itself; and the clock agents' schedules go by (ADR 0039)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The host half: the clock, what chats scheduled, kept on the host, and
+# the turns that wake them. The types, the message and the views build
+# without it.
+host = ["dep:anyhow", "dep:async-trait", "dep:libc", "dep:tau-agents", "dep:tokio"]
+
+[dependencies]
+anyhow = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+# The host's offset from UTC, for times in its local time.
+libc = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+# Where agents' repositories are: their runs schedule with their own
+# tool, which also repeats (ADR 0037).
+tau-agents = { workspace = true, optional = true }
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
+tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
+
+[dev-dependencies]
+tau-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time"] }
+tokio-util.workspace = true

@@ -376,6 +376,10 @@ have three more tools:
   that from `scheduled`, not from an event.
 - One that came due while tau was closed fires once on start, as a
   declared schedule does.
+- Other chats schedule once only, through tau-schedule
+  ([0039](0039-chats-wake-themselves-later.md)); repeating is an
+  agent's alone. An agent's runs take this `schedule` in place of
+  tau-schedule's.
 
 ### Creating one, and where it shows
 

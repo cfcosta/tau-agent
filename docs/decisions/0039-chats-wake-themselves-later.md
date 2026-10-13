@@ -24,9 +24,11 @@ make one safe to leave running.
 
 - **A built-in plugin, `tau-schedule`**, with a host half (ADR 0030)
   and a UI half, listed under Plugins like the others.
-- **Its tools, in every main chat and chat** but an agent's, whose own
-  `schedule` takes their place, and no sub-agent's, which ends and
-  lands:
+- **Its tools, in every run** but an agent's, whose own `schedule`
+  takes their place. A sub-agent has them too, so main, its chats and
+  its sub-agents keep one prompt prefix, but its `schedule` refuses: it
+  ends and lands, so nothing would wake it, and it says in its answer
+  what the chat that started it should schedule.
   - `schedule { name, note, in | on }` wakes the chat once, `in` a
     duration (`"2h"`) or `on` a local date and time
     (`"2026-10-13 09:00"`). A minute ahead is the soonest, a year the

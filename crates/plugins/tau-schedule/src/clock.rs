@@ -1,5 +1,7 @@
 //! The host's clock: what time it is, and the host's local days, which
-//! an agent's schedules and its daily cap go by (ADR 0037).
+//! an agent's schedules and its daily cap go by (ADR 0037), and what a
+//! chat schedules for itself (ADR 0039); durations and times of day as
+//! both write them.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -74,6 +76,30 @@ impl Clock for FakeClock {
 
 const DAY: i64 = 86_400;
 
+/// `text` as seconds: a number, then `s`, `m`, `h` or `d`.
+pub fn duration(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let unit = text.chars().last()?;
+    let number: i64 = text[..text.len() - unit.len_utf8()].parse().ok()?;
+    let scale = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        'd' => DAY,
+        _ => return None,
+    };
+    (number > 0).then(|| number.checked_mul(scale)).flatten()
+}
+
+/// `HH:MM` as seconds into the day.
+pub fn time_of_day(text: &str) -> Option<i64> {
+    let (hours, minutes) = text.trim().split_once(':')?;
+    let (hours, minutes): (i64, i64) =
+        (hours.parse().ok()?, minutes.parse().ok()?);
+    ((0..24).contains(&hours) && (0..60).contains(&minutes))
+        .then_some(hours * 3600 + minutes * 60)
+}
+
 /// The local day `at` falls on, counted from 1970-01-01.
 fn local_days(at: i64, offset: i32) -> i64 {
     (at + i64::from(offset)).div_euclid(DAY)
@@ -135,7 +161,7 @@ pub fn parse_local(clock: &dyn Clock, text: &str) -> Option<i64> {
         return None;
     }
     let days = days_from_civil(year, month, day)?;
-    let wall = days * DAY + crate::schedule::time_of_day(time)?;
+    let wall = days * DAY + time_of_day(time)?;
     // The offset is the one at that time, not now's: across a change
     // of the clocks, the first guess is an hour out.
     let guess = wall - i64::from(clock.offset(wall));

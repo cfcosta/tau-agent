@@ -122,6 +122,7 @@ cards and shapes every interface draws, which a phone links, and a
 | `tau-ask`               | The `ask` tool: structured questions to the person                        |
 | `tau-skills`            | Skills from `~/.agents/skills`, loaded with the `skill` tool              |
 | `tau-direnv`            | Runs commands in the repository's direnv environment, once allowed        |
+| `tau-schedule`          | A chat wakes itself later, once, with a note to itself                    |
 | `tau-jev`               | A client for Jev, TypeSafe's System One model, shared by plugins          |
 
 Evaluations, under `crates/evals/`:

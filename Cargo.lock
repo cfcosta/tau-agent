@@ -9394,7 +9394,6 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "futures-util",
- "libc",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -9404,6 +9403,7 @@ dependencies = [
  "tau-ai",
  "tau-artifacts",
  "tau-luau-plugins-host",
+ "tau-schedule",
  "tau-skills",
  "tau-testing",
  "tau-tools",
@@ -9947,6 +9947,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-schedule"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "gpui-pre",
+ "libc",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-agents",
+ "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "tau-skills"
 version = "0.1.0"
 dependencies = [
@@ -10141,6 +10161,7 @@ dependencies = [
  "tau-memory-host",
  "tau-reasoning",
  "tau-remote",
+ "tau-schedule",
  "tau-skills",
  "tau-store",
  "tau-store-sqlite",
@@ -10229,6 +10250,7 @@ dependencies = [
  "tau-memory",
  "tau-reasoning",
  "tau-remote",
+ "tau-schedule",
  "tau-skills",
  "tau-store",
  "tau-terminal",

@@ -40,8 +40,8 @@ tokio = { workspace = true, features = ["net"] }
 # Websocket streams.
 tokio-tungstenite.workspace = true
 tokio-util.workspace = true
-# The host's offset from UTC, for schedules in its local time.
-libc.workspace = true
+# The clock and local days its schedules go by, which chats' share.
+tau-schedule.workspace = true
 
 [dev-dependencies]
 tau-testing.workspace = true

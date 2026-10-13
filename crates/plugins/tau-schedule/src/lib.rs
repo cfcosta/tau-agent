@@ -1,0 +1,160 @@
+//! tau-schedule: a chat wakes itself later
+//! ([ADR 0039](../../../docs/decisions/0039-chats-wake-themselves-later.md)).
+//!
+//! A chat's `schedule` tool leaves it a note for a time to come; when
+//! that time comes, the chat takes a turn of tau's on the note. Once
+//! only: repeating is for agents (ADR 0037), whose own `schedule` takes
+//! this one's place in their runs.
+//!
+//! - [`Wake`], [`Overview`]: what chats have waiting, for every
+//!   interface.
+//! - [`Act`]: what the interface asks the host.
+//! - [`message`], [`Woken::parse`]: the message a chat wakes on.
+//! - `clock` (with `host`): the host's time and local days, which
+//!   agents' schedules go by too.
+//! - `host` (with `host`): what chats scheduled, kept on the host, and
+//!   the turns that wake them.
+
+#[cfg(feature = "host")]
+pub mod clock;
+#[cfg(feature = "host")]
+pub mod host;
+pub mod ui;
+
+#[cfg(feature = "host")]
+pub use host::{Made, Plan, ScheduleHost, Schedules};
+use serde::{Deserialize, Serialize};
+pub use ui::ScheduleUi;
+
+/// The plugin's name, for both its halves.
+pub const NAME: &str = "tau-schedule";
+
+/// The most a chat may have waiting: one that schedules in a loop stops
+/// here.
+pub const MAX_WAITING: usize = 100;
+
+/// A wake-up a chat scheduled for itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Wake {
+    /// The chat it wakes.
+    pub run: String,
+    /// Its own among the chat's: what cancelling it names.
+    pub name: String,
+    /// What the chat left itself for then.
+    pub note: String,
+    /// When it comes due, in seconds since the epoch.
+    pub at: i64,
+    /// When the chat scheduled it.
+    pub made: i64,
+}
+
+/// What every chat has waiting, soonest first.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Overview {
+    pub wakes: Vec<Wake>,
+}
+
+impl Overview {
+    /// What the chat `run` has waiting, soonest first.
+    pub fn of_run<'a>(
+        &'a self,
+        run: &'a str,
+    ) -> impl Iterator<Item = &'a Wake> {
+        self.wakes.iter().filter(move |wake| wake.run == run)
+    }
+}
+
+/// What the interface asks the host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "act", rename_all = "snake_case")]
+pub enum Act {
+    /// The person cancelled what the chat `run` scheduled as `name`.
+    Cancel { run: String, name: String },
+}
+
+/// The message a chat wakes on: one block per wake-up that came due,
+/// its name and when, in the host's local time, then its note.
+///
+/// ```text
+/// [scheduled · recheck · 2026-10-13 09:30]
+/// Did #412 merge? If not, look at what its review asks.
+/// ```
+pub fn message(woken: &[Woken]) -> String {
+    woken
+        .iter()
+        .map(|woken| {
+            format!(
+                "[scheduled · {} · {}]\n{}",
+                woken.name, woken.due, woken.note
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// One wake-up in the message a chat wakes on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Woken {
+    pub name: String,
+    /// When it came due, `YYYY-MM-DD HH:MM` in the host's local time.
+    pub due: String,
+    pub note: String,
+}
+
+impl Woken {
+    /// `text` as the wake-ups of a message tau wrote, if it is one: the
+    /// card the interface draws in its place.
+    pub fn parse(text: &str) -> Option<Vec<Woken>> {
+        let mut woken: Vec<Woken> = Vec::new();
+        for line in text.lines() {
+            let head = line
+                .strip_prefix("[scheduled · ")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .and_then(|rest| rest.split_once(" · "));
+            match (head, woken.last_mut()) {
+                (Some((name, due)), _) => woken.push(Woken {
+                    name: name.to_owned(),
+                    due: due.to_owned(),
+                    note: String::new(),
+                }),
+                (None, Some(last)) => {
+                    if !last.note.is_empty() {
+                        last.note.push('\n');
+                    }
+                    last.note.push_str(line);
+                }
+                (None, None) => return None,
+            }
+        }
+        for woken in &mut woken {
+            woken.note = woken.note.trim_end().to_owned();
+        }
+        (!woken.is_empty()).then_some(woken)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_message_reads_back_as_written() {
+        let woken = vec![
+            Woken {
+                name: "recheck".into(),
+                due: "2026-10-13 09:30".into(),
+                note: "Did #412 merge?\nIf not, read its review.".into(),
+            },
+            Woken {
+                name: "release".into(),
+                due: "2026-10-13 09:31".into(),
+                note: "Is 1.4 out?".into(),
+            },
+        ];
+        let text = message(&woken);
+        assert!(text.starts_with("[scheduled · recheck · 2026-10-13 09:30]\n"));
+        assert_eq!(Woken::parse(&text), Some(woken));
+        assert_eq!(Woken::parse("Did #412 merge?"), None);
+        assert_eq!(Woken::parse(""), None);
+    }
+}

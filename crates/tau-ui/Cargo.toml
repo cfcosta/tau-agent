@@ -29,6 +29,7 @@ tau-constitution-host = { workspace = true, features = ["demo"] }
 tau-ask.workspace = true
 tau-skills = { workspace = true, features = ["demo"] }
 tau-direnv.workspace = true
+tau-schedule.workspace = true
 tau-goal = { workspace = true, features = ["demo"] }
 tau-agents.workspace = true
 tau-luau-plugins.workspace = true

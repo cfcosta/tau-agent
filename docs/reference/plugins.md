@@ -848,6 +848,26 @@ Built: `crates/plugins/tau-watcher`. Its reference is
 - **State:** records only: `noted`, `dropped`, `typed_past`, `answered`.
   The interface stores the answers itself.
 
+### `tau-schedule`: a chat wakes itself later
+
+Built: `crates/plugins/tau-schedule`, with its host half behind its
+`host` feature. Its decision is
+[0039](../decisions/0039-chats-wake-themselves-later.md).
+
+- **Tools**, in every run but an agent's (whose own `schedule` also
+  repeats, 0037): `schedule { name, note, in | on }`, `scheduled {}`
+  and `unschedule { name }`. Each reads its chat from its call's run.
+  A sub-agent's `schedule` refuses, saying to hand it back: the tools
+  are there so its prompt prefix stays main's.
+- **Waking:** the host half looks every second for what came due, and
+  wakes each such chat through `Conversations::wake` with one message
+  of tau's holding every note due. A chat with a turn going waits for
+  it; one that landed or was dropped loses what it had waiting.
+- **State:** `wakes.json` in its plugin directory, by chat, written
+  whole on each change; nothing in the run's records. The interface
+  reads it as the plugin's data: the inspector's Scheduled section, and
+  the card a wake-up's message draws as.
+
 ## What changed in tau-agent
 
 1. `Plugin`, `PluginRun`, `PluginCtx`, `RunPlan`, `ContextView`,

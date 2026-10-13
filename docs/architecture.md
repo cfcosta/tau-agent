@@ -43,6 +43,8 @@ tau-agent/
 │       ├── tau-mcp/              # MCP servers' tools (rmcp), the Servers page
 │       ├── tau-memory/           # linked notes each repository's runs keep
 │       ├── tau-reasoning/        # picks a run's reasoning effort
+│       ├── tau-schedule/         # a chat wakes itself later, once; the
+│       │                         # clock agents' schedules go by (ADR 0039)
 │       ├── tau-skills/           # instructions an agent loads when a task
 │       │                         # calls for them
 │       ├── tau-tools/            # read, exec_command, write_stdin, edit, ...

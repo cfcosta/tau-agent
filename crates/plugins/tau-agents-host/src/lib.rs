@@ -22,7 +22,6 @@
 
 mod agents;
 pub mod artifacts;
-pub mod clock;
 pub mod env;
 mod half;
 pub mod poll;
@@ -44,6 +43,9 @@ pub use agents::{
 pub use half::AgentsHost;
 pub use tau_agents::{NAME, ROOT, SKILL};
 use tau_luau_plugins_host::runtime::Root;
+/// The host's clock and local days, which tau-schedule keeps for chats
+/// and agents alike.
+pub use tau_schedule::clock;
 
 /// An agent's repository as a folder: `agent.luau`, required as
 /// `agent`, with its modules under `lib/` and its tests under `tests/`.
