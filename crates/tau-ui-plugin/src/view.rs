@@ -181,6 +181,8 @@ pub enum Request {
     Composer(String),
     /// Shows the run's details: the inspector, or a phone's sheet.
     RunDetails,
+    /// Opens the pane of the run in view ([`crate::points::PANE`]).
+    OpenPane,
     /// Sends what the composer holds, as Enter in it would.
     Submit,
     /// Draws the interface again.
@@ -341,6 +343,11 @@ impl Handle {
 
     pub fn run_details(&self, cx: &mut App) {
         self.request(Request::RunDetails, cx);
+    }
+
+    /// Opens the pane of the run in view ([`crate::points::PANE`]).
+    pub fn open_pane(&self, cx: &mut App) {
+        self.request(Request::OpenPane, cx);
     }
 
     pub fn refresh(&self, cx: &mut App) {

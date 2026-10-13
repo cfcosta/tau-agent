@@ -254,6 +254,7 @@ impl Workspace {
                     self.toggle_sheet(cx);
                 }
             }
+            Request::OpenPane => self.open_pane(cx),
             Request::Submit => self.submit_from_button(cx),
             Request::Refresh => {}
             Request::OpenRun(run) => self.navigate(Route::Run(run), cx),

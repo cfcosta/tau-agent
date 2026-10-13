@@ -454,6 +454,14 @@ pub struct Workspace {
     /// Whether the person opened the run's details: the inspector,
     /// beside the transcript. Closed, the transcript has the width.
     pub(crate) details_open: bool,
+    /// Runs whose pane ([`tau_ui_plugin::points::PANE`]) is open.
+    pane_open: HashSet<RunId>,
+    /// How fresh each run's pane was when last drawn: it opens once it
+    /// grew since.
+    pane_seen: HashMap<RunId, u64>,
+    /// The title of the current run's pane, when a plugin draws one; set
+    /// as the workspace draws.
+    pub(crate) pane_title: Option<String>,
     /// How large the interface is drawn: 1 is as designed. Every size
     /// is in rems, so this sets the rem.
     pub(crate) zoom: f32,
@@ -757,6 +765,9 @@ impl Workspace {
             run_models: HashMap::new(),
             inspector_shown: false,
             details_open: false,
+            pane_open: HashSet::new(),
+            pane_seen: HashMap::new(),
+            pane_title: None,
             zoom: 1.,
             interface_settings: None,
             runs_filter: Default::default(),
@@ -1626,10 +1637,76 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Opens or closes the run's details beside the transcript.
+    /// Opens or closes the run's details beside the transcript. With the
+    /// run's pane open in their place, the pane closes for them.
     pub fn toggle_details(&mut self, cx: &mut Context<Self>) {
-        self.details_open = !self.details_open;
+        let paned = self.pane_title.is_some()
+            && self
+                .current()
+                .is_some_and(|run| self.pane_open.contains(&run.id));
+        if paned {
+            if let Some(run) = self.current().map(|run| run.id.clone()) {
+                self.pane_open.remove(&run);
+            }
+            self.details_open = true;
+        } else {
+            self.details_open = !self.details_open;
+        }
         cx.notify();
+    }
+
+    /// Whether the pane of `run` is open.
+    pub fn pane_is_open(&self, run: &RunId) -> bool {
+        self.pane_open.contains(run)
+    }
+
+    /// Opens or closes the current run's pane.
+    pub fn toggle_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(run) = self.current().map(|run| run.id.clone())
+            && !self.pane_open.remove(&run)
+        {
+            self.pane_open.insert(run);
+        }
+        cx.notify();
+    }
+
+    /// Opens the current run's pane, as a plugin asked.
+    pub fn open_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(run) = self.current().map(|run| run.id.clone()) {
+            self.pane_open.insert(run);
+        }
+        cx.notify();
+    }
+
+    /// What a plugin shows in the current run's pane, when one does. The
+    /// pane opens when it has something new since the run was last
+    /// drawn; a run drawn for the first time with something there keeps
+    /// it closed.
+    pub(super) fn run_pane(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<tau_ui_plugin::points::PaneView> {
+        let run = self
+            .current()
+            .filter(|_| matches!(self.route, Route::Home | Route::Run(_)))?;
+        let id = run.id.clone();
+        let pane = self
+            .contributions(
+                tau_ui_plugin::points::PANE,
+                &tau_ui_plugin::points::AtRun { run: run.info() },
+                cx,
+            )
+            .into_iter()
+            .next();
+        let fresh = pane.as_ref().map_or(0, |pane| pane.fresh);
+        if self
+            .pane_seen
+            .insert(id.clone(), fresh)
+            .is_some_and(|seen| fresh > seen)
+        {
+            self.pane_open.insert(id);
+        }
+        pane
     }
 
     /// Whether `run` can be forked at all. Runs nest one level (ADR

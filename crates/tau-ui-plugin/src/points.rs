@@ -120,6 +120,17 @@ pub struct CardView {
     pub inset: bool,
 }
 
+/// What a plugin shows in a run's pane ([`PANE`]).
+pub struct PaneView {
+    /// What the pane's bar, and the button that opens it, call it.
+    pub title: String,
+    /// Grows each time the plugin has something new to show: the
+    /// interface opens the pane when it grew since the run was last
+    /// drawn.
+    pub fresh: u64,
+    pub body: gpui::AnyElement,
+}
+
 impl PointCx for AtCard {
     fn run(&self) -> Option<&RunInfo> {
         Some(&self.run)
@@ -189,8 +200,15 @@ pub const COMPOSER_BAND: Point<AtRun> = Point::new("tau.run.composer.band");
 /// setting the plugin keeps per repository.
 pub const REPO_MENU: Point<AtRepo> = Point::new("tau.sidebar.repo.menu");
 
+/// A wide pane beside a run's transcript, for what the run made for the
+/// person to look at: a canvas. The first contribution draws it, in the
+/// inspector's place on a desktop and over the run on a phone, while the
+/// person keeps it open. A plugin opens it with
+/// [`crate::Handle::open_pane`].
+pub const PANE: Point<AtRun, PaneView> = Point::new("tau.run.pane");
+
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 23] = [
+pub const ALL: [&str; 24] = [
     CARD.name,
     TRANSCRIPT.name,
     REWRITE.name,
@@ -214,4 +232,5 @@ pub const ALL: [&str; 23] = [
     COMPOSER.name,
     COMPOSER_BAND.name,
     REPO_MENU.name,
+    PANE.name,
 ];

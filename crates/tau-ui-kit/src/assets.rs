@@ -80,6 +80,8 @@ pub enum Icon {
     Clock,
     /// A run that stopped with an error.
     Failed,
+    /// A picture: what a run shows the person on its canvas.
+    Image,
 }
 
 impl Icon {
@@ -138,6 +140,7 @@ impl Icon {
             Self::Closed => "icons/closed.svg",
             Self::Clock => "icons/clock.svg",
             Self::Failed => "icons/failed.svg",
+            Self::Image => "icons/image.svg",
         }
     }
 
@@ -266,10 +269,13 @@ impl Icon {
             Self::Failed => {
                 r#"<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>"#
             }
+            Self::Image => {
+                r#"<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>"#
+            }
         }
     }
 
-    const ALL: [Self; 53] = [
+    const ALL: [Self; 54] = [
         Self::Check,
         Self::Spinner,
         Self::Blocked,
@@ -323,6 +329,7 @@ impl Icon {
         Self::Closed,
         Self::Clock,
         Self::Failed,
+        Self::Image,
     ];
 
     fn svg(self) -> String {

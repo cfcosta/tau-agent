@@ -1305,6 +1305,7 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Option<Div> {
 pub fn phone_run_bar(
     run: &RunView,
     main: bool,
+    pane: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
@@ -1361,6 +1362,13 @@ pub fn phone_run_bar(
             bar.child(icon_button("phone-close", Icon::Close, 44., t).on_click(
                 cx.listener(move |ws, _, _, cx| ws.close_run_to_list(&id, cx)),
             ))
+        })
+        // What a plugin shows in the run's pane.
+        .when(pane, |bar| {
+            bar.child(
+                icon_button("phone-pane", Icon::Image, 44., t)
+                    .on_click(cx.listener(|ws, _, _, cx| ws.toggle_pane(cx))),
+            )
         })
         .child(
             icon_button("phone-details", Icon::Panel, 44., t)

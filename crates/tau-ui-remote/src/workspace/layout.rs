@@ -46,14 +46,21 @@ impl Render for Workspace {
         // widths they would for a window that much smaller.
         let phone = self.phone_preview || width / self.zoom < PHONE_MAX;
         self.width = if self.phone_preview { px(390.) } else { width };
+        // A run's pane, while open, takes the inspector's place.
+        let pane = self.run_pane(cx);
+        self.pane_title = pane.as_ref().map(|pane| pane.title.clone());
+        let pane = pane.filter(|_| {
+            self.current().is_some_and(|run| self.pane_is_open(&run.id))
+        });
         self.inspector_shown = !phone
             && width / self.zoom >= NARROW_MAX
             && self.details_open
+            && pane.is_none()
             && matches!(self.route, Route::Home | Route::Run(_));
         let body = if phone {
-            self.phone(&t, cx)
+            self.phone(pane, &t, cx)
         } else {
-            self.desktop(width / self.zoom >= NARROW_MAX, &t, cx)
+            self.desktop(width / self.zoom >= NARROW_MAX, pane, &t, cx)
         };
         // Drawing found nothing in the composer's place where something
         // was: the composer takes the keys back.
@@ -412,6 +419,10 @@ impl Workspace {
             && run.status == RunStatus::Finished(StopReason::Stop)
             && !self.is_main(&run.id);
         let id = run.id.clone();
+        // With the run's pane open the header has half the width: the
+        // context meter goes.
+        let paned = self.pane_title.is_some() && self.pane_is_open(&run.id);
+        let window = window.filter(|_| !paned);
         div()
             .h(rems(3.))
             .flex_shrink_0()
@@ -428,6 +439,7 @@ impl Workspace {
                     .items_center()
                     .gap(sp(1.5))
                     .min_w(rems(0.))
+                    .overflow_hidden()
                     .child(div().text_color(t.mark(&repo)).child(repo))
                     .child(div().text_color(t.dim).child("/"))
                     .child(
@@ -554,6 +566,16 @@ impl Workspace {
                         })),
                 )
             })
+            // What a plugin shows in the run's pane, in the inspector's
+            // place; the pane's own bar closes it.
+            .children(self.pane_title.clone().filter(|_| !paned).map(|title| {
+                div()
+                    .id("pane")
+                    .child(ui::button(title, ButtonKind::Secondary, t).child(
+                        ui::icon(Icon::Image, IconSize::COMPACT, t.text_soft),
+                    ))
+                    .on_click(cx.listener(|ws, _, _, cx| ws.toggle_pane(cx)))
+            }))
             // The run's details beside the transcript: its plugins,
             // budget and events.
             .when(self.width >= NARROW_MAX, |header| {
@@ -561,7 +583,7 @@ impl Workspace {
                     div()
                         .id("details")
                         .child(ui::button(
-                            if self.details_open {
+                            if self.details_open && !paned {
                                 "Hide details"
                             } else {
                                 "Details"
@@ -796,16 +818,76 @@ impl Workspace {
         }
     }
 
+    /// A run's pane: its bar, with what the plugin calls it and a button
+    /// that closes it, over what the plugin draws. On a phone it covers
+    /// the run.
+    pub(super) fn pane(
+        &self,
+        pane: tau_ui_plugin::points::PaneView,
+        compact: bool,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let bar = div()
+            .h(rems(if compact { 3.5 } else { 3. }))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(sp(2.))
+            .px(sp(if compact { 1.5 } else { 4. }))
+            .border_b_1()
+            .border_color(t.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(rems(0.))
+                    .truncate()
+                    .typeset(if compact { Type::LEAD } else { Type::SMALL })
+                    .font_weight(weight::STRONG)
+                    .when(compact, |title| title.pl(sp(2.5)))
+                    .child(pane.title),
+            )
+            .child(
+                tau_ui_kit::components::icon_button(
+                    "pane-close",
+                    Icon::Close,
+                    if compact { 44. } else { 28. },
+                    t,
+                )
+                .on_click(cx.listener(|ws, _, _, cx| ws.toggle_pane(cx))),
+            );
+        div()
+            .flex()
+            .flex_col()
+            .min_w(rems(0.))
+            .min_h(rems(0.))
+            .bg(t.bg)
+            .when(!compact, |pane| pane.chrome(ui::Edge::Right, t))
+            .child(bar)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(rems(0.))
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .child(pane.body),
+            )
+    }
+
     pub(super) fn desktop(
         &self,
         wide: bool,
+        pane: Option<tau_ui_plugin::points::PaneView>,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.route.is_focused() {
             return self.focused(false, t, cx);
         }
+        // An open pane takes the inspector's place.
         let details = self.details_open
+            && pane.is_none()
             && matches!(self.route, Route::Home | Route::Run(_));
         div()
             .size_full()
@@ -829,6 +911,16 @@ impl Workspace {
                             .flex_col()
                             .child(self.screen(false, t, cx)),
                     )
+                    .when_some(pane, |row, pane| {
+                        // Beside the transcript, with a little less of the
+                        // width than it.
+                        row.child(
+                            self.pane(pane, false, t, cx)
+                                .w(self.screen_width() * 0.45)
+                                .min_w(rems(24.))
+                                .flex_shrink_0(),
+                        )
+                    })
                     .when(wide && details, |row| {
                         row.child(
                             div()
@@ -867,6 +959,7 @@ impl Workspace {
 
     pub(super) fn phone(
         &self,
+        pane: Option<tau_ui_plugin::points::PaneView>,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -876,10 +969,24 @@ impl Workspace {
         let screen = div().size_full().relative().flex().flex_col();
         match (&self.route, self.current()) {
             (Route::Run(_), Some(run)) => screen
-                .child(chrome::phone_run_bar(run, self.is_main(&run.id), t, cx))
+                .child(chrome::phone_run_bar(
+                    run,
+                    self.is_main(&run.id),
+                    self.pane_title.is_some(),
+                    t,
+                    cx,
+                ))
                 .child(self.run_screen(true, t, cx))
                 .when(self.sheet_open, |screen| {
                     screen.child(self.sheet(run, t, cx))
+                })
+                .when_some(pane, |screen, pane| {
+                    screen.child(
+                        self.pane(pane, true, t, cx)
+                            .absolute()
+                            .inset_0()
+                            .occlude(),
+                    )
                 })
                 .into_any_element(),
             (Route::Home, _) => screen
