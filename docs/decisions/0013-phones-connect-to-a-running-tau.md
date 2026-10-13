@@ -213,7 +213,10 @@ Added after: a message sent from a phone did not show on the computer.
   (`Down::Ack`), and sends what is left on every connection; the
   computer keeps the last number it took from each phone, across
   restarts, and takes nothing at or below it. The header says how many
-  wait. Protocol version 2.
+  wait.
+- **An answer to a request is not kept** (`Down::Transient`, ADR 0041):
+  an image's bytes and a plugin's reply go unnumbered to the phones
+  there now, and a phone that was away asks again. Protocol version 3.
 - **A model checks it** (`crates/tau-ui/tests/sync_model.rs`): the real
   host and one or two phones over the real feed and encoding, in
   process, with the network's every drop and delay picked by Hegel.

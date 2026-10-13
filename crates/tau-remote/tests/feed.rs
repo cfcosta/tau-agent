@@ -30,6 +30,8 @@ struct Phone {
     last: Option<u64>,
     /// It asked for a snapshot that has not been answered.
     waiting: bool,
+    /// Transient messages it got.
+    transients: usize,
 }
 
 struct Machine {
@@ -62,12 +64,30 @@ impl Machine {
                 phone.last = Some(seq);
             }
             Down::Ack { .. } => unreachable!("the feed answers no request"),
+            // Not part of the log: it takes no number, and a phone that
+            // was away never gets it.
+            Down::Transient { body } => {
+                assert_eq!(body, json!("transient"));
+                phone.transients += 1;
+            }
         }
     }
 }
 
 #[hegel::state_machine]
 impl Machine {
+    /// A transient message goes to the phones taking messages now, and
+    /// leaves the numbering alone: the next message follows the last.
+    #[rule]
+    fn host_sends_transient(&mut self, _tc: TestCase) {
+        let (down, to) = self.feed.transient(json!("transient"));
+        for phone in &mut self.phones {
+            if phone.conn.is_some_and(|conn| to.contains(&conn)) {
+                phone.inbox.push_back(down.clone());
+            }
+        }
+    }
+
     #[rule(weight = 3)]
     fn host_sends(&mut self, tc: TestCase) {
         let value: i64 = tc.draw(gs::integers().min_value(0).max_value(99));

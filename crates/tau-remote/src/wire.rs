@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The protocol's version. A host refuses a phone that speaks another.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// A phone's first frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -94,6 +94,12 @@ pub enum Down {
     Ack {
         up: u64,
     },
+    /// A message for the phones connected now, not numbered and not
+    /// kept for one that comes back: an answer to a request, such as an
+    /// image's bytes, that a phone asks again when it needs it.
+    Transient {
+        body: Value,
+    },
 }
 
 impl Down {
@@ -104,7 +110,7 @@ impl Down {
             Self::Snapshot { seq, .. } | Self::Message { seq, .. } => {
                 Some(*seq)
             }
-            Self::Ack { .. } => None,
+            Self::Ack { .. } | Self::Transient { .. } => None,
         }
     }
 }
@@ -132,7 +138,7 @@ mod tests {
         };
         assert_eq!(
             serde_json::to_value(&hello).unwrap(),
-            json!({"type": "resume", "version": 2, "token": "t", "last_seq": 3})
+            json!({"type": "resume", "version": 3, "token": "t", "last_seq": 3})
         );
         let refused = Answer::Refused {
             reason: Refusal::Version { speaks: 1 },

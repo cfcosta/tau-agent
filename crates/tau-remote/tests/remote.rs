@@ -196,6 +196,31 @@ async fn a_phone_that_comes_back_gets_what_it_missed() {
     assert_eq!(body(recv(&mut phone).await), json!(3));
 }
 
+/// A transient message reaches the phone connected now, takes no
+/// number, and is not replayed to a phone that comes back.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transient_message_reaches_who_is_there_and_is_not_kept() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    let last = recv(&mut phone).await.seq().unwrap();
+    host.handle.broadcast_transient(json!({"image": "bytes"}));
+    let transient = recv(&mut phone).await;
+    assert_eq!(
+        transient,
+        Down::Transient {
+            body: json!({"image": "bytes"})
+        }
+    );
+    assert_eq!(transient.seq(), None);
+    drop(phone);
+    host.handle.broadcast_transient(json!("missed"));
+    host.handle.broadcast(json!(1));
+    let mut phone = client::resume(&credentials, Some(last)).await.unwrap();
+    let first = recv(&mut phone).await;
+    assert_eq!(first.seq(), Some(last + 1), "the transients took no number");
+    assert_eq!(body(first), json!(1));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_phone_away_too_long_gets_a_snapshot() {
     let mut host = host().await;

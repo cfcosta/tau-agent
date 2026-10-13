@@ -87,6 +87,18 @@ impl<C: Copy + Eq + Hash> Feed<C> {
         )
     }
 
+    /// `body` for the connections taking messages now, unnumbered and
+    /// not kept ([`Down::Transient`]).
+    pub fn transient(&self, body: Value) -> (Down, Vec<C>) {
+        let to = self
+            .conns
+            .iter()
+            .filter(|(_, live)| **live)
+            .map(|(conn, _)| *conn)
+            .collect();
+        (Down::Transient { body }, to)
+    }
+
     /// `conn` joins, having had every message up to `last`, if any.
     pub fn join(&mut self, conn: C, last: Option<u64>) -> Joined {
         let missed = last.and_then(|last| self.missed(last));

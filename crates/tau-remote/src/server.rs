@@ -152,6 +152,12 @@ impl ServerHandle {
         self.command(Command::Broadcast(body));
     }
 
+    /// Sends `body` to the phones connected now, unnumbered and not
+    /// kept for one that comes back ([`Down::Transient`]).
+    pub fn broadcast_transient(&self, body: Value) {
+        self.command(Command::Transient(body));
+    }
+
     /// Answers a [`ServerEvent::NeedSnapshot`].
     pub fn snapshot(&self, conn: ConnId, bodies: Vec<Value>) {
         self.command(Command::Snapshot(conn, bodies));
@@ -232,6 +238,7 @@ impl ServerHandle {
 
 enum Command {
     Broadcast(Value),
+    Transient(Value),
     Snapshot(ConnId, Vec<Value>),
     Revoked(String),
     Stop,
@@ -273,6 +280,15 @@ impl State {
         while let Some(command) = commands.recv().await {
             match command {
                 Command::Broadcast(body) => self.broadcast(body),
+                Command::Transient(body) => {
+                    let (down, to) = self.feed.transient(body);
+                    let frame = to_frame(&down);
+                    for conn in
+                        to.iter().filter_map(|conn| self.conns.get(conn))
+                    {
+                        let _ = conn.out.send(Out::Frame(frame.clone()));
+                    }
+                }
                 Command::Snapshot(conn, bodies) => self.snapshot(conn, bodies),
                 Command::Revoked(id) => {
                     let feed = &mut self.feed;

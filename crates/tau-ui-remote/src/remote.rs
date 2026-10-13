@@ -327,7 +327,7 @@ pub fn to_computer(up: &PhoneUp) -> Option<serde_json::Value> {
 pub fn updates(down: Down) -> Vec<HostUpdate> {
     let bodies = match down {
         Down::Snapshot { bodies, .. } => bodies,
-        Down::Message { body, .. } => vec![body],
+        Down::Message { body, .. } | Down::Transient { body } => vec![body],
         Down::Ack { .. } => Vec::new(),
     };
     bodies
