@@ -283,10 +283,21 @@ pub struct ModelPick {
     pub effort: String,
 }
 
+/// What came of waking a chat ([`Conversations::wake`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Waking {
+    /// Its turn started on tau's message.
+    Started,
+    /// A turn of it is going: what woke it waits for that turn to end.
+    Busy,
+    /// It landed, was dropped, or is not there: it takes no message.
+    Gone,
+}
+
 /// The host's conversations, which a plugin's host half may drive: an
 /// agent's repository and its main chat, a conversation that never ends
-/// (ADR 0037). The host puts it in [`HostCx::services`] as an
-/// `Arc<dyn Conversations>`.
+/// (ADR 0037), and any chat a plugin wakes later (ADR 0039). The host
+/// puts it in [`HostCx::services`] as an `Arc<dyn Conversations>`.
 pub trait Conversations: Send + Sync {
     /// Makes the agent `name`'s repository, lists it as tau's own and
     /// makes its main chat.
@@ -307,6 +318,18 @@ pub trait Conversations: Send + Sync {
         &self,
         turn: Turn,
     ) -> crate::registry::HostFuture<'_, anyhow::Result<()>>;
+
+    /// Starts a turn of the chat `run` on tau's message `text`, on the
+    /// model it last ran on, unless a turn of it is going or it takes no
+    /// more messages. A host that wakes no chats refuses.
+    fn wake(
+        &self,
+        run: &str,
+        text: String,
+    ) -> crate::registry::HostFuture<'_, anyhow::Result<Waking>> {
+        let _ = (run, text);
+        Box::pin(async { anyhow::bail!("This host wakes no chats") })
+    }
 }
 
 /// One plugin's tools that run outside any run: what an agent's polls

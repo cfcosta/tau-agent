@@ -1,12 +1,13 @@
 //! What a plugin's host half drives of this host's conversations (ADR
-//! 0037): an agent's repository, made and listed, and turns of its main
-//! chat that the agent's events start.
+//! 0037): an agent's repository, made and listed, turns of its main
+//! chat that the agent's events start, and any chat a plugin wakes
+//! later (ADR 0039).
 //!
 //! Whether a main chat is going is read here. Making an agent and
 //! starting a turn go to the interface, which shows the turn as it
 //! starts, then has the host start it ([`Host::attach`] answers them).
 
-use tau_ui_plugin::{Conversations, Turn, registry::HostFuture};
+use tau_ui_plugin::{Conversations, Turn, Waking, registry::HostFuture};
 use tokio::sync::oneshot;
 
 use super::*;
@@ -20,6 +21,11 @@ pub(super) enum Ask {
     Turn {
         turn: Turn,
         done: oneshot::Sender<anyhow::Result<()>>,
+    },
+    Wake {
+        run: RunId,
+        text: String,
+        done: oneshot::Sender<anyhow::Result<Waking>>,
     },
 }
 
@@ -75,5 +81,26 @@ impl Conversations for HostConversations {
 
     fn turn(&self, turn: Turn) -> HostFuture<'_, anyhow::Result<()>> {
         self.ask(move |done| Ask::Turn { turn, done })
+    }
+
+    /// A chat with a turn going is busy here; the interface starts the
+    /// others, as it does an agent's turns.
+    fn wake(
+        &self,
+        run: &str,
+        text: String,
+    ) -> HostFuture<'_, anyhow::Result<Waking>> {
+        let run = RunId(run.into());
+        if self.runs.lock().expect("not poisoned").contains_key(&run) {
+            return Box::pin(async { Ok(Waking::Busy) });
+        }
+        let (done, answer) = oneshot::channel();
+        let sent = self.asks.send(Ask::Wake { run, text, done });
+        Box::pin(async move {
+            sent.map_err(|_| anyhow::anyhow!("tau is closing"))?;
+            answer.await.map_err(|_| {
+                anyhow::anyhow!("tau's window closed before it answered")
+            })?
+        })
     }
 }

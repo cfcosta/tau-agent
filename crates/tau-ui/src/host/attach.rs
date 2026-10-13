@@ -445,7 +445,79 @@ fn answer(
                 cx,
             );
         }
+        conversations::Ask::Wake { run, text, done } => {
+            wake_chat(host, run, text, done, workspace, cx);
+        }
     }
+}
+
+/// Starts a turn of `run` on tau's `text`, on the model it last ran on,
+/// once it is shown, then answers how it went: a turn that started in
+/// between, or a chat that ended, is not woken.
+fn wake_chat(
+    host: &Arc<Host>,
+    run: RunId,
+    text: String,
+    done: tokio::sync::oneshot::Sender<anyhow::Result<tau_ui_plugin::Waking>>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    use tau_ui_plugin::Waking;
+    let done = std::rc::Rc::new(std::cell::RefCell::new(Some(done)));
+    let answer = move |result: anyhow::Result<Waking>| {
+        if let Some(done) = done.borrow_mut().take() {
+            let _ = done.send(result);
+        }
+    };
+    let (checked, starter) = (run.clone(), host.clone());
+    let (failed, started) = (answer.clone(), answer.clone());
+    on_host(
+        host,
+        workspace,
+        async move |host| {
+            Ok(if host.is_running(&checked) {
+                Waking::Busy
+            } else if host.wakeable(&checked).await? {
+                Waking::Started
+            } else {
+                Waking::Gone
+            })
+        },
+        move |ws, waking, cx| {
+            if waking != Waking::Started {
+                answer(Ok(waking));
+                return;
+            }
+            ws.apply(
+                HostUpdate::TauTurn {
+                    run: run.clone(),
+                    prompt: text.clone(),
+                },
+                cx,
+            );
+            let workspace = cx.entity();
+            cx.defer(move |cx| {
+                let failed_run = run.clone();
+                let answered = started.clone();
+                on_host(
+                    &starter,
+                    &workspace,
+                    async move |host| {
+                        let choice = host.choice_of(&run);
+                        host.resume_by_tau(&run, &text, &choice).await
+                    },
+                    move |_, (), _| answered(Ok(Waking::Started)),
+                    move |ws, error, cx| {
+                        ws.apply(HostUpdate::ResumeFailed(failed_run), cx);
+                        started(Err(anyhow::anyhow!(error)));
+                    },
+                    cx,
+                );
+            });
+        },
+        move |_, error, _| failed(Err(anyhow::anyhow!(error))),
+        cx,
+    );
 }
 
 /// Starts `turn` on `main`, then answers.

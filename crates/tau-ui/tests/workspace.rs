@@ -3508,3 +3508,107 @@ fn a_host_half_makes_an_agent_and_starts_its_turns(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// A chat a plugin's host half wakes later (ADR 0039): it starts a turn
+/// on tau's message when idle, is busy while a turn goes, and a chat
+/// that is not there is gone.
+#[gpui::test]
+fn a_host_half_wakes_a_chat_that_is_idle(cx: &mut TestAppContext) {
+    use tau_testing::scripted::ScriptedModel;
+    use tau_ui::{
+        accounts::Credentials,
+        host::{Host, HostConfig},
+    };
+    use tau_ui_plugin::Waking;
+
+    cx.executor().allow_parking();
+    let (workspace, mut cx, _) = open(cx);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let model = ScriptedModel::new()
+        .turn(|turn| {
+            turn.text("Checked.")
+                .delay(std::time::Duration::from_millis(300))
+        })
+        .turn(|turn| turn.text("Again."));
+    let agent = tau_agent::agent::Agent::new(model).name("coder");
+    let dir = tempfile::tempdir().unwrap().keep();
+    let config = HostConfig {
+        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
+        credentials: Credentials::new(dir.join("config")),
+        model: Some("gpt-5.5".into()),
+        store: dir.join("unused.db"),
+        repos: dir.join("repos"),
+        settings: dir.join("models.json"),
+        repo_list: dir.join("repos.json"),
+        skills: std::env::temp_dir().join("tau-test-skills-none"),
+    };
+    let (host, events) = Host::with_agent(runtime, agent, store, config);
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
+    let host = cx.update(|_, cx| host.attach(&workspace, events, cx));
+    let conversations = host.conversations();
+    let wait = |ask: Box<dyn FnOnce() -> anyhow::Result<Waking> + Send>| {
+        let asked = std::thread::spawn(ask);
+        while !asked.is_finished() {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        asked.join().unwrap()
+    };
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    // A chat to wake: the main chat a repository gets.
+    let listing = conversations.clone();
+    let listed =
+        std::thread::spawn(move || block_on(listing.list_agent("greet")));
+    while !listed.is_finished() {
+        cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    listed.join().unwrap().unwrap();
+    let main = host.block_on(host.main_of("greet")).unwrap();
+
+    let text = "[scheduled · recheck · 2026-10-13 09:30]\nDid #412 merge?";
+    let waking = conversations.clone();
+    let id = main.0.to_string();
+    let woke = wait(Box::new(move || block_on(waking.wake(&id, text.into()))));
+    assert_eq!(woke.unwrap(), Waking::Started);
+    workspace.read_with(&cx, |ws, _| {
+        let view = ws.run(&main).expect("the chat is shown");
+        assert!(
+            view.items
+                .iter()
+                .any(|item| *item == Item::Tau(text.to_owned())),
+            "{:?}",
+            view.items
+        );
+    });
+    // Its turn is going: another wake waits.
+    let busy = conversations.clone();
+    let id = main.0.to_string();
+    assert_eq!(
+        wait(Box::new(move || block_on(busy.wake(&id, "later".into()))))
+            .unwrap(),
+        Waking::Busy
+    );
+    let gone = conversations.clone();
+    assert_eq!(
+        wait(Box::new(move || block_on(
+            gone.wake("no-such-run", "x".into())
+        )))
+        .unwrap(),
+        Waking::Gone
+    );
+}

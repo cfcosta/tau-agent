@@ -1656,6 +1656,15 @@ impl Host {
 
     /// How `run` ended for good, if it did: landed on its parent, or
     /// dropped. Such a chat takes no more messages.
+    /// Whether `run` takes a message now: it is stored, and it neither
+    /// landed nor was dropped.
+    pub async fn wakeable(&self, run: &RunId) -> anyhow::Result<bool> {
+        if self.store.run(&run.0).await?.is_none() {
+            return Ok(false);
+        }
+        Ok(self.ending_of(run).await?.is_none())
+    }
+
     pub async fn ending_of(
         &self,
         run: &RunId,
