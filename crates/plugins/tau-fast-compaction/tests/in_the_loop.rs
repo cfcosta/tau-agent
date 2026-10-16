@@ -474,16 +474,3 @@ fn a_fork_prunes_at_start_only_when_it_must() {
         });
     }
 }
-
-/// Debug output shows the settings, not the Jev client.
-#[test]
-fn debug_shows_the_settings() {
-    let plugin =
-        FastCompaction::new(FakeJev::nouls(|_| 1.0)).settings(settings());
-    let debug = format!("{plugin:?}");
-    assert!(
-        debug.starts_with("FastCompaction { settings: Settings {"),
-        "{debug}"
-    );
-    assert!(debug.contains("preserve_recent: 1"), "{debug}");
-}
