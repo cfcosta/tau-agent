@@ -169,8 +169,9 @@ fn at_least_two_turns(tc: &TestCase) -> LaneHistory {
     history
 }
 
-/// Changing an item the server already holds (in the baseline) forces a
-/// full resend; the server still sees the full input.
+/// Changing an item the server already holds (in the baseline), or
+/// sending input shorter than the baseline, forces a full resend; the
+/// server still sees the full input.
 #[hegel::test(test_cases = 500)]
 fn baseline_change_forces_full_resend(tc: TestCase) {
     baseline_change_forces_full_resend_body(tc)
@@ -193,9 +194,16 @@ fn baseline_change_forces_full_resend_body(tc: TestCase) {
     let baseline_len = history.full_input(at - 1).len()
         + history.turns[at - 1].output_items.len();
     let index = tc.draw(gs::integers::<usize>().max_value(baseline_len - 1));
+    // Either rewrite an item the server holds, or cut the input shorter
+    // than what it holds.
+    let cut = tc.draw(gs::booleans());
     let kinds = run_lane(&history, |i, body| {
         if i == at {
-            body["input"][index]["text"] = json!("rewritten ☃");
+            if cut {
+                body["input"].as_array_mut().unwrap().truncate(index);
+            } else {
+                body["input"][index]["text"] = json!("rewritten ☃");
+            }
         }
     });
     assert_eq!(kinds[at], RequestKind::Full);
@@ -234,19 +242,6 @@ fn prepared_bodies_keep_other_fields(tc: TestCase) {
             assert_eq!(&prepared.body[key], value, "{key}");
         }
     }
-}
-
-/// Input shorter than the baseline cannot continue.
-#[test]
-fn shorter_input_forces_full_resend() {
-    let mut full = serde_json::Map::new();
-    full.insert("input".into(), json!([{"type": "message", "text": "a"}]));
-    let continuation = record(
-        &full,
-        vec![json!({"type": "message", "text": "b"})],
-        "resp_1".into(),
-    );
-    assert_eq!(prepare(Some(&continuation), full).kind, RequestKind::Full);
 }
 
 /// Key order inside items does not matter, as it does not to the server.

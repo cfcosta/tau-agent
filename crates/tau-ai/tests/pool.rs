@@ -126,6 +126,13 @@ struct Model {
     submitted: BTreeMap<LaneId, Vec<Value>>,
     /// Each in-flight request as the server received it.
     sent: BTreeMap<LaneId, Sent>,
+    /// Connections opened, and lanes placed on a connection already open.
+    opened: u64,
+    reused: u64,
+    /// Requests that moved off their connection, before any output, after
+    /// a connection limit or a lost (or stalled) connection.
+    limit_recoveries: u64,
+    lost_recoveries: u64,
 }
 
 impl Model {
@@ -146,6 +153,7 @@ impl Model {
                         },
                     );
                     self.held.insert(*c, BTreeMap::new());
+                    self.opened += 1;
                 }
                 PoolAction::Close(c) => {
                     assert!(
@@ -358,10 +366,36 @@ impl PoolMachine {
         self.pool.handle(lane, event).unwrap()
     }
 
+    /// In-flight lanes with no output yet, and their connections, on the
+    /// connections `on` picks.
+    fn quiet_in_flight(
+        &self,
+        on: impl Fn(ConnectionId) -> bool,
+    ) -> Vec<(LaneId, ConnectionId)> {
+        self.model
+            .in_flight
+            .iter()
+            .filter(|(lane, c)| !self.model.started.contains(lane) && on(**c))
+            .map(|(&lane, &c)| (lane, c))
+            .collect()
+    }
+
+    /// How many of `lanes` a step recovered: their request still stands,
+    /// off the connection it was on.
+    fn recovered(&self, lanes: &[(LaneId, ConnectionId)]) -> u64 {
+        lanes
+            .iter()
+            .filter(|(lane, c)| {
+                self.pool.is_busy(*lane)
+                    && self.pool.connection_of(*lane) != Some(*c)
+            })
+            .count() as u64
+    }
+
     /// Folds lanes moving between connections into the model's view of
     /// the connections: who holds each, the path it serves and served
     /// before, and when it was last used.
-    fn follow_placements(&mut self) {
+    fn follow_placements(&mut self, opened: &BTreeSet<ConnectionId>) {
         let now = self.now;
         let held: BTreeMap<ConnectionId, LaneId> = self
             .model
@@ -377,6 +411,9 @@ impl PoolMachine {
             if let Some(lane) = now_held
                 && conn.lane != Some(lane)
             {
+                if !opened.contains(id) {
+                    self.model.reused += 1;
+                }
                 let path = self.model.lanes[&lane].path.clone();
                 if conn.path != path {
                     if conn.path.is_some() {
@@ -445,7 +482,14 @@ impl PoolMachine {
         let open: BTreeSet<ConnectionId> =
             self.model.conns.keys().copied().collect();
         self.last_activity.retain(|c, _| open.contains(c));
-        self.follow_placements();
+        let opened: BTreeSet<ConnectionId> = actions
+            .iter()
+            .filter_map(|action| match action {
+                PoolAction::Open(c) => Some(*c),
+                _ => None,
+            })
+            .collect();
+        self.follow_placements(&opened);
         if let Some(&(tagged, used, c)) = trimmed.iter().max() {
             tc.event("free connections over the cap close");
             let free: Vec<&Conn> = self
@@ -749,6 +793,9 @@ impl PoolMachine {
             &tc,
             self.model.in_flight.keys().copied().collect(),
         );
+        let quiet = self.quiet_in_flight(|_| true);
+        let quiet: Vec<_> =
+            quiet.into_iter().filter(|(l, _)| *l == lane).collect();
         if self.model.started.contains(&lane) {
             // Fails the request.
             self.model.drop_request(lane);
@@ -760,6 +807,7 @@ impl PoolMachine {
             },
         );
         self.after(&tc, actions, false);
+        self.model.limit_recoveries += self.recovered(&quiet);
     }
 
     /// The server evicts the response an in-flight delta continues, and
@@ -810,9 +858,19 @@ impl PoolMachine {
         tc.assume(!self.model.lanes.is_empty());
         let lane =
             Self::draw_lane(&tc, self.model.lanes.keys().copied().collect());
+        // A cancelled request's tail would stream on ahead of anything
+        // sent next, so its connection closes.
+        let streaming = self.model.in_flight.get(&lane).copied();
         self.model.drop_request(lane);
         let actions = self.pool.cancel(lane).unwrap();
+        if let Some(connection) = streaming {
+            assert!(
+                actions.contains(&PoolAction::Close(connection)),
+                "cancelled {lane} left {connection} open: {actions:?}"
+            );
+        }
         self.after(&tc, actions, false);
+        assert!(!self.pool.is_busy(lane));
     }
 
     /// A cancel the server was asked to stop: its connection stays open.
@@ -849,8 +907,11 @@ impl PoolMachine {
             tc.draw(gs::sampled_from(vec![0, 1, 2, 3, 10, 60])),
         );
         self.model.now = self.now;
+        // A stalled connection is presumed lost.
+        let quiet = self.quiet_in_flight(|_| true);
         let actions = self.pool.tick(self.now);
         self.after(&tc, actions, true);
+        self.model.lost_recoveries += self.recovered(&quiet);
     }
 
     #[rule]
@@ -870,10 +931,12 @@ impl PoolMachine {
         let connection = tc.draw(gs::sampled_from(
             self.model.conns.keys().copied().collect::<Vec<_>>(),
         ));
+        let quiet = self.quiet_in_flight(|c| c == connection);
         self.model.conns.remove(&connection);
         self.model.held.remove(&connection);
         let actions = self.pool.connection_lost(connection);
         self.after(&tc, actions, false);
+        self.model.lost_recoveries += self.recovered(&quiet);
     }
 
     /// Counts, placement and what each connection serves agree with the
@@ -990,6 +1053,16 @@ impl PoolMachine {
             stats.lanes.previous_response_not_found,
             self.model.not_found
         );
+        assert_eq!(
+            stats.lanes.connection_limit_reached,
+            self.model.limit_recoveries
+        );
+        assert_eq!(stats.lanes.connection_lost, self.model.lost_recoveries);
+        assert_eq!(
+            (stats.connections_opened, stats.connections_reused),
+            (self.model.opened, self.model.reused),
+            "connections opened and reused"
+        );
     }
 }
 
@@ -1049,33 +1122,6 @@ fn complete(
         },
     )
     .unwrap()
-}
-
-/// Each lane gets a connection of its own; a closed lane's connection
-/// takes the next lane, and one that serves no path closes once it has
-/// had no lane for `idle_timeout`.
-#[test]
-fn a_lane_per_connection_and_reuse() {
-    let mut pool = Pool::new(Limits::default());
-    let (first, opened) = pool.open_lane(Affinity::default());
-    assert_eq!(opened, vec![PoolAction::Open(0)]);
-    let (second, opened) = pool.open_lane(Affinity::default());
-    assert_eq!(opened, vec![PoolAction::Open(1)]);
-    assert_eq!(pool.lane_on(0), Some(first));
-    assert_eq!(pool.lane_on(1), Some(second));
-    assert!(pool.close_lane(first).unwrap().is_empty(), "stays open");
-    assert_eq!(pool.lane_on(0), None);
-    let (third, opened) = pool.open_lane(Affinity::default());
-    assert!(opened.is_empty(), "{opened:?}");
-    assert_eq!(pool.connection_of(third), Some(0));
-    let stats = pool.stats();
-    assert_eq!((stats.connections_opened, stats.connections_reused), (2, 1));
-    pool.close_lane(third).unwrap();
-    assert!(pool.tick(Duration::from_secs(4 * 60)).is_empty());
-    assert_eq!(
-        pool.tick(Duration::from_secs(5 * 60)),
-        vec![PoolAction::Close(0)]
-    );
 }
 
 /// A run of a conversation that went on before takes the connection
@@ -1299,24 +1345,6 @@ fn a_fork_waits_briefly_for_its_parent_s_busy_connection() {
     assert!(!pool.is_waiting(other));
 }
 
-/// A lane holds one request at a time.
-#[test]
-fn a_busy_lane_takes_no_second_request() {
-    let mut pool = Pool::new(Limits::default());
-    let (lane, _) = pool.open_lane(Affinity::default());
-    pool.submit(lane, body(1)).unwrap();
-    assert_eq!(pool.submit(lane, body(2)), Err(PoolError::Busy(lane)));
-    assert!(pool.is_busy(lane));
-    // The cancelled request streams on there: its connection closes.
-    let connection = pool.connection_of(lane).unwrap();
-    assert_eq!(
-        pool.cancel(lane).unwrap(),
-        vec![PoolAction::Close(connection)]
-    );
-    assert!(!pool.is_busy(lane));
-    assert_eq!(pool.connection_of(lane), None);
-}
-
 /// The connection limit moves the lane to a fresh connection, resends in
 /// full there, and closes the old connection.
 #[test]
@@ -1392,49 +1420,6 @@ fn unknown_lane_is_rejected() {
         Err(PoolError::UnknownLane(7))
     );
     assert!(pool.close_lane(7).is_err());
-}
-
-/// Recovery counters survive closing the lane that recovered.
-#[test]
-fn closed_lane_stats_are_kept() {
-    let mut pool = Pool::new(Limits::default());
-    let (lane, _) = pool.open_lane(Affinity::default());
-    pool.submit(lane, body(1)).unwrap();
-    pool.handle(
-        lane,
-        Event::ServerError {
-            code: Some(CONNECTION_LIMIT_REACHED.into()),
-        },
-    )
-    .unwrap();
-    complete(&mut pool, lane, "resp_1");
-    let (other, _) = pool.open_lane(Affinity::default());
-    pool.submit(other, body(2)).unwrap();
-    pool.connection_lost(pool.connection_of(other).unwrap());
-    // A third lane continues with a delta that the server has lost.
-    let (third, _) = pool.open_lane(Affinity::default());
-    pool.submit(third, with_input(json!([item("a")]))).unwrap();
-    complete(&mut pool, third, "resp_3");
-    pool.submit(third, with_input(json!([item("a"), item("b")])))
-        .unwrap();
-    pool.handle(
-        third,
-        Event::ServerError {
-            code: Some(PREVIOUS_RESPONSE_NOT_FOUND.into()),
-        },
-    )
-    .unwrap();
-    let before = pool.stats();
-    assert_eq!(before.lanes.delta_requests, 1);
-    assert_eq!(before.lanes.previous_response_not_found, 1);
-    pool.close_lane(lane).unwrap();
-    pool.close_lane(other).unwrap();
-    pool.close_lane(third).unwrap();
-    let after = pool.stats();
-    assert_eq!(after, before);
-    assert_eq!(after.lanes.connection_limit_reached, 1);
-    assert_eq!(after.lanes.connection_lost, 1);
-    assert_eq!(after.lanes.full_requests, 6);
 }
 
 /// At `rotate_after`, an idle lane leaves at once, a busy lane leaves

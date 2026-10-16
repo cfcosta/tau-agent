@@ -1,6 +1,7 @@
 //! The credential store against a model: whatever order accounts are
-//! saved, replaced and chosen in, the store lists, loads and names the
-//! active one exactly as a map and a pointer would, and its files stay
+//! saved, replaced and chosen in, and however often the store is opened
+//! again, it lists, loads and names the active one exactly as a map and
+//! a pointer would, keeps the host id it made first, and its files stay
 //! private to the owner.
 
 use std::{collections::BTreeMap, os::unix::fs::PermissionsExt as _};
@@ -95,6 +96,14 @@ impl StoreModel {
         loaded.clear_tokens();
         self.store.save(&loaded).unwrap();
         model.clear_tokens();
+    }
+
+    /// The store opened again, as another process or the next start
+    /// opens it: the same accounts, active account and host id, the host
+    /// id not made again.
+    #[rule]
+    fn reopen(&mut self, _tc: TestCase) {
+        self.store = Store::open(self.dir.path().join("chatgpt")).unwrap();
     }
 
     #[invariant]

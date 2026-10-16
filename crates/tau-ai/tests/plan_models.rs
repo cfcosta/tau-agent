@@ -72,12 +72,23 @@ fn table(tc: &TestCase) -> Vec<Drawn> {
         .collect()
 }
 
-/// For any table, the result has at most one model per plan family,
-/// in the families' order, and each is its family's newest version;
-/// a family with any model in the table is present.
+/// For any table, each id reads as the family and version it was built
+/// from (other shapes as none), and the result has at most one model
+/// per plan family, in the families' order, and each is its family's
+/// newest version; a family with any model in the table is present.
 #[hegel::test(test_cases = 300)]
 fn one_newest_model_per_family(tc: TestCase) {
     let drawn = table(&tc);
+    // Each id reads as its family and its version without trailing
+    // zeros, and an id of any other shape as none.
+    for (id, parsed) in &drawn {
+        assert_eq!(
+            model::family_version(id)
+                .map(|(family, version)| (family.to_owned(), version)),
+            *parsed,
+            "{id}"
+        );
+    }
     let rows: Vec<Model> =
         drawn.iter().map(|(id, _)| row(id.clone())).collect();
     let picked = model::newest_per_family(&rows);
@@ -124,16 +135,4 @@ fn todays_plan_models() {
             ("gpt-5.6-terra", "GPT-5.6 Terra"),
         ]
     );
-}
-
-#[test]
-fn versions_compare_by_number() {
-    assert_eq!(
-        model::family_version("gpt-6.1-sol"),
-        Some(("sol", vec![6, 1]))
-    );
-    assert_eq!(model::family_version("gpt-6.0-sol"), Some(("sol", vec![6])));
-    assert_eq!(model::family_version("gpt-5.6"), None);
-    assert_eq!(model::family_version("gpt-x-sol"), None);
-    assert_eq!(model::family_version("gpt-5-pro-sol"), None);
 }

@@ -89,22 +89,38 @@ fn long_context_pricing_without_short_context_cap_keeps_full_context() {
     assert!(m.pricing.long_context.is_some());
 }
 
-/// `withOpenAiLongContextPricing` (generate-models.ts:413-425): the tier
-/// multiplies the base rate by x2 input, x1.5 output, x2 cache read, x2
-/// cache write, active above 272,000 input tokens.
+/// `withOpenAiLongContextPricing` (generate-models.ts:413-425): every
+/// model's long-context tier multiplies its base rate by x2 input, x1.5
+/// output, x2 cache read, x2 cache write, active above 272,000 input
+/// tokens. Checked over the whole table, which is finite.
 #[test]
-fn long_context_tier_applies_pis_multipliers() {
-    let m = get("gpt-5.5");
-    let tier = m
-        .pricing
-        .long_context
-        .expect("gpt-5.5 has a long-context tier");
-    assert_eq!(tier.input_tokens_above, 272_000);
-    assert_eq!(tier.input, m.pricing.input * 2.0);
-    assert_eq!(tier.output, m.pricing.output * 1.5);
-    assert_eq!(tier.cache_read, m.pricing.cache_read * 2.0);
-    // gpt-5.5 has no cache_write rate; 0 x 2 is still 0.
-    assert_eq!(tier.cache_write, m.pricing.cache_write * 2.0);
+fn every_long_context_tier_applies_pis_multipliers() {
+    let tiered: Vec<&Model> = model::models()
+        .iter()
+        .filter(|m| m.pricing.long_context.is_some())
+        .collect();
+    assert!(
+        tiered.iter().any(|m| m.id == "gpt-5.5"),
+        "gpt-5.5 has a long-context tier"
+    );
+    for m in tiered {
+        let base = &m.pricing;
+        let tier = base.long_context.unwrap();
+        assert_eq!(tier.input_tokens_above, 272_000, "{}", m.id);
+        // Prices are rounded to a millionth of a dollar, as pi rounds them.
+        for (label, got, want) in [
+            ("input", tier.input, base.input * 2.0),
+            ("output", tier.output, base.output * 1.5),
+            ("cache_read", tier.cache_read, base.cache_read * 2.0),
+            ("cache_write", tier.cache_write, base.cache_write * 2.0),
+        ] {
+            assert!(
+                (got - want).abs() <= 5e-7,
+                "{} {label}: {got} vs {want}",
+                m.id
+            );
+        }
+    }
 }
 
 /// `OPENAI_STANDARD_COSTS` (generate-models.ts:428-438) replaces the

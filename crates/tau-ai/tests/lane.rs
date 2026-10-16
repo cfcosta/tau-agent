@@ -8,7 +8,10 @@
 
 use std::collections::HashMap;
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _},
+};
 use serde_json::{Map, Value, json};
 use tau_ai::ws::proto::{
     continuation::Body,
@@ -34,6 +37,8 @@ enum Fault {
     /// The server forgets every response before this request arrives.
     Evict,
     ConnectionLimit,
+    /// The connection limit, after some output: too late to reconnect.
+    LimitAfterOutput,
     LostBeforeOutput,
     LostAfterOutput,
     /// The connection is lost before any output, and the reconnect fails
@@ -56,6 +61,7 @@ impl Fault {
         match self {
             Self::OtherError => Some(server("server_error")),
             Self::UncodedError => Some(Failure::Server { code: None }),
+            Self::LimitAfterOutput => Some(server(CONNECTION_LIMIT_REACHED)),
             Self::LostAfterOutput => Some(Failure::ConnectionLost {
                 before_first_event: false,
             }),
@@ -199,6 +205,12 @@ impl LaneMachine {
                         expected_input,
                         "turn {i}"
                     );
+                    // A reconnect notice for a request that is not
+                    // reconnecting changes nothing.
+                    if tc.draw(gs::weighted_booleans(0.2)) {
+                        assert_eq!(lane.handle(Event::Reconnected), None);
+                        assert!(lane.is_busy());
+                    }
                     if attempts == 1 {
                         match this_fault {
                             Fault::ConnectionLimit => {
@@ -229,6 +241,10 @@ impl LaneMachine {
                             })
                         }
                         Fault::ConnectionLimit => {
+                            lane.handle(refuse(CONNECTION_LIMIT_REACHED))
+                        }
+                        Fault::LimitAfterOutput => {
+                            assert_eq!(lane.handle(Event::Output), None);
                             lane.handle(refuse(CONNECTION_LIMIT_REACHED))
                         }
                         Fault::LostBeforeOutput
@@ -267,6 +283,18 @@ impl LaneMachine {
                 Action::Reconnect => {
                     self.server.held.clear();
                     self.cache_valid = false;
+                    // A late completion from the old connection neither
+                    // completes the request nor records a continuation.
+                    if tc.draw(gs::weighted_booleans(0.3)) {
+                        assert_eq!(
+                            lane.handle(Event::Completed {
+                                response_id: "resp_old".into(),
+                                output_items: vec![],
+                            }),
+                            None
+                        );
+                        assert!(lane.is_busy());
+                    }
                     if fault == Fault::LostDuringReconnect {
                         tc.event("reconnect failed");
                         action = lane.handle(Event::ConnectionLost);
@@ -307,6 +335,35 @@ impl LaneMachine {
             "turn {i}: {fault:?}"
         );
         assert!(!lane.is_busy(), "turn {i} left the lane busy");
+    }
+
+    /// Between turns, a frame for a request the lane no longer has asks
+    /// for nothing and starts nothing. An error, a lost or replaced
+    /// connection or a cancel means the server's cache is gone, so the
+    /// next request goes in full; a late output or completion keeps it.
+    #[rule]
+    fn stray_frame(&mut self, tc: TestCase) {
+        let event = tc.draw(
+            gs::sampled_from(vec![
+                Event::Output,
+                Event::Completed {
+                    response_id: "resp_stray".into(),
+                    output_items: vec![],
+                },
+                Event::ServerError {
+                    code: Some(PREVIOUS_RESPONSE_NOT_FOUND.into()),
+                },
+                Event::ConnectionLost,
+                Event::Reconnected,
+                Event::Cancel,
+            ])
+            .print_as_debug(),
+        );
+        if !matches!(event, Event::Output | Event::Completed { .. }) {
+            self.cache_valid = false;
+        }
+        assert_eq!(self.lane.handle(event), None);
+        assert!(!self.lane.is_busy());
     }
 
     /// The lane's counters agree with what the server saw.
@@ -480,99 +537,4 @@ fn previous_response_not_found_on_full_request_fails() {
         }),
         Some(Action::Fail(_))
     ));
-}
-
-/// The connection limit and a lost connection reconnect only
-/// before any output; the resend after reconnecting is full and counted.
-/// A second refusal after that one recovery fails the request.
-#[test]
-fn reconnect_only_before_output() {
-    for (event, counter) in [
-        (
-            Event::ServerError {
-                code: Some(CONNECTION_LIMIT_REACHED.into()),
-            },
-            "connection_limit_reached",
-        ),
-        (Event::ConnectionLost, "connection_lost"),
-    ] {
-        let mut lane = lane_with_continuation();
-        lane.submit(next_body()).unwrap();
-        assert_eq!(
-            lane.handle(event.clone()),
-            Some(Action::Reconnect),
-            "{event:?}"
-        );
-        assert!(is_full(&lane.handle(Event::Reconnected)), "{event:?}");
-        let stats = lane.stats();
-        let count = match counter {
-            "connection_limit_reached" => stats.connection_limit_reached,
-            _ => stats.connection_lost,
-        };
-        assert_eq!(count, 1, "{counter}");
-        assert!(
-            matches!(lane.handle(event.clone()), Some(Action::Fail(_))),
-            "{event:?} twice"
-        );
-
-        let mut lane = lane_with_continuation();
-        lane.submit(next_body()).unwrap();
-        lane.handle(Event::Output);
-        assert!(
-            matches!(lane.handle(event.clone()), Some(Action::Fail(_))),
-            "{event:?} after output"
-        );
-    }
-}
-
-/// Frames for a request the lane no longer has change nothing.
-#[test]
-fn stale_frames_are_ignored() {
-    let mut lane = Lane::new();
-    for event in [
-        Event::Output,
-        Event::Completed {
-            response_id: "resp_x".into(),
-            output_items: vec![],
-        },
-        Event::ServerError {
-            code: Some(PREVIOUS_RESPONSE_NOT_FOUND.into()),
-        },
-        Event::ConnectionLost,
-        Event::Reconnected,
-        Event::Cancel,
-    ] {
-        assert_eq!(lane.handle(event), None);
-    }
-    assert!(!lane.is_busy());
-    // Nothing was recorded, so the next request is full.
-    assert!(is_full(&Some(lane.submit(next_body()).unwrap())));
-}
-
-/// While the lane waits to reconnect, a late completion from the old
-/// connection neither completes the request nor records a continuation.
-#[test]
-fn late_completion_while_reconnecting_is_ignored() {
-    let mut lane = lane_with_continuation();
-    lane.submit(next_body()).unwrap();
-    assert_eq!(lane.handle(Event::ConnectionLost), Some(Action::Reconnect));
-    assert_eq!(
-        lane.handle(Event::Completed {
-            response_id: "resp_old".into(),
-            output_items: vec![],
-        }),
-        None
-    );
-    assert!(lane.is_busy());
-    assert!(is_full(&lane.handle(Event::Reconnected)));
-}
-
-/// A reconnect notice for a request that is not reconnecting changes
-/// nothing: no resend, and the request stays in flight.
-#[test]
-fn stray_reconnected_is_ignored() {
-    let mut lane = lane_with_continuation();
-    lane.submit(next_body()).unwrap();
-    assert_eq!(lane.handle(Event::Reconnected), None);
-    assert!(lane.is_busy());
 }
