@@ -38,14 +38,6 @@ fn none_is_nothing_however_it_is_spelled() {
 }
 
 #[test]
-fn none_with_more_after_it_is_not_a_reply() {
-    assert_eq!(
-        parse("learn: none\nbut also this"),
-        Err(Unreadable::ManyLines)
-    );
-}
-
-#[test]
 fn a_note_with_an_explanation_reads() {
     assert_eq!(
         parse(NOTE),
@@ -55,42 +47,6 @@ fn a_note_with_an_explanation_reads() {
                 .into(),
             explain: Some(explain()),
         })
-    );
-}
-
-#[test]
-fn a_note_without_a_tag_is_not_read() {
-    assert_eq!(parse("learn: The key expires."), Err(Unreadable::NoTag));
-    assert_eq!(
-        parse("learn: The key expires.\nexplain:\n**x**\n- a\n- b\n- c"),
-        Err(Unreadable::NoTag)
-    );
-}
-
-#[test]
-fn an_unknown_tag_is_not_read() {
-    assert_eq!(
-        parse("learn: The key expires.\ntag: FYI"),
-        Err(Unreadable::UnknownTag("FYI".into()))
-    );
-}
-
-#[test]
-fn a_line_over_the_limit_is_not_read() {
-    let line = format!("{}.", "a".repeat(MAX_LINE));
-    assert_eq!(
-        parse(&format!("learn: {line}\ntag: Heads up")),
-        Err(Unreadable::TooLong(MAX_LINE + 1))
-    );
-    let line = format!("{}.", "a".repeat(MAX_LINE - 1));
-    assert!(parse(&format!("learn: {line}\ntag: Heads up")).is_ok());
-}
-
-#[test]
-fn a_line_without_a_period_is_not_read() {
-    assert_eq!(
-        parse("learn: The key expires\ntag: Heads up"),
-        Err(Unreadable::NoPeriod)
     );
 }
 
@@ -115,33 +71,51 @@ fn prose_and_blanks_are_not_read() {
     assert_eq!(parse("learn:\ntag: Heads up"), Err(Unreadable::NoLine));
 }
 
-#[test]
-fn a_broken_explanation_drops_the_note() {
-    let head = "learn: A thing.\ntag: Heads up\nexplain:\n";
-    for tail in [
-        "**t**\n- a\n- b",
-        "**t**\n- a\n- b\n- c\n- d\n- e\n- f",
-        "t\n- a\n- b\n- c",
-        "**t**\n- a\n- b\nc",
-        "- a\n- b\n- c",
-    ] {
-        assert_eq!(
-            parse(&format!("{head}{tail}")),
-            Err(Unreadable::BadExplain),
-            "{tail:?}"
-        );
+/// What a note's line is written in: letters, digits, punctuation and
+/// characters of two, three and four bytes, so a count of bytes and a
+/// count of characters differ.
+const ALPHABET: &str = "abcXYZ019 `,;_-é漢🦀";
+
+/// `count` characters a note's line may hold before its period: no white
+/// space at either end (the parser trims it), and never the word `none`,
+/// which is the reply that has nothing to say.
+fn body(tc: &TestCase, count: usize) -> String {
+    let mut chars: Vec<char> = tc
+        .draw(
+            gs::text()
+                .alphabet(ALPHABET)
+                .min_size(count)
+                .max_size(count),
+        )
+        .chars()
+        .collect();
+    for at in [0, chars.len().saturating_sub(1)] {
+        if chars.get(at) == Some(&' ') {
+            chars[at] = 'a';
+        }
     }
-    assert_eq!(
-        parse("learn: A thing.\ntag: Heads up\nand then some"),
-        Err(Unreadable::BadExplain)
-    );
+    let body: String = chars.into_iter().collect();
+    if body.eq_ignore_ascii_case("none") {
+        format!("x{}", &body[1..])
+    } else {
+        body
+    }
 }
 
-/// A line one row long that ends in a period, within the limit.
+/// A line `count` characters long, its period included.
+fn line_of(tc: &TestCase, count: usize) -> String {
+    format!("{}.", body(tc, count - 1))
+}
+
+/// A line one row long that ends in a period, within the limit: its
+/// shortest and longest lengths drawn as often as the rest.
 #[hegel::composite]
 fn line(tc: &TestCase) -> String {
-    let body = tc.draw(gs::from_regex("[A-Za-z`][A-Za-z0-9 `,;_-]{0,200}"));
-    format!("{}.", body.trim_end().trim_end_matches('.'))
+    let count = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![1, 2, MAX_LINE - 1, MAX_LINE]),
+        gs::integers::<usize>().min_value(1).max_value(MAX_LINE),
+    ));
+    line_of(tc, count)
 }
 
 #[hegel::composite]
@@ -160,7 +134,8 @@ fn padding() -> impl gs::PrintableGenerator<String> {
 }
 
 /// A note written the way the parser reads it, with or without an
-/// explanation and wrapped in white space, reads back as written.
+/// explanation and wrapped in white space, reads back as written, up to
+/// a line of [`MAX_LINE`] characters however many bytes they take.
 #[hegel::test(test_cases = 200)]
 fn a_written_note_reads_back(tc: TestCase) {
     let line = tc.draw(line());
@@ -174,19 +149,114 @@ fn a_written_note_reads_back(tc: TestCase) {
     assert_eq!(parse(&text), Ok(Reply::Note { tag, line, explain }));
 }
 
-/// No text makes the parser panic, and whatever it reads as a note has
-/// a line within the limit that ends in a period.
+/// An explanation's lines as [`reply::write`] puts them, after the
+/// `explain:` head: the bold title, then a bullet each.
+fn explain_lines(explain: &Explain) -> Vec<String> {
+    std::iter::once(format!("**{}**", explain.title))
+        .chain(explain.bullets.iter().map(|bullet| format!("- {bullet}")))
+        .collect()
+}
+
+/// A note written as the parser reads it, then broken in one way, is
+/// refused for that fault and no other: no `tag:` line; a tag that is
+/// not one of the two; a line without its period; a line longer than
+/// [`MAX_LINE`] characters, counted as characters; `none` with more
+/// after it; and an explanation that is not a bold title and 3 to 5
+/// bullets.
 #[hegel::test(test_cases = 300)]
-fn any_text_reads_or_is_refused(tc: TestCase) {
-    let text = tc.draw(gs::text().max_size(400));
-    let text = if tc.draw(gs::booleans()) {
-        format!("learn: {text}")
-    } else {
-        text
+fn a_note_with_one_fault_is_refused_for_it(tc: TestCase) {
+    let tag = tc.draw(gs::sampled_from(Tag::ALL.to_vec()).print_as_debug());
+    let line = tc.draw(line());
+    let explain = tc.draw(gs::optional(explanation().print_as_debug()));
+    // What follows the tag line when the explanation is kept whole.
+    let tail: Vec<String> = explain
+        .as_ref()
+        .map(|explain| {
+            std::iter::once("explain:".to_owned())
+                .chain(explain_lines(explain))
+                .collect()
+        })
+        .unwrap_or_default();
+    let tag_line = format!("tag: {}", tag.label());
+    let note = |line: &str, tag_line: Option<&str>, tail: &[String]| {
+        std::iter::once(format!("learn: {line}"))
+            .chain(tag_line.map(str::to_owned))
+            .chain(tail.iter().cloned())
+            .collect::<Vec<_>>()
+            .join("\n")
     };
-    if let Ok(Reply::Note { line, .. }) = parse(&text) {
-        assert!(line.chars().count() <= MAX_LINE);
-        assert!(line.ends_with('.'));
-        assert!(!line.contains('\n'));
-    }
+    let (text, expected) = match tc.draw(gs::integers::<u8>().max_value(8)) {
+        0 => (note(&line, None, &tail), Unreadable::NoTag),
+        1 => {
+            let word = tc.draw(gs::sampled_from(vec![
+                "FYI",
+                "heads up",
+                "HEADS UP",
+                "Heads-up",
+                "You should know!",
+                "Note",
+            ]));
+            (
+                note(&line, Some(&format!("tag: {word}")), &tail),
+                Unreadable::UnknownTag(word.to_owned()),
+            )
+        }
+        2 => {
+            let count = tc
+                .draw(gs::integers::<usize>().min_value(1).max_value(MAX_LINE));
+            let bare = body(&tc, count);
+            (note(&bare, Some(&tag_line), &tail), Unreadable::NoPeriod)
+        }
+        3 => {
+            let count = tc.draw(hegel::one_of!(
+                gs::just(MAX_LINE + 1),
+                gs::integers::<usize>()
+                    .min_value(MAX_LINE + 1)
+                    .max_value(MAX_LINE + 40),
+            ));
+            let long = line_of(&tc, count);
+            (
+                note(&long, Some(&tag_line), &tail),
+                Unreadable::TooLong(count),
+            )
+        }
+        4 => {
+            let none = tc.draw(gs::sampled_from(vec!["none", "None.", "NONE"]));
+            let written = note(&line, Some(&tag_line), &tail);
+            (format!("learn: {none}\n{written}"), Unreadable::ManyLines)
+        }
+        // The explanation broken: too few or too many bullets, a title
+        // that is not bold, a line that is not a bullet, or no
+        // `explain:` head.
+        fault => {
+            let explain = explain
+                .unwrap_or_else(|| tc.draw(explanation().print_as_debug()));
+            let mut lines = explain_lines(&explain);
+            match fault {
+                5 => {
+                    let bullets =
+                        tc.draw(gs::sampled_from(vec![0_usize, 1, 2, 6, 7]));
+                    lines.truncate(1);
+                    lines.extend((0..bullets).map(|n| format!("- bullet {n}")));
+                    lines.insert(0, "explain:".into());
+                }
+                6 => {
+                    lines[0] = explain.title.clone();
+                    lines.insert(0, "explain:".into());
+                }
+                7 => {
+                    let at = tc.draw(
+                        gs::integers::<usize>()
+                            .min_value(1)
+                            .max_value(lines.len()),
+                    );
+                    lines.insert(at, "and then some".into());
+                    lines.insert(0, "explain:".into());
+                }
+                _ => {}
+            }
+            (note(&line, Some(&tag_line), &lines), Unreadable::BadExplain)
+        }
+    };
+    assert_eq!(parse(&text), Err(expected), "{text:?}");
 }
