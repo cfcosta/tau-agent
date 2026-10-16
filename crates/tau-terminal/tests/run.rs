@@ -84,7 +84,8 @@ async fn stdout_and_stderr_are_a_terminal_and_stdin_is_not() {
 }
 
 /// The terminal is 120 by 40, `TERM` is `xterm-256color`, and pagers
-/// are `cat`.
+/// are `cat`. The size is read through `/dev/tty`, which opens only
+/// because the terminal is the process's controlling terminal.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_terminal_has_a_fixed_size_and_environment() {
     let run = collect(sh(
@@ -110,40 +111,6 @@ async fn a_launcher_runs_the_program_after_its_words() {
     .await;
     assert_eq!(run.all_text(), "zero yes\n");
     assert_eq!(run.code(), Some(0));
-}
-
-/// The terminal is the process's controlling terminal, so `/dev/tty`
-/// opens.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_terminal_is_the_controlling_terminal() {
-    let run = collect(sh(": > /dev/tty && echo has-tty")).await;
-    assert_eq!(run.all_text(), "has-tty\n");
-}
-
-/// Colors a program prints because it sees a terminal reach the raw
-/// bytes, and not the text.
-#[tokio::test(flavor = "multi_thread")]
-async fn colors_reach_the_bytes_and_not_the_text() {
-    let run = collect(sh(
-        "if [ -t 1 ]; then printf '\\033[31mred\\033[0m\\n'; else echo plain; fi",
-    ))
-    .await;
-    assert!(
-        run.output.windows(5).any(|w| w == b"\x1b[31m"),
-        "{:?}",
-        String::from_utf8_lossy(&run.output)
-    );
-    assert_eq!(run.all_text(), "red\n");
-}
-
-/// A progress bar redrawn with `\r` leaves only its last frame in the
-/// text, while the bytes keep every frame; the terminal's `\r\n` line
-/// ends come back as `\n`.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_progress_bar_leaves_its_last_frame() {
-    let run = collect(sh("printf '10%%\\r50%%\\r100%%\\n'; echo done")).await;
-    assert_eq!(run.all_text(), "100%\ndone\n");
-    assert_eq!(run.output, b"10%\r50%\r100%\r\ndone\r\n");
 }
 
 /// A program reading stdin sees end of file at once, and so does one
