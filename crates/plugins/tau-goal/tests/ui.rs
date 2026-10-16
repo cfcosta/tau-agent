@@ -11,6 +11,7 @@ use tau_goal::{
     Goal,
     NAME,
     Record,
+    Status,
     ui::{GoalHost, State},
 };
 use tau_ui_plugin::{
@@ -32,7 +33,7 @@ fn record(tc: &hegel::TestCase) -> Record {
                 .draw(gs::sampled_from(vec!["it builds", "tests pass"]))
                 .into(),
             continuations: n,
-            budget: 1.0,
+            budget: f64::from(tc.draw(gs::integers::<u8>().max_value(4))),
         },
         1 => Record::Check(Check {
             n,
@@ -43,7 +44,8 @@ fn record(tc: &hegel::TestCase) -> Record {
                 gs::integers().min_value(1_u32).max_value(9),
             )),
             cost: 0.0,
-            spent: 0.0,
+            // Quarters, so the model's and the fold's spending agree.
+            spent: f64::from(tc.draw(gs::integers::<u8>().max_value(8))) / 4.0,
         }),
         2 => Record::Stopped {
             why: if tc.draw(gs::booleans()) {
@@ -65,24 +67,92 @@ fn record(tc: &hegel::TestCase) -> Record {
     }
 }
 
-/// Over any records, the fold's goal is the goal the records leave; a
-/// note shows for each check, stop and error, and only for those; the
-/// continuations a check sent are held; what it says as a run starts
-/// sets whether it checks, and nothing else.
+/// The goal records leave, as goal.md's table of records states it:
+/// `set` makes a new active goal; a `check` records its spending, the
+/// continuation it sent and clears the last error, and `met` ends it;
+/// `stopped` stops it; `extended` adds continuations past those used
+/// and makes it active again; `paused` holds an active goal and
+/// `resumed` a paused one; `cleared` leaves no goal; `error` keeps the
+/// failure. Without a goal, only `set` does anything.
+fn model(goal: &mut Option<Goal>, record: &Record) {
+    match record {
+        Record::Set {
+            goal: condition,
+            continuations,
+            budget,
+        } => {
+            *goal = Some(Goal {
+                condition: condition.clone(),
+                max_continuations: *continuations,
+                budget: *budget,
+                status: Status::Active,
+                continuations: 0,
+                spent: 0.0,
+                checks: Vec::new(),
+                error: None,
+            });
+        }
+        Record::Cleared => *goal = None,
+        _ => {
+            let Some(goal) = goal else { return };
+            match record {
+                Record::Check(check) => {
+                    goal.spent = check.spent;
+                    goal.error = None;
+                    goal.continuations =
+                        check.continuation.unwrap_or(goal.continuations);
+                    if check.met {
+                        goal.status = Status::Met;
+                    }
+                    goal.checks.push(check.clone());
+                }
+                Record::Stopped { why } => goal.status = Status::Stopped(*why),
+                Record::Extended { by } => {
+                    goal.max_continuations =
+                        by + goal.max_continuations.max(goal.continuations);
+                    goal.status = Status::Active;
+                }
+                Record::Paused if goal.status == Status::Active => {
+                    goal.status = Status::Paused;
+                }
+                Record::Resumed if goal.status == Status::Paused => {
+                    goal.status = Status::Active;
+                }
+                Record::Error { message } => goal.error = Some(message.clone()),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Over any records, the goal the fold shows and the goal the records
+/// fold to are the model's after each record; a note shows for each
+/// check, stop and error, and only for those; the continuations a check
+/// sent are held; what it says as a run starts sets whether it checks,
+/// and nothing else.
 #[hegel::test(test_cases = 300)]
 fn the_fold_follows_the_records(tc: hegel::TestCase) {
-    let records: Vec<Record> =
-        tc.draw(gs::vecs(record().print_as_debug()).max_size(12));
+    // Mostly a goal set first, so the records after it act on one.
+    let set = tc.draw(gs::weighted_booleans(0.8)).then(|| Record::Set {
+        goal: "tests pass".into(),
+        continuations: 2,
+        budget: 1.0,
+    });
+    let records: Vec<Record> = set
+        .into_iter()
+        .chain(tc.draw(gs::vecs(record().print_as_debug()).max_size(12)))
+        .collect();
     let mut state = State::default();
     let mut anchors = FakeRun::default();
+    let mut expected = None;
+    let mut bodies: Vec<Value> = Vec::new();
     for record in &records {
         state.apply(record.clone(), &mut anchors);
+        model(&mut expected, record);
+        bodies.push(serde_json::to_value(record).unwrap());
+        assert_eq!(state.goal, expected, "{record:?}");
+        assert_eq!(Goal::fold(&bodies), expected, "{record:?}");
     }
-    let bodies: Vec<Value> = records
-        .iter()
-        .map(|record| serde_json::to_value(record).unwrap())
-        .collect();
-    assert_eq!(state.goal, Goal::fold(&bodies));
     let noted = records
         .iter()
         .filter(|record| {
