@@ -10,7 +10,7 @@ use hegel::{
     TestCase,
     generators::{self as gs, Generator},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tau_mcp::config::{
     ConfigError,
     Exposure,
@@ -382,31 +382,6 @@ fn invalid_entries_are_reported_and_skipped() {
     assert!(messages.contains(&format!("server `sse`: {SSE_REFUSED}")));
 }
 
-/// A repository server waits for approval by its hash; changing the
-/// entry asks again.
-#[test]
-fn repository_servers_wait_for_approval() {
-    let (repo, _) = McpConfig::parse(
-        r#"{"mcpServers": {"git": {"command": "uvx", "args": ["mcp-server-git"]}}}"#,
-    );
-    let mut settings = Settings::default();
-    let sources = Sources::merge(None, &settings, Some(&repo));
-    assert!(sources.servers.is_empty());
-    assert_eq!(sources.pending.len(), 1);
-
-    settings.approved.insert(sources.pending[0].hash.clone());
-    let sources = Sources::merge(None, &settings, Some(&repo));
-    assert_eq!(sources.servers.len(), 1);
-    assert_eq!(sources.servers[0].0, Origin::Repo);
-
-    let (changed, _) = McpConfig::parse(
-        r#"{"mcpServers": {"git": {"command": "uvx", "args": ["evil"]}}}"#,
-    );
-    let sources = Sources::merge(None, &settings, Some(&changed));
-    assert!(sources.servers.is_empty());
-    assert_eq!(sources.pending.len(), 1);
-}
-
 /// The two files are read from the documented places, the settings'
 /// servers go between them, and a missing file is no servers.
 #[test]
@@ -441,67 +416,157 @@ fn files_are_read_from_their_places() {
     assert!(sources.servers.is_empty() && sources.errors.is_empty());
 }
 
-/// An `oauth` block is checked: never with an Authorization header, a
-/// secret only with a client, a loopback callback, a port that fits;
-/// empty strings and nulls are left out.
-#[test]
-fn oauth_blocks_are_checked() {
-    let error = |entry: serde_json::Value| {
-        let (_, errors) =
-            McpConfig::from_value(&json!({ "mcpServers": { "s": entry } }));
-        errors.first().map(|error| error.message.clone())
-    };
-    let url = "https://mcp.dev/mcp";
-    assert!(
-        error(json!({ "url": url, "headers": { "authorization": "Bearer x" }, "oauth": {} }))
-            .unwrap()
-            .contains("Authorization")
+/// The ways an `oauth` block goes wrong, each with words only its own
+/// error holds.
+const OAUTH_DEFECTS: [&str; 8] = [
+    "`Authorization`",
+    "needs `oauth.clientId`",
+    "loopback host",
+    "must name its port",
+    "1 to 65535",
+    "`oauth` must be an object",
+    "must be a string",
+    "`oauth.authServerMetadataUrl` must be an http",
+];
+
+/// A valid `oauth` block, with one defect or none, is checked: with a
+/// defect the entry is skipped and its one error is that defect's; with
+/// none, the block reads back as it was written, empty strings and nulls
+/// for the fields it leaves out changing nothing. A secret never shows
+/// in `Debug`.
+#[hegel::test(test_cases = 300)]
+fn an_oauth_block_is_checked_one_defect_at_a_time(tc: TestCase) {
+    let block = tc.draw(oauth().print_as_debug());
+    let server = ServerConfig::new(
+        "s",
+        Transport::Http(HttpConfig {
+            url: "https://mcp.dev/mcp".into(),
+            headers: Vec::new(),
+            oauth: Some(block.clone()),
+        }),
     );
-    assert!(
-        error(json!({ "url": url, "oauth": { "clientSecret": "x" } }))
-            .unwrap()
-            .contains("clientId")
-    );
-    assert!(
-        error(json!({ "url": url, "oauth": { "callbackUrl": "http://10.0.0.1:9/cb" } }))
-            .unwrap()
-            .contains("loopback")
-    );
-    assert!(
-        error(json!({ "url": url, "oauth": { "callbackUrl": "http://127.0.0.1/cb" } }))
-            .unwrap()
-            .contains("port")
-    );
-    assert!(
-        error(json!({ "url": url, "oauth": { "callbackPort": 70000 } }))
-            .unwrap()
-            .contains("port")
-    );
-    assert!(error(json!({ "url": url, "oauth": "yes" })).is_some());
-    let (config, errors) = McpConfig::from_value(
-        &json!({ "mcpServers": { "s": {
-        "url": url,
-        "oauth": { "clientId": "", "scope": null, "callbackUrl": "http://localhost:8/cb" }
-    } } }),
-    );
-    assert!(errors.is_empty(), "{errors:?}");
-    let Transport::Http(http) = &config.servers[0].transport else {
-        panic!("an HTTP server");
-    };
-    assert_eq!(
-        http.oauth,
-        Some(OAuthConfig {
-            callback_url: Some("http://localhost:8/cb".into()),
-            ..OAuthConfig::default()
-        })
-    );
-    // A secret never shows in Debug.
+    let mut entry = McpConfig {
+        servers: vec![server],
+    }
+    .to_value()["mcpServers"]["s"]
+        .clone();
+    let defect: Option<usize> = tc.draw(gs::optional(
+        gs::integers::<usize>().max_value(OAUTH_DEFECTS.len() - 1),
+    ));
+    let oauth = entry["oauth"].as_object_mut().unwrap();
+    match defect {
+        Some(0) => {
+            let name = tc.draw(gs::sampled_from(vec![
+                "Authorization",
+                "authorization",
+                "AUTHORIZATION",
+            ]));
+            entry["headers"] = json!({ name: "Bearer x" });
+        }
+        Some(1) => {
+            oauth.remove("clientId");
+            oauth.insert("clientSecret".into(), json!("x"));
+        }
+        Some(2) => {
+            let host = tc.draw(gs::sampled_from(vec![
+                "10.0.0.1",
+                "0.0.0.0",
+                "example.com",
+                "[::2]",
+            ]));
+            oauth.insert(
+                "callbackUrl".into(),
+                json!(format!("http://{host}:9/cb")),
+            );
+        }
+        Some(3) => {
+            oauth.insert("callbackUrl".into(), json!("http://127.0.0.1/cb"));
+            oauth.remove("callbackPort");
+        }
+        Some(4) => {
+            let port = tc.draw(gs::sampled_from(vec![
+                json!(0),
+                json!(65_536),
+                json!(-1),
+                json!(1.5),
+                json!("8080"),
+            ]));
+            oauth.insert("callbackPort".into(), port);
+        }
+        Some(5) => {
+            entry["oauth"] = tc.draw(gs::sampled_from(vec![
+                json!("yes"),
+                json!(1),
+                json!([]),
+            ]));
+        }
+        Some(6) => {
+            let key = tc.draw(gs::sampled_from(vec![
+                "clientId",
+                "callbackUrl",
+                "scope",
+                "clientName",
+                "authServerMetadataUrl",
+            ]));
+            oauth.insert(key.into(), json!(7));
+        }
+        Some(_) => {
+            oauth.insert(
+                "authServerMetadataUrl".into(),
+                json!("ftp://auth.dev/meta"),
+            );
+        }
+        None => {
+            for key in [
+                "clientId",
+                "clientSecret",
+                "callbackUrl",
+                "scope",
+                "clientName",
+                "authServerMetadataUrl",
+                "callbackPort",
+            ] {
+                if !oauth.contains_key(key) && tc.draw(gs::booleans()) {
+                    let absent =
+                        if key == "callbackPort" || tc.draw(gs::booleans()) {
+                            Value::Null
+                        } else {
+                            json!("")
+                        };
+                    oauth.insert(key.into(), absent);
+                }
+            }
+        }
+    }
+    let (config, errors) =
+        McpConfig::from_value(&json!({ "mcpServers": { "s": entry } }));
+    match defect {
+        Some(index) => {
+            assert!(config.servers.is_empty(), "{entry}");
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert_eq!(errors[0].server.as_deref(), Some("s"));
+            let message = &errors[0].message;
+            assert!(message.contains(OAUTH_DEFECTS[index]), "{message}");
+            for (other, words) in OAUTH_DEFECTS.iter().enumerate() {
+                if other != index {
+                    assert!(!message.contains(words), "{message}");
+                }
+            }
+        }
+        None => {
+            assert!(errors.is_empty(), "{errors:?}");
+            let Transport::Http(http) = &config.servers[0].transport else {
+                panic!("an HTTP server");
+            };
+            assert_eq!(http.oauth.as_ref(), Some(&block), "{entry}");
+        }
+    }
     let secret = OAuthConfig {
         client_id: Some("c".into()),
-        client_secret: Some("hush".into()),
-        ..OAuthConfig::default()
+        client_secret: Some("zqhush".into()),
+        ..block
     };
-    assert!(!format!("{secret:?}").contains("hush"));
+    assert!(!format!("{secret:?}").contains("zqhush"));
 }
 
 /// A loopback host as a callback URL writes it, and as the redirect
@@ -537,21 +602,33 @@ fn callback_path(tc: &TestCase) -> String {
     format!("/{}", segments.join("/"))
 }
 
-/// A callback URL on a loopback host with a port and a path is taken
-/// as written, and the redirect URI it registers is that URL. Port 80
-/// is the case `Url` hides, so it is drawn on purpose.
+/// A callback URL on a loopback host with a path is taken as written,
+/// its port from the URL or from `callbackPort`, which agree when both
+/// are given; the redirect URI it registers is that URL with the port.
+/// Port 80 is the case `Url` hides, so it is drawn on purpose.
 #[hegel::test(test_cases = 300)]
 fn a_loopback_callback_url_is_the_redirect_uri(tc: TestCase) {
     let (written, host) = tc.draw(loopback_host());
     let port = tc.draw(hegel::one_of!(
         gs::just(80_u16),
+        gs::sampled_from(vec![1_u16, 65_535]),
         gs::integers::<u16>().min_value(1)
     ));
     let path = tc.draw(callback_path());
-    let agreeing = tc.draw(gs::optional(gs::just(port)));
-    let url = format!("http://{written}:{port}{path}");
-    let address = callback_address(Some(&url), agreeing)
-        .unwrap_or_else(|error| panic!("{url}: {error}"));
+    // The port in the URL, in `callbackPort`, or in both.
+    let (in_url, configured) = match tc.draw(gs::integers::<u8>().max_value(2))
+    {
+        0 => (true, None),
+        1 => (false, Some(port)),
+        _ => (true, Some(port)),
+    };
+    let url = if in_url {
+        format!("http://{written}:{port}{path}")
+    } else {
+        format!("http://{written}{path}")
+    };
+    let address = callback_address(Some(&url), configured)
+        .unwrap_or_else(|error| panic!("{url} with {configured:?}: {error}"));
     assert_eq!((address.port, &address.path), (port, &path), "{url}");
     assert_eq!(
         address.redirect_uri(port),
@@ -561,18 +638,29 @@ fn a_loopback_callback_url_is_the_redirect_uri(tc: TestCase) {
 }
 
 /// Everything else about a callback URL is refused: another scheme, a
-/// user, a query or a fragment, and any host that is not loopback.
+/// user, a query or a fragment, any host that is not loopback, a port
+/// the URL and `callbackPort` disagree on, and no port at all.
 #[hegel::test(test_cases = 300)]
 fn a_callback_url_that_is_not_plain_loopback_http_is_refused(tc: TestCase) {
     let (written, _) = tc.draw(loopback_host());
     let port = tc.draw(gs::integers::<u16>().min_value(1));
     let path = tc.draw(callback_path());
-    let url = match tc.draw(gs::integers::<u8>().max_value(5)) {
+    let mut configured = Some(port);
+    let url = match tc.draw(gs::integers::<u8>().max_value(7)) {
         0 => format!("https://{written}:{port}{path}"),
         1 => format!("http://user@{written}:{port}{path}"),
         2 => format!("http://user:pw@{written}:{port}{path}"),
         3 => format!("http://{written}:{port}{path}?x=1"),
         4 => format!("http://{written}:{port}{path}#frag"),
+        5 => {
+            // Any other port: the two disagree.
+            configured = Some(port % u16::MAX + 1);
+            format!("http://{written}:{port}{path}")
+        }
+        6 => {
+            configured = None;
+            format!("http://{written}{path}")
+        }
         _ => {
             let host = tc.draw(hegel::one_of!(
                 gs::sampled_from(vec![
@@ -582,11 +670,16 @@ fn a_callback_url_that_is_not_plain_loopback_http_is_refused(tc: TestCase) {
                     "192.168.1.9".to_owned(),
                     "128.0.0.1".to_owned(),
                     "[::2]".to_owned(),
+                    "localhost.example.com".to_owned(),
+                    "127.0.0.1.example.com".to_owned(),
                 ]),
                 gs::domains().map(|domain| format!("x{domain}")),
             ));
             format!("http://{host}:{port}{path}")
         }
     };
-    assert!(callback_address(Some(&url), Some(port)).is_err(), "{url}");
+    assert!(
+        callback_address(Some(&url), configured).is_err(),
+        "{url} with {configured:?}"
+    );
 }

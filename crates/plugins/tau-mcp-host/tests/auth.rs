@@ -1,7 +1,8 @@
 //! Signing in's laws (`docs/reference/mcp.md`, "Tests"): PKCE verifiers
 //! and their challenges; the callback accepts exactly this attempt's
 //! answer; the grants file keeps what it is given, owner-only, and never
-//! shows a token; the callback address is loopback-only.
+//! shows a token; with no callback URL, tau listens on loopback. Which
+//! callback URLs are accepted is `tau-mcp`'s `config` properties.
 
 use std::{collections::BTreeMap, net::IpAddr, os::unix::fs::PermissionsExt};
 
@@ -266,73 +267,6 @@ fn the_grants_file_keeps_what_it_is_given(tc: TestCase) {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
-    }
-}
-
-/// A host for a callback URL, and whether it is loopback.
-fn hosts() -> Vec<(&'static str, bool)> {
-    vec![
-        ("127.0.0.1", true),
-        ("127.8.9.10", true),
-        ("localhost", true),
-        ("LocalHost", true),
-        ("[::1]", true),
-        ("0.0.0.0", false),
-        ("10.0.0.1", false),
-        ("128.0.0.1", false),
-        ("[::2]", false),
-        ("example.com", false),
-        ("localhost.example.com", false),
-        ("127.0.0.1.example.com", false),
-    ]
-}
-
-/// A callback URL is accepted exactly when it is plain http on a
-/// loopback host, with no query or fragment, and a port the URL or
-/// `callbackPort` gives, the two agreeing. Then tau listens on loopback,
-/// and the redirect URI it makes keeps the host, port and path.
-#[hegel::test(test_cases = 500)]
-fn the_callback_is_loopback_only(tc: TestCase) {
-    let https: bool = tc.draw(gs::booleans());
-    let (host, loopback) = tc.draw(gs::sampled_from(hosts()));
-    let port: Option<u16> =
-        tc.draw(gs::optional(gs::integers().min_value(1_u16)));
-    let path: String = tc.draw(gs::from_regex("(/[a-z0-9]{0,6}){0,3}"));
-    let query: bool = tc.draw(gs::booleans());
-    let callback_port: Option<u16> = tc.draw(hegel::one_of!(
-        gs::just(None),
-        gs::integers().min_value(1_u16).map(Some),
-        gs::just(port),
-    ));
-    let mut url = format!("{}://{host}", if https { "https" } else { "http" });
-    if let Some(port) = port {
-        url.push_str(&format!(":{port}"));
-    }
-    url.push_str(&path);
-    if query {
-        url.push_str("?x=1");
-    }
-    let agree = match (port, callback_port) {
-        (Some(a), Some(b)) => a == b,
-        (None, None) => false,
-        _ => true,
-    };
-    let accepted = callback_address(Some(&url), callback_port);
-    assert_eq!(
-        accepted.is_ok(),
-        !https && loopback && !query && agree,
-        "{url} with {callback_port:?}: {accepted:?}"
-    );
-    if let Ok(address) = accepted {
-        assert!(address.ip.is_loopback());
-        let port = port.or(callback_port).unwrap();
-        assert_eq!(address.port, port);
-        let redirect = address.redirect_uri(port);
-        let parsed = url::Url::parse(&redirect).unwrap();
-        let expected = url::Url::parse(&url).unwrap();
-        assert_eq!(parsed.host(), expected.host());
-        assert_eq!(parsed.path(), expected.path());
-        assert_eq!(parsed.port_or_known_default(), Some(port));
     }
 }
 

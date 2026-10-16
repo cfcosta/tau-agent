@@ -319,6 +319,7 @@ fn an_approval_holds_for_the_entry_shown(tc: TestCase) {
     };
     let sources = Sources::merge(None, &approved, Some(&file));
     assert_eq!(sources.pending.len(), 1);
+    assert!(sources.servers.is_empty(), "the changed entry does not run");
 }
 
 /// A server the page cannot add says why: a bad name, an entry that is
@@ -891,17 +892,50 @@ fn the_page_turns_any_server_off() {
     );
 }
 
+/// A small count, 0, 1 and 2 (where the wording changes) most of all.
+#[hegel::composite]
+fn count(tc: &TestCase) -> usize {
+    tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![0_usize, 1, 2]),
+        gs::integers::<usize>().max_value(1_000),
+    ))
+}
+
 /// The catalog says how many servers there are, how many are connected
-/// and how many wait.
-#[test]
-fn summaries_count_what_matters() {
-    assert_eq!(ui::summary(0, None, 0), "no servers");
-    assert_eq!(ui::summary(1, None, 0), "1 server");
+/// once they started (and there are any), and how many wait for a
+/// sign-in and for approval, each part left out at zero, one server or
+/// need counted in the singular. The wording is written out here.
+#[hegel::test(test_cases = 300)]
+fn summaries_count_what_matters(tc: TestCase) {
+    let servers = tc.draw(count());
+    let connected: Option<usize> = tc.draw(gs::optional(count()));
+    let sign_in = tc.draw(count());
+    let pending = tc.draw(count());
+    let waiting = |n: usize, what: &str| match n {
+        0 => None,
+        1 => Some(format!("1 needs {what}")),
+        n => Some(format!("{n} need {what}")),
+    };
+    let mut parts = vec![match servers {
+        0 => "no servers".to_owned(),
+        1 => "1 server".to_owned(),
+        n => format!("{n} servers"),
+    }];
+    if servers > 0
+        && let Some(connected) = connected
+    {
+        parts.push(format!("{connected} connected"));
+    }
+    parts.extend(waiting(sign_in, "sign-in"));
+    parts.extend(waiting(pending, "approval"));
+    let expected = parts.join(" · ");
     assert_eq!(
-        ui::summary(3, Some(2), 1),
-        "3 servers · 2 connected · 1 needs approval"
+        ui::summary_with_sign_in(servers, connected, sign_in, pending),
+        expected
     );
-    assert_eq!(ui::summary(0, Some(0), 2), "no servers · 2 need approval");
+    if sign_in == 0 {
+        assert_eq!(ui::summary(servers, connected, pending), expected);
+    }
 }
 
 // The interface.
