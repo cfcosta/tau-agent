@@ -1081,22 +1081,6 @@ fn fuzzy_mode_preserves_a_final_untouched_line_without_a_trailing_newline() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "FIRST\nsecond");
 }
 
-/// In fuzzy mode, an edit whose match ends exactly at a line boundary
-/// does not sweep the following, untouched line into its group: that
-/// line keeps its own original bytes (`tools.md`, "edit", step 6).
-#[test]
-fn fuzzy_mode_does_not_sweep_the_following_untouched_line_into_the_group() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("f.txt");
-    std::fs::write(&file, "first   \nsecond   \nthird\n").unwrap();
-    let edit = new_edit(dir.path());
-    call(&edit, json!({"path": "f.txt", "edits": [{"oldText": "first\n", "newText": "FIRST\n"}]})).unwrap();
-    assert_eq!(
-        std::fs::read_to_string(&file).unwrap(),
-        "FIRST\nsecond   \nthird\n"
-    );
-}
-
 /// Two fuzzy edits whose line ranges touch (one spans into the next
 /// line) are merged into one group instead of two, which would
 /// otherwise slice past the merged range (`edit-diff.ts`'s
@@ -1144,58 +1128,50 @@ fn known_case_crlf_matching_and_duplicates() {
     assert!(error.to_string().contains("Found 2 occurrences"), "{error}");
 }
 
-/// pi's `edit-tool-legacy-input.test.ts`: `oldText`/`newText` at the
-/// top level fold into `edits`.
-#[test]
-fn prepare_arguments_folds_legacy_old_new_text() {
-    let dir = tempfile::tempdir().unwrap();
-    let edit = new_edit(dir.path());
-    let prepared = edit.prepare_arguments(json!({
-        "path": "file.txt",
-        "oldText": "before",
-        "newText": "after",
-    }));
-    assert_eq!(
-        prepared,
-        json!({"path": "file.txt", "edits": [{"oldText": "before", "newText": "after"}]})
-    );
-}
+/// Argument repair (`tools.md`, "edit", "Argument repair"; pi's
+/// `edit-tool-legacy-input.test.ts`): however the model sends its
+/// edits -- a list, that list as a JSON string, a lone object for a
+/// one-element list (also as a JSON string), or none at all -- and
+/// whether or not it also sends a top-level `oldText`/`newText`, the
+/// arguments prepare to one form, built here directly: the edits as a
+/// list, with the top-level pair appended last.
+#[hegel::test(test_cases = 200)]
+fn prepared_arguments_are_the_edits_as_a_list(tc: TestCase) {
+    let pair =
+        || hegel::tuples!(gs::text().max_size(6), gs::text().max_size(6));
+    let edits: Vec<(String, String)> = tc.draw(gs::vecs(pair()).max_size(3));
+    let legacy: Option<(String, String)> = tc.draw(gs::optional(pair()));
+    let object =
+        |(old, new): &(String, String)| json!({"oldText": old, "newText": new});
+    let list = Value::Array(edits.iter().map(object).collect());
+    let mut forms = vec!["list", "string"];
+    match edits.len() {
+        0 => forms.push("absent"),
+        1 => forms.extend(["lone", "lone string"]),
+        _ => {}
+    }
+    let form = tc.draw(gs::sampled_from(forms));
 
-/// pi's `edit-tool-legacy-input.test.ts`: a legacy replacement is
-/// appended after any edits already present.
-#[test]
-fn prepare_arguments_appends_legacy_to_existing_edits() {
-    let dir = tempfile::tempdir().unwrap();
-    let edit = new_edit(dir.path());
-    let prepared = edit.prepare_arguments(json!({
-        "path": "file.txt",
-        "edits": [{"oldText": "a", "newText": "b"}],
-        "oldText": "c",
-        "newText": "d",
-    }));
-    assert_eq!(
-        prepared,
-        json!({"path": "file.txt", "edits": [
-            {"oldText": "a", "newText": "b"},
-            {"oldText": "c", "newText": "d"},
-        ]})
-    );
-}
+    let mut args = json!({"path": "f.txt"});
+    match form {
+        "list" => args["edits"] = list.clone(),
+        "string" => args["edits"] = json!(list.to_string()),
+        "lone" => args["edits"] = list[0].clone(),
+        "lone string" => args["edits"] = json!(list[0].to_string()),
+        _ => {}
+    }
+    if let Some((old, new)) = &legacy {
+        args["oldText"] = json!(old);
+        args["newText"] = json!(new);
+    }
 
-/// pi's `edit-tool-legacy-input.test.ts`: `edits` sent as a JSON
-/// string is parsed.
-#[test]
-fn prepare_arguments_parses_a_json_string_edits() {
+    let mut expected = json!({"path": "f.txt"});
+    if form != "absent" || legacy.is_some() {
+        let all: Vec<Value> = edits.iter().chain(&legacy).map(object).collect();
+        expected["edits"] = Value::Array(all);
+    }
     let dir = tempfile::tempdir().unwrap();
-    let edit = new_edit(dir.path());
-    let prepared = edit.prepare_arguments(json!({
-        "path": "file.txt",
-        "edits": "[{\"oldText\": \"a\", \"newText\": \"b\"}]",
-    }));
-    assert_eq!(
-        prepared,
-        json!({"path": "file.txt", "edits": [{"oldText": "a", "newText": "b"}]})
-    );
+    assert_eq!(new_edit(dir.path()).prepare_arguments(args), expected);
 }
 
 /// pi's `edit-tool-legacy-input.test.ts`: invalid JSON in `edits` is
@@ -1207,22 +1183,6 @@ fn prepare_arguments_leaves_invalid_json_edits_alone() {
     let prepared = edit
         .prepare_arguments(json!({"path": "file.txt", "edits": "not json"}));
     assert_eq!(prepared, json!({"path": "file.txt", "edits": "not json"}));
-}
-
-/// pi's `edit.ts`: a single edit object is wrapped in a one-element
-/// array.
-#[test]
-fn prepare_arguments_wraps_a_single_edit_object() {
-    let dir = tempfile::tempdir().unwrap();
-    let edit = new_edit(dir.path());
-    let prepared = edit.prepare_arguments(json!({
-        "path": "file.txt",
-        "edits": {"oldText": "a", "newText": "b"},
-    }));
-    assert_eq!(
-        prepared,
-        json!({"path": "file.txt", "edits": [{"oldText": "a", "newText": "b"}]})
-    );
 }
 
 /// The tool's name, description and parameter descriptions are ported

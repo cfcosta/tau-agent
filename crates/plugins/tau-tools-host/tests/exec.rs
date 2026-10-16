@@ -480,15 +480,44 @@ async fn a_notify_process_tells_when_it_ends() {
     assert!(ended.try_recv().is_err(), "told once");
 }
 
-/// Without `notify`, nothing is told; and a call that reports the end
-/// first leaves nothing to tell.
+/// Waits until nothing can tell any more, and returns what was told:
+/// the notifier lives in `exec` and in the watcher of each process left
+/// running with `notify`, so with `exec` dropped the channel closes
+/// exactly when the last watcher ends, told or not.
+async fn told_once_watchers_end(
+    exec: ExecCommand,
+    mut ended: mpsc::UnboundedReceiver<Ended>,
+) -> Vec<Ended> {
+    drop(exec);
+    let mut told = Vec::new();
+    while let Some(notice) =
+        tokio::time::timeout(Duration::from_secs(10), ended.recv())
+            .await
+            .expect("every watcher ends")
+    {
+        told.push(notice);
+    }
+    told
+}
+
+/// Without `notify`, nothing is told when the process ends.
 #[tokio::test(flavor = "multi_thread")]
-async fn nothing_is_told_without_notify_or_after_a_report() {
-    let (t, mut ended) = notified(tools());
-    t.exec
+async fn a_process_without_notify_is_not_told_of() {
+    let (t, ended) = notified(tools());
+    let first = t
+        .exec
         .call(json!({ "cmd": "sleep 1", "yield_time_ms": 250 }), ctx())
         .await
         .unwrap();
+    assert!(first.structured.unwrap()["running"].as_bool().unwrap());
+    assert_eq!(told_once_watchers_end(t.exec, ended).await, []);
+}
+
+/// A call that reports the end first leaves nothing to tell: a command
+/// that ends within its call, and one a later poll sees end.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_process_whose_end_a_call_reported_is_not_told_of() {
+    let (t, ended) = notified(tools());
     t.exec
         .call(
             json!({ "cmd": "echo quick", "notify": true,
@@ -505,23 +534,18 @@ async fn nothing_is_told_without_notify_or_after_a_report() {
         )
         .await
         .unwrap();
-    // The poll that sees the end reports it, so nobody is woken for it.
+    let id = process_of(&polled);
     t.write
-        .call(
-            json!({ "process_id": process_of(&polled),
-                    "yield_time_ms": 5000 }),
-            ctx(),
-        )
+        .call(json!({ "process_id": id, "yield_time_ms": 5000 }), ctx())
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(ended.try_recv().is_err());
+    assert_eq!(told_once_watchers_end(t.exec, ended).await, []);
 }
 
 /// A process the store kills is not told of.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_killed_process_is_not_told_of() {
-    let (t, mut ended) = notified(tools());
+    let (t, ended) = notified(tools());
     t.exec
         .call(
             json!({ "cmd": "sleep 30", "notify": true,
@@ -531,6 +555,5 @@ async fn a_killed_process_is_not_told_of() {
         .await
         .unwrap();
     t.processes.terminate_all();
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    assert!(ended.try_recv().is_err());
+    assert_eq!(told_once_watchers_end(t.exec, ended).await, []);
 }

@@ -131,9 +131,10 @@ fn tool_names(
     tools.iter().map(|tool| tool.name()).collect()
 }
 
-/// `coding_tools` and the plugin offer the same seven tools, in pi's
-/// order; `only` and `without` pick a subset, and the order stays pi's
-/// whatever order the subset was named in.
+/// `coding_tools` and the plugin offer the same eight tools, in pi's
+/// order, the plugin with `artifact_read` for scripts after them; `only`
+/// and `without` pick a subset, and the order stays pi's whatever order
+/// the subset was named in.
 #[test]
 fn the_plugin_picks_tools_in_pis_order() {
     use tau_agent::plugin::Plugin;
@@ -142,7 +143,16 @@ fn the_plugin_picks_tools_in_pis_order() {
     assert_eq!(all.name(), tau_tools::ui::NAME);
     assert_eq!(
         tool_names(&coding_tools(&root)),
-        Tool::ALL.map(Tool::name).to_vec()
+        [
+            "read",
+            "exec_command",
+            "write_stdin",
+            "edit",
+            "write",
+            "grep",
+            "find",
+            "ls"
+        ]
     );
     assert_eq!(
         tool_names(&all.tools()),
@@ -161,24 +171,6 @@ fn the_plugin_picks_tools_in_pis_order() {
     assert_eq!(
         all.tools().last().unwrap().exposure(),
         tau_agent::tool::Exposure::Nested
-    );
-    let range = all.tools().pop().unwrap();
-    assert!(range.parameters()["properties"]["id"].is_object());
-    assert!(range.parameters()["properties"]["offset"].is_object());
-    assert!(range.parameters()["properties"]["limit"].is_object());
-    assert!(range.parameters()["properties"]["encoding"].is_object());
-    let output = range.output_schema().unwrap();
-    assert!(
-        output["required"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("complete"))
-    );
-    assert!(
-        output["required"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("next_offset"))
     );
     let picked = CodingTools::new(root.clone()).only(&[
         Tool::Ls,

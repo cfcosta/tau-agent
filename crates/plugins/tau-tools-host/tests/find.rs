@@ -2,6 +2,8 @@
 //! ("find") and pi's `find.ts`, on a real directory
 //! (`docs/reference/testing.md`, "tau-tools").
 
+mod common;
+
 use std::path::Path;
 
 use globset::GlobBuilder;
@@ -50,7 +52,8 @@ fn structured_of(output: &ToolOutput) -> &serde_json::Value {
 
 /// The tool's identity and pinned description string, verbatim from
 /// pi's `find.ts` except for the ported limits
-/// (`docs/reference/tools.md`, "find").
+/// (`docs/reference/tools.md`, "find"). The output schema is checked
+/// against every generated result, in the properties below.
 #[test]
 fn name_description_and_schema() {
     let dir = tempfile::tempdir().unwrap();
@@ -68,29 +71,6 @@ truncated to 1000 results or 50KB (whichever is hit first)."
         schema["properties"]["limit"]["description"],
         json!("Maximum number of results (default: 1000)")
     );
-
-    let output_schema = tool.output_schema().unwrap();
-    assert_eq!(output_schema["type"], "object");
-    assert_eq!(
-        output_schema["required"],
-        json!([
-            "root",
-            "paths",
-            "truncated",
-            "complete",
-            "limit_reached",
-            "bytes_truncated",
-            "skipped"
-        ])
-    );
-    let properties = &output_schema["properties"];
-    assert_eq!(properties["root"]["type"], "string");
-    assert_eq!(properties["paths"]["type"], "array");
-    assert_eq!(properties["paths"]["items"]["type"], "string");
-    for field in ["truncated", "complete", "limit_reached", "bytes_truncated"] {
-        assert_eq!(properties[field]["type"], "boolean", "{field}");
-    }
-    assert_eq!(properties["skipped"]["type"], "integer");
 }
 
 /// The candidate files a generated tree draws from: a mix of root and
@@ -372,6 +352,7 @@ fn find_matches_a_naive_walk(tc: TestCase) {
         case.pattern, case.present, case.gitignore, case.limit
     );
     let structured = structured_of(&output);
+    common::assert_matches_output_schema(&Find::new(root.clone()), structured);
     assert_eq!(structured["paths"], json!(matched));
     assert_eq!(structured["limit_reached"], limit_reached);
     assert_eq!(structured["bytes_truncated"], false);
@@ -510,10 +491,11 @@ fn exclude_globally(config_dir: &std::path::Path) {
     unsafe { std::env::set_var("GIT_CONFIG_GLOBAL", &config) };
 }
 
-/// Zero, exact, and exceeded entry limits keep their existing display text and
-/// report the selected records and completeness separately.
+/// A zero limit lists nothing and says the limit was reached, keeping
+/// its display text; exact and exceeded limits are checked by
+/// `find_matches_a_naive_walk`.
 #[test]
-fn zero_exact_and_exceeded_limits_report_structured_paths() {
+fn a_zero_limit_reports_no_paths() {
     let dir = tempfile::tempdir().unwrap();
     for name in ["a.txt", "b.txt", "c.txt"] {
         std::fs::write(dir.path().join(name), "x").unwrap();
@@ -530,28 +512,6 @@ fn zero_exact_and_exceeded_limits_report_structured_paths() {
     assert_eq!(structured_of(&zero)["limit_reached"], true);
     assert_eq!(structured_of(&zero)["truncated"], true);
     assert_eq!(structured_of(&zero)["complete"], false);
-
-    let exact =
-        call_output(&root, json!({"pattern": "*.txt", "limit": 3})).unwrap();
-    assert_eq!(text_of(&exact), "a.txt\nb.txt\nc.txt");
-    assert_eq!(
-        structured_of(&exact)["paths"],
-        json!(["a.txt", "b.txt", "c.txt"])
-    );
-    assert_eq!(structured_of(&exact)["limit_reached"], false);
-    assert_eq!(structured_of(&exact)["truncated"], false);
-    assert_eq!(structured_of(&exact)["complete"], true);
-
-    let exceeded =
-        call_output(&root, json!({"pattern": "*.txt", "limit": 2})).unwrap();
-    assert_eq!(
-        text_of(&exceeded),
-        "a.txt\nb.txt\n\n[2 results limit reached. Use limit=4 for more, or refine pattern]"
-    );
-    assert_eq!(structured_of(&exceeded)["paths"], json!(["a.txt", "b.txt"]));
-    assert_eq!(structured_of(&exceeded)["limit_reached"], true);
-    assert_eq!(structured_of(&exceeded)["truncated"], true);
-    assert_eq!(structured_of(&exceeded)["complete"], false);
 }
 
 /// Complete path records survive display formatting even when a valid path

@@ -197,11 +197,6 @@ mod tests {
     }
 
     #[test]
-    fn other_details_are_not_a_listing() {
-        assert!(DirListing::parse(&json!({ "summary": "5 lines" })).is_none());
-    }
-
-    #[test]
     fn sizes_and_ages_read_short() {
         assert_eq!(size(83), "83 B");
         assert_eq!(size(4329), "4.2 KB");

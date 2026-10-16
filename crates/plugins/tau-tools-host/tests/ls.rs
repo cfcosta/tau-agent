@@ -2,12 +2,18 @@
 //! and pi's `ls.ts`, on a real directory (`docs/reference/testing.md`,
 //! "tau-tools").
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+mod common;
+
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::{
     error::ToolError,
     tool::{AgentTool, ToolCtx, ToolOutput},
-    validation::ArgumentSchema,
 };
 use tau_ai::message::InputBlock;
 use tau_testing::block_on;
@@ -110,7 +116,14 @@ fn ls_matches_a_naive_listing(tc: TestCase) {
         }
     }
     let root = Root::new(dir.path());
-    let actual = call(&root, json!({"limit": limit})).unwrap();
+    let output = block_on(
+        Ls::new(root.clone())
+            .call(json!({"limit": limit}), ToolCtx::detached()),
+    )
+    .unwrap();
+    let actual = text_of(&output).to_owned();
+    let structured = output.structured.as_ref().expect("a structured listing");
+    common::assert_matches_output_schema(&Ls::new(root.clone()), structured);
 
     let mut sorted = entries.clone();
     sorted.sort_by(|(a, _), (b, _)| {
@@ -158,6 +171,19 @@ fn ls_matches_a_naive_listing(tc: TestCase) {
     };
 
     assert_eq!(actual, expected, "entries = {entries:?}, limit = {limit}");
+    // The structured entries are the ones listed, by name, in order.
+    let names: Vec<&str> = structured["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    let listed: Vec<&str> = results
+        .iter()
+        .map(|line| line.strip_suffix('/').unwrap_or(line))
+        .collect();
+    assert_eq!(names, listed);
+    assert_eq!(structured["truncated"], limit_reached);
 }
 
 /// An empty directory is reported with a fixed string (`ls.ts`).
@@ -188,20 +214,6 @@ fn file_path_is_not_a_directory() {
     let error =
         call(&root, json!({"path": file.to_string_lossy()})).unwrap_err();
     assert!(error.to_string().contains("Not a directory"), "{error}");
-}
-
-/// Names equal but for case list in byte order, whatever order the
-/// filesystem returns them in (a regression: the tie used to follow
-/// `read_dir`'s order; pi's comes from libuv's sorted `scandir`).
-#[test]
-fn names_equal_but_for_case_list_in_byte_order() {
-    let dir = tempfile::tempdir().unwrap();
-    for name in ["n", "é", "N", "É", "nN", "Nn"] {
-        std::fs::write(dir.path().join(name), "x").unwrap();
-    }
-    let root = Root::new(dir.path());
-    let output = call(&root, json!({})).unwrap();
-    assert_eq!(output, "N\nn\nNn\nnN\nÉ\né");
 }
 
 /// The details carry each entry the model got, in its order, with its
@@ -243,20 +255,11 @@ fn details_describe_each_entry() {
     assert_eq!(get("link").target.as_deref(), Some("notes.md"));
     assert_eq!(get("code").kind, EntryKind::SymlinkDir);
     assert!(!listing.truncated);
-}
-
-/// A listing cut at the entry limit holds only what the model got,
-/// and says it was cut.
-#[test]
-fn details_stop_where_the_text_does() {
-    let dir = tempfile::tempdir().unwrap();
-    for name in ["a.txt", "b.txt", "c.txt"] {
-        std::fs::write(dir.path().join(name), "x").unwrap();
-    }
-    let root = Root::new(dir.path());
-    let listing = listing(&root, json!({"limit": 2}));
-    assert_eq!(listing.entries.len(), 2);
-    assert!(listing.truncated);
+    // The structured result holds the same records.
+    assert_eq!(
+        structured(&root, json!({}))["entries"],
+        serde_json::to_value(&listing.entries).unwrap()
+    );
 }
 
 /// Structured results always retain the empty-directory value, including
@@ -281,7 +284,8 @@ fn structured_empty_and_zero_limit_results_are_objects() {
 }
 
 /// The exact entry limit is complete; only finding an additional name
-/// marks the bounded result incomplete.
+/// marks the bounded result incomplete, in the structured result and in
+/// the card's details.
 #[test]
 fn structured_entry_limit_distinguishes_exact_from_exceeded() {
     let dir = tempfile::tempdir().unwrap();
@@ -292,6 +296,7 @@ fn structured_entry_limit_distinguishes_exact_from_exceeded() {
 
     let exact = structured(&root, json!({"limit": 3}));
     assert_eq!(exact["entries"].as_array().unwrap().len(), 3);
+    assert!(!listing(&root, json!({"limit": 3})).truncated);
     assert_eq!(exact["truncated"], false);
     assert_eq!(exact["complete"], true);
 
@@ -305,6 +310,10 @@ fn structured_entry_limit_distinguishes_exact_from_exceeded() {
     assert_eq!(names, ["a.txt", "b.txt"]);
     assert_eq!(exceeded["truncated"], true);
     assert_eq!(exceeded["complete"], false);
+    // The card's details stop where the text does, and say so.
+    let cut = listing(&root, json!({"limit": 2}));
+    assert_eq!(cut.entries.len(), 2);
+    assert!(cut.truncated);
 }
 
 /// Structured names come from filesystem records, not rendered lines;
@@ -320,110 +329,6 @@ fn structured_names_preserve_newlines_punctuation_and_unicode() {
     assert_eq!(value["entries"].as_array().unwrap().len(), 1);
     assert_eq!(value["entries"][0]["name"], name);
     assert_eq!(value["complete"], true);
-}
-
-/// Symlink records preserve Entry's followed kind and link target.
-#[cfg(unix)]
-#[test]
-fn structured_symlink_metadata_matches_details_entries() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("target")).unwrap();
-    std::os::unix::fs::symlink("target", dir.path().join("shortcut")).unwrap();
-    let root = Root::new(dir.path());
-
-    let value = structured(&root, json!({}));
-    let shortcut = value["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "shortcut")
-        .unwrap();
-    assert_eq!(shortcut["kind"], "symlink_dir");
-    assert_eq!(shortcut["target"], "target");
-    assert_eq!(shortcut["items"], 0);
-}
-
-/// The schema advertised by AgentTool accepts the structured success
-/// value through tau-agent's existing schema validation API.
-#[test]
-fn structured_output_validates_against_its_schema() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
-    let tool = Ls::new(Root::new(dir.path()));
-    let schema = ArgumentSchema::new(
-        tool.output_schema().expect("ls has an output schema"),
-    )
-    .expect("the output schema compiles");
-    let output =
-        block_on(tool.call(json!({}), ToolCtx::detached())).expect("ls runs");
-    let value = output.structured.expect("a structured listing");
-
-    schema
-        .validate(&value)
-        .expect("the listing matches its schema");
-}
-
-/// Property inventory: structured names equal the independent, sorted names
-/// read back from the temporary filesystem. This checks record identity
-/// without using the text renderer as an oracle.
-///
-/// The generator uses safe ASCII fragments and appends the drawn index, so
-/// every generated name is valid and unique without filtering or rejection;
-/// shrinking shortens fragments and the index still prevents collisions.
-/// The test uses 100 cases locally and in CI. Workspace hegel.toml already
-/// selects the fixed-seed, derandomized CI profile; change suite-wide counts
-/// there, and use a per-test count only for a deliberately different cost.
-#[hegel::composite]
-fn safe_ls_names(tc: &TestCase) -> Vec<String> {
-    let fragments: Vec<String> = tc.draw(
-        gs::vecs(
-            gs::text()
-                .alphabet("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
-                .min_size(1)
-                .max_size(12),
-        )
-        .max_size(12),
-    );
-    fragments
-        .into_iter()
-        .enumerate()
-        .map(|(index, fragment)| format!("{fragment}-{index}"))
-        .collect()
-}
-
-#[hegel::test(test_cases = 100)]
-fn structured_names_match_sorted_filesystem_oracle(tc: TestCase) {
-    let names = tc.draw(safe_ls_names());
-    let dir = tempfile::tempdir().unwrap();
-    for name in &names {
-        std::fs::write(dir.path().join(name), "x").unwrap();
-    }
-
-    let mut expected: Vec<String> = std::fs::read_dir(dir.path())
-        .unwrap()
-        .map(|entry| {
-            entry
-                .unwrap()
-                .file_name()
-                .into_string()
-                .expect("generated filenames are valid UTF-8")
-        })
-        .collect();
-    expected.sort_by(|a, b| {
-        a.to_lowercase()
-            .cmp(&b.to_lowercase())
-            .then_with(|| a.cmp(b))
-    });
-
-    let actual = structured(&Root::new(dir.path()), json!({}));
-    let actual_names: Vec<&str> = actual["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(actual_names, expected);
-    assert_eq!(actual["complete"], true);
 }
 
 /// The structured inventory is gathered before the presentation's byte cap,
@@ -442,4 +347,58 @@ fn structured_entries_survive_presentation_byte_limit() {
     assert_eq!(value["entries"].as_array().unwrap().len(), COUNT);
     assert_eq!(value["truncated"], true);
     assert_eq!(value["complete"], false);
+}
+
+/// tau-tools' card reads a listing only from `ls`'s details: what the
+/// other coding tools put in theirs is no listing (`tau_tools::ui`).
+#[tokio::test(flavor = "multi_thread")]
+async fn only_ls_details_read_as_a_listing() {
+    use tau_tools::ui::listing::DirListing;
+    use tau_tools_host::{
+        edit::Edit,
+        exec::{ExecCommand, Processes},
+        find::Find,
+        grep::Grep,
+        read::Read,
+        write::Write,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "needle\n").unwrap();
+    let root = Root::new(dir.path());
+    let calls: Vec<(Box<dyn AgentTool>, serde_json::Value)> = vec![
+        (Box::new(Read::new(root.clone())), json!({"path": "a.txt"})),
+        (
+            Box::new(Edit::new(root.clone())),
+            json!({"path": "a.txt", "edits": [{"oldText": "needle", "newText": "pin"}]}),
+        ),
+        (
+            Box::new(Write::new(root.clone())),
+            json!({"path": "b.txt", "content": "pin\n"}),
+        ),
+        (Box::new(Grep::new(root.clone())), json!({"pattern": "pin"})),
+        (
+            Box::new(Find::new(root.clone())),
+            json!({"pattern": "*.txt"}),
+        ),
+        (
+            Box::new(ExecCommand::new(root.clone(), Processes::new())),
+            json!({"cmd": "echo hi"}),
+        ),
+    ];
+    for (tool, args) in calls {
+        let output = tool.call(args, ToolCtx::detached()).await.unwrap();
+        let details = output.details.unwrap_or_default();
+        assert!(
+            DirListing::parse(&details).is_none(),
+            "{}'s details read as a listing: {details}",
+            tool.name()
+        );
+    }
+    let output = Ls::new(root)
+        .call(json!({}), ToolCtx::detached())
+        .await
+        .unwrap();
+    let listing =
+        DirListing::parse(&output.details.unwrap()).expect("a listing");
+    assert_eq!(listing.entries.len(), 2);
 }

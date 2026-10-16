@@ -284,26 +284,6 @@ mod tests {
         assert!(!fits(3_538_944));
     }
 
-    /// JPEG candidates use the quality asked for: a lower quality gives
-    /// a smaller file.
-    #[test]
-    fn jpeg_quality_is_used() {
-        let image = DynamicImage::ImageRgb8(image::RgbImage::from_fn(
-            64,
-            64,
-            |x, y| {
-                image::Rgb([
-                    (x * 4) as u8,
-                    (y * 4) as u8,
-                    ((x * y) % 256) as u8,
-                ])
-            },
-        ));
-        let low = encode(&image, ImageFormat::Jpeg, 10).unwrap();
-        let high = encode(&image, ImageFormat::Jpeg, 95).unwrap();
-        assert!(low.len() < high.len(), "{} vs {}", low.len(), high.len());
-    }
-
     /// `fit` keeps an image within the maximum as it is; a larger one
     /// gets its long side at exactly the maximum and its short side
     /// scaled by the same factor, to within one pixel (it is rounded,

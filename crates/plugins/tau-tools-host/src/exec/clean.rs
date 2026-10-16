@@ -362,10 +362,10 @@ mod tests {
         );
     }
 
+    /// A byte that is no part of UTF-8 reads as U+FFFD. (A character cut
+    /// between chunks is `the_text_does_not_depend_on_how_the_bytes_are_cut`.)
     #[test]
-    fn a_character_cut_between_chunks_is_whole() {
-        let bytes = "é\r\n".as_bytes();
-        assert_eq!(text(&[&bytes[..1], &bytes[1..]]), "é");
+    fn a_byte_that_is_not_utf8_is_a_replacement_character() {
         assert_eq!(text(&[b"a\xffb\r\n"]), "a\u{fffd}b");
     }
 

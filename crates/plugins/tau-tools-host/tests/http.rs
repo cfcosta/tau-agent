@@ -467,41 +467,39 @@ fn the_store_is_owner_only_and_replaced_whole() {
     });
 }
 
-#[test]
-fn secret_names_are_short_and_plain() {
-    assert!(valid_name("github"));
-    assert!(valid_name("ci.token_2-b"));
-    assert!(!valid_name(""));
-    assert!(!valid_name("with space"));
-    assert!(!valid_name(&"x".repeat(65)));
+/// A secret's name is 1 to 64 letters, digits, `_`, `-` and `.`
+/// (`docs/reference/tools.md`, "http"): `valid_name` agrees with that
+/// rule written as a regex, for names around the length bound made of
+/// allowed characters, short names with near misses, and any text.
+#[hegel::test(test_cases = 500)]
+fn secret_names_follow_the_rule(tc: TestCase) {
+    let rule = regex::Regex::new(r"\A[A-Za-z0-9_.-]{1,64}\z").unwrap();
+    let name: String = tc.draw(hegel::one_of!(
+        gs::text().alphabet("aZ09_.-").min_size(60).max_size(68),
+        gs::text().alphabet("aZ09_.- é/").max_size(8),
+        gs::text().max_size(8),
+    ));
+    assert_eq!(valid_name(&name), rule.is_match(&name), "{name:?}");
 }
 
 /// Property inventory: whatever text a value of at least four bytes is
 /// put into, at any places, scrubbed text holds no copy of it and keeps
 /// the text around it. The oracle is the text built without the value.
-/// Generator plan: draw the value from printable ASCII and the text as
-/// pieces joined by it; shrinking shortens both without rejection.
+/// Generator plan: the value is drawn from digits, `_` and `.`, and the
+/// pieces between its copies from letters, spaces and `-:[]`, so no piece
+/// holds it, no two pieces make it across an edge, and the mark
+/// `[secret:key]` cannot hold it; nothing is rejected, and shrinking
+/// shortens both.
 #[hegel::test]
 fn scrubbed_text_never_holds_a_secret(tc: TestCase) {
-    let value: String = tc.draw(
-        gs::text()
-            .alphabet("abcxyz019-_.:[]")
-            .min_size(4)
-            .max_size(24),
-    );
+    let value: String =
+        tc.draw(gs::text().alphabet("019_.").min_size(4).max_size(24));
     let pieces: Vec<String> = tc.draw(
         gs::vecs(gs::text().alphabet("abc xyz-:[]").max_size(12))
             .min_size(1)
             .max_size(6),
     );
-    // The mark itself must not hold the value.
-    tc.assume(!"[secret:key]".contains(&value));
-    // A piece that holds the value, or makes it with its neighbours,
-    // would hide what the oracle expects; keep pieces without it.
-    tc.assume(!pieces.iter().any(|piece| piece.contains(&value)));
     let text = pieces.join(&value);
-    // Only where the value was put: no match across a piece's edge.
-    tc.assume(text.replace(&value, "\u{0}") == pieces.join("\u{0}"));
     let secrets = BTreeMap::from([("key".to_owned(), value.clone())]);
     let scrubbed = Scrub::new(&secrets).text(&text);
     assert!(!scrubbed.contains(&value), "{scrubbed:?}");

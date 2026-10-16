@@ -6,6 +6,8 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+mod common;
+
 use std::io::Cursor;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -15,7 +17,6 @@ use serde_json::{Value, json};
 use tau_agent::{
     error::ToolError,
     tool::{AgentTool, ToolCtx, ToolOutput},
-    validation::ArgumentSchema,
 };
 use tau_ai::message::InputBlock;
 use tau_tools_host::{
@@ -110,8 +111,25 @@ fn pi_read(
 /// file may start with a byte order mark.
 #[hegel::composite]
 fn file(tc: &TestCase) -> Vec<u8> {
-    let lengths = || gs::sampled_from(vec![0usize, 1, 7, 40, 300, 60_000]);
-    let count = tc.draw(gs::integers::<usize>().max_value(2_600));
+    // Without the long lengths, a file over the line limit stays under
+    // the byte limit, so the line cut comes first.
+    let long = tc.draw(gs::weighted_booleans(0.3));
+    let lengths = || {
+        gs::sampled_from(if long {
+            vec![0usize, 1, 7, 40, 300, 60_000]
+        } else {
+            vec![0usize, 1, 7, 40]
+        })
+    };
+    // Often right at the 2000-line limit, which a uniform draw rarely
+    // reaches.
+    let boundary =
+        || gs::sampled_from(vec![0usize, 1, 1_999, 2_000, 2_001, 2_600]);
+    let count = tc.draw(hegel::one_of!(
+        boundary(),
+        boundary(),
+        gs::integers::<usize>().max_value(2_600),
+    ));
     let chars = ["a", "é", "€", "😀"];
     let extras: [&[u8]; 6] =
         [b"", b"\r", b"\xff", b"\xc3", b"\xe2\x82", b"\x80\r"];
@@ -155,9 +173,17 @@ fn read_equals_pis_whole_file_read(tc: TestCase) {
         tc.event("CRLF lines");
     }
     let total = content.split('\n').count() as u64;
-    let offset =
-        tc.draw(gs::optional(gs::integers::<u64>().max_value(total + 2)));
-    let limit = tc.draw(gs::optional(gs::integers::<u64>().max_value(2_500)));
+    // From the start, or at a line drawn up to past the end; with no
+    // limit, a limit past the line cut, or any limit.
+    let offset = tc.draw(gs::optional(hegel::one_of!(
+        gs::just(1u64),
+        gs::integers::<u64>().max_value(total + 2),
+    )));
+    let limit = tc.draw(gs::optional(hegel::one_of!(
+        gs::sampled_from(vec![2_000u64, 2_001, 2_500]),
+        gs::integers::<u64>().max_value(2_500),
+    )));
+
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("f.txt"), &bytes).unwrap();
     let root = Root::new(dir.path());
@@ -176,22 +202,14 @@ fn read_equals_pis_whole_file_read(tc: TestCase) {
     assert_eq!(got, pi_read(&content, "f.txt", offset, limit));
 }
 
-/// `output` carries a structured result that `read`'s declared output
-/// schema accepts as it is: valid, and with nothing for the lenient
-/// coercion to change (`AgentTool::output_schema`).
+/// `output` carries a structured result `read`'s output schema accepts
+/// as it is.
 fn assert_matches_output_schema(output: &ToolOutput) {
-    static SCHEMA: std::sync::OnceLock<ArgumentSchema> =
-        std::sync::OnceLock::new();
-    let schema = SCHEMA.get_or_init(|| {
-        let read = Read::new(Root::new("/"));
-        ArgumentSchema::new(read.output_schema().expect("an output schema"))
-            .expect("the output schema compiles")
-    });
     let structured = output.structured.as_ref().expect("a structured result");
-    let accepted = schema
-        .validate(structured)
-        .unwrap_or_else(|error| panic!("{error}: {structured}"));
-    assert_eq!(&accepted, structured, "the schema had to coerce it");
+    common::assert_matches_output_schema(
+        &Read::new(Root::new("/")),
+        structured,
+    );
 }
 
 /// The notices name the right lines: a file over the line limit shows
@@ -405,13 +423,13 @@ fn exif_orientation_after_xmp_is_applied() {
 fn read_describes_itself_as_pi() {
     let read = Read::new(Root::new("/"));
     assert_eq!(read.name(), "read");
-    assert!(
-        read.description()
-            .starts_with("Read the contents of a file.")
-    );
-    assert!(
-        read.description()
-            .contains("truncated to 2000 lines or 50KB")
+    assert_eq!(
+        read.description(),
+        "Read the contents of a file. Supports text files and images (jpg, \
+png, gif, webp, bmp). Images are sent as attachments. For text files, \
+output is truncated to 2000 lines or 50KB (whichever is hit first). Use \
+offset/limit for large files. When you need the full file, continue with \
+offset until complete."
     );
     let properties = &read.parameters()["properties"];
     assert_eq!(

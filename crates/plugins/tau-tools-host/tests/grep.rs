@@ -2,6 +2,8 @@
 //! ("grep") and pi's `grep.ts`, on a real directory
 //! (`docs/reference/testing.md`, "tau-tools").
 
+mod common;
+
 use hegel::{TestCase, generators as gs};
 use regex::RegexBuilder;
 use serde_json::json;
@@ -48,7 +50,8 @@ fn structured_of(output: &ToolOutput) -> &serde_json::Value {
 
 /// The tool's identity and pinned description string, verbatim from
 /// pi's `grep.ts` except for the ported limits
-/// (`docs/reference/tools.md`, "grep").
+/// (`docs/reference/tools.md`, "grep"). The output schema is checked
+/// against every generated result, in the properties below.
 #[test]
 fn name_description_and_schema() {
     let dir = tempfile::tempdir().unwrap();
@@ -67,31 +70,6 @@ file paths and line numbers. Respects .gitignore. Output is truncated to \
         schema["properties"]["ignoreCase"]["description"],
         json!("Case-insensitive search (default: false)")
     );
-
-    let output_schema = tool.output_schema().expect("grep output schema");
-    let output_validator =
-        tau_agent::validation::ArgumentSchema::new(output_schema)
-            .expect("output schema is valid JSON Schema");
-    std::fs::write(dir.path().join("a.txt"), "needle").unwrap();
-    let output =
-        call_output(&Root::new(dir.path()), json!({"pattern": "needle"}))
-            .unwrap();
-    assert!(output_validator.validate(structured_of(&output)).is_ok());
-    let required = output_schema["required"].as_array().unwrap();
-    assert_eq!(required.len(), 9);
-    for field in [
-        "root",
-        "lines",
-        "match_count",
-        "truncated",
-        "complete",
-        "limit_reached",
-        "bytes_truncated",
-        "lines_truncated",
-        "skipped",
-    ] {
-        assert!(required.contains(&json!(field)), "missing required {field}");
-    }
 }
 
 #[test]
@@ -296,6 +274,10 @@ fn literal_marker_records_match_naive_scan(tc: TestCase) {
         json!({"pattern": "needle", "literal": true}),
     )
     .unwrap();
+    common::assert_matches_output_schema(
+        &Grep::new(Root::new(dir.path())),
+        structured_of(&output),
+    );
     let actual: Vec<_> = structured_of(&output)["lines"]
         .as_array()
         .unwrap()
@@ -474,7 +456,12 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
             ])),
         )
     };
-    let only_first = tc.draw(gs::booleans());
+    // The `glob` filter, if any: gitignore-style, so a pattern without
+    // `/` matches a file's name at any depth, and one with `/` the path
+    // from the search root (`docs/reference/tools.md`, "grep").
+    let glob: Option<&str> = tc.draw(gs::optional(gs::sampled_from(vec![
+        "f00.txt", "*.txt", "f0*.txt", "d/**",
+    ])));
 
     let dir = tempfile::tempdir().unwrap();
     let names: Vec<String> = (0..file_count)
@@ -494,11 +481,16 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
         "context": context,
         "limit": limit,
     });
-    if only_first {
-        // A bare name matches at any depth; the names are unique.
-        args["glob"] = json!("f00.txt");
+    if let Some(glob) = glob {
+        tc.event(format!("glob {glob}"));
+        args["glob"] = json!(glob);
     }
-    let actual = call(&root, args).unwrap();
+    let output = call_output(&root, args).unwrap();
+    common::assert_matches_output_schema(
+        &Grep::new(root.clone()),
+        structured_of(&output),
+    );
+    let actual = text_of(&output).to_owned();
 
     // Oracle: an independent scan, using `regex` (not `grep-regex`),
     // over the files in path order (component by component).
@@ -510,11 +502,19 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
     .case_insensitive(ignore_case)
     .build()
     .unwrap();
-    let mut order: Vec<usize> = if only_first {
-        vec![0]
-    } else {
-        (0..file_count).collect()
+    // Which files the glob keeps, by name or by path, written out.
+    let kept = |name: &str| {
+        let base = name.rsplit('/').next().unwrap();
+        match glob {
+            None | Some("*.txt") => true,
+            Some("f00.txt") => base == "f00.txt",
+            Some("f0*.txt") => base.starts_with("f0") && base.ends_with(".txt"),
+            Some("d/**") => name.starts_with("d/"),
+            Some(other) => unreachable!("{other}"),
+        }
     };
+    let mut order: Vec<usize> =
+        (0..file_count).filter(|&i| kept(&names[i])).collect();
     order.sort_by_key(|&i| names[i].split('/').collect::<Vec<_>>());
 
     let mut out_lines: Vec<String> = Vec::new();
@@ -620,44 +620,6 @@ fn single_file_path_reports_its_own_name() {
     assert!(output.contains("example.txt:2: match line"), "{output}");
 }
 
-/// The match limit and context window, pinned exactly as pi's own test
-/// expects them (`tools.test.ts:842`, "should respect global limit and
-/// include context lines"): once the limit is reached mid-file, the
-/// rejected match's own context (here, "middle") never appears either.
-#[test]
-fn limit_reached_notice_and_context_lines() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("context.txt");
-    std::fs::write(
-        &file,
-        "before\nmatch one\nafter\nmiddle\nmatch two\nafter two",
-    )
-    .unwrap();
-    let root = Root::new(dir.path());
-
-    let output = call(
-        &root,
-        json!({
-            "pattern": "match",
-            "path": file.to_string_lossy(),
-            "limit": 1,
-            "context": 1,
-        }),
-    )
-    .unwrap();
-    assert!(output.contains("context.txt-1- before"), "{output}");
-    assert!(output.contains("context.txt:2: match one"), "{output}");
-    assert!(output.contains("context.txt-3- after"), "{output}");
-    assert!(
-        output.contains(
-            "[1 matches limit reached. Use limit=2 for more, or refine pattern]"
-        ),
-        "{output}"
-    );
-    assert!(!output.contains("middle"), "{output}");
-    assert!(!output.contains("match two"), "{output}");
-}
-
 /// A path that does not exist is an error, not an empty result.
 #[test]
 fn missing_path_is_an_error() {
@@ -715,19 +677,4 @@ fn exclude_globally(config_dir: &std::path::Path) {
     // SAFETY: set before this test starts any thread that reads the
     // environment.
     unsafe { std::env::set_var("GIT_CONFIG_GLOBAL", &config) };
-}
-
-/// The `glob` argument filters which files are searched, matching a
-/// bare name at any depth (`docs/reference/tools.md`, "grep").
-#[test]
-fn glob_filters_files() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("keep.rs"), "needle").unwrap();
-    std::fs::write(dir.path().join("skip.txt"), "needle").unwrap();
-    let root = Root::new(dir.path());
-
-    let output =
-        call(&root, json!({"pattern": "needle", "glob": "*.rs"})).unwrap();
-    assert!(output.contains("keep.rs"), "{output}");
-    assert!(!output.contains("skip.txt"), "{output}");
 }

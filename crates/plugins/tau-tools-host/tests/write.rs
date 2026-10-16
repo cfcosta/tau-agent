@@ -19,27 +19,40 @@ fn new_write(dir: &std::path::Path) -> Write {
 }
 
 /// `write` returns exactly `Successfully wrote to <path>` and the file
-/// holds exactly the given content, for any generated text
-/// (`tools.md`, "write"; round trip). Its details say it created the
-/// file, with a diff that adds every line of it, for its card.
+/// holds exactly the given content, for any generated text, under up to
+/// three directories that did not exist, which it creates (`tools.md`,
+/// "write"; round trip). Its details say it created the file, with a
+/// diff that adds every line of it, for its card.
 #[hegel::test(test_cases = 50)]
 // A line of `++` shows as `+++` in the diff, like the `+++` header.
-#[hegel::explicit_test_case(content = String::from("++"))]
+#[hegel::explicit_test_case(content = String::from("++"), dirs = Vec::<String>::new())]
 fn write_round_trips_the_content(tc: TestCase) {
     let content: String = tc.draw(gs::text().max_size(200));
+    let dirs: Vec<String> = tc.draw(
+        gs::vecs(gs::text().alphabet("abcé").min_size(1).max_size(4))
+            .max_size(3),
+    );
+    let path = dirs
+        .iter()
+        .map(String::as_str)
+        .chain(["f.txt"])
+        .collect::<Vec<_>>()
+        .join("/");
     let dir = tempfile::tempdir().unwrap();
     let write = new_write(dir.path());
 
     let output = tau_testing::block_on(write.call(
-        json!({"path": "f.txt", "content": content}),
+        json!({"path": path, "content": content}),
         ToolCtx::detached(),
     ))
     .unwrap();
 
     assert_eq!(
         output.content,
-        tau_agent::tool::ToolOutput::text("Successfully wrote to f.txt")
-            .content
+        tau_agent::tool::ToolOutput::text(format!(
+            "Successfully wrote to {path}"
+        ))
+        .content
     );
     let details = output.details.expect("details for the card");
     assert_eq!(details["created"], json!(true));
@@ -59,12 +72,13 @@ fn write_round_trips_the_content(tc: TestCase) {
         .collect();
     assert_eq!(added, lines, "{diff}");
     assert_eq!(
-        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        std::fs::read_to_string(dir.path().join(&path)).unwrap(),
         content
     );
 }
 
-/// Overwriting a file gives its card a unified diff it can read: after
+/// Overwriting a file replaces its content whole and gives its card a
+/// unified diff it can read: after
 /// the two file headers, each line is a hunk header or one of its
 /// hunk's lines, none of them empty, and each hunk holds as many old
 /// and new lines as its header says. A line without its `\n`, even one
@@ -81,7 +95,13 @@ fn write_diffs_hold_what_their_hunks_say(tc: TestCase) {
         ToolCtx::detached(),
     ))
     .unwrap();
+    // The file holds the new content whole, and it was not created.
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        new
+    );
     let details = output.details.expect("details for the card");
+    assert_eq!(details["created"], json!(false));
     let diff = details["diff"].as_str().unwrap();
     let lines: Vec<&str> = diff.split_terminator('\n').collect();
     if old == new {
@@ -125,48 +145,6 @@ fn write_diffs_hold_what_their_hunks_say(tc: TestCase) {
     assert_eq!((old_left, new_left), (0, 0), "{diff:?}");
 }
 
-/// `write` creates missing parent directories (`tools.md`, "write").
-#[test]
-fn write_creates_parent_directories() {
-    let dir = tempfile::tempdir().unwrap();
-    let write = new_write(dir.path());
-    let output = tau_testing::block_on(write.call(
-        json!({"path": "a/b/c.txt", "content": "hi"}),
-        ToolCtx::detached(),
-    ))
-    .unwrap();
-    assert!(output.content.iter().any(|_| true));
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("a/b/c.txt")).unwrap(),
-        "hi"
-    );
-}
-
-/// `write` overwrites an existing file completely (`tools.md`,
-/// "write": "overwrites if it does").
-#[test]
-fn write_overwrites_existing_content() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("f.txt");
-    std::fs::write(&file, "old content, much longer than the new one").unwrap();
-    let write = new_write(dir.path());
-    let output = tau_testing::block_on(write.call(
-        json!({"path": "f.txt", "content": "new"}),
-        ToolCtx::detached(),
-    ))
-    .unwrap();
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
-    // Its diff takes the old content out and puts the new in.
-    let details = output.details.unwrap();
-    assert_eq!(details["created"], json!(false));
-    let diff = details["diff"].as_str().unwrap();
-    assert!(
-        diff.contains("-old content, much longer than the new one"),
-        "{diff}"
-    );
-    assert!(diff.contains("+new"), "{diff}");
-}
-
 /// Cancelled (`tools.md`, "Error strings", "all"): nothing is written.
 #[test]
 fn aborted_when_cancelled_before_writing() {
@@ -180,22 +158,23 @@ fn aborted_when_cancelled_before_writing() {
 }
 
 /// Per-path lock, shared with `edit` (`tools.md`, "write": "Holds the
-/// same per-path mutex as `edit`"; `lock.rs`): overlapping `write`
-/// calls to one file never interleave their write, so the file always
-/// ends up holding exactly one writer's whole content, never a mix of
-/// two.
+/// same per-path mutex as `edit`"): overlapping `write` calls to one
+/// file run one after another. Each call's diff is from what the file
+/// held when it ran to what it wrote, so the calls' "before" contents
+/// chain from the original through every writer exactly once, and the
+/// file ends as the last one left it. Without the lock, two calls read
+/// the same "before" and the chain breaks.
 #[hegel::test(test_cases = 50)]
-fn concurrent_writes_never_interleave(tc: TestCase) {
+fn concurrent_writes_run_one_after_another(tc: TestCase) {
     let n = tc.draw(gs::integers::<usize>().min_value(2).max_value(6));
-    let size = tc.draw(gs::integers::<usize>().min_value(2000).max_value(6000));
 
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("f.txt"), "original\n").unwrap();
     let write = Arc::new(new_write(dir.path()));
-    let contents: Vec<String> = (0..n)
-        .map(|i| char::from(b'a' + i as u8).to_string().repeat(size))
-        .collect();
+    let contents: Vec<String> =
+        (0..n).map(|i| format!("writer {i}\n")).collect();
 
-    tau_testing::block_on(async {
+    let befores: Vec<String> = tau_testing::block_on(async {
         let mut tasks = Vec::new();
         for content in &contents {
             let write = write.clone();
@@ -209,15 +188,44 @@ fn concurrent_writes_never_interleave(tc: TestCase) {
                     .await
             }));
         }
+        let mut befores = Vec::new();
         for task in tasks {
-            task.await.unwrap().unwrap();
+            let output = task.await.unwrap().unwrap();
+            let details = output.details.unwrap();
+            // Every content is one line: the diff's one removed line is
+            // what the file held.
+            let removed: Vec<&str> = details["diff"]
+                .as_str()
+                .unwrap()
+                .lines()
+                .skip(2)
+                .filter_map(|line| line.strip_prefix('-'))
+                .collect();
+            assert_eq!(removed.len(), 1, "{details}");
+            befores.push(format!("{}\n", removed[0]));
         }
+        befores
     });
 
-    let result = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
-    assert!(
-        contents.contains(&result),
-        "the file mixed bytes from more than one writer"
+    // Follow the chain from the original: each step is the one call
+    // that saw what the step before wrote.
+    let mut current = String::from("original\n");
+    let mut seen = vec![false; n];
+    for _ in 0..n {
+        let next: Vec<usize> = (0..n)
+            .filter(|&i| !seen[i] && befores[i] == current)
+            .collect();
+        assert_eq!(
+            next.len(),
+            1,
+            "calls {next:?} all wrote over {current:?}: {befores:?}"
+        );
+        seen[next[0]] = true;
+        current.clone_from(&contents[next[0]]);
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+        current
     );
 }
 
