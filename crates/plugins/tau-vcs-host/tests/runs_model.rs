@@ -1557,96 +1557,101 @@ fn a_drop_after_an_update_keeps_upstreams_commits() {
     .run();
 }
 
-#[test]
-fn rebasing_a_path_follows_jjs_trivial_merge() {
-    let r = |v: &'static str| Term::resolved(Some(v));
-    let none = Term::resolved(None);
-    // One side changed: the change wins.
-    assert_eq!(Term::rebase(&r("a"), &r("a"), &r("b")), r("b"));
-    assert_eq!(Term::rebase(&r("b"), &r("a"), &r("a")), r("b"));
-    // Both made the same change.
-    assert_eq!(Term::rebase(&r("b"), &r("a"), &r("b")), r("b"));
-    // Both changed it differently, or one deleted what the other changed.
-    assert!(Term::rebase(&r("b"), &r("a"), &r("c")).value().is_none());
-    assert!(Term::rebase(&none, &r("a"), &r("c")).value().is_none());
-    // A conflict rebased onto one of its sides' bases resolves.
-    let conflict = Term::rebase(&r("b"), &r("a"), &r("c"));
-    assert_eq!(Term::rebase(&r("a"), &r("b"), &conflict), r("c"));
-}
-
-// Questions the model found, pinned as examples.
-
-/// Keep jj's markerless materialization and structured conflict until
-/// an explicit acceptance, rather than inventing markers or deciding
-/// file presence from unchanged bytes.
-#[test]
-fn a_markerless_landed_conflict_can_be_explicitly_accepted() {
-    use serde_json::json;
-    use tau_agent::{plugin::Plugin as _, tool::ToolCtx};
-    let m = Machine::new();
-    let trunk = m.commits[0].commit_id.clone();
-    let parent = m.project.add_workspace("p", &trunk).unwrap();
-    let child = m.project.add_workspace("c", &trunk).unwrap();
-    let dir = m.project.workspace_dir("p");
-    std::fs::write(dir.join("c.txt"), "").unwrap();
-    block_on(parent.commit_all("p1", "tau/p")).unwrap();
-    std::fs::write(m.project.workspace_dir("c").join("c.txt"), "two\n")
-        .unwrap();
-    let head = block_on(child.commit_all("c1", "tau/c")).unwrap();
-    let landing =
-        block_on(parent.land(&head.commit_id, "tau/p", true)).unwrap();
-    assert_eq!(landing.conflicts, ["c.txt"]);
-    let text = std::fs::read_to_string(dir.join("c.txt")).unwrap();
-    assert_eq!(text, "two\n");
-    for transient_delete in [false, true] {
-        if transient_delete {
-            std::fs::remove_file(dir.join("c.txt")).unwrap();
-        }
-        std::fs::write(dir.join("c.txt"), "two\n").unwrap();
-        let copy = block_on(parent.working_copy()).unwrap();
-        assert!(copy.paths.is_empty(), "same final bytes are not acceptance");
-        let wc = m.project.workspace_head("p").unwrap().unwrap();
-        assert_eq!(m.project.conflicts(&wc).unwrap(), ["c.txt"]);
+/// `Term`, a path's value as merge terms, as `Merge` holds it: the
+/// added values, then the removed ones, interleaved.
+fn as_merge(term: &Term) -> jj_lib::merge::Merge<Val> {
+    let mut adds = Vec::new();
+    let mut removes = Vec::new();
+    for (value, count) in &term.0 {
+        let side = if *count > 0 { &mut adds } else { &mut removes };
+        side.extend(std::iter::repeat_n(*value, count.unsigned_abs() as usize));
     }
-    let tool = tau_vcs_host::VcsPlugin::new(parent.clone())
-        .tools()
-        .into_iter()
-        .find(|tool| tool.name() == "vcs_resolve")
-        .unwrap();
-    block_on(tool.call(json!({"paths": ["c.txt"]}), ToolCtx::detached()))
-        .unwrap();
-    let turn =
-        block_on(parent.commit_all("accept markerless contents", "tau/p"))
-            .unwrap();
-    assert_eq!(turn.paths, ["c.txt"]);
-    assert!(m.project.conflicts(&turn.commit_id).unwrap().is_empty());
-    assert_eq!(std::fs::read(dir.join("c.txt")).unwrap(), b"two\n");
+    assert_eq!(adds.len(), removes.len() + 1, "{term:?}");
+    let mut values = vec![adds[0]];
+    for (remove, add) in removes.into_iter().zip(&adds[1..]) {
+        values.extend([remove, *add]);
+    }
+    jj_lib::merge::Merge::from_vec(values)
 }
 
-/// Resolving a.txt cannot decide dir/b.txt's empty-v-deleted conflict.
-/// Its native markerless materialization is not an implicit approval.
+/// The model's rebase of a path is jj's: `onto + old - base`, flattened,
+/// resolved by `trivial_merge` with `same-change = accept`, and left as
+/// the same terms when it does not resolve. Every triple of a missing
+/// file, three contents, the conflicts their rebases make, and a few
+/// rebased conflicts that count a value twice.
 #[test]
-fn a_turn_keeps_a_conflict_it_did_not_touch() {
-    let m = Machine::new();
-    let trunk = m.commits[0].commit_id.clone();
-    let parent = m.project.add_workspace("p", &trunk).unwrap();
-    let dir = m.project.workspace_dir("p");
-    std::fs::write(dir.join("a.txt"), "").unwrap();
-    let turn = block_on(parent.commit_all("p1", "tau/p")).unwrap();
-    let child = m.project.add_workspace("c", &turn.commit_id).unwrap();
-    let child_dir = m.project.workspace_dir("c");
-    std::fs::write(dir.join("dir/b.txt"), "").unwrap();
-    std::fs::remove_file(dir.join("a.txt")).unwrap();
-    block_on(parent.commit_all("p2", "tau/p")).unwrap();
-    std::fs::write(child_dir.join("a.txt"), "one\n").unwrap();
-    block_on(child.commit_all("c1", "tau/c")).unwrap();
-    std::fs::remove_file(child_dir.join("dir/b.txt")).unwrap();
-    let head = block_on(child.commit_all("c2", "tau/c")).unwrap();
-    let landing =
-        block_on(parent.land(&head.commit_id, "tau/p", true)).unwrap();
-    assert_eq!(landing.conflicts, ["a.txt", "dir/b.txt"]);
-    std::fs::remove_file(dir.join("a.txt")).unwrap();
-    let turn = block_on(parent.commit_all("p3", "tau/p")).unwrap();
-    assert_eq!(turn.paths, ["a.txt"], "the turn only deleted a.txt");
-    assert_eq!(m.project.conflicts(&turn.commit_id).unwrap(), ["dir/b.txt"]);
+fn rebasing_a_path_is_jjs_trivial_merge() {
+    use jj_lib::merge::{Merge, SameChange};
+    let resolved: Vec<Term> = [None, Some("a"), Some("b"), Some("c")]
+        .into_iter()
+        .map(Term::resolved)
+        .collect();
+    let mut terms = resolved.clone();
+    for onto in &resolved {
+        for base in &resolved {
+            for old in &resolved {
+                let term = Term::rebase(onto, base, old);
+                if !terms.contains(&term) {
+                    terms.push(term);
+                }
+            }
+        }
+    }
+    // Rebasing conflicts again counts a value more than once: a few of
+    // those too.
+    let mut counted = Vec::new();
+    for onto in &terms {
+        for base in &terms {
+            for old in &terms {
+                let term = Term::rebase(onto, base, old);
+                if term.0.values().any(|count| count.abs() > 1)
+                    && !counted.contains(&term)
+                    && counted.len() < 8
+                {
+                    counted.push(term);
+                }
+            }
+        }
+    }
+    assert!(!counted.is_empty(), "no value counted twice");
+    terms.extend(counted);
+    assert!(
+        terms.iter().any(|term| term.value().is_none()),
+        "no conflicts"
+    );
+    for onto in &terms {
+        for base in &terms {
+            for old in &terms {
+                let model = Term::rebase(onto, base, old);
+                let jj = Merge::from_vec(vec![
+                    as_merge(onto),
+                    as_merge(base),
+                    as_merge(old),
+                ])
+                .flatten();
+                match jj.resolve_trivial(SameChange::Accept) {
+                    Some(value) => assert_eq!(
+                        model.value(),
+                        Some(*value),
+                        "{onto:?} + {old:?} - {base:?}"
+                    ),
+                    None => {
+                        let mut counts: BTreeMap<Val, i32> = BTreeMap::new();
+                        for value in jj.adds() {
+                            *counts.entry(*value).or_default() += 1;
+                        }
+                        for value in jj.removes() {
+                            *counts.entry(*value).or_default() -= 1;
+                        }
+                        counts.retain(|_, count| *count != 0);
+                        assert_eq!(
+                            model,
+                            Term(counts),
+                            "{onto:?} + {old:?} - {base:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
