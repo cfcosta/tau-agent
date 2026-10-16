@@ -134,32 +134,28 @@ fn partial_view_only_grows(tc: TestCase) {
 }
 
 /// Metamorphic: re-chunking the same text at different character
-/// boundaries never changes the parser's snapshot, nor its final value.
+/// boundaries never changes the parser's snapshot, at any point of the
+/// stream: two chunkings of any prefix of the text, a cut inside a
+/// string or a number included, show the same partial value. (The
+/// final value is `agrees_with_serde_json_for_any_chunking`'s.)
 #[hegel::test(test_cases = 500)]
 fn rechunking_does_not_change_the_result(tc: TestCase) {
     let value = Value::Object(tc.draw(generators::json_object(3)));
     let text =
         serde_json::to_string(&value).expect("a JSON value always serializes");
-    let chunks_a = tc.draw(generators::char_chunks(text.clone()));
-    let chunks_b = tc.draw(generators::char_chunks(text));
-
-    let mut parser_a = PartialJson::new();
-    for chunk in &chunks_a {
-        parser_a.push(chunk);
-    }
-    let mut parser_b = PartialJson::new();
-    for chunk in &chunks_b {
-        parser_b.push(chunk);
-    }
-    assert_eq!(
-        parser_a.value(),
-        parser_b.value(),
-        "different chunkings of the same text disagree before finish()"
-    );
-    assert_eq!(
-        parser_a.finish().expect("generated JSON is always valid"),
-        parser_b.finish().expect("generated JSON is always valid")
-    );
+    let cut = tc.draw(gs::integers::<usize>().max_value(text.chars().count()));
+    let prefix: String = text.chars().take(cut).collect();
+    tc.note(&prefix);
+    let snapshot = |chunks: Vec<String>| {
+        let mut parser = PartialJson::new();
+        for chunk in &chunks {
+            parser.push(chunk);
+        }
+        parser.value().clone()
+    };
+    let a = snapshot(tc.draw(generators::char_chunks(prefix.clone())));
+    let b = snapshot(tc.draw(generators::char_chunks(prefix)));
+    assert_eq!(a, b, "different chunkings of the same prefix disagree");
 }
 
 /// A faithful port of pi's `repairJson`
