@@ -171,30 +171,6 @@ fn done_usage_gets_its_cost(tc: TestCase) {
     );
 }
 
-/// Property inventory: the current ChatGPT route strips the output ceiling
-/// whether configured or absent. The fake server's captured request is the
-/// oracle. Generate valid positive u32 limits so shrinking tends toward a
-/// small counterexample; `hegel.toml` sets local and CI case counts.
-#[hegel::test]
-fn chatgpt_route_omits_output_ceiling(tc: TestCase) {
-    let limit = tc.draw(gs::integers::<u32>().min_value(1).max_value(8192));
-    let usage = Usage::default();
-    let settings = Settings {
-        model: "gpt-5.5".into(),
-        max_output_tokens: Some(limit),
-        ..Settings::default()
-    };
-    let (_, request) = one_response(&tc, settings, usage.clone());
-    assert!(request.get("max_output_tokens").is_none());
-
-    let settings = Settings {
-        model: "gpt-5.5".into(),
-        ..Settings::default()
-    };
-    let (_, request) = one_response(&tc, settings, usage);
-    assert!(request.get("max_output_tokens").is_none());
-}
-
 /// A warm-up sends the session's settings with no input and
 /// `generate: false`; the first real turn then continues from it, as a
 /// delta carrying the whole transcript, and the server rebuilds that

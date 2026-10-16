@@ -4,17 +4,13 @@
 
 use std::{future::Future, time::Duration};
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _},
+};
 use serde_json::json;
 use tau_ai::{
-    chatgpt::{
-        AccountId,
-        ChatGpt,
-        Config,
-        RedirectUri,
-        Store,
-        UNSUPPORTED_FIELDS,
-    },
+    chatgpt::{AccountId, ChatGpt, Config, RedirectUri, Store},
     client::OpenAi,
     event::AssistantEvent,
     message::{Message, UserContent, UserMessage},
@@ -187,52 +183,116 @@ fn clones_share_one_refresh() {
     );
 }
 
-/// Whatever the settings ask for, the plan route gets none of the fields
-/// it does not take, `store: false`, and no `stream_id`.
-#[hegel::test(test_cases = 5)]
-fn unsupported_fields_never_go_out(tc: TestCase) {
-    let lineage = tc
-        .draw(gs::optional(gs::text().min_size(1).max_size(80)))
-        .map(|path| Lineage { path, parent: None });
-    let tools = tc.draw(gs::booleans());
-    let settings = Settings {
-        lineage,
-        tools: if tools {
-            vec![ToolDefinition {
-                name: "get_weather".into(),
-                description: "The weather.".into(),
+/// The request fields the plan route does not take ("Preview
+/// limitations" in OpenAI's plan-usage docs), written out apart from
+/// `tau_ai::chatgpt::UNSUPPORTED_FIELDS`.
+const NOT_TAKEN: [&str; 15] = [
+    "background",
+    "conversation",
+    "max_output_tokens",
+    "max_tool_calls",
+    "metadata",
+    "moderation",
+    "multi_agent",
+    "prompt",
+    "prompt_cache_retention",
+    "safety_identifier",
+    "temperature",
+    "top_logprobs",
+    "top_p",
+    "truncation",
+    "user",
+];
+
+/// Any settings a run could ask with: a model the table knows or one it
+/// does not (whose reasoning and Lite flags are then the caller's), and
+/// every optional field, the output ceiling most often set.
+#[hegel::composite]
+fn any_settings(tc: &TestCase) -> Settings {
+    use tau_ai::responses::request::ReasoningEffort;
+    let tools = tc.draw(gs::integers::<usize>().max_value(2));
+    Settings {
+        model: tc.draw(gs::sampled_from(vec![
+            "gpt-5.5".to_owned(),
+            "gpt-6-sol".to_owned(),
+            "not-a-model".to_owned(),
+        ])),
+        instructions: tc.draw(gs::optional(gs::text().max_size(20))),
+        tools: (0..tools)
+            .map(|i| ToolDefinition {
+                name: format!("tool_{i}"),
+                description: "A tool.".into(),
                 parameters: json!({"type": "object", "properties": {}}),
-                strict: false,
-            }]
-        } else {
-            Vec::new()
-        },
-        ..settings()
-    };
+                strict: tc.draw(gs::booleans()),
+            })
+            .collect(),
+        reasoning_model: tc.draw(gs::booleans()),
+        lite: tc.draw(gs::booleans()),
+        reasoning: tc.draw(
+            gs::optional(gs::sampled_from(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::High,
+            ]))
+            .print_as_debug(),
+        ),
+        text_format: tc.draw(gs::optional(gs::just(json!({
+            "type": "json_schema", "name": "T", "schema": {}, "strict": true,
+        })))),
+        max_output_tokens: tc.draw(hegel::one_of!(
+            gs::integers::<u32>().min_value(1).max_value(8192).map(Some),
+            gs::just(None),
+        )),
+        service_tier: tc.draw(gs::optional(gs::sampled_from(vec![
+            "flex".to_owned(),
+            "priority".to_owned(),
+        ]))),
+        lineage: tc
+            .draw(gs::optional(gs::text().min_size(1).max_size(80)))
+            .map(|path| Lineage { path, parent: None }),
+    }
+}
+
+/// Whatever the settings ask for, the plan route's request holds none of
+/// the fields it does not take, and every other field the settings make
+/// (`request::fields` of the session's settings) as it is.
+#[hegel::test(test_cases = 10)]
+fn the_plan_route_gets_every_field_but_those_it_does_not_take(tc: TestCase) {
+    use std::{cell::RefCell, rc::Rc};
+
+    use tau_ai::responses::request::fields;
+    let settings = tc.draw(any_settings().print_as_debug());
     let api = FakeOpenAi::new(vec![completed("resp_1")]);
     let seen = api.clone();
+    let effective: Rc<RefCell<Option<Settings>>> = Rc::default();
+    let kept = effective.clone();
     simulate(
         FakeChatGpt::new(),
         api,
         |_, _, chatgpt, account| async move {
             let client = OpenAi::chatgpt(chatgpt, account);
-            let events = respond(&client, settings).await;
-            assert!(matches!(events.last(), Some(AssistantEvent::Done { .. })));
+            let mut session = client.session(settings).await.unwrap();
+            *kept.borrow_mut() = Some(session.settings().clone());
+            let mut response = session.respond(&hello(), 0);
+            let mut last = None;
+            while let Some(event) = response.next().await {
+                last = Some(event);
+            }
+            assert!(matches!(last, Some(AssistantEvent::Done { .. })));
         },
     );
+    let effective = effective.borrow_mut().take().unwrap();
     let received = seen.received();
     assert_eq!(received.len(), 1);
-    let body = &received[0].body;
-    for field in UNSUPPORTED_FIELDS {
-        assert!(body.get(field).is_none(), "{field} went out: {body}");
+    let mut body = received[0].body.as_object().unwrap().clone();
+    for field in NOT_TAKEN {
+        assert!(!body.contains_key(field), "{field} went out: {body:?}");
     }
-    assert_eq!(body["store"], json!(false));
-    assert!(body.get("stream_id").is_none());
-    assert_eq!(body["instructions"], json!("Be brief."));
-    // Tools go as plain top-level functions: the route takes them.
-    if tools {
-        assert_eq!(body["tools"][0]["type"], json!("function"));
+    assert!(body.remove("input").is_some());
+    let mut expected = fields(&effective);
+    for field in NOT_TAKEN {
+        expected.remove(field);
     }
+    assert_eq!(body, expected);
 }
 
 /// A usage limit at the upgrade stops the run at once: one attempt, a
