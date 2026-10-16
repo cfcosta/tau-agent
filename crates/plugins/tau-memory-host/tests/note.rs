@@ -68,6 +68,9 @@ fn a_note_reads_back_as_written(tc: TestCase) {
     assert_eq!(Note::parse(&text).unwrap().render(), text);
 }
 
+/// A bare `[[id]]` in the body relates the note to `id`, once however
+/// often it appears, unless the front matter links there already: then
+/// the links there are the listed ones, as listed, a repeat included.
 #[hegel::test]
 fn a_bare_link_in_the_body_relates(tc: TestCase) {
     let mut note = tc.draw(note());
@@ -76,11 +79,18 @@ fn a_bare_link_in_the_body_relates(tc: TestCase) {
         format!("See [[{target}]] and [[{target}]], not [[Not An Id]].");
     let links = note.all_links();
     let bare: Vec<&Link> = links.iter().filter(|l| l.to == target).collect();
-    // Once, and as listed when the front matter names it already.
-    assert_eq!(bare.len(), 1);
-    match note.links.iter().find(|l| l.to == target) {
-        Some(listed) => assert_eq!(bare[0], listed),
-        None => assert_eq!(bare[0].kind, LinkType::Relates),
+    let listed: Vec<&Link> =
+        note.links.iter().filter(|l| l.to == target).collect();
+    if listed.is_empty() {
+        let relates = Link {
+            to: target.clone(),
+            kind: LinkType::Relates,
+            why: None,
+        };
+        assert_eq!(bare, [&relates]);
+    } else {
+        tc.event("listed already");
+        assert_eq!(bare, listed);
     }
     assert!(links.iter().all(|l| l.to != "Not An Id"));
 }
