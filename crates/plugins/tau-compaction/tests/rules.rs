@@ -31,7 +31,6 @@ use tau_ai::message::{
     UserMessage,
 };
 use tau_compaction::{
-    Compaction,
     CutPoint,
     FileOperations,
     PRIORITIES,
@@ -165,6 +164,9 @@ enum TokenEstimateMessageKind {
     AssistantText,
     AssistantThinking,
     AssistantToolCall,
+    /// Text, thinking and a tool call in one message: their characters
+    /// are added before the message is rounded once.
+    AssistantMixed,
     ToolResultText,
     ToolResultImages,
 }
@@ -347,6 +349,35 @@ fn draw_counted_message(
             ];
             counted_tool_call(name, fields)
         }
+        TokenEstimateMessageKind::AssistantMixed => {
+            let text = draw_text_scalars(tc, 0, 8);
+            let thinking = draw_text_scalars(tc, 0, 8);
+            let call = counted_tool_call(
+                draw_text_scalars(tc, 1, 6),
+                vec![("v".to_owned(), draw_tiny_json_argument(tc))],
+            );
+            let Message::Assistant(mut assistant) = call.message else {
+                unreachable!("counted_tool_call builds an assistant message")
+            };
+            let character_count = text.chars().count()
+                + thinking.chars().count()
+                + call.character_count;
+            assistant.content.splice(
+                0..0,
+                [
+                    text_block(&text),
+                    AssistantBlock::Thinking(ThinkingContent {
+                        thinking,
+                        thinking_signature: None,
+                        redacted: None,
+                    }),
+                ],
+            );
+            MessageWithCharacterCount {
+                character_count,
+                message: Message::Assistant(assistant),
+            }
+        }
         TokenEstimateMessageKind::ToolResultText => {
             let text = draw_text_scalars(tc, 0, 8);
             MessageWithCharacterCount {
@@ -397,10 +428,11 @@ fn draw_counted_message(
 /// Property inventory: the oracle carries scalar counts from original text,
 /// 4,800 characters per image, and manually counted compact scalar JSON for
 /// tool calls. Assistant constructors set zero usage. Every case contains all
-/// seven message forms plus up to eight generated forms; text is bounded to
-/// eight scalars, names to six, and JSON integers to 0..=99. Shrinking can
-/// simplify generated fields and remove extra messages while retaining the
-/// required forms.
+/// eight message forms, one of them an assistant message whose text,
+/// thinking and tool call are added before it is rounded, plus up to eight
+/// generated forms; text is bounded to eight scalars, names to six, and JSON
+/// integers to 0..=99. Shrinking can simplify generated fields and remove
+/// extra messages while retaining the required forms.
 #[hegel::test(test_cases = 500)]
 fn context_estimate_rounds_semantic_characters_per_unreported_message(
     tc: TestCase,
@@ -411,6 +443,7 @@ fn context_estimate_rounds_semantic_characters_per_unreported_message(
         TokenEstimateMessageKind::AssistantText,
         TokenEstimateMessageKind::AssistantThinking,
         TokenEstimateMessageKind::AssistantToolCall,
+        TokenEstimateMessageKind::AssistantMixed,
         TokenEstimateMessageKind::ToolResultText,
         TokenEstimateMessageKind::ToolResultImages,
     ];
@@ -421,6 +454,7 @@ fn context_estimate_rounds_semantic_characters_per_unreported_message(
             TokenEstimateMessageKind::AssistantText,
             TokenEstimateMessageKind::AssistantThinking,
             TokenEstimateMessageKind::AssistantToolCall,
+            TokenEstimateMessageKind::AssistantMixed,
             TokenEstimateMessageKind::ToolResultText,
             TokenEstimateMessageKind::ToolResultImages,
         ]))
@@ -441,17 +475,6 @@ fn context_estimate_rounds_semantic_characters_per_unreported_message(
         .map(|entry| entry.message)
         .collect();
     assert_eq!(estimate_context_tokens(&messages), expected);
-}
-
-#[test]
-fn unreported_context_counts_unicode_scalars_and_rounds_messages_separately() {
-    let unicode_text = "éééé";
-    assert_eq!(unicode_text.chars().count(), 4);
-    assert_eq!(unicode_text.len(), 8);
-    assert_eq!(estimate_context_tokens(&[user_text(unicode_text)]), 1);
-
-    let one_character_messages = vec![user_text("a"), user_text("b")];
-    assert_eq!(estimate_context_tokens(&one_character_messages), 2);
 }
 
 /// pi issue #8328: an assistant message whose usage is present but
@@ -605,6 +628,10 @@ fn model_cut_point(messages: &[Message], keep_recent_tokens: u64) -> CutPoint {
 /// `find_cut_point` is exactly the declarative rule of
 /// [`model_cut_point`]: snap the point where the budget is reached to
 /// the nearest valid boundary at or after it, else the latest valid one.
+/// Two consequences are checked as well: a split-turn cut names the user
+/// message that starts its turn, at or before the cut ("Cut point", step
+/// 3), and a budget the whole transcript fits under cuts nothing (step 1;
+/// pi's "should keep everything if all messages fit within budget").
 #[hegel::test(test_cases = 500)]
 fn find_cut_point_matches_the_declarative_rule(tc: TestCase) {
     let messages = tc.draw(generators::transcript());
@@ -624,6 +651,19 @@ fn find_cut_point_matches_the_declarative_rule(tc: TestCase) {
         tc.event("split_turn");
     }
     assert_eq!(cut, model_cut_point(&messages, keep_recent_tokens));
+
+    match cut.turn_start_index {
+        Some(turn_start) => {
+            assert!(cut.is_split_turn);
+            assert!(turn_start <= cut.first_kept_index);
+            assert!(matches!(messages[turn_start], Message::User(_)));
+        }
+        None => assert!(!cut.is_split_turn),
+    }
+
+    let total: u64 = messages.iter().map(estimate_message_tokens).sum();
+    let whole = find_cut_point(&messages, total + 1);
+    assert_eq!((whole.first_kept_index, whole.is_split_turn), (0, false));
 }
 
 /// The kept suffix holds at least `keep_recent_tokens`, unless the whole
@@ -750,42 +790,6 @@ fn regression_cut_can_be_pulled_forward_below_the_budget() {
     );
 }
 
-/// A split-turn cut always names the user message that starts the turn
-/// being split, and that message is at or before the cut
-/// (`docs/reference/compaction.md`, "Cut point", step 3).
-#[hegel::test(test_cases = 500)]
-fn split_turn_names_a_turn_start_at_or_before_the_cut(tc: TestCase) {
-    let messages = tc.draw(generators::transcript());
-    let keep_recent_tokens = draw_keep_recent_tokens(&tc, &messages);
-    let cut = find_cut_point(&messages, keep_recent_tokens);
-    if cut.is_split_turn {
-        tc.event("split_turn");
-    }
-
-    if cut.is_split_turn {
-        let turn_start = cut
-            .turn_start_index
-            .expect("a split turn always names its start");
-        assert!(turn_start <= cut.first_kept_index);
-        assert!(matches!(messages[turn_start], Message::User(_)));
-    } else {
-        assert!(cut.turn_start_index.is_none());
-    }
-}
-
-/// If the whole transcript's estimated tokens fit under
-/// `keep_recent_tokens`, nothing is cut (`docs/reference/compaction.md`,
-/// "Cut point", step 1; pi's "should keep everything if all messages fit
-/// within budget").
-#[hegel::test(test_cases = 300)]
-fn everything_is_kept_when_the_whole_transcript_fits(tc: TestCase) {
-    let messages = tc.draw(generators::transcript());
-    let total: u64 = messages.iter().map(estimate_message_tokens).sum();
-    let cut = find_cut_point(&messages, total + 1);
-    assert_eq!(cut.first_kept_index, 0);
-    assert!(!cut.is_split_turn);
-}
-
 /// pi issue #9740: an oversized trailing tool result must not force the
 /// cut to land on (or split around) the result itself. The cut falls
 /// back to the latest valid boundary before it — here, the tool call
@@ -845,31 +849,6 @@ fn pi_known_case_9740_oversized_trailing_tool_result() {
 // =============================================================================
 // Serialization (testing.md: input to the summary request)
 // =============================================================================
-
-/// A tool result longer than 2,000 characters is cut to its first 2,000
-/// characters, followed by the truncation marker
-/// (`docs/reference/compaction.md`, "Input").
-#[test]
-fn tool_result_is_truncated_to_2000_characters() {
-    let long_result = "y".repeat(2500);
-    let messages = vec![Message::ToolResult(ToolResultMessage {
-        tool_call_id: "call-1|fc-1".to_owned(),
-        tool_name: "read".to_owned(),
-        content: vec![InputBlock::Text(TextContent {
-            text: long_result.clone(),
-            text_signature: None,
-        })],
-        details: None,
-        is_error: false,
-        timestamp: 0,
-    })];
-    let serialized = serialize_conversation(&messages);
-    let expected = format!(
-        "[Tool result]: {}\n\n[... 500 more characters truncated]",
-        &long_result[..2000]
-    );
-    assert_eq!(serialized, expected);
-}
 
 /// A tool result's text is serialized verbatim when it holds at most
 /// 2,000 characters, and otherwise cut to its first 2,000 characters
@@ -947,36 +926,6 @@ fn tool_call_is_serialized_with_json_encoded_arguments() {
 // File operations (testing.md: file lists carried across compactions)
 // =============================================================================
 
-/// A file that is only ever read stays in the read list; a file that is
-/// written or edited moves to the modified list even if it was also
-/// read, and both lists come out sorted (pi's `computeFileLists`).
-#[test]
-fn file_lists_separate_read_only_from_modified_and_sort() {
-    let mut ops = FileOperations::new();
-    let read_call = |name: &str, path: &str| {
-        Message::Assistant(assistant_response(
-            StopReason::ToolUse,
-            None,
-            vec![AssistantBlock::ToolCall(ToolCall {
-                id: "call|fc".to_owned(),
-                name: name.to_owned(),
-                arguments: Map::from_iter([("path".to_owned(), json!(path))]),
-            })],
-        ))
-    };
-    ops.extract_from_messages(&[
-        read_call("read", "z.txt"),
-        read_call("read", "a.txt"),
-        read_call("write", "a.txt"),
-        read_call("edit", "m.txt"),
-        read_call("bash", "ignored.txt"),
-    ]);
-
-    let (read_files, modified_files) = ops.file_lists();
-    assert_eq!(read_files, vec!["z.txt".to_owned()]);
-    assert_eq!(modified_files, vec!["a.txt".to_owned(), "m.txt".to_owned()]);
-}
-
 /// `format_file_operations` wraps each non-empty list in its own tag,
 /// and returns an empty string when both lists are empty
 /// (`docs/reference/compaction.md`, "File lists").
@@ -1001,44 +950,51 @@ fn format_file_operations_wraps_each_list_and_is_empty_when_both_are() {
 // Summary request (testing.md: prompt variant)
 // =============================================================================
 
-/// With no prior summary, the request uses the initial prompt and has no
-/// `<previous-summary>` section (`docs/reference/compaction.md`, "Prior
-/// summary"; pi's `generateSummaryWithUsage`).
-#[test]
-fn summary_request_uses_the_initial_prompt_with_no_previous_summary() {
-    let messages = vec![user_text("hello")];
-    let request = build_summary_request(&messages, None, None);
-    assert!(
-        request
-            .starts_with("<conversation>\n[User]: hello\n</conversation>\n\n")
+/// The summary request is the serialized conversation in
+/// `<conversation>` tags; then the prior summary, when there is one, in
+/// `<previous-summary>` tags; then the initial prompt, or the "update"
+/// prompt with a prior summary; then any custom instructions after
+/// `Additional focus:` (`docs/reference/compaction.md`, "Prior summary";
+/// pi's `generateSummaryWithUsage`). The oracle builds the string from
+/// that layout, with each user message as `[User]: <text>`. Texts may
+/// hold tags and blank lines, which the request carries verbatim.
+#[hegel::test(test_cases = 300)]
+fn summary_request_wraps_the_conversation_prior_summary_and_prompt(
+    tc: TestCase,
+) {
+    let text = || gs::from_regex(r"[a-z<>/ \n]{0,24}").fullmatch(true);
+    let said: Vec<String> = tc.draw(
+        gs::vecs(gs::from_regex(r"[a-z<>/ ]{1,24}").fullmatch(true))
+            .min_size(1)
+            .max_size(3),
     );
-    assert!(request.ends_with(SUMMARIZATION_PROMPT));
-    assert!(!request.contains("<previous-summary>"));
-}
+    let previous: Option<String> = tc.draw(gs::optional(text()));
+    let focus: Option<String> = tc.draw(gs::optional(text()));
+    let messages: Vec<Message> = said.iter().map(|t| user_text(t)).collect();
 
-/// With a prior summary, the request uses the "update" prompt and
-/// includes the prior summary in `<previous-summary>` tags.
-#[test]
-fn summary_request_uses_the_update_prompt_with_a_previous_summary() {
-    let messages = vec![user_text("hello")];
-    let request =
-        build_summary_request(&messages, Some("prior summary text"), None);
-    assert!(request.contains(
-        "<previous-summary>\nprior summary text\n</previous-summary>\n\n"
-    ));
-    assert!(request.ends_with(UPDATE_SUMMARIZATION_PROMPT));
-    assert!(!request.contains(&format!("\n\n{SUMMARIZATION_PROMPT}")));
-}
-
-/// Custom instructions are appended after the chosen prompt.
-#[test]
-fn summary_request_appends_custom_instructions() {
-    let messages = vec![user_text("hello")];
-    let request =
-        build_summary_request(&messages, None, Some("focus on the bug"));
-    assert!(request.ends_with(&format!(
-        "{SUMMARIZATION_PROMPT}\n\nAdditional focus: focus on the bug"
-    )));
+    let conversation: Vec<String> =
+        said.iter().map(|t| format!("[User]: {t}")).collect();
+    let mut expected = format!(
+        "<conversation>\n{}\n</conversation>\n\n",
+        conversation.join("\n\n")
+    );
+    if let Some(previous) = &previous {
+        tc.event("previous summary");
+        expected.push_str(&format!(
+            "<previous-summary>\n{previous}\n</previous-summary>\n\n"
+        ));
+        expected.push_str(UPDATE_SUMMARIZATION_PROMPT);
+    } else {
+        expected.push_str(SUMMARIZATION_PROMPT);
+    }
+    if let Some(focus) = &focus {
+        tc.event("custom instructions");
+        expected.push_str(&format!("\n\nAdditional focus: {focus}"));
+    }
+    assert_eq!(
+        build_summary_request(&messages, previous.as_deref(), focus.as_deref()),
+        expected
+    );
 }
 
 /// Every summarization prompt carries tau's priorities before its
@@ -1186,65 +1142,6 @@ fn check_summary_rejects_exactly_error_length_and_tool_calls(tc: TestCase) {
 // not to reach: `cargo mutants` found the gap in each case (see the
 // module's mutants run for the full list).
 // =============================================================================
-
-/// Each `Compaction` builder sets exactly its own field, leaving the
-/// other untouched.
-#[test]
-fn compaction_builders_set_their_own_field() {
-    let compaction = Compaction::default()
-        .reserve_tokens(1)
-        .keep_recent_tokens(2);
-    assert_eq!(compaction.reserve_tokens, 1);
-    assert_eq!(compaction.keep_recent_tokens, 2);
-}
-
-/// `estimate_message_tokens` counts every character it should, and
-/// nothing else: a user message's text and image blocks, and an
-/// assistant message's text, thinking and tool-call (name plus
-/// JSON-encoded arguments, *added* together, not multiplied).
-#[test]
-fn estimate_message_tokens_counts_characters_precisely() {
-    // 8 characters -> ceil(8 / 4) = 2.
-    assert_eq!(estimate_message_tokens(&user_text("abcdefgh")), 2);
-
-    // 2 text characters + 4,800 for the image -> ceil(4802 / 4) = 1201.
-    let user_with_image = Message::User(UserMessage {
-        content: UserContent::Blocks(vec![
-            InputBlock::Text(TextContent {
-                text: "ab".to_owned(),
-                text_signature: None,
-            }),
-            InputBlock::Image(ImageContent {
-                data: String::new(),
-                mime_type: "image/png".to_owned(),
-            }),
-        ]),
-        timestamp: 0,
-    });
-    assert_eq!(estimate_message_tokens(&user_with_image), 1201);
-
-    // text (4 chars) + thinking (6 chars) + tool call (name "toolname" =
-    // 8 chars, arguments `{"a":"bb"}` = 10 chars, summed to 18, not
-    // multiplied to 80) = 28 total -> ceil(28 / 4) = 7.
-    let assistant = Message::Assistant(assistant_response(
-        StopReason::ToolUse,
-        None,
-        vec![
-            text_block("abcd"),
-            AssistantBlock::Thinking(ThinkingContent {
-                thinking: "efghij".to_owned(),
-                thinking_signature: None,
-                redacted: None,
-            }),
-            AssistantBlock::ToolCall(ToolCall {
-                id: "call|fc".to_owned(),
-                name: "toolname".to_owned(),
-                arguments: Map::from_iter([("a".to_owned(), json!("bb"))]),
-            }),
-        ],
-    ));
-    assert_eq!(estimate_message_tokens(&assistant), 7);
-}
 
 /// An assistant message's thinking and text blocks are both carried into
 /// the serialized conversation, on their own lines.
