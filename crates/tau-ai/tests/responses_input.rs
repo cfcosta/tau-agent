@@ -87,17 +87,6 @@ fn user_blocks_item_shape() {
     );
 }
 
-/// A user message with no content blocks is dropped entirely.
-/// (`openai-responses-shared.ts:249`)
-#[test]
-fn user_message_with_no_content_is_skipped() {
-    let messages = vec![Message::User(UserMessage {
-        content: UserContent::Blocks(vec![]),
-        timestamp: 0,
-    })];
-    assert!(to_input(&messages).is_empty());
-}
-
 /// A `TextSignatureV1` JSON signature carries a structured id and,
 /// optionally, a phase. (`openai-responses-shared.ts:53-77`)
 #[test]

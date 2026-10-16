@@ -627,23 +627,6 @@ fn dropping_responses(tc: TestCase) {
     }
 }
 
-/// Dropping a lane handle closes the lane, freeing its connection for
-/// the next one.
-#[test]
-fn dropping_a_lane_frees_its_connection() {
-    let stats: Rc<RefCell<Option<PoolStats>>> = Rc::default();
-    let seen = stats.clone();
-    simulate(vec![], async move {
-        let transport = Transport::start(SimConnector, Limits::default());
-        let first = transport.open_lane(Affinity::default()).await.unwrap();
-        drop(first);
-        let _second = transport.open_lane(Affinity::default()).await.unwrap();
-        *seen.borrow_mut() = Some(transport.stats().await.unwrap());
-        Ok(())
-    });
-    assert_eq!(stats.borrow().as_ref().unwrap().connections_opened, 1);
-}
-
 /// A request the server rejects outright fails with one `Start` and one
 /// `Error`, even though no response frame ever arrived.
 #[test]

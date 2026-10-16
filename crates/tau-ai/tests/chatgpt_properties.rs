@@ -84,16 +84,19 @@ fn some_text() -> impl PrintableGenerator<String> {
     gs::text().min_size(1).max_size(40)
 }
 
+/// A body with no documented code, and the code `ApiError::code` reads
+/// from it: malformed text, an error with only a message, an unknown
+/// code, a code of the wrong type, or admission's `{"detail": …}`.
 #[hegel::composite]
-fn unrecognized_error_body(tc: &TestCase) -> String {
-    match tc.draw(gs::integers::<u8>().min_value(0).max_value(3)) {
+fn unrecognized_error_body(tc: &TestCase) -> (String, Option<String>) {
+    match tc.draw(gs::integers::<u8>().min_value(0).max_value(4)) {
         0 => {
             let suffix = tc.draw(
                 gs::text()
                     .alphabet("abcdefghijklmnopqrstuvwxyz0123456789 ")
                     .max_size(50),
             );
-            format!("not-json:{suffix}")
+            (format!("not-json:{suffix}"), None)
         }
         1 => {
             let message = tc.draw(
@@ -101,7 +104,7 @@ fn unrecognized_error_body(tc: &TestCase) -> String {
                     .alphabet("abcdefghijklmnopqrstuvwxyz0123456789 ")
                     .max_size(20),
             );
-            json!({"error": {"message": message}}).to_string()
+            (json!({"error": {"message": message}}).to_string(), None)
         }
         2 => {
             let suffix = tc.draw(
@@ -110,12 +113,20 @@ fn unrecognized_error_body(tc: &TestCase) -> String {
                     .max_size(24),
             );
             let code = format!("future_{suffix}");
-            json!({"error": {"code": code}}).to_string()
+            (json!({"error": {"code": code}}).to_string(), Some(code))
         }
-        _ => {
+        3 => {
             let wrong_type = tc
                 .draw(gs::sampled_from(vec!["null", "true", "7", "[]", "{}"]));
-            format!(r#"{{"error":{{"code":{wrong_type}}}}}"#)
+            (format!(r#"{{"error":{{"code":{wrong_type}}}}}"#), None)
+        }
+        _ => {
+            let detail = tc.draw(
+                gs::text()
+                    .alphabet("abcdefghijklmnopqrstuvwxyz0123456789 .")
+                    .max_size(40),
+            );
+            (json!({ "detail": detail }).to_string(), None)
         }
     }
 }
@@ -239,9 +250,23 @@ fn a_callback_reads_back_what_was_sent(tc: TestCase) {
     // A new registration needs the issued client id.
     let url = redirect(port, &with_client);
     assert!(check(&url, &Registration::New).is_ok_and(|got| got == expected));
-    // Pasted as a query string, it reads the same.
+    // Pasted as a query string, with or without its `?`, or as the
+    // request target the browser asked for, with stray whitespace
+    // around it, it reads the same.
     let query = Url::parse(&url).unwrap().query().unwrap().to_owned();
-    assert!(check(&query, &Registration::New).is_ok_and(|got| got == expected));
+    let blank = tc.draw(gs::text().alphabet(" \t\n").max_size(2));
+    for pasted in [
+        query.clone(),
+        format!("{blank}{query}{blank}"),
+        format!("?{query}"),
+        format!("{blank}/auth/callback?{query}{blank}"),
+        format!("{blank}{url}{blank}"),
+    ] {
+        assert!(
+            check(&pasted, &Registration::New).is_ok_and(|got| got == expected),
+            "{pasted:?}"
+        );
+    }
     assert!(matches!(
         check(&redirect(port, &pairs), &Registration::New),
         Err(ChatGptError::RegistrationIncomplete)
@@ -314,32 +339,39 @@ fn documented_codes_decide_the_recovery_whatever_the_status(tc: TestCase) {
     assert_eq!(error.body, body.to_string(), "kept verbatim");
 }
 
-#[hegel::test(test_cases = 300)]
-fn admission_details_are_classified_by_status(tc: TestCase) {
-    let detail = tc.draw(gs::text().max_size(60));
-    let status = tc.draw(gs::sampled_from(vec![401_u16, 403, 503]));
-    let body = json!({ "detail": detail }).to_string();
-    let error = ApiError::new(status, None, body.as_bytes());
-    let expected = match status {
-        401 => Recovery::SignInAgain,
-        403 => Recovery::Restricted,
-        _ => Recovery::RetryLater,
-    };
-    assert_eq!(error.recovery(), expected);
-    assert_eq!(error.code(), None);
-}
-
 /// Property inventory: bodies without a documented code use the literal
-/// status table below. Status shrinks within 0..=700; body generation selects
-/// malformed, missing, unknown, or wrong-type codes, with ASCII bodies capped
-/// at 60 bytes so shrinking leaves small, readable counterexamples.
+/// status table below, admission's `{"detail": …}` (401 sign in again,
+/// 403 restricted, 503 retry later) included. Status shrinks within
+/// 0..=700, with the table's boundaries drawn often; body generation
+/// selects malformed, missing, unknown, wrong-type or detail bodies, with
+/// ASCII bodies capped at 60 bytes so shrinking leaves small, readable
+/// counterexamples.
 #[hegel::test(test_cases = 300)]
+#[hegel::explicit_test_case(
+    status = 401u16,
+    drawn = (r#"{"detail":"sign in"}"#.to_owned(), None::<String>),
+)]
+#[hegel::explicit_test_case(
+    status = 403u16,
+    drawn = (r#"{"detail":"region"}"#.to_owned(), None::<String>),
+)]
+#[hegel::explicit_test_case(
+    status = 503u16,
+    drawn = (r#"{"detail":"later"}"#.to_owned(), None::<String>),
+)]
 fn bodies_without_a_code_fall_back_to_the_status(tc: TestCase) {
-    let status = tc.draw(gs::integers::<u16>().min_value(0).max_value(700));
-    let body = tc.draw(unrecognized_error_body());
+    let status = tc.draw(hegel::one_of!(
+        gs::integers::<u16>().min_value(0).max_value(700),
+        gs::sampled_from(vec![
+            400, 401, 403, 408, 409, 429, 499, 500, 503, 599, 600
+        ]),
+    ));
+    let drawn = tc.draw(unrecognized_error_body());
+    let (body, code) = drawn;
     assert!(body.len() <= 60, "generated body exceeds its byte bound");
     let error = ApiError::new(status, None, body.as_bytes());
     assert_eq!(error.recovery(), expected_status_fallback(status));
+    assert_eq!(error.code(), code.as_deref());
     assert_eq!(error.body, body, "kept verbatim");
 }
 

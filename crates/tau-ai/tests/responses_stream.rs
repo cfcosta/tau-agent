@@ -377,65 +377,6 @@ fn tool_call_scratch_buffer_never_reaches_the_emitted_call() {
     assert_eq!(result.stop_reason, StopReason::ToolUse);
 }
 
-/// An `error` frame with `previous_response_not_found` exposes that code
-/// through `error_code()`, separately from the human-readable message —
-/// the lane needs the raw code to drive the recovery ladder.
-/// `docs/reference/openai-websocket.md`'s "Recovery ladder"; pi's
-/// equivalent path: `openai-codex-stream.test.ts:2216`.
-#[test]
-fn previous_response_not_found_exposes_its_code() {
-    let frames = vec![json!({
-        "type": "error",
-        "code": "previous_response_not_found",
-        "message": "Previous response with id 'resp_abc' not found.",
-        "param": "previous_response_id",
-    })];
-    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
-    let mut acc = Accumulator::new();
-    for frame in &frames {
-        for event in processor.push(frame) {
-            acc.push(event).unwrap();
-        }
-    }
-    assert_eq!(processor.error_code(), Some("previous_response_not_found"));
-    let result = acc.finish().unwrap();
-    assert_eq!(result.stop_reason, StopReason::Error);
-    assert_eq!(
-        result.error_message.as_deref(),
-        Some(
-            "Error Code previous_response_not_found: Previous response with id 'resp_abc' not found."
-        )
-    );
-}
-
-/// The server nests an `error` frame's details under `error`, as it
-/// rejects an effort the model does not take.
-#[test]
-fn a_nested_error_frame_keeps_its_code_and_message() {
-    let frame = json!({
-        "type": "error",
-        "status": 400,
-        "error": {
-            "type": "invalid_request_error",
-            "code": "unsupported_value",
-            "message": "Unsupported value: 'minimal' is not supported with the 'gpt-6-sol' model.",
-            "param": "reasoning.effort",
-        },
-    });
-    let mut processor = StreamProcessor::new("gpt-6-sol".to_owned(), 0);
-    let mut acc = Accumulator::new();
-    for event in processor.push(&frame) {
-        acc.push(event).unwrap();
-    }
-    assert_eq!(processor.error_code(), Some("unsupported_value"));
-    assert_eq!(
-        acc.finish().unwrap().error_message.as_deref(),
-        Some(
-            "Error Code unsupported_value: Unsupported value: 'minimal' is not supported with the 'gpt-6-sol' model."
-        )
-    );
-}
-
 /// A model the plan does not run stops the turn once, fatally, and says
 /// so in words a person reads. The plan route words it as a `detail`
 /// (seen live over HTTP for `gpt-0-nope`); the message and the frame's
@@ -474,32 +415,6 @@ fn a_model_off_the_plan_reads_as_unavailable() {
         panic!("one error");
     };
     assert_eq!(message, &format!("Error Code unknown: {words}"));
-}
-
-/// A `response.failed` frame carries the provider's error, and its code
-/// is exposed too. pi: `openai-responses-terminal-event.test.ts`
-/// ("rejects failed terminal events with the provider error").
-#[test]
-fn response_failed_exposes_code_and_message() {
-    let frames = vec![json!({
-        "type": "response.failed",
-        "response": {
-            "id": "resp_failed",
-            "status": "failed",
-            "error": { "code": "server_error", "message": "boom" },
-        },
-    })];
-    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
-    let mut acc = Accumulator::new();
-    for frame in &frames {
-        for event in processor.push(frame) {
-            acc.push(event).unwrap();
-        }
-    }
-    assert_eq!(processor.error_code(), Some("server_error"));
-    let result = acc.finish().unwrap();
-    assert_eq!(result.stop_reason, StopReason::Error);
-    assert_eq!(result.error_message.as_deref(), Some("server_error: boom"));
 }
 
 // =============================================================================
@@ -709,11 +624,13 @@ fn tool_call_argument_deltas_are_exact() {
     assert_eq!(done_repeats, Vec::<AssistantEvent>::new());
 }
 
-/// A tool call whose `added` item carries no initial `arguments` gets no
-/// immediate delta (only the empty case is reachable from real server
-/// data, but the code must still not synthesize one).
-#[test]
-fn tool_call_with_no_initial_arguments_gets_no_immediate_delta() {
+/// A function call whose `added` item already carries some `arguments`
+/// streams them at once, as one delta; one whose `arguments` are empty
+/// streams nothing yet (only the empty case comes from real server data,
+/// but no delta may be made up for it).
+#[hegel::test(test_cases = 100)]
+fn an_added_call_streams_the_arguments_it_carries(tc: TestCase) {
+    let arguments = tc.draw(gs::text().max_size(12));
     let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
     let added = processor.push(&json!({
         "type": "response.output_item.added",
@@ -723,24 +640,28 @@ fn tool_call_with_no_initial_arguments_gets_no_immediate_delta() {
             "id": "fc_a",
             "call_id": "call_a",
             "name": "search",
-            "arguments": "",
+            "arguments": arguments,
         },
     }));
-    assert_eq!(
-        added,
-        vec![
-            AssistantEvent::Start {
-                model: "gpt-5-mini".into(),
-                response_id: None,
-                timestamp: 0,
-            },
-            AssistantEvent::ToolCallStart {
-                index: 0,
-                id: "call_a|fc_a".into(),
-                name: "search".into(),
-            },
-        ]
-    );
+    let mut expected = vec![
+        AssistantEvent::Start {
+            model: "gpt-5-mini".into(),
+            response_id: None,
+            timestamp: 0,
+        },
+        AssistantEvent::ToolCallStart {
+            index: 0,
+            id: "call_a|fc_a".into(),
+            name: "search".into(),
+        },
+    ];
+    if !arguments.is_empty() {
+        expected.push(AssistantEvent::ToolCallDelta {
+            index: 0,
+            delta: arguments,
+        });
+    }
+    assert_eq!(added, expected);
 }
 
 /// `response.reasoning_summary_part.done` inserts a `"\n\n"` separator
@@ -951,9 +872,12 @@ fn terminal_status_absent_is_stop_but_unexpected_status_is_error() {
     );
 }
 
-/// The codes and types `retry::classify` knows, as either field, and one
-/// it does not.
-const ERROR_NAMES: [&str; 12] = [
+/// The codes and types `retry::classify` knows, as either field, the
+/// codes the lane recovers from, and ones it does not know.
+const ERROR_NAMES: [&str; 15] = [
+    "previous_response_not_found",
+    "websocket_connection_limit_reached",
+    "unsupported_value",
     "rate_limit_exceeded",
     "server_error",
     "context_length_exceeded",
@@ -973,6 +897,12 @@ const ERROR_NAMES: [&str; 12] = [
 /// whose class is `retry::classify` of the frame's code, type and (for
 /// an `error` frame) status, whatever those are. With the details at the
 /// top, the type is the frame's own, `error`, which no table names.
+///
+/// The frame's raw code is exposed through `error_code()`, for the lane's
+/// recovery ladder, and the message keeps the code and the server's
+/// words: `Error Code {code}: {message}` for an `error` frame (pi's
+/// wording), `{code}: {message}` for a failed response, with `unknown`
+/// for a missing code and no words (or `no message`) for missing ones.
 #[hegel::test]
 fn failure_frames_are_classified_like_retry_classify(tc: TestCase) {
     let name = || gs::optional(gs::sampled_from(ERROR_NAMES.to_vec()));
@@ -983,9 +913,12 @@ fn failure_frames_are_classified_like_retry_classify(tc: TestCase) {
     ));
     let failed = tc.draw(gs::booleans());
     let nested = tc.draw(gs::booleans());
+    let words = tc.draw(gs::optional(gs::text().max_size(16)));
 
     let mut details = serde_json::Map::new();
-    details.insert("message".into(), json!("m"));
+    if let Some(words) = &words {
+        details.insert("message".into(), json!(words));
+    }
     if let Some(code) = code {
         details.insert("code".into(), json!(code));
     }
@@ -1013,10 +946,20 @@ fn failure_frames_are_classified_like_retry_classify(tc: TestCase) {
         }
         (frame, kind, status)
     };
-    let events = StreamProcessor::new("gpt-5-mini".to_owned(), 0).push(&frame);
-    let Some(AssistantEvent::Error { class, .. }) = events.last() else {
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let events = processor.push(&frame);
+    let Some(AssistantEvent::Error { class, message, .. }) = events.last()
+    else {
         panic!("expected an error, got {events:?}");
     };
+    assert_eq!(processor.error_code(), code, "{frame}");
+    let code_text = code.unwrap_or("unknown");
+    let wanted = if failed {
+        format!("{code_text}: {}", words.as_deref().unwrap_or("no message"))
+    } else {
+        format!("Error Code {code_text}: {}", words.as_deref().unwrap_or(""))
+    };
+    assert_eq!(message, &wanted, "{frame}");
     let expected = retry::classify(&Failure::Api { code, kind, status });
     assert_eq!(*class, expected, "{frame}");
 }

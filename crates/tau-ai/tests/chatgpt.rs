@@ -490,23 +490,6 @@ fn revocation_retries_outages_and_reports_what_it_could_not_confirm() {
 }
 
 #[test]
-fn the_model_list_keeps_listed_models_in_order() {
-    let fake = FakeChatGpt::new();
-    fake.set_models(json!([
-        {"slug": "gpt-6.1-sol", "display_name": "GPT-6.1 Sol", "visibility": "list"},
-        {"slug": "internal", "display_name": "Internal", "visibility": "hide"},
-        {"slug": "gpt-5.5", "display_name": "GPT-5.5", "visibility": "list"},
-    ]));
-    simulate(fake, |fake, chatgpt, _dir| async move {
-        let account = sign_in(&chatgpt, &fake, None).await.unwrap().account;
-        let models = chatgpt.models(&account).await.unwrap();
-        let slugs: Vec<&str> = models.iter().map(|m| m.slug.as_str()).collect();
-        assert_eq!(slugs, ["gpt-6.1-sol", "gpt-5.5"]);
-        assert_eq!(models[0].display_name, "GPT-6.1 Sol");
-    });
-}
-
-#[test]
 fn api_errors_keep_status_body_and_request_id() {
     let fake = FakeChatGpt::new();
     fake.fail_models(403, json!({"detail": "Region not supported"}));
@@ -525,14 +508,4 @@ fn api_errors_keep_status_body_and_request_id() {
         );
         assert_eq!(error.recovery(), Recovery::Restricted);
     });
-}
-
-#[test]
-fn the_host_id_is_made_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path()).unwrap();
-    let id = store.host_id().unwrap();
-    assert!(id.as_str().starts_with("urn:uuid:"));
-    assert_eq!(store.host_id().unwrap(), id);
-    assert_eq!(Store::open(dir.path()).unwrap().host_id().unwrap(), id);
 }

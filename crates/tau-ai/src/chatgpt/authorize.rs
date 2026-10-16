@@ -449,22 +449,6 @@ mod tests {
         assert_eq!(Pkce::new().verifier.len(), 43);
     }
 
-    #[test]
-    fn pasted_shapes_give_the_same_pairs() {
-        let expected = vec![
-            ("code".to_owned(), "c 1".to_owned()),
-            ("state".to_owned(), "s".to_owned()),
-        ];
-        for pasted in [
-            "http://127.0.0.1:1455/auth/callback?code=c+1&state=s",
-            "  /auth/callback?code=c%201&state=s ",
-            "code=c+1&state=s",
-            "?code=c+1&state=s",
-        ] {
-            assert_eq!(query_pairs(pasted), expected, "{pasted}");
-        }
-    }
-
     #[tokio::test]
     async fn the_loopback_answers_the_browser() {
         let loopback = Loopback::bind_port(0).await.unwrap();
