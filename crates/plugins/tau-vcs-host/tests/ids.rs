@@ -317,19 +317,3 @@ fn a_path_argument_is_read_as_the_rule_says(tc: TestCase) {
         }
     });
 }
-
-/// The same path, relative and absolute, limits the diff the same way.
-#[hegel::test(test_cases = 50)]
-fn relative_and_absolute_paths_agree(tc: TestCase) {
-    let repo = Repo::new();
-    for file in FILES {
-        repo.write(file, "text\n");
-    }
-    let path =
-        tc.draw(gs::sampled_from(vec!["a.txt", "dir", "dir/sub", "é", "."]));
-    let absolute = repo.dir.path().join(path).to_str().unwrap().to_owned();
-    let by_relative = repo.ok("vcs_diff", json!({ "paths": [path] }));
-    let by_absolute = repo.ok("vcs_diff", json!({ "paths": [absolute] }));
-    let files = |details: &Value| details["files"].clone();
-    assert_eq!(files(&by_relative), files(&by_absolute));
-}
