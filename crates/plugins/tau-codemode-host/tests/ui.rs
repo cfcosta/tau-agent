@@ -131,9 +131,41 @@ fn repository_pin_fold_keeps_source_for_hostless_inspection() {
     );
 }
 
-// Property inventory: generated define/select/test sequences have the same
-// module library in the live UI fold, a reloaded UI fold, and the separate
-// persisted-record library oracle at every prefix. hegel.toml sets counts.
+/// The module library a model keeps: versions by digest, the selected
+/// version of each name, and each version's tests' code, in order.
+#[derive(Default)]
+struct LibraryModel {
+    versions: BTreeMap<String, Definition>,
+    selected: BTreeMap<String, String>,
+    tests: BTreeMap<String, Vec<String>>,
+}
+
+impl LibraryModel {
+    fn check(&self, library: &modules::Library) {
+        assert_eq!(library.versions(), &self.versions);
+        assert_eq!(library.selected(), &self.selected);
+        for version in self.versions.keys() {
+            let codes: Vec<&str> = library
+                .tests(version)
+                .iter()
+                .map(ModuleTest::code)
+                .collect();
+            let expected: Vec<&str> = self
+                .tests
+                .get(version)
+                .map(|codes| codes.iter().map(String::as_str).collect())
+                .unwrap_or_default();
+            assert_eq!(codes, expected, "tests of {version}");
+        }
+    }
+}
+
+// Property inventory: whatever define, select and test records come, the
+// UI's module library, folded live and folded again from the stored
+// records, is a model's: a definition is kept by its digest and selected
+// under its name; a selection of a known version under its own name moves
+// the alias, and one under another name changes nothing; a test is kept
+// with its version, in order. hegel.toml sets counts.
 #[hegel::test]
 fn module_records_match_live_and_reloaded_ui(tc: hegel::TestCase) {
     let steps: Vec<(u8, u8)> = tc.draw(
@@ -145,41 +177,70 @@ fn module_records_match_live_and_reloaded_ui(tc: hegel::TestCase) {
     let mut state = tau_ui_plugin::PluginValue::default();
     let mut records = Vec::new();
     let mut known = Vec::<Definition>::new();
+    let mut model = LibraryModel::default();
     for (kind, n) in steps {
-        let record = if kind % 3 == 0 || known.is_empty() {
+        let record = if kind % 4 == 0 || known.is_empty() {
             let definition = module_definition(
                 if n % 2 == 0 { "alpha" } else { "beta" },
-                &format!("return {n}"),
+                &format!("return {}", n % 8),
             );
             known.push(definition.clone());
+            model
+                .selected
+                .insert(definition.name().into(), definition.version().into());
+            model
+                .versions
+                .insert(definition.version().into(), definition.clone());
             modules::Record::Define { definition }
         } else {
-            let definition = &known[n as usize % known.len()];
-            if kind % 3 == 1 {
-                modules::Record::Select {
-                    name: definition.name().into(),
-                    version: definition.version().into(),
-                }
-            } else {
-                let report = TestReport {
-                    name: definition.name().into(),
-                    version: definition.version().into(),
-                    passed: n % 2 == 0,
-                    output: format!("case {n}"),
-                    output_truncated: false,
-                    calls: vec![],
-                    error: None,
-                    error_truncated: false,
-                };
-                modules::Record::Test {
-                    test: ModuleTest::new(
+            let definition = known[n as usize % known.len()].clone();
+            match kind % 4 {
+                1 => {
+                    model.selected.insert(
                         definition.name().into(),
                         definition.version().into(),
-                        format!("assert({n} == {n})"),
-                        vec![],
-                        report,
-                    )
-                    .unwrap(),
+                    );
+                    modules::Record::Select {
+                        name: definition.name().into(),
+                        version: definition.version().into(),
+                    }
+                }
+                // Another name's version: not a selection.
+                2 => modules::Record::Select {
+                    name: if definition.name() == "alpha" {
+                        "beta".into()
+                    } else {
+                        "alpha".into()
+                    },
+                    version: definition.version().into(),
+                },
+                _ => {
+                    let code = format!("assert({n} == {n})");
+                    model
+                        .tests
+                        .entry(definition.version().into())
+                        .or_default()
+                        .push(code.clone());
+                    let report = TestReport {
+                        name: definition.name().into(),
+                        version: definition.version().into(),
+                        passed: n % 2 == 0,
+                        output: format!("case {n}"),
+                        output_truncated: false,
+                        calls: vec![],
+                        error: None,
+                        error_truncated: false,
+                    };
+                    modules::Record::Test {
+                        test: ModuleTest::new(
+                            definition.name().into(),
+                            definition.version().into(),
+                            code,
+                            vec![],
+                            report,
+                        )
+                        .unwrap(),
+                    }
                 }
             }
         };
@@ -190,8 +251,7 @@ fn module_records_match_live_and_reloaded_ui(tc: hegel::TestCase) {
             &body,
             &mut tau_ui_plugin::testing::FakeRun::default(),
         );
-        let oracle = modules::fold(&records);
-        assert_eq!(state.get::<State>().modules, oracle);
+        model.check(&state.get::<State>().modules);
         let mut reloaded = tau_ui_plugin::PluginValue::default();
         for body in &records {
             plugin.apply(
@@ -200,7 +260,7 @@ fn module_records_match_live_and_reloaded_ui(tc: hegel::TestCase) {
                 &mut tau_ui_plugin::testing::FakeRun::default(),
             );
         }
-        assert_eq!(reloaded.get::<State>().modules, oracle);
+        model.check(&reloaded.get::<State>().modules);
     }
 }
 
@@ -240,8 +300,11 @@ fn selection_validation_rejects_missing_mismatched_and_corrupt_versions() {
     );
 }
 
+/// The selection and promotion buttons each send one action, in the
+/// wire shape the host half reads: the run and the exact version or
+/// request, and nothing else.
 #[gpui::test]
-fn selection_button_sends_only_the_exact_version(cx: &mut TestAppContext) {
+fn the_buttons_send_exactly_their_actions(cx: &mut TestAppContext) {
     let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
     let received = requests.clone();
     let handle = Handle::new(
@@ -252,48 +315,26 @@ fn selection_button_sends_only_the_exact_version(cx: &mut TestAppContext) {
     );
     let run = RunId("run-7".into());
     let version = "a".repeat(64);
-    cx.update(|cx| ui::select_version(&run, "alpha", &version, &handle, cx));
-    assert_eq!(
-        *requests.borrow(),
-        vec![UiRequest::Act(
-            serde_json::to_value(Action::Select {
-                run,
-                name: "alpha".into(),
-                version,
-            })
-            .unwrap()
-        )]
-    );
-}
-
-#[gpui::test]
-fn promotion_button_sends_only_request_identity_and_decision(
-    cx: &mut TestAppContext,
-) {
-    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
-    let received = requests.clone();
-    let handle = Handle::new(
-        PLUGIN,
-        Rc::new(move |_, request, _: &mut App| {
-            received.borrow_mut().push(request)
-        }),
-    );
-    let run = RunId("run-7".into());
-    let request_id = "opaque-id";
     cx.update(|cx| {
+        ui::select_version(&run, "alpha", &version, &handle, cx);
         ui::decide_promotion(
             &run,
-            request_id,
+            "opaque-id",
             tau_codemode::promotion::Decision::Approved,
             &handle,
             cx,
-        )
+        );
     });
     assert_eq!(
         *requests.borrow(),
-        vec![UiRequest::Act(
-            json!({"action":"promote","run":"run-7","request_id":"opaque-id","decision":"approved"})
-        )]
+        vec![
+            UiRequest::Act(
+                json!({"action":"select","run":"run-7","name":"alpha","version":version})
+            ),
+            UiRequest::Act(
+                json!({"action":"promote","run":"run-7","request_id":"opaque-id","decision":"approved"})
+            ),
+        ]
     );
 }
 
