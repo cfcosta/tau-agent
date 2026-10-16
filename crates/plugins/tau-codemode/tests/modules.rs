@@ -126,6 +126,8 @@ fn generated_histories_match_the_version_and_alias_oracle(tc: TestCase) {
     let mut records = Vec::new();
     let mut versions = BTreeMap::<String, Definition>::new();
     let mut aliases = BTreeMap::<String, String>::new();
+    // The model's state after each prefix, the empty one first.
+    let mut states = vec![(versions.clone(), aliases.clone())];
     for (define, name_index, source_index) in steps {
         let name = ["alpha", "beta", "gamma"][(name_index as usize) % 3];
         if define || versions.is_empty() {
@@ -143,10 +145,25 @@ fn generated_histories_match_the_version_and_alias_oracle(tc: TestCase) {
                 version: value.version().into(),
             }));
         }
-        // Every prefix is a resume point; a fork starts from precisely this state.
+        // Every prefix is a resume point.
         let resumed = modules::fold(&records);
         assert_eq!(resumed.versions(), &versions);
         assert_eq!(resumed.selected(), &aliases);
-        assert_eq!(modules::fold(&records[..records.len()]), resumed);
+        states.push((versions.clone(), aliases.clone()));
     }
+    // A fork starts from the state at its prefix: records written after
+    // the fork point in the parent never reach it, and its own records
+    // land on that state.
+    let at = tc.draw(gs::integers::<usize>().max_value(records.len()));
+    let (mut versions, mut aliases) = states[at].clone();
+    let own = definition("gamma", "return 'fork'");
+    let mut forked = records[..at].to_vec();
+    forked.push(outer(modules::Record::Define {
+        definition: own.clone(),
+    }));
+    aliases.insert(own.name().into(), own.version().into());
+    versions.insert(own.version().into(), own);
+    let fork = modules::fold(&forked);
+    assert_eq!(fork.versions(), &versions);
+    assert_eq!(fork.selected(), &aliases);
 }

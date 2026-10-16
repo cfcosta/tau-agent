@@ -26,11 +26,35 @@ fn definition(name: &str, number: u8) -> Definition {
     .unwrap()
 }
 
+fn pin_record(owner: &str, definition: &Definition) -> Value {
+    let pin = RepositoryPin {
+        owner: owner.to_owned(),
+        selected: BTreeMap::from([(
+            definition.name().to_owned(),
+            definition.version().to_owned(),
+        )]),
+        versions: BTreeMap::from([(
+            definition.version().to_owned(),
+            definition.clone(),
+        )]),
+    };
+    serde_json::to_value(store::Record::RepositoryPin(pin)).unwrap()
+}
+
+/// A run's pin is the one its records hold. A later record for the same
+/// owner repeating that pin is a resume and changes nothing; a later
+/// record holding a different pin is a conflict, and the lookup for that
+/// owner fails, while every other owner's lookup is unaffected. The
+/// model is a table of each owner's pin and whether it conflicted.
 #[hegel::test]
 fn owned_pin_follows_every_record_prefix(tc: TestCase) {
-    let selections: Vec<(u8, u8)> = tc.draw(
-        gs::vecs(hegel::tuples!(gs::integers::<u8>(), gs::integers::<u8>()))
-            .max_size(24),
+    let steps: Vec<(u8, u8, bool)> = tc.draw(
+        gs::vecs(hegel::tuples!(
+            gs::integers::<u8>(),
+            gs::integers::<u8>(),
+            gs::weighted_booleans(0.2)
+        ))
+        .max_size(24),
     );
     let candidates = [
         definition("alpha", 0),
@@ -38,35 +62,47 @@ fn owned_pin_follows_every_record_prefix(tc: TestCase) {
         definition("beta", 2),
     ];
     let mut records = Vec::<Value>::new();
-    let mut expected = BTreeMap::<String, (String, String)>::new();
-    for (owner_index, selection_index) in selections {
+    // Owner to (index of its pinned candidate, whether it conflicted).
+    let mut expected = BTreeMap::<String, (usize, bool)>::new();
+    for (owner_index, selection_index, conflict) in steps {
         let owner = format!("run-{}", owner_index % 4);
-        let selected = &candidates[selection_index as usize % candidates.len()];
-        // A run's first pin wins. Later records for the same owner use the
-        // same immutable pin; this models a resume, not a new activation.
-        let (name, version) = expected
-            .entry(owner.clone())
-            .or_insert_with(|| {
-                (selected.name().to_owned(), selected.version().to_owned())
-            })
-            .clone();
-        let definition = candidates
-            .iter()
-            .find(|item| item.version() == version)
-            .unwrap();
-        let pin = RepositoryPin {
-            owner: owner.clone(),
-            selected: BTreeMap::from([(name, version.clone())]),
-            versions: BTreeMap::from([(version, definition.clone())]),
+        let chosen = match expected.get_mut(&owner) {
+            None => {
+                let index = selection_index as usize % candidates.len();
+                expected.insert(owner.clone(), (index, false));
+                index
+            }
+            Some((pinned, conflicted)) if conflict => {
+                // Any candidate but the pinned one: a different pin.
+                let offset = 1 + selection_index as usize % 2;
+                *conflicted = true;
+                (*pinned + offset) % candidates.len()
+            }
+            Some((pinned, _)) => *pinned,
         };
-        records.push(
-            serde_json::to_value(store::Record::RepositoryPin(pin)).unwrap(),
-        );
-        for (owner, (name, version)) in &expected {
-            let actual =
-                modules::pin_for_run(&records, owner).unwrap().unwrap();
-            assert_eq!(actual.selected.get(name), Some(version));
+        records.push(pin_record(&owner, &candidates[chosen]));
+        for (owner, (pinned, conflicted)) in &expected {
+            let looked_up = modules::pin_for_run(&records, owner);
+            if *conflicted {
+                assert!(
+                    looked_up
+                        .as_ref()
+                        .is_err_and(|error| error
+                            .contains("conflicting repository pins")),
+                    "{owner}: {looked_up:?}"
+                );
+                continue;
+            }
+            let actual = looked_up.unwrap().unwrap();
+            let definition = &candidates[*pinned];
             assert_eq!(actual.owner, *owner);
+            assert_eq!(
+                actual.selected,
+                BTreeMap::from([(
+                    definition.name().to_owned(),
+                    definition.version().to_owned()
+                )])
+            );
         }
         assert!(
             modules::pin_for_run(&records, "not-a-run")

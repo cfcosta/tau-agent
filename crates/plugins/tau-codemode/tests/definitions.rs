@@ -18,25 +18,51 @@ fn name_ok(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
 }
 
+const IDENT_START: &str =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_";
+const IDENT_REST: &str =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_";
+
+/// An identifier of exactly `len` ASCII characters (`len >= 1`).
+#[hegel::composite]
+fn identifier(tc: &TestCase, len: usize) -> String {
+    let first: String =
+        tc.draw(gs::text().alphabet(IDENT_START).min_size(1).max_size(1));
+    let rest: String = tc.draw(
+        gs::text()
+            .alphabet(IDENT_REST)
+            .min_size(len - 1)
+            .max_size(len - 1),
+    );
+    format!("{first}{rest}")
+}
+
 /// Valid names, and the ways a name goes wrong: empty, too long, a
 /// digit first, a character outside the identifier set, a non-ASCII
-/// letter.
+/// letter. Lengths are drawn at the 64-byte limit and either side of
+/// it as well as across the range, so a name of 64 and one of 65
+/// identifier characters are both common.
 #[hegel::composite]
 fn name(tc: &TestCase) -> String {
-    let valid =
-        tc.draw(gs::from_regex("[A-Za-z_][A-Za-z0-9_]{0,63}").fullmatch(true));
-    match tc.draw(gs::integers::<u8>().max_value(6)) {
+    let len = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![1_usize, 63, 64, 65]),
+        gs::integers::<usize>().min_value(1).max_value(70),
+    ));
+    let valid = tc.draw(identifier(len));
+    match tc.draw(gs::integers::<u8>().max_value(5)) {
         0 => String::new(),
-        1 => format!("{valid}{valid}"),
-        2 => format!(
-            "{}{valid}",
-            tc.draw(gs::from_regex("[0-9]").fullmatch(true))
+        1 => format!(
+            "{}{}",
+            tc.draw(gs::from_regex("[0-9]").fullmatch(true)),
+            &valid[1..]
         ),
-        3 => format!(
-            "{valid}{}",
-            tc.draw(gs::sampled_from(vec!["-", " ", ".", "é", "雪", "/"]))
-        ),
-        4 => format!("é{valid}"),
+        2 => {
+            let at = tc.draw(gs::integers::<usize>().max_value(valid.len()));
+            let bad =
+                tc.draw(gs::sampled_from(vec!["-", " ", ".", "é", "雪", "/"]));
+            format!("{}{bad}{}", &valid[..at], &valid[at..])
+        }
+        3 => format!("é{}", &valid[1..]),
         _ => valid,
     }
 }
