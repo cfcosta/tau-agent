@@ -233,7 +233,8 @@ async fn screens_show_progress() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_interactive_program_reads_its_input() {
     let mut run =
-        sh("read line; echo got:$line; trap 'echo int; exit 3' INT; \
+        // The trap is set before the echo the test answers with ^C.
+        sh("trap 'echo int; exit 3' INT; read line; echo got:$line; \
                       while :; do sleep 0.05; done")
         .interactive(true)
         .spawn()
