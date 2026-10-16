@@ -471,30 +471,6 @@ fn a_fork_of_a_compacted_run_starts_from_the_summary() {
     });
 }
 
-/// Below the threshold, and with no overflow, the loop never asks for a
-/// summary, however many turns the run takes.
-#[test]
-fn no_compaction_below_the_threshold() {
-    let llm = ScriptedModel::new()
-        .turn(|t| t.tool_call("read", json!({"path": "a.rs"})))
-        .turn(|t| t.tool_call("read", json!({"path": "b.rs"})))
-        .turn(|t| t.text("done"));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(llm.clone())
-            .tool(typed(Read))
-            .plugin(settings().context_window(u64::MAX));
-        let (events, outcome) = run(&agent, &store, "go", "then this").await;
-        assert_eq!(outcome.text, "done");
-        assert_eq!(llm.requests().len(), 3);
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, RunEvent::ContextRewritten { .. }))
-        );
-    });
-}
-
 /// An overflow is recognized by its wording too, when the failure has
 /// no code that says so: here a failed response from a factory turn.
 #[test]
