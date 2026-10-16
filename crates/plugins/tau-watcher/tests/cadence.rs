@@ -1,6 +1,6 @@
 //! When a check is due, the back-off, the seen-list and the chat text.
 
-use hegel::{TestCase, generators as gs};
+use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_watcher::cadence::{
     EVERY,
     MAX_SKIPS,
@@ -11,67 +11,61 @@ use tau_watcher::cadence::{
     skips,
 };
 
-#[test]
-fn no_checks_are_skipped_for_the_first_two_times() {
-    assert_eq!([0, 1, 2].map(skips), [0, 0, 0]);
+/// The skips the back-off makes after `typed_past` notes were written
+/// past, written out as the rule says it: none for the first two, one
+/// for the third, then twice as many for each note more, up to
+/// [`MAX_SKIPS`].
+fn expected_skips(typed_past: u32) -> u32 {
+    let mut skipped = 0;
+    for n in 3..=typed_past.min(64) {
+        skipped = if n == 3 {
+            1
+        } else {
+            (skipped * 2).min(MAX_SKIPS)
+        };
+    }
+    skipped
 }
 
+/// Every count of notes written past to 200, and the largest, skips as
+/// the rule says.
 #[test]
-fn then_two_to_the_n_minus_three_up_to_sixteen() {
-    assert_eq!([3, 4, 5, 6, 7].map(skips), [1, 2, 4, 8, 16]);
-    assert_eq!([8, 9, 100, u32::MAX].map(skips), [MAX_SKIPS; 4]);
+fn skips_double_from_the_third_note_up_to_the_cap() {
+    for typed_past in (0..=200).chain([u32::MAX]) {
+        assert_eq!(
+            skips(typed_past),
+            expected_skips(typed_past),
+            "{typed_past}"
+        );
+    }
+    assert_eq!(MAX_SKIPS, 16);
 }
 
-/// Skips never shrink as the person ignores more, and never pass 16.
-#[hegel::test(test_cases = 200)]
-fn skips_grow_and_stop_at_the_cap(tc: TestCase) {
-    let n = tc.draw(gs::integers::<u32>().max_value(200));
-    assert!(skips(n) <= skips(n + 1));
-    assert!(skips(n) <= MAX_SKIPS);
-}
-
+/// However many notes were written past, the checks a long run makes
+/// are the first due one, at step [`EVERY`], and then every
+/// `skips + 1`th due one after it, and no others.
 #[test]
-fn a_check_is_due_every_sixth_step() {
-    let due_steps: Vec<u32> =
-        (0..=24).filter(|steps| due(*steps, None, 0)).collect();
-    assert_eq!(due_steps, [6, 12, 18, 24]);
-}
-
-#[test]
-fn back_off_thins_the_due_checks_after_a_check() {
-    // Wrote past 3 notes: one due check is skipped.
-    assert!(!due(12, Some(6), 3));
-    assert!(due(18, Some(6), 3));
-    // Wrote past 5: 4 skipped.
-    assert!(!due(30, Some(6), 5));
-    assert!(due(36, Some(6), 5));
-    // Twice or less: every due check.
-    assert!(due(12, Some(6), 2));
+fn checks_come_every_sixth_step_thinned_by_the_back_off() {
+    for typed_past in 0..=12 {
+        let mut last = None;
+        let mut made = Vec::new();
+        for steps in 0..=1_000 {
+            if due(steps, last, typed_past) {
+                made.push(steps);
+                last = Some(steps);
+            }
+        }
+        let apart = EVERY * (expected_skips(typed_past) + 1);
+        let expected: Vec<u32> =
+            (EVERY..=1_000).step_by(apart as usize).collect();
+        assert_eq!(made, expected, "{typed_past} written past");
+    }
 }
 
 #[test]
 fn a_shrunk_transcript_starts_the_count_again() {
     assert!(due(6, Some(120), 9));
     assert!(!due(6, Some(6), 0));
-}
-
-/// Over a long run, the checks made are `EVERY` steps apart at least,
-/// and `skips + 1` due checks apart after the first.
-#[hegel::test(test_cases = 100)]
-fn checks_made_keep_their_distance(tc: TestCase) {
-    let ignored = tc.draw(gs::integers::<u32>().max_value(12));
-    let mut last = None;
-    let mut made = Vec::new();
-    for steps in 1..=1_000 {
-        if due(steps, last, ignored) {
-            made.push(steps);
-            last = Some(steps);
-        }
-    }
-    assert!(
-        made.windows(2)
-            .all(|pair| { pair[1] - pair[0] == EVERY * (skips(ignored) + 1) })
-    );
 }
 
 #[hegel::test(test_cases = 100)]
@@ -83,34 +77,72 @@ fn the_seen_list_keeps_the_last_fifty(tc: TestCase) {
     assert!(lines.ends_with(kept));
 }
 
-#[test]
-fn chat_text_quotes_the_note_and_defuses_commands() {
-    let text = chat_text("Run @src/lib.rs with ultrathink.\u{7}\u{1b}[31m");
-    assert!(text.starts_with("Here is a note offered by a side agent:"));
-    assert!(!text.contains('\u{7}') && !text.contains('\u{1b}'));
-    assert!(!text.contains("@s"), "{text:?}");
-    assert!(!text.contains("ultrathink"), "{text:?}");
-    assert!(text.contains("src/lib.rs"));
-    // A word that starts `ultra` twice is cut at each.
-    let text = chat_text("Ultraultrathink");
-    assert!(!text.to_ascii_lowercase().contains("ultrathink"), "{text:?}");
-}
-
-/// Whatever the note says, no `@` is followed by anything that could
-/// name a file, and no word starts `ultra` plainly.
-#[hegel::test(test_cases = 200)]
-fn chat_text_has_no_live_mentions_or_keywords(tc: TestCase) {
-    let line = tc.draw(gs::text().max_size(60));
-    let text = chat_text(&line);
+/// What the chat gets for `line`: the note quoted after a fixed lead,
+/// with every control character but the space dropped, a zero-width
+/// space after each `@` so it names no file, and one after the `ultra`
+/// of each word that starts so (in any case) so it is no keyword;
+/// nothing else changes.
+fn check_chat_text(line: &str) {
+    let text = chat_text(line);
     let body = text
         .strip_prefix("Here is a note offered by a side agent:\n\n> ")
-        .unwrap();
-    assert!(!body.chars().any(|c| c.is_control() && c != '\n'));
+        .and_then(|rest| rest.strip_suffix("\n\n"))
+        .unwrap_or_else(|| panic!("{text:?}"));
+    let kept: String = line
+        .chars()
+        .filter(|c| !c.is_control() || *c == ' ')
+        .collect();
+    assert_eq!(body.replace('\u{200b}', ""), kept, "{line:?}");
     for (at, _) in body.match_indices('@') {
-        assert!(body[at + 1..].starts_with('\u{200b}'));
+        assert!(body[at + 1..].starts_with('\u{200b}'), "{body:?}");
     }
-    assert!(
-        !body.to_ascii_lowercase().contains("ultra")
-            || body.contains('\u{200b}')
-    );
+    // Each run of letters and digits that starts `ultra` is cut right
+    // after it: `ultra`, then a zero-width space.
+    let mut rest = body;
+    while let Some(start) = rest.find(char::is_alphanumeric) {
+        let run = &rest[start..];
+        let end = run
+            .find(|c: char| !c.is_alphanumeric())
+            .unwrap_or(run.len());
+        if run[..end].to_ascii_lowercase().starts_with("ultra") {
+            assert_eq!(end, 5, "{:?} in {body:?}", &run[..end]);
+            assert!(run[end..].starts_with('\u{200b}'), "{body:?}");
+        }
+        rest = &run[end..];
+    }
+}
+
+/// A piece of a note: ordinary text, or what the chat must defuse.
+fn piece() -> impl gs::PrintableGenerator<String> {
+    hegel::one_of!(
+        gs::text().exclude_characters("\u{200b}").max_size(8),
+        gs::sampled_from(vec![
+            "@",
+            "@src/lib.rs",
+            "a@b",
+            "ultrathink",
+            "ULTRATHINK",
+            "Ultra",
+            "ultra",
+            "xultra",
+            "\u{7}",
+            "\u{1b}[31m",
+            "\n",
+            "\t",
+            " ",
+            "é",
+        ])
+        .map(str::to_owned),
+    )
+}
+
+/// Whatever the note says, the chat gets it whole, with no live mention
+/// or keyword in it.
+#[hegel::test(test_cases = 300)]
+fn chat_text_has_no_live_mentions_or_keywords(tc: TestCase) {
+    let line: String = tc.draw(gs::vecs(piece()).max_size(12)).concat();
+    check_chat_text(&line);
+    // Notes that once came through live.
+    check_chat_text("Run @src/lib.rs with ultrathink.\u{7}\u{1b}[31m");
+    check_chat_text("Ultraultrathink");
 }

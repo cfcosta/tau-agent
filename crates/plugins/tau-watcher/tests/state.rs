@@ -162,12 +162,14 @@ fn any_history_folds_consistently(tc: TestCase) {
     let mut state = State::default();
     let mut run = FakeRun::default();
     let mut typed = 0;
+    let mut bodies = Vec::new();
     for record in records {
         if record == Record::TypedPast {
             typed += 1;
         }
         let body = serde_json::to_value(&record).unwrap();
         fold(WatcherUi, &mut state, &body, &mut run);
+        bodies.push(body);
     }
     let keys: Vec<&str> = state.notes.iter().map(|n| n.key.as_str()).collect();
     assert_eq!(run.anchors, keys);
@@ -180,4 +182,5 @@ fn any_history_folds_consistently(tc: TestCase) {
     assert!(state.known().len() <= SEEN);
     assert!(state.ignored <= typed);
     // Folding the stored records again gives the same state.
+    assert_eq!(State::from_records(&bodies), state);
 }
