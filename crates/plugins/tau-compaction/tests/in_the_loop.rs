@@ -372,40 +372,9 @@ fn a_rejected_summary_on_overflow_fails_the_run() {
     });
 }
 
-/// A rejected summary past the threshold writes nothing; the run goes
-/// on uncompacted, and the next turn does not try again.
-#[test]
-fn a_rejected_summary_past_the_threshold_leaves_the_run_going() {
-    let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("read", json!({"path": "a.rs"}))
-                .usage(5_000, 10)
-        })
-        .turn(|t| t.tool_call("read", json!({"path": "x"})))
-        .turn(|t| {
-            t.tool_call("read", json!({"path": "b.rs"}))
-                .usage(5_000, 10)
-        })
-        .turn(|t| t.text("done"));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let (events, outcome) =
-            run(&agent(&llm), &store, "go", "then this").await;
-        assert_eq!(outcome.text, "done");
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, RunEvent::ContextRewritten { .. }))
-        );
-        let requests = llm.requests();
-        assert_eq!(requests.len(), 4);
-        // The turn after the rejected summary saw the whole transcript.
-        assert_eq!(text(&requests[2].transcript[0]), "go");
-        llm.assert_exhausted();
-    });
-}
-
-/// After a rejected summary, compaction waits two turns, then tries
+/// A rejected summary past the threshold writes nothing: the run goes on
+/// uncompacted, the turn after it sees the whole transcript, and the
+/// next turn does not try again. Compaction waits two turns, then tries
 /// again: a run with no turn cap is not left uncompacted for good.
 #[test]
 fn a_rejected_summary_is_tried_again_after_a_wait() {
@@ -434,6 +403,8 @@ fn a_rejected_summary_is_tried_again_after_a_wait() {
             .filter(|e| matches!(e, RunEvent::ContextRewritten { .. }))
             .count();
         assert_eq!(rewrites, 1);
+        // The turn after the rejected summary saw the whole transcript.
+        assert_eq!(text(&llm.requests()[2].transcript[0]), "go");
         llm.assert_exhausted();
     });
 }
@@ -505,14 +476,15 @@ fn an_overflow_is_recognized_by_its_wording() {
     });
 }
 
-/// A context overflow reported by its code (not its wording) compacts,
-/// and the summary request goes through the retry policy too.
+/// A context overflow reported by its class alone, in words that do not
+/// say so, compacts, and the summary request goes through the retry
+/// policy too.
 #[test]
 fn an_overflow_code_compacts_and_the_summary_is_retried() {
     use futures_util::StreamExt;
     let llm = ScriptedModel::new()
         .turn(|t| t.text("first"))
-        .turn(|t| t.error("context_length_exceeded", "no room"))
+        .turn(|t| t.failure("no room", tau_ai::retry::Class::ContextOverflow))
         .turn(|t| t.error("server_error", "try again"))
         .turn(|t| t.text("summary"))
         .turn(|t| t.text("done"));

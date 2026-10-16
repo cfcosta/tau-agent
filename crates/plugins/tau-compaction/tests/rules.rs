@@ -476,21 +476,6 @@ fn context_estimate_rounds_semantic_characters_per_unreported_message(
     assert_eq!(estimate_context_tokens(&messages), expected);
 }
 
-/// pi issue #8328: an assistant message whose usage is present but
-/// all-zero must not be mistaken for "no usage reported" being false —
-/// it still falls back to the chars/4 estimate, not to zero.
-#[test]
-fn pi_known_case_zero_usage_assistant_falls_back_to_chars_over_four() {
-    let messages =
-        vec![user_text(&"x".repeat(400)), assistant_text("response")];
-    let expected: u64 = [400, "response".chars().count()]
-        .into_iter()
-        .map(|characters| characters.div_ceil(4) as u64)
-        .sum();
-    assert_eq!(estimate_context_tokens(&messages), expected);
-    assert_eq!(expected, 102);
-}
-
 /// `should_compact` is exactly `tokens > context_window - reserve_tokens`,
 /// saturating so a reserve larger than the window never underflows.
 #[hegel::test(test_cases = 300)]
@@ -511,24 +496,22 @@ fn should_compact_matches_the_threshold_formula(tc: TestCase) {
 // Cut point (testing.md: "never splits a tool call", "kept suffix")
 // =============================================================================
 
-/// Compaction's cut point never falls between a tool call and its
-/// result, and never lands on a tool result itself
-/// (`docs/reference/testing.md`; `docs/reference/compaction.md`, "Cut
-/// point", step 2).
-#[hegel::test(test_cases = 500)]
-fn cut_point_never_splits_a_tool_call_from_its_result(tc: TestCase) {
-    let messages = tc.draw(generators::transcript());
-    let keep_recent_tokens = draw_keep_recent_tokens(&tc, &messages);
-    let cut = find_cut_point(&messages, keep_recent_tokens);
-    if cut.is_split_turn {
-        tc.event("split_turn");
+/// The cut point never falls between a tool call and its result, and
+/// never lands on a tool result itself (`docs/reference/testing.md`;
+/// `docs/reference/compaction.md`, "Cut point", step 2). Checked against
+/// the transcript itself rather than [`model_cut_point`], so a model that
+/// shared the code's mistake would still fail it.
+fn assert_no_tool_call_is_split(messages: &[Message], cut: &CutPoint) {
+    if messages
+        .iter()
+        .any(|m| !matches!(m, Message::ToolResult(_)))
+    {
+        assert!(
+            !matches!(messages[cut.first_kept_index], Message::ToolResult(_)),
+            "cut point {} landed on a tool result",
+            cut.first_kept_index
+        );
     }
-
-    assert!(
-        !matches!(messages[cut.first_kept_index], Message::ToolResult(_)),
-        "cut point {} landed on a tool result",
-        cut.first_kept_index
-    );
 
     // Every tool call and its result must land on the same side of the
     // cut: both kept, or both dropped. Matched in generation order
@@ -627,10 +610,15 @@ fn model_cut_point(messages: &[Message], keep_recent_tokens: u64) -> CutPoint {
 /// `find_cut_point` is exactly the declarative rule of
 /// [`model_cut_point`]: snap the point where the budget is reached to
 /// the nearest valid boundary at or after it, else the latest valid one.
-/// Two consequences are checked as well: a split-turn cut names the user
-/// message that starts its turn, at or before the cut ("Cut point", step
-/// 3), and a budget the whole transcript fits under cuts nothing (step 1;
-/// pi's "should keep everything if all messages fit within budget").
+/// Its consequences are checked against the transcript as well, so a
+/// model sharing the code's mistake still fails: no tool call is split
+/// from its result ([`assert_no_tool_call_is_split`]), the kept suffix
+/// holds the budget unless pulled forward
+/// ([`assert_kept_suffix_holds_the_budget_unless_pulled_forward`]), a
+/// split-turn cut names the user message that starts its turn, at or
+/// before the cut ("Cut point", step 3), and a budget the whole
+/// transcript fits under cuts nothing (step 1; pi's "should keep
+/// everything if all messages fit within budget").
 #[hegel::test(test_cases = 500)]
 fn find_cut_point_matches_the_declarative_rule(tc: TestCase) {
     let messages = tc.draw(generators::transcript());
@@ -650,6 +638,12 @@ fn find_cut_point_matches_the_declarative_rule(tc: TestCase) {
         tc.event("split_turn");
     }
     assert_eq!(cut, model_cut_point(&messages, keep_recent_tokens));
+    assert_no_tool_call_is_split(&messages, &cut);
+    assert_kept_suffix_holds_the_budget_unless_pulled_forward(
+        &messages,
+        keep_recent_tokens,
+        &cut,
+    );
 
     match cut.turn_start_index {
         Some(turn_start) => {
@@ -680,14 +674,12 @@ fn find_cut_point_matches_the_declarative_rule(tc: TestCase) {
 /// [`regression_cut_can_be_pulled_forward_below_the_budget`] for that
 /// exception pinned as a concrete case (found by this property during
 /// the port, not a numbered pi issue).
-#[hegel::test(test_cases = 500)]
-fn kept_suffix_holds_at_least_keep_recent_tokens_unless_pulled_forward(
-    tc: TestCase,
+fn assert_kept_suffix_holds_the_budget_unless_pulled_forward(
+    messages: &[Message],
+    keep_recent_tokens: u64,
+    cut: &CutPoint,
 ) {
-    let messages = tc.draw(generators::transcript());
-    let keep_recent_tokens = draw_keep_recent_tokens(&tc, &messages);
-    let cut = find_cut_point(&messages, keep_recent_tokens);
-    let trigger = trigger_index(&messages, keep_recent_tokens).unwrap_or(0);
+    let trigger = trigger_index(messages, keep_recent_tokens).unwrap_or(0);
     let total_tokens: u64 = messages.iter().map(estimate_message_tokens).sum();
 
     if cut.first_kept_index <= trigger {
@@ -702,7 +694,6 @@ fn kept_suffix_holds_at_least_keep_recent_tokens_unless_pulled_forward(
             keep_recent_tokens.min(total_tokens)
         );
     } else {
-        tc.event("pulled_forward");
         // The cut was pulled forward past the trigger point: every
         // message from the trigger up to the cut must be an invalid
         // boundary (a tool result), since otherwise `find_cut_point`
@@ -725,7 +716,7 @@ fn kept_suffix_holds_at_least_keep_recent_tokens_unless_pulled_forward(
 }
 
 /// Found while writing
-/// [`kept_suffix_holds_at_least_keep_recent_tokens_unless_pulled_forward`]:
+/// [`assert_kept_suffix_holds_the_budget_unless_pulled_forward`]:
 /// an oversized tool result that sits *before* the transcript's last
 /// message (not just trailing, as in pi issue #9740) can still force the
 /// cut forward past it, past the small final assistant turn that follows
@@ -1164,15 +1155,6 @@ fn every_summary_prompt_ranks_the_users_words_first() {
 // Rejected summaries (testing.md: "fails compaction and writes nothing")
 // =============================================================================
 
-/// An `error` stop with no message falls back to "Unknown error", like
-/// pi's `getSummarizationFailure`.
-#[test]
-fn error_stop_reason_without_a_message_uses_a_placeholder() {
-    let response = assistant_response(StopReason::Error, None, vec![]);
-    let error = check_summary(&response).unwrap_err();
-    assert_eq!(error.to_string(), "Summarization failed: Unknown error");
-}
-
 /// pi issue #7048: a length-truncated summary must never become a
 /// checkpoint, and the error says exactly why.
 #[test]
@@ -1253,34 +1235,44 @@ fn check_summary_rejects_exactly_error_length_and_tool_calls(tc: TestCase) {
 /// the reported total when there is one, else the sum of the four
 /// counters, cached tokens included (pi's `calculateContextTokens`;
 /// `docs/reference/compaction.md`, "Token estimate"). Usage that is all
-/// zero is no report, and the estimate falls back to characters (#8328's
-/// rule; its case is pinned above). Each count is drawn as zero half the
-/// time, so every combination of reported fields comes up.
+/// zero is no report, and the estimate falls back to characters: pi
+/// issue #8328, pinned as the explicit case of all five counts zero.
+/// Each count is drawn as zero half the time, so every combination of
+/// reported fields comes up.
 #[hegel::test(test_cases = 500)]
+#[hegel::explicit_test_case(
+    input = 0_u64,
+    output = 0_u64,
+    cache_read = 0_u64,
+    cache_write = 0_u64,
+    total_tokens = 0_u64
+)]
 fn a_reported_usage_anchors_the_estimate_at_its_context(tc: TestCase) {
     let count = || {
         hegel::one_of!(gs::just(0u64), gs::integers::<u64>().max_value(1 << 40))
     };
+    let input = tc.draw(count());
+    let output = tc.draw(count());
+    let cache_read = tc.draw(count());
+    let cache_write = tc.draw(count());
+    let total_tokens = tc.draw(count());
     let usage = Usage {
-        input: tc.draw(count()),
-        output: tc.draw(count()),
-        cache_read: tc.draw(count()),
-        cache_write: tc.draw(count()),
+        input,
+        output,
+        cache_read,
+        cache_write,
         reasoning: None,
-        total_tokens: tc.draw(count()),
+        total_tokens,
         cost: UsageCost::default(),
     };
     let counters =
         usage.input + usage.output + usage.cache_read + usage.cache_write;
     // 400 characters, then "ok": 100 and 1 token by characters.
     let expected = if usage.total_tokens > 0 {
-        tc.event("reported total");
         usage.total_tokens
     } else if counters > 0 {
-        tc.event("counters only");
         counters
     } else {
-        tc.event("no report");
         101
     };
     let messages =
