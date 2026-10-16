@@ -4,7 +4,10 @@
 
 use std::time::Duration;
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _},
+};
 use tau_ai::retry::{Class, Failure, classify, parse_retry_after};
 use tau_testing::generators;
 
@@ -64,31 +67,46 @@ fn allows_permits_exactly_max_attempts(tc: TestCase) {
 }
 
 /// A server-provided `Retry-After` hint is the least the backoff waits,
-/// and `max_delay` the most.
+/// and `max_delay` the most: the wait is never under the backoff's own
+/// delay or under the hint (as far as `max_delay` lets it go), never
+/// over `max_delay`, and never over the larger of the two, so a hint
+/// below the backoff changes nothing. The hint is drawn on either side
+/// of the delay and of `max_delay`, and at each.
 #[hegel::test(test_cases = 500)]
 fn a_hint_bounds_the_backoff_from_below(tc: TestCase) {
     let policy = tc.draw(generators::retry_policy());
-    let attempt = tc.draw(gs::integers::<u32>().min_value(1).max_value(1000));
-    let jitter = tc.draw(
-        gs::floats::<f64>()
-            .min_value(0.0)
-            .max_value(1.0)
-            .allow_nan(false)
-            .allow_infinity(false),
-    );
-    let hint = Duration::from_millis(
-        tc.draw(gs::integers::<u64>().max_value(120_000)),
-    );
+    let attempt = tc.draw(gs::integers::<u32>().min_value(1).max_value(40));
+    let jitter = tc.draw(hegel::one_of!(
+        gs::floats::<f64>().min_value(0.0).max_value(1.0),
+        gs::sampled_from(vec![0.0, 1.0]),
+    ));
+    let delay = policy.delay(attempt, jitter);
+    let ms = |d: Duration| u64::try_from(d.as_millis()).unwrap();
+    let around = |at: Duration| {
+        gs::integers::<i64>()
+            .min_value(-2)
+            .max_value(2)
+            .map(move |step| ms(at).saturating_add_signed(step))
+    };
+    let hint = Duration::from_millis(tc.draw(hegel::one_of!(
+        gs::integers::<u64>().max_value(30_000),
+        around(delay),
+        around(policy.max_delay),
+    )));
 
-    let delay = policy.delay_with_hint(attempt, jitter, Some(hint));
+    let wait = policy.delay_with_hint(attempt, jitter, Some(hint));
 
-    assert_eq!(
-        delay,
-        policy
-            .delay(attempt, jitter)
-            .max(hint)
-            .min(policy.max_delay)
+    assert!(wait <= policy.max_delay, "{wait:?}");
+    assert!(wait >= delay, "{wait:?} under the backoff's {delay:?}");
+    assert!(
+        wait >= hint.min(policy.max_delay),
+        "{wait:?} under {hint:?}"
     );
+    assert!(
+        wait <= hint.max(delay),
+        "{wait:?} over {hint:?} and {delay:?}"
+    );
+    assert_eq!(policy.delay_with_hint(attempt, jitter, None), delay);
 }
 
 /// The `code`s `classify` knows, with their class: OpenAI's, and the
