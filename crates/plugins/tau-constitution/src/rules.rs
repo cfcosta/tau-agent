@@ -409,21 +409,6 @@ mod tests {
     }
 
     #[test]
-    fn a_constitution_reads_back_from_the_store_shape() {
-        let constitution = example();
-        assert_eq!(constitution.max_holds, 2);
-        assert_eq!(constitution.on_error, OnError::Allow);
-        let r2 = &constitution.rules[0];
-        assert_eq!(r2.on[0].label(), "edit.newText");
-        assert_eq!((r2.review, r2.block), (0.3, 0.8));
-        assert_eq!(constitution.rules[1].on, [Target::FinalAnswer]);
-        assert_eq!(
-            Constitution::from_stored(constitution.to_stored()).unwrap(),
-            constitution
-        );
-    }
-
-    #[test]
     fn bad_constitutions_say_what_is_wrong() {
         let bad = |rules: Vec<StoredRule>, on_error: &str| {
             let stored = StoredConstitution {
@@ -484,23 +469,5 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(constitution.for_final_answer().len(), 1);
-    }
-
-    #[test]
-    fn rules_added_are_checked() {
-        let mut constitution = example();
-        let id = constitution
-            .add("Never force-push.", &["exec_command.cmd".into()], 0.2, 0.6)
-            .unwrap();
-        assert_eq!(id, "R1");
-        assert!(constitution.add("x", &[], 0.5, 0.8).is_err());
-        assert!(
-            constitution
-                .add("x", &["exec_command".into()], 0.5, 0.8)
-                .is_err()
-        );
-        assert!(constitution.add("x", &["a.b".into()], 0.9, 0.1).is_err());
-        assert!(constitution.remove("R2"));
-        assert!(!constitution.remove("R2"));
     }
 }

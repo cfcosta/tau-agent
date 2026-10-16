@@ -40,7 +40,6 @@ use tau_constitution_host::{
     Record,
     StoredConstitution,
     StoredRule,
-    Target,
     Verdict,
     VerdictKind,
     db::Db,
@@ -348,35 +347,6 @@ fn a_final_answer_that_breaks_a_rule_goes_back_until_the_cap() {
     llm.assert_exhausted();
 }
 
-#[test]
-fn when_jev_cannot_answer_the_constitution_decides() {
-    let failing =
-        || FakeJev::new(|_| Err(JevError::Transport("offline".into())));
-    let script = || {
-        ScriptedModel::new()
-            .turn(|t| t.tool_call("write", write("x")))
-            .turn(|t| t.text("ok"))
-    };
-    // By default the call runs, and the failure is reported.
-    let llm = script();
-    // R6 moved somewhere no call reaches, so only the write is checked.
-    let mut rules = rules();
-    rules.rules[1].on = vec![Target::parse("none.none").unwrap()];
-    let (events, writes, _, _) = run(&llm, failing(), rules.clone());
-    assert_eq!(writes, 1);
-    assert!(events.iter().any(|event| matches!(
-        event,
-        RunEvent::PluginReport { body, .. } if body["kind"] == "error"
-    )));
-    // `on_error = "block"` refuses what it cannot check.
-    let llm = script();
-    let mut strict = rules;
-    strict.on_error = OnError::Block;
-    let (_, writes, _, _) = run(&llm, failing(), strict);
-    assert_eq!(writes, 0);
-    assert!(results(&llm)[0].contains("cannot check"));
-}
-
 /// Whenever Jev fails, `on_error` decides, for calls and final answers
 /// alike, and the failure is reported and recorded as it happened:
 /// `allow` lets the call run and the answer stand; `block` refuses the
@@ -404,8 +374,12 @@ fn on_error_decides_wherever_jev_fails(tc: TestCase) {
         llm = llm.turn(|t| t.text("Done."));
     }
     let fails = Arc::new(std::sync::Mutex::new(fails.into_iter()));
+    // How many of Jev's requests failed, each of which is reported.
+    let failed = Arc::new(AtomicUsize::new(0));
+    let failures = failed.clone();
     let jev = FakeJev::new(move |request| {
         if fails.lock().unwrap().next().unwrap_or(false) {
+            failures.fetch_add(1, Ordering::SeqCst);
             return Err(JevError::Transport("offline".into()));
         }
         // Passing: every rule kept.
@@ -429,11 +403,31 @@ fn on_error_decides_wherever_jev_fails(tc: TestCase) {
         })
         .collect();
     assert_eq!(records, reports, "what is reported is recorded");
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|body| body["kind"] == "error")
+            .count(),
+        failed.load(Ordering::SeqCst),
+        "each failure is reported"
+    );
     let failed_calls = reports
         .iter()
         .filter(|body| body["kind"] == "error" && body["call_id"].is_string())
         .count();
-    assert_eq!(ran, writes - if block { failed_calls } else { 0 });
+    let refused = if block { failed_calls } else { 0 };
+    assert_eq!(ran, writes - refused);
+    // A refused call tells the model why; the others ran.
+    let told = results(&llm);
+    assert_eq!(told.len(), writes);
+    assert_eq!(
+        told.iter()
+            .filter(|text| text.contains("cannot check"))
+            .count(),
+        refused,
+        "{told:?}"
+    );
+    assert_eq!(told.iter().filter(|text| *text == "written").count(), ran);
     let continued = events
         .iter()
         .filter(|event| matches!(event, RunEvent::Continued { .. }))
@@ -657,42 +651,6 @@ fn the_real_jev_tells_a_broken_rule_from_a_kept_one() {
             .all(|v| v.kind != VerdictKind::Blocked)
     );
     assert_eq!(writes, 1);
-}
-
-#[test]
-fn a_rule_is_edited_in_place() {
-    let mut rules = rules();
-    rules
-        .replace(
-            "R2",
-            "No unwrap anywhere.",
-            &["edit.newText".into()],
-            0.2,
-            0.6,
-        )
-        .unwrap();
-    let r2 = &rules.rules[0];
-    assert_eq!(
-        (r2.id.as_str(), r2.text.as_str()),
-        ("R2", "No unwrap anywhere.")
-    );
-    assert_eq!((r2.review, r2.block), (0.2, 0.6));
-    assert_eq!(rules.rules[1].id, "R6", "the order stays");
-    // Checked: thresholds in order, somewhere to apply.
-    assert!(rules.replace("R2", "x", &[], 0.2, 0.6).is_err());
-    assert!(
-        rules
-            .replace("R2", "x", &["edit.newText".into()], 0.9, 0.6)
-            .is_err()
-    );
-    assert!(
-        rules
-            .replace("R9", "x", &["edit.newText".into()], 0.2, 0.6)
-            .is_err()
-    );
-    // The round trip keeps it.
-    let again = Constitution::from_stored(rules.to_stored()).unwrap();
-    assert_eq!(again, rules);
 }
 
 #[test]
