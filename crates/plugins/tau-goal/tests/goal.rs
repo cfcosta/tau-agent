@@ -23,6 +23,7 @@ use tau_goal::{
     Exhausted,
     Goal,
     GoalPlugin,
+    MET_AT,
     NAME,
     Record,
     Status,
@@ -149,7 +150,8 @@ fn the_run_goes_on_until_jev_says_the_goal_holds() {
             t.tool_call("bash", json!({ "command": "cargo nextest run" }))
         })
         .turn(|t| t.text("14 passed."));
-    let fake = jev(&[0.1, 0.2, 0.9]);
+    // Just under the line, then on it: met at `MET_AT` or more.
+    let fake = jev(&[0.1, MET_AT.next_down(), MET_AT]);
     let store = block_on_io(tau_store_sqlite::memory()).unwrap();
     let agent = agent(&llm, fake.clone());
     let (id, events, stop) =

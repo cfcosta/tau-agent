@@ -159,24 +159,91 @@ fn any_condition_reads_back_from_the_models_input(tc: TestCase) {
     }
 }
 
-/// An ordinary condition is written as is, as a person would type it,
-/// quotes that are not one valid quoted string included.
-#[test]
-fn an_ordinary_condition_is_written_as_is() {
-    for condition in ["cargo test passes", r#""a" and "b""#, r#""a\b""#] {
-        let input = set_input(condition);
-        assert_eq!(
-            input.lines().next(),
-            Some(format!("/goal {condition}").as_str()),
-        );
+/// `condition` as a quoted string, as `Command::parse` documents it:
+/// `"`, the text with `\"`, `\\`, `\n` and `\r` for a quote, a
+/// backslash, a line feed and a carriage return, then `"`.
+fn quoted(condition: &str) -> String {
+    let mut out = String::from("\"");
+    for c in condition.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// A condition, and whether the model's input may write it as is: a
+/// few words joined by single spaces, or those words broken in one of
+/// the ways that would read back otherwise (white space at an end, a
+/// run of it, a line break or a tab, a limit before them, the word
+/// `clear`, or the whole condition one quoted string).
+fn condition(tc: &TestCase) -> (String, bool) {
+    // Words with quotes and backslashes inside; never a quote first, so
+    // only the case drawn for it is one quoted string.
+    let first = tc.draw(
+        gs::from_regex(r#"[a-z0-9é,.:'-][a-z0-9é,.:'"\\-]{0,6}"#)
+            .fullmatch(true),
+    );
+    let more: Vec<String> = tc.draw(
+        gs::vecs(gs::from_regex(r#"[a-z0-9é,.:'"\\-]{1,7}"#).fullmatch(true))
+            .max_size(3),
+    );
+    let words: Vec<String> = std::iter::once(first).chain(more).collect();
+    let joined = words.join(" ");
+    let plain = joined != "clear";
+    match tc.draw(gs::integers::<u8>().max_value(9)) {
+        0 => (format!(" {joined}"), false),
+        1 => (format!("{joined} "), false),
+        2 if words.len() > 1 => (words.join("  "), false),
+        3 if words.len() > 1 => {
+            let gap =
+                tc.draw(gs::sampled_from(vec!["\n", "\r\n", "\t", "\u{a0}"]));
+            (words.join(gap), false)
+        }
+        4 => {
+            let limit = tc.draw(gs::sampled_from(vec![
+                "--budget 5",
+                "--continuations 3",
+                "--budget $0.5",
+            ]));
+            (format!("{limit} {joined}"), false)
+        }
+        5 => ("clear".to_owned(), false),
+        6 => (quoted(&joined), false),
+        _ => (joined, plain),
     }
 }
 
-/// Each condition that would not read back as written is quoted, and
-/// reads back exactly.
-#[test]
-fn a_colliding_condition_is_quoted() {
+/// The model's input writes a condition as `/goal <condition>` exactly
+/// when that reads back as the condition, and otherwise as one quoted
+/// string; either way it reads back exactly.
+#[hegel::test(test_cases = 300)]
+fn a_condition_is_quoted_exactly_when_it_would_not_read_back(tc: TestCase) {
+    let (condition, plain) = condition(&tc);
+    let first_line = if plain {
+        format!("/goal {condition}")
+    } else {
+        format!("/goal {}", quoted(&condition))
+    };
+    let input = set_input(&condition);
+    assert_eq!(
+        input.lines().next(),
+        Some(first_line.as_str()),
+        "{condition:?}"
+    );
+    assert_eq!(set_message(&input), Some(condition));
+
+    // Quotes that are not one quoted string are written as is; these,
+    // and every kind of collision, as they once were written.
     for (condition, first_line) in [
+        ("cargo test passes", "/goal cargo test passes"),
+        (r#""a" and "b""#, r#"/goal "a" and "b""#),
+        (r#""a\b""#, r#"/goal "a\b""#),
         ("clear", r#"/goal "clear""#),
         ("--budget 5 tests pass", r#"/goal "--budget 5 tests pass""#),
         ("--continuations 3 x", r#"/goal "--continuations 3 x""#),
