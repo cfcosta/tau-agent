@@ -324,12 +324,15 @@ fn scripted_cost_is_reported_in_usage() {
     });
 }
 
-/// Scripted failures carry the retry class the loop acts on: an error
-/// is classified by its code, a failure before start is retryable, and
-/// a drop mid-stream or an exhausted script is not.
+/// Each scripted failure, and a script run out, is a stream of exactly
+/// `Start` then the documented terminal `Error`, with no content in
+/// between: its message, and the retry class the loop acts on. An error
+/// is classified by its code, a failure before start is retryable, and a
+/// drop mid-stream or an exhausted script is not.
 #[test]
-fn scripted_failures_carry_their_retry_class() {
+fn scripted_failures_carry_their_message_and_retry_class() {
     use tau_ai::retry::Class;
+    use tau_testing::scripted::EXHAUSTED_MESSAGE;
     tau_testing::block_on(async {
         let model = ScriptedModel::new()
             .turn(|t| t.error("rate_limit_exceeded", "slow down"))
@@ -338,28 +341,34 @@ fn scripted_failures_carry_their_retry_class() {
             .turn(|t| t.fails_before_start())
             .turn(|t| t.dropped());
         let mut session = model.open(settings("gpt-test")).await.unwrap();
-        let mut classes = Vec::new();
-        for _ in 0..6 {
+        for (expected_message, expected_class) in [
+            ("rate_limit_exceeded: slow down", Class::Retryable),
+            ("insufficient_quota: pay up", Class::Fatal),
+            ("context_length_exceeded: too long", Class::ContextOverflow),
+            (FAILS_BEFORE_START_MESSAGE, Class::Retryable),
+            (DROPPED_MESSAGE, Class::Fatal),
+            (EXHAUSTED_MESSAGE, Class::Fatal),
+        ] {
             let events: Vec<AssistantEvent> =
                 session.respond(&[], 0).collect().await;
-            match events.last() {
-                Some(AssistantEvent::Error { class, .. }) => {
-                    classes.push(*class)
+            match &events[..] {
+                [
+                    AssistantEvent::Start { .. },
+                    AssistantEvent::Error {
+                        reason,
+                        message,
+                        class,
+                        ..
+                    },
+                ] => {
+                    assert_eq!(
+                        (*reason, message.as_str(), *class),
+                        (ErrorReason::Error, expected_message, expected_class)
+                    );
                 }
-                other => panic!("expected an error, got {other:?}"),
+                other => panic!("{expected_message}: {other:?}"),
             }
         }
-        assert_eq!(
-            classes,
-            vec![
-                Class::Retryable,
-                Class::Fatal,
-                Class::ContextOverflow,
-                Class::Retryable,
-                Class::Fatal,
-                Class::Fatal,
-            ]
-        );
     });
 }
 
@@ -420,66 +429,6 @@ fn assert_exhausted_panics_when_turns_are_left() {
 // =============================================================================
 // Errors
 // =============================================================================
-
-/// Each error kind starts with `Start` and ends with the documented
-/// terminal `Error` event, with no content in between.
-#[test]
-fn error_turns_start_then_terminate_with_the_documented_error() {
-    tau_testing::block_on(async {
-        let model = ScriptedModel::new()
-            .turn(|t| t.error("rate_limit_exceeded", "slow down"));
-        let mut session = model.open(settings("gpt-test")).await.unwrap();
-        let mut stream = session.respond(&[], 0);
-        assert!(matches!(
-            stream.next().await,
-            Some(AssistantEvent::Start { .. })
-        ));
-        match stream.next().await {
-            Some(AssistantEvent::Error {
-                reason, message, ..
-            }) => {
-                assert_eq!(reason, ErrorReason::Error);
-                assert_eq!(message, "rate_limit_exceeded: slow down");
-            }
-            other => panic!("expected a terminal Error, got {other:?}"),
-        }
-        assert!(stream.next().await.is_none());
-    });
-
-    tau_testing::block_on(async {
-        let model = ScriptedModel::new().turn(|t| t.dropped());
-        let mut session = model.open(settings("gpt-test")).await.unwrap();
-        let mut stream = session.respond(&[], 0);
-        assert!(matches!(
-            stream.next().await,
-            Some(AssistantEvent::Start { .. })
-        ));
-        match stream.next().await {
-            Some(AssistantEvent::Error { message, .. }) => {
-                assert_eq!(message, DROPPED_MESSAGE);
-            }
-            other => panic!("expected a terminal Error, got {other:?}"),
-        }
-        assert!(stream.next().await.is_none());
-    });
-
-    tau_testing::block_on(async {
-        let model = ScriptedModel::new().turn(|t| t.fails_before_start());
-        let mut session = model.open(settings("gpt-test")).await.unwrap();
-        let mut stream = session.respond(&[], 0);
-        assert!(matches!(
-            stream.next().await,
-            Some(AssistantEvent::Start { .. })
-        ));
-        match stream.next().await {
-            Some(AssistantEvent::Error { message, .. }) => {
-                assert_eq!(message, FAILS_BEFORE_START_MESSAGE);
-            }
-            other => panic!("expected a terminal Error, got {other:?}"),
-        }
-        assert!(stream.next().await.is_none());
-    });
-}
 
 // =============================================================================
 // Cache simulation
