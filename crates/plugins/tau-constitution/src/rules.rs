@@ -364,8 +364,6 @@ fn collect(value: &Value, key: &str, found: &mut Vec<Value>) {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     fn rule(
@@ -384,90 +382,45 @@ mod tests {
         }
     }
 
-    fn example() -> Constitution {
-        Constitution::from_stored(StoredConstitution {
-            on_error: "allow".into(),
-            max_holds: 2,
-            rules: vec![
-                rule(
-                    "R2",
-                    "No unwrap outside tests.",
-                    &["edit.newText", "write.content"],
-                    0.3,
-                    0.8,
-                ),
-                rule(
-                    "R6",
-                    "Name the tests that ran.",
-                    &["final answer"],
-                    0.5,
-                    0.8,
-                ),
-            ],
-        })
-        .unwrap()
-    }
-
+    /// A stored constitution that does not check out is refused with
+    /// what is wrong with it: a rule with nowhere to apply, a target
+    /// that names no field, review above block, two rules of one id, or
+    /// an `on_error` that is neither allow nor block.
     #[test]
     fn bad_constitutions_say_what_is_wrong() {
         let bad = |rules: Vec<StoredRule>, on_error: &str| {
-            let stored = StoredConstitution {
+            Constitution::from_stored(StoredConstitution {
                 on_error: on_error.into(),
                 max_holds: 3,
                 rules,
-            };
-            format!("{:#}", Constitution::from_stored(stored).unwrap_err())
+            })
+            .unwrap_err()
         };
-        assert!(
-            bad(vec![rule("A", "t", &[], 0.5, 0.8)], "allow")
-                .contains("applies nowhere")
+        assert_eq!(
+            bad(vec![rule("A", "t", &[], 0.5, 0.8)], "allow"),
+            RuleError::Nowhere("A".into())
         );
-        assert!(
-            bad(vec![rule("A", "t", &["exec_command"], 0.5, 0.8)], "allow")
-                .contains("names no target")
-        );
-        assert!(
-            bad(vec![rule("A", "t", &["a.b"], 0.9, 0.5)], "allow")
-                .contains("above block")
+        assert!(matches!(
+            bad(vec![rule("A", "t", &["exec_command"], 0.5, 0.8)], "allow"),
+            RuleError::Target { id, target }
+                if id == "A" && matches!(*target, RuleError::NoTarget(_))
+        ));
+        assert_eq!(
+            bad(vec![rule("A", "t", &["a.b"], 0.9, 0.5)], "allow"),
+            RuleError::ReviewAboveBlock {
+                id: "A".into(),
+                review: 0.9,
+                block: 0.5
+            }
         );
         let twice = vec![
             rule("A", "t", &["a.b"], 0.5, 0.8),
             rule("A", "u", &["a.b"], 0.5, 0.8),
         ];
-        assert!(bad(twice, "allow").contains("Two rules"));
-        assert!(bad(Vec::new(), "maybe").contains("not allow or block"));
-    }
-
-    #[test]
-    fn only_the_fields_a_rule_names_are_checked() {
-        let constitution = example();
-        let args = json!({
-            "path": "src/lib.rs",
-            "edits": [
-                {"oldText": "a", "newText": "x.unwrap()"},
-                {"oldText": "b", "newText": "y"}
-            ]
-        });
-        let found = constitution.for_call("edit", &args);
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].0.id, "R2");
+        assert_eq!(bad(twice, "allow"), RuleError::Duplicate("A".into()));
         assert_eq!(
-            found[0].1,
-            json!({"newText": ["x.unwrap()", "y"]})
-                .as_object()
-                .unwrap()
-                .clone()
+            bad(Vec::new(), "maybe"),
+            RuleError::NotOnError("maybe".into())
         );
-        assert!(
-            constitution
-                .for_call("exec_command", &json!({"cmd": "ls"}))
-                .is_empty()
-        );
-        assert!(
-            constitution
-                .for_call("edit", &json!({"path": "a"}))
-                .is_empty()
-        );
-        assert_eq!(constitution.for_final_answer().len(), 1);
     }
 }

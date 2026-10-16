@@ -300,12 +300,33 @@ fn on_k() -> Constitution {
 
 /// A call's rule is shown something exactly when its field occurs in
 /// the arguments, and what it is shown was under that field: the one
-/// value, or each of several. Rules on other tools or the final answer
-/// are never about a call.
+/// value, or each of several, in order. Rules on other tools or the
+/// final answer are never about a call.
 #[hegel::test]
 fn a_rule_is_shown_what_is_under_its_field(tc: TestCase) {
-    let args = tc.draw(arguments(3));
+    // Half the time, the edits of a call that makes several: the field
+    // in each of a list of objects, as `edit.newText` is.
+    let args = if tc.draw(gs::booleans()) {
+        tc.draw(arguments(3))
+    } else {
+        let edits: Vec<Value> =
+            tc.draw(gs::vecs(values()).min_size(2).max_size(4));
+        json!({ "path": "src/lib.rs", "edits": edits
+            .iter()
+            .map(|edit| json!({ "x": 1, "k": edit }))
+            .collect::<Vec<_>>() })
+    };
     let constitution = on_k();
+    let answer: Vec<&str> = constitution
+        .for_final_answer()
+        .iter()
+        .map(|rule| rule.id.as_str())
+        .collect();
+    assert_eq!(
+        answer,
+        ["R3"],
+        "only the rule on the final answer is about it"
+    );
     let found = constitution.for_call("tool", &args);
     let mut under = Vec::new();
     everything_under(&args, "k", &mut under);
@@ -325,7 +346,12 @@ fn a_rule_is_shown_what_is_under_its_field(tc: TestCase) {
             panic!("{shown} is not under k in {args}");
         };
         assert!(each.len() >= 2);
-        assert!(each.iter().all(|value| under.contains(value)));
+        // Each was under the field, in the order the arguments hold them.
+        let mut rest = under.iter();
+        assert!(
+            each.iter().all(|value| rest.any(|other| other == value)),
+            "{shown} is not in order under k in {args}"
+        );
     }
 }
 
