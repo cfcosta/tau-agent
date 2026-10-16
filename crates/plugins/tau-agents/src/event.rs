@@ -191,9 +191,19 @@ pub fn clock(seconds: i64, utc_offset: i32) -> String {
 }
 
 /// A name or an id as one field of an event's line: on one line, and
-/// without the separator.
+/// without the separator, even where its text meets the separators on
+/// either side of it. Line breaks are spaces; each ` · ` is a space,
+/// until none is left, a `·` at either end counting as one beside the
+/// line's own.
 fn field(text: &str) -> String {
-    text.replace(['\n', '\r'], " ").replace(" · ", " ")
+    let mut padded = format!(" {} ", text.replace(['\n', '\r'], " "));
+    while padded.contains(" · ") {
+        padded = padded.replace(" · ", " ");
+    }
+    padded
+        .get(1..padded.len() - 1)
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// `data` as compact JSON, cut at [`INLINE_DATA`] with a note of how

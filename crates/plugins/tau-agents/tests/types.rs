@@ -9,19 +9,21 @@ use tau_agents::{
     valid_name,
 };
 
+/// A name or an id: any short text, mostly of letters, but with line
+/// breaks and the line's separator `·` anywhere, beside each other, at
+/// either end or alone.
+fn field_text(tc: &hegel::TestCase, alphabet: &str) -> String {
+    tc.draw(hegel::one_of!(
+        gs::text().alphabet("ab:· \n\r").max_size(10),
+        gs::text().alphabet(alphabet).min_size(1).max_size(10),
+    ))
+}
+
 fn event(tc: &hegel::TestCase) -> Event {
     Event {
-        // A line break or the line's separator inside a name or an id
-        // would break its line: some carry one.
-        trigger: tc.draw(
-            gs::from_regex("[a-z_]{1,8}((\n|\r| · )[a-z_]{1,4}){0,2}")
-                .fullmatch(true),
-        ),
+        trigger: field_text(tc, "abc_"),
         kind: tc.draw(gs::sampled_from(Kind::ALL.to_vec()).print_as_debug()),
-        id: tc.draw(
-            gs::from_regex("[a-z]{1,8}:[0-9a-z]{1,10}((\n| · )[0-9a-z]{1,4})?")
-                .fullmatch(true),
-        ),
+        id: field_text(tc, "abc:019"),
         at: tc
             .draw(gs::integers::<i64>().min_value(0).max_value(4_000_000_000)),
         data: match tc.draw(gs::integers::<u8>().max_value(2)) {
@@ -33,8 +35,10 @@ fn event(tc: &hegel::TestCase) -> Event {
 }
 
 /// What an event message says of each event reads back from it, at any
-/// offset from UTC: the card shows what the agent read. A line break or
-/// ` · ` in a name or an id reads back as a space, keeping it on its line.
+/// offset from UTC: the card shows what the agent read. A name or an id
+/// stays on its line and never holds the line's separator, whatever it
+/// held: line breaks and separators read back as spaces, and nothing
+/// else of it is lost. One that held neither reads back as it was.
 #[hegel::test(test_cases = 300)]
 fn an_event_message_reads_back_as_its_events(tc: hegel::TestCase) {
     let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(5));
@@ -50,17 +54,27 @@ fn an_event_message_reads_back_as_its_events(tc: hegel::TestCase) {
     let message = Message::parse(&batch.message(offset))
         .expect("an event message reads back");
     assert_eq!(message.events.len(), events.len());
+    // What is left of a field once spaces and separators are taken out.
+    let words = |field: &str| -> String {
+        field
+            .chars()
+            .filter(|c| !matches!(c, ' ' | '\n' | '\r' | '·'))
+            .collect()
+    };
     for (shown, event) in message.events.iter().zip(&events) {
-        let on_its_line =
-            |field: &str| field.replace(['\n', '\r'], " ").replace(" · ", " ");
-        if event.trigger.contains(['\n', '\r', '·'])
-            || event.id.contains(['\n', '·'])
+        for (shown, written) in
+            [(&shown.trigger, &event.trigger), (&shown.id, &event.id)]
         {
-            tc.event("a field kept on its line");
+            if written.contains(['\n', '\r', '·']) {
+                tc.event("a field kept on its line");
+            } else {
+                assert_eq!(shown, written);
+            }
+            assert!(!shown.contains(['\n', '\r']), "{shown:?}");
+            assert!(!format!(" {shown} ").contains(" · "), "{shown:?}");
+            assert_eq!(words(shown), words(written), "{written:?}");
         }
-        assert_eq!(shown.trigger, on_its_line(&event.trigger));
         assert_eq!(shown.kind, event.kind);
-        assert_eq!(shown.id, on_its_line(&event.id));
         assert_eq!(shown.time, clock(event.at, offset));
         let data: Value = serde_json::from_str(&shown.data).unwrap();
         assert_eq!(data, event.data);
