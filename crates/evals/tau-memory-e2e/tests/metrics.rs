@@ -206,12 +206,78 @@ fn the_old_fact_counts_when_acted_on_not_when_written_down() {
     assert!(!stale_used(&noted, &stale));
 }
 
-/// A transcript's chunks each fit the limit and, between them, hold
-/// every message.
-#[hegel::test(test_cases = 50)]
+/// A user message's text of `chars` characters: letters, spaces, line
+/// breaks and characters of several bytes, no blank at either end and no
+/// `[`.
+fn text_of(tc: &TestCase, chars: usize) -> String {
+    if chars <= 1 {
+        return "a".to_owned();
+    }
+    let middle: String = tc.draw(
+        gs::text()
+            .alphabet("ab é日🦀\n")
+            .min_size(chars - 2)
+            .max_size(chars - 2),
+    );
+    format!("a{middle}z")
+}
+
+/// The characters of a message's entry: `[user]`, a line break, its text.
+const ENTRY_HEAD: usize = "[user]\n".len();
+
+/// User messages' texts, at lengths that reach past a whole chunk; some
+/// sized so their entry exactly fills what the one before left of a
+/// chunk, or one character more or less.
+#[hegel::composite]
+fn said_texts(tc: &TestCase) -> Vec<String> {
+    let count = tc.draw(gs::integers::<usize>().max_value(12));
+    let mut lengths: Vec<usize> = Vec::new();
+    while lengths.len() < count {
+        let fill = lengths
+            .last()
+            .filter(|_| tc.draw(gs::booleans()))
+            .map(|before| (before + ENTRY_HEAD).min(CHUNK_CHARS));
+        let chars = match fill {
+            Some(before) => {
+                tc.event("an entry sized to fill a chunk");
+                let room = CHUNK_CHARS.saturating_sub(before + 2);
+                let entry = match tc.draw(gs::integers::<u8>().max_value(2)) {
+                    0 => room.saturating_sub(1),
+                    1 => room,
+                    _ => room + 1,
+                };
+                entry.saturating_sub(ENTRY_HEAD).max(1)
+            }
+            None => tc.draw(hegel::one_of!(
+                gs::sampled_from(vec![
+                    1usize,
+                    CHUNK_CHARS - ENTRY_HEAD - 1,
+                    CHUNK_CHARS - ENTRY_HEAD,
+                    CHUNK_CHARS - ENTRY_HEAD + 1,
+                ]),
+                gs::integers::<usize>().min_value(1).max_value(700),
+                gs::integers::<usize>()
+                    .min_value(1)
+                    .max_value(2 * CHUNK_CHARS),
+            )),
+        };
+        lengths.push(chars);
+    }
+    lengths
+        .into_iter()
+        .map(|chars| text_of(tc, chars))
+        .collect()
+}
+
+/// A transcript's chunks: its entries (`[user]` and the text, for a
+/// user message), each cut to [`CHUNK_CHARS`] characters, packed in order
+/// into chunks joined by blank lines. Every chunk fits the limit in
+/// characters, not bytes; the chunks together are the cut entries, in
+/// order, nothing lost or added; and each chunk is as full as it can be:
+/// the next entry would not have fit in it.
+#[hegel::test(test_cases = 100)]
 fn transcript_chunks_fit_and_keep_every_message(tc: TestCase) {
-    let texts: Vec<String> = tc
-        .draw(gs::vecs(gs::from_regex("[a-z][a-z ]{0,600}[a-z]")).max_size(12));
+    let texts: Vec<String> = tc.draw(said_texts());
     let transcript: Vec<Message> = texts
         .iter()
         .map(|text| {
@@ -221,12 +287,49 @@ fn transcript_chunks_fit_and_keep_every_message(tc: TestCase) {
             })
         })
         .collect();
+    let entries: Vec<String> = texts
+        .iter()
+        .map(|text| {
+            let entry = format!("[user]\n{text}");
+            if entry.chars().count() > CHUNK_CHARS {
+                tc.event("an entry cut");
+            }
+            entry.chars().take(CHUNK_CHARS).collect()
+        })
+        .collect();
     let chunks = chunks(&transcript);
-    for chunk in &chunks {
-        assert!(chunk.chars().count() <= CHUNK_CHARS, "{}", chunk.len());
+    if chunks.len() > 1 {
+        tc.event("several chunks");
     }
-    for text in &texts {
-        assert!(chunks.iter().any(|chunk| chunk.contains(text.as_str())));
+    for chunk in &chunks {
+        assert!(!chunk.is_empty());
+        let length = chunk.chars().count();
+        assert!(length <= CHUNK_CHARS, "{length}");
+        if length == CHUNK_CHARS {
+            tc.event("a chunk exactly full");
+        }
+    }
+    assert_eq!(chunks.join("\n\n"), entries.join("\n\n"));
+    // Which entries each chunk holds, from how many it took in order.
+    let mut at = 0;
+    for pair in chunks.windows(2) {
+        let held = entries[at..]
+            .iter()
+            .scan(String::new(), |packed, entry| {
+                if !packed.is_empty() {
+                    packed.push_str("\n\n");
+                }
+                packed.push_str(entry);
+                Some(packed.clone())
+            })
+            .position(|packed| packed == pair[0])
+            .expect("a chunk is whole entries");
+        at += held + 1;
+        let next = &entries[at];
+        assert!(
+            pair[0].chars().count() + 2 + next.chars().count() > CHUNK_CHARS,
+            "the next entry fit in the chunk before it"
+        );
     }
 }
 
