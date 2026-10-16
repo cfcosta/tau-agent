@@ -206,7 +206,12 @@ pub fn check_claims(
         return Err(IdTokenError::Audience);
     }
     match claims.get("exp").and_then(Value::as_u64) {
-        Some(exp) if exp + LEEWAY_SECS > expected.now => {}
+        // An expiry so far ahead that the leeway passes `u64::MAX` is
+        // later than any clock.
+        Some(exp)
+            if exp
+                .checked_add(LEEWAY_SECS)
+                .is_none_or(|end| end > expected.now) => {}
         _ => return Err(IdTokenError::Expired),
     }
     if let Some(nonce) = expected.nonce
@@ -260,28 +265,188 @@ mod tests {
         );
     }
 
-    #[test]
-    fn each_bad_claim_is_named() {
-        let with = |name: &str, value: Value| {
-            let mut claims = claims();
-            claims[name] = value;
-            check_claims(&claims, &expected())
-        };
-        assert!(matches!(
-            with("iss", json!("https://evil")),
-            Err(IdTokenError::Issuer(_))
+    /// How a drawn claim stands against what the token must say.
+    #[derive(Debug, Clone)]
+    enum Aud {
+        /// The client id as a string.
+        Ours,
+        /// Another client's id.
+        Theirs,
+        /// A list holding only the client id.
+        OnlyOurs,
+        /// A list with the client id and another, and the `azp` drawn.
+        Several(Option<&'static str>),
+        /// A list without the client id.
+        NotOurs,
+        Missing,
+    }
+
+    /// The claims are checked in a fixed order, each against what the
+    /// token must say, and the first that fails is named; a token that
+    /// passes them all gives its subject and email. The written-out
+    /// expectation reads `exp` in 128 bits, so a clock leeway past
+    /// `u64::MAX` cannot wrap. Expiries are drawn on either side of the
+    /// leeway's edge, and near `u64::MAX`, clocks near zero and near the
+    /// top.
+    #[hegel::test(test_cases = 500)]
+    fn claims_are_checked_in_order_against_the_expected_token(
+        tc: hegel::TestCase,
+    ) {
+        use hegel::generators::{self as gs, Generator as _};
+        let now: u64 = tc.draw(hegel::one_of!(
+            gs::integers::<u64>().max_value(100_000),
+            gs::sampled_from(vec![0, 59, 60, 61, u64::MAX]),
+            gs::integers::<u64>().min_value(u64::MAX - 120),
         ));
-        assert_eq!(with("aud", json!("other")), Err(IdTokenError::Audience));
+        let nonce = tc.draw(gs::optional(gs::just("n1")));
+        let expected = Expected {
+            issuer: "https://auth.openai.com",
+            client_id: "oaiapp_1",
+            nonce,
+            now,
+        };
+        let mut claims = serde_json::Map::new();
+
+        // Each claim is right most of the time, so the later checks are
+        // reached; when it is wrong, it is wrong in any of a few ways.
+        let right = || gs::weighted_booleans(0.8);
+        let iss = if tc.draw(right()) {
+            Some("https://auth.openai.com")
+        } else {
+            tc.draw(gs::optional(gs::sampled_from(vec![
+                "https://auth.openai.com/",
+                "https://evil",
+            ])))
+        };
+        if let Some(iss) = iss {
+            claims.insert("iss".into(), json!(iss));
+        }
+        let aud = if tc.draw(right()) {
+            tc.draw(
+                gs::sampled_from(vec![
+                    Aud::Ours,
+                    Aud::OnlyOurs,
+                    Aud::Several(Some("oaiapp_1")),
+                ])
+                .print_as_debug(),
+            )
+        } else {
+            tc.draw(
+                gs::sampled_from(vec![
+                    Aud::Theirs,
+                    Aud::Several(None),
+                    Aud::Several(Some("other")),
+                    Aud::NotOurs,
+                    Aud::Missing,
+                ])
+                .print_as_debug(),
+            )
+        };
+        match &aud {
+            Aud::Ours => claims.insert("aud".into(), json!("oaiapp_1")),
+            Aud::Theirs => claims.insert("aud".into(), json!("other")),
+            Aud::OnlyOurs => claims.insert("aud".into(), json!(["oaiapp_1"])),
+            Aud::Several(azp) => {
+                if let Some(azp) = azp {
+                    claims.insert("azp".into(), json!(azp));
+                }
+                claims.insert("aud".into(), json!(["other", "oaiapp_1"]))
+            }
+            Aud::NotOurs => claims.insert("aud".into(), json!(["other"])),
+            Aud::Missing => None,
+        };
+        // On either side of where the leeway runs out, far ahead, near the
+        // top of the range, or not a whole number at all.
+        let edge = now.saturating_sub(LEEWAY_SECS);
+        let exp: Option<Value> = tc.draw(gs::optional(hegel::one_of!(
+            gs::integers::<i64>()
+                .min_value(-2)
+                .max_value(2)
+                .map(move |step| json!(edge.saturating_add_signed(step))),
+            gs::integers::<u64>().map(|n| json!(n)),
+            gs::integers::<u64>()
+                .min_value(u64::MAX - 120)
+                .map(|n| json!(n)),
+            gs::just(json!(u64::MAX)),
+            gs::just(json!(-1)),
+            gs::just(json!(1.5)),
+            gs::just(json!("2000")),
+        )));
+        if let Some(exp) = &exp {
+            claims.insert("exp".into(), exp.clone());
+        }
+        let token_nonce = if tc.draw(right()) {
+            Some("n1")
+        } else {
+            tc.draw(gs::optional(gs::just("n2")))
+        };
+        if let Some(token_nonce) = token_nonce {
+            claims.insert("nonce".into(), json!(token_nonce));
+        }
+        let sub = if tc.draw(right()) {
+            Some("user-1")
+        } else {
+            tc.draw(gs::optional(gs::just("")))
+        };
+        if let Some(sub) = sub {
+            claims.insert("sub".into(), json!(sub));
+        }
+        let email = tc.draw(gs::optional(gs::just("a@example.com")));
+        if let Some(email) = email {
+            claims.insert("email".into(), json!(email));
+        }
+
+        let audience_ok = match aud {
+            Aud::Ours | Aud::OnlyOurs => true,
+            // Several audiences need `azp` to name this client.
+            Aud::Several(azp) => azp == Some("oaiapp_1"),
+            Aud::Theirs | Aud::NotOurs | Aud::Missing => false,
+        };
+        let unexpired =
+            exp.as_ref().and_then(Value::as_u64).is_some_and(|exp| {
+                u128::from(exp) + u128::from(LEEWAY_SECS) > u128::from(now)
+            });
+        let want = if iss != Some("https://auth.openai.com") {
+            Err(IdTokenError::Issuer(iss.map(str::to_owned)))
+        } else if !audience_ok {
+            Err(IdTokenError::Audience)
+        } else if !unexpired {
+            Err(IdTokenError::Expired)
+        } else if nonce.is_some() && token_nonce != nonce {
+            Err(IdTokenError::Nonce)
+        } else if sub.is_none_or(str::is_empty) {
+            Err(IdTokenError::Subject)
+        } else {
+            Ok(Identity {
+                subject: "user-1".into(),
+                email: email.map(str::to_owned),
+            })
+        };
         assert_eq!(
-            with("aud", json!(["oaiapp_1", "x"])),
-            Err(IdTokenError::Audience),
-            "several audiences need azp"
+            check_claims(&Value::Object(claims.clone()), &expected),
+            want,
+            "{claims:?} at {now}"
         );
-        assert!(with("aud", json!(["oaiapp_1"])).is_ok());
-        assert_eq!(with("exp", json!(900)), Err(IdTokenError::Expired));
-        assert!(with("exp", json!(1000)).is_ok(), "within the leeway");
-        assert_eq!(with("nonce", json!("n2")), Err(IdTokenError::Nonce));
-        assert_eq!(with("sub", json!("")), Err(IdTokenError::Subject));
+    }
+
+    /// Regression: `exp + LEEWAY_SECS` wrapped for an expiry within a
+    /// minute of `u64::MAX`, and the token read as expired at any clock
+    /// (shrunk by `claims_are_checked_in_order_against_the_expected_token`
+    /// to `exp = u64::MAX - 59` at `now = 0`). Such an expiry is later than
+    /// every clock, the last one included.
+    #[test]
+    fn an_expiry_at_the_end_of_time_is_later_than_any_clock() {
+        for exp in [u64::MAX - 59, u64::MAX] {
+            for now in [0, u64::MAX - 1, u64::MAX] {
+                let mut claims = claims();
+                claims["exp"] = json!(exp);
+                let expected = Expected { now, ..expected() };
+                assert!(
+                    check_claims(&claims, &expected).is_ok(),
+                    "{exp} at {now}"
+                );
+            }
+        }
     }
 
     #[test]
