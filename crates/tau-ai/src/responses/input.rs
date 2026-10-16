@@ -440,8 +440,9 @@ fn build_text_item(
         )
     });
     // OpenAI requires the id to be at most 64 characters
-    // (`openai-responses-shared.ts:275-281`).
-    if from_signature && id.len() > 64 {
+    // (`openai-responses-shared.ts:275-281`), counted as pi's
+    // `id.length` counts them: in UTF-16 code units, not bytes.
+    if from_signature && id.encode_utf16().count() > 64 {
         id = format!("msg_{}", short_hash(&id));
     }
     let mut value = json!({

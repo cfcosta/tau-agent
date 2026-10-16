@@ -211,8 +211,8 @@ redundant examples, the round went after tests that could not fail:
   the system clock's offset is checked under fixed time zones in child
   processes.
 
-Nine rows stay, each the only test of its behaviour or needing a production
-seam: the signature-id row (below), `jitter_samples_the_unit_interval`, the
+Eight rows stay, each the only test of its behaviour or needing a production
+seam: `jitter_samples_the_unit_interval`, the
 host's `Act::Prompt` reply path and the older protocol's `prompts/get` in
 `tau-mcp-host`, `every_demo_screen_opens`, the no-AGENTS-file host test,
 `Type::mono()`'s only test, the clone into a missing parent with a token, and
@@ -233,10 +233,11 @@ Findings:
 
 - **Fixed:** `chat_text` cut only the first `ultra` of a word, so
   `Ultraultrathink` reached the composer as a live keyword (`tau-watcher`).
-- **tau departs from pi:** a signature id is shortened when longer than 64
-  bytes (`tau-ai/src/responses/input.rs`); pi counts JavaScript string length,
-  so 33 × `é` is kept by pi and shortened by tau. Undecided; the property is
-  left out until it is.
+- **Fixed, to match pi:** a signature id was shortened when longer than 64
+  bytes (`tau-ai/src/responses/input.rs`), where pi counts JavaScript string
+  length, so 33 × `é` was kept by pi and shortened by tau. It now counts
+  UTF-16 code units, and `a_signature_id_is_kept_up_to_64_utf16_units` checks
+  it.
 - An optional `null` inside an object held under `additionalProperties` is
   coerced, not dropped: `normalize_optional_nulls` does not walk
   `additionalProperties` (`tau-agent`).

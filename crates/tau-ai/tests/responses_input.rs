@@ -216,18 +216,50 @@ fn assistant_text_item_fallback_id_uses_response_id() {
     assert_eq!(items[0]["id"], "msg_pi_ye7ywj10a8cx6");
 }
 
-/// A signature id of exactly 64 characters is kept as-is: OpenAI's limit
-/// is inclusive. (`openai-responses-shared.ts:275-281`)
-#[test]
-fn assistant_text_item_id_at_64_chars_is_not_shortened() {
-    let id = "y".repeat(64);
+/// A signature id is kept as it is while pi's `id.length`, its count of
+/// UTF-16 code units, is at most 64 (OpenAI's limit is inclusive), and
+/// replaced by `msg_{shortHash}` past it, however many bytes it takes:
+/// `é` is one unit in two bytes, `🦀` two units in four.
+/// (`openai-responses-shared.ts:275-281`)
+#[hegel::test(test_cases = 200)]
+fn a_signature_id_is_kept_up_to_64_utf16_units(tc: TestCase) {
+    // Lengths in units around the limit, with ASCII, two-byte and
+    // surrogate-pair characters, so bytes and units part ways.
+    let units: usize = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![63, 64, 65, 66]),
+        gs::integers::<usize>().max_value(80)
+    ));
+    let mut id = String::new();
+    let mut taken = 0;
+    while taken < units {
+        let wide = units - taken >= 2;
+        let c: char = if wide {
+            tc.draw(gs::sampled_from(vec!['y', 'é', '🦀']))
+        } else {
+            tc.draw(gs::sampled_from(vec!['y', 'é']))
+        };
+        taken += c.len_utf16();
+        id.push(c);
+    }
     let signature = json!({"v": 1, "id": id}).to_string();
     let messages =
         one_assistant_message(vec![AssistantBlock::Text(TextContent {
             text: "hi".into(),
             text_signature: Some(signature),
         })]);
-    assert_eq!(to_input(&messages)[0]["id"], id);
+    let sent = to_input(&messages)[0]["id"].as_str().unwrap().to_owned();
+    if units <= 64 {
+        assert_eq!(sent, id);
+    } else {
+        let hash = sent.strip_prefix("msg_").expect("shortened");
+        assert!(
+            !hash.is_empty()
+                && hash
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || b.is_ascii_lowercase()),
+            "{sent}"
+        );
+    }
 }
 
 /// A signature id past 64 characters is replaced by `msg_{shortHash}`.
