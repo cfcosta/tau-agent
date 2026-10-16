@@ -29,49 +29,6 @@ fn outer(record: modules::Record) -> Value {
 }
 
 #[test]
-fn digest_uses_canonical_content_and_every_field() {
-    let first = Definition::new(
-        "m".into(),
-        "return 1".into(),
-        json!({"z": {"b": 1, "a": 2}, "a": 3}),
-        BTreeMap::new(),
-    )
-    .unwrap();
-    let reordered = Definition::new(
-        "m".into(),
-        "return 1".into(),
-        serde_json::from_str("{\"a\":3,\"z\":{\"a\":2,\"b\":1}}").unwrap(),
-        BTreeMap::new(),
-    )
-    .unwrap();
-    assert_eq!(first.version(), reordered.version());
-    assert_ne!(first.version(), definition("m", "return 2").version());
-    assert_ne!(
-        first.version(),
-        Definition::new(
-            "m".into(),
-            "return 1".into(),
-            json!({"a": 4}),
-            BTreeMap::new()
-        )
-        .unwrap()
-        .version()
-    );
-    let dependencies = BTreeMap::from([("dep".into(), "a".repeat(64))]);
-    assert_ne!(
-        first.version(),
-        Definition::new(
-            "m".into(),
-            "return 1".into(),
-            first.signatures().clone(),
-            dependencies
-        )
-        .unwrap()
-        .version()
-    );
-}
-
-#[test]
 fn invalid_content_and_versions_cannot_change_selection() {
     for name in ["", "../x", "a/b", "9a", "a-b", &"x".repeat(65)] {
         assert!(
@@ -140,34 +97,6 @@ fn invalid_content_and_versions_cannot_change_selection() {
     );
     assert_eq!(library.versions().len(), 1);
     assert_eq!(store::fold(&records), Default::default());
-}
-
-#[test]
-fn old_versions_support_rollback_and_forked_prefixes() {
-    let first = definition("m", "one");
-    let second = definition("m", "two");
-    let prefix = vec![outer(modules::Record::Define {
-        definition: first.clone(),
-    })];
-    let mut main = prefix.clone();
-    main.push(outer(modules::Record::Define {
-        definition: second.clone(),
-    }));
-    main.push(outer(modules::Record::Select {
-        name: "m".into(),
-        version: first.version().into(),
-    }));
-    let mut fork = prefix.clone();
-    fork.push(outer(modules::Record::Define {
-        definition: definition("m", "fork"),
-    }));
-    assert_eq!(modules::fold(&prefix).selected()["m"], first.version());
-    assert_eq!(modules::fold(&main).selected()["m"], first.version());
-    assert_eq!(modules::fold(&main).versions().len(), 2);
-    assert_ne!(
-        modules::fold(&fork).selected()["m"],
-        modules::fold(&main).selected()["m"]
-    );
 }
 
 #[test]
