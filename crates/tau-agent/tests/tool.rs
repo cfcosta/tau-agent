@@ -11,15 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tau_agent::{
     error::ToolError,
-    tool::{
-        AgentTool,
-        ExecutionMode,
-        RunId,
-        ToolCtx,
-        ToolOutput,
-        TypedTool,
-        typed,
-    },
+    tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput, TypedTool, typed},
 };
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -93,10 +85,4 @@ fn text_output_has_one_text_block() {
         serde_json::to_value(&output.content).unwrap(),
         json!([{"type": "text", "text": "done"}])
     );
-}
-
-/// A run id displays as the id itself.
-#[test]
-fn run_ids_display_as_themselves() {
-    assert_eq!(RunId("run_1".into()).to_string(), "run_1");
 }

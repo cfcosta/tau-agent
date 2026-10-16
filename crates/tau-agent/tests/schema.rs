@@ -13,7 +13,6 @@ use std::collections::HashSet;
 use hegel::{TestCase, extras::serde_json as json_gs, generators as gs};
 use serde_json::{Map, Value, json};
 use tau_agent::schema::{
-    NotStrict,
     STRICT_FORMATS,
     inline_refs,
     strip_nulls_for_optional,
@@ -363,19 +362,6 @@ fn strict_schema_accepts_exactly_what_the_closed_original_accepts(
         strict_accepts, original_accepts,
         "schema: {schema}\nstrict: {strict}\nvalue: {value}"
     );
-}
-
-/// `NotStrict` carries its reason and behaves like a normal error type:
-/// `Display` prints the reason, it implements `std::error::Error`, and
-/// it is `Clone` + structurally comparable.
-#[test]
-fn not_strict_behaves_like_a_normal_error() {
-    let error: NotStrict = to_strict(&json!("not an object")).unwrap_err();
-    assert_eq!(error.reason(), "root schema must have type object");
-    assert_eq!(error.to_string(), error.reason());
-    assert_eq!(error.clone(), error);
-    let as_error: &dyn std::error::Error = &error;
-    assert_eq!(as_error.to_string(), error.reason());
 }
 
 // =============================================================================

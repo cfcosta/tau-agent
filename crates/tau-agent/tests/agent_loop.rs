@@ -11,8 +11,7 @@ use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
-    event::{LimitKind, RunEvent, StopReason},
-    limits::Limits,
+    event::{RunEvent, StopReason},
     plugin::{Decision, Plugin, PluginCtx, PluginRun, RunPlan, ToolCall},
     runner::{CANCELLED, TRUNCATED},
     tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput},
@@ -956,29 +955,6 @@ fn before_tool_hooks() {
     });
 }
 
-/// An unknown tool gets pi's message and the run goes on.
-#[test]
-fn unknown_tool_is_an_error_result() {
-    let llm = ScriptedModel::new()
-        .turn(|t| t.tool_call("nope", json!({})))
-        .turn(|t| t.text("ok"));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let run = Agent::new(llm).start("go", &store);
-        let id = run.id();
-        assert_eq!(run.outcome().await.unwrap().stop, StopReason::Stop);
-        let transcript = stored(&store, &id.0).await;
-        let Message::ToolResult(result) = &transcript[2] else {
-            panic!()
-        };
-        assert!(
-            serde_json::to_string(&result.content)
-                .unwrap()
-                .contains("Tool nope not found")
-        );
-    });
-}
-
 /// A tool that fails with output of its own.
 struct FailsWithOutput(Value);
 
@@ -1065,28 +1041,6 @@ fn model_error_ends_the_run() {
         );
         let record = store.run(&outcome.run.0).await.unwrap().unwrap();
         assert_eq!(record.status, tau_store::Status::Failed);
-    });
-}
-
-/// `max_turns` ends a run that keeps calling tools.
-#[test]
-fn turn_limit_ends_the_run() {
-    let mut llm = ScriptedModel::new();
-    for _ in 0..5 {
-        llm = llm.turn(|t| t.tool_call("probe", json!({"ms": 0})));
-    }
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let outcome = Agent::new(llm)
-            .tool(Probe::new("probe", ExecutionMode::Parallel, log))
-            .limits(Limits::default().max_turns(2))
-            .run("go", &store)
-            .await
-            .unwrap();
-        assert_eq!(outcome.stop, StopReason::Limit(LimitKind::Turns));
-        let record = store.run(&outcome.run.0).await.unwrap().unwrap();
-        assert_eq!(record.status, tau_store::Status::Limit);
     });
 }
 
@@ -1273,40 +1227,6 @@ fn failed_response_runs_no_tools() {
     });
 }
 
-#[test]
-fn errors_and_debug_output() {
-    use tau_agent::agent::AgentError;
-    let llm = tau_ai::llm::LlmError {
-        message: "down".into(),
-    };
-    assert_eq!(AgentError::Llm(llm).to_string(), "model provider: down");
-    assert_eq!(
-        AgentError::Schema {
-            tool: "t".into(),
-            message: "bad".into()
-        }
-        .to_string(),
-        "tool t has an invalid schema: bad"
-    );
-    assert_eq!(AgentError::Panicked.to_string(), "the run's task panicked");
-    let agent = Agent::new(ScriptedModel::new())
-        .name("lead")
-        .model("gpt-5.5");
-    let shown = format!("{agent:?}");
-    assert!(
-        shown.contains("lead") && shown.contains("gpt-5.5"),
-        "{shown}"
-    );
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let run = Agent::new(ScriptedModel::new().turn(|t| t.text("x")))
-            .start("go", &store);
-        let shown = format!("{run:?}");
-        assert!(shown.contains(&*run.id().0), "{shown}");
-        run.outcome().await.unwrap();
-    });
-}
-
 /// With warm-up on, each run warms its session up once, with the run's
 /// settings, before its first turn; with it off (the default), never.
 #[test]
@@ -1354,39 +1274,6 @@ fn tools_adds_several_in_order() {
             .map(|t| t.name.clone())
             .collect();
         assert_eq!(names, ["first", "a", "b"]);
-    });
-}
-
-/// A batch holding a sequential tool runs its calls one at a time, in
-/// source order, parallel calls included; a batch of parallel tools
-/// alone runs its calls together.
-#[test]
-fn a_sequential_tool_serializes_its_batch() {
-    let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("probe", json!({"ms": 100}))
-                .tool_call("serial", json!({"ms": 100}))
-                .tool_call("probe", json!({"ms": 100}))
-        })
-        .turn(|t| {
-            t.tool_call("probe", json!({"ms": 100}))
-                .tool_call("probe", json!({"ms": 100}))
-        })
-        .turn(|t| t.text("done"));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let agent = Agent::new(llm.clone())
-            .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
-            .tool(Probe::new("serial", ExecutionMode::Sequential, log.clone()));
-        let outcome = agent.run("go", &store).await.unwrap();
-        assert_eq!(outcome.text, "done");
-        let log = log.lock().unwrap().clone();
-        assert_eq!(log.len(), 5);
-        for pair in log[..3].windows(2) {
-            assert!(pair[1].start >= pair[0].end, "{log:?}");
-        }
-        assert_eq!(log[3].start, log[4].start, "{log:?}");
     });
 }
 

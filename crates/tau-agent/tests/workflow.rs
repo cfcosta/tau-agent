@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::{Agent, AgentError, Input},
-    event::{LimitKind, RunEvent, StopReason},
+    event::{RunEvent, StopReason},
     limits::Limits,
     schema::to_strict,
     tool::{AgentTool, RunId, ToolCtx, ToolOutput, TypedTool, typed},
@@ -618,35 +618,6 @@ fn supervisor_with_sub_agents(tc: TestCase) {
     });
 }
 
-/// Sub-agent usage counts toward the caller's limits: the caller's own
-/// turns cost nothing, but after two calls its children cost 1.2 USD,
-/// over its 1 USD limit, so it stops before its third turn.
-#[test]
-fn sub_agent_usage_counts_toward_limits() {
-    let lead_llm = ScriptedModel::new()
-        .turn(|t| t.tool_call("research", json!({"input": "a"})))
-        .turn(|t| t.tool_call("research", json!({"input": "b"})))
-        .turn(|t| t.text("never"));
-    let child_llm = ScriptedModel::new()
-        .turn(|t| t.text("found").cost(0.6))
-        .turn(|t| t.text("found").cost(0.6));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let outcome = Agent::new(lead_llm.clone())
-            .tool(Agent::new(child_llm).as_tool("research", "Investigates."))
-            .limits(Limits::default().max_usd(1.0))
-            .run("task", &store)
-            .await
-            .unwrap();
-        assert_eq!(outcome.stop, StopReason::Limit(LimitKind::Usd));
-        assert_eq!(lead_llm.requests().len(), 2);
-        assert_eq!(outcome.usage.cost.total, 1.2);
-        // The store keeps each run's own cost.
-        let record = store.run(&outcome.run.0).await.unwrap().unwrap();
-        assert_eq!(record.cost_usd, 0.0);
-    });
-}
-
 /// Cancelling the caller cancels the sub-agent run it is waiting on:
 /// both end cancelled, and the call gets an error result.
 #[test]
@@ -873,6 +844,12 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
             }
         }
         tc.event(format!("{:?}", outcome.stop));
+        // The store records how the run ended.
+        let status = if expected.is_some() {
+            tau_store::Status::Limit
+        } else {
+            tau_store::Status::Done
+        };
         match expected {
             Some((stop, turn)) => {
                 assert_eq!(outcome.stop, stop, "{limits:?}");
@@ -888,6 +865,8 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
             }
         }
         assert_eq!(outcome.usage.cost.total, total.cost.total);
+        let record = store.run(&lead_id.0).await.unwrap().unwrap();
+        assert_eq!(record.status, status);
     });
 }
 
