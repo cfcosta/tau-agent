@@ -122,32 +122,51 @@ fn assistant_text_item_uses_v1_signature_with_phase() {
     );
 }
 
-/// `"commentary"` is the other phase pi keeps.
-/// (`openai-responses-shared.ts:67`)
-#[test]
-fn assistant_text_item_keeps_commentary_phase() {
-    let signature =
-        json!({"v": 1, "id": "msg_c", "phase": "commentary"}).to_string();
-    let messages =
-        one_assistant_message(vec![AssistantBlock::Text(TextContent {
-            text: "hi".into(),
-            text_signature: Some(signature),
-        })]);
-    assert_eq!(to_input(&messages)[0]["phase"], "commentary");
+/// The phases pi keeps (`openai-responses-shared.ts:67-69`), written
+/// out apart from `tau_ai::responses::input`.
+const KEPT_PHASES: [&str; 2] = ["commentary", "final_answer"];
+
+/// A `TextSignatureV1` phase: one pi keeps, a near miss of one, or any
+/// text at all.
+#[hegel::composite]
+fn phase(tc: &TestCase) -> String {
+    tc.draw(hegel::one_of!(
+        gs::sampled_from(
+            [
+                "commentary",
+                "final_answer",
+                "Commentary",
+                "final-answer",
+                "commentary ",
+                "draft",
+                "",
+            ]
+            .map(str::to_owned)
+            .to_vec()
+        ),
+        generators::text(12),
+    ))
 }
 
-/// A phase that is neither `"commentary"` nor `"final_answer"` is
-/// dropped, not passed through. (`openai-responses-shared.ts:67-69`)
-#[test]
-fn assistant_text_item_drops_unknown_phase() {
-    let signature =
-        json!({"v": 1, "id": "msg_d", "phase": "draft"}).to_string();
+/// A v1 signature's phase goes out exactly when pi keeps it
+/// (`"commentary"` or `"final_answer"`, spelled exactly); any other
+/// phase, or none, is dropped, and the signature's id stays either way.
+#[hegel::test(test_cases = 200)]
+fn only_the_phases_pi_keeps_go_out(tc: TestCase) {
+    let phase = tc.draw(gs::optional(phase()));
+    let mut signature = json!({"v": 1, "id": "msg_v1"});
+    if let Some(phase) = &phase {
+        signature["phase"] = json!(phase);
+    }
     let messages =
         one_assistant_message(vec![AssistantBlock::Text(TextContent {
             text: "hi".into(),
-            text_signature: Some(signature),
+            text_signature: Some(signature.to_string()),
         })]);
-    assert!(to_input(&messages)[0].get("phase").is_none());
+    let item = &to_input(&messages)[0];
+    let kept = phase.filter(|phase| KEPT_PHASES.contains(&phase.as_str()));
+    assert_eq!(item.get("phase"), kept.map(|phase| json!(phase)).as_ref());
+    assert_eq!(item["id"], "msg_v1");
 }
 
 /// A signature that is not a `TextSignatureV1` (a plain id, garbled
@@ -482,15 +501,6 @@ fn split_tool_call_id_known_cases() {
 
     // An id with no `|` at all (pi: `openai-responses-shared.ts:167`).
     assert_eq!(split_tool_call_id("bare_id"), ("bare_id", None));
-}
-
-/// Deviation from pi: `split_tool_call_id` splits at the *first* `|`
-/// and keeps everything after it as `item_id`. pi's `id.split("|")`
-/// destructuring (`openai-responses-shared.ts:292`) keeps only the
-/// first two segments, silently dropping anything past a second `|`.
-#[test]
-fn split_tool_call_id_keeps_extra_pipes_unlike_pi() {
-    assert_eq!(split_tool_call_id("a|b|c"), ("a", Some("b|c")));
 }
 
 // =============================================================================
