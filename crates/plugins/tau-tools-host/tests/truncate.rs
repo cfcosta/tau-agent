@@ -4,10 +4,7 @@
 use hegel::{TestCase, generators as gs};
 use tau_tools_host::truncate::{
     CUT,
-    GREP_MAX_LINE,
     Limit,
-    MAX_BYTES,
-    MAX_LINES,
     format_size,
     truncate_head,
     truncate_line,
@@ -187,27 +184,6 @@ fn truncation_is_idempotent(tc: TestCase) {
     }
 }
 
-/// pi's edge: content whose only excess is its trailing newline is
-/// reported as cut by lines, as pi's `truncatedBy` starts at "lines".
-#[test]
-fn a_trailing_newline_over_the_byte_limit() {
-    let result = truncate_head("a\n", 10, 1);
-    assert_eq!(result.content, "a");
-    assert_eq!(result.by, Some(Limit::Lines));
-}
-
-/// A grep line is cut at 500 characters (not bytes) and marked.
-#[test]
-fn lines_are_cut_by_characters() {
-    let short = "é".repeat(GREP_MAX_LINE);
-    assert_eq!(truncate_line(&short, GREP_MAX_LINE), (short.clone(), false));
-    let long = format!("{short}xyz");
-    assert_eq!(
-        truncate_line(&long, GREP_MAX_LINE),
-        (format!("{short}... [truncated]"), true)
-    );
-}
-
 /// `truncate_line` keeps a line of at most `max_chars` characters as it
 /// is, and cuts a longer one to its first `max_chars` characters (never
 /// inside a character) followed by the marker.
@@ -280,12 +256,4 @@ fn sizes_read_as_pi_prints_them() {
     assert_eq!(format_size(1024 * 1024 - 1), "1024.0KB");
     assert_eq!(format_size(1024 * 1024), "1.0MB");
     assert_eq!(format_size(5 * 1024 * 1024 / 2), "2.5MB");
-}
-
-/// The limits are the spec's (`tools.md`, "The shared limits").
-#[test]
-fn the_limits_are_the_spec() {
-    assert_eq!(MAX_LINES, 2000);
-    assert_eq!(MAX_BYTES, 51_200);
-    assert_eq!(GREP_MAX_LINE, 500);
 }

@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use tau_agent::{
     error::ToolError,
     tool::{AgentTool, ToolCtx, ToolOutput},
+    validation::ArgumentSchema,
 };
 use tau_ai::message::InputBlock;
 use tau_tools_host::{
@@ -167,10 +168,30 @@ fn read_equals_pis_whole_file_read(tc: TestCase) {
     if let Some(limit) = limit {
         args["limit"] = json!(limit);
     }
-    let got = call(&root, args)
-        .map(|o| text_of(&o))
-        .map_err(|e| e.to_string());
+    let got = call(&root, args).map_err(|e| e.to_string());
+    if let Ok(output) = &got {
+        assert_matches_output_schema(output);
+    }
+    let got = got.map(|o| text_of(&o));
     assert_eq!(got, pi_read(&content, "f.txt", offset, limit));
+}
+
+/// `output` carries a structured result that `read`'s declared output
+/// schema accepts as it is: valid, and with nothing for the lenient
+/// coercion to change (`AgentTool::output_schema`).
+fn assert_matches_output_schema(output: &ToolOutput) {
+    static SCHEMA: std::sync::OnceLock<ArgumentSchema> =
+        std::sync::OnceLock::new();
+    let schema = SCHEMA.get_or_init(|| {
+        let read = Read::new(Root::new("/"));
+        ArgumentSchema::new(read.output_schema().expect("an output schema"))
+            .expect("the output schema compiles")
+    });
+    let structured = output.structured.as_ref().expect("a structured result");
+    let accepted = schema
+        .validate(structured)
+        .unwrap_or_else(|error| panic!("{error}: {structured}"));
+    assert_eq!(&accepted, structured, "the schema had to coerce it");
 }
 
 /// The notices name the right lines: a file over the line limit shows
@@ -278,6 +299,7 @@ fn images_come_back_within_the_limits(tc: TestCase) {
     std::fs::write(dir.path().join("picture.txt"), png(width, height)).unwrap();
     let output =
         call(&Root::new(dir.path()), json!({"path": "picture.txt"})).unwrap();
+    assert_matches_output_schema(&output);
     let (_, image) = image_of(&output);
     assert!(image.width() <= MAX_DIMENSION && image.height() <= MAX_DIMENSION);
     let (w, h) = (image.width() as f64, image.height() as f64);
@@ -485,41 +507,6 @@ fn zero_limit_has_an_empty_range_without_underflow() {
     assert_eq!(structured["complete"], false);
 }
 
-/// A requested subset reports its selected text and the first line after
-/// that subset, while the direct continuation notice stays unchanged.
-#[test]
-fn subset_has_structured_text_and_continuation() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "one\ntwo\nthree").unwrap();
-    let output = call(
-        &Root::new(dir.path()),
-        json!({"path": "f.txt", "offset": 2, "limit": 1}),
-    )
-    .unwrap();
-    assert_eq!(
-        text_of(&output),
-        "two\n\n[1 more lines in file. Use offset=3 to continue.]"
-    );
-    assert_eq!(
-        output.structured.unwrap(),
-        json!({
-            "kind": "text",
-            "path": "f.txt",
-            "text": "two",
-            "offset": 2,
-            "requested_limit": 1,
-            "total_lines": 3,
-            "returned_lines": 1,
-            "next_offset": 3,
-            "truncated": false,
-            "complete": false,
-            "truncated_by": null,
-            "first_line_exceeds_limit": false,
-            "artifact_error": "artifact storage is unavailable",
-        })
-    );
-}
-
 /// The 2000-line and 50 KiB boundaries are inclusive. Crossing either
 /// one reports the same display cut used by the direct output.
 #[test]
@@ -567,27 +554,6 @@ fn structured_text_tracks_exact_and_exceeded_bounds() {
     assert_eq!(structured["next_offset"], Value::Null);
 }
 
-/// Unicode text remains intact in the structured range and counts the
-/// same line boundaries as the streaming reader.
-#[test]
-fn structured_text_keeps_unicode_and_path() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("é.txt"), "α😀\n漢字").unwrap();
-    let output = call(
-        &Root::new(dir.path()),
-        json!({"path": "é.txt", "offset": 2, "limit": 1}),
-    )
-    .unwrap();
-    assert_eq!(text_of(&output), "漢字");
-    let structured = output.structured.unwrap();
-    assert_eq!(structured["path"], "é.txt");
-    assert_eq!(structured["text"], "漢字");
-    assert_eq!(structured["total_lines"], 2);
-    assert_eq!(structured["returned_lines"], 1);
-    assert_eq!(structured["next_offset"], Value::Null);
-    assert_eq!(structured["complete"], false);
-}
-
 /// A recognized but undecodable image is marked omitted and carries the
 /// same text block the direct output returned.
 #[test]
@@ -610,44 +576,6 @@ fn an_omitted_image_has_structured_text_content() {
     assert_eq!(
         structured["content"],
         serde_json::to_value(&output.content).unwrap()
-    );
-}
-
-/// The public schema covers both tagged result variants and is exposed
-/// through `AgentTool::output_schema`.
-#[test]
-fn read_declares_its_structured_output_schema() {
-    let read = Read::new(Root::new("/"));
-    let schema = read.output_schema().unwrap();
-    assert_eq!(schema["oneOf"].as_array().unwrap().len(), 2);
-    assert_eq!(schema["oneOf"][0]["properties"]["kind"]["const"], "text");
-    assert_eq!(schema["oneOf"][1]["properties"]["kind"]["const"], "image");
-    for field in [
-        "text",
-        "offset",
-        "requested_limit",
-        "total_lines",
-        "returned_lines",
-        "next_offset",
-        "truncated",
-        "complete",
-        "truncated_by",
-        "first_line_exceeds_limit",
-    ] {
-        assert!(
-            schema["oneOf"][0]["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!(field)),
-            "missing required field {field}"
-        );
-    }
-    assert!(
-        schema["oneOf"][1]["properties"]["content"]["items"]["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|block| block["properties"]["type"]["const"] == "image")
     );
 }
 

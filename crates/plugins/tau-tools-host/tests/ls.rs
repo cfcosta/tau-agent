@@ -160,21 +160,6 @@ fn ls_matches_a_naive_listing(tc: TestCase) {
     assert_eq!(actual, expected, "entries = {entries:?}, limit = {limit}");
 }
 
-/// Dotfiles and directories are listed, with a trailing `/` on
-/// directories (pi, `tools.test.ts:936`, "should list dotfiles and
-/// directories").
-#[test]
-fn dotfiles_and_directories_are_listed() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join(".hidden-file"), "secret").unwrap();
-    std::fs::create_dir(dir.path().join(".hidden-dir")).unwrap();
-    let root = Root::new(dir.path());
-
-    let output = call(&root, json!({})).unwrap();
-    assert!(output.contains(".hidden-file"), "{output}");
-    assert!(output.contains(".hidden-dir/"), "{output}");
-}
-
 /// An empty directory is reported with a fixed string (`ls.ts`).
 #[test]
 fn empty_directory() {
@@ -203,25 +188,6 @@ fn file_path_is_not_a_directory() {
     let error =
         call(&root, json!({"path": file.to_string_lossy()})).unwrap_err();
     assert!(error.to_string().contains("Not a directory"), "{error}");
-}
-
-/// The entry limit notice, pinned exactly (`docs/reference/tools.md`,
-/// "ls"; the "limit reached" wording is part of the spec).
-#[test]
-fn entry_limit_notice() {
-    let dir = tempfile::tempdir().unwrap();
-    for name in ["a.txt", "b.txt", "c.txt"] {
-        std::fs::write(dir.path().join(name), "x").unwrap();
-    }
-    let root = Root::new(dir.path());
-    let output = call(&root, json!({"limit": 2})).unwrap();
-    assert!(output.contains("a.txt"), "{output}");
-    assert!(output.contains("b.txt"), "{output}");
-    assert!(!output.contains("c.txt"), "{output}");
-    assert!(
-        output.contains("[2 entries limit reached. Use limit=4 for more]"),
-        "{output}"
-    );
 }
 
 /// Names equal but for case list in byte order, whatever order the

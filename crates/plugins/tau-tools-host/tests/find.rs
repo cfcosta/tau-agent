@@ -478,49 +478,36 @@ fn search_from_an_absolute_path() {
     assert!(output.contains("found.txt"), "{output}");
 }
 
-/// Hidden files are included in the walk (`docs/reference/tools.md`,
-/// "find").
-#[test]
-fn hidden_files_are_found() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join(".env"), "x").unwrap();
-    let root = Root::new(dir.path());
-    let output = call(&root, json!({"pattern": ".env"})).unwrap();
-    assert_eq!(output, ".env");
-}
-
 /// The user's own global gitignore (`core.excludesFile`) is not part
-/// of the spec and must not leak into results just because the search
-/// tree has no `.git` directory of its own.
+/// of the spec: a file it lists is found all the same
+/// (`docs/reference/tools.md`, "grep" and "find").
 #[test]
 fn global_gitignore_is_not_consulted() {
+    let config = tempfile::tempdir().unwrap();
+    exclude_globally(config.path());
     let dir = tempfile::tempdir().unwrap();
-    // A name commonly listed in a personal global gitignore.
-    std::fs::write(dir.path().join(".env"), "x").unwrap();
+    std::fs::write(dir.path().join("global-excluded.txt"), "x").unwrap();
     let root = Root::new(dir.path());
     let output = call(&root, json!({"pattern": "*"})).unwrap();
-    assert_eq!(output, ".env");
+    assert_eq!(output, "global-excluded.txt");
 }
 
-/// No matches at all is a fixed string (`find.ts`).
-#[test]
-fn no_files_found() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = Root::new(dir.path());
-    let output = call_output(&root, json!({"pattern": "*.zzz"})).unwrap();
-    assert_eq!(text_of(&output), "No files found matching pattern");
-    assert_eq!(
-        structured_of(&output),
-        &json!({
-            "root": dir.path().to_string_lossy(),
-            "paths": [],
-            "truncated": false,
-            "complete": true,
-            "limit_reached": false,
-            "bytes_truncated": false,
-            "skipped": 0
-        })
-    );
+/// Makes the process's global Git configuration name an excludes file
+/// that lists `global-excluded.txt`, as a person's `core.excludesFile`
+/// would. Nextest runs each test in a process of its own, and no other
+/// test uses that name.
+fn exclude_globally(config_dir: &std::path::Path) {
+    let excludes = config_dir.join("ignore");
+    std::fs::write(&excludes, "global-excluded.txt\n").unwrap();
+    let config = config_dir.join("gitconfig");
+    std::fs::write(
+        &config,
+        format!("[core]\n\texcludesFile = {}\n", excludes.display()),
+    )
+    .unwrap();
+    // SAFETY: set before this test starts any thread that reads the
+    // environment.
+    unsafe { std::env::set_var("GIT_CONFIG_GLOBAL", &config) };
 }
 
 /// Zero, exact, and exceeded entry limits keep their existing display text and

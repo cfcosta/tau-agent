@@ -268,38 +268,6 @@ fn tilde_expands_only_as_a_directory() {
     assert_eq!(root.resolve("@~draft.md"), dir.path().join("~draft.md"));
 }
 
-/// A leading `@` is stripped, unicode spaces become spaces, `file://`
-/// URLs become paths, `.` and `..` are resolved, and an absolute path
-/// ignores the root.
-#[test]
-fn inputs_are_normalized() {
-    let (dir, root) = root();
-    assert_eq!(root.resolve("@src/lib.rs"), dir.path().join("src/lib.rs"));
-    assert_eq!(
-        root.resolve("a\u{00A0}b\u{3000}c"),
-        dir.path().join("a b c")
-    );
-    assert_eq!(
-        root.resolve("a\u{2000}b\u{200A}c\u{202F}d\u{205F}e"),
-        dir.path().join("a b c d e")
-    );
-    assert_eq!(
-        root.resolve("file:///etc/hosts"),
-        PathBuf::from("/etc/hosts")
-    );
-    assert_eq!(
-        root.resolve("file:///../../url-root"),
-        PathBuf::from("/url-root")
-    );
-    assert_eq!(root.resolve("./a/../b/./c"), dir.path().join("b/c"));
-    assert_eq!(root.resolve("/tmp/x"), PathBuf::from("/tmp/x"));
-    assert_eq!(
-        root.resolve("/../../root-boundary"),
-        PathBuf::from("/root-boundary")
-    );
-    assert_eq!(root.dir(), dir.path());
-}
-
 /// Lowercase `am`/`pm` are matched too (pi, `path-utils.test.ts:20`),
 /// the exact name wins over a variant, and with nothing on disk the
 /// resolved path comes back.

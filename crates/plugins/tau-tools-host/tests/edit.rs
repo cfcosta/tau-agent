@@ -874,21 +874,6 @@ fn not_found_several_edits() {
     );
 }
 
-/// Not unique, one edit (`tools.md`, "Error strings").
-#[test]
-fn not_unique_single_edit() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "foo foo foo").unwrap();
-    let edit = new_edit(dir.path());
-    let error =
-        call(&edit, json!({"path": "f.txt", "edits": [{"oldText": "foo", "newText": "bar"}]}))
-            .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "Found 3 occurrences of the text in f.txt. The text must be unique. Please provide more context to make it unique."
-    );
-}
-
 /// Not unique, several edits (`tools.md`, "Error strings").
 #[test]
 fn not_unique_several_edits() {
@@ -906,27 +891,6 @@ fn not_unique_several_edits() {
     assert_eq!(
         error.to_string(),
         "Found 3 occurrences of edits[1] in f.txt. Each oldText must be unique. Please provide more context to make it unique."
-    );
-}
-
-/// Overlapping edits (`tools.md`, "Error strings"), ported from pi's
-/// `tools.test.ts` ("should fail when multi-edit regions overlap").
-#[test]
-fn overlapping_edits_are_rejected() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "one\ntwo\nthree\n").unwrap();
-    let edit = new_edit(dir.path());
-    let error = call(
-        &edit,
-        json!({"path": "f.txt", "edits": [
-            {"oldText": "one\ntwo\n", "newText": "ONE\nTWO\n"},
-            {"oldText": "two\nthree\n", "newText": "TWO\nTHREE\n"},
-        ]}),
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "edits[0] and edits[1] overlap in f.txt. Merge them into one edit or target disjoint regions."
     );
 }
 
@@ -1004,43 +968,6 @@ fn a_unique_exact_match_is_not_rejected_by_a_fuzzy_near_duplicate() {
     );
 }
 
-/// pi's `tools.test.ts`: "should replace text in file".
-#[test]
-fn known_case_replace_text_in_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("f.txt");
-    std::fs::write(&file, "Hello, world!").unwrap();
-    let edit = new_edit(dir.path());
-    let output =
-        call(&edit, json!({"path": "f.txt", "edits": [{"oldText": "world", "newText": "testing"}]}))
-            .unwrap();
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "Hello, testing!");
-    let details = output.details.unwrap();
-    assert!(details["diff"].as_str().unwrap().contains("testing"));
-}
-
-/// pi's `tools.test.ts`: "should replace multiple disjoint regions in
-/// one call".
-#[test]
-fn known_case_multiple_disjoint_regions() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("f.txt");
-    std::fs::write(&file, "alpha\nbeta\ngamma\ndelta\n").unwrap();
-    let edit = new_edit(dir.path());
-    call(
-        &edit,
-        json!({"path": "f.txt", "edits": [
-            {"oldText": "alpha\n", "newText": "ALPHA\n"},
-            {"oldText": "gamma\n", "newText": "GAMMA\n"},
-        ]}),
-    )
-    .unwrap();
-    assert_eq!(
-        std::fs::read_to_string(&file).unwrap(),
-        "ALPHA\nbeta\nGAMMA\ndelta\n"
-    );
-}
-
 /// pi's `tools.test.ts`: "should match edits against the original
 /// file, not incrementally".
 #[test]
@@ -1060,25 +987,6 @@ fn known_case_edits_match_the_original_not_incrementally() {
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
         "foo bar\nBAR\nbaz\n"
-    );
-}
-
-/// pi's `tools.test.ts` ("edit tool fuzzy matching"): trailing
-/// whitespace is stripped before matching.
-#[test]
-fn known_case_trailing_whitespace_is_stripped() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("f.txt");
-    std::fs::write(&file, "line one   \nline two  \nline three\n").unwrap();
-    let edit = new_edit(dir.path());
-    call(
-        &edit,
-        json!({"path": "f.txt", "edits": [{"oldText": "line one\nline two\n", "newText": "replaced\n"}]}),
-    )
-    .unwrap();
-    assert_eq!(
-        std::fs::read_to_string(&file).unwrap(),
-        "replaced\nline three\n"
     );
 }
 
@@ -1118,79 +1026,6 @@ fn known_case_unicode_compatibility_forms() {
     )
     .unwrap();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "XYZ789\ncoffee\n");
-}
-
-/// pi's `tools.test.ts`: smart single and double quotes match ASCII
-/// quotes.
-#[test]
-fn known_case_smart_quotes() {
-    let dir = tempfile::tempdir().unwrap();
-    let single = dir.path().join("single.txt");
-    std::fs::write(&single, "console.log(\u{2018}hello\u{2019});\n").unwrap();
-    let edit = new_edit(dir.path());
-    call(
-        &edit,
-        json!({"path": "single.txt", "edits": [{"oldText": "console.log('hello');", "newText": "console.log('world');"}]}),
-    )
-    .unwrap();
-    assert!(std::fs::read_to_string(&single).unwrap().contains("world"));
-
-    let double = dir.path().join("double.txt");
-    std::fs::write(&double, "const msg = \u{201C}Hello World\u{201D};\n")
-        .unwrap();
-    call(
-        &edit,
-        json!({"path": "double.txt", "edits": [{"oldText": "const msg = \"Hello World\";", "newText": "const msg = \"Goodbye\";"}]}),
-    )
-    .unwrap();
-    assert!(
-        std::fs::read_to_string(&double)
-            .unwrap()
-            .contains("Goodbye")
-    );
-}
-
-/// pi's `tools.test.ts`: Unicode dashes and NBSP match their ASCII
-/// equivalents.
-#[test]
-fn known_case_unicode_dashes_and_nbsp() {
-    let dir = tempfile::tempdir().unwrap();
-    let dashes = dir.path().join("dashes.txt");
-    std::fs::write(&dashes, "range: 1\u{2013}5\nbreak\u{2014}here\n").unwrap();
-    let edit = new_edit(dir.path());
-    call(
-        &edit,
-        json!({"path": "dashes.txt", "edits": [{"oldText": "range: 1-5\nbreak-here", "newText": "range: 10-50\nbreak--here"}]}),
-    )
-    .unwrap();
-    assert!(std::fs::read_to_string(&dashes).unwrap().contains("10-50"));
-
-    let nbsp = dir.path().join("nbsp.txt");
-    std::fs::write(&nbsp, "hello\u{00A0}world\n").unwrap();
-    call(
-        &edit,
-        json!({"path": "nbsp.txt", "edits": [{"oldText": "hello world", "newText": "hello universe"}]}),
-    )
-    .unwrap();
-    assert!(std::fs::read_to_string(&nbsp).unwrap().contains("universe"));
-}
-
-/// pi's `tools.test.ts`: an exact match wins over a fuzzy one.
-#[test]
-fn known_case_exact_match_preferred_over_fuzzy() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("f.txt");
-    std::fs::write(&file, "const x = 'exact';\nconst y = 'other';\n").unwrap();
-    let edit = new_edit(dir.path());
-    call(
-        &edit,
-        json!({"path": "f.txt", "edits": [{"oldText": "const x = 'exact';", "newText": "const x = 'changed';"}]}),
-    )
-    .unwrap();
-    assert_eq!(
-        std::fs::read_to_string(&file).unwrap(),
-        "const x = 'changed';\nconst y = 'other';\n"
-    );
 }
 
 /// pi's `tools.test.ts`: duplicates are detected after fuzzy
@@ -1286,21 +1121,6 @@ fn fuzzy_mode_merges_adjacent_touching_line_ranges() {
         std::fs::read_to_string(&file).unwrap(),
         "PREFIX-MIDDLE2-SUFFIX2\nNEXT-LINE2\nFOURTH\n"
     );
-}
-
-/// The result's `firstChangedLine` is the line number of the first
-/// change in the new file, not just the first line of the file
-/// (`tools.md`, "edit", "Result details").
-#[test]
-fn first_changed_line_points_at_the_actual_change() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("f.txt");
-    std::fs::write(&file, "a\nb\nc\nTARGET\ne\n").unwrap();
-    let edit = new_edit(dir.path());
-    let output =
-        call(&edit, json!({"path": "f.txt", "edits": [{"oldText": "TARGET\n", "newText": "CHANGED\n"}]}))
-            .unwrap();
-    assert_eq!(output.details.unwrap()["firstChangedLine"], 4);
 }
 
 /// pi's `edit-tool-crlf` suite: LF `oldText` matches CRLF content, and

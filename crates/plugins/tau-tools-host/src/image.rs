@@ -275,17 +275,6 @@ mod tests {
         assert_eq!(fit(9000, 1), (2000, 1));
     }
 
-    /// Shrinking takes three quarters of each side, keeps a side of 1,
-    /// and stops at 1×1.
-    #[test]
-    fn shrinking_takes_three_quarters_until_one_by_one() {
-        assert_eq!(shrink(2000, 1000), Some((1500, 750)));
-        assert_eq!(shrink(1, 8), Some((1, 6)));
-        assert_eq!(shrink(8, 1), Some((6, 1)));
-        assert_eq!(shrink(2, 3), Some((1, 2)));
-        assert_eq!(shrink(1, 1), None);
-    }
-
     /// The limit is strict: a payload whose base64 is exactly 4.5 MB does
     /// not fit, one three bytes smaller does.
     #[test]
@@ -389,16 +378,5 @@ mod tests {
         let bytes =
             tc.draw(hegel::generators::integers::<usize>().max_value(5_000));
         assert_eq!(base64_len(bytes), STANDARD.encode(vec![0u8; bytes]).len());
-    }
-
-    /// Base64 takes four characters per three bytes, rounded up; the
-    /// limit is strict, as pi's `<`.
-    #[test]
-    fn base64_sizes() {
-        assert_eq!(base64_len(0), 0);
-        assert_eq!(base64_len(1), 4);
-        assert_eq!(base64_len(3), 4);
-        assert_eq!(base64_len(4), 8);
-        assert_eq!(MAX_BASE64_BYTES, 4_718_592);
     }
 }

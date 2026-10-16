@@ -696,46 +696,20 @@ fn image_read_keeps_direct_image_and_pages_original_file_bytes() {
     });
 }
 
-#[test]
-fn file_larger_than_default_artifact_quota_reports_failure_without_reference() {
-    block_on(async {
-        let directory = tempfile::tempdir().unwrap();
-        let file = std::fs::File::create(directory.path().join("oversize.dat"))
-            .unwrap();
-        file.set_len(64 * 1024 * 1024 + 1).unwrap();
-        let bytes =
-            Bytes::new(directory.path().join("artifacts"), Quotas::default())
-                .unwrap();
-        let fixture =
-            FixtureCodingTools::new(Root::new(directory.path()), bytes);
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let run = Agent::new(file_model(json!({"path":"oversize.dat"}), false))
-            .plugin(fixture.clone())
-            .run("oversize", &store)
-            .await
-            .unwrap();
-        let result =
-            fixture.file_results.lock().unwrap().last().unwrap().clone();
-        assert!(result["structured"]["artifact"].is_null());
-        assert!(
-            result["structured"]["artifact_error"]
-                .as_str()
-                .unwrap()
-                .contains("byte quota")
-        );
-        assert_eq!(published_objects(directory.path()), 0);
-        assert!(
-            store
-                .records(&run.run.0, tau_tools::ui::NAME)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-    });
-}
-
+/// A source over the artifact quota keeps its display text and reports
+/// why it has no artifact, leaving no grant and no object. The default
+/// quota a run gets is the documented 64 MiB per artifact, 512 MiB in
+/// all (`docs/reference/codemode-artifact-storage.md`); a small quota
+/// stands in for it here, as streaming a 64 MiB source took seconds.
 #[test]
 fn quota_failure_returns_artifact_error_without_a_grant_or_object() {
+    assert_eq!(
+        Quotas::default(),
+        Quotas {
+            max_artifact_bytes: 64 * 1024 * 1024,
+            total_bytes: 512 * 1024 * 1024,
+        }
+    );
     block_on(async {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("large.txt"), "x".repeat(80))

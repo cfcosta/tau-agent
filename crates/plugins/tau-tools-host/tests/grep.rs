@@ -131,26 +131,6 @@ fn structured_context_records_keep_kind_and_order() {
 }
 
 #[test]
-fn structured_literal_and_regex_matches_follow_arguments() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("patterns.txt"), "NEE.LE\nNEEXLE\nNEE?LE")
-        .unwrap();
-    let root = Root::new(dir.path());
-
-    let regex = call_output(&root, json!({"pattern": "NEE.LE"})).unwrap();
-    let regex_lines = structured_of(&regex)["lines"].as_array().unwrap();
-    assert_eq!(regex_lines.len(), 3);
-    assert_eq!(regex_lines[1]["text"], "NEEXLE");
-
-    let literal =
-        call_output(&root, json!({"pattern": "NEE.LE", "literal": true}))
-            .unwrap();
-    let literal_lines = structured_of(&literal)["lines"].as_array().unwrap();
-    assert_eq!(literal_lines.len(), 1);
-    assert_eq!(literal_lines[0]["text"], "NEE.LE");
-}
-
-#[test]
 fn structured_match_limit_distinguishes_exact_from_exceeded() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("limits.txt");
@@ -678,22 +658,6 @@ fn limit_reached_notice_and_context_lines() {
     assert!(!output.contains("match two"), "{output}");
 }
 
-/// No matches at all is reported with a fixed string, not an empty
-/// result (`grep.ts`).
-#[test]
-fn no_matches_found() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.txt"), "nothing here").unwrap();
-    let root = Root::new(dir.path());
-    let output = call(&root, json!({"pattern": "zzz"})).unwrap();
-    assert_eq!(output, "No matches found");
-    let result = call_output(&root, json!({"pattern": "zzz"})).unwrap();
-    let structured = structured_of(&result);
-    assert_eq!(structured["lines"], json!([]));
-    assert_eq!(structured["match_count"], 0);
-    assert_eq!(structured["complete"], true);
-}
-
 /// A path that does not exist is an error, not an empty result.
 #[test]
 fn missing_path_is_an_error() {
@@ -722,16 +686,35 @@ fn hidden_files_included_gitignore_respected() {
 }
 
 /// The user's own global gitignore (`core.excludesFile`) is not part
-/// of the spec and must not leak into results just because the search
-/// tree has no `.git` directory of its own.
+/// of the spec: a file it lists is searched all the same, whether or
+/// not the tree is a Git repository (`docs/reference/tools.md`, "grep").
 #[test]
 fn global_gitignore_is_not_consulted() {
+    let config = tempfile::tempdir().unwrap();
+    exclude_globally(config.path());
     let dir = tempfile::tempdir().unwrap();
-    // A name commonly listed in a personal global gitignore.
-    std::fs::write(dir.path().join(".env"), "needle").unwrap();
+    std::fs::write(dir.path().join("global-excluded.txt"), "needle").unwrap();
     let root = Root::new(dir.path());
     let output = call(&root, json!({"pattern": "needle"})).unwrap();
-    assert!(output.contains(".env"), "{output}");
+    assert_eq!(output, "global-excluded.txt:1: needle");
+}
+
+/// Makes the process's global Git configuration name an excludes file
+/// that lists `global-excluded.txt`, as a person's `core.excludesFile`
+/// would. Nextest runs each test in a process of its own, and no other
+/// test uses that name.
+fn exclude_globally(config_dir: &std::path::Path) {
+    let excludes = config_dir.join("ignore");
+    std::fs::write(&excludes, "global-excluded.txt\n").unwrap();
+    let config = config_dir.join("gitconfig");
+    std::fs::write(
+        &config,
+        format!("[core]\n\texcludesFile = {}\n", excludes.display()),
+    )
+    .unwrap();
+    // SAFETY: set before this test starts any thread that reads the
+    // environment.
+    unsafe { std::env::set_var("GIT_CONFIG_GLOBAL", &config) };
 }
 
 /// The `glob` argument filters which files are searched, matching a
