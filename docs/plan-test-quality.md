@@ -241,11 +241,90 @@ Findings:
 - An optional `null` inside an object held under `additionalProperties` is
   coerced, not dropped: `normalize_optional_nulls` does not walk
   `additionalProperties` (`tau-agent`).
-- `field()` in `tau-agents/src/event.rs` is not idempotent: an id holding
-  `· ·` keeps a `·` after the replace and breaks its line.
+- **Fixed in round three:** `field()` in `tau-agents/src/event.rs` was not
+  idempotent: an id holding `· ·` kept a `·` after the replace and broke
+  its line.
 - A `/goal` prompt's branch slug comes from the goal's first line only.
 - `Commit::label` (`tau-vcs`) has no test of its own; a demo test is its only
   coverage.
 - The intro in [Codemode](reference/codemode.md) "The description" is older
   than `tau_codemode::description::INTRO`, so only the closing paragraph is
   pinned to the doc.
+
+### Round three
+
+Status: complete (2026-10-16). The six audits read the suite a third time,
+1,886 tests, and were asked to look past plain waste: for each test, name
+the likeliest bug in the code it guards and check whether the test would
+catch it. They nominated 281 rows; 56 reached severity 3 or more. The cut
+was again severity 2 and up, 207 tests (11%), with clusters done whole.
+
+122 test functions went and 40 came; the suite runs 1,804 tests. Most of
+the round strengthened tests that stay:
+
+- Oracles that called the code under test: folds checked against the
+  `Stats::add` and `Goal::apply` they call, skill scanning judged by
+  `scan::one_line`, the model's answer text by `Answer::text`, OpenAI's
+  strict formats by the code's own `STRICT_FORMATS`. Each now has a model
+  or a literal table of its own.
+- Generators that never reached the rule: names and headers counted in
+  bytes where the limit is in characters, thresholds drawn far from
+  `>=`, a fork check that folded the same slice twice, a pin conflict
+  never drawn, the plan route's one unsupported setting never set.
+- Tests whose input met the assertion: a forked sub-agent's transcript
+  already held the file name it was meant to read, a command's echo was
+  found in the model's own arguments, and `grep` reported a path that a
+  `contains` accepted in any form.
+- Time: launcher waits, cancels and a gauge wait on the event itself, a
+  publication lease is proved with a non-blocking `flock`, and the last
+  wall-clock bounds on MCP calls are gone.
+
+Nothing was kept back this time; one row in `tau-vcs-host` was
+strengthened instead of deleted, because its refusals are the only check
+that `vcs_resolve` validates its paths.
+
+Fault probes: about 280. All were caught but two in `tau-ui`, which
+removed one of two guards that refuse the same case (the queue's
+`main.busy()` check, and tau-reasoning's own gate for a picked effort),
+and a few equivalent mutants the agents named. Several probes were only
+caught after a generator learned to start where the rules act or to
+draw what production passes; both are now rules in
+[Testing](reference/testing.md#generators), with a section on
+[fault probes](reference/testing.md#fault-probes).
+
+Findings:
+
+- **Fixed:** an http `timeout` of `1e20` panicked building its
+  `Duration` before the 60 s check (`tau-tools-host`).
+- **Fixed:** `reach` read `10.example.com` as on the local network; it
+  now parses an IP address (`tau-ui-remote`).
+- **Fixed:** a listing's size picked its unit before rounding, so
+  1,048,575 bytes read `1024 KB` (`tau-tools`).
+- **Fixed:** an ID token whose `exp` was within a minute of `u64::MAX`
+  read as expired (`tau-ai`).
+- **Fixed, to match pi:** a plan refusal in an `error` frame with its
+  details at the top was lost; pi's Codex client reads them there
+  (`tau-ai/src/refusal.rs`).
+- **Fixed:** `field()` (see round two).
+- **Fixed:** `written_titles_come_back_in_history` used `/tmp` as its
+  checkout, so `/tmp` became a git repository and every temporary
+  directory sat inside one.
+- An explicit `null` in a `ToolOutput`'s `details` or `structured` reads
+  back from JSON as `None`.
+- The module import-cycle check in `tau-codemode-host/src/engine.rs` can
+  never run: the digest it is keyed by includes the dependency pins.
+- The Luau runtime's `call_tool` guard cannot be reached from Lua, since
+  `tools()` already hides the tool.
+- A 409 is "retry later" for plan HTTP refusals but fatal in a stream
+  error frame; both tables are documented.
+- Nested `[secret:…]` marks stay as they are on purpose: a single-pass
+  scrub would leave a value that occurs inside a mark's text.
+- `State::due` in `tau-watcher` is unused; the host repeats its rule.
+- `tau-ui`'s `auto_reasoning_takes_the_effort_jev_picks` failed once in
+  four full runs, as it did in the first round's survey, with "database is
+  locked" at its second host's `start`. Alone (300 runs) and with the
+  host binary in parallel copies (24 runs) it passed. Each host keeps its
+  plugin files in a directory of its own and its store in memory, so the
+  lock is not one test's database held by another; the cause is not found.
+  Switching a SQLite file into WAL takes a lock that `busy_timeout` does not
+  wait on, which is worth checking first.

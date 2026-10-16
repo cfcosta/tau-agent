@@ -211,7 +211,25 @@ own.
   generator drew days around century and 400-year turns. The same goes for
   a shape a generator can reach but seldom does, such as several values in
   one list, or two rare draws at once: mix it in on purpose, or pin it as an
-  explicit case.
+  explicit case. Weight an edge by repeating its generator inside
+  `one_of!`, and draw each special character as a case of its own, not
+  only from an alphabet.
+- **Enumerate a small deciding domain.** When a rule turns on two fields
+  together, drawing each at its edges seldom hits both at once: a
+  generator over IPv4 octets missed `100.128` about one run in five at 500
+  cases. If the fields that decide are few, loop over all of them as a
+  table, and keep the property for the shapes around them.
+- **Start where the rules act.** When records act only on some state (a
+  goal set, a note waiting), start histories in that state most of the
+  time. A goal error that a check should clear went unnoticed while most
+  histories had no goal.
+- **Draw what production passes.** A schedule's `due` is always one of
+  its own times, so draw it there, or `>` against `>=` survives. For a
+  packing rule, draw an item sized to fill the room left, and one more or
+  less.
+- **Handle the empty case a filter can leave.** A property that filters
+  its drawn names can end up with none; one such counterexample only
+  showed on a full run.
 - **Derive when the type is plain.** Use `#[derive(DefaultGenerator)]`
   for configuration structs and small enums. Write a composite for
   anything with invariants.
@@ -312,6 +330,11 @@ loop:
   - `#[hegel::explicit_test_case(name = value)]` on the property, when
     the input is short enough to write out; or
   - a named example test with a comment linking the property.
+- An explicit test case has no `event()`, so a property that calls
+  `tc.event` cannot carry one. Move the body into a helper and run the
+  regression once through `hegel::Hegel::new(..)` with
+  `Settings::new().test_cases(1)`, as `tau-vcs-host`'s `turns_model.rs`
+  does, or drop the events.
 - `#[hegel::reproduce_failure("…")]` is for local debugging only. The
   blob depends on the Hegel version, so never commit it.
 
@@ -500,7 +523,9 @@ let llm = ScriptedModel::new()
   overflow paths:
   - `rate_limit`;
   - `context_length_exceeded`;
-  - a dropped connection.
+  - a dropped connection;
+  - `failure(message, class)`, a failure with words of its own and a
+    retry class, for one whose message does not say what it is.
 - **Generated scripts.** `tau_testing::generators::script()` draws a
   whole script: turn count, tool calls per turn, tool outcomes and
   delays, steering points and a cancel point. The loop's model tests are
@@ -645,6 +670,23 @@ It runs by hand, not in CI: a full pass is about 1400 mutants, some
 eight hours on a hosted runner. Run it after changing these modules;
 `scripts/mutants.sh --in-diff <diff>` mutates only the changed lines.
 
+### Fault probes
+
+A new or strengthened property earns its place by failing on a bug it
+exists for. Inject a small one in the code it guards, run the test, and
+revert:
+
+- Move the crate's `.hegel/` aside first. Otherwise a failure saved by
+  an earlier probe replays and counts as detection, and CI runs without
+  that database.
+- Aim the probe at the new assertion: a bug the old test already caught
+  says nothing about the new one.
+- A probe that removes one of several guards may survive because another
+  guard refuses the same case. Remove them together, and note which guard
+  is the second line.
+- Revert from a backup only you write, never through `jj restore` of a
+  file with edits of your own (see [Anti-patterns](#anti-patterns)).
+
 ## CI tiers
 
 | Tier    | When       | Runs                                                                                                                                       |
@@ -662,7 +704,10 @@ move cases to nightly variants rather than lowering the default counts.
 
 ## Anti-patterns
 
-- A property that recomputes the result the same way the code does.
+- A property that recomputes the result the same way the code does,
+  including an oracle that calls the code under test from elsewhere: a
+  fold checked against the `Stats::add` it calls, or a skill scan judged
+  by `scan::one_line`.
 - A test whose only assertion is that nothing panicked.
 - Generating random input and discarding most of it with `tc.assume`.
 - Real sleeps, real clocks, `thread_rng`, or `HashMap` iteration order
@@ -684,6 +729,13 @@ move cases to nightly variants rather than lowering the default counts.
   word the request itself put in the text.
 - A `contains` that a longer word satisfies: `contains("dep")` holds
   through "dependency". Search for a token only the input can put there.
+- Checking a forked agent's whole transcript for what it did: the fork
+  carries the caller's tool calls, so the text is there already. Assert on
+  the specific tool result.
+- Racing two threads to show a lock is held. Try a non-blocking
+  `flock(LOCK_EX | LOCK_NB)` from a second open file and expect
+  `EWOULDBLOCK`. Likewise, stop a waiting future on a `Notify` fired by
+  the event it waits for, not after a timeout.
 - A test that returns early when a tool is missing: it passes having
   checked nothing. Put the tool in the dev shell, or mark the test
   `#[ignore]` with a reason.
