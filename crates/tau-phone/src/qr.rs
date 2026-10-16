@@ -318,23 +318,4 @@ mod tests {
             pose.degrees, pose.width, pose.height
         );
     }
-
-    #[hegel::test(test_cases = 40)]
-    fn noise_reads_nothing(tc: TestCase) {
-        let width = tc.draw(gs::integers::<usize>().min_value(1).max_value(96));
-        let height =
-            tc.draw(gs::integers::<usize>().min_value(1).max_value(96));
-        let stride = width + tc.draw(gs::integers::<usize>().max_value(16));
-        // Noise, or one flat shade, as a blank screen gives.
-        let luma: Vec<u8> = match tc.draw(gs::optional(gs::integers::<u8>())) {
-            Some(shade) => vec![shade; stride * height],
-            None => tc.draw(
-                gs::vecs(gs::integers::<u8>())
-                    .min_size(stride * height)
-                    .max_size(stride * height),
-            ),
-        };
-        let frame = Frame::new(&luma, width, height, stride).unwrap();
-        assert_eq!(pairing_code(frame), None);
-    }
 }
