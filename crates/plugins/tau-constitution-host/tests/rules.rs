@@ -306,15 +306,16 @@ fn on_k() -> Constitution {
 fn a_rule_is_shown_what_is_under_its_field(tc: TestCase) {
     // Half the time, the edits of a call that makes several: the field
     // in each of a list of objects, as `edit.newText` is.
-    let args = if tc.draw(gs::booleans()) {
-        tc.draw(arguments(3))
+    let (args, edits) = if tc.draw(gs::booleans()) {
+        (tc.draw(arguments(3)), None)
     } else {
         let edits: Vec<Value> =
             tc.draw(gs::vecs(values()).min_size(2).max_size(4));
-        json!({ "path": "src/lib.rs", "edits": edits
+        let args = json!({ "path": "src/lib.rs", "edits": edits
             .iter()
             .map(|edit| json!({ "x": 1, "k": edit }))
-            .collect::<Vec<_>>() })
+            .collect::<Vec<_>>() });
+        (args, Some(edits))
     };
     let constitution = on_k();
     let answer: Vec<&str> = constitution
@@ -338,7 +339,11 @@ fn a_rule_is_shown_what_is_under_its_field(tc: TestCase) {
     assert_eq!(rule.id, "R1");
     assert_eq!(fields.keys().collect::<Vec<_>>(), ["k"]);
     let shown = &fields["k"];
-    if under.contains(shown) {
+    if let Some(edits) = edits {
+        // Each edit's field, every one of them, in order.
+        tc.event("edits");
+        assert_eq!(shown, &Value::Array(edits), "{args}");
+    } else if under.contains(shown) {
         tc.event("one value");
     } else {
         tc.event("several values");

@@ -269,27 +269,76 @@ fn a_call_that_breaks_a_rule_is_refused_with_the_rule() {
     );
 }
 
-#[test]
-fn a_doubtful_call_runs_and_is_flagged() {
-    let llm = ScriptedModel::new()
+/// A score at or near a rule's thresholds, or anywhere from 0 to 1.
+fn near(review: f64, block: f64) -> impl PrintableGenerator<f64> {
+    hegel::one_of!(
+        gs::sampled_from(vec![
+            review.next_down(),
+            review,
+            block.next_down(),
+            block
+        ]),
+        gs::floats::<f64>().min_value(0.0).max_value(1.0),
+    )
+}
+
+/// A score decides by the rule's thresholds alone: at `block` or more a
+/// call is refused and an answer sent back; from `review` up to `block`
+/// either goes on, flagged; under `review` nothing is said. The call runs
+/// unless refused.
+#[hegel::test(test_cases = 40)]
+fn verdicts_follow_the_rules_thresholds(tc: TestCase) {
+    // R2 on the call (0.3, 0.8), R6 on the answer (0.4, 0.75).
+    let on_call = tc.draw(near(0.3, 0.8));
+    let on_answer = tc.draw(near(0.4, 0.75));
+    let held = on_answer >= 0.75;
+    let mut llm = ScriptedModel::new()
         .turn(|t| t.tool_call("write", write("maybe")))
         .turn(|t| t.text("Tests: cargo test, all passed."));
-    let jev = FakeJev::nouls(|_| 0.5);
+    if held {
+        llm = llm.turn(|t| t.text("Tests: cargo test, 3 passed."));
+    }
+    // The answer is scored once; sent back, the next one keeps the rule.
+    let answered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let jev = FakeJev::new(move |request| {
+        let score = if request.state.get("tool").is_some() {
+            on_call
+        } else if !answered.swap(true, Ordering::SeqCst) {
+            on_answer
+        } else {
+            0.0
+        };
+        Ok(tau_jev::fake::response(
+            request
+                .questions
+                .keys()
+                .map(|id| (id.clone(), tau_jev::Answer::Noul { noul: score }))
+                .collect(),
+            request,
+        ))
+    });
     let (events, writes, _, _) = run(&llm, jev, rules());
-    assert_eq!(writes, 1);
+    llm.assert_exhausted();
+    let blocked = on_call >= 0.8;
+    let mut expected = Vec::new();
+    if blocked {
+        expected.push((VerdictKind::Blocked, "R2".to_owned()));
+    } else if on_call >= 0.3 {
+        expected.push((VerdictKind::Flagged, "R2".to_owned()));
+    }
+    if held {
+        expected.push((VerdictKind::Held, "R6".to_owned()));
+    } else if on_answer >= 0.4 {
+        expected.push((VerdictKind::Flagged, "R6".to_owned()));
+    }
     let kinds: Vec<(VerdictKind, String)> = verdicts(&events)
         .into_iter()
         .map(|verdict| (verdict.kind, verdict.rule))
         .collect();
-    // R2 on the call, then R6 on the answer: both only doubtful.
-    assert_eq!(
-        kinds,
-        [
-            (VerdictKind::Flagged, "R2".to_owned()),
-            (VerdictKind::Flagged, "R6".to_owned())
-        ]
-    );
-    assert_eq!(results(&llm), ["written"]);
+    assert_eq!(kinds, expected);
+    assert_eq!(writes, usize::from(!blocked));
+    let told = results(&llm);
+    assert_eq!(told[0] == "written", !blocked, "{told:?}");
 }
 
 #[test]
