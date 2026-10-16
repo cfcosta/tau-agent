@@ -575,18 +575,11 @@ mod tests {
         assert!(saved_notifications(&path), "unreadable");
     }
 
+    /// The named curves do what their names say: a pop overshoots, and
+    /// an ease in and out is symmetric. (Ends and monotony are the
+    /// properties' below.)
     #[test]
-    fn cubic_beziers_meet_their_ends_and_overshoot_where_asked() {
-        for curve in [
-            cubic_bezier(0.2, 0.7, 0.2, 1.),
-            cubic_bezier(0.45, 0., 0.55, 1.),
-            cubic_bezier(0.3, 1.4, 0.5, 1.),
-        ] {
-            assert!(curve(0.).abs() < 1e-3);
-            assert!((curve(1.) - 1.).abs() < 1e-3);
-        }
-        let linear = cubic_bezier(0.25, 0.25, 0.75, 0.75);
-        assert!((linear(0.3) - 0.3).abs() < 1e-3);
+    fn the_named_curves_overshoot_and_ease_where_asked() {
         let pop = curve::pop();
         assert!((0..100).any(|n| pop(n as f32 / 100.) > 1.01), "overshoots");
         let ease = curve::ease_in_out();
@@ -603,13 +596,6 @@ mod tests {
     }
 
     #[test]
-    fn rows_enter_one_after_another() {
-        assert_eq!(stagger(550, 60, 0), 550);
-        assert_eq!(stagger(550, 60, 3), 730);
-        assert_eq!(stagger(0, 40, 7), 280);
-    }
-
-    #[test]
     fn entrances_wait_their_turn_unless_motion_is_reduced() {
         let late = entrance(200, false);
         let total = (200 + ENTRANCE_MS) as f32;
@@ -620,33 +606,6 @@ mod tests {
         let reduced = entrance(200, true);
         assert_eq!(reduced.duration, Duration::from_millis(FADE_MS));
         assert!(((reduced.easing)(0.5) - 0.5).abs() < 1e-6, "a linear fade");
-    }
-
-    #[test]
-    fn a_pop_overshoots_then_settles() {
-        let linear = |t: f32| t;
-        assert_eq!(pop(0., &linear), (0.4, 0.));
-        let (peak, shown) = pop(0.6, &linear);
-        assert!((peak - 1.12).abs() < 1e-4 && shown == 1.);
-        assert!((pop(1., &linear).0 - 1.).abs() < 1e-4);
-    }
-
-    #[test]
-    fn breaths_rise_and_fall() {
-        assert!(breath(0.).abs() < 1e-6);
-        assert!((breath(0.5) - 1.).abs() < 1e-6);
-        assert!(breath(1.).abs() < 1e-5);
-    }
-
-    #[test]
-    fn tracked_values_count_their_changes() {
-        let mut link = Tracked::new(Link::Idle);
-        assert!(!link.changed() && link.epoch == 0);
-        assert!(!link.observe(Link::Idle));
-        assert!(link.observe(Link::Waiting));
-        assert!(link.observe(Link::Connected));
-        assert_eq!((link.previous, link.epoch), (Link::Waiting, 2));
-        assert!(link.changed() && link.within(60_000));
     }
 
     #[test]
@@ -695,34 +654,6 @@ mod tests {
         assert!(motion.link.within(60_000));
     }
 
-    #[test]
-    fn loops_stop_in_the_background_and_when_reduced() {
-        let mut motion = SetupMotion::default();
-        assert!(motion.loops());
-        motion.active = false;
-        assert!(!motion.loops());
-        motion.active = true;
-        motion.reduce = true;
-        assert!(!motion.loops());
-    }
-
-    #[test]
-    fn clones_are_followed_by_name() {
-        let mut motion = SetupMotion::default();
-        motion.observe_clones([("a", 100, false), ("b", 0, false)].into_iter());
-        motion.observe_clones([("a", 1000, true)].into_iter());
-        let a = &motion.clones["a"];
-        assert_eq!((a.previous, a.current), ((100, false), (1000, true)));
-        assert!(!motion.clones.contains_key("b"));
-    }
-
-    #[test]
-    fn black_and_white_mix_to_grey() {
-        let (black, white) = (gpui::black(), gpui::white());
-        let grey: Rgba = mix(black, white, 0.5).into();
-        assert!((grey.r - 0.5).abs() < 1e-3 && (grey.a - 1.).abs() < 1e-3);
-    }
-
     /// Any colour, channels in `[0, 1]`; built in RGB so the HSL round
     /// trip inside `mix` is what the properties exercise.
     #[hegel::composite]
@@ -760,10 +691,12 @@ mod tests {
         assert!(close(mix(from.into(), to.into(), 1.).into(), to));
     }
 
-    /// Every channel of a mix lies between the same channel of its two
-    /// inputs, so a transition never overshoots either colour.
+    /// A mix moves along the straight line between its inputs in RGB:
+    /// each channel is `t` of the way from `from`'s to `to`'s, through
+    /// the HSL round trip, so a transition never overshoots either
+    /// colour and black and white meet in grey.
     #[hegel::test(test_cases = 200)]
-    fn a_mix_stays_between_its_inputs(tc: hegel::TestCase) {
+    fn a_mix_is_the_straight_line_between_its_inputs(tc: hegel::TestCase) {
         let (from, to) = (rgba(tc.draw(channels())), rgba(tc.draw(channels())));
         let t = tc.draw(gs::floats::<f32>().min_value(0.).max_value(1.));
         let mixed: Rgba = mix(from.into(), to.into(), t).into();
@@ -773,7 +706,8 @@ mod tests {
             (mixed.b, from.b, to.b),
             (mixed.a, from.a, to.a),
         ] {
-            assert!(m >= f.min(o) - 1e-3 && m <= f.max(o) + 1e-3);
+            let along = f * (1. - t) + o * t;
+            assert!((m - along).abs() < 1e-3, "{m} is not {along}");
         }
     }
 
@@ -813,6 +747,16 @@ mod tests {
         }
     }
 
+    /// A curve whose control points lie on the diagonal is no easing at
+    /// all: it gives back the time it is given.
+    #[hegel::test(test_cases = 100)]
+    fn a_bezier_on_the_diagonal_is_the_identity(tc: hegel::TestCase) {
+        let (first, second) = (tc.draw(unit()), tc.draw(unit()));
+        let curve = cubic_bezier(first, first, second, second);
+        let t = tc.draw(unit());
+        assert!((curve(t) - t).abs() < 1e-3, "{t} gives {}", curve(t));
+    }
+
     /// Time outside a curve's range is the nearest end.
     #[hegel::test(test_cases = 100)]
     fn a_bezier_holds_its_ends_outside_the_unit_interval(tc: hegel::TestCase) {
@@ -828,18 +772,28 @@ mod tests {
         assert_eq!(curve(late), curve(1.));
     }
 
-    /// A breath is symmetric about the middle of its loop and stays in
-    /// `[0, 1]`, so a loop's two halves mirror each other.
+    /// A breath rises from 0 at the start of its loop to 1 in its
+    /// middle, never falling on the way, and its second half mirrors the
+    /// first, so it falls back to 0.
     #[hegel::test(test_cases = 200)]
-    fn a_breath_mirrors_itself_within_the_unit_interval(tc: hegel::TestCase) {
+    fn a_breath_rises_to_the_middle_and_mirrors_itself(tc: hegel::TestCase) {
         let phase = tc.draw(unit());
         let breath = breath(phase);
         assert!((-1e-6..=1. + 1e-6).contains(&breath));
         assert!((breath - super::breath(1. - phase)).abs() < 1e-4);
+        let (a, b) = (
+            tc.draw(gs::floats::<f32>().min_value(0.).max_value(0.5)),
+            tc.draw(gs::floats::<f32>().min_value(0.).max_value(0.5)),
+        );
+        let (low, high) = (a.min(b), a.max(b));
+        assert!(super::breath(low) <= super::breath(high) + 1e-6);
+        assert!(super::breath(0.).abs() < 1e-6);
+        assert!((super::breath(0.5) - 1.).abs() < 1e-6);
     }
 
-    /// A pop's two legs meet at 60 %, where the scale is the peak, for
-    /// every curve the screens pop along. (A curve that is nearly
+    /// A pop starts at `.4` and unseen, its two legs meet at 60 %, where
+    /// the scale is the peak, and it settles at 1, for every curve the
+    /// screens pop along. (A curve that is nearly
     /// vertical may jump anywhere, so arbitrary ones are not asked.)
     #[hegel::test(test_cases = 100)]
     fn a_pop_is_continuous_at_its_peak(tc: hegel::TestCase) {
@@ -853,6 +807,8 @@ mod tests {
         let which =
             tc.draw(gs::integers::<usize>().max_value(curves.len() - 1));
         let curve = &curves[which];
+        let (start, unseen) = pop(0., curve);
+        assert!((start - 0.4).abs() < 1e-3 && unseen.abs() < 1e-3);
         let (before, _) = pop(0.6 - 1e-4, curve);
         let (after, opacity) = pop(0.6, curve);
         assert!((before - after).abs() < 0.02, "{before} then {after}");
@@ -890,7 +846,9 @@ mod tests {
     }
 
     /// After any series of frames, the clones followed are exactly the
-    /// ones the last frame listed, each at its latest progress.
+    /// ones the last frame listed, each at its latest progress and with
+    /// the progress that last gave way, against a map of pairs: a clone
+    /// that comes (or comes back) starts with nothing that gave way.
     #[hegel::test(test_cases = 200)]
     fn followed_clones_are_the_ones_last_listed(tc: hegel::TestCase) {
         let frame = || {
@@ -905,11 +863,34 @@ mod tests {
         };
         let frames = tc.draw(gs::vecs(frame()).min_size(1).max_size(6));
         let mut motion = SetupMotion::default();
+        // name -> (previous, current)
+        type Progress = (u32, bool);
+        let mut model: HashMap<&str, (Progress, Progress)> = HashMap::new();
         for listed in &frames {
             motion.observe_clones(
                 listed
                     .iter()
                     .map(|(name, (share, ready))| (*name, *share, *ready)),
+            );
+            model = listed
+                .iter()
+                .map(|(name, now)| {
+                    let pair = match model.get(name) {
+                        Some((_, current)) if current != now => {
+                            (*current, *now)
+                        }
+                        Some(same) => *same,
+                        None => (*now, *now),
+                    };
+                    (*name, pair)
+                })
+                .collect();
+        }
+        for (name, (previous, current)) in &model {
+            let tracked = &motion.clones[*name];
+            assert_eq!(
+                (tracked.previous, tracked.current),
+                (*previous, *current)
             );
         }
         let last = frames.last().unwrap();

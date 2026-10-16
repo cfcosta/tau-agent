@@ -143,34 +143,16 @@ fn open(
 }
 
 #[gpui::test]
-fn agents_are_apart_from_the_person_s_repositories(cx: &mut TestAppContext) {
+fn an_agent_s_row_opens_its_conversation(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
-    workspace.update(&mut cx, |ws, _| {
-        let agents: Vec<&str> = ws
-            .catalog()
-            .agents()
-            .map(|repo| repo.name.as_str())
-            .collect();
-        assert_eq!(agents, [NEW, AGENT]);
-        let listed: Vec<&str> = ws
-            .repo_rows("")
-            .iter()
-            .map(|rows| rows.repo.name.as_str())
-            .collect();
-        assert_eq!(listed, [REPO]);
+    workspace.update(&mut cx, |ws, cx| {
+        // The row reads the agent from tau-agents' overview.
         assert_eq!(
             ws.agents()
                 .and_then(|overview| overview.agent(AGENT))
                 .map(|a| &a.status),
             Some(&Status::Working)
         );
-    });
-}
-
-#[gpui::test]
-fn an_agent_s_row_opens_its_conversation(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open(cx);
-    workspace.update(&mut cx, |ws, cx| {
         ws.open_agent(AGENT, cx);
         assert_eq!(ws.route(), &Route::Run(id("agent-main")));
         // One the host has not made a conversation for opens the

@@ -113,14 +113,60 @@ mod tests {
         assert_eq!(reach("8.8.8.8"), None);
     }
 
+    /// Signing in and out, keys, pairing, the phones' own settings and
+    /// paths on the computer stay with the computer; what a person does
+    /// with chats and repositories a phone may ask for. Every event the
+    /// computer keeps is listed, with some a phone may send.
     #[test]
-    fn a_phone_cannot_sign_in_or_pair() {
-        assert!(!WorkspaceEvent::GitHubSignIn.from_phone());
-        assert!(
-            WorkspaceEvent::Cancel {
-                run: tau_agent::tool::RunId("r".into())
-            }
-            .from_phone()
-        );
+    fn a_phone_asks_for_what_it_may_and_nothing_the_computer_keeps() {
+        use crate::pairing::PairRequest;
+        let run = || tau_agent::tool::RunId("r".into());
+        let kept = [
+            WorkspaceEvent::Pair(PairRequest::Scan),
+            WorkspaceEvent::Phones(PhonesRequest::ShowCode),
+            WorkspaceEvent::OpenRepos(vec!["tau".into()]),
+            WorkspaceEvent::JevKey {
+                key: Some("ts-x".into()),
+            },
+            WorkspaceEvent::GitHubSignIn,
+            WorkspaceEvent::GitHubCheck,
+            WorkspaceEvent::GitHubToken {
+                token: "github_pat_x".into(),
+            },
+            WorkspaceEvent::GitHubSignOut,
+            WorkspaceEvent::ChatGptSignIn {
+                account: None,
+                consent: false,
+            },
+            WorkspaceEvent::ChatGptCallback {
+                url: "http://localhost/cb".into(),
+            },
+            WorkspaceEvent::SwitchChatGpt {
+                account: "a".into(),
+            },
+            WorkspaceEvent::SignOut,
+        ];
+        for event in &kept {
+            assert!(!event.from_phone(), "{event:?} stays on the computer");
+        }
+        let asked = [
+            WorkspaceEvent::Say {
+                run: run(),
+                text: "go".into(),
+                model: Default::default(),
+                images: Vec::new(),
+            },
+            WorkspaceEvent::Cancel { run: run() },
+            WorkspaceEvent::CloseRun { run: run() },
+            WorkspaceEvent::Land { run: run() },
+            WorkspaceEvent::Push {
+                repo: "tau".into(),
+                fetch: true,
+            },
+            WorkspaceEvent::ChatGptCancel,
+        ];
+        for event in &asked {
+            assert!(event.from_phone(), "{event:?} is a phone's to ask");
+        }
     }
 }

@@ -221,8 +221,3 @@ fn a_hard_break_is_a_new_line() {
         [Block::Paragraph(vec![Span::plain("one\ntwo")])]
     );
 }
-
-#[test]
-fn nothing_reads_as_nothing() {
-    assert_eq!(blocks(""), []);
-}

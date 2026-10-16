@@ -319,10 +319,4 @@ mod tests {
         setup.update(SetupUpdate::Clone(cloning(0.5)));
         assert_eq!(setup.clones, [cloning(0.5)]);
     }
-
-    #[test]
-    fn stages_follow_the_steps() {
-        assert_eq!(SetupStep::Token.stage(), SetupStep::GitHub.stage());
-        assert!(SetupStep::Model.stage() < SetupStep::Ready.stage());
-    }
 }

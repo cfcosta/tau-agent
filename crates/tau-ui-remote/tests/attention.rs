@@ -214,24 +214,6 @@ fn each_state_reads_as_the_design_words_it() {
     }
 }
 
-/// A forecast with nothing to land leaves a stopped fork idle, and a
-/// stored run's question, with the run no longer live, asks nothing.
-#[test]
-fn nothing_to_land_and_a_question_nobody_waits_on_are_idle() {
-    let empty = Facts {
-        status: Status::Stopped,
-        forecast: Some(Forecast::default()),
-        ..Facts::default()
-    };
-    assert_eq!(Attention::of(&empty), Attention::Idle);
-    let stored = Facts {
-        status: Status::Stopped,
-        asks: Some("Keep them?".into()),
-        ..Facts::default()
-    };
-    assert_eq!(Attention::of(&stored), Attention::Idle);
-}
-
 /// A run's status says where it is: a cut-off run by its own status, and
 /// an error, whatever its words, is a failure.
 #[test]

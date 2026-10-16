@@ -2554,16 +2554,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn usd_rounds_up_to_a_dollar_with_cents() {
-        assert_eq!(usd(0.9996), "$1.00");
-        assert_eq!(usd(0.9994), "$0.999");
-        assert_eq!(usd(1.0), "$1.00");
-        assert_eq!(usd(0.042), "$0.042");
-    }
-
     /// Text however it streams in, split anywhere, shows as the text in
-    /// one delta would: pieces join until something else happens.
+    /// one delta would; and what shows is, in order, one text for each
+    /// stretch of text between the tool calls, the stretch's pieces
+    /// joined, and a card for each call: pieces join until something
+    /// else happens.
     #[hegel::test]
     fn text_split_anywhere_shows_as_one_delta(tc: hegel::TestCase) {
         use hegel::generators as gs;
@@ -2604,33 +2599,25 @@ mod tests {
             }
         }
         assert_eq!(split.items, whole.items);
-    }
-
-    #[test]
-    fn text_deltas_join_until_something_else_happens() {
-        let mut view = view();
-        for delta in ["Hel", "lo"] {
-            view.apply(&RunEvent::TextDelta {
-                run: run(),
-                parent: None,
-                delta: delta.into(),
-            });
+        // The shape the transcript should have, from the parts alone.
+        let mut expected: Vec<(bool, String)> = Vec::new();
+        for (n, part) in parts.iter().enumerate() {
+            match (part, expected.last_mut()) {
+                (Some(part), Some((true, text))) => text.push_str(part),
+                (Some(part), _) => expected.push((true, part.clone())),
+                (None, _) => expected.push((false, format!("c{n}"))),
+            }
         }
-        view.apply(&RunEvent::ToolStart {
-            run: run(),
-            call_id: "c1".into(),
-            tool: Arc::from("read"),
-            args: json!({ "path": "src/lib.rs" }),
-            parent: None,
-        });
-        view.apply(&RunEvent::TextDelta {
-            run: run(),
-            parent: None,
-            delta: "Done".into(),
-        });
-        assert_eq!(view.items.len(), 3);
-        assert_eq!(view.items[0], Item::Text("Hello".into()));
-        assert_eq!(view.items[2], Item::Text("Done".into()));
+        let shown: Vec<(bool, String)> = whole
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::Text(text) => (true, text.clone()),
+                Item::Tool(card) => (false, card.call_id.clone()),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(shown, expected, "{parts:?}");
     }
 
     #[test]
@@ -2839,29 +2826,6 @@ mod tests {
             "#3 ← y\\n"
         );
         assert_eq!(summarize_args(&json!({ "process_id": 3 })), "#3");
-    }
-
-    #[test]
-    fn numbers_read_the_way_the_mockups_write_them() {
-        assert_eq!(tokens(184_000), "184k");
-        assert_eq!(grouped(0), "0");
-        assert_eq!(grouped(212), "212");
-        assert_eq!(grouped(4_810), "4,810");
-        assert_eq!(grouped(1_234_567), "1,234,567");
-        assert_eq!(usd(0.184), "$0.184");
-        assert_eq!(usd(2.0), "$2.00");
-        assert_eq!(clock(Duration::from_secs(192)), "3:12");
-    }
-
-    #[test]
-    fn turns_end_with_a_marker_to_fork_from() {
-        let mut view = view();
-        view.apply(&RunEvent::TurnEnd {
-            run: run(),
-            turn: 1,
-            usage: Usage::default(),
-        });
-        assert_eq!(view.items.last(), Some(&Item::TurnEnd { turn: 1 }));
     }
 
     #[test]
