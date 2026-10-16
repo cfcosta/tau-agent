@@ -836,89 +836,202 @@ fn control_steers_and_cancels_while_events_are_read() {
     });
 }
 
-/// Hooks run in order; the first that blocks wins and later hooks do not
-/// run; an erroring hook blocks; changed arguments are validated again.
-#[test]
-fn before_tool_hooks() {
-    #[derive(Clone)]
-    struct Block(&'static str, Arc<Mutex<Vec<&'static str>>>);
-    #[async_trait]
-    impl PluginRun for Block {
-        async fn before_tool(
-            &mut self,
-            call: &mut ToolCall,
-            _ctx: &PluginCtx,
-        ) -> Result<Decision, PluginError> {
-            self.1.lock().unwrap().push(self.0);
-            match (self.0, call.args["ms"].as_u64()) {
-                ("blocker", Some(1)) => Ok(Decision::Block("not today".into())),
-                ("breaker", Some(2)) => return Err("hook exploded".into()),
-                ("mangler", Some(3)) => {
-                    call.args = json!({"ms": "not a number at all"});
-                    Ok(Decision::Allow)
-                }
-                _ => Ok(Decision::Allow),
+/// What a `before_tool` hook does with one call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hooked {
+    Allow,
+    Block,
+    Fail,
+    /// Changes the arguments to ones that validate after coercion.
+    Fix,
+    /// Changes the arguments to ones that never validate.
+    Break,
+}
+
+hegel::pretty_print_as_debug!(Hooked);
+
+/// What a hook was shown: its name, the call's position, the arguments.
+type Shown = (&'static str, usize, Value);
+
+/// A plugin whose `before_tool` does what its script says for each call,
+/// by the call's position in the batch, and logs what it was shown.
+#[derive(Clone)]
+struct Hook {
+    name: &'static str,
+    script: Vec<Hooked>,
+    seen: Arc<Mutex<Vec<Shown>>>,
+}
+
+#[async_trait]
+impl PluginRun for Hook {
+    async fn before_tool(
+        &mut self,
+        call: &mut ToolCall,
+        _ctx: &PluginCtx,
+    ) -> Result<Decision, PluginError> {
+        // The scripted model numbers its calls `call_{n}|fc_{n}`.
+        let at: usize = call.id["call_".len()..call.id.find('|').unwrap()]
+            .parse()
+            .unwrap();
+        self.seen
+            .lock()
+            .unwrap()
+            .push((self.name, at, call.args.clone()));
+        match self.script[at] {
+            Hooked::Allow => Ok(Decision::Allow),
+            Hooked::Block => {
+                Ok(Decision::Block(format!("{} blocks", self.name)))
+            }
+            Hooked::Fail => Err(format!("{} failed", self.name).into()),
+            Hooked::Fix => {
+                call.args = json!({"ms": "7"});
+                Ok(Decision::Allow)
+            }
+            Hooked::Break => {
+                call.args = json!({"ms": "not a number at all"});
+                Ok(Decision::Allow)
             }
         }
     }
+}
 
-    #[async_trait]
-    impl Plugin for Block {
-        fn name(&self) -> &str {
-            self.0
-        }
-
-        async fn start(
-            &self,
-            _plan: &mut RunPlan,
-            _ctx: &PluginCtx,
-        ) -> Result<Box<dyn PluginRun>, PluginError> {
-            Ok(Box::new(self.clone()))
-        }
+#[async_trait]
+impl Plugin for Hook {
+    fn name(&self) -> &str {
+        self.name
     }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(self.clone()))
+    }
+}
+
+/// How a call ends, as the fold below predicts it.
+#[derive(Debug, PartialEq)]
+enum Ends {
+    /// An error result with exactly this text.
+    Refused(String),
+    /// An error result from validating changed arguments.
+    Invalid,
+    /// The tool ran with this many milliseconds.
+    Ran(u64),
+}
+
+/// `before_tool` hooks, against a left fold: for each call, the plugins
+/// in the order they were added each see the arguments as the ones before
+/// left them; the first that blocks or fails ends the call with its
+/// reason; arguments a hook changed are validated at once, an invalid
+/// change ends the call, and a valid one goes on coerced; a call no hook
+/// stopped runs with the arguments the last hook left. A stopped call
+/// never reaches a later hook or the tool.
+#[hegel::test(test_cases = 60)]
+fn before_tool_hooks_fold_in_order_and_the_first_stop_wins(tc: TestCase) {
+    let calls = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
+    let names = ["first", "second", "third"];
+    let plugins = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
+    // Mostly allowing, so later hooks are reached.
+    let action = || {
+        gs::sampled_from(vec![
+            Hooked::Allow,
+            Hooked::Allow,
+            Hooked::Allow,
+            Hooked::Block,
+            Hooked::Fail,
+            Hooked::Fix,
+            Hooked::Break,
+        ])
+    };
+    let scripts: Vec<Vec<Hooked>> = (0..plugins)
+        .map(|_| tc.draw(gs::vecs(action()).min_size(calls).max_size(calls)))
+        .collect();
+
+    // The fold.
+    let mut want_seen = Vec::new();
+    let mut want = Vec::new();
+    for at in 0..calls {
+        let mut args = json!({"ms": 1});
+        let mut ends = None;
+        for (name, script) in names.iter().zip(&scripts) {
+            want_seen.push((*name, at, args.clone()));
+            match script[at] {
+                Hooked::Allow => {}
+                Hooked::Block => {
+                    ends = Some(Ends::Refused(format!("{name} blocks")))
+                }
+                Hooked::Fail => {
+                    ends = Some(Ends::Refused(format!("{name} failed")))
+                }
+                Hooked::Fix => args = json!({"ms": 7}),
+                Hooked::Break => ends = Some(Ends::Invalid),
+            }
+            if ends.is_some() {
+                break;
+            }
+        }
+        want.push(ends.unwrap_or(Ends::Ran(args["ms"].as_u64().unwrap())));
+    }
+
     let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("probe", json!({"ms": 1}))
-                .tool_call("probe", json!({"ms": 2}))
-                .tool_call("probe", json!({"ms": 3}))
-                .tool_call("probe", json!({"ms": 4}))
+        .turn(|mut t| {
+            for _ in 0..calls {
+                t = t.tool_call("probe", json!({"ms": 1}));
+            }
+            t
         })
         .turn(|t| t.text("ok"));
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let agent = Agent::new(llm)
-            .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
-            .plugin(Block("blocker", seen.clone()))
-            .plugin(Block("breaker", seen.clone()))
-            .plugin(Block("mangler", seen.clone()));
+        let mut agent = Agent::new(llm).tool(Probe::new(
+            "probe",
+            ExecutionMode::Parallel,
+            log.clone(),
+        ));
+        for (name, script) in names.iter().zip(&scripts) {
+            agent = agent.plugin(Hook {
+                name,
+                script: script.clone(),
+                seen: seen.clone(),
+            });
+        }
         let run = agent.start("go", &store);
         let id = run.id();
         run.outcome().await.unwrap();
         let transcript = stored(&store, &id.0).await;
-        let texts: Vec<(String, bool)> = transcript[2..6]
+        let got: Vec<Ends> = transcript[2..2 + calls]
             .iter()
-            .map(|m| match m {
-                Message::ToolResult(r) => {
-                    (serde_json::to_string(&r.content).unwrap(), r.is_error)
+            .map(|m| {
+                let Message::ToolResult(r) = m else {
+                    panic!("{transcript:?}")
+                };
+                let InputBlock::Text(text) = &r.content[0] else {
+                    panic!("{r:?}")
+                };
+                match text.text.strip_prefix("slept ") {
+                    Some(ms) if !r.is_error => Ends::Ran(ms.parse().unwrap()),
+                    _ if text.text.starts_with("Validation failed:") => {
+                        assert!(r.is_error);
+                        Ends::Invalid
+                    }
+                    _ => {
+                        assert!(r.is_error, "{r:?}");
+                        Ends::Refused(text.text.clone())
+                    }
                 }
-                _ => panic!(),
             })
             .collect();
-        assert!(texts[0].0.contains("not today") && texts[0].1);
-        assert!(texts[1].0.contains("hook exploded") && texts[1].1);
-        assert!(
-            texts[2].1,
-            "invalid changed arguments must not run: {:?}",
-            texts[2]
-        );
-        assert!(texts[3].0.contains("slept 4") && !texts[3].1);
-        // Only the last call ran.
-        assert_eq!(log.lock().unwrap().len(), 1);
-        // The blocker stopped the chain for call 1: later hooks never saw it.
-        let order = seen.lock().unwrap().clone();
-        assert_eq!(&order[..3], ["blocker", "blocker", "breaker"]);
+        assert_eq!(got, want);
+        let ran = want.iter().filter(|e| matches!(e, Ends::Ran(_))).count();
+        assert_eq!(log.lock().unwrap().len(), ran, "only unstopped calls run");
+        let mut seen = seen.lock().unwrap().clone();
+        // Calls go through the hooks one at a time, in order.
+        seen.sort_by_key(|(_, at, _)| *at);
+        assert_eq!(seen, want_seen);
     });
 }
 
