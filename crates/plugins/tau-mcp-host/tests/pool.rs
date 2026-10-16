@@ -354,10 +354,11 @@ async fn an_agent_s_servers_need_no_approval_and_start_only_in_its_sandbox() {
             .pending
             .is_empty()
     );
+    // Building the plugin started its server: calling `connect` again
+    // would start a second attempt whenever the first had already failed.
     let plugin = host.plugin(Some(agent.path()), &settings);
     let own = plugin.connections()[0].clone();
     assert_eq!(own.origin(), Origin::Repo);
-    own.connect();
     own.settled(&CancellationToken::new()).await;
     let status = own.status();
     assert_eq!(status.state, State::Failed);
@@ -379,7 +380,6 @@ async fn an_agent_s_servers_need_no_approval_and_start_only_in_its_sandbox() {
         .with_unattended(unattended);
     let plugin = host.plugin(Some(sandboxed.path()), &settings);
     let own = plugin.connections()[0].clone();
-    own.connect();
     own.settled(&CancellationToken::new()).await;
     assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
     drop((host, plugin, own));

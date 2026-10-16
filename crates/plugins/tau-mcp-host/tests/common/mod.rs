@@ -266,6 +266,17 @@ impl State {
         self.subscribed.lock().unwrap().len()
     }
 
+    /// The open `subscriptions/listen`s that take changes to the tool
+    /// list.
+    pub fn listening_for_tools(&self) -> usize {
+        self.sinks
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|sink| sink.accepted().tools_list_changed == Some(true))
+            .count()
+    }
+
     /// The open `subscriptions/listen`s that take `uri`'s updates.
     pub fn listening_to(&self, uri: &str) -> usize {
         self.sinks

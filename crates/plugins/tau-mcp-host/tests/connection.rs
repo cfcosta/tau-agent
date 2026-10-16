@@ -286,6 +286,11 @@ async fn list_changed_lists_the_tools_again() {
     both(|fixture| async move {
         let connection = connect(&fixture, 60.0);
         settle(&connection).await;
+        // rmcp acknowledges a 2026-07-28 listen before the server's
+        // handler holds its sink: a change made in between reaches no one.
+        if !fixture.legacy {
+            eventually(|| fixture.listening_for_tools() == 1).await;
+        }
         let before = connection.generation();
         fixture
             .add_tool(common::tool("added", "Added later."))
