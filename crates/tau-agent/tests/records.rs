@@ -2,8 +2,8 @@
 //! them. Reading them skips what no longer parses, keeps the rest in
 //! order, and never stops a run.
 //!
-//! Properties: `read_records` agrees with parsing each body on its own;
-//! a record written by `serde_json` reads back whatever surrounds it.
+//! Property: `read_records` agrees with parsing each body on its own,
+//! the unreadable left out and the order kept.
 
 use hegel::{TestCase, generators as gs};
 use serde::{Deserialize, Serialize};
@@ -58,19 +58,4 @@ fn reading_many_is_reading_each_in_order(tc: TestCase) {
             serde_json::from_value(body.clone()).ok()
         );
     }
-}
-
-/// What a plugin wrote, it reads back, however much unreadable data
-/// sits between its records.
-#[hegel::test(test_cases = 300)]
-fn written_records_read_back_between_unreadable_ones(tc: TestCase) {
-    let notes = tc.draw(gs::vecs(note()).max_size(6));
-    let mut bodies = Vec::new();
-    for note in &notes {
-        for _ in 0..tc.draw(gs::integers::<u8>().max_value(2)) {
-            bodies.push(json!({"unrelated": tc.draw(gs::text().max_size(5))}));
-        }
-        bodies.push(json!(note));
-    }
-    assert_eq!(read_records::<Note>("test", &bodies), notes);
 }

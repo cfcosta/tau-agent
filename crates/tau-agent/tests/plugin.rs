@@ -103,11 +103,13 @@ impl Plugin for Probe {
             self.name, plan.instructions
         ));
         self.seen.lock().unwrap().push(format!(
-            "model {} kind {:?} workflow {:?} now {} ctx {ctx:?}",
+            "model {} kind {:?} workflow {:?} now {} run {} plugin {}",
             plan.model(),
             plan.kind(),
             plan.workflow(),
-            ctx.now()
+            ctx.now(),
+            ctx.run.0,
+            ctx.plugin(),
         ));
         self.records_seen
             .lock()
@@ -302,9 +304,9 @@ fn start_shapes_the_run() {
         assert_eq!(
             seen,
             [format!(
-                "model gpt-5.4-mini kind Root workflow Some(\"w1\") now 42 ctx \
-                 PluginCtx {{ run: {:?}, plugin: \"first\", .. }}",
-                outcome.run
+                "model gpt-5.4-mini kind Root workflow Some(\"w1\") now 42 run {} \
+                 plugin first",
+                outcome.run.0
             )]
         );
 

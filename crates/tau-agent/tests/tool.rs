@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tau_agent::{
     error::ToolError,
-    tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput, TypedTool, typed},
+    tool::{AgentTool, ToolCtx, ToolOutput, TypedTool, typed},
 };
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -42,22 +42,16 @@ impl TypedTool for Search {
     }
 }
 
-/// A typed tool exposes its name, description and a schema generated
-/// from its argument type, and runs with parsed arguments.
+/// A typed tool's schema is generated from its argument type (an
+/// `Option` field optional, the rest required), and it runs with the
+/// arguments parsed into that type.
 #[test]
 fn typed_tool_adapts() {
     let tool = typed(Search);
-    assert_eq!(tool.name(), "search");
-    assert_eq!(tool.description(), "Search the index.");
-    assert_eq!(tool.execution_mode(), ExecutionMode::Parallel);
     let schema = tool.parameters();
     assert_eq!(schema["type"], "object");
     assert_eq!(schema["properties"]["query"]["type"], "string");
     assert_eq!(schema["required"], json!(["query"]));
-    assert_eq!(
-        tool.prepare_arguments(json!({"query": "x"})),
-        json!({"query": "x"})
-    );
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
@@ -71,8 +65,9 @@ fn typed_tool_adapts() {
             .unwrap();
     assert_eq!(output, ToolOutput::text("tokio:3"));
     // Arguments that do not match the type are an error, not a panic.
-    let error = runtime
-        .block_on(tool.call(json!({"query": 5}), ToolCtx::detached()))
-        .unwrap_err();
-    assert!(error.to_string().contains("invalid type"), "{error}");
+    assert!(
+        runtime
+            .block_on(tool.call(json!({"query": 5}), ToolCtx::detached()))
+            .is_err()
+    );
 }

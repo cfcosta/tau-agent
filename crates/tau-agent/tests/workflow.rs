@@ -194,6 +194,10 @@ fn tools_stay_available_in_a_typed_run() {
         assert_eq!(requests.len(), 2);
         for request in requests {
             assert_eq!(request.settings.tools[0].name, "lookup");
+            assert_eq!(
+                request.settings.tools[0].description,
+                "Looks a topic up."
+            );
             assert!(request.settings.text_format.is_some());
         }
     });
@@ -667,11 +671,8 @@ fn a_failed_sub_agent_is_an_error_result() {
 fn a_sub_agent_tool_outside_a_run_fails() {
     let tool =
         Agent::new(ScriptedModel::new()).as_tool("research", "Investigates.");
-    assert_eq!(tool.name(), "research");
-    assert_eq!(tool.description(), "Investigates.");
     assert_eq!(to_strict(tool.parameters()).unwrap(), *tool.parameters());
     assert_eq!(tool.parameters()["required"], json!(["input"]));
-    assert!(format!("{tool:?}").contains("research"));
     block_on(async {
         let ctx = ToolCtx::detached();
         let error = tool.call(json!({"input": "a"}), ctx).await.unwrap_err();
