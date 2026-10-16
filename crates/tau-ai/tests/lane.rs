@@ -353,6 +353,10 @@ impl LaneMachine {
                 Event::ServerError {
                     code: Some(PREVIOUS_RESPONSE_NOT_FOUND.into()),
                 },
+                Event::ServerError {
+                    code: Some("server_error".into()),
+                },
+                Event::ServerError { code: None },
                 Event::ConnectionLost,
                 Event::Reconnected,
                 Event::Cancel,
@@ -474,34 +478,6 @@ fn next_body() -> Body {
 
 fn is_full(action: &Option<Action>) -> bool {
     matches!(action, Some(Action::Send(b)) if b.previous_response_id.is_none())
-}
-
-/// Each event that invalidates the connection's cache makes the next
-/// request full.
-#[test]
-fn cache_breaking_events_force_full_resend() {
-    let events = [
-        Event::Cancel,
-        Event::ConnectionLost,
-        Event::Reconnected,
-        Event::ServerError {
-            code: Some("server_error".into()),
-        },
-    ];
-    for event in events {
-        let mut lane = lane_with_continuation();
-        assert_eq!(
-            lane.handle(event.clone()),
-            None,
-            "{event:?} on an idle lane"
-        );
-        assert!(
-            is_full(&Some(lane.submit(next_body()).unwrap())),
-            "{event:?}"
-        );
-    }
-    let mut lane = lane_with_continuation();
-    assert!(!is_full(&Some(lane.submit(next_body()).unwrap())));
 }
 
 /// `previous_response_not_found` on a delta resends in full on the same
