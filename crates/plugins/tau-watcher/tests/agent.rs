@@ -224,9 +224,35 @@ fn a_check_resumes_once_the_note_is_answered_and_the_prompt_lists_it() {
     model.assert_exhausted();
     let checks = checks(&model);
     assert_eq!(checks.len(), 2);
-    let asked = format!("{:?}", checks[1].transcript);
-    assert!(asked.contains("person_already_knew"), "{asked}");
-    assert!(asked.contains("rebuilds in debug"), "{asked}");
+    // The note the person knew is listed under what they knew, as well
+    // as under what was said.
+    let asked = input_text(&checks[1]);
+    for tag in ["person_already_knew", "earlier_notes"] {
+        assert_eq!(
+            section(&asked, tag),
+            "- `cargo test` rebuilds in debug, so each run takes minutes.",
+            "{tag} in {asked}"
+        );
+    }
+}
+
+/// The text of a side request's one user message.
+fn input_text(request: &tau_testing::scripted::Request) -> String {
+    match &request.transcript[..] {
+        [tau_ai::message::Message::User(user)] => match &user.content {
+            tau_ai::message::UserContent::Text(text) => text.clone(),
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    }
+}
+
+/// What `text` holds between `<tag>` and `</tag>`, trimmed.
+fn section<'a>(text: &'a str, tag: &str) -> &'a str {
+    let open = format!("<{tag}>");
+    let start = text.find(&open).unwrap() + open.len();
+    let end = text.find(&format!("</{tag}>")).unwrap();
+    text[start..end].trim()
 }
 
 #[test]
