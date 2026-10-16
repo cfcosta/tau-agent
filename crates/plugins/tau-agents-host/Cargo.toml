@@ -4,6 +4,7 @@ description = "tau-agents' host half: each agent's agent.luau read from its repo
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

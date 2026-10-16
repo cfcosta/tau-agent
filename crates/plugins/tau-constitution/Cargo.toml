@@ -4,6 +4,7 @@ description = "tau-constitution's interface half: a repository's rules, the chec
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

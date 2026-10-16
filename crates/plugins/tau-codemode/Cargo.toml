@@ -4,6 +4,7 @@ description = "Codemode's interface half: the cards of its Luau scripts, and the
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

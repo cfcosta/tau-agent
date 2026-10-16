@@ -289,5 +289,10 @@ Codex's unified exec.
 
 ## Status
 
-tau is in active development and has no release yet. No license has been
-chosen.
+tau is in active development and has no release yet.
+
+## License
+
+tau is under the [MIT license](LICENSE). Parts of it come from pi and
+other projects, under their own licenses:
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them.

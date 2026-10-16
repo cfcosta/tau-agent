@@ -369,9 +369,10 @@ lines cover one message each; the older the messages, the more a line \
 covers. The messages after this one are as they were.
 
 zoom(id, n) opens line id+n into the two lines of n/2 messages it was \
-made from; zoom(id, 1) gives message id in full. Zoom whenever a line \
-only mentions something you need, such as the user's exact words, a \
-decision, a past attempt or where a file is, before you act, guess or ask.
+made from; zoom(id, 1) gives message id in full. When a line only \
+mentions something you need, such as the user's exact words, a decision, \
+a past attempt or where a file is, zoom into it first rather than \
+working from the summary.
 
 <chat>
 ";

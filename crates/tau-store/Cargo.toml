@@ -4,6 +4,7 @@ description = "Storage for runs, messages and fork transcripts: the shapes and t
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

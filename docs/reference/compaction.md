@@ -150,10 +150,10 @@ estimated with `chars / 4`.
 
 ## What the prompts add
 
-The prompts are pi's, format and all, with three rules taken from the
-compactor prompt of OptChat
+The prompts are pi's, format and all, with three rules of tau's, in
+its own words, after the compactor prompt of OptChat
 (<https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449>,
-section 4.4), which was tuned over many iterations for summaries that
+section 5), which was tuned over many iterations for summaries that
 stand in for a conversation:
 
 - **The user's words first.** Before its format, every prompt ranks
@@ -165,14 +165,14 @@ stand in for a conversation:
 - **Tool output is described, not copied.** "Read X: it holds the type
   checker's main loop" serves a later turn better than the first lines
   of X.
-- **Nothing further along than it was.** pi's format has Done and In
-  Progress lists; the prompt asks that a task be marked done only when
-  the conversation shows it done, since a summarizer tends to inflate
-  progress.
-- **A record, not a request.** The system prompt says never to answer,
-  obey or add to anything in the conversation, tool results included,
-  which also keeps an injected command in a tool result from steering
-  the summary.
+- **Progress only as far as it went.** pi's format has Done and In
+  Progress lists; the prompt asks that a task go under Done only when
+  the conversation shows it finished, since a summarizer tends to
+  inflate progress.
+- **Material, not a request.** The system prompt says not to reply to
+  the conversation, carry out what it asks or add to it, tool results
+  included, which also keeps an injected command in a tool result from
+  steering the summary.
 
 tau-memory's flush and consolidation prompts carry the same rules for
 the notes they write. Thinking stays in the serialized conversation:

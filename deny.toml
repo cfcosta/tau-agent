@@ -122,38 +122,17 @@ confidence-threshold = 0.8
 # Allow 1 or more licenses on a per-crate basis, so that particular licenses
 # aren't accepted for every possible crate as with the normal allow list
 #
-# Copyleft is not in the list above, and it must not be: a licence that
-# reaches into the tree that links it is a decision about docbert, not
-# about one dependency. The crates that need one are named below,
-# one at a time, so that adding another is a deliberate act.
+# tau is MIT. Copyleft is not in the list above, and it must not be: a
+# licence that reaches into the tree that links it is a decision about
+# tau, not about one dependency. Permissive licences only one crate asks
+# for are named below, one at a time, so that adding another is a
+# deliberate act.
 exceptions = [
-  # sequoia is the OpenPGP library that `mailbert view` opens an
-  # encrypted body with. (§5.4) The LGPL reaches a program that links
-  # it only if that program cannot be relinked against another build of
-  # the library, and docbert ships as an ordinary Rust binary that can.
-  { allow = ["LGPL-2.0-or-later"], crate = "sequoia-openpgp" },
-  { allow = ["LGPL-2.0-or-later"], crate = "sequoia-gpg-agent" },
-  { allow = ["LGPL-2.0-or-later"], crate = "sequoia-ipc" },
-  { allow = ["LGPL-2.0-or-later"], crate = "buffered-reader" },
-
-  # What sequoia reaches through: bzip2 for the compression that RFC
-  # 4880 allows inside a message, and xxhash for its own caches. Both
-  # licences are permissive; neither is on the list above because
-  # nothing else in the tree asks for them.
+  # bzip2's own licence, permissive, for the Rust port of libbz2.
   { allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" },
-  { allow = ["BSL-1.0"], crate = "xxhash-rust" },
-
-  # The LLVM exception only widens Apache-2.0, which is allowed above.
-  { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "ar_archive_writer" },
-
-  # lettre encodes a message body with this, for the submission server
-  # of §11. 0BSD asks for nothing at all, not even the notice that the
-  # BSD licences above ask for.
-  { allow = ["0BSD"], crate = "quoted_printable" },
   # Under gpui, used only by tau-ui.
   { allow = ["CC0-1.0"], crate = "hexf-parse" },
   { allow = ["CC0-1.0"], crate = "tiny-keccak" },
-  { allow = ["NCSA"], crate = "libfuzzer-sys" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
@@ -179,7 +158,8 @@ exceptions = [
 # published to private registries.
 # To see how to mark a crate as unpublished (to the official registry),
 # visit https://doc.rust-lang.org/cargo/reference/manifest.html#the-publish-field.
-ignore = true
+# tau's own crates are not published, but are checked: each must say MIT.
+ignore = false
 # One or more private registries that you might publish crates to, if a crate
 # is only published to private registries, and ignore is true, the crate will
 # not have its license(s) checked
@@ -278,7 +258,12 @@ unknown-git = "warn"
 # if not specified. If it is specified but empty, no registries are allowed.
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # List of URLs for allowed Git repositories
-allow-git = []
+allow-git = [
+  # docbert's ColBERT model (tau-memory's `docbert` feature).
+  "https://github.com/cfcosta/docbert",
+  # gpui on Android (tau-phone).
+  "https://github.com/longbridge/gpui-mobile",
+]
 
 [sources.allow-org]
 # github.com organizations to allow git sources for

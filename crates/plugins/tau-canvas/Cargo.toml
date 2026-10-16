@@ -4,6 +4,7 @@ description = "Lets a tau agent show the person images and write documents on a 
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

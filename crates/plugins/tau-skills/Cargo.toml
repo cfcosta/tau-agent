@@ -4,6 +4,7 @@ description = "Skills: instructions a tau agent loads when a task calls for them
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

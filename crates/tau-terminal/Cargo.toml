@@ -4,6 +4,7 @@ description = "A terminal for tool output: libghostty-vt emulation, a PTY comman
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 # No other tau crate: this one is reusable on its own

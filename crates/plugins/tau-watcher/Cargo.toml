@@ -4,6 +4,7 @@ description = "Notes what you missed: every few steps a side request reads the r
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

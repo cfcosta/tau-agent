@@ -4,6 +4,7 @@ description = "Keeps a tau run going until a goal holds, checked with Jev, as a 
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

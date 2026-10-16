@@ -4,6 +4,7 @@ description = "The codemode tool: a Luau sandbox that calls tau's tools and Jev,
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

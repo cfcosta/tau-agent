@@ -9,7 +9,8 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/cfcosta/tau-agent"
-# Not published until a license is chosen.
+license = "MIT"
+# Not on crates.io: tau is an app, and it depends on git crates.
 publish = false
 
 [workspace.dependencies]

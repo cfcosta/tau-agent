@@ -4,6 +4,7 @@ description = "tau on the computer: the desktop app, with every plugin's host ha
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

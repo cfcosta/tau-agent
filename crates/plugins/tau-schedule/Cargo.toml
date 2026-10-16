@@ -4,6 +4,7 @@ description = "A tau chat wakes itself later, once, with a note to itself; and t
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

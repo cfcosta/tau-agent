@@ -7,7 +7,7 @@
 //!   budget, asking only for lines that need a model (oracle: the free
 //!   rule, recomputed from the requests);
 //! - no request shows a line's label, which a compactor copies into its
-//!   output (OptChat, section 4.2);
+//!   output (OptChat, section 4);
 //! - no more than `jobs` requests run at once;
 //! - cutting at a byte limit never splits a character.
 

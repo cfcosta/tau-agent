@@ -4,6 +4,7 @@ description = "Long-term memory for tau agents: a Zettelkasten of typed, linked 
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

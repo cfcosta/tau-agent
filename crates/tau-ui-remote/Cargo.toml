@@ -4,6 +4,7 @@ description = "tau's interface: the workspace, its screens and the plugins' view
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dev-dependencies]

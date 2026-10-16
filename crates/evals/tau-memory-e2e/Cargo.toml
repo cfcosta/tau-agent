@@ -4,6 +4,7 @@ description = "The end-to-end evaluation of tau-memory: coding tasks that need a
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

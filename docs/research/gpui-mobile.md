@@ -181,8 +181,8 @@ it, gpui-component 0.7 among them.
 ## Licenses
 
 gpui-mobile and gpui-pre-mobile are GPL-3.0-or-later, AGPL-3.0-or-later
-or Apache-2.0, at the user's choice. Apache-2.0 leaves tau's own
-license, not yet chosen, open. gpui-pre carries Zed's GPUI license
+or Apache-2.0, at the user's choice. Under Apache-2.0, tau stays
+under its own MIT license. gpui-pre carries Zed's GPUI license
 (Apache-2.0).
 
 ## Sources

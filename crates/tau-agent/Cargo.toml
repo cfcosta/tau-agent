@@ -4,6 +4,7 @@ description = "Agents, runs, the agent loop, tools, plugins, limits, sub-agents 
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

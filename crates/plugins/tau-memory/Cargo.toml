@@ -4,6 +4,7 @@ description = "tau-memory's interface half: long-term notes as their pages show 
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

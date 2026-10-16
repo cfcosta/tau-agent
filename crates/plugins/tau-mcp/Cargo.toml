@@ -4,6 +4,7 @@ description = "tau-mcp's interface half: the Servers page, MCP tools' cards, and
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

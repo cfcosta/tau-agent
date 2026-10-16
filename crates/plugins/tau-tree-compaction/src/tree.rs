@@ -413,7 +413,7 @@ impl History {
     /// The view's lines before entry `end`, bare (no labels), up to the
     /// first that is not built: what a compactor call reads as context.
     /// Ids in a compactor's input get copied into its output (OptChat,
-    /// section 4.2).
+    /// section 4).
     pub fn context(&self, end: usize) -> String {
         self.view
             .iter()
@@ -427,7 +427,7 @@ impl History {
     pub fn flat(&self, node: Node) -> String {
         match self.text(node) {
             Some(text) => text.split_whitespace().collect::<Vec<_>>().join(" "),
-            None => "(not summarized yet: zoom it)".to_owned(),
+            None => "(no summary yet: zoom to read it)".to_owned(),
         }
     }
 

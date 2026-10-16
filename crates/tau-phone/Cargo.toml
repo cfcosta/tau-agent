@@ -4,6 +4,7 @@ description = "tau's interface on an Android phone, through gpui-pre-mobile: a r
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 # The library Android's NativeActivity loads. On any other target it

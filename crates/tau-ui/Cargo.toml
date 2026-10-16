@@ -4,6 +4,7 @@ description = "tau on the computer: the host that runs agents behind tau-ui-remo
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dev-dependencies]

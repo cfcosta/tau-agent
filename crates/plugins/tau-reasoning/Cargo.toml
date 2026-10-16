@@ -4,6 +4,7 @@ description = "Picks a tau run's reasoning effort from its task with Jev, as a p
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

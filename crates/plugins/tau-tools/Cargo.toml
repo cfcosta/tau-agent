@@ -4,6 +4,7 @@ description = "tau-tools' interface half: the cards of its coding tools, and the
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [features]

@@ -4,6 +4,7 @@ description = "tau's design language: theme tokens, icons, fonts and the shared 
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

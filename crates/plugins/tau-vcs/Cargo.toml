@@ -4,6 +4,7 @@ description = "tau-vcs's interface half: the cards of its version-control tools,
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

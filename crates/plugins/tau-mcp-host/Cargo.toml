@@ -4,6 +4,7 @@ description = "Connects a tau agent to MCP servers and adds their tools: tau-mcp
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

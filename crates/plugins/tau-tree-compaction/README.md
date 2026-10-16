@@ -12,8 +12,8 @@ The rules are in
   - `History`, with `fit` (merge the most due pair until the view fits),
     `wanted` (the merges `fit` will need), `render` and `zoom`.
 - `build`: the compactor. `Builder::grow` builds every line a view
-  needs, `jobs` requests at once. `COMPACT_PROMPT` is OptChat's prompt,
-  for a run. `SCALE` is a line of exactly 512 bytes.
+  needs, `jobs` requests at once. `COMPACT_PROMPT` is tau's compactor
+  prompt, after OptChat's, for a run. `SCALE` is a line of exactly 512 bytes.
 - `TreeCompaction`: the plugin, and the `zoom` tool it adds to each run.
 - `Record`, `Details`: what it stores, so a fork can zoom.
 - `ui::TreeCompactionUi` and `ui::TreeCompactionHost`: its switch, off

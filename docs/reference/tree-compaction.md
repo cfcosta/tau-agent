@@ -1,7 +1,7 @@
 # Tree compaction
 
 `tau-tree-compaction` (`crates/plugins/tau-tree-compaction`) compacts a
-run without losing what it drops. It is a port of OptChat's memory
+run without losing what it drops. It implements OptChat's memory design
 ([the spec](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)),
 fitted to a run of tau's. It is off by default: the Plugins screen
 switches it on, and until an evaluation shows it does better than
@@ -102,10 +102,10 @@ found by simulating it with each unbuilt line at the most it can be.
 Those parents are built a level at a time, `jobs` at once.
 
 Each line is one request to the run's model and effort, with
-`COMPACT_PROMPT` as instructions. This is OptChat's compactor prompt,
-written for a run: the user's words first, near verbatim, then lasting
-effects and failures, then findings and replies, and tool output last,
-described rather than copied. The request is one user message with two
+`COMPACT_PROMPT` as instructions. It asks what OptChat's compactor
+prompt asks, in tau's own words and for a run: the user's words first,
+in their own wording, then lasting effects and failures, then findings
+and replies, and tool output last, described rather than copied. The request is one user message with two
 text blocks:
 
 1. **Context.** `<chat>` holds the view's built lines before the line,
@@ -117,7 +117,7 @@ text blocks:
    lines ("Merge these two lines into one…").
 
 No request shows a label: a compactor shown `id+n|text` lines copies
-the format into its output (OptChat, section 4.2).
+the format into its output (OptChat, section 4).
 
 A reply over 512 bytes goes back in the same conversation, with its
 size and the line cut where the limit falls. There are up to 5 tries,
