@@ -92,30 +92,57 @@ mod tests {
 
     /// A file within the limit comes back whole, under the heading, and
     /// says nothing of a cut; a longer one keeps the longest prefix that
-    /// fits on a character's boundary, and says it was cut.
+    /// fits on a character's boundary, and says it was cut. Files are a
+    /// short pattern of one- to four-byte characters repeated to a length
+    /// drawn around the limit, so the limit falls on every byte of a
+    /// character, and a file of exactly the limit is drawn too.
     #[hegel::test(test_cases = 300)]
     fn the_section_keeps_what_fits(tc: hegel::TestCase) {
-        let unit: String = tc.draw(gs::sampled_from(vec![
-            "a".to_owned(),
-            "é".to_owned(),
-            "語".to_owned(),
-            "🦀".to_owned(),
-        ]));
-        let count: usize = tc.draw(gs::integers().max_value(AGENTS_LIMIT / 2));
-        let text = format!("x{}", unit.repeat(count));
-        let section = agents_section(text.as_bytes());
-        assert!(section.starts_with(AGENTS_HEADING));
-        let cut = text.len() > AGENTS_LIMIT;
-        assert_eq!(section.contains("was cut here"), cut, "{}", text.len());
-        if cut {
-            let mut end = AGENTS_LIMIT;
-            while !text.is_char_boundary(end) {
-                end -= 1;
+        let pattern: Vec<char> = tc.draw(
+            gs::vecs(gs::sampled_from(vec!['a', 'é', '語', '🦀']))
+                .min_size(1)
+                .max_size(6),
+        );
+        let target: usize = tc.draw(hegel::one_of!(
+            gs::integers::<usize>()
+                .min_value(AGENTS_LIMIT - 4)
+                .max_value(AGENTS_LIMIT + 4),
+            gs::integers::<usize>().max_value(AGENTS_LIMIT + 64),
+        ));
+        let mut text = String::new();
+        for ch in pattern.iter().cycle() {
+            if text.len() >= target {
+                break;
             }
-            assert!(section.contains(&text[..end]));
-            assert!(!section.contains(&text[..end + unit.len()]));
+            text.push(*ch);
+        }
+        // Exactly the limit, when the pattern lets the length land there.
+        if target == AGENTS_LIMIT && text.len() > AGENTS_LIMIT {
+            while text.len() > AGENTS_LIMIT - 4 {
+                text.pop();
+            }
+            while text.len() < AGENTS_LIMIT {
+                text.push('a');
+            }
+        }
+        let section = agents_section(text.as_bytes());
+        let head = agents_section(b"");
+        assert!(head.starts_with(AGENTS_HEADING));
+        if text.len() > AGENTS_LIMIT {
+            let kept = text
+                .char_indices()
+                .map(|(at, c)| at + c.len_utf8())
+                .take_while(|end| *end <= AGENTS_LIMIT)
+                .last()
+                .unwrap_or(0);
+            let note = section
+                .strip_prefix(&format!("{head}{}", &text[..kept]))
+                .unwrap_or_else(|| {
+                    panic!("not the kept prefix: {}", text.len())
+                });
+            assert!(note.starts_with("\n\n[AGENTS.md was cut here"), "{note}");
         } else {
-            assert!(section.ends_with(&text));
+            assert_eq!(section, format!("{head}{text}"), "{}", text.len());
         }
     }
 

@@ -827,6 +827,32 @@ mod tests {
         assert_eq!(String::from_utf8(bytes).unwrap(), value);
     }
 
+    /// A sign-in with an expiry is expired from that millisecond on, not
+    /// a millisecond before; one without never expires. Times are drawn
+    /// at the expiry, either side of it, and anywhere.
+    #[hegel::test(test_cases = 300)]
+    fn a_sign_in_expires_at_its_time(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let expires_at: Option<u64> = tc.draw(gs::optional(
+            gs::integers::<u64>().min_value(1).max_value(u64::MAX - 1),
+        ));
+        let around = expires_at.unwrap_or(1_700_000_000_000);
+        let now: u64 = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![around - 1, around, around + 1]),
+            gs::integers::<u64>(),
+        ));
+        let token = Token {
+            token: "ghu_x".into(),
+            user: "octocat".into(),
+            expires_at,
+        };
+        let expired = match expires_at {
+            Some(at) => now >= at,
+            None => false,
+        };
+        assert_eq!(token.is_expired(now), expired, "{expires_at:?} at {now}");
+    }
+
     #[test]
     fn expired_sign_ins_are_not_loaded() {
         let dir = tempfile::tempdir().unwrap();

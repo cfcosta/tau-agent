@@ -177,7 +177,7 @@ fn notices_fire_once_per_change(tc: TestCase) {
 
 /// Each notice says what it is about: its title opens with the chat's,
 /// a question is its body as asked, a chat ready to land counts its
-/// changes and names where they would land, and a failure or conflicts
+/// changes and names the target and repository they would land in, and a failure or conflicts
 /// left on main name the repository, the latter with the count of files.
 #[test]
 fn notices_say_what_they_are_about() {
@@ -185,7 +185,8 @@ fn notices_say_what_they_are_about() {
         run: RunId("r".into()),
         title: "Load AGENTS.md".into(),
         repo: "tau-agent".into(),
-        target: "main".into(),
+        // Not `main`: the body names the target it was given.
+        target: "fix-retry".into(),
         attention,
     };
     let mut notifier = Notifier::default();
@@ -232,13 +233,7 @@ fn notices_say_what_they_are_about() {
         words[0].2,
         "Delete the 3 workspaces with no run, or keep them?"
     );
-    let ready = &words[1].2;
-    assert!(
-        ready.contains("2 changes")
-            && ready.contains("main")
-            && ready.contains("tau-agent"),
-        "{ready}"
-    );
+    assert_eq!(words[1].2, "2 changes on fix-retry · tau-agent");
     assert!(words[2].2.contains("tau-agent"), "{}", words[2].2);
     let conflicts = &words[3].2;
     assert!(

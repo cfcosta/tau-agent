@@ -474,7 +474,9 @@ fn written_titles_come_back_in_history() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
     let data = tempfile::tempdir().unwrap();
     let db = data.path().join("runs.db");
-    let (host, mut events) = host_with_store(llm, &std::env::temp_dir(), &db);
+    // A checkout of its own: `project_of` makes it a Git repository.
+    let checkout = tempfile::tempdir().unwrap();
+    let (host, mut events) = host_with_store(llm, checkout.path(), &db);
     let view = host
         .block_on(host.start(
             "Say hello\nto everyone",
@@ -2589,19 +2591,30 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
     // History shows it again, from the plugin's record.
     assert!(chosen(&host.block_on(host.history()).unwrap()[0]));
 
-    // An effort someone chose is not scored.
-    let (host, mut events) =
-        host_on(ScriptedModel::new().turn(|t| t.text("ok")), dir.path());
-    let host =
-        host.with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::new(|_| {
-            panic!("not asked")
-        })));
+    // An effort someone chose is not scored: Jev is never asked, and
+    // the run asks the model at that effort and ends as it should.
+    let llm = ScriptedModel::new().turn(|t| t.text("ok"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    let jev = tau_jev::fake::FakeJev::nouls(|_| 0.5);
+    let host = host.with_jev(std::sync::Arc::new(jev.clone()));
     let low = ModelChoice::new("gpt-5.5", Effort::Low);
     let run = host
         .block_on(host.start("rename a variable", &low, REPO))
         .unwrap();
-    until_end(&mut events);
+    let stops: Vec<StopReason> = until_end(&mut events)
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::RunEnd { stop, .. } => Some(stop),
+            _ => None,
+        })
+        .collect();
     wait_until_done(&host, &run.id);
+    assert_eq!(stops, [StopReason::Stop]);
+    assert!(jev.requests().is_empty(), "{:?}", jev.requests());
+    assert_eq!(
+        llm.requests()[0].settings.reasoning,
+        Some(tau_ai::responses::request::ReasoningEffort::Low)
+    );
 }
 
 /// The Models screen's reasoning settings reach tau-reasoning: asked to
@@ -4076,10 +4089,30 @@ fn a_command_left_running_goes_on_in_the_next_turn() {
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &main);
-    let asked = format!("{:?}", llm.requests().last().unwrap().transcript);
-    assert!(
-        asked.contains("hello") && !asked.contains("No process"),
-        "{asked}"
-    );
+    // What `write_stdin` answered: cat's echo of what it was typed. The
+    // model's own call holds "hello" too, so only the result counts.
+    let answered: String = llm
+        .requests()
+        .last()
+        .unwrap()
+        .transcript
+        .iter()
+        .filter_map(|message| match message {
+            tau_ai::message::Message::ToolResult(result)
+                if result.tool_name == "write_stdin" =>
+            {
+                Some(result.content.iter().filter_map(|block| match block {
+                    tau_ai::message::InputBlock::Text(text) => {
+                        Some(text.text.clone())
+                    }
+                    _ => None,
+                }))
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert!(answered.contains("hello"), "{answered}");
+    assert!(!answered.contains("No process"), "{answered}");
     llm.assert_exhausted();
 }
