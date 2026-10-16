@@ -365,26 +365,58 @@ async fn dropping_the_processes_kills_them() {
     wait_until_dead(pid).await;
 }
 
-/// Past the limit, the least recently used goes; one that exited
-/// first.
+/// Past the limit, a process goes to make room: among all but the newest
+/// few, one that exited first, else the least recently used.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_store_keeps_a_limited_number_of_processes() {
     use tau_tools_host::exec::processes::MAX_PROCESSES;
     let t = tools();
-    let mut calls = Vec::new();
-    for _ in 0..(MAX_PROCESSES + 6) {
+    let start = |cmd: &'static str| {
         let exec =
             ExecCommand::new(Root::new(t.dir.path()), t.processes.clone());
-        calls.push(tokio::spawn(async move {
-            exec.call(json!({ "cmd": "sleep 30", "yield_time_ms": 250 }), ctx())
+        async move {
+            let output = exec
+                .call(json!({ "cmd": cmd, "yield_time_ms": 250 }), ctx())
                 .await
-                .unwrap()
-        }));
+                .unwrap();
+            process_of(&output)
+        }
+    };
+    // The oldest, still running; then one that ends unread, so the store
+    // keeps it, exited.
+    let oldest = start("sleep 30").await;
+    let exited = start("sleep 0.5").await;
+    {
+        let process = t.processes.get(exited).unwrap();
+        let mut changes = process.changes();
+        while !process.has_exited() {
+            changes.changed().await.unwrap();
+        }
     }
-    for call in calls {
-        call.await.unwrap();
+    // The rest of the store, newer than both.
+    let fill: Vec<_> = (0..MAX_PROCESSES - 2)
+        .map(|_| tokio::spawn(start("sleep 30")))
+        .collect();
+    let mut filled = Vec::new();
+    for call in fill {
+        filled.push(call.await.unwrap());
     }
     assert_eq!(t.processes.len(), MAX_PROCESSES);
+
+    // One more: the exited one goes, though the oldest is older.
+    start("sleep 30").await;
+    assert_eq!(t.processes.len(), MAX_PROCESSES);
+    assert!(t.processes.get(exited).is_none(), "the exited one stayed");
+    assert!(
+        t.processes.get(oldest).is_some(),
+        "a running one went first"
+    );
+
+    // Another: none has exited, so the least recently used goes.
+    start("sleep 30").await;
+    assert!(t.processes.get(oldest).is_none(), "the oldest stayed");
+    assert_eq!(t.processes.len(), MAX_PROCESSES);
+    assert!(filled.iter().all(|id| t.processes.get(*id).is_some()));
     t.processes.terminate_all();
 }
 

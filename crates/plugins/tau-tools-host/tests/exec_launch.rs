@@ -17,7 +17,6 @@ use std::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -34,12 +33,14 @@ use tau_tools_host::{
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-/// A launcher that answers `launch`, once `open` lets it, and keeps the
-/// directories it was asked about.
+/// A launcher that answers `launch`, once `open` lets it, keeps the
+/// directories it was asked about, and says it was asked through
+/// `waiting`.
 struct Fake {
     launch: Launch,
     open: Option<Arc<Notify>>,
     asked: Mutex<Vec<PathBuf>>,
+    waiting: Arc<Notify>,
     answered: AtomicUsize,
 }
 
@@ -49,6 +50,7 @@ impl Fake {
             launch,
             open: None,
             asked: Mutex::default(),
+            waiting: Arc::new(Notify::new()),
             answered: AtomicUsize::new(0),
         }
     }
@@ -63,6 +65,7 @@ impl Fake {
 impl Launcher for Fake {
     async fn launch(&self, dir: &Path) -> Launch {
         self.asked.lock().unwrap().push(dir.to_owned());
+        self.waiting.notify_one();
         if let Some(open) = &self.open {
             open.notified().await;
         }
@@ -131,7 +134,8 @@ async fn without_a_launcher_or_with_a_direct_one_nothing_changes() {
     }
 }
 
-/// The command starts only once the launcher answers.
+/// The command starts only once the launcher answers, and with its
+/// answer: it prints the launcher's variable.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_held_command_starts_once_the_launcher_answers() {
     let dir = tempfile::tempdir().unwrap();
@@ -147,7 +151,8 @@ async fn a_held_command_starts_once_the_launcher_answers() {
         )
         .await
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The call is waiting on the launcher.
+    fake.waiting.notified().await;
     assert!(!marker.exists(), "the command waits for the launcher");
     assert_eq!(fake.answered.load(Ordering::SeqCst), 0);
     open.notify_one();
@@ -163,7 +168,7 @@ async fn a_cancel_ends_the_wait() {
     let processes = Processes::new();
     let fake = Arc::new(Fake::new(probing()).held(Arc::new(Notify::new())));
     let exec = ExecCommand::new(Root::new(dir.path()), processes.clone())
-        .with_launcher(fake);
+        .with_launcher(fake.clone());
     let cancel = CancellationToken::new();
     let call = {
         let cancel = cancel.clone();
@@ -171,7 +176,8 @@ async fn a_cancel_ends_the_wait() {
             exec.call(json!({ "cmd": "touch ran" }), ctx(cancel)).await
         })
     };
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Cancelled while the launcher holds it.
+    fake.waiting.notified().await;
     cancel.cancel();
     let error = call.await.unwrap().unwrap_err();
     assert_eq!(error.to_string(), "Operation aborted");

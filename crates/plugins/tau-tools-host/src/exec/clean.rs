@@ -388,19 +388,22 @@ mod tests {
         assert_eq!(cleaner.take().text, "REDRAWN");
     }
 
+    /// Past [`MAX_UNREAD`] unread bytes, whole lines go from the front:
+    /// with lines of 1 KiB each (the newline counted), exactly the
+    /// newest `MAX_UNREAD / 1024` stay, and the take says how many went.
     #[test]
     fn what_is_not_read_in_time_is_dropped_oldest_first() {
         let mut cleaner = Cleaner::default();
-        let line = format!("{}\r\n", "x".repeat(1023));
-        for _ in 0..1100 {
-            cleaner.feed(line.as_bytes());
+        // Numbered, so which lines stay shows.
+        let lines: Vec<String> = (0..1100)
+            .map(|i| format!("{i:04}{}", "x".repeat(1019)))
+            .collect();
+        for line in &lines {
+            cleaner.feed(format!("{line}\r\n").as_bytes());
         }
         let taken = cleaner.take();
-        assert!(
-            taken.dropped > 0 && taken.dropped < 100,
-            "{}",
-            taken.dropped
-        );
-        assert!(taken.text.len() <= MAX_UNREAD + 1024);
+        let kept = MAX_UNREAD / 1024;
+        assert_eq!(taken.dropped, lines.len() - kept);
+        assert_eq!(taken.text, lines[lines.len() - kept..].join("\n"));
     }
 }
