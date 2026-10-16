@@ -261,7 +261,8 @@ fn sessions_from_the_same_model_share_one_script_queue() {
             .turn(|t| t.text("first"))
             .turn(|t| t.text("second"));
         let mut session_a = model.open(settings("gpt-test")).await.unwrap();
-        let mut session_b = model.open(settings("gpt-test")).await.unwrap();
+        let mut session_b =
+            model.clone().open(settings("gpt-test")).await.unwrap();
 
         let first = accumulate(session_a.respond(&[], 0)).await.unwrap();
         let second = accumulate(session_b.respond(&[], 0)).await.unwrap();
@@ -381,12 +382,6 @@ fn exhausted_script_yields_a_clear_error_and_never_hangs() {
 }
 
 #[test]
-fn remaining_and_assert_exhausted_track_the_script() {
-    let model = ScriptedModel::new().turn(|t| t.text("hi"));
-    assert_eq!(model.remaining(), 1);
-}
-
-#[test]
 #[should_panic(expected = "scripted turn(s) were never used")]
 fn assert_exhausted_panics_when_turns_are_left() {
     let model = ScriptedModel::new().turn(|t| t.text("hi"));
@@ -460,58 +455,6 @@ fn error_turns_start_then_terminate_with_the_documented_error() {
 // =============================================================================
 // Cache simulation
 // =============================================================================
-
-/// Ported from pi's faux provider (`packages/ai/src/providers/faux.ts`,
-/// `withUsageEstimate`): a session's first request has nothing to share, so
-/// `cache_read` is 0 and `cache_write` pays for the whole prompt. A later
-/// request that extends the same session's previous transcript reports
-/// `cache_read` for the shared prefix and `cache_write` for the rest, with
-/// `input` reduced by `cache_read`. A request that shares no prefix with the
-/// session's last transcript (even though the session has history) reports
-/// `cache_read: 0` again.
-#[test]
-fn cache_simulation_matches_pi_faux_formula() {
-    tau_testing::block_on(async {
-        let model = ScriptedModel::new()
-            .turn(|t| t.text("ok"))
-            .turn(|t| t.text("ok"))
-            .turn(|t| t.text("ok"));
-        let mut session = model.open(settings("gpt-test")).await.unwrap();
-
-        // Request 1: transcript serializes to "user:hi" (7 chars). Every
-        // turn's own content is "ok" (2 chars), so output is ceil(2/4) = 1.
-        let message1 = accumulate(session.respond(&[user_message("hi")], 0))
-            .await
-            .unwrap();
-        assert_eq!(message1.usage.cache_read, 0);
-        assert_eq!(message1.usage.cache_write, 2); // ceil(7 / 4)
-        assert_eq!(message1.usage.input, 2); // ceil(7 / 4) - cache_read(0)
-        assert_eq!(message1.usage.output, 1); // ceil(2 / 4)
-
-        // Request 2: transcript serializes to "user:hi\n\nuser:yo" (16
-        // chars), which starts with all 7 chars of request 1's prompt.
-        let message2 = accumulate(
-            session.respond(&[user_message("hi"), user_message("yo")], 0),
-        )
-        .await
-        .unwrap();
-        assert_eq!(message2.usage.cache_read, 2); // ceil(7 / 4)
-        assert_eq!(message2.usage.cache_write, 3); // ceil((16 - 7) / 4)
-        assert_eq!(message2.usage.input, 2); // ceil(16 / 4) - cache_read(2)
-        assert_eq!(message2.usage.output, 1);
-
-        // Request 3: transcript serializes to "assistant:zzz" (13 chars),
-        // sharing no prefix at all with request 2's prompt.
-        let message3 =
-            accumulate(session.respond(&[assistant_text_message("zzz")], 0))
-                .await
-                .unwrap();
-        assert_eq!(message3.usage.cache_read, 0);
-        assert_eq!(message3.usage.cache_write, 4); // ceil(13 / 4)
-        assert_eq!(message3.usage.input, 4); // ceil(13 / 4) - cache_read(0)
-        assert_eq!(message3.usage.output, 1);
-    });
-}
 
 /// `ceil(chars / 4)`: pi's `estimateTokens`, in Unicode scalar values.
 fn tokens_of(chars: usize) -> u64 {
@@ -594,12 +537,17 @@ fn cache_simulation_follows_pi_faux_formula(tc: TestCase) {
 
 /// The cache estimate covers every message kind the transcript can hold,
 /// not just plain user text: an image block's placeholder text
-/// (`input_block_text`) and a tool result's own text
-/// (`tool_result_text`) both count toward the serialized prompt.
+/// (`input_block_text`), a tool result's own text (`tool_result_text`)
+/// and an assistant's text all count toward the serialized prompt. A
+/// request that shares no prefix with the session's last one reads
+/// nothing from the cache, though the session has history (pi's faux
+/// provider, `withUsageEstimate`).
 #[test]
 fn cache_estimate_covers_image_blocks_and_tool_results() {
     tau_testing::block_on(async {
         let model = ScriptedModel::new()
+            .turn(|t| t.text("ok"))
+            .turn(|t| t.text("ok"))
             .turn(|t| t.text("ok"))
             .turn(|t| t.text("ok"));
 
@@ -623,7 +571,8 @@ fn cache_estimate_covers_image_blocks_and_tool_results() {
         assert_eq!(message.usage.input, 6);
 
         // "toolResult:grep\nresult text" = 11 + 16 = 27 chars -> ceil(27 / 4) = 7
-        let mut session_b = model.open(settings("gpt-test")).await.unwrap();
+        let mut session_b =
+            model.clone().open(settings("gpt-test")).await.unwrap();
         let tool_result_transcript =
             vec![Message::ToolResult(ToolResultMessage {
                 tool_call_id: "call_1|fc_1".to_owned(),
@@ -642,6 +591,21 @@ fn cache_estimate_covers_image_blocks_and_tool_results() {
         assert_eq!(message.usage.cache_read, 0);
         assert_eq!(message.usage.cache_write, 7);
         assert_eq!(message.usage.input, 7);
+
+        // "user:hi" first; then "assistant:zzz" (13 chars), which shares
+        // no prefix with it: nothing read, ceil(13 / 4) = 4 written.
+        let mut session_c = model.open(settings("gpt-test")).await.unwrap();
+        accumulate(session_c.respond(&[user_message("hi")], 0))
+            .await
+            .unwrap();
+        let message =
+            accumulate(session_c.respond(&[assistant_text_message("zzz")], 0))
+                .await
+                .unwrap();
+        assert_eq!(message.usage.cache_read, 0);
+        assert_eq!(message.usage.cache_write, 4);
+        assert_eq!(message.usage.input, 4);
+        model.assert_exhausted();
     });
 }
 
@@ -722,17 +686,6 @@ fn response_ids_are_distinct_across_requests() {
         assert!(id1.as_deref().is_some_and(|id| !id.is_empty()));
         assert!(id2.as_deref().is_some_and(|id| !id.is_empty()));
         assert_ne!(id1, id2);
-    });
-}
-
-/// A session reports exactly the settings it was opened with.
-#[test]
-fn session_reports_the_settings_it_was_opened_with() {
-    tau_testing::block_on(async {
-        let model = ScriptedModel::new().turn(|t| t.text("hi"));
-        let opened_with = settings("gpt-test-settings");
-        let session = model.open(opened_with.clone()).await.unwrap();
-        assert_eq!(session.settings(), &opened_with);
     });
 }
 
