@@ -744,6 +744,9 @@ fn a_poll_that_fails_says_why_and_waits_longer_after_three() {
     assert_eq!(f.trigger("pulls").last, None);
 }
 
+/// A poll whose `key` fails on one of its items fires none of them, not
+/// even the new ones whose keys it read, and says why; what it saw before
+/// is still seen.
 #[test]
 fn a_poll_whose_key_fails_fires_nothing_and_says_why() {
     let source = r#"
@@ -754,17 +757,35 @@ return tau.agent {
     pulls = {
       poll = { tool = "mcp__github__list_pull_requests" },
       every = "10m",
-      key = function(pr) error("no key here") end,
+      key = function(pr)
+        if pr.number == 2 then error("no key here") end
+        return pr.number
+      end,
     },
   },
 }
 "#;
     let f = Fixture::with(source);
-    f.host
-        .answer("mcp__github__list_pull_requests", pulls(&[1]));
+    let tool = "mcp__github__list_pull_requests";
+    f.host.answer(tool, pulls(&[1]));
+    f.tick();
+    assert_eq!(f.trigger("pulls").error, None);
+    // Due: 3 is new and has a key, but 2's fails.
+    f.clock.set(MONDAY_EIGHT + 600);
+    f.host.answer(tool, pulls(&[1, 3, 2]));
     f.tick();
     let error = f.trigger("pulls").error.unwrap();
     assert!(error.contains("no key here"), "{error}");
+    assert_eq!(f.agent().queued, 0);
+    f.clock.advance(30);
+    f.tick();
+    assert!(f.turns().is_empty());
+    // Once every key reads, what is new since fires, and only that.
+    f.clock.set(MONDAY_EIGHT + 1200);
+    f.host.answer(tool, pulls(&[1, 3]));
+    f.tick();
+    assert_eq!(f.trigger("pulls").error, None);
+    assert_eq!(f.agent().queued, 1);
 }
 
 /// A server on 127.0.0.1 that answers each request with `status` and
@@ -1155,6 +1176,79 @@ fn what_it_schedules_again_and_again_moves_on_and_catches_up_once() {
     );
 }
 
+/// A one-off comes from a minute to a year ahead (366 days), `in` a
+/// duration or `on` a local date and time, and a repeat goes every minute
+/// to every year: past either end it is refused, saying which, and
+/// nothing is scheduled. Times are drawn at both ends and one either
+/// side, and anywhere between.
+#[hegel::test(test_cases = 60)]
+fn a_schedule_is_kept_from_a_minute_to_a_year_ahead(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    use tau_agents_host::schedule::{LONGEST, SHORTEST};
+    let way = tc.draw(gs::sampled_from(vec!["in", "on", "every"]));
+    let ahead = if way == "on" {
+        // A local time names a minute.
+        let (soonest, furthest) = (SHORTEST / 60, LONGEST / 60);
+        60 * tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![
+                -1,
+                0,
+                soonest - 1,
+                soonest,
+                soonest + 1,
+                furthest - 1,
+                furthest,
+                furthest + 1,
+            ]),
+            gs::integers::<i64>()
+                .min_value(-10)
+                .max_value(furthest + 10),
+        ))
+    } else {
+        tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![
+                1,
+                SHORTEST - 1,
+                SHORTEST,
+                SHORTEST + 1,
+                LONGEST - 1,
+                LONGEST,
+                LONGEST + 1,
+            ]),
+            gs::integers::<i64>().min_value(1).max_value(LONGEST + 100),
+        ))
+    };
+    let f = Fixture::with(QUIET);
+    let when = match way {
+        "on" => json!({ "on": f.agents.local_time(MONDAY_EIGHT + ahead) }),
+        "in" => json!({ "in": format!("{ahead}s") }),
+        _ => json!({ "every": format!("{ahead}s") }),
+    };
+    let made = block_on_io(f.agents.schedule("greet", plan("x", when)));
+    if ahead < SHORTEST {
+        tc.event("too soon");
+        let why = made.unwrap_err();
+        let says = if way == "every" {
+            "shorter than a minute"
+        } else {
+            "a minute from now is the soonest"
+        };
+        assert!(why.contains(says), "{way} {ahead}: {why}");
+        assert!(f.agent().scheduled.is_empty());
+    } else if ahead > LONGEST {
+        tc.event("too far");
+        let why = made.unwrap_err();
+        assert!(why.contains("A year ahead is the furthest"), "{why}");
+        assert!(f.agent().scheduled.is_empty());
+    } else {
+        let made = made.unwrap_or_else(|why| panic!("{way} {ahead}: {why}"));
+        assert_eq!(made.scheduled.next, MONDAY_EIGHT + ahead);
+        assert_eq!(f.agent().scheduled.len(), 1);
+    }
+}
+
+/// What else keeps a schedule from being made says why: its name, how
+/// it says when, its days and its note.
 #[test]
 fn a_schedule_it_cannot_keep_is_refused_and_says_why() {
     let f = Fixture::with(QUIET);
@@ -1169,17 +1263,10 @@ fn a_schedule_it_cannot_keep_is_refused_and_says_why() {
     assert!(
         refused("x", json!({ "in": "1h", "every": "1h" })).contains("Say when")
     );
-    assert!(refused("x", json!({ "in": "30s" })).contains("soonest"));
-    assert!(
-        refused("x", json!({ "on": "2026-10-12 07:00" })).contains("soonest")
-    );
     assert!(
         refused("x", json!({ "on": "tomorrow" }))
             .contains("like \"2026-10-13 08:00\"")
     );
-    assert!(refused("x", json!({ "in": "400d" })).contains("year"));
-    assert!(refused("x", json!({ "every": "400d" })).contains("year"));
-    assert!(refused("x", json!({ "every": "30s" })).contains("minute"));
     assert!(
         refused("x", json!({ "at": "09:00", "days": ["Someday"] }))
             .contains("not a day")

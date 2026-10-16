@@ -56,14 +56,22 @@ fn the_skills_agents_pass_their_tests() {
     }
 }
 
+/// The skill installs as `SKILL.md`, rendered with its worked agents
+/// inlined, and the agents' files to copy from; installing again replaces
+/// what was there, a file the skill no longer has included.
 #[test]
 fn the_skill_installs_where_skills_are_read() {
     let dir = tempfile::tempdir().unwrap();
     skill::install(dir.path()).unwrap();
-    skill::install(dir.path()).unwrap();
     let folder = dir.path().join(skill::NAME);
+    let stale = folder.join("examples").join("gone").join("agent.luau");
+    std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    std::fs::write(&stale, "-- an example the skill dropped").unwrap();
+    skill::install(dir.path()).unwrap();
+    assert!(std::fs::symlink_metadata(&stale).is_err(), "left behind");
     let text = std::fs::read_to_string(folder.join("SKILL.md")).unwrap();
     assert!(text.starts_with("---\nname: tau-agents\n"));
+    assert_eq!(text, skill::render());
     for (name, files) in EXAMPLES {
         for (path, source) in files {
             let copied = folder.join("examples").join(name).join(path);

@@ -498,16 +498,25 @@ mod tests {
     }
 
     /// One event as a server writes it: maybe a comment, a name, data
-    /// lines, an id and a `retry:` field, each line ending in `\n`,
-    /// `\r\n` or `\r`, then a blank line.
+    /// lines (with or without the space after `data:`), an id and a
+    /// `retry:` field, a number of milliseconds or not, each line ending
+    /// in `\n`, `\r\n` or `\r`, then a blank line.
     #[derive(Debug, Clone)]
     struct Written {
         comment: bool,
         name: Option<String>,
         data: Vec<String>,
+        spaced: bool,
         id: Option<String>,
-        retry: Option<u64>,
+        retry: Option<Retry>,
         ends: Vec<&'static str>,
+    }
+
+    /// A `retry:` field's value: milliseconds, or what is not.
+    #[derive(Debug, Clone)]
+    enum Retry {
+        Millis(u64),
+        Not(&'static str),
     }
 
     #[hegel::composite]
@@ -517,9 +526,17 @@ mod tests {
             comment: tc.draw(gs::booleans()),
             name: tc.draw(gs::optional(word("[a-z]{1,5}"))),
             data: tc.draw(gs::vecs(word("[a-zé日]{0,6}")).max_size(3)),
+            spaced: tc.draw(gs::booleans()),
             id: tc.draw(gs::optional(word("[a-z0-9]{1,4}"))),
-            retry: tc
-                .draw(gs::optional(gs::integers::<u64>().max_value(9_999))),
+            retry: match tc.draw(gs::integers::<u8>().max_value(2)) {
+                0 => None,
+                1 => Some(Retry::Millis(
+                    tc.draw(gs::integers::<u64>().max_value(9_999)),
+                )),
+                _ => Some(Retry::Not(tc.draw(gs::sampled_from(vec![
+                    "soon", "-1", "", "1.5", "2s",
+                ])))),
+            },
             ends: tc.draw(
                 gs::vecs(gs::sampled_from(vec!["\n", "\r\n", "\r"]))
                     .min_size(8)
@@ -532,15 +549,19 @@ mod tests {
     /// or a character included), gives the frames its events say:
     /// each event with data is one frame, named `message` when the server
     /// named none, its data lines joined by newlines, with the last id
-    /// given so far; comments and events with no data are none. The last
-    /// id and the last `retry:` are the stream's.
+    /// given so far, or the one the stream opened with; comments and
+    /// events with no data are none. The last id and the last `retry:`
+    /// that is a number of milliseconds are the stream's.
     #[hegel::test(test_cases = 300)]
     fn events_come_whole_however_the_stream_is_cut(tc: hegel::TestCase) {
         let events: Vec<Written> =
             tc.draw(gs::vecs(written()).max_size(5).print_as_debug());
+        let opened_with: Option<String> = tc.draw(gs::optional(
+            gs::from_regex("[a-z0-9]{1,4}").fullmatch(true),
+        ));
         let mut bytes = String::new();
         let mut expected = Vec::new();
-        let (mut last_id, mut retry) = (None, None);
+        let (mut last_id, mut retry) = (opened_with.clone(), None);
         for event in &events {
             let mut lines = Vec::new();
             if event.comment {
@@ -549,14 +570,24 @@ mod tests {
             if let Some(name) = &event.name {
                 lines.push(format!("event: {name}"));
             }
-            lines.extend(event.data.iter().map(|data| format!("data: {data}")));
+            let gap = if event.spaced { " " } else { "" };
+            lines.extend(
+                event.data.iter().map(|data| format!("data:{gap}{data}")),
+            );
             if let Some(id) = &event.id {
                 lines.push(format!("id: {id}"));
                 last_id = Some(id.clone());
             }
-            if let Some(millis) = event.retry {
-                lines.push(format!("retry: {millis}"));
-                retry = Some(Duration::from_millis(millis));
+            match &event.retry {
+                Some(Retry::Millis(millis)) => {
+                    lines.push(format!("retry: {millis}"));
+                    retry = Some(Duration::from_millis(*millis));
+                }
+                Some(Retry::Not(value)) => {
+                    tc.event("a retry that is not a number");
+                    lines.push(format!("retry: {value}"));
+                }
+                None => {}
             }
             lines.push(String::new());
             for (line, end) in lines.iter().zip(&event.ends) {
@@ -591,7 +622,7 @@ mod tests {
         cuts.extend([0, bytes.len()]);
         cuts.sort_unstable();
         cuts.dedup();
-        let mut sse = Sse::new(None);
+        let mut sse = Sse::new(opened_with);
         let mut got = Vec::new();
         for pair in cuts.windows(2) {
             got.extend(frames(sse.feed(&bytes[pair[0]..pair[1]])));
@@ -599,40 +630,6 @@ mod tests {
         assert_eq!(got, expected, "{:?}", String::from_utf8_lossy(&bytes));
         assert_eq!(sse.last_id, last_id);
         assert_eq!(sse.retry(), retry);
-    }
-
-    #[test]
-    fn a_bare_carriage_return_ends_a_line_and_one_before_a_newline_ends_one() {
-        let mut sse = Sse::new(None);
-        let got = frames(sse.feed(b"data: one\rdata: two\r\r"));
-        assert_eq!(got, [json!({ "event": "message", "data": "one\ntwo" })]);
-        // `\r` at a chunk's end, then `\n`: one line end, not two.
-        assert!(sse.feed(b"data: three\r").is_empty());
-        assert!(sse.feed(b"\n").is_empty());
-        let got = frames(sse.feed(b"\r\n"));
-        assert_eq!(got, [json!({ "event": "message", "data": "three" })]);
-    }
-
-    #[test]
-    fn retry_says_how_long_to_wait_and_nothing_else_does() {
-        let mut sse = Sse::new(None);
-        assert_eq!(sse.retry(), None);
-        sse.feed(b"retry: 2500\n\n");
-        assert_eq!(sse.retry(), Some(Duration::from_millis(2500)));
-        // Not a number of milliseconds: ignored.
-        sse.feed(b"retry: soon\nretry: -1\nretry:\n\n");
-        assert_eq!(sse.retry(), Some(Duration::from_millis(2500)));
-    }
-
-    #[test]
-    fn comments_and_empty_events_are_no_frames_and_ids_carry_on() {
-        let mut sse = Sse::new(Some("3".into()));
-        let got = frames(sse.feed(b": ping\n\nevent: x\n\ndata:hi\n\n"));
-        // An event with no name is a message, with the id it had before.
-        assert_eq!(
-            got,
-            [json!({ "event": "message", "data": "hi", "id": "3" })]
-        );
     }
 
     #[test]

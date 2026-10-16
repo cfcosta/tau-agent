@@ -105,14 +105,17 @@ fn taus_variables_are_dropped_but_for_the_kept_ones() {
 
 /// A real command in a real sandbox: it writes its workspace and its
 /// home, cannot see a file next to its workspace (a stand-in for the
-/// person's), has none of tau's secrets in its environment, and reads
-/// the host's DNS settings.
+/// person's), has none of tau's own variables in its environment (here
+/// `CARGO_MANIFEST_DIR`, which the test runner sets for every test),
+/// and reads the host's DNS settings. `bwrap` is in the dev shell
+/// (`flake.nix`), so its absence fails the test rather than skipping it.
 #[test]
 fn a_real_command_stays_in_its_sandbox() {
-    let Some(bwrap) = find_bwrap() else {
-        eprintln!("bwrap is not on PATH: skipped");
-        return;
-    };
+    let bwrap = find_bwrap().expect("bwrap is on PATH in the dev shell");
+    assert!(
+        std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
+        "the test runner sets CARGO_MANIFEST_DIR"
+    );
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("agents/greet/workspaces/main");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -128,6 +131,7 @@ fn a_real_command_stays_in_its_sandbox() {
         "echo made > made && echo kept > \"$HOME/kept\" && \
          if cat {secret} 2>/dev/null; then echo SEEN; fi; \
          echo home=$HOME; \
+         echo manifest=${{CARGO_MANIFEST_DIR-dropped}}; \
          test -r /etc/resolv.conf && echo dns",
         secret = person.join("secret").display(),
     );
@@ -153,6 +157,7 @@ fn a_real_command_stays_in_its_sandbox() {
     );
     assert!(!stdout.contains("SEEN"), "{stdout}");
     assert!(stdout.contains(&format!("home={HOME}")), "{stdout}");
+    assert!(stdout.contains("manifest=dropped\n"), "{stdout}");
     if Path::new("/etc/resolv.conf").exists() {
         assert!(stdout.contains("dns"), "{stdout}");
     }

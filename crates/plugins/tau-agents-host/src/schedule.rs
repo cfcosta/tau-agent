@@ -125,19 +125,10 @@ impl Schedule {
 
 #[cfg(test)]
 mod tests {
-    use hegel::generators as gs;
+    use hegel::generators::{self as gs, Generator as _};
 
     use super::*;
     use crate::clock::FakeClock;
-
-    fn at(at: &str, days: &[&str]) -> Schedule {
-        Schedule::of(&TriggerKind::Schedule {
-            every: None,
-            at: Some(at.into()),
-            days: days.iter().map(|day| (*day).to_owned()).collect(),
-        })
-        .unwrap()
-    }
 
     /// A duration is a whole number above zero and a unit, `s`, `m`, `h`
     /// or `d`, maybe padded with spaces; anything else, or one too large to
@@ -215,39 +206,112 @@ mod tests {
         assert_eq!(time_of_day(&format!("{hours}")), None);
     }
 
-    #[test]
-    fn an_interval_skips_what_it_missed() {
-        let clock = FakeClock::new(0, 0);
-        let hourly = Schedule::Every(3600);
-        assert_eq!(hourly.first_after(1_000, &clock), 4_600);
-        // Due at 4 600, fired at 4 700: next at 8 200.
-        assert_eq!(hourly.after_firing(4_600, 4_700, &clock), 8_200);
-        // Five hours late: once, then the next hour from where it was.
-        assert_eq!(
-            hourly.after_firing(4_600, 4_600 + 5 * 3600 + 10, &clock),
-            4_600 + 6 * 3600
-        );
+    /// 2026-10-12T00:00:00Z, a Monday's midnight in UTC: weekdays are
+    /// counted from it, apart from the clock's own reckoning.
+    const MONDAY: i64 = 1_791_763_200;
+
+    /// An interval's next time, once it fired at `due` and it is `now`, is
+    /// the first of `due` and the intervals after it that is past now, and
+    /// never `due` itself: the times it missed fire as one. Counted one
+    /// interval at a time, not divided. Its first time is an interval on.
+    #[hegel::test(test_cases = 500)]
+    fn an_interval_moves_to_its_first_time_past_now(tc: hegel::TestCase) {
+        let every = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![60i64, 61, 3_600, DAY]),
+            gs::integers::<i64>().min_value(60).max_value(2 * DAY),
+        ));
+        let due =
+            tc.draw(gs::integers::<i64>().min_value(0).max_value(1 << 40));
+        // Early, on time, a moment late, exactly some intervals late, or
+        // anywhere up to ten intervals late.
+        let late = tc.draw(hegel::one_of!(
+            gs::integers::<i64>().min_value(-every).max_value(1),
+            gs::integers::<i64>()
+                .min_value(0)
+                .max_value(10)
+                .map(move |n| n * every),
+            gs::integers::<i64>().min_value(0).max_value(10 * every),
+        ));
+        let now = due + late;
+        let clock = FakeClock::new(now, 0);
+        let schedule = Schedule::Every(every);
+        let mut next = due + every;
+        while next <= now {
+            next += every;
+        }
+        if late >= every {
+            tc.event("missed some");
+        }
+        assert_eq!(schedule.after_firing(due, now, &clock), next);
+        assert_eq!(schedule.first_after(now, &clock), now + every);
     }
 
-    #[test]
-    fn a_time_of_day_is_the_hosts_on_its_days() {
-        // 2026-10-11T23:30:00Z, a Sunday; three hours east, it is Monday
-        // 02:30.
-        let now = 1_791_761_400;
-        let east = FakeClock::new(now, 3 * 3600);
-        let monday = clock::midnight(&east, now);
-        let nine = at("09:00", &[]);
-        assert_eq!(nine.first_after(now, &east), monday + 9 * 3600);
-        // Weekdays only from Tuesday on: Tuesday 09:00.
-        let tuesday = at("09:00", &["Tue", "Wed"]);
-        assert_eq!(tuesday.first_after(now, &east), monday + DAY + 9 * 3600);
-        // Once it fired, the next is a day on.
-        let due = monday + 9 * 3600;
-        assert_eq!(nine.after_firing(due, due + 5, &east), due + DAY);
-        // Fired three days late: the next after now.
-        assert_eq!(
-            nine.after_firing(due, due + 3 * DAY + 3600, &east),
-            due + 4 * DAY
-        );
+    /// A time of day is due at that time of the host's local day, at any
+    /// offset from UTC, on its days of the week (every day when none):
+    /// its first time after a moment is past it, at the time, on a day it
+    /// keeps, with no such time between, even from one of its own times.
+    /// Once it fired, its next time is the first past both its due time
+    /// and now.
+    #[hegel::test(test_cases = 500)]
+    fn a_time_of_day_comes_on_its_days_at_the_hosts_time(tc: hegel::TestCase) {
+        let offset = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![-14 * 3600, -3600, 0, 3 * 3600, 14 * 3600]),
+            gs::integers::<i32>()
+                .min_value(-14 * 3600)
+                .max_value(14 * 3600),
+        ));
+        let seconds = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0i64, 60, DAY - 60]),
+            gs::integers::<i64>()
+                .min_value(0)
+                .max_value(DAY / 60 - 1)
+                .map(|m| m * 60),
+        ));
+        let days: Vec<usize> =
+            tc.draw(gs::subsequences((0..7).collect::<Vec<usize>>()));
+        // It fired at one of its times: that time of some local day.
+        let day = tc.draw(gs::integers::<i64>().min_value(-30).max_value(30));
+        let due = MONDAY + day * DAY + seconds - i64::from(offset);
+        // At its time or a moment either side, whole days on (at its
+        // later times), or anywhere.
+        let late = tc.draw(hegel::one_of!(
+            gs::integers::<i64>().min_value(-2).max_value(2),
+            gs::integers::<i64>()
+                .min_value(0)
+                .max_value(8)
+                .map(|n| n * DAY),
+            gs::integers::<i64>().min_value(-DAY).max_value(9 * DAY),
+        ));
+        let now = due + late;
+        let clock = FakeClock::new(now, offset);
+        let schedule = Schedule::At {
+            seconds,
+            days: days.clone(),
+        };
+        let local = |at: i64| at + i64::from(offset);
+        let weekday =
+            |at: i64| (local(at) - MONDAY).div_euclid(DAY).rem_euclid(7);
+        let keeps = |at: i64| {
+            local(at).rem_euclid(DAY) == seconds
+                && (days.is_empty() || days.contains(&(weekday(at) as usize)))
+        };
+        let first_after = |after: i64, got: i64| {
+            assert!(got > after, "{got} is not past {after}");
+            assert!(keeps(got), "{got} is not on the schedule {days:?}");
+            // The schedule's earlier times are a whole number of days
+            // before: none of them is past `after` and kept.
+            for back in 1..=7 {
+                let earlier = got - back * DAY;
+                assert!(
+                    earlier <= after || !keeps(earlier),
+                    "{earlier} came first"
+                );
+            }
+        };
+        first_after(now, schedule.first_after(now, &clock));
+        first_after(now.max(due), schedule.after_firing(due, now, &clock));
+        if !days.is_empty() && days.len() < 7 {
+            tc.event("some days");
+        }
     }
 }
