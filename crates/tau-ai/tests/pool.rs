@@ -1188,6 +1188,45 @@ fn a_fork_takes_its_parent_s_connection() {
     assert_eq!(state.served_before.as_deref(), Some("fork"));
 }
 
+/// A tick moves every stalled lane before it places one that waits.
+/// Placed in between, a waiting lane took a new connection only for a
+/// stalled fork to take it over, and the connection was left having
+/// served a path it never sent for. (Found by
+/// `pool_places_lanes_by_affinity`.)
+#[test]
+fn a_tick_moves_stalled_lanes_before_waiting_ones() {
+    let second = Duration::from_secs(1);
+    let mut pool = Pool::new(Limits {
+        rotate_after: second,
+        idle_timeout: second,
+        stall_timeout: second,
+        affinity_wait: second,
+        max_idle: 0,
+        cache_lifetime: second,
+    });
+    for _ in 0..2 {
+        let (lane, _) = pool.open_lane(Affinity::default());
+        pool.submit(lane, on_path(None, vec![item("a")])).unwrap();
+    }
+    // A fork takes its parent's connection and sends there, so the
+    // parent waits for it, then cancels its request.
+    let (main, _) = pool.open_lane(Affinity::new("p0", Some("p1".into())));
+    let (fork, _) = pool.open_lane(Affinity::new("p1", Some("p0".into())));
+    pool.submit(fork, on_path(Some("p1"), vec![item("b")]))
+        .unwrap();
+    pool.submit(main, on_path(Some("p0"), vec![item("c")]))
+        .unwrap();
+    assert!(pool.is_waiting(main));
+    pool.cancel(main).unwrap();
+    // A second on, every connection with a request has stalled.
+    pool.tick(second);
+    for state in pool.connections() {
+        assert_eq!(state.served_before, None, "{state:?}");
+    }
+    assert_ne!(pool.connection_of(fork), pool.connection_of(main));
+    assert!(pool.connection_of(main).is_some());
+}
+
 /// After its first response, a fork no longer looks for its parent's
 /// connection.
 #[test]

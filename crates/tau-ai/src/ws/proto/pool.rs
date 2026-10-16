@@ -462,20 +462,26 @@ impl Pool {
         &mut self,
         connection: ConnectionId,
     ) -> Vec<PoolAction> {
+        let mut actions = self.lose(connection);
+        actions.extend(self.finish());
+        actions
+    }
+
+    /// [`Self::connection_lost`] without ending the operation: the lanes
+    /// that wait are placed once whatever lost `connection` is done.
+    fn lose(&mut self, connection: ConnectionId) -> Vec<PoolAction> {
         let Some(lost) = self.connections.remove(&connection) else {
             return Vec::new();
         };
-        let mut actions = Vec::new();
-        if let Some(lane) = lost.lane {
-            self.slot(lane).connection = None;
-            let action = self.slot(lane).lane.handle(Event::ConnectionLost);
-            actions.extend(match action {
-                Some(lane::Action::Reconnect) => self.reconnect(lane),
-                other => self.follow(lane, other),
-            });
+        let Some(lane) = lost.lane else {
+            return Vec::new();
+        };
+        self.slot(lane).connection = None;
+        let action = self.slot(lane).lane.handle(Event::ConnectionLost);
+        match action {
+            Some(lane::Action::Reconnect) => self.reconnect(lane),
+            other => self.follow(lane, other),
         }
-        actions.extend(self.finish());
-        actions
     }
 
     /// Advances the pool's clock to `now`, the time since an arbitrary
@@ -513,9 +519,12 @@ impl Pool {
             })
             .map(|(id, _)| *id)
             .collect();
+        // Every stalled lane moves before a waiting one is placed: placed
+        // in between, a waiting lane could take a connection only for a
+        // stalled lane's fork to take it from it again.
         for connection in stalled {
             actions.push(PoolAction::Close(connection));
-            actions.extend(self.connection_lost(connection));
+            actions.extend(self.lose(connection));
         }
         let aged: Vec<ConnectionId> = self
             .connections
