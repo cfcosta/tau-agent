@@ -17,7 +17,7 @@ use tau_constitution::ui::{
     State,
     Stats,
     page::{self, HandledKind, Mark, Preset, Trying, Ui},
-    stats::RulesStats,
+    stats::{FlaggedAnswer, RulesStats},
 };
 use tau_constitution_host::{NAME, Record};
 use tau_ui_plugin::{
@@ -45,27 +45,45 @@ fn card(call_id: &str, tool: &str, summary: &str) -> CardInfo {
 }
 
 /// One of tau-constitution's records: a check of a call or the answer,
-/// a verdict or a failure.
+/// a verdict on either, or a failure.
 #[hegel::composite]
 fn record(tc: &hegel::TestCase) -> Value {
     let rule = tc.draw(gs::sampled_from(vec!["R1", "R2", "R3"]));
-    let call = tc.draw(gs::booleans());
+    let call = tc.draw(gs::optional(gs::sampled_from(vec!["c1", "c2"])));
+    let score = f64::from(tc.draw(gs::integers::<u8>().max_value(100))) / 100.0;
     match tc.draw(gs::integers::<u8>().max_value(4)) {
-        0 => json!({
-            "kind": "checked",
-            "call_id": call.then_some("c1"),
-            "scores": [{"rule": rule, "score": 0.5}],
-            // Multiples of 1/1024, so sums are exact.
-            "cost": f64::from(tc.draw(gs::integers::<u32>().max_value(64)))
-                / 1024.0,
+        0 => {
+            let rules = tc.draw(gs::integers::<usize>().max_value(3));
+            json!({
+                "kind": "checked",
+                "call_id": call,
+                "scores": (1..=rules)
+                    .map(|n| json!({"rule": format!("R{n}"), "score": score}))
+                    .collect::<Vec<_>>(),
+                // Multiples of 1/1024, so sums are exact.
+                "cost": f64::from(tc.draw(gs::integers::<u32>().max_value(64)))
+                    / 1024.0,
+            })
+        }
+        1 => json!({
+            "kind": "blocked", "rule": rule, "text": format!("text of {rule}"),
+            "score": score, "call_id": call,
+            "reason": tc.draw(gs::optional(gs::sampled_from(vec!["Rule says no"]))),
         }),
-        1 => json!({"kind": "blocked", "rule": rule, "text": "", "score": 0.9}),
-        2 => json!({"kind": "flagged", "rule": rule, "text": "", "score": 0.5}),
+        2 => json!({
+            "kind": "flagged", "rule": rule, "text": format!("text of {rule}"),
+            "score": score, "call_id": call,
+        }),
         3 => json!({
-            "kind": "held", "rule": rule, "text": "", "score": 0.9,
-            "hold": 1, "max_holds": 3,
+            "kind": "held", "rule": rule, "text": format!("text of {rule}"),
+            "score": score, "hold": 1,
+            "max_holds": tc.draw(gs::integers::<u32>().min_value(1).max_value(5)),
         }),
-        _ => json!({"kind": "error", "message": "offline"}),
+        _ => json!({
+            "kind": "error", "message": "offline", "call_id": call,
+            "on_error": tc.draw(gs::sampled_from(vec!["allow", "block"])),
+            "held": tc.draw(gs::booleans()),
+        }),
     }
 }
 
@@ -102,29 +120,139 @@ fn loading_a_run_does_not_change_the_totals(tc: hegel::TestCase) {
     assert_eq!(stored.runs, runs.len());
 }
 
-/// Over any records, the fold counts them as the run's stats do, marks
-/// each call a verdict is about on its card, and notes each failure and
-/// each verdict on the answer.
+/// Over any records, the fold counts what the records hold: checks of
+/// calls and of answers, questions, failures, cost, and the rules behind
+/// each block, flag and hold, an answer's flag with the run's last
+/// text; each call a verdict is about is marked on its card as its last
+/// verdict says, and shows its last scores; each failure and each
+/// verdict on the answer gets a note of its own.
 #[hegel::test(test_cases = 200)]
 fn the_fold_marks_what_the_checks_decided(tc: hegel::TestCase) {
-    let bodies: Vec<Value> = tc.draw(gs::vecs(record()).max_size(8));
+    let bodies: Vec<Value> = tc.draw(gs::vecs(record()).max_size(10));
     let mut run = FakeRun {
-        cards: vec![card("c1", "exec_command", "rm -rf /")],
+        cards: vec![
+            card("c1", "exec_command", "rm -rf /"),
+            card("c2", "write", "a.rs"),
+        ],
+        last_text: Some("Done.".into()),
         turn: 1,
         ..FakeRun::default()
     };
     let mut state = State::default();
-    let mut stats = Stats::default();
     for body in &bodies {
         fold(ConstitutionUi, &mut state, body, &mut run);
-        stats.add(&Record::parse(body).unwrap(), None);
     }
-    assert_eq!(state.stats, stats);
-    // Verdicts here are all on the answer; failures and verdicts each
-    // get a note.
+
+    let kind = |body: &Value| body["kind"].as_str().unwrap().to_owned();
+    let rules_of = |what: &str| -> Vec<String> {
+        bodies
+            .iter()
+            .filter(|body| kind(body) == what)
+            .map(|body| body["rule"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let checks = |on_call: bool| {
+        bodies
+            .iter()
+            .filter(|body| {
+                kind(body) == "checked"
+                    && body["call_id"].is_string() == on_call
+            })
+            .count() as u32
+    };
+    let expected = Stats {
+        calls: checks(true),
+        answers: checks(false),
+        questions: bodies
+            .iter()
+            .filter(|body| kind(body) == "checked")
+            .map(|body| body["scores"].as_array().unwrap().len() as u32)
+            .sum(),
+        failed: bodies.iter().filter(|body| kind(body) == "error").count()
+            as u32,
+        cost: bodies
+            .iter()
+            .filter(|body| kind(body) == "checked")
+            .map(|body| body["cost"].as_f64().unwrap())
+            .sum(),
+        blocked: rules_of("blocked"),
+        flagged: rules_of("flagged"),
+        held: rules_of("held"),
+        max_holds: bodies
+            .iter()
+            .rev()
+            .find(|body| kind(body) == "held")
+            .map(|body| body["max_holds"].as_u64().unwrap() as u32),
+        flagged_answers: bodies
+            .iter()
+            .filter(|body| kind(body) == "flagged" && body["call_id"].is_null())
+            .map(|body| FlaggedAnswer {
+                rule: body["rule"].as_str().unwrap().to_owned(),
+                text: body["text"].as_str().unwrap().to_owned(),
+                score: body["score"].as_f64().unwrap(),
+                answer: "Done.".into(),
+            })
+            .collect(),
+    };
+    assert_eq!(state.stats, expected);
+
+    for call in ["c1", "c2"] {
+        let about = |body: &&Value| body["call_id"] == call;
+        let verdict = bodies.iter().filter(about).rfind(|body| {
+            ["blocked", "flagged"].contains(&kind(body).as_str())
+        });
+        let mark = verdict.map(|body| match kind(body).as_str() {
+            "blocked" => CardMark::Blocked {
+                reason: body["reason"]
+                    .as_str()
+                    .or(body["text"].as_str())
+                    .unwrap()
+                    .to_owned(),
+            },
+            _ => CardMark::Flagged,
+        });
+        assert_eq!(run.marks.get(call), mark.as_ref(), "{call}");
+        let scores: Option<Vec<(String, f64)>> = bodies
+            .iter()
+            .filter(about)
+            .rfind(|body| kind(body) == "checked")
+            .map(|body| {
+                body["scores"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|score| {
+                        (
+                            score["rule"].as_str().unwrap().to_owned(),
+                            score["score"].as_f64().unwrap(),
+                        )
+                    })
+                    .collect()
+            });
+        let shown = state.calls.get(call);
+        if verdict.is_none() && scores.is_none() {
+            assert!(shown.is_none(), "{call}");
+            continue;
+        }
+        let shown = shown.unwrap();
+        assert_eq!(shown.scores, scores.unwrap_or_default(), "{call}");
+        assert_eq!(
+            shown.verdict.as_ref().map(|v| (v.rule.as_str(), v.score)),
+            verdict.map(|body| (
+                body["rule"].as_str().unwrap(),
+                body["score"].as_f64().unwrap()
+            )),
+            "{call}"
+        );
+    }
+
+    // A note for each failure and each verdict on the answer.
     let noted = bodies
         .iter()
-        .filter(|body| body["kind"] != "checked")
+        .filter(|body| {
+            kind(body) == "error"
+                || (kind(body) != "checked" && body["call_id"].is_null())
+        })
         .count();
     assert_eq!(run.anchors.len(), noted);
     assert_eq!(state.notes.len(), noted);
