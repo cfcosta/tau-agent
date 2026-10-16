@@ -118,20 +118,24 @@ pub fn count(n: usize, noun: &str) -> String {
     }
 }
 
-/// `83 B`, `4.2 KB`, `267 KB`, `1.4 MB`.
+/// `83 B`, `4.2 KB`, `267 KB`, `1.4 MB`: the smallest unit whose
+/// number, as printed, stays under 1024, with one decimal but for KB from
+/// 10 up. The unit is picked after rounding, so 1023.99 KB is `1.0 MB`.
 pub fn size(bytes: u64) -> String {
     const KB: f64 = 1024.;
-    let b = bytes as f64;
     if bytes < 1024 {
-        format!("{bytes} B")
-    } else if b < 10. * KB {
-        format!("{:.1} KB", b / KB)
-    } else if b < KB * KB {
-        format!("{:.0} KB", b / KB)
-    } else if b < KB * KB * KB {
-        format!("{:.1} MB", b / (KB * KB))
+        return format!("{bytes} B");
+    }
+    let kb = bytes as f64 / KB;
+    let mb = kb / KB;
+    if (kb * 10.).round() < 100. {
+        format!("{kb:.1} KB")
+    } else if kb.round() < KB {
+        format!("{kb:.0} KB")
+    } else if (mb * 10.).round() < KB * 10. {
+        format!("{mb:.1} MB")
     } else {
-        format!("{:.1} GB", b / (KB * KB * KB))
+        format!("{:.1} GB", mb / KB)
     }
 }
 
@@ -196,15 +200,97 @@ mod tests {
         assert_eq!(listing.entries[0].change, Some(ChangeKind::Modified));
     }
 
-    #[test]
-    fn sizes_and_ages_read_short() {
-        assert_eq!(size(83), "83 B");
-        assert_eq!(size(4329), "4.2 KB");
-        assert_eq!(size(272_948), "267 KB");
-        assert_eq!(size(1_468_006), "1.4 MB");
-        assert_eq!(age(1_000, 1_030), "now");
-        assert_eq!(age(1_000, 1_000 + 8 * 60), "8m");
-        assert_eq!(age(0, 3 * 86_400), "3d");
-        assert_eq!(age(0, 400 * 86_400), "1y");
+    /// The byte counts where `size`'s rule changes: the first KB, the
+    /// rounding to 10 KB (9.95 KB) and to the next unit (1023.5 KB,
+    /// 1023.95 MB), and each unit, one byte either side.
+    fn size_boundaries() -> Vec<u64> {
+        let edges = [1_024u64, 10_189, 10_240, 1_048_064, 1_048_576]
+            .into_iter()
+            .chain([1_073_689_396, 1 << 30]);
+        edges.flat_map(|edge| [edge - 1, edge, edge + 1]).collect()
+    }
+
+    /// A size reads as bytes below 1 KiB, else as a number of the
+    /// smallest unit (KB, MB, GB) that keeps it, as printed, under 1024:
+    /// within half its last digit of the exact amount, at least 1, with
+    /// one decimal, but for KB from 10 up, which has none.
+    #[hegel::test(test_cases = 500)]
+    // These read "10.0 KB" and "1024 KB" when the unit was picked before
+    // rounding.
+    #[hegel::explicit_test_case(bytes = 10_189_u64)]
+    #[hegel::explicit_test_case(bytes = 1_048_575_u64)]
+    fn a_size_reads_in_the_smallest_unit_that_keeps_it_short(
+        tc: hegel::TestCase,
+    ) {
+        use hegel::generators as gs;
+        let bytes: u64 = tc.draw(hegel::one_of!(
+            gs::sampled_from(size_boundaries()),
+            gs::integers::<u64>().max_value(1 << 21),
+            gs::integers::<u64>().max_value(1 << 34),
+        ));
+        let text = size(bytes);
+        let (number, unit) = text.split_once(' ').expect("a number and a unit");
+        if unit == "B" {
+            assert!(bytes < 1024, "{text}");
+            assert_eq!(number, bytes.to_string());
+            return;
+        }
+        assert!(bytes >= 1024, "{text}");
+        let scale = match unit {
+            "KB" => 1024f64,
+            "MB" => 1024f64 * 1024.,
+            "GB" => 1024f64 * 1024. * 1024.,
+            other => panic!("{other} is no unit: {text}"),
+        };
+        let value: f64 = number.parse().unwrap();
+        let decimals = number.split_once('.').map_or(0, |(_, d)| d.len());
+        let wanted = if unit == "KB" && value >= 10. { 0 } else { 1 };
+        assert_eq!(decimals, wanted, "{bytes} as {text}");
+        let step = if decimals == 0 { 1. } else { 0.1 };
+        let exact = bytes as f64 / scale;
+        assert!(
+            (value - exact).abs() <= step / 2. + 1e-9,
+            "{bytes} as {text}"
+        );
+        assert!(value >= 1., "{bytes} as {text}: a smaller unit keeps it");
+        if unit != "GB" {
+            assert!(value < 1024., "{bytes} as {text}: a larger unit keeps it");
+        }
+    }
+
+    /// Units of time, largest last, and their names.
+    const UNITS: [(i64, &str); 5] = [
+        (60, "m"),
+        (3_600, "h"),
+        (86_400, "d"),
+        (2_592_000, "mo"),
+        (31_536_000, "y"),
+    ];
+
+    /// An age is `now` under a minute (or in the future), else the whole
+    /// number of the largest unit it reaches.
+    #[hegel::test(test_cases = 500)]
+    fn an_age_is_the_largest_unit_it_reaches(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let edges: Vec<i64> = UNITS
+            .iter()
+            .flat_map(|(unit, _)| [unit - 1, *unit, unit + 1])
+            .chain([-1, 0, 59])
+            .collect();
+        let elapsed: i64 = tc.draw(hegel::one_of!(
+            gs::sampled_from(edges),
+            gs::integers::<i64>()
+                .min_value(-100)
+                .max_value(10 * 31_536_000),
+        ));
+        let modified: i64 = tc
+            .draw(gs::integers::<i64>().min_value(0).max_value(2_000_000_000));
+        let text = age(modified, modified + elapsed);
+        match UNITS.iter().rev().find(|(unit, _)| elapsed >= *unit) {
+            None => assert_eq!(text, "now", "{elapsed}"),
+            Some((unit, name)) => {
+                assert_eq!(text, format!("{}{name}", elapsed / unit))
+            }
+        }
     }
 }
