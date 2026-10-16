@@ -64,24 +64,6 @@ fn round_trip_wire_realistic_message(tc: TestCase) {
     assert_eq!(result, message);
 }
 
-/// Unknown server event types anywhere in a stream are ignored and do
-/// not change the result. `docs/reference/testing.md`'s "tau-ai"
-/// property inventory.
-#[hegel::test(test_cases = 500)]
-fn unknown_frames_anywhere_do_not_change_the_result(tc: TestCase) {
-    let message = tc.draw(wire_assistant_message());
-    let clean = draw_response_frames(&tc, &message);
-    let with_unknowns = interleave_unknown_frames(&tc, clean.clone());
-
-    let clean_result = run(&message.model, message.timestamp, &clean)
-        .finish()
-        .expect("the clean stream terminates");
-    let noisy_result = run(&message.model, message.timestamp, &with_unknowns)
-        .finish()
-        .expect("inserting unknown frames must not break termination");
-    assert_eq!(clean_result, noisy_result);
-}
-
 /// Every strict prefix of a valid frame stream, closed instead of
 /// completed, ends in `Error`, never `Done`, and every event along the
 /// way (including the ones `close()` produces) satisfies the

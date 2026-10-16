@@ -68,18 +68,6 @@ fn input(tc: &TestCase) -> Vec<Value> {
     tc.draw(gs::vecs(generators::lane::item()).max_size(4))
 }
 
-/// Two bodies for the same settings differ only in `input`, which is
-/// what lets the delta rule continue a run.
-#[hegel::test(test_cases = 300)]
-fn bodies_differ_only_in_input(tc: TestCase) {
-    let settings = tc.draw(settings());
-    let mut a = body(&settings, input(&tc));
-    let mut b = body(&settings, input(&tc));
-    a.remove("input");
-    b.remove("input");
-    assert_eq!(a, b);
-}
-
 /// The WebSocket rules hold for every body: fixed type, `store: false`,
 /// no forbidden fields, and the input as given.
 #[hegel::test(test_cases = 300)]

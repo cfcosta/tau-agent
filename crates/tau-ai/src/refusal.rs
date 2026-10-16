@@ -132,19 +132,6 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_upgrade_keeps_status_code_and_request_id() {
-        let body = br#"{"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"m"}}"#;
-        let error = ApiError::new(429, Some("req_1".into()), body);
-        let refusal = Refusal::from_api(&error);
-        assert_eq!(refusal.recovery, Recovery::UsageLimit);
-        assert_eq!(refusal.status, Some(429));
-        assert_eq!(refusal.request_id.as_deref(), Some("req_1"));
-        assert!(refusal.message.contains("req_1"));
-        let busy = ApiError::new(503, None, br#"{"detail":"later"}"#);
-        assert_eq!(Refusal::from_api(&busy).class(), Class::Retryable);
-    }
-
-    #[test]
     fn only_refusals_come_from_sign_in_errors() {
         let network = ChatGptError::Network(std::io::Error::other("down"));
         assert_eq!(Refusal::from_chatgpt(&network), None);

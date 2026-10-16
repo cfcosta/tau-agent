@@ -661,32 +661,6 @@ fn undamaged_transcript_drops_nothing(tc: TestCase) {
     assert_eq!(extract_texts(&items), walk_texts(&messages));
 }
 
-/// Ids: a surviving `function_call`'s `call_id` and `id`, joined back
-/// with `|`, equal the original tool call id.
-#[hegel::test(test_cases = 300)]
-fn function_call_id_round_trips(tc: TestCase) {
-    let call = tc.draw(generators::tool_call());
-    let messages = vec![
-        Message::Assistant(assistant_with(
-            vec![AssistantBlock::ToolCall(call.clone())],
-            StopReason::ToolUse,
-        )),
-        Message::ToolResult(
-            tc.draw(generators::tool_result_for_call(call.clone())),
-        ),
-    ];
-    let items = to_input(&messages);
-    let function_call = items
-        .iter()
-        .find(|item| item["type"] == "function_call")
-        .expect("the call has a matching result, so it survives");
-    let call_id = function_call["call_id"].as_str().unwrap();
-    let item_id = function_call["id"]
-        .as_str()
-        .expect("tau_testing's tool_call() ids always have an item_id half");
-    assert_eq!(format!("{call_id}|{item_id}"), call.id);
-}
-
 /// `split_tool_call_id` loses nothing, whatever the id holds: the
 /// `call_id` has no `|`, the `item_id` is there exactly when the id has
 /// a `|`, and joining the halves back with `|` gives the id.

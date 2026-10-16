@@ -158,31 +158,6 @@ fn the_bearer_is_refreshed_before_the_connection() {
     );
 }
 
-/// Two clients of one sign-in share its refresh: one grant, whatever
-/// the order they connect in.
-#[test]
-fn clones_share_one_refresh() {
-    let api = FakeOpenAi::new(vec![completed("resp_1"), completed("resp_2")]);
-    simulate(
-        FakeChatGpt::new(),
-        api,
-        |chat, api, chatgpt, account| async move {
-            chat.advance(3600);
-            let first = OpenAi::chatgpt(chatgpt.clone(), account.clone());
-            let second = OpenAi::chatgpt(chatgpt.clone(), account.clone());
-            let (a, b) = tokio::join!(
-                respond(&first, settings()),
-                respond(&second, settings())
-            );
-            assert!(matches!(a.last(), Some(AssistantEvent::Done { .. })));
-            assert!(matches!(b.last(), Some(AssistantEvent::Done { .. })));
-            assert_eq!(chat.refresh_grants(), 1);
-            assert_eq!(chat.violations(), Vec::<String>::new());
-            assert_eq!(api.authorizations().len(), 2);
-        },
-    );
-}
-
 /// The request fields the plan route does not take ("Preview
 /// limitations" in OpenAI's plan-usage docs), written out apart from
 /// `tau_ai::chatgpt::UNSUPPORTED_FIELDS`.

@@ -501,51 +501,6 @@ async fn collect(
     accumulator.finish().unwrap()
 }
 
-/// Two runs get a connection each, no request names a lane, and each
-/// run gets the response its own connection carried.
-#[hegel::test(test_cases = 20)]
-fn runs_get_a_connection_each(tc: TestCase) {
-    let (first, first_reply) = respond(&tc, "resp_a");
-    let (second, second_reply) = respond(&tc, "resp_b");
-    let got: Rc<RefCell<Vec<AssistantMessage>>> = Rc::default();
-    let seen = got.clone();
-    let labels = [
-        (first.model.clone(), first.timestamp),
-        (second.model.clone(), second.timestamp),
-    ];
-    let fake = simulate(vec![first_reply, second_reply], async move {
-        let transport = Transport::start(SimConnector, Limits::default());
-        let settings = Settings {
-            model: "gpt-5.5".into(),
-            ..Settings::default()
-        };
-        let input = to_input(&[user("hi")]);
-        // Open lanes keep their connections, so the next run cannot take
-        // one. One at a time, so the fake's reply order is the lanes'.
-        let mut open = Vec::new();
-        for (model, timestamp) in labels {
-            let lane = transport.open_lane(Affinity::default()).await.unwrap();
-            let response =
-                lane.request(body(&settings, input.clone()), model, timestamp);
-            let message = collect(response).await;
-            seen.borrow_mut().push(message);
-            open.push(lane);
-        }
-        Ok(())
-    });
-    assert_eq!(fake.connections(), 2);
-    let received = fake.received();
-    assert_eq!(received.len(), 2);
-    assert!(received.iter().all(|r| r.body.get("stream_id").is_none()));
-    assert_ne!(received[0].connection, received[1].connection);
-    let got = got.borrow();
-    for (have, want) in got.iter().zip([&first, &second]) {
-        let mut want = want.clone();
-        want.usage.cost = have.usage.cost.clone();
-        assert_eq!(have, &want);
-    }
-}
-
 /// Dropping an unfinished response cancels its request, so the lane can
 /// take the next one; dropping a finished response later does not
 /// cancel the request that followed it.
@@ -773,6 +728,15 @@ fn concurrent_runs_get_a_connection_each(tc: TestCase) {
     let stats = stats.borrow_mut().take().unwrap();
     assert_eq!(stats.connections_opened as usize, lanes);
     assert_eq!(fake.connections() as usize, lanes);
+    // No request names a lane, and each went on a connection of its own.
+    let received = fake.received();
+    assert_eq!(received.len(), lanes);
+    assert!(received.iter().all(|r| r.body.get("stream_id").is_none()));
+    let mut connections: Vec<_> =
+        received.iter().map(|r| r.connection).collect();
+    connections.sort_unstable();
+    connections.dedup();
+    assert_eq!(connections.len(), lanes);
 }
 
 /// Runs one after another reuse one connection: each run's lane closes

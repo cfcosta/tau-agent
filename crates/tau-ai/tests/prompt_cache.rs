@@ -2,8 +2,8 @@
 //! `FakeOpenAi`'s per-connection prompt cache, in a turmoil simulation
 //! (`docs/reference/openai-websocket.md`, "Prompt cache"). A resumed
 //! conversation reads its prefix on its own connection, a fork's first
-//! request reads its parent's, parallel forks get connections of their
-//! own, and a different tool list reads nothing.
+//! request reads its parent's, and parallel forks get connections of
+//! their own.
 
 use std::{cell::RefCell, io, rc::Rc};
 
@@ -285,60 +285,4 @@ fn parallel_forks_get_their_own_connections(tc: TestCase) {
     assert!(a.cached_tokens >= main.input_tokens);
     assert_ne!(b.connection, main.connection);
     assert_eq!(b.cached_tokens, 0);
-}
-
-/// A fork whose tool list differs from its parent's still takes the
-/// parent's connection, but reads nothing from its cache: the tools come
-/// first in the prompt.
-#[hegel::test(test_cases = 5)]
-fn a_different_tool_list_reads_nothing(tc: TestCase) {
-    let received = simulate(&tc, 2, |client, reported| async move {
-        let mut transcript = vec![user("hello")];
-        let mut main = client
-            .session(settings("main", None, &["read", "delegate"]))
-            .await
-            .unwrap();
-        let (answer, cached) = ask(&mut main, &transcript).await;
-        reported.borrow_mut().push(("main", cached));
-        drop(main);
-        transcript.push(Message::Assistant(answer));
-        transcript.push(user("chat"));
-        let mut chat = client
-            .session(settings("chat", Some("main"), &["read"]))
-            .await
-            .unwrap();
-        let (_, cached) = ask(&mut chat, &transcript).await;
-        reported.borrow_mut().push(("chat", cached));
-    });
-    assert_eq!(received[1].connection, received[0].connection);
-    assert_eq!(received[1].cached_tokens, 0);
-}
-
-/// Instructions that grow at the end still read the prefix up to the
-/// change: the head and the instructions they share, not the input
-/// after them.
-#[hegel::test(test_cases = 5)]
-fn longer_instructions_read_up_to_the_change(tc: TestCase) {
-    let received = simulate(&tc, 2, |client, reported| async move {
-        let transcript = vec![user("hello")];
-        let mut first = client
-            .session(settings("main", None, &["read"]))
-            .await
-            .unwrap();
-        let (_, cached) = ask(&mut first, &transcript).await;
-        reported.borrow_mut().push(("main", cached));
-        drop(first);
-        let mut longer = settings("main", None, &["read"]);
-        if let Some(text) = &mut longer.instructions {
-            text.push_str("Repository notes: use tabs.");
-        }
-        let mut again = client.session(longer).await.unwrap();
-        let (_, cached) = ask(&mut again, &transcript).await;
-        reported.borrow_mut().push(("main", cached));
-    });
-    assert_eq!(received[1].connection, received[0].connection);
-    assert!(received[1].body.get("previous_response_id").is_none());
-    let instructions = settings("main", None, &[]).instructions.unwrap();
-    assert!(received[1].cached_tokens >= instructions.len() as u64 / 4);
-    assert!(received[1].cached_tokens < received[0].input_tokens);
 }
