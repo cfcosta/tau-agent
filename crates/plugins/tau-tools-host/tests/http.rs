@@ -533,30 +533,113 @@ fn secret_names_follow_the_rule(tc: TestCase) {
     assert_eq!(valid_name(&name), rule.is_match(&name), "{name:?}");
 }
 
-/// Property inventory: whatever text a value of at least four bytes is
-/// put into, at any places, scrubbed text holds no copy of it and keeps
-/// the text around it. The oracle is the text built without the value.
-/// Generator plan: the value is drawn from digits, `_` and `.`, and the
-/// pieces between its copies from letters, spaces and `-:[]`, so no piece
-/// holds it, no two pieces make it across an edge, and the mark
-/// `[secret:key]` cannot hold it; nothing is rejected, and shrinking
-/// shortens both.
-#[hegel::test]
+/// Up to three secrets, whose values may sit one inside another, may
+/// be equal, or may be too short to scrub.
+#[hegel::composite]
+fn secrets(tc: &TestCase) -> Vec<(String, String)> {
+    let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
+    let mut values: Vec<String> = Vec::new();
+    for _ in 0..count {
+        let fresh = || {
+            hegel::one_of!(
+                // Around the 4-byte threshold, or any length up to 8.
+                gs::sampled_from(vec![3usize, 4]).flat_map(|len| {
+                    gs::text().alphabet("019_.").min_size(len).max_size(len)
+                }),
+                gs::text().alphabet("019_.").max_size(8),
+            )
+        };
+        let value: String =
+            match (values.len(), tc.draw(gs::integers::<u8>().max_value(2))) {
+                (0, _) | (_, 0) => tc.draw(fresh()),
+                // A part of an earlier value, or one with more around it.
+                (n, kind) => {
+                    let earlier = &values
+                        [tc.draw(gs::integers::<usize>().max_value(n - 1))];
+                    if kind == 1 {
+                        let start = tc.draw(
+                            gs::integers::<usize>().max_value(earlier.len()),
+                        );
+                        let end = tc.draw(
+                            gs::integers::<usize>()
+                                .min_value(start)
+                                .max_value(earlier.len()),
+                        );
+                        earlier[start..end].to_owned()
+                    } else {
+                        let before: String =
+                            tc.draw(gs::text().alphabet("019_.").max_size(2));
+                        format!("{before}{earlier}")
+                    }
+                }
+            };
+        values.push(value);
+    }
+    ["a", "b", "c"]
+        .into_iter()
+        .map(str::to_owned)
+        .zip(values)
+        .collect()
+}
+
+/// Property inventory: scrubbed text is the text with each copy of a
+/// value of at least 4 bytes replaced whole by its mark, a value that
+/// holds another going whole, an equal value marked by the first name,
+/// and a value under 4 bytes left; no scrubbed value is left in it, in
+/// text or in bytes that are not UTF-8. The oracle builds the expected
+/// text from the same pieces. Generator plan: values are drawn from
+/// digits, `_` and `.`, and the pieces between copies (never empty
+/// between two copies) from letters, spaces and `-:[]`, so a copy is
+/// exactly one run of value characters and no mark holds one; nothing
+/// is rejected, and shrinking shortens both.
+#[hegel::test(test_cases = 300)]
 fn scrubbed_text_never_holds_a_secret(tc: TestCase) {
-    let value: String =
-        tc.draw(gs::text().alphabet("019_.").min_size(4).max_size(24));
-    let pieces: Vec<String> = tc.draw(
-        gs::vecs(gs::text().alphabet("abc xyz-:[]").max_size(12))
-            .min_size(1)
-            .max_size(6),
+    let secrets = tc.draw(secrets());
+    let copies: Vec<usize> = tc.draw(
+        gs::vecs(gs::integers::<usize>().max_value(secrets.len() - 1))
+            .max_size(5),
     );
-    let text = pieces.join(&value);
-    let secrets = BTreeMap::from([("key".to_owned(), value.clone())]);
-    let scrubbed = Scrub::new(&secrets).text(&text);
-    assert!(!scrubbed.contains(&value), "{scrubbed:?}");
-    assert_eq!(scrubbed, pieces.join("[secret:key]"));
-    let bytes = Scrub::new(&secrets).bytes(text.as_bytes());
-    assert_eq!(bytes, pieces.join("[secret:key]").into_bytes());
+    let piece = |min: usize| {
+        gs::text().alphabet("abc xyz-:[]").min_size(min).max_size(6)
+    };
+    let first: String = tc.draw(piece(0));
+    let mut text = first.clone();
+    let mut expected = first;
+    for (n, &at) in copies.iter().enumerate() {
+        let value = &secrets[at].1;
+        text.push_str(value);
+        expected.push_str(&if value.len() >= 4 {
+            let name = secrets
+                .iter()
+                .find(|(_, other)| other == value)
+                .map(|(name, _)| name)
+                .unwrap();
+            format!("[secret:{name}]")
+        } else {
+            value.clone()
+        });
+        let after: String = tc.draw(piece(usize::from(n + 1 < copies.len())));
+        text.push_str(&after);
+        expected.push_str(&after);
+    }
+    let map: BTreeMap<String, String> = secrets.iter().cloned().collect();
+    let scrub = Scrub::new(&map);
+    let scrubbed = scrub.text(&text);
+    assert_eq!(scrubbed, expected, "{text:?}");
+    for (_, value) in &secrets {
+        if value.len() >= 4 {
+            assert!(
+                !scrubbed.contains(value.as_str()),
+                "{value:?} in {scrubbed:?}"
+            );
+        }
+    }
+    // The same in bytes that are not UTF-8.
+    let mut bytes = vec![0xff];
+    bytes.extend_from_slice(text.as_bytes());
+    let mut want = vec![0xff];
+    want.extend_from_slice(expected.as_bytes());
+    assert_eq!(scrub.bytes(&bytes), want);
 }
 
 /// Each agent's keys are a file of its own: one agent's store never
