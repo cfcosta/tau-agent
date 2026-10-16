@@ -332,9 +332,14 @@ mod tests {
 
     /// Text around [`MAX_DIFF_BYTES`] long: runs of one character, some
     /// of them several bytes wide, each maybe ending a line. Long runs
-    /// make lines far longer than the limit as well as short ones.
+    /// make lines far longer than the limit as well as short ones. Or
+    /// text right at the limit (see [`at_the_limit`]), which runs almost
+    /// never reach.
     #[hegel::composite]
     fn text(tc: &hegel::TestCase) -> String {
+        if tc.draw(gs::weighted_booleans(0.3)) {
+            return tc.draw(at_the_limit());
+        }
         let runs: Vec<(char, usize, bool)> = tc.draw(
             gs::vecs(hegel::tuples!(
                 gs::sampled_from(vec!['a', 'é', '€', '😀']),
@@ -351,6 +356,38 @@ mod tests {
             }
         }
         text
+    }
+
+    /// Text within two bytes of [`MAX_DIFF_BYTES`] long, with line ends
+    /// just before, at and just past the limit, and a three-byte
+    /// character that may straddle it.
+    #[hegel::composite]
+    fn at_the_limit(tc: &hegel::TestCase) -> String {
+        let len =
+            MAX_DIFF_BYTES - 2 + tc.draw(gs::integers::<usize>().max_value(4));
+        let mut bytes = vec![b'a'; len];
+        let near = || {
+            hegel::one_of!(
+                gs::sampled_from(vec![
+                    MAX_DIFF_BYTES - 2,
+                    MAX_DIFF_BYTES - 1,
+                    MAX_DIFF_BYTES,
+                    MAX_DIFF_BYTES + 1,
+                ]),
+                gs::integers::<usize>().max_value(len - 1),
+            )
+        };
+        if let Some(at) =
+            tc.draw(gs::optional(near())).filter(|at| at + 3 <= len)
+        {
+            bytes[at..at + 3].copy_from_slice("€".as_bytes());
+        }
+        for at in tc.draw(gs::vecs(near()).max_size(2)) {
+            if at < len && bytes[at].is_ascii() {
+                bytes[at] = b'\n';
+            }
+        }
+        String::from_utf8(bytes).expect("ASCII around a whole character")
     }
 
     /// A diff at most [`MAX_DIFF_BYTES`] long comes back whole. A longer
