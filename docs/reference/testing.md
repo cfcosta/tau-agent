@@ -203,6 +203,9 @@ own.
   U+2028/U+2029, NNBSP, smart quotes, combining marks, and multi-byte
   characters at chunk and truncation boundaries. Use `one_of!` to mix a
   small alphabet of these into ordinary text.
+- **Draw lengths at their bounds.** A regex or a range rarely reaches
+  its edge on its own: a `{0,41}` name almost never has 41 characters.
+  Mix `sampled_from` of the boundary lengths into the range.
 - **Derive when the type is plain.** Use `#[derive(DefaultGenerator)]`
   for configuration structs and small enums. Write a composite for
   anything with invariants.
@@ -355,6 +358,7 @@ list is a floor, not a ceiling.
 | Transport: `PoolStats` matches the model: `delta_requests` equals requests minus the forced full resends, and a new lane reuses a connection a closed lane left                                                                                                                                                                                                       | Model        |
 | Transport: `websocket_connection_limit_reached` reconnects once, and only before any output was emitted; after output it becomes an `error` event                                                                                                                                                                                                                     | Model        |
 | A turn cancelled before its terminal event records zero usage                                                                                                                                                                                                                                                                                                         | Model        |
+| A v1 text signature's phase goes out if and only if it is exactly `commentary` or `final_answer`                                                                                                                                                                                                                                                                      | Differential |
 | Cost is additive: `cost(a + b) == cost(a) + cost(b)` for usages of the same model and tier                                                                                                                                                                                                                                                                            | Algebraic    |
 
 The delta rule is the riskiest code in the project. Its model test must
@@ -363,37 +367,39 @@ also run in the nightly tier and under `cargo mutants`
 
 ### `tau-agent`
 
-| Property                                                                                                                                                               | Oracle       |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| Strict schema rewrite: every object in the output has all properties required and `additionalProperties: false`                                                        | Invariant    |
-| Strict schema rewrite is idempotent                                                                                                                                    | Algebraic    |
-| A value valid under the original schema, with missing optional fields set to `null`, is valid under the strict schema                                                  | Metamorphic  |
-| A schema with a string `format` has a strict form exactly when OpenAI's strict mode takes the format, and a strict form holds no other                                 | Invariant    |
-| Coercion leaves a value that already validates unchanged                                                                                                               | Invariant    |
-| Coercion is idempotent                                                                                                                                                 | Algebraic    |
-| A number, a boolean or a one-element array gives the same result as its string or scalar form after coercion                                                           | Metamorphic  |
-| `before_tool` plugins: the result equals a left fold over the plugins in which the first `Block` or error wins                                                         | Model        |
-| **Loop, over generated scripts** (tool calls, tool results that succeed, fail or take time, steering, cancel at any point):                                            | Model        |
-| · every tool call in the transcript has exactly one result, including after a cancel                                                                                   |              |
-| · result messages are in source order; `ToolStart` is in source order; `ToolEnd` is in completion order                                                                |              |
-| · the event stream matches the grammar `RunStart (TurnStart … TurnEnd)* RunEnd`, and nothing follows `RunEnd`                                                          |              |
-| · steered messages appear after the tool batch that was running, in the order they were sent                                                                           |              |
-| · the persisted usage equals the sum of the turns' usage                                                                                                               |              |
-| · in a parallel batch, tools whose virtual-time intervals could overlap do overlap; with any `Sequential` tool, no two intervals overlap                               |              |
-| · grouped calls start together, and no two groups overlap; groups start in the order their first calls come                                                            |              |
-| · a tool call cut off by a `length` stop never runs                                                                                                                    |              |
-| · a `ToolUpdate` sent after the tool's future resolved produces no event and no panic                                                                                  |              |
-| Steering sent from inside `on_event` or `before_tool` is drained at the next drain point, exactly once                                                                 | Model        |
-| A slow `on_event` subscriber holds its run: the run does not finish until the subscriber returns, and other runs keep going                                            | Model        |
-| Arguments changed by `before_tool` are validated again; invalid ones yield an error result and the tool never runs                                                     | Model        |
-| Limits: a run ends with `StopReason::Limit` if and only if a limit was exceeded after some turn, and child usage counts                                                | Model        |
-| A fork's transcript equals the parent's transcript up to the checkpoint, followed by the fork's own messages                                                           | Model        |
-| (`tau-compaction`) Compaction cut point never falls between a tool call and its result, and never on a tool result                                                     | Invariant    |
-| The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer or snapping past an oversized tool result moved the cut                   | Invariant    |
-| The token estimate never decreases when a message is appended                                                                                                          | Invariant    |
-| With no reported usage anywhere, the estimate is `chars / 4` over every message                                                                                        | Differential |
-| A summary that stops with `length` or `error`, or that calls a tool, fails compaction and writes nothing                                                               | Model        |
-| Repeated compactions: a second compaction runs only when the kept messages no longer fit, and summarizes messages the first one kept once they leave the recent window | Model        |
+| Property                                                                                                                                                                                                                              | Oracle       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| Strict schema rewrite: every object in the output has all properties required and `additionalProperties: false`                                                                                                                       | Invariant    |
+| Strict schema rewrite is idempotent                                                                                                                                                                                                   | Algebraic    |
+| A value valid under the original schema, with missing optional fields set to `null`, is valid under the strict schema                                                                                                                 | Metamorphic  |
+| A schema with a string `format` has a strict form exactly when OpenAI's strict mode takes the format, and a strict form holds no other                                                                                                | Invariant    |
+| Coercion leaves a value that already validates unchanged                                                                                                                                                                              | Invariant    |
+| Coercion is idempotent                                                                                                                                                                                                                | Algebraic    |
+| A scalar coerced under one to three type names comes out as pi's primitive table, written out in the test, says                                                                                                                       | Differential |
+| A number, a boolean or a one-element array gives the same result as its string or scalar form after coercion                                                                                                                          | Metamorphic  |
+| `before_tool` plugins: the result equals a left fold over the plugins in which the first `Block` or error wins                                                                                                                        | Model        |
+| **Loop, over generated scripts** (tool calls, tool results that succeed, fail or take time, steering, cancel at any point):                                                                                                           | Model        |
+| · every tool call in the transcript has exactly one result, including after a cancel                                                                                                                                                  |              |
+| · result messages are in source order; `ToolStart` is in source order; `ToolEnd` is in completion order                                                                                                                               |              |
+| · the event stream matches the grammar `RunStart (TurnStart … TurnEnd)* RunEnd`, and nothing follows `RunEnd`                                                                                                                         |              |
+| · steered messages appear after the tool batch that was running, in the order they were sent                                                                                                                                          |              |
+| · the persisted usage equals the sum of the turns' usage                                                                                                                                                                              |              |
+| · in a parallel batch, tools whose virtual-time intervals could overlap do overlap; with any `Sequential` tool, no two intervals overlap                                                                                              |              |
+| · grouped calls start together, and no two groups overlap; groups start in the order their first calls come                                                                                                                           |              |
+| · a tool call cut off by a `length` stop never runs                                                                                                                                                                                   |              |
+| · a `ToolUpdate` sent after the tool's future resolved produces no event and no panic                                                                                                                                                 |              |
+| Side asks, over provider limit support, an ask limit, an observer or admission rejection, and retryable failures: the outcome, sessions opened, requests, admitted and reported attempts and the total charged match an attempt model | Model        |
+| Steering sent from inside `on_event` or `before_tool` is drained at the next drain point, exactly once                                                                                                                                | Model        |
+| A slow `on_event` subscriber holds its run: the run does not finish until the subscriber returns, and other runs keep going                                                                                                           | Model        |
+| Arguments changed by `before_tool` are validated again; invalid ones yield an error result and the tool never runs                                                                                                                    | Model        |
+| Limits: a run ends with `StopReason::Limit` if and only if a limit was exceeded after some turn, and child usage counts                                                                                                               | Model        |
+| A fork's transcript equals the parent's transcript up to the checkpoint, followed by the fork's own messages                                                                                                                          | Model        |
+| (`tau-compaction`) Compaction cut point never falls between a tool call and its result, and never on a tool result                                                                                                                    | Invariant    |
+| The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer or snapping past an oversized tool result moved the cut                                                                                  | Invariant    |
+| The token estimate never decreases when a message is appended                                                                                                                                                                         | Invariant    |
+| With no reported usage anywhere, the estimate is `chars / 4` over every message                                                                                                                                                       | Differential |
+| A summary that stops with `length` or `error`, or that calls a tool, fails compaction and writes nothing                                                                                                                              | Model        |
+| Repeated compactions: a second compaction runs only when the kept messages no longer fit, and summarizes messages the first one kept once they leave the recent window                                                                | Model        |
 
 ### `tau-store-sqlite`
 
@@ -425,12 +431,13 @@ store, so cases do not share state.
 | `find` equals `globset` matching over a naive walk; "limit reached" appears only when more results existed                                                                             | Differential |
 | `ls` output is sorted case-insensitively, with a trailing `/` on directories and dotfiles included                                                                                     | Invariant    |
 | `read` with `offset` and `limit` equals the same slice of the file's lines                                                                                                             | Differential |
+| Every structured `read` result, text or image, validates against `output_schema()`, and the schema's coercion changes nothing                                                          | Invariant    |
 | Applying the diff `edit` returns to the original content gives exactly the bytes written, in exact and fuzzy mode                                                                      | Round trip   |
 | A failed `edit` leaves the file byte-for-byte unchanged                                                                                                                                | Invariant    |
 | Per-path lock (state machine, paused time): overlapping `edit`/`write` calls on one file, or on a file and a symlink to it, never interleave their read-modify-write                   | Model        |
 | Path resolution: for a generated name, a file created under a macOS variant (NNBSP before AM/PM in either case, NFD, curly apostrophe) is found from the typed form                    | Differential |
 | Images: for a generated size, a PNG built in the test comes back within 2000×2000 and 4.5 MB, with its aspect ratio kept; the format is detected by magic bytes whatever the extension | Invariant    |
-| Command output (`exec::clean::Cleaner`) cut into chunks at any byte boundary, including inside a multi-byte character or an escape sequence, reads the same as the whole                | Metamorphic  |
+| Command output (`exec::clean::Cleaner`) cut into chunks at any byte boundary, including inside a multi-byte character or an escape sequence, reads the same as the whole               | Metamorphic  |
 
 The command tools also have example tests, on real processes (normal,
 unpaused runtime): a command that ends answers with its output and
@@ -664,6 +671,13 @@ move cases to nightly variants rather than lowering the default counts.
   test or in the code.
 - A test that only checks "no error", or that logs a result
   instead of asserting on it.
+- An assertion the input already guarantees, such as `contains` on a
+  word the request itself put in the text.
+- `exists()` to show a symlink is absent: a dangling link passes it
+  too. Use `symlink_metadata`.
+- Depending on the person's machine, such as a global gitignore or the
+  time zone. Point `GIT_CONFIG_GLOBAL` and the like at a file the test
+  writes.
 - Fixtures generated at test time and never committed. A fixture that
   is not in the repository cannot catch a regression.
 - Copying a fake or a helper into each test file. Shared fakes live in

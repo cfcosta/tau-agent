@@ -63,7 +63,8 @@ dependencies, evaluation goldens, or unrelated regressions changed.
 
 This is not a full mutation campaign or runtime comparison. The larger checked
 suite does not establish a speedup, mutation-score increase, or provider savings.
-Ordinary-test quality triage remains outside this pass.
+Ordinary example tests had a pass of their own afterwards: see
+[Second pass: example tests](#second-pass-example-tests).
 
 ### CI and failure replay
 
@@ -117,3 +118,66 @@ Shared Cargo target artifacts can have newer timestamps than sources copied
 into another workspace. Checks refresh local Rust source timestamps before
 building; ambiguous probe artifacts require a clean rebuild. This changes no
 source content. The cost probe required such a rebuild.
+
+## Second pass: example tests
+
+Status: complete (2026-10-15). Six audits read every test the release suite
+runs, 2,210 in all, and nominated 354 weak ones with a severity from 1 to 5.
+The cut was severity 3 and up: 237 tests, 10.7%. Each one was deleted when a
+property or model already checked it (the covering test was read again before
+deleting), merged into the property that covers it, or replaced by a property
+with an oracle of its own. A cluster of examples of one law was done whole.
+
+229 test functions went and 20 came; the suite runs 2,005 tests. What went:
+
+- `Display` and `Debug` pins, setter read-backs and constants checked against
+  themselves.
+- Examples a property or model already checks: most of `tau-vcs-host`'s tool,
+  landing, sub-agent and project examples, `tau-tools-host`'s pi edit and
+  listing examples, `tau-ai`'s ChatGPT store, HTTP and cost examples.
+- Clusters of one law, now one property each: leaf coercion against pi's
+  table, side asks against an attempt model, text phases, the summary
+  request, agent names, relative times, bounded seen-key sets, glob matching,
+  the restored inference budget, Luau formatting, number and clock formats,
+  note and card toggles, idle compaction.
+- Wall-clock waits: the MCP progress timeout and the memory plugin's commit
+  marks run on a paused or injected clock, and the sandbox tests check peak
+  concurrency without elapsed-time bounds. The find and grep tests of a global
+  gitignore set `GIT_CONFIG_GLOBAL` instead of reading the person's.
+
+Ten nominated tests stay, each the only test of its behaviour or needing a
+seam in production code:
+
+- `tau-schedule` `the_system_clock_has_an_offset`, the only run of
+  `SystemClock::offset`'s `localtime_r`.
+- `tau-tree-compaction` `the_builders_set_their_fields`, the only test of
+  `view_bytes()` and `jobs()`.
+- `tau-codemode-host` `a_call_that_never_ran_says_why` (the never-ran branch of
+  `ui::failure`) and `infinite_loop_times_out_with_a_persisted_failure` (the
+  only test that `module_test` has a time limit, which is not injectable).
+- `tau-ui` `reduced_motion_stops_onboardings_loops`,
+  `settings_start_with_phones_off`, and three slow ones that need a clock seam:
+  `what_waits_lands_after_a_main_turn_that_finishes_slowly` and the two
+  reasoning-timer tests, which read `std::time::Instant`.
+- `tau-remote` `nothing_listening_is_unreachable`, the only test of
+  `ServerHandle::stop`.
+
+78 injected faults, one or more per new or strengthened property, each failed
+the test named for it and was reverted. Several were chosen so that the old
+examples would pass and only the new assertion catches them: an assistant
+message counted by its first block only, `cap` counting bytes instead of
+characters, ties between a write and a commit in the same millisecond,
+refreshed OAuth tokens not saved, and a declined promotion activating.
+
+Open findings:
+
+- `worth_compacting` (idle compaction in `tau-ui`) compares against
+  `window / 2` in integers, so for an odd window less than half counts. The
+  property draws even windows only until the rule is decided.
+- `read_equals_pis_whole_file_read` rarely reaches the 2,000-line cut: a
+  fault in `truncated_by: "lines"` survived it, and only
+  `structured_text_tracks_exact_and_exceeded_bounds` caught it.
+- `sp()`, `stagger()` and `SetupStep::stage()` have no test left; the old ones
+  restated their formulas.
+- `tau-constitution`'s rule edits are tested from `tau-constitution-host`, so
+  `cargo mutants -p tau-constitution` alone shows survivors there.
