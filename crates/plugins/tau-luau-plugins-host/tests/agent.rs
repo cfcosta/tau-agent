@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
+use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
@@ -20,9 +21,10 @@ use tau_agent::{
     event::RunEvent,
     tool::{AgentTool, RunId, ToolCtx, ToolOutput},
 };
+use tau_ai::message::{InputBlock, Message, UserContent};
 use tau_luau_plugins::{NAME, Record};
 use tau_luau_plugins_host::{
-    agent::{Active, LuauPlugins},
+    agent::{Active, LuauPlugins, at},
     runtime::{Files, load},
     testing::PluginTesting,
 };
@@ -106,6 +108,51 @@ fn active(name: &str, source: &str) -> Active {
     Active { loaded, settings }
 }
 
+fn text(blocks: &[InputBlock]) -> String {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            InputBlock::Text(text) => Some(text.text.as_str()),
+            InputBlock::Image(_) => None,
+        })
+        .collect()
+}
+
+/// The tool results the model's last request carried: text, and whether
+/// each failed.
+fn tool_results(llm: &ScriptedModel) -> Vec<(String, bool)> {
+    llm.requests()
+        .last()
+        .unwrap()
+        .transcript
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => {
+                Some((text(&result.content), result.is_error))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The user messages the model's last request carried, a plugin's
+/// `continue` among them.
+fn user_texts(llm: &ScriptedModel) -> Vec<String> {
+    llm.requests()
+        .last()
+        .unwrap()
+        .transcript
+        .iter()
+        .filter_map(|message| match message {
+            Message::User(user) => Some(match &user.content {
+                UserContent::Text(text) => text.clone(),
+                UserContent::Blocks(blocks) => text(blocks),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 fn records(store: &Store, run: &RunId) -> Vec<Record> {
     block_on_io(store.records(&run.0, NAME))
         .unwrap()
@@ -157,9 +204,20 @@ fn a_plugin_takes_part_in_a_run() {
     );
 
     // The deploy was blocked, and the stop held once.
-    let asked = format!("{:?}", llm.requests().last().unwrap().transcript);
-    assert!(asked.contains("No deploys on"), "{asked}");
-    assert!(asked.contains("Say which tests you ran."), "{asked}");
+    let results = tool_results(&llm);
+    assert!(
+        results
+            .iter()
+            .any(|(text, failed)| *failed && text.contains("No deploys on")),
+        "{results:?}"
+    );
+    assert_eq!(
+        user_texts(&llm)
+            .iter()
+            .filter(|text| *text == "Say which tests you ran.")
+            .count(),
+        1
+    );
 
     // Four turns counted, and the view followed the count.
     let stored = records(&store, &outcome.run);
@@ -203,13 +261,10 @@ return tau.plugin {
     let outcome = block_on_io(agent.run("go", &store)).unwrap();
     assert_eq!(outcome.text, "done");
     // Every call ran: a failing hook allows.
-    let asked = format!("{:?}", llm.requests().last().unwrap().transcript);
-    for command in ["a", "b", "c", "d"] {
-        assert!(
-            asked.contains(&format!("ran \\\"{command}\\\"")),
-            "{command}: {asked}"
-        );
-    }
+    let ran: Vec<(String, bool)> = ["a", "b", "c", "d"]
+        .map(|command| (format!("ran \"{command}\""), false))
+        .into();
+    assert_eq!(tool_results(&llm), ran);
     let stored = records(&store, &outcome.run);
     let errors = stored
         .iter()
@@ -257,11 +312,26 @@ t.case("says bye", function() t.equal(t.run{}:tool("hello"), "bye") end)
     let agent = Agent::new(llm.clone())
         .plugin(PluginTesting::new(dir.path().to_owned()));
     block_on_io(agent.run("test greet", &store)).unwrap();
-    let asked = format!("{:?}", llm.requests().last().unwrap().transcript);
-    assert!(asked.contains("greet loads; 1 of 2 tests pass."), "{asked}");
-    assert!(asked.contains("says bye failed"), "{asked}");
-    assert!(asked.contains("is not a plugin's folder"), "{asked}");
-    assert!(asked.contains("missing"), "{asked}");
+    let results = tool_results(&llm);
+    assert_eq!(results.len(), 3, "{results:?}");
+    let (tested, failed) = &results[0];
+    assert!(!failed);
+    assert!(
+        tested.starts_with("greet loads; 1 of 2 tests pass.\n- ")
+            && tested.contains(": says bye failed: "),
+        "{tested}"
+    );
+    assert_eq!(
+        results[1],
+        ("\"../x\" is not a plugin's folder".into(), true)
+    );
+    // A folder that is not there fails reading it, naming its path.
+    let (missing, failed) = &results[2];
+    let folder = dir.path().join("missing");
+    assert!(
+        *failed && missing.starts_with(&*folder.to_string_lossy()),
+        "{missing}"
+    );
 }
 
 const COUNTER_V1: &str = r#"
@@ -454,4 +524,112 @@ fn a_new_version_takes_over_with_its_state() {
         events
     });
     assert_eq!(results(&events), ["v1 1", "v2 2"], "{events:#?}");
+}
+
+/// The calendar date of a day counted from 1970-01-01, by walking whole
+/// years and then months: a reference that shares nothing with the
+/// closed-form conversion the clock uses.
+fn walk(mut days: i64) -> (i64, i64, i64) {
+    let leap =
+        |year: i64| year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let length = |year: i64| if leap(year) { 366 } else { 365 };
+    let mut year = 1970;
+    while days < 0 {
+        year -= 1;
+        days += length(year);
+    }
+    while days >= length(year) {
+        days -= length(year);
+        year += 1;
+    }
+    let months = [
+        31,
+        if leap(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut month = 0;
+    while days >= months[month] {
+        days -= months[month];
+        month += 1;
+    }
+    (year, month as i64 + 1, days + 1)
+}
+
+/// The day 1 January of `year` falls on, counted from 1970-01-01, by
+/// adding up whole years.
+fn new_year(year: i64) -> i64 {
+    let leap =
+        |year: i64| year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let length = |year: i64| if leap(year) { 366 } else { 365 };
+    if year >= 1970 {
+        (1970..year).map(length).sum()
+    } else {
+        -(year..1970).map(length).sum::<i64>()
+    }
+}
+
+/// The clock an agent's hooks read names the UTC date, time and weekday
+/// of any moment from year 1 to 9999. Besides moments across the whole
+/// range, it draws the days around the turn of a century and of each
+/// 400-year cycle, where the leap rules change and a closed-form
+/// conversion slips, and the turn of a day.
+#[hegel::test(test_cases = 300)]
+fn the_clock_names_the_day(tc: TestCase) {
+    const FIRST: i64 = -62_135_596_800; // 0001-01-01T00:00:00Z
+    const LAST: i64 = 253_402_300_799; // 9999-12-31T23:59:59Z
+    let unix: i64 = match tc.draw(gs::integers::<u8>().max_value(2)) {
+        0 => tc.draw(gs::integers::<i64>().min_value(FIRST).max_value(LAST)),
+        1 => {
+            // Within a few days of 1 January or 1 March of a century year.
+            let century =
+                tc.draw(gs::integers::<i64>().min_value(1).max_value(99));
+            let march = if tc.draw(gs::booleans()) { 59 } else { 0 };
+            let offset =
+                tc.draw(gs::integers::<i64>().min_value(-3).max_value(3));
+            let second =
+                tc.draw(gs::integers::<i64>().min_value(0).max_value(86_399));
+            (new_year(century * 100) + march + offset) * 86_400 + second
+        }
+        _ => tc.draw(gs::sampled_from(vec![
+            FIRST,
+            -1,
+            0,
+            951_782_400,
+            951_868_799,
+            LAST,
+        ])),
+    };
+    let days = unix.div_euclid(86_400);
+    let seconds = unix.rem_euclid(86_400);
+    let (year, month, day) = walk(days);
+    let iso = format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        seconds / 3_600,
+        seconds / 60 % 60,
+        seconds % 60
+    );
+    // 1970-01-01 was a Thursday.
+    let weekdays = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ];
+    let weekday = weekdays[(days + 3).rem_euclid(7) as usize];
+    assert_eq!(
+        at(unix),
+        serde_json::json!({ "unix": unix, "iso": iso, "weekday": weekday })
+    );
 }

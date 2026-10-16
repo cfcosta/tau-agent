@@ -7,9 +7,10 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_codemode_host::{ToolCall, ToolEntry, ToolReply};
 use tau_luau_plugins::{Hooks, Uses};
@@ -19,7 +20,9 @@ use tau_luau_plugins_host::runtime::{
     Hook,
     NoReach,
     Reach,
+    evaluate,
     load,
+    long_string,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -310,18 +313,27 @@ async fn a_tool_reaches_only_what_it_uses() {
     assert!(sneaked.error.is_some(), "{sneaked:?}");
 }
 
+/// A hook that fails says why and leaves the state as it was; one that
+/// runs past its limit says so. The loop is in a card, whose limit is
+/// 200 ms, so the test does not wait out a 2 s one.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failing_hook_says_why_and_keeps_the_state() {
     let plugin = r#"
 local tau = require("tau")
 return tau.plugin {
   name = "broken",
+  tools = {
+    slow = {
+      description = "Never draws its card.",
+      call = function(args, ctx) return 1 end,
+      card = function(call, result, ctx)
+        while true do end
+      end,
+    },
+  },
   turn_end = function(turn, ctx)
     ctx.state.seen = true
     error("no luck")
-  end,
-  before_tool = function(call, ctx)
-    while true do end
   end,
 }
 "#;
@@ -347,20 +359,42 @@ return tau.plugin {
     assert_eq!(failed.state, json!({ "kept": 1 }));
     let looped = loaded
         .call(
-            &Hook::BeforeTool,
-            json!({ "name": "exec_command" }),
+            &Hook::Card("slow".into()),
+            json!({ "call": {}, "result": 1 }),
             &ctx,
             no_reach(),
             CancellationToken::new(),
         )
         .await;
-    assert!(
-        looped
-            .error
-            .as_deref()
-            .is_some_and(|e| e.contains("2000 ms")),
+    assert_eq!(
+        looped.error.as_deref(),
+        Some("it ran past its 200 ms"),
         "{looped:?}"
     );
+}
+
+/// The text a hook's input is passed as, in a Luau long string, reads
+/// back as that text in Luau itself, whatever brackets and `=` it holds.
+/// The text is JSON, which never begins with a line break: the one
+/// character a long string drops after its opening bracket.
+#[hegel::test(test_cases = 100)]
+fn a_long_string_reads_back_as_its_text(tc: TestCase) {
+    let drawn: String = tc.draw(gs::text().alphabet("[]=x\n").max_size(24));
+    let text = if drawn.starts_with('\n') {
+        format!("x{drawn}")
+    } else {
+        drawn
+    };
+    let modules = Arc::new(files("return {}").modules().unwrap());
+    let read = tau_testing::block_on_io(evaluate(
+        "strings",
+        modules,
+        // A table, as hooks return: a bare string comes back as text.
+        format!("return {{ text = {} }}", long_string(&text)),
+        Duration::from_secs(2),
+        CancellationToken::new(),
+    ));
+    assert_eq!(read, Ok(json!({ "text": text })), "{}", long_string(&text));
 }
 
 #[tokio::test(flavor = "multi_thread")]

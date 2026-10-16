@@ -228,6 +228,7 @@ pub fn fields(schema: &Value) -> Vec<Field> {
 
 #[cfg(test)]
 mod tests {
+    use hegel::generators as gs;
     use serde_json::json;
 
     use super::*;
@@ -282,12 +283,77 @@ mod tests {
         assert!(why.unwrap().contains("not one of its choices"));
     }
 
-    #[test]
-    fn keys_set_and_read_through_tables() {
-        let value = set_key(&json!({ "a": 1 }), "limits.max", json!(3));
-        assert_eq!(value, json!({ "a": 1, "limits": { "max": 3 } }));
-        assert_eq!(get_key(&value, "limits.max"), &json!(3));
-        assert_eq!(get_key(&value, "limits.min"), &Value::Null);
+    const SEGMENTS: [&str; 3] = ["a", "b", "c"];
+
+    /// Settings up to `depth` tables deep, keyed by `a`, `b` and `c`, so
+    /// generated keys often meet tables, values and absences.
+    #[hegel::composite]
+    fn settings(tc: &hegel::TestCase, depth: u8) -> Value {
+        if depth == 0 || tc.draw(gs::booleans()) {
+            return match tc.draw(gs::integers::<u8>().max_value(2)) {
+                0 => Value::Null,
+                1 => json!(tc.draw(gs::integers::<i32>())),
+                _ => {
+                    json!(tc.draw(gs::from_regex("[a-z]{0,3}").fullmatch(true)))
+                }
+            };
+        }
+        let mut table = Map::new();
+        for segment in SEGMENTS {
+            if tc.draw(gs::booleans()) {
+                table.insert(segment.into(), tc.draw(settings(depth - 1)));
+            }
+        }
+        Value::Object(table)
+    }
+
+    /// Every dotted key of one to three segments.
+    fn every_key() -> Vec<Vec<&'static str>> {
+        let mut keys: Vec<Vec<&str>> =
+            SEGMENTS.iter().map(|s| vec![*s]).collect();
+        for _ in 0..2 {
+            let longer: Vec<Vec<&str>> = keys
+                .iter()
+                .filter(|key| key.len() == keys.last().unwrap().len())
+                .flat_map(|key| {
+                    SEGMENTS
+                        .iter()
+                        .map(move |s| [key.clone(), vec![*s]].concat())
+                })
+                .collect();
+            keys.extend(longer);
+        }
+        keys
+    }
+
+    /// Setting a dotted key, making the tables on its way, reads back
+    /// the value set there; every key that is neither on its way nor
+    /// under it reads as it did before.
+    #[hegel::test(test_cases = 300)]
+    fn a_key_set_reads_back_and_leaves_the_others(tc: hegel::TestCase) {
+        let before = tc.draw(settings(2));
+        let all = every_key();
+        let key = all
+            [tc.draw(gs::integers::<usize>().max_value(all.len() - 1))]
+        .clone();
+        let new = json!(tc.draw(gs::integers::<i32>()));
+        let after = set_key(&before, &key.join("."), new.clone());
+        assert_eq!(get_key(&after, &key.join(".")), &new);
+        for other in &all {
+            let on_its_way = other.len() <= key.len() && key.starts_with(other);
+            let under = other.len() > key.len() && other.starts_with(&key);
+            let path = other.join(".");
+            if under {
+                // The value set is a number: nothing is under it.
+                assert_eq!(get_key(&after, &path), &Value::Null, "{path}");
+            } else if !on_its_way {
+                assert_eq!(
+                    get_key(&after, &path),
+                    get_key(&before, &path),
+                    "{path}"
+                );
+            }
+        }
     }
 
     #[test]

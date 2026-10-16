@@ -736,19 +736,3 @@ impl Host for PluginHost {
         self.reach.charge(usage);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_long_string_cannot_be_closed_by_its_text() {
-        assert_eq!(long_string("a"), "[[a]]");
-        assert_eq!(long_string("x]]y"), "[=[x]]y]=]");
-        assert_eq!(long_string("]=]]]"), "[==[]=]]]]==]");
-        // A JSON list ends in `]`: with `]]` after it, it would close
-        // one early.
-        assert_eq!(long_string("[1]"), "[=[[1]]=]");
-        assert_eq!(long_string("[1]=]"), "[==[[1]=]]==]");
-    }
-}

@@ -28,6 +28,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 
 [dev-dependencies]
+hegeltest.workspace = true
 tau-store-sqlite.workspace = true
 async-trait.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }

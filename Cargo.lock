@@ -9747,6 +9747,7 @@ name = "tau-luau-plugins"
 version = "0.1.0"
 dependencies = [
  "gpui-pre",
+ "hegeltest",
  "serde",
  "serde_json",
  "tau-ui-kit",
@@ -9760,6 +9761,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
+ "hegeltest",
  "serde",
  "serde_json",
  "sha2 0.11.0",

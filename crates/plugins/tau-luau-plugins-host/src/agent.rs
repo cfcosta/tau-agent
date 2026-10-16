@@ -793,20 +793,3 @@ pub fn at(unix: i64) -> Value {
         "weekday": DAYS[days.rem_euclid(7) as usize],
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_clock_names_the_day() {
-        assert_eq!(
-            at(0),
-            json!({ "unix": 0, "iso": "1970-01-01T00:00:00Z", "weekday": "Thursday" })
-        );
-        // A Friday, mid-morning.
-        assert_eq!(at(1_791_540_000)["iso"], "2026-10-09T10:00:00Z");
-        assert_eq!(at(1_791_540_000)["weekday"], "Friday");
-        assert_eq!(at(951_782_400)["iso"], "2000-02-29T00:00:00Z");
-    }
-}
