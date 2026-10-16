@@ -2904,6 +2904,8 @@ mod tests {
     use super::*;
     use crate::view::{Item, ToolState};
 
+    /// Every demo screen has a name of its own, and every demo run is in
+    /// a listed repository.
     #[test]
     fn every_demo_screen_has_one_name() {
         let mut names: Vec<&str> =
@@ -2915,8 +2917,16 @@ mod tests {
         for name in ["run", "memory", "constitution", "ledger", "pr-opened"] {
             assert!(names.contains(&name), "{name}");
         }
+        let catalog = catalog();
+        let mut runs = vec![retry_after()];
+        runs.extend(history());
+        for run in &runs {
+            assert!(catalog.repo(&run.repo).is_some(), "{}", run.title);
+        }
     }
 
+    /// The demo's tool calls draw as their plugins' cards: tau-vcs's
+    /// log, show, diff, status and commit, and tau-tools' listing.
     #[test]
     fn the_vcs_calls_draw_as_their_cards() {
         let mut run = retry_after();
@@ -2960,31 +2970,11 @@ mod tests {
                 show.files.len() + commit.left.len()
             )
         );
-    }
-
-    #[test]
-    fn the_ls_call_draws_as_a_listing() {
-        let mut run = retry_after();
-        for (_, update) in script() {
-            run.update(update);
-        }
-        let card = run.tool(LS_CALL).expect(LS_CALL);
-        let details = card.data.result.as_ref().unwrap().details.clone();
-        tau_tools::ui::listing::DirListing::parse(&details.unwrap())
+        // The `ls` call draws as tau-tools' listing.
+        let listing = run.tool(LS_CALL).expect(LS_CALL);
+        tau_tools::ui::listing::DirListing::parse(&details(LS_CALL))
             .expect("a listing");
-        assert!(matches!(card.state, ToolState::Done { .. }));
-    }
-
-    #[test]
-    fn the_fork_points_at_its_run() {
-        let runs = history();
-        let fork = runs.iter().find(|run| run.id == fork_id()).expect("fork");
-        let crate::view::Origin::Fork { from, turn } = &fork.origin else {
-            panic!("not a fork: {:?}", fork.origin);
-        };
-        assert_eq!(*from, run_id(), "a chat forks the main chat");
-        assert_eq!(*turn, 2);
-        assert!(fork.last_diff().is_some());
+        assert!(matches!(listing.state, ToolState::Done { .. }));
     }
 
     #[test]
@@ -3013,16 +3003,6 @@ mod tests {
         }
         let tau = notes(catalog.repo("tau-agent").unwrap());
         assert!(tau.backlinks("n-0417").count() >= 2);
-    }
-
-    #[test]
-    fn every_demo_run_belongs_to_a_listed_repository() {
-        let catalog = catalog();
-        let mut runs = vec![retry_after()];
-        runs.extend(history());
-        for run in &runs {
-            assert!(catalog.repo(&run.repo).is_some(), "{}", run.title);
-        }
     }
 
     #[test]

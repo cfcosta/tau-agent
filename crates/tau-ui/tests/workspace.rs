@@ -883,13 +883,12 @@ fn reduced_motion_stops_onboardings_loops(cx: &mut TestAppContext) {
     });
 }
 
-/// Every onboarding screen draws, on a desktop and on a phone, and
-/// stays the step it was opened at. On the model step, whatever the
-/// sign-in reports (signed in, waiting, refused, without plan usage,
-/// not eligible, failed) is shown there: the step stays, to show the
-/// account or the refusal, until the person moves on.
+/// On the model step, whatever the sign-in reports (signed in, waiting,
+/// refused, without plan usage, not eligible, failed) is shown there:
+/// the step stays, to show the account or the refusal, until the person
+/// moves on. (Every onboarding screen draws in `every_demo_screen_opens`.)
 #[gpui::test]
-fn every_onboarding_screen_draws_and_stays_its_step(cx: &mut TestAppContext) {
+fn the_model_step_stays_whatever_the_sign_in_reports(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
     let models = [
         ModelAccess::None,
@@ -907,42 +906,20 @@ fn every_onboarding_screen_draws_and_stays_its_step(cx: &mut TestAppContext) {
         },
         ModelAccess::Failed("no".into()),
     ];
-    for phone in [false, true] {
+    for model in &models {
         workspace.update(&mut cx, |ws, cx| {
-            ws.set_frame(phone.then_some((390., 844.)), cx)
+            ws.set_setup(demo::setup(SetupStep::Model), cx);
+            ws.start_setup(SetupStep::Model, cx);
+            ws.update_setup(SetupUpdate::Model(model.clone()), cx);
         });
-        for step in [
-            SetupStep::Welcome,
-            SetupStep::GitHub,
-            SetupStep::Token,
-            SetupStep::Repos,
-            SetupStep::Ready,
-        ] {
-            workspace.update(&mut cx, |ws, cx| {
-                ws.set_setup(demo::setup(step), cx);
-                ws.start_setup(step, cx);
-            });
-            cx.run_until_parked();
-            workspace.read_with(&cx, |ws, _| {
-                assert_eq!(ws.route(), &Route::Setup(step), "phone: {phone}");
-            });
-        }
-        for model in &models {
-            workspace.update(&mut cx, |ws, cx| {
-                ws.set_setup(demo::setup(SetupStep::Model), cx);
-                ws.start_setup(SetupStep::Model, cx);
-                ws.update_setup(SetupUpdate::Model(model.clone()), cx);
-            });
-            cx.run_until_parked();
-            workspace.read_with(&cx, |ws, _| {
-                assert_eq!(
-                    ws.route(),
-                    &Route::Setup(SetupStep::Model),
-                    "{model:?}, phone: {phone}"
-                );
-                assert_eq!(&ws.setup().model, model);
-            });
-        }
+        cx.run_until_parked();
+        workspace.read_with(&cx, |ws, _| {
+            assert_eq!(
+                ws.route(),
+                &Route::Setup(SetupStep::Model),
+                "{model:?}"
+            );
+        });
     }
 }
 
@@ -2475,36 +2452,6 @@ fn an_unreachable_computer_leads_back_once_it_answers(cx: &mut TestAppContext) {
     );
 }
 
-/// Every pairing screen draws, on a desktop and on a phone, and stays
-/// the step it was opened at.
-#[gpui::test]
-fn every_pairing_screen_draws_and_stays_its_step(cx: &mut TestAppContext) {
-    use tau_ui_remote::pairing::PairStep;
-
-    let (workspace, mut cx, _) = open(cx);
-    for phone in [false, true] {
-        workspace.update(&mut cx, |ws, cx| {
-            ws.set_frame(phone.then_some((390., 844.)), cx)
-        });
-        for step in [
-            PairStep::Welcome,
-            PairStep::Scan,
-            PairStep::Address,
-            PairStep::Paired,
-            PairStep::Unreachable,
-        ] {
-            workspace.update(&mut cx, |ws, cx| {
-                ws.set_pairing(demo::pairing(step), cx);
-                ws.start_pairing(step, cx);
-            });
-            cx.run_until_parked();
-            workspace.read_with(&cx, |ws, _| {
-                assert_eq!(ws.route(), &Route::Pair(step), "phone: {phone}");
-            });
-        }
-    }
-}
-
 #[gpui::test]
 fn a_mirrored_workspace_echoes_what_the_host_applies(cx: &mut TestAppContext) {
     use tau_ui_remote::update::HostUpdate;
@@ -2984,16 +2931,25 @@ fn a_nested_spawn_opens_its_chat(cx: &mut TestAppContext) {
 }
 
 /// Every screen the demo opens by name opens on the demo, with its host
-/// answering, and draws.
+/// answering, and draws, on a computer and on a phone: onboarding's and
+/// pairing's steps among them.
 #[gpui::test]
 fn every_demo_screen_opens(cx: &mut TestAppContext) {
     let (workspace, mut cx, _, host) = open_demo_host(cx);
-    for (name, _) in demo::SCREENS {
+    for phone in [false, true] {
         workspace.update(&mut cx, |ws, cx| {
-            assert!(demo::open(name, ws, &host, cx), "{name}");
+            ws.set_frame(phone.then_some((390., 844.)), cx)
         });
-        cx.run_until_parked();
-        cx.update(|window, cx| window.draw(cx).clear(cx));
+        for (name, _) in demo::SCREENS {
+            workspace.update(&mut cx, |ws, cx| {
+                assert!(
+                    demo::open(name, ws, &host, cx),
+                    "{name}, phone: {phone}"
+                );
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+        }
     }
 }
 

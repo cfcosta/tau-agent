@@ -274,58 +274,9 @@ fn commit(message: &str) -> serde_json::Value {
     json!({ "message": message })
 }
 
-/// A chat landed while main works joins the queue and lands once
-/// main's turn ends, not before.
-#[gpui::test]
-fn a_chat_landed_while_main_works_lands_after_its_turn(
-    cx: &mut TestAppContext,
-) {
-    let llm = ScriptedModel::new()
-        .turn(|t| t.tool_call("write", write("one.txt", "one\n")))
-        .turn(|t| t.tool_call("vcs_commit", commit("docs: one")))
-        .turn(|t| t.text("one is done"))
-        // Main's turn, slow enough to land while it runs.
-        .turn(|t| t.delay(Duration::from_secs(3)).text("thinking"));
-    let mut s = setup(cx, llm.clone());
-    let one = s.start("write one");
-    s.finished(&one);
-    s.write_to_main("think");
-    let preview = s.preview(&one);
-    assert_eq!(preview.changes.len(), 1);
-    s.land(&one);
-    until(&mut s.cx, "the chat to queue", |cx| {
-        s.workspace.read_with(cx, |ws, _| ws.queued(&one).is_some())
-    });
-    assert_eq!(s.queued(), [one.0.to_string()]);
-    assert!(s.live(&s.main.clone()), "main still works");
-    assert!(!s.is_closed(&one), "it waits for main");
-    let trunk = s.project.blocking().trunk().unwrap();
-    assert!(
-        s.project
-            .blocking()
-            .file_at(&trunk, "one.txt")
-            .unwrap()
-            .is_none()
-    );
-
-    let workspace = s.workspace.clone();
-    until(&mut s.cx, "the chat to land", |cx| {
-        workspace.read_with(cx, |ws, _| ws.is_closed(&one))
-    });
-    assert!(s.queued().is_empty());
-    let trunk = s.project.blocking().trunk().unwrap();
-    assert!(
-        s.project
-            .blocking()
-            .file_at(&trunk, "one.txt")
-            .unwrap()
-            .is_some()
-    );
-    llm.assert_exhausted();
-}
-
-/// Two chats wait; the first lands, and the second, which meets a
-/// conflict main's turn brought, waits for the person to confirm it.
+/// Two chats landed while main works join the queue, and nothing lands
+/// before main's turn ends; then the first lands, and the second, which
+/// meets a conflict main's turn brought, waits for the person to confirm it.
 /// Confirmed, it lands, and tau's turn resolves the conflict.
 #[gpui::test]
 fn a_queued_chat_with_new_conflicts_waits_for_confirmation(
@@ -365,6 +316,17 @@ fn a_queued_chat_with_new_conflicts_waits_for_confirmation(
         })
     });
     assert_eq!(s.queued(), [a.0.to_string(), b.0.to_string()]);
+    // Both wait for main's turn: nothing lands while it runs.
+    assert!(s.live(&s.main.clone()), "main still works");
+    assert!(!s.is_closed(&a), "a waits for main");
+    let trunk = s.project.blocking().trunk().unwrap();
+    assert!(
+        s.project
+            .blocking()
+            .file_at(&trunk, "a.txt")
+            .unwrap()
+            .is_none()
+    );
 
     let workspace = s.workspace.clone();
     until(&mut s.cx, "a to land and b to wait", |cx| {
