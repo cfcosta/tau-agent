@@ -196,35 +196,99 @@ mod tests {
         assert_eq!(parse(&long).unwrap().chars().count(), MAX_CHARS);
     }
 
-    #[test]
-    fn requests_fit_the_budget() {
-        let long = "ü".repeat(2000);
-        let request = request(&long);
-        assert!(request.len() <= PROMPT_MAX_BYTES);
-        assert!(request.ends_with('ü'));
-        assert!(request.contains("User prompt:\nü"));
+    /// Characters of one to four bytes, and white space.
+    const UNITS: [char; 6] = ['a', 'Z', 'é', '語', '🦀', ' '];
+
+    /// A request is the instructions, then the most of the trimmed
+    /// prompt that fits in `PROMPT_MAX_BYTES`, cut between characters.
+    /// Prompts are drawn with lengths around the room left, so the last
+    /// character fits exactly, or one byte short, or past it.
+    #[hegel::test(test_cases = 300)]
+    fn requests_fit_the_budget(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let prefix = request("");
+        assert!(prefix.ends_with("User prompt:\n"));
+        let room = PROMPT_MAX_BYTES - prefix.len();
+        let target: usize = tc.draw(hegel::one_of!(
+            gs::integers::<usize>()
+                .min_value(room - 4)
+                .max_value(room + 4),
+            gs::integers::<usize>().max_value(room + 40),
+        ));
+        let mut prompt = String::new();
+        while prompt.len() < target {
+            prompt.push(tc.draw(gs::sampled_from(UNITS.to_vec())));
+        }
+        let trimmed = prompt.trim();
+        // The longest prefix of whole characters within the room.
+        let kept = trimmed
+            .char_indices()
+            .map(|(at, c)| at + c.len_utf8())
+            .take_while(|end| *end <= room)
+            .last()
+            .unwrap_or(0);
+        assert_eq!(request(&prompt), format!("{prefix}{}", &trimmed[..kept]));
     }
 
+    /// A goal's run is titled and asked about by its condition, not the
+    /// command.
     #[test]
-    fn requests_carry_a_goal_not_the_command() {
-        let request = request("/goal --continuations 3 all tests pass");
-        assert!(request.ends_with("User prompt:\nall tests pass"));
+    fn a_goal_is_titled_by_its_condition() {
+        let goal = "/goal --continuations 3 all tests pass";
+        assert!(request(goal).ends_with("User prompt:\nall tests pass"));
+        assert_eq!(placeholder(goal), "all tests pass");
     }
 
-    #[test]
-    fn placeholders_are_the_first_line() {
-        assert_eq!(
-            placeholder("\n  Fix the   retry loop\nin the client"),
-            "Fix the retry loop"
-        );
-        assert_eq!(placeholder("  \n "), "Untitled");
-        assert_eq!(
-            placeholder("/goal --continuations 3 all tests pass"),
-            "all tests pass"
-        );
-        let long = placeholder(&"word ".repeat(20));
-        assert!(long.chars().count() <= MAX_CHARS, "{long}");
-        assert!(long.ends_with('…'));
+    /// A placeholder is the first line with words, its white space made
+    /// single spaces: itself up to `MAX_CHARS` characters, and past that
+    /// its first `MAX_CHARS - 1` characters, trimmed, and an ellipsis.
+    /// With no words at all, it is `Untitled`. Lines are drawn around
+    /// the limit, in characters of several bytes.
+    #[hegel::test(test_cases = 300)]
+    fn placeholders_are_the_first_line(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let word = || {
+            gs::vecs(gs::sampled_from(vec!['a', 'Z', 'é', '語', '🦀']))
+                .min_size(1)
+                .max_size(9)
+        };
+        let gap = || gs::sampled_from(vec![" ", "  ", "\t", " \t "]);
+        let lead: String = tc
+            .draw(gs::sampled_from(vec!["", "\n", "  \n \n", "\t"]))
+            .to_owned();
+        // Words up to a line around the limit.
+        let target: usize = tc.draw(hegel::one_of!(
+            gs::integers::<usize>()
+                .min_value(MAX_CHARS - 2)
+                .max_value(MAX_CHARS + 2),
+            gs::integers::<usize>().max_value(MAX_CHARS * 2),
+        ));
+        let mut words: Vec<String> = Vec::new();
+        while words.join(" ").chars().count() < target {
+            let chars: Vec<char> = tc.draw(word());
+            words.push(chars.into_iter().collect());
+        }
+        let mut text = lead;
+        for (n, word) in words.iter().enumerate() {
+            if n > 0 {
+                text.push_str(tc.draw(gap()));
+            }
+            text.push_str(word);
+        }
+        if !words.is_empty() && tc.draw(gs::booleans()) {
+            text.push_str("\nthe next line");
+        }
+        let line = words.join(" ");
+        let count = line.chars().count();
+        let expected = if line.is_empty() {
+            "Untitled".to_owned()
+        } else if count <= MAX_CHARS {
+            line
+        } else {
+            let cut: String = line.chars().take(MAX_CHARS - 1).collect();
+            format!("{}…", cut.trim_end())
+        };
+        assert_eq!(placeholder(&text), expected, "{text:?}");
     }
 
     #[test]

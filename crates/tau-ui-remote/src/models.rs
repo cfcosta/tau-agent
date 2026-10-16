@@ -390,14 +390,51 @@ mod tests {
         }
     }
 
-    #[test]
-    fn labels_read_as_the_design_writes_them() {
-        let model = ModelOption {
-            context: 400_000,
+    /// A context window reads as the design writes it: under a million,
+    /// the whole thousands and `k`; from a million, millions to two
+    /// places with no trailing zero or point, and `M`, within half a
+    /// hundredth of the count. Windows are drawn at the switch, at round
+    /// millions and tenths, and anywhere. A choice reads as its model
+    /// and effort.
+    #[hegel::test(test_cases = 300)]
+    fn labels_read_as_the_design_writes_them(tc: hegel::TestCase) {
+        use hegel::generators::{self as gs, Generator as _};
+        let context: u64 = tc.draw(hegel::one_of!(
+            gs::integers::<u64>()
+                .min_value(998_000)
+                .max_value(1_002_000),
+            gs::integers::<u64>()
+                .min_value(10)
+                .max_value(10_000)
+                .map(|tens| tens * 100_000),
+            gs::integers::<u64>().max_value(1_000_000),
+            gs::integers::<u64>().max_value(10_000_000_000),
+        ));
+        let label = ModelOption {
+            context,
             ..option("m")
-        };
-        assert_eq!(model.context_label(), "400k");
-        assert_eq!(option("n").context_label(), "1.05M");
+        }
+        .context_label();
+        if context < 1_000_000 {
+            assert_eq!(label, format!("{}k", context / 1000));
+        } else {
+            let number = label.strip_suffix('M').expect("millions");
+            let millions: f64 = number.parse().unwrap();
+            let off = (millions * 1e6 - context as f64).abs();
+            assert!(
+                off <= 5_000.0 + 1e-3 * context as f64 / 1e6,
+                "{context} as {label}"
+            );
+            if let Some((_, places)) = number.split_once('.') {
+                assert!(
+                    (1..=2).contains(&places.len()) && !places.ends_with('0'),
+                    "{context} as {label}"
+                );
+            }
+            if context.is_multiple_of(1_000_000) {
+                assert_eq!(label, format!("{}M", context / 1_000_000));
+            }
+        }
         assert_eq!(ModelChoice::default().label(), "gpt-6.1-sol · auto");
     }
 

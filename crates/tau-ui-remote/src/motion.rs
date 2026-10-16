@@ -508,43 +508,57 @@ mod tests {
 
     use super::*;
 
+    /// Every place a wish can come from, in every state, decides as the
+    /// most direct one that says anything: the flag, then a
+    /// `TAU_REDUCE_MOTION` it understands (each of its words, in any
+    /// case, padded or not), then the saved setting, then the desktop's
+    /// animations being off. An unclear environment says nothing.
     #[test]
     fn the_most_direct_wish_for_less_motion_decides() {
-        let none = MotionPreference::default();
-        assert!(!none.reduce(), "full motion when nothing asks");
-        let desktop_off = MotionPreference {
-            desktop_animations: Some(false),
-            ..none.clone()
-        };
-        assert!(desktop_off.reduce());
-        let saved_on = MotionPreference {
-            saved: Some(false),
-            ..desktop_off.clone()
-        };
-        assert!(!saved_on.reduce(), "the saved setting beats the desktop");
-        let env_on = MotionPreference {
-            env: Some(" Yes ".into()),
-            ..saved_on.clone()
-        };
-        assert!(env_on.reduce(), "the environment beats the setting");
-        let env_off = MotionPreference {
-            env: Some("0".into()),
-            saved: Some(true),
-            ..none.clone()
-        };
-        assert!(!env_off.reduce());
-        let env_unclear = MotionPreference {
-            env: Some("maybe".into()),
-            saved: Some(true),
-            ..none.clone()
-        };
-        assert!(env_unclear.reduce(), "an unclear value says nothing");
-        let flag = MotionPreference {
-            flag: true,
-            env: Some("off".into()),
-            ..none
-        };
-        assert!(flag.reduce(), "the flag beats everything");
+        const MORE: [&str; 4] = ["1", "true", "yes", "on"];
+        const LESS: [&str; 4] = ["0", "false", "no", "off"];
+        let mut envs: Vec<(Option<String>, Option<bool>)> = vec![(None, None)];
+        for (words, says) in [(MORE, true), (LESS, false)] {
+            for word in words {
+                for written in
+                    [word.to_owned(), word.to_uppercase(), format!(" {word}\t")]
+                {
+                    envs.push((Some(written), Some(says)));
+                }
+            }
+        }
+        for unclear in ["", "maybe", "2", "y", "of", "yess"] {
+            envs.push((Some(unclear.to_owned()), None));
+        }
+        let three = [None, Some(true), Some(false)];
+        for flag in [false, true] {
+            for (env, env_says) in &envs {
+                for saved in three {
+                    for desktop_animations in three {
+                        let preference = MotionPreference {
+                            flag,
+                            env: env.clone(),
+                            saved,
+                            desktop_animations,
+                        };
+                        let expected = if flag {
+                            true
+                        } else if let Some(says) = env_says {
+                            *says
+                        } else if let Some(saved) = saved {
+                            saved
+                        } else {
+                            desktop_animations == Some(false)
+                        };
+                        assert_eq!(
+                            preference.reduce(),
+                            expected,
+                            "{preference:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -671,34 +685,24 @@ mod tests {
         Rgba { r, g, b, a }
     }
 
-    fn close(left: Rgba, right: Rgba) -> bool {
-        [
-            (left.r, right.r),
-            (left.g, right.g),
-            (left.b, right.b),
-            (left.a, right.a),
-        ]
-        .iter()
-        .all(|(l, r)| (l - r).abs() < 1e-3)
-    }
-
-    /// The ends of a mix are its inputs: `t = 0` is `from`, `t = 1` is
-    /// `to`.
-    #[hegel::test(test_cases = 200)]
-    fn a_mix_starts_at_from_and_ends_at_to(tc: hegel::TestCase) {
-        let (from, to) = (rgba(tc.draw(channels())), rgba(tc.draw(channels())));
-        assert!(close(mix(from.into(), to.into(), 0.).into(), from));
-        assert!(close(mix(from.into(), to.into(), 1.).into(), to));
-    }
-
     /// A mix moves along the straight line between its inputs in RGB:
     /// each channel is `t` of the way from `from`'s to `to`'s, through
     /// the HSL round trip, so a transition never overshoots either
-    /// colour and black and white meet in grey.
-    #[hegel::test(test_cases = 200)]
+    /// colour and black and white meet in grey. Its ends are its inputs
+    /// (`t` is drawn at 0 and 1 too), and a colour mixed with itself
+    /// stays itself (`to` is sometimes `from`).
+    #[hegel::test(test_cases = 300)]
     fn a_mix_is_the_straight_line_between_its_inputs(tc: hegel::TestCase) {
-        let (from, to) = (rgba(tc.draw(channels())), rgba(tc.draw(channels())));
-        let t = tc.draw(gs::floats::<f32>().min_value(0.).max_value(1.));
+        let from = rgba(tc.draw(channels()));
+        let to = if tc.draw(gs::weighted_booleans(0.2)) {
+            from
+        } else {
+            rgba(tc.draw(channels()))
+        };
+        let t = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0.0f32, 1.0]),
+            gs::floats::<f32>().min_value(0.).max_value(1.),
+        ));
         let mixed: Rgba = mix(from.into(), to.into(), t).into();
         for (m, f, o) in [
             (mixed.r, from.r, to.r),
@@ -709,14 +713,6 @@ mod tests {
             let along = f * (1. - t) + o * t;
             assert!((m - along).abs() < 1e-3, "{m} is not {along}");
         }
-    }
-
-    /// Mixing a colour with itself changes nothing, whatever `t` is.
-    #[hegel::test(test_cases = 200)]
-    fn a_mix_of_one_color_is_that_color(tc: hegel::TestCase) {
-        let color = rgba(tc.draw(channels()));
-        let t = tc.draw(gs::floats::<f32>().min_value(0.).max_value(1.));
-        assert!(close(mix(color.into(), color.into(), t).into(), color));
     }
 
     fn unit() -> impl hegel::generators::PrintableGenerator<f32> {

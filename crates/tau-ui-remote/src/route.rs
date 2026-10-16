@@ -159,26 +159,122 @@ mod tests {
 
     use super::*;
 
+    /// Every screen knows its run, its repository, its tab, and whether
+    /// it is top-level or focused: the table lists each kind of screen.
+    /// Each tab leads to a top-level screen under itself.
     #[test]
-    fn every_tab_leads_to_a_top_level_screen() {
+    fn every_screen_knows_its_run_repository_and_tab() {
+        // (screen, run, repository, tab, top-level, focused)
+        type Row<'a> =
+            (Route, Option<&'a RunId>, Option<&'a str>, Tab, bool, bool);
+        let (main, fork) = (RunId(Arc::from("main")), RunId(Arc::from("fork")));
+        let plugin = |params: &[(&str, &str)]| Route::Plugin {
+            plugin: "tau-memory".into(),
+            page: "notes".into(),
+            params: params
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        };
+        let table: Vec<Row> = vec![
+            (Route::Home, None, None, Tab::Runs, true, false),
+            (
+                Route::Run(main.clone()),
+                Some(&main),
+                None,
+                Tab::Runs,
+                false,
+                false,
+            ),
+            (Route::NewRun, None, None, Tab::Runs, false, false),
+            (
+                Route::Compare {
+                    main: main.clone(),
+                    fork: fork.clone(),
+                },
+                Some(&main),
+                None,
+                Tab::Runs,
+                false,
+                false,
+            ),
+            (Route::History, None, None, Tab::History, true, false),
+            (Route::Plugins, None, None, Tab::Plugins, true, false),
+            (
+                Route::Plan(fork.clone()),
+                Some(&fork),
+                None,
+                Tab::Runs,
+                false,
+                false,
+            ),
+            (
+                Route::Setup(SetupStep::Welcome),
+                None,
+                None,
+                Tab::Runs,
+                false,
+                true,
+            ),
+            (
+                Route::Pair(PairStep::Welcome),
+                None,
+                None,
+                Tab::Runs,
+                false,
+                true,
+            ),
+            (
+                Route::PullRequest(fork.clone()),
+                Some(&fork),
+                None,
+                Tab::Runs,
+                false,
+                true,
+            ),
+            (Route::Models, None, None, Tab::Models, true, false),
+            (Route::Phones, None, None, Tab::Models, false, false),
+            (
+                Route::Repo("docbert".into()),
+                None,
+                Some("docbert"),
+                Tab::Runs,
+                false,
+                false,
+            ),
+            (
+                plugin(&[("repo", "docbert")]),
+                None,
+                Some("docbert"),
+                Tab::Runs,
+                false,
+                false,
+            ),
+            (
+                plugin(&[("run", "main")]),
+                None,
+                None,
+                Tab::Runs,
+                false,
+                false,
+            ),
+        ];
+        for (route, run, repo, tab, top, focused) in &table {
+            assert_eq!(
+                (
+                    route.run(),
+                    route.repo(),
+                    route.tab(),
+                    route.is_top_level(),
+                    route.is_focused()
+                ),
+                (*run, *repo, *tab, *top, *focused),
+                "{route:?}"
+            );
+        }
         for tab in Tab::ALL {
             assert!(tab.route().is_top_level(), "{tab:?}");
             assert_eq!(tab.route().tab(), tab);
         }
-    }
-
-    #[test]
-    fn run_screens_know_their_run() {
-        let run = RunId(Arc::from("r"));
-        assert_eq!(Route::Plan(run.clone()).run(), Some(&run));
-        assert_eq!(Route::Plan(run.clone()).tab(), Tab::Runs);
-        let memory = Route::Plugin {
-            plugin: "tau-memory".into(),
-            page: "notes".into(),
-            params: [("repo".to_owned(), "docbert".to_owned())].into(),
-        };
-        assert!(!memory.is_top_level());
-        assert_eq!(memory.tab(), Tab::Runs);
-        assert_eq!(memory.repo(), Some("docbert"));
     }
 }

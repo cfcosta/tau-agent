@@ -2716,21 +2716,85 @@ mod tests {
         ));
     }
 
+    /// A call's arguments read as the first that says something: a
+    /// command, a process typed to (with what was typed, escaped), a
+    /// pattern and path as grep and find have them, an id and title,
+    /// then a query, task, id or title alone. Every set of these keys is
+    /// tried, with and without something typed; a value of another type
+    /// counts as absent.
     #[test]
     fn grep_arguments_read_as_pattern_then_path() {
+        const KEYS: [&str; 9] = [
+            "cmd",
+            "process_id",
+            "chars",
+            "pattern",
+            "path",
+            "id",
+            "title",
+            "query",
+            "task",
+        ];
+        let value = |key: &str, typed: &str| match key {
+            "cmd" => json!("cargo test"),
+            "process_id" => json!(3),
+            "chars" => json!(typed),
+            "pattern" => json!("retry"),
+            "path" => json!("src"),
+            "id" => json!("n-1"),
+            "title" => json!("Notes"),
+            "query" => json!("rerank"),
+            _ => json!("write docs"),
+        };
+        for typed in ["y\n", ""] {
+            for set in 0..1u32 << KEYS.len() {
+                let has = |key: &str| {
+                    set & 1 << KEYS.iter().position(|k| *k == key).unwrap() != 0
+                };
+                let args: serde_json::Map<String, Value> = KEYS
+                    .iter()
+                    .filter(|key| has(key))
+                    .map(|key| ((*key).to_owned(), value(key, typed)))
+                    .collect();
+                let expected = if has("cmd") {
+                    "cargo test".to_owned()
+                } else if has("process_id") {
+                    if has("chars") && !typed.is_empty() {
+                        "#3 ← y\\n".to_owned()
+                    } else {
+                        "#3".to_owned()
+                    }
+                } else if has("pattern") && has("path") {
+                    "\"retry\" src".to_owned()
+                } else if has("pattern") {
+                    "\"retry\"".to_owned()
+                } else if has("path") {
+                    "src".to_owned()
+                } else if has("id") && has("title") {
+                    "n-1 · Notes".to_owned()
+                } else if has("query") {
+                    "rerank".to_owned()
+                } else if has("task") {
+                    "write docs".to_owned()
+                } else if has("id") {
+                    "n-1".to_owned()
+                } else if has("title") {
+                    "Notes".to_owned()
+                } else {
+                    String::new()
+                };
+                let args = Value::Object(args);
+                assert_eq!(summarize_args(&args), expected, "{args}");
+            }
+        }
+        // Another type is no value: a process id written as text, a
+        // number for a path.
         assert_eq!(
-            summarize_args(&json!({ "pattern": "retry", "path": "src" })),
-            "\"retry\" src"
+            summarize_args(
+                &json!({ "process_id": "3", "path": 7, "query": "q" })
+            ),
+            "q"
         );
-        assert_eq!(
-            summarize_args(&json!({ "cmd": "cargo test" })),
-            "cargo test"
-        );
-        assert_eq!(
-            summarize_args(&json!({ "process_id": 3, "chars": "y\n" })),
-            "#3 ← y\\n"
-        );
-        assert_eq!(summarize_args(&json!({ "process_id": 3 })), "#3");
     }
 
     #[test]

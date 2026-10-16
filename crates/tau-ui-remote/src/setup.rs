@@ -305,18 +305,34 @@ mod tests {
         assert_eq!(setup.selected().count(), 0);
     }
 
+    /// A clone's update replaces the one of its name, in its place, and
+    /// leaves the others; a new name joins at the end.
     #[test]
     fn clone_updates_replace_by_name() {
         let mut setup = Setup::default();
-        let cloning = |share| RepoClone {
-            name: "a/tau".into(),
+        let cloning = |name: &str, share| RepoClone {
+            name: name.into(),
             state: CloneState::Cloning {
                 share,
                 detail: String::new(),
             },
         };
-        setup.update(SetupUpdate::Clone(cloning(0.1)));
-        setup.update(SetupUpdate::Clone(cloning(0.5)));
-        assert_eq!(setup.clones, [cloning(0.5)]);
+        setup.update(SetupUpdate::Clone(cloning("a/tau", 0.1)));
+        setup.update(SetupUpdate::Clone(cloning("a/docs", 0.2)));
+        setup.update(SetupUpdate::Clone(cloning("a/tau", 0.5)));
+        assert_eq!(
+            setup.clones,
+            [cloning("a/tau", 0.5), cloning("a/docs", 0.2)]
+        );
+        setup.update(SetupUpdate::Clone(cloning("a/docs", 0.9)));
+        setup.update(SetupUpdate::Clone(cloning("a/web", 0.0)));
+        assert_eq!(
+            setup.clones,
+            [
+                cloning("a/tau", 0.5),
+                cloning("a/docs", 0.9),
+                cloning("a/web", 0.0)
+            ]
+        );
     }
 }
