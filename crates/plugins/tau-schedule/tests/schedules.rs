@@ -274,11 +274,23 @@ fn a_chat_does_not_repeat_and_says_why_else_it_refuses() {
         refused("x", json!({ "in": "1h", "on": "2026-10-13 09:00" }))
             .contains("Say when")
     );
-    assert!(refused("x", json!({ "in": "30s" })).contains("soonest"));
+    // A minute from now is the soonest, and a year (366 days) ahead the
+    // furthest: each bound holds, and a step past it is refused.
+    assert!(refused("x", json!({ "in": "59s" })).contains("soonest"));
     assert!(
-        refused("x", json!({ "on": "2026-10-12 07:00" })).contains("soonest")
+        refused("x", json!({ "on": "2026-10-12 08:00" })).contains("soonest")
     );
-    assert!(refused("x", json!({ "in": "400d" })).contains("year"));
+    assert!(refused("x", json!({ "in": "367d" })).contains("year"));
+    assert!(refused("x", json!({ "on": "2027-10-13 08:01" })).contains("year"));
+    for (name, when) in [
+        ("soonest", json!({ "in": "60s" })),
+        ("on-soonest", json!({ "on": "2026-10-12 08:01" })),
+        ("furthest", json!({ "in": "366d" })),
+        ("on-furthest", json!({ "on": "2027-10-13 08:00" })),
+    ] {
+        f.schedule("chat-2", name, when).unwrap();
+    }
+    assert_eq!(f.waiting("chat-2").len(), 4);
     assert!(
         refused("x", json!({ "on": "soon" }))
             .contains("like \"2026-10-13 08:00\"")
