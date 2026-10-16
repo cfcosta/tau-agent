@@ -23,7 +23,7 @@ use tau_agent::{
         ToolSource,
     },
 };
-use tau_ai::message::{InputBlock, Message, ToolResultMessage};
+use tau_ai::message::{InputBlock, Message, ToolResultMessage, UserContent};
 use tau_codemode_host::{CancellationToken, Codemode, PLUGIN};
 use tau_jev::fake::FakeJev;
 use tau_store::{Entry, Store};
@@ -567,7 +567,24 @@ fn start_lists_the_direct_tools_signatures() {
             .plugin(Codemode::new(None));
         agent.run("go", &store).await.unwrap();
 
-        let first = format!("{:?}", llm.requests()[0].transcript);
+        // What the first request told the model, as text.
+        let first: String = llm.requests()[0]
+            .transcript
+            .iter()
+            .filter_map(|message| match message {
+                Message::User(user) => Some(match &user.content {
+                    UserContent::Text(text) => text.clone(),
+                    UserContent::Blocks(blocks) => blocks
+                        .iter()
+                        .filter_map(|block| match block {
+                            InputBlock::Text(text) => Some(text.text.clone()),
+                            InputBlock::Image(_) => None,
+                        })
+                        .collect(),
+                }),
+                _ => None,
+            })
+            .collect();
         assert!(
             first.contains(
                 "function tools.echo(args: { fail: boolean?, ms: number?, \

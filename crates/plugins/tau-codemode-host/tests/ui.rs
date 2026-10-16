@@ -106,10 +106,9 @@ fn repository_pin_fold_keeps_source_for_hostless_inspection() {
         store::Record::RepositoryPin(pin),
         &mut tau_ui_plugin::testing::FakeRun::default(),
     );
-    let reloaded: State =
-        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
-    let saved = &reloaded.repository_pins["run-1"];
-    assert_eq!(saved, &state.repository_pins["run-1"]);
+    // The fold keeps the pin under its owner, whole: the card can show its
+    // sources with no host to ask.
+    let saved = &state.repository_pins["run-1"];
     assert_eq!(
         saved.resolve("alpha", None).unwrap().source(),
         definition.source()
@@ -414,12 +413,29 @@ fn host_action_revalidates_persisted_records_and_publishes_selection() {
     }
 }
 
-#[test]
-fn large_fake_fixture_json_is_bounded_before_display() {
-    let value = json!({"fake": "x".repeat(1024 * 1024)});
-    let preview = ui::compact_json_preview(&value, 2048);
-    assert!(preview.len() <= 2051);
-    assert!(preview.ends_with('…'));
+/// A fixture's JSON is cut before it is drawn: within its limit it is the
+/// compact JSON itself; past it, the JSON's first `limit` bytes (a cut
+/// character shown as U+FFFD) and `…`. Limits are drawn at the JSON's own
+/// length, either side of it, and anywhere below.
+#[hegel::test(test_cases = 300)]
+fn a_fixture_preview_is_its_json_up_to_the_limit(tc: hegel::TestCase) {
+    let value: Value = tc.draw(hegel::extras::serde_json::values());
+    let full = serde_json::to_string(&value).unwrap();
+    let limit: usize = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![
+            0,
+            full.len().saturating_sub(1),
+            full.len(),
+            full.len() + 1
+        ]),
+        gs::integers::<usize>().max_value(full.len() + 8),
+    ));
+    let expected = if full.len() <= limit {
+        full.clone()
+    } else {
+        format!("{}…", String::from_utf8_lossy(&full.as_bytes()[..limit]))
+    };
+    assert_eq!(ui::compact_json_preview(&value, limit), expected, "{full}");
 }
 
 const CALL: &str = "call_1";

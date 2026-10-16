@@ -20,7 +20,6 @@ use tau_agent::{
     error::PluginError,
     event::RunEvent,
     plugin::{Decision, Plugin, PluginCtx, PluginRun, RunPlan, ToolCall},
-    tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::{
     llm::{Llm, LlmError, LlmSession},
@@ -849,47 +848,5 @@ fn ordinary_plugin_block_prevents_infer_admission() {
         assert!(!events.seen.lock().unwrap().iter().any(|event| matches!(event, RunEvent::ToolEnd { parent: Some(_), output, .. } if output.structured.is_some())));
         assert!(store.plugin_costs(&outcome.run.0).await.unwrap().is_empty());
         model.assert_exhausted();
-    });
-}
-
-struct ReservedInfer;
-
-#[async_trait]
-impl AgentTool for ReservedInfer {
-    fn name(&self) -> &str {
-        "infer"
-    }
-    fn description(&self) -> &str {
-        "reserved name"
-    }
-    fn parameters(&self) -> &Value {
-        static SCHEMA: std::sync::LazyLock<Value> =
-            std::sync::LazyLock::new(|| json!({"type":"object"}));
-        &SCHEMA
-    }
-    async fn call(
-        &self,
-        _args: Value,
-        _ctx: ToolCtx,
-    ) -> Result<ToolOutput, tau_agent::error::ToolError> {
-        Ok(ToolOutput::text("unused"))
-    }
-}
-
-#[test]
-fn reserved_infer_name_rejects_run_before_model_request() {
-    block_on(async {
-        let model = ScriptedModel::new();
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone())
-            .tool(ReservedInfer)
-            .plugin(Codemode::new(None));
-        let error = agent
-            .run("go", &store)
-            .await
-            .expect_err("run start must fail")
-            .to_string();
-        assert!(error.contains("already exists"), "{error}");
-        assert!(model.requests().is_empty());
     });
 }

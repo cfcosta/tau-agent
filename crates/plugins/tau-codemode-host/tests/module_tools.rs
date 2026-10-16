@@ -267,12 +267,13 @@ return {{bad_syntax=bad_syntax,oversized=oversized,count=#tools.module_list({{}}
     });
 }
 
-struct ConflictingTool;
+/// A tool of the run's own, under a name it is given.
+struct ConflictingTool(&'static str);
 
 #[async_trait]
 impl AgentTool for ConflictingTool {
     fn name(&self) -> &str {
-        "module_define"
+        self.0
     }
     fn description(&self) -> &str {
         "conflict"
@@ -290,17 +291,29 @@ impl AgentTool for ConflictingTool {
     }
 }
 
+/// Every name codemode gives a tool of its own is reserved: a run that
+/// already has a tool by one of them fails to start, naming it, before
+/// any request reaches the model.
 #[test]
-fn reserved_module_name_rejects_conflicting_tool() {
+fn reserved_tool_names_reject_the_run_before_any_request() {
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model(&["return true"]))
-            .tool(ConflictingTool)
-            .plugin(Codemode::new(None));
-        let error = agent.run("go", &store).await.unwrap_err().to_string();
-        assert!(
-            error.contains("codemode reserves tool name `module_define`"),
-            "{error}"
-        );
+        for name in [
+            "module_define",
+            "module_inspect",
+            "module_list",
+            "module_promote",
+            "module_select",
+            "module_test",
+            "infer",
+        ] {
+            let llm = ScriptedModel::new();
+            let agent = Agent::new(llm.clone())
+                .tool(ConflictingTool(name))
+                .plugin(Codemode::new(None));
+            let error = agent.run("go", &store).await.unwrap_err().to_string();
+            assert!(error.contains(name), "{name}: {error}");
+            assert!(llm.requests().is_empty(), "{name}");
+        }
     });
 }

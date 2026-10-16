@@ -1,8 +1,10 @@
 //! Property inventory: `map_matches_arithmetic_oracle` checks exact ordered
 //! settled records against independent indexed arithmetic, including empty
-//! arrays and every valid small concurrency. The generator draws small JSON
-//! safe integers and a valid concurrency by construction; vector shrinking
-//! removes items and integer shrinking simplifies values. Hegel uses the
+//! arrays and every valid small concurrency, while each callback's tool
+//! call takes a drawn time, and checks how many callbacks run at once. The
+//! generator draws small JSON safe integers, durations and a valid
+//! concurrency by construction; vector shrinking removes items and integer
+//! shrinking simplifies values. Hegel uses the
 //! workspace hegel.toml development profile locally and its shipped CI
 //! profile on CI, so this test needs no per-test case count.
 
@@ -27,27 +29,6 @@ use tau_testing::block_on;
 
 fn host() -> Arc<FakeHost> {
     Arc::new(FakeHost::default())
-}
-
-#[tokio::test]
-async fn preserves_item_order_despite_staggered_completion() {
-    let host = host();
-    let outcome = script(
-        &host,
-        r#"return map(array({ 80, 10, 40 }), function(ms, index)
-            tools.sleep({ ms = ms })
-            return { item = ms, index = index }
-        end, 3)"#,
-    )
-    .await;
-    assert_eq!(outcome.failure, None);
-    assert_eq!(
-        texts(&outcome),
-        [
-            r#"[{"ok":true,"value":{"index":1,"item":80}},{"ok":true,"value":{"index":2,"item":10}},{"ok":true,"value":{"index":3,"item":40}}]"#
-        ]
-    );
-    assert_eq!(host.peak.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
@@ -160,55 +141,46 @@ async fn limits_collection_to_ten_thousand_items() {
     assert!(error(&outcome).contains("10000 elements"));
 }
 
+/// A timeout or a cancel stops a map alike: the callbacks running are
+/// dropped, their calls marked cancelled, and queued items never start.
 #[tokio::test]
-async fn timeout_drops_running_callbacks_and_never_starts_queued_items() {
-    let host = host();
-    let outcome = script(
-        &host,
-        r#"-- @options: {"timeout_ms": 100}
-           return map(array({ 1, 2, 3, 4 }), function(item)
+async fn timeout_and_cancel_drop_running_callbacks_and_never_start_queued_items()
+ {
+    const MAP: &str = r#"return map(array({ 1, 2, 3, 4 }), function(item)
                return tools.sleep({ ms = 10000, item = item })
-           end, 2)"#,
-    )
-    .await;
-    assert_eq!(outcome.failure, Some(Failure::TimedOut { timeout_ms: 100 }));
-    assert_eq!(host.names().len(), 2);
-    assert_eq!(host.dropped.load(Ordering::SeqCst), 2);
-    assert!(
-        outcome
-            .calls
-            .iter()
-            .all(|row| row.status == CallStatus::Cancelled)
-    );
-}
-
-#[tokio::test]
-async fn cancellation_drops_running_callbacks_and_never_starts_queued_items() {
-    let host = host();
-    let cancel = CancellationToken::new();
-    let trigger = cancel.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        trigger.cancel();
-    });
-    let outcome = script_with(
-        &host,
-        r#"return map(array({ 1, 2, 3, 4 }), function(item)
-               return tools.sleep({ ms = 10000, item = item })
-           end, 2)"#,
-        Snapshot::new(),
-        cancel,
-    )
-    .await;
-    assert_eq!(outcome.failure, Some(Failure::Cancelled));
-    assert_eq!(host.names().len(), 2);
-    assert_eq!(host.dropped.load(Ordering::SeqCst), 2);
-    assert!(
-        outcome
-            .calls
-            .iter()
-            .all(|row| row.status == CallStatus::Cancelled)
-    );
+           end, 2)"#;
+    for cancelled in [false, true] {
+        let host = host();
+        let outcome = if cancelled {
+            let cancel = CancellationToken::new();
+            let trigger = cancel.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                trigger.cancel();
+            });
+            script_with(&host, MAP, Snapshot::new(), cancel).await
+        } else {
+            script(
+                &host,
+                &format!("-- @options: {{\"timeout_ms\": 100}}\n{MAP}"),
+            )
+            .await
+        };
+        let stopped = if cancelled {
+            Failure::Cancelled
+        } else {
+            Failure::TimedOut { timeout_ms: 100 }
+        };
+        assert_eq!(outcome.failure, Some(stopped));
+        assert_eq!(host.names().len(), 2);
+        assert_eq!(host.dropped.load(Ordering::SeqCst), 2);
+        assert!(
+            outcome
+                .calls
+                .iter()
+                .all(|row| row.status == CallStatus::Cancelled)
+        );
+    }
 }
 
 #[tokio::test]
@@ -224,25 +196,45 @@ async fn map_starts_fresh_in_each_vm() {
     assert_eq!(texts(&second), ["true", "function"]);
 }
 
+/// Whatever the items, the concurrency and how long each callback's tool
+/// call takes, the settled records come back in item order with the
+/// values independent arithmetic gives, and as many callbacks run at
+/// once as the concurrency allows: no more, and, since every call takes
+/// some time, no fewer. Time is tokio's paused clock, so the drawn
+/// durations reorder completions without real waiting.
 #[hegel::test]
 fn map_matches_arithmetic_oracle(tc: TestCase) {
-    let inputs: Vec<i16> = tc.draw(
-        gs::vecs(gs::integers::<i16>().min_value(-100).max_value(100))
-            .max_size(12),
+    let inputs: Vec<(i16, u8)> = tc.draw(
+        gs::vecs(hegel::tuples!(
+            gs::integers::<i16>().min_value(-100).max_value(100),
+            gs::integers::<u8>().min_value(1).max_value(50)
+        ))
+        .max_size(12),
     );
     let concurrency: u8 =
         tc.draw(gs::integers::<u8>().min_value(1).max_value(8));
+    let pairs: Vec<[i64; 2]> = inputs
+        .iter()
+        .map(|(item, ms)| [i64::from(*item), i64::from(*ms)])
+        .collect();
     let code = format!(
-        "return map(json.decode('{}'), function(item, index) return item * 3 + index end, {concurrency})",
-        json!(inputs)
+        "return map(json.decode('{}'), function(pair, index) \
+         tools.sleep({{ ms = pair[2] }}) return pair[1] * 3 + index end, {concurrency})",
+        json!(pairs)
     );
-    let outcome = block_on(script(&host(), &code));
+    let host = host();
+    let outcome = block_on(script(&host, &code));
     assert_eq!(outcome.failure, None);
     let actual: Value = serde_json::from_str(&texts(&outcome)[0]).unwrap();
     let expected: Vec<Value> = inputs
         .iter()
         .enumerate()
-        .map(|(index, item)| json!({"ok":true,"value":i32::from(*item) * 3 + index as i32 + 1}))
+        .map(|(index, (item, _))| json!({"ok":true,"value":i32::from(*item) * 3 + index as i32 + 1}))
         .collect();
     assert_eq!(actual, json!(expected));
+    assert_eq!(
+        host.peak.load(Ordering::SeqCst),
+        inputs.len().min(usize::from(concurrency)),
+        "callbacks running at once"
+    );
 }

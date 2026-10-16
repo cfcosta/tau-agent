@@ -185,7 +185,6 @@ async fn parallel_refuses_what_is_not_a_function() {
 #[tokio::test(flavor = "multi_thread")]
 async fn sequential_tools_run_one_at_a_time() {
     let host = host();
-    let started = Instant::now();
     let outcome = script(
         &host,
         "parallel(\n\
@@ -195,7 +194,7 @@ async fn sequential_tools_run_one_at_a_time() {
     )
     .await;
     assert_eq!(outcome.failure, None);
-    assert!(started.elapsed() >= Duration::from_millis(300));
+    // Never two at once; the elapsed time would add nothing to that.
     assert_eq!(host.peak.load(Ordering::SeqCst), 1);
 }
 

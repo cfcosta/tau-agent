@@ -200,19 +200,30 @@ fn the_catalog_fits_its_budget_and_accounts_for_every_tool(tc: TestCase) {
     }
 }
 
+/// The description is fixed: the intro, then the `Jev:` section or the
+/// line saying there is no Jev, then the closing paragraph, which is
+/// the one `docs/reference/codemode.md` gives, word for word.
 #[test]
 fn the_description_is_fixed() {
-    let with = description(true);
-    let without = description(false);
+    const DOC: &str = include_str!("../../../../docs/reference/codemode.md");
+    let (_, after) = DOC
+        .split_once("Luau types. Then:\n\n```\n")
+        .expect("the doc gives the closing paragraph");
+    let (closing, _) = after.split_once("\n```").unwrap();
+    assert_eq!(description::NOT_DECLARED, closing);
+    for (has_jev, middle) in
+        [(true, description::JEV), (false, description::NO_JEV)]
+    {
+        assert_eq!(
+            description(has_jev),
+            format!("{}\n\n{middle}\n\n{closing}", description::INTRO)
+        );
+    }
     assert!(
-        with.starts_with(
+        description::INTRO.starts_with(
             "Run Luau code to orchestrate and compose tool calls\n"
         )
     );
-    assert!(with.contains("\n\nJev:\n"));
-    assert!(without.contains(description::NO_JEV));
-    assert!(with.ends_with(description::NOT_DECLARED));
-    assert!(without.ends_with(description::NOT_DECLARED));
 }
 
 #[hegel::composite]
@@ -542,6 +553,25 @@ fn simple_schema(tc: &TestCase) -> Value {
     }
 }
 
+/// The Luau type of a `simple_schema`, written out here: an integer is a
+/// number, and an array is a table of its items' type.
+fn luau_type(schema: &Value) -> String {
+    let leaf = |name: &str| match name {
+        "string" => "string",
+        "number" | "integer" => "number",
+        "boolean" => "boolean",
+        other => panic!("not a simple schema: {other}"),
+    };
+    match schema["type"].as_str().unwrap() {
+        "array" => {
+            format!("{{ {} }}", leaf(schema["items"]["type"].as_str().unwrap()))
+        }
+        name => leaf(name).to_owned(),
+    }
+}
+
+/// An object's type keeps every property under its key, with the type
+/// written out above, and marks with `?` exactly the ones not required.
 #[hegel::test]
 fn objects_keep_every_property_and_mark_only_optional_ones(tc: TestCase) {
     // Luau cannot write a key holding NUL; those go to the indexer.
@@ -567,7 +597,7 @@ fn objects_keep_every_property_and_mark_only_optional_ones(tc: TestCase) {
         } else {
             format!("[{}]", quote(name))
         };
-        let ty = schema_type(&properties[name]).render(0);
+        let ty = luau_type(&properties[name]);
         let field = if required.contains(name) {
             format!("{key}: {ty},")
         } else {

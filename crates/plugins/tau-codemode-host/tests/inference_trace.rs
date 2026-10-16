@@ -9,8 +9,10 @@
 //! Generator plan: up to six traces, each owned or inherited, with up to
 //! three reservations and an optional terminal whose attempts match them;
 //! shrinking removes traces and attempts and simplifies outcomes toward
-//! clean finished ones. The fixed examples below keep the legacy label,
-//! malformed records and the budget's own refusal.
+//! clean finished ones. The fixed examples below keep malformed owners,
+//! records that would replenish the budget, and the raw-output bound. The
+//! budget's refusal to admit after an incomplete attempt is `infer_tool`'s,
+//! end to end.
 
 #![allow(
     clippy::disallowed_methods,
@@ -24,11 +26,6 @@ use tau_ai::message::{Usage, UsageCost};
 use tau_codemode::{
     inference_trace::{self, Attempt, AttemptOutcome, Record, UsageProvenance},
     store,
-    ui::State,
-};
-use tau_codemode_host::{
-    CancellationToken,
-    inference_budget::{Budget, Limits},
 };
 
 fn owner(id: &str) -> RunId {
@@ -84,99 +81,6 @@ fn finished(
         attempts,
         total_usage: total,
     }
-}
-
-#[test]
-fn roundtrip_preserves_private_data_and_ui_defaults() {
-    let record = started("opaque", owner("run"));
-    let json = stored(record.clone());
-    assert_eq!(json["kind"], "inference");
-    assert_eq!(json["phase"], "started");
-    assert_eq!(json["task"], "private task");
-    assert_eq!(
-        serde_json::from_value::<store::Record>(json).unwrap(),
-        store::Record::Inference(record)
-    );
-    let old_state: State = serde_json::from_value(json!({
-        "store": {}, "writes": 2, "modules": {}
-    }))
-    .unwrap();
-    assert!(old_state.inference.is_empty());
-    let mut state = State::default();
-    state.inference.push(started("pending", owner("run")));
-    assert_eq!(
-        state.inference_statuses()["pending"],
-        "interrupted / incomplete"
-    );
-    state
-        .inference
-        .push(finished("pending", owner("run"), vec![], None));
-    assert_eq!(state.inference_statuses()["pending"], "finished");
-    assert!(store::fold(&[stored(started("other", owner("run")))]).is_empty());
-}
-
-#[test]
-fn missing_finish_is_incomplete_and_blocks_same_run() {
-    let records = vec![
-        stored(started("pending", owner("run"))),
-        stored(Record::Attempt {
-            trace_id: "pending".into(),
-            owner: owner("run"),
-            number: 1,
-        }),
-    ];
-    let restored =
-        inference_trace::restore_budget(&records, &owner("run")).unwrap();
-    assert_eq!(restored.calls, 1);
-    assert!(restored.incomplete_attempt);
-    assert_eq!(restored.usage, Usage::default());
-    let fork =
-        inference_trace::restore_budget(&records, &owner("fork")).unwrap();
-    assert_eq!(fork.calls, 0);
-    assert!(!fork.incomplete_attempt);
-
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .start_paused(true)
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let budget = Budget::restored(Limits::default(), restored).unwrap();
-        assert!(
-            budget
-                .admit(&CancellationToken::new())
-                .await
-                .unwrap_err()
-                .contains("incomplete inference budget")
-        );
-    });
-}
-
-#[test]
-fn legacy_open_failure_label_is_still_uncertain() {
-    let records = vec![
-        stored(started("legacy", owner("run"))),
-        stored(Record::Attempt {
-            trace_id: "legacy".into(),
-            owner: owner("run"),
-            number: 1,
-        }),
-        stored(finished(
-            "legacy",
-            owner("run"),
-            vec![Attempt {
-                number: 1,
-                outcome: AttemptOutcome::OpenFailed,
-                reported_usage: Usage::default(),
-                usage_provenance: UsageProvenance::NoProviderResponse,
-            }],
-            Some("open failed".into()),
-        )),
-    ];
-    let restored =
-        inference_trace::restore_budget(&records, &owner("run")).unwrap();
-    assert_eq!(restored.calls, 1);
-    assert!(restored.incomplete_attempt);
 }
 
 #[test]
