@@ -184,19 +184,34 @@ mod tests {
     use super::*;
 
     /// A value read as its type, changed, and sent reads back the same;
-    /// a clone taken before the change keeps the old value.
+    /// a clone taken before the change keeps the old value. JSON a
+    /// plugin cannot read is its type's default, not an error, and an
+    /// empty value is null.
     #[hegel::test(test_cases = 100)]
     fn a_value_changes_alone_and_travels_whole(tc: hegel::TestCase) {
         use hegel::generators as gs;
-        let first: Vec<u32> =
+        let list: Vec<u32> =
             tc.draw(gs::vecs(gs::integers::<u32>()).max_size(5));
-        let more: u32 = tc.draw(gs::integers());
-        let from_json: bool = tc.draw(gs::booleans());
-        let mut value = if from_json {
-            PluginValue::from_json(serde_json::to_value(&first).unwrap())
-        } else {
-            PluginValue::typed(first.clone())
+        // 0: typed, 1: its JSON, 2: JSON of another shape.
+        let source: u8 = tc.draw(gs::integers::<u8>().max_value(2));
+        let other = || -> serde_json::Value {
+            match tc.draw(gs::integers::<u8>().max_value(3)) {
+                0 => serde_json::json!({ "not": "a list" }),
+                1 => serde_json::json!("text"),
+                2 => serde_json::json!(tc.draw(gs::integers::<i64>())),
+                _ => serde_json::json!([tc.draw(gs::booleans())]),
+            }
         };
+        let (mut value, first) = match source {
+            0 => (PluginValue::typed(list.clone()), list),
+            1 => (
+                PluginValue::from_json(serde_json::to_value(&list).unwrap()),
+                list,
+            ),
+            _ => (PluginValue::from_json(other()), Vec::new()),
+        };
+        let more: u32 = tc.draw(gs::integers());
+        assert_eq!(value.get::<Vec<u32>>(), &first);
         let before = value.clone();
         value.get_mut::<Vec<u32>>().push(more);
         let mut expected = first.clone();
@@ -208,14 +223,6 @@ mod tests {
                 .unwrap();
         assert_eq!(sent.get::<Vec<u32>>(), &expected);
         assert_eq!(sent, value);
-    }
-
-    /// JSON a plugin cannot read is its type's default, not an error.
-    #[test]
-    fn unreadable_json_is_the_default() {
-        let value =
-            PluginValue::from_json(serde_json::json!({"not": "a list"}));
-        assert!(value.get::<Vec<u32>>().is_empty());
         assert!(PluginValue::default().is_null());
     }
 }
