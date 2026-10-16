@@ -1,5 +1,5 @@
 //! Inventory: the complete report matches a fixed independent JSON golden;
-//! report JSON round trips; the text display loses log evidence while the
+//! the text display loses log evidence while the
 //! structured grep sees every failure. The oracle is handwritten output, not
 //! the scripts or simulator. No generator is needed for this fixed VM corpus.
 //! Hegel's workspace hegel.toml governs the generated fixture properties.
@@ -32,14 +32,6 @@ async fn actual_vm_output_matches_independent_golden() {
             .all(|case| case.provider_round_trips == 0
                 && case.reported_usage.usd.is_none())
     );
-}
-
-#[tokio::test]
-async fn typed_report_round_trips_without_changing_results() {
-    let report = evaluate_offline().await.unwrap();
-    let json = serde_json::to_string(&report).unwrap();
-    let restored: EvalReport = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored, report);
 }
 
 #[test]

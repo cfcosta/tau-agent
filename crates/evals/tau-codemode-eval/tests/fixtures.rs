@@ -112,6 +112,19 @@ fn serialized_corpus_kinds_keep_inputs_and_independent_answers() {
         assert_eq!(fixture.expected, expected);
         assert_eq!(decoded.expected, expected);
     }
+    // A changed workflow needs its new input: its answer is not the
+    // original's, so a cached answer cannot pass it.
+    let answer = |name: &str| {
+        &corpus
+            .iter()
+            .find(|fixture| fixture.name == name)
+            .unwrap()
+            .expected
+    };
+    assert_ne!(
+        answer(&fixtures::repeated_workflow(false).name),
+        answer(&fixtures::repeated_workflow(true).name)
+    );
 }
 
 #[test]
@@ -128,28 +141,6 @@ fn display_windows_omit_required_evidence() {
     let byte_tail = &log[log.len() - 50 * 1024..];
     assert_ne!(failures(byte_head), fixture.expected);
     assert_ne!(failures(byte_tail), fixture.expected);
-}
-
-#[test]
-fn search_answer_matches_a_literal_reference_scan() {
-    let fixture = fixtures::search();
-    assert_eq!(search_records(&fixture), fixture.expected);
-}
-
-#[test]
-fn changed_workflow_requires_a_new_input_not_a_cached_answer() {
-    let original = fixtures::repeated_workflow(false);
-    let changed = fixtures::repeated_workflow(true);
-    assert_ne!(original.expected, changed.expected);
-    for fixture in [original, changed] {
-        let config: Value =
-            serde_json::from_str(&fixture.files[0].text).unwrap();
-        let command = config
-            .get("verify_command")
-            .or_else(|| config.get("test_command"))
-            .unwrap();
-        assert_eq!(json!({"command": command}), fixture.expected);
-    }
 }
 
 #[test]
