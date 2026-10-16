@@ -70,7 +70,7 @@ fn utf8_pages_end_on_codepoint_boundaries_and_never_stall() {
 }
 
 #[test]
-fn invalid_bytes_limits_offsets_and_missing_files_fail_explicitly() {
+fn invalid_bytes_cancellation_and_missing_files_fail_explicitly() {
     let (directory, bytes, artifact) = published(&[b'a', 0xff, b'z']);
     let cancel = CancellationToken::new();
     assert!(matches!(
@@ -82,24 +82,6 @@ fn invalid_bytes_limits_offsets_and_missing_files_fail_explicitly() {
     assert!(matches!(
         truncated_bytes.read_range(&truncated, 0, 3, Encoding::Utf8, &cancel),
         Err(Error::InvalidUtf8)
-    ));
-    assert!(matches!(
-        bytes.read_range(&artifact, 0, 0, Encoding::Base64, &cancel),
-        Err(Error::InvalidLimit)
-    ));
-    assert!(matches!(
-        bytes.read_range(
-            &artifact,
-            0,
-            MAX_RANGE_BYTES + 1,
-            Encoding::Base64,
-            &cancel
-        ),
-        Err(Error::InvalidLimit)
-    ));
-    assert!(matches!(
-        bytes.read_range(&artifact, 4, 1, Encoding::Base64, &cancel),
-        Err(Error::OffsetOutOfRange)
     ));
     let stopped = CancellationToken::new();
     stopped.cancel();
@@ -142,6 +124,49 @@ fn maximum_range_reads_exactly_65536_bytes() {
     );
     assert_eq!(page.next_offset, Some(MAX_RANGE_BYTES as u64));
     assert!(!page.complete);
+}
+
+/// Whatever the bytes and the encoding, a limit outside 1 to
+/// [`MAX_RANGE_BYTES`] is refused, and so is an offset past the end, the
+/// edges of each as often as the rest.
+#[hegel::test]
+fn limits_and_offsets_outside_the_artifact_are_refused(tc: TestCase) {
+    let source: String = tc.draw(gs::text().max_size(64));
+    use hegel::generators::Generator as _;
+    let encoding = tc.draw(
+        gs::sampled_from(vec![Encoding::Base64, Encoding::Utf8])
+            .print_as_debug(),
+    );
+    let (_directory, bytes, artifact) = published(source.as_bytes());
+    let size = source.len() as u64;
+    let read = |offset: u64, limit: u32| {
+        bytes.read_range(
+            &artifact,
+            offset,
+            limit,
+            encoding,
+            &CancellationToken::new(),
+        )
+    };
+    if tc.draw(gs::booleans()) {
+        let limit = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0, MAX_RANGE_BYTES + 1, u32::MAX]),
+            gs::integers::<u32>().min_value(MAX_RANGE_BYTES + 1),
+        ));
+        let offset = tc.draw(gs::integers::<u64>().max_value(size));
+        assert!(matches!(read(offset, limit), Err(Error::InvalidLimit)));
+    } else {
+        let past = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![1_u64, u64::MAX - size]),
+            gs::integers::<u64>().min_value(1).max_value(1 << 40),
+        ));
+        let limit =
+            tc.draw(gs::integers().min_value(1).max_value(MAX_RANGE_BYTES));
+        assert!(matches!(
+            read(size + past, limit),
+            Err(Error::OffsetOutOfRange)
+        ));
+    }
 }
 
 // Inventory: arbitrary bytes/offsets/limits compare with an independent slice
