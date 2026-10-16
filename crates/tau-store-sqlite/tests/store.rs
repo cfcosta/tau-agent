@@ -897,7 +897,9 @@ fn waiting_for_the_write_lock_is_measured() {
 }
 
 /// A run's sub-agents come back by their parent, oldest first, whatever
-/// became of them; a fork is not one.
+/// became of them; a fork is not one, nor a sub-agent's own. Their ids
+/// sort against the order they were made in, so oldest first is not the
+/// ids' order.
 #[test]
 fn subagents_are_found_by_their_parent() {
     block_on_io(async {
@@ -905,28 +907,28 @@ fn subagents_are_found_by_their_parent() {
         for (id, kind) in [
             ("a", RunKind::Root),
             (
-                "b",
+                "z",
                 RunKind::Subagent {
                     parent: "a".into(),
                     fork_seq: None,
                 },
             ),
             (
-                "c",
+                "y",
                 RunKind::Subagent {
                     parent: "a".into(),
                     fork_seq: None,
                 },
             ),
             (
-                "d",
+                "x",
                 RunKind::Subagent {
-                    parent: "c".into(),
+                    parent: "y".into(),
                     fork_seq: None,
                 },
             ),
             (
-                "e",
+                "w",
                 RunKind::Fork {
                     parent: "a".into(),
                     fork_seq: 0,
@@ -947,12 +949,12 @@ fn subagents_are_found_by_their_parent() {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         store
-            .finish_run("b", Status::Failed, None, Some("broke"))
+            .finish_run("z", Status::Failed, None, Some("broke"))
             .await
             .unwrap();
         let found = store.subagents("a").await.unwrap();
         let ids: Vec<&str> = found.iter().map(|run| run.id.as_str()).collect();
-        assert_eq!(ids, ["b", "c"]);
+        assert_eq!(ids, ["z", "y"]);
         assert_eq!(found[0].status, Status::Failed);
         assert!(store.subagents("nobody").await.unwrap().is_empty());
     });
