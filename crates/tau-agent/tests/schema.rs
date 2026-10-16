@@ -586,8 +586,24 @@ fn factor_child(
 ) -> Value {
     let inner = factor_out(tc, schema, defs);
     if tc.draw(hegel::generators::booleans()) {
-        let name = format!("D{}", defs.len());
-        defs.insert(name.clone(), inner);
+        // An equal subschema already defined may be used again, as
+        // schemars refers to one definition wherever its type appears:
+        // reuse, not recursion.
+        let same = defs
+            .iter()
+            .find(|(_, defined)| **defined == inner)
+            .map(|(name, _)| name.clone());
+        let name = match same {
+            Some(name) if tc.draw(hegel::generators::booleans()) => {
+                tc.event("a definition used twice");
+                name
+            }
+            _ => {
+                let name = format!("D{}", defs.len());
+                defs.insert(name.clone(), inner);
+                name
+            }
+        };
         json!({"$ref": format!("#/$defs/{name}")})
     } else {
         inner
@@ -595,8 +611,9 @@ fn factor_child(
 }
 
 /// Inlining undoes factoring out: a schema with drawn subschemas moved
-/// into `$defs` behind `$ref`s inlines back to the original, and so has
-/// the same strict form.
+/// into `$defs` behind `$ref`s, equal ones sometimes behind one
+/// definition, inlines back to the original, and so has the same strict
+/// form.
 #[hegel::test(test_cases = 300)]
 fn inlining_references_undoes_factoring_them_out(tc: TestCase) {
     let schema = tc.draw(generators::strict_schema(3));
@@ -662,20 +679,6 @@ fn references_that_cannot_be_inlined_are_rejected() {
         let error = inline_refs(&schema).unwrap_err();
         assert_eq!(error.reason(), reason, "for {schema}");
     }
-}
-
-/// A definition used twice is inlined at both places: only a cycle is
-/// recursion, not reuse.
-#[test]
-fn a_definition_may_be_used_twice() {
-    let schema = json!({
-        "type": "object",
-        "properties": {"a": {"$ref": "#/$defs/S"}, "b": {"$ref": "#/$defs/S"}},
-        "$defs": {"S": {"type": "string"}},
-    });
-    let inlined = inline_refs(&schema).unwrap();
-    assert_eq!(inlined["properties"]["a"], json!({"type": "string"}));
-    assert_eq!(inlined["properties"]["b"], json!({"type": "string"}));
 }
 
 /// A schemars schema with a nested and an optional nested struct gets a

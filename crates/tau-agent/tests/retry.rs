@@ -151,6 +151,7 @@ fn retryable_failures_are_retried_within_the_policy(tc: TestCase) {
 /// Failures that retrying cannot fix are not retried: a quota error, an
 /// invalid request, a connection dropped after output began, and the
 /// ChatGPT plan's usage limit, dead subscriber context and restrictions.
+/// The run ends in error, stored as failed.
 #[test]
 fn fatal_failures_are_not_retried() {
     let cases: [fn(TurnBuilder) -> TurnBuilder; 6] = [
@@ -169,6 +170,9 @@ fn fatal_failures_are_not_retried() {
                 Agent::new(llm.clone()).run("go", &store).await.unwrap();
             assert!(matches!(outcome.stop, StopReason::Error(_)));
             assert_eq!(llm.requests().len(), 1);
+            // The run is stored as failed.
+            let record = store.run(&outcome.run.0).await.unwrap().unwrap();
+            assert_eq!(record.status, tau_store::Status::Failed);
         });
     }
 }

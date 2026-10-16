@@ -245,32 +245,6 @@ struct Page<T> {
     items: Vec<T>,
 }
 
-/// The format's name is built from the type's schema name, with every
-/// character OpenAI does not allow replaced, so generic types work too.
-#[test]
-fn generic_output_types_get_a_valid_format_name() {
-    let llm = ScriptedModel::new().turn(|t| t.text(r#"{"items":[true]}"#));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let typed = Agent::new(llm.clone())
-            .run_typed::<Page<bool>>("list", &store)
-            .await
-            .unwrap();
-        assert_eq!(typed.value.items, vec![true]);
-        let format = llm.requests()[0].settings.text_format.clone().unwrap();
-        let name = format["name"].as_str().unwrap();
-        assert!(
-            !name.is_empty()
-                && name.len() <= 64
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c)),
-            "{name}"
-        );
-        assert!(name.starts_with("Page"), "{name}");
-    });
-}
-
 /// Echoes its `text` argument back.
 struct Echo;
 

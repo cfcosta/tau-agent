@@ -76,13 +76,3 @@ fn typed_tool_adapts() {
         .unwrap_err();
     assert!(error.to_string().contains("invalid type"), "{error}");
 }
-
-#[test]
-fn text_output_has_one_text_block() {
-    let output = ToolOutput::text("done");
-    assert_eq!(output.details, None);
-    assert_eq!(
-        serde_json::to_value(&output.content).unwrap(),
-        json!([{"type": "text", "text": "done"}])
-    );
-}

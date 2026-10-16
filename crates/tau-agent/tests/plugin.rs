@@ -904,9 +904,10 @@ async fn run_to_end(
 }
 
 /// A rewrite between turns replaces the working transcript: the next
-/// request sends it, the store keeps a context entry naming the plugin
-/// and pointing at the messages it kept, an event reports it, and a fork
-/// starts from it, with the plugin's details handed back.
+/// request sends it, every plugin is handed what it replaced, the store
+/// keeps a context entry naming the plugin and pointing at the messages
+/// it kept, an event reports it, and a fork starts from it, with the
+/// plugin's details handed back.
 #[test]
 fn a_rewrite_replaces_the_transcript() {
     block_on(async {
@@ -919,14 +920,19 @@ fn a_rewrite_replaces_the_transcript() {
             on: Some(tau_agent::plugin::Trigger::TurnEnd),
             ..Pruner::new(Prune::KeepLastUser)
         };
+        let watcher = Watcher::default();
         let agent = Agent::new(model.clone())
             .tool(Echo::new())
-            .plugin(pruner.clone());
+            .plugin(pruner.clone())
+            .plugin(watcher.clone());
         let store = tau_store_sqlite::memory().await.unwrap();
         let (events, outcome) =
             run_to_end(&agent, &store, "go", Some("then this")).await;
         assert_grammar(&events);
         assert_eq!(outcome.text, "done");
+        // Every plugin is handed what the rewrite replaced, whole: the
+        // four messages before it, and the one it kept.
+        assert_eq!(watcher.seen.lock().unwrap().clone(), [(4, 1)]);
 
         let requests = model.requests();
         assert_eq!(requests[1].transcript.len(), 1);
@@ -1173,29 +1179,6 @@ impl PluginRun for Watcher {
             .push((replaced.len(), rewrite.messages.len()));
         Ok(())
     }
-}
-
-/// Every plugin, the rewriter included, is handed the transcript a
-/// rewrite replaced, whole, before the next request goes out.
-#[test]
-fn plugins_see_what_a_rewrite_replaced() {
-    block_on(async {
-        let model = ScriptedModel::new()
-            .turn(|t| t.tool_call("echo", json!({"text": "x"})))
-            .turn(|t| t.text("done"));
-        let watcher = Watcher::default();
-        let agent = Agent::new(model.clone())
-            .tool(Echo::new())
-            .plugin(Pruner::new(Prune::KeepLastUser))
-            .plugin(watcher.clone());
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let (events, _) =
-            run_to_end(&agent, &store, "go", Some("then this")).await;
-        assert_grammar(&events);
-        // The four messages before the rewrite, and the one it kept.
-        assert_eq!(watcher.seen.lock().unwrap().clone(), [(4, 1)]);
-        assert_eq!(model.requests()[1].transcript.len(), 1);
-    });
 }
 
 /// What a [`Picker`] was offered: the turn, the model, the effort and the

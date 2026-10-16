@@ -1511,36 +1511,40 @@ impl fmt::Debug for Run {
 mod tests {
     use super::*;
 
-    /// Characters OpenAI does not allow in a format name become `_`,
-    /// `-` and `_` stay, the name is cut to 64 characters, and an empty
-    /// name falls back to `output`.
-    #[test]
-    fn format_names_are_valid() {
-        assert_eq!(format_name("Page_for_bool"), "Page_for_bool");
-        assert_eq!(format_name("a-b<c>.d"), "a-b_c__d");
-        assert_eq!(format_name(&"x".repeat(70)), "x".repeat(64));
-        assert_eq!(format_name(""), "output");
-    }
-
-    /// Any name becomes a valid format name (1–64 characters from
-    /// `[A-Za-z0-9_-]`), a second pass changes nothing, and a name that is
-    /// already valid is kept as it is.
+    /// A format name keeps each character OpenAI allows (ASCII letters,
+    /// digits, `-` and `_`) and puts `_` for any other, then keeps the
+    /// first 64; a name with nothing left is `output`. Lengths are drawn
+    /// at their bounds, and names from the allowed characters and others.
     #[hegel::test(test_cases = 300)]
+    #[hegel::explicit_test_case(length = 13usize, name = "Page_for_bool".to_owned())]
+    #[hegel::explicit_test_case(length = 8usize, name = "a-b<c>.d".to_owned())]
+    #[hegel::explicit_test_case(length = 0usize, name = String::new())]
     fn format_names_are_valid_for_any_name(tc: hegel::TestCase) {
         use hegel::generators as gs;
-        let valid = |name: &str| {
-            (1..=64).contains(&name.len())
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        let length = tc.draw(hegel::one_of!(
+            gs::integers::<usize>().max_value(80),
+            gs::sampled_from(vec![0, 1, 63, 64, 65]),
+        ));
+        let name: String = tc.draw(hegel::one_of!(
+            gs::text().min_size(length).max_size(length),
+            gs::text()
+                .alphabet("aZ09-_ .<>é日")
+                .min_size(length)
+                .max_size(length),
+        ));
+        let allowed =
+            |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+        let kept: String = name
+            .chars()
+            .take(64)
+            .map(|c| if allowed(c) { c } else { '_' })
+            .collect();
+        let expected = if kept.is_empty() {
+            "output".to_owned()
+        } else {
+            kept
         };
-        let name: String = tc.draw(gs::text().max_size(80));
-        let formatted = format_name(&name);
-        assert!(valid(&formatted), "{name:?} became {formatted:?}");
-        assert_eq!(format_name(&formatted), formatted);
-        let already: String =
-            tc.draw(gs::from_regex("[A-Za-z0-9_-]{1,64}").fullmatch(true));
-        assert_eq!(format_name(&already), already);
+        assert_eq!(format_name(&name), expected, "{name:?}");
     }
 
     /// Only another model's reasoning goes: this model's messages, and

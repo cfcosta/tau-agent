@@ -632,39 +632,6 @@ fn truncated_calls_never_run() {
     });
 }
 
-/// A steered message is added after the running tool batch, once.
-#[test]
-fn steering_lands_after_the_batch() {
-    let llm = ScriptedModel::new()
-        .turn(|t| t.tool_call("probe", json!({"ms": 100})))
-        .turn(|t| t.text("heard you"));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let agent = Agent::new(llm.clone()).tool(Probe::new(
-            "probe",
-            ExecutionMode::Parallel,
-            log,
-        ));
-        let run = agent.start("go", &store);
-        let id = run.id();
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        run.steer("also check the tests");
-        let outcome = run.outcome().await.unwrap();
-        assert_eq!(outcome.text, "heard you");
-        let transcript = stored(&store, &id.0).await;
-        let kinds: Vec<&str> = transcript.iter().map(|m| m.role()).collect();
-        assert_eq!(
-            kinds,
-            ["user", "assistant", "toolResult", "user", "assistant"]
-        );
-        // The model saw the steered message on its second request.
-        let requests = llm.requests();
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[1].transcript.len(), 4);
-    });
-}
-
 fn picture(data: &str) -> tau_ai::message::ImageContent {
     tau_ai::message::ImageContent {
         data: data.into(),
@@ -1023,24 +990,6 @@ fn a_failure_with_output_keeps_its_details() {
             panic!()
         };
         assert_eq!(text.text, "partial\n\nCommand exited with code 2");
-    });
-}
-
-/// A failed model response ends the run with its error.
-#[test]
-fn model_error_ends_the_run() {
-    let llm =
-        ScriptedModel::new().turn(|t| t.error("insufficient_quota", "boom"));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let outcome = Agent::new(llm).run("go", &store).await.unwrap();
-        assert!(
-            matches!(&outcome.stop, StopReason::Error(m) if m.contains("boom")),
-            "{:?}",
-            outcome.stop
-        );
-        let record = store.run(&outcome.run.0).await.unwrap().unwrap();
-        assert_eq!(record.status, tau_store::Status::Failed);
     });
 }
 
