@@ -461,31 +461,6 @@ fn short_lines_need_no_model() {
     assert_eq!(history.free(Node::new(1, 0)), None);
 }
 
-/// OptChat's rule, worked by hand: eight lines of 100 bytes, every
-/// parent 100 bytes, a 500-byte budget. The pair at 0 is most due (8/4),
-/// then the one at 2 (6/4); then the pair of level-1 lines at 0 (8/8)
-/// ties the leaves at 4 (4/4), and the older pair wins.
-#[test]
-fn the_most_due_pair_merges_first_and_ties_go_to_the_older() {
-    let mut history = leaves(&[100; 8]);
-    build_parents(&mut history, |_, _, _| Some(100));
-    assert_eq!(history.fit(700), Fit::Fits);
-    assert_eq!(history.view()[0], Node::new(1, 0));
-    assert_eq!(history.fit(600), Fit::Fits);
-    assert_eq!(&history.view()[..2], [Node::new(1, 0), Node::new(1, 1)]);
-    assert_eq!(history.fit(500), Fit::Fits);
-    assert_eq!(
-        history.view(),
-        [
-            Node::new(2, 0),
-            Node::leaf(4),
-            Node::leaf(5),
-            Node::leaf(6),
-            Node::leaf(7)
-        ]
-    );
-}
-
 /// Detail fades with age: grown one message at a time, every merge
 /// available, a line never covers more than the lines before it.
 #[hegel::test]
@@ -513,26 +488,89 @@ fn older_lines_never_cover_less_than_newer_ones(tc: TestCase) {
     }
 }
 
-/// A pair is due by its age over its weight, not its age alone: with
-/// sixteen messages, two level-2 lines from 0 are due 16/16 and two
-/// leaves from 8 are due 8/4, so the younger leaves merge first.
-#[test]
-fn a_younger_pair_merges_first_when_it_is_more_due() {
-    let mut history = leaves(&[100; 16]);
-    build_parents(&mut history, |_, _, _| Some(100));
-    let mut view = vec![Node::new(2, 0), Node::new(2, 1)];
-    view.extend((8..16).map(Node::leaf));
-    let nodes: Vec<(Node, String)> = history
-        .nodes()
-        .map(|(node, text)| (node, text.to_owned()))
-        .collect();
-    let mut history = History::restore(history.entries().to_vec(), nodes, view);
-    assert_eq!(history.view_bytes(0), 1_000);
-    assert_eq!(history.fit(999), Fit::Fits);
-    assert_eq!(
-        &history.view()[..3],
-        [Node::new(2, 0), Node::new(2, 1), Node::new(1, 4)]
-    );
+/// The pair `fit` should merge next in `view`, by OptChat's rule
+/// (`docs/reference/tree-compaction.md`, "The view"): of two siblings
+/// side by side whose parent is built, the most due, a pair at level `l`
+/// from entry `start` being due `(total - start) / 2^(l+2)`; ties go to
+/// the older pair. Dues are compared as exact fractions; the second
+/// value is how many pairs tie for the top.
+fn most_due_model(
+    history: &History,
+    view: &[Node],
+    total: usize,
+) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, u128, u32)> = None;
+    let mut ties = 0;
+    for at in 0..view.len().saturating_sub(1) {
+        let (a, b) = (view[at], view[at + 1]);
+        if a.level != b.level
+            || a.parent() != b.parent()
+            || !history.is_built(a.parent())
+        {
+            continue;
+        }
+        let (age, power) = ((total - a.first()) as u128, a.level + 2);
+        match best {
+            // age / 2^power against top / 2^top_power, cross-multiplied.
+            Some((_, top, top_power))
+                if (age << top_power) < (top << power) => {}
+            Some((_, top, top_power))
+                if (age << top_power) == (top << power) =>
+            {
+                ties += 1;
+            }
+            _ => {
+                best = Some((at, age, power));
+                ties = 1;
+            }
+        }
+    }
+    best.map(|(at, _, _)| (at, ties))
+}
+
+/// Each merge `fit` makes is the pair OptChat's rule names: replayed one
+/// merge at a time (a budget a byte under the view, and parents smaller
+/// than their two lines, so each step merges once), over leaves of any
+/// size and any parents built, until no pair can merge. Due is age over
+/// weight, not age alone, so a younger pair can go first; ties go to the
+/// older pair.
+#[hegel::test]
+fn each_merge_takes_the_most_due_pair_and_ties_go_to_the_older(tc: TestCase) {
+    let lengths = tc.draw(lengths(64));
+    let mut history = leaves(&lengths);
+    let built: Vec<bool> =
+        tc.draw(gs::vecs(gs::booleans()).min_size(128).max_size(128));
+    let mut n = 0;
+    build_parents(&mut history, |_, a, b| {
+        n += 1;
+        built[n % built.len()].then_some(((a + b) / 2).max(1))
+    });
+    let total = history.len();
+    loop {
+        let before = history.view().to_vec();
+        let expected = most_due_model(&history, &before, total);
+        let size = history.view_bytes(NODE_BYTES);
+        let fit = history.fit(size - 1);
+        let Some((at, ties)) = expected else {
+            assert_eq!(fit, Fit::Waiting);
+            assert_eq!(history.view(), before);
+            break;
+        };
+        if ties > 1 {
+            tc.event("a tie");
+        }
+        let oldest = (0..before.len() - 1).find(|&i| {
+            before[i].parent() == before[i + 1].parent()
+                && history.is_built(before[i].parent())
+        });
+        if oldest != Some(at) {
+            tc.event("a younger pair first");
+        }
+        let mut want = before.clone();
+        want.splice(at..at + 2, [before[at].parent()]);
+        assert_eq!(fit, Fit::Fits);
+        assert_eq!(history.view(), want, "merged from {before:?}");
+    }
 }
 
 /// A kept view whose line was never built is not trusted: the history
