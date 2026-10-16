@@ -69,10 +69,10 @@ skills from a second folder.
 
 ## Features
 
-| Feature | Default | Effect                                                                        |
-| ------- | ------- | ----------------------------------------------------------------------------- |
-| `host`  | on      | The agent half: `scan`, `host` and `SkillsHost`, with serde_yaml_ng and tokio |
-| `demo`  | off     | `demo::seed`, the skills tau-ui's demo screens show                           |
+| Feature | Default | Effect                                                                 |
+| ------- | ------- | ---------------------------------------------------------------------- |
+| `host`  | on      | The agent half: `scan`, `host` and `SkillsHost`, with saphyr and tokio |
+| `demo`  | off     | `demo::seed`, the skills tau-ui's demo screens show                    |
 
 ## Testing
 

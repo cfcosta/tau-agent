@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde_yaml_ng::Value;
+use saphyr::{LoadableYamlNode, Scalar, Yaml};
 
 use crate::{Problem, SKILL_FILE, Skill, Skills, TOOL};
 
@@ -172,24 +172,34 @@ pub fn split(text: &str) -> Result<(&str, &str), String> {
 
 /// What the frontmatter `front` says: a YAML mapping.
 pub fn parse(front: &str) -> Result<Front, String> {
-    let value: Value = serde_yaml_ng::from_str(front)
-        .map_err(|error| format!("its frontmatter is not YAML: {error}"))?;
-    let Value::Mapping(map) = value else {
-        return if value.is_null() {
-            Ok(Front::default())
-        } else {
-            Err("its frontmatter is not a list of keys and values".into())
-        };
+    let not_yaml = |error: &dyn std::fmt::Display| {
+        format!("its frontmatter is not YAML: {error}")
+    };
+    let mut documents =
+        Yaml::load_from_str(front).map_err(|error| not_yaml(&error))?;
+    if documents.len() > 1 {
+        return Err(not_yaml(&"it holds more than one document"));
+    }
+    let map = match documents.pop() {
+        None | Some(Yaml::Value(Scalar::Null)) => return Ok(Front::default()),
+        Some(Yaml::Mapping(map)) => map,
+        Some(_) => {
+            return Err(
+                "its frontmatter is not a list of keys and values".into()
+            );
+        }
     };
     let mut parsed = Front::default();
     for (key, value) in map {
-        let Value::String(key) = key else { continue };
-        match key.as_str() {
+        let Yaml::Value(Scalar::String(key)) = key else {
+            continue;
+        };
+        match &*key {
             "name" => parsed.name = text_of(&value, "name")?,
             "description" => {
                 parsed.description = text_of(&value, "description")?
             }
-            _ => parsed.other.push(key),
+            _ => parsed.other.push(key.into_owned()),
         }
     }
     Ok(parsed)
@@ -198,14 +208,18 @@ pub fn parse(front: &str) -> Result<Front, String> {
 /// `value` as text: YAML reads `name: 404` as a number and `name: true`
 /// as a flag, which are their text here; `name: null` or `~` is none
 /// given.
-fn text_of(value: &Value, key: &str) -> Result<Option<String>, String> {
-    match value {
-        Value::Null => Ok(None),
-        Value::String(text) => Ok(Some(text.clone())),
-        Value::Number(number) => Ok(Some(number.to_string())),
-        Value::Bool(flag) => Ok(Some(flag.to_string())),
-        _ => Err(format!("its {key} is not text")),
-    }
+fn text_of(value: &Yaml, key: &str) -> Result<Option<String>, String> {
+    let Yaml::Value(scalar) = value else {
+        return Err(format!("its {key} is not text"));
+    };
+    Ok(match scalar {
+        Scalar::Null => None,
+        Scalar::String(text) => Some(text.to_string()),
+        Scalar::Integer(number) => Some(number.to_string()),
+        // `1.0` stays `1.0`, which `Display` would make `1`.
+        Scalar::FloatingPoint(number) => Some(format!("{:?}", number.0)),
+        Scalar::Boolean(flag) => Some(flag.to_string()),
+    })
 }
 
 /// `text` on one line, its runs of white space one space, cut to

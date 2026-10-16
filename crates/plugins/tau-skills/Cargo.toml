@@ -14,7 +14,7 @@ demo = []
 # The agent half: reading the skills folder, the list in a run's
 # instructions, and the `skill` tool. The list and the views build
 # without it, as on a phone.
-host = ["dep:async-trait", "dep:serde_yaml_ng", "dep:tokio"]
+host = ["dep:async-trait", "dep:saphyr", "dep:tokio"]
 
 [dependencies]
 anyhow.workspace = true
@@ -23,7 +23,8 @@ gpui = { package = "gpui-pre", version = "=0.3.7" }
 serde.workspace = true
 serde_json.workspace = true
 # SKILL.md's frontmatter: descriptions are often YAML block scalars.
-serde_yaml_ng = { version = "0.10", optional = true }
+# Safe Rust; `encoding` only decodes byte input, and it is read as text.
+saphyr = { version = "0.2.2", default-features = false, optional = true }
 tau-agent.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true

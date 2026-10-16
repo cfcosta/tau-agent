@@ -74,10 +74,6 @@ ignore = [
   # test-only dependency; it never ships in a tau-agent build.
   { id = "RUSTSEC-2024-0436", reason = "test-only, via hegeltest" },
   # Unmaintained crates under gpui, used only by tau-ui.
-  { id = "RUSTSEC-2024-0384", reason = "instant, via gpui (tau-ui)" },
-  { id = "RUSTSEC-2025-0052", reason = "async-std, via gpui (tau-ui)" },
-  { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile, via gpui (tau-ui)" },
-  { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2, via gpui (tau-ui)" },
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via gpui (tau-ui)" },
   { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via gpui (tau-ui)" },
   # stylua formats codemode's scripts as a library, but depends on clap 3
