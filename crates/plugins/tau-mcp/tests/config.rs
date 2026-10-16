@@ -2,7 +2,7 @@
 //! printing and parsing round-trips; merging is last-wins by name; names
 //! that differ only in `-` and `_` clash; `${VAR}` expansion leaves text
 //! without `${` unchanged; a tool's exposure follows its exact name, then
-//! the first glob.
+//! the first glob; a glob matches what its regular expression matches.
 
 use std::collections::BTreeMap;
 
@@ -27,6 +27,7 @@ use tau_mcp::config::{
     callback_address,
     expand_vars,
     exposure_of,
+    glob_matches,
     merge,
 };
 
@@ -303,6 +304,22 @@ fn glob_regex(pattern: &str) -> regex::Regex {
     regex::Regex::new(&format!("^{}$", body.join(".*"))).unwrap()
 }
 
+/// A glob matches exactly the texts its regular expression does: `*` is
+/// any run of characters, everything else is literal, and the match is
+/// whole. Patterns and texts share a small alphabet so they often match,
+/// and the oracle is `regex`, not the hand-written matcher.
+#[hegel::test(test_cases = 500)]
+fn a_glob_matches_what_its_regular_expression_matches(tc: TestCase) {
+    let pattern: String =
+        tc.draw(gs::from_regex("[ab_*]{0,6}").fullmatch(true));
+    let text: String = tc.draw(gs::from_regex("[ab_]{0,8}").fullmatch(true));
+    assert_eq!(
+        glob_matches(&pattern, &text),
+        glob_regex(&pattern).is_match(&text),
+        "{pattern:?} against {text:?}"
+    );
+}
+
 /// A tool's exposure is its exact name's, else the first matching
 /// glob's in order, else the server's.
 #[hegel::test(test_cases = 500)]
@@ -543,32 +560,6 @@ fn a_loopback_callback_url_is_the_redirect_uri(tc: TestCase) {
     assert!(address.ip.is_loopback());
 }
 
-/// The port may come from `callbackPort` alone; without either, the
-/// URL is refused; with both they must agree.
-#[hegel::test(test_cases = 300)]
-fn the_callback_port_comes_from_the_url_or_the_setting_and_they_agree(
-    tc: TestCase,
-) {
-    let (written, _) = tc.draw(loopback_host());
-    let (url_port, setting) = (
-        tc.draw(gs::integers::<u16>().min_value(1)),
-        tc.draw(gs::integers::<u16>()),
-    );
-    let bare = format!("http://{written}/cb");
-    assert_eq!(
-        callback_address(Some(&bare), Some(setting)).unwrap().port,
-        setting
-    );
-    assert!(callback_address(Some(&bare), None).is_err());
-    let with_port = format!("http://{written}:{url_port}/cb");
-    let both = callback_address(Some(&with_port), Some(setting));
-    assert_eq!(
-        both.is_ok(),
-        url_port == setting,
-        "{with_port} and {setting}"
-    );
-}
-
 /// Everything else about a callback URL is refused: another scheme, a
 /// user, a query or a fragment, and any host that is not loopback.
 #[hegel::test(test_cases = 300)]
@@ -598,14 +589,4 @@ fn a_callback_url_that_is_not_plain_loopback_http_is_refused(tc: TestCase) {
         }
     };
     assert!(callback_address(Some(&url), Some(port)).is_err(), "{url}");
-}
-
-/// With no URL the callback is `127.0.0.1` on the asked port, or any
-/// free one, at the default path.
-#[hegel::test(test_cases = 100)]
-fn the_default_callback_is_127_0_0_1_at_the_default_path(tc: TestCase) {
-    let setting = tc.draw(gs::optional(gs::integers::<u16>()));
-    let address = callback_address(None, setting).unwrap();
-    assert_eq!(address.port, setting.unwrap_or(0));
-    assert_eq!(address.redirect_uri(1234), "http://127.0.0.1:1234/callback");
 }

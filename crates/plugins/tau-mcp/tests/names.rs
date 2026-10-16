@@ -104,13 +104,19 @@ fn expected_digest_prefix(server: &str, tool: &str) -> String {
 #[hegel::test(test_cases = 300)]
 fn colliding_sanitized_bases_get_full_hash_names(tc: TestCase) {
     let tool = tc.draw(short_ascii_component());
-    let pairs = [("a-b", tool.as_str()), ("a_b", tool.as_str())];
-    // The generated tool needs no sanitization; these two server spellings
-    // have the independently known sanitized form `a_b`.
+    let pairs = [
+        ("a-b", tool.as_str()),
+        ("a_b", tool.as_str()),
+        ("x", tool.as_str()),
+    ];
+    // The generated tool needs no sanitization; the first two server
+    // spellings have the independently known sanitized form `a_b`. The
+    // third pair collides with neither, so it keeps its plain name.
     let expected_base = format!("mcp__a_b__{tool}");
     let expected = [
         format!("{expected_base}_{}", expected_digest_prefix("a-b", &tool)),
         format!("{expected_base}_{}", expected_digest_prefix("a_b", &tool)),
+        format!("mcp__x__{tool}"),
     ];
     assert_eq!(tool_names(&pairs), expected);
 }

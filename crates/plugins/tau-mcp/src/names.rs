@@ -103,33 +103,3 @@ pub fn tool_names(pairs: &[(&str, &str)]) -> Vec<String> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plain_names() {
-        assert_eq!(
-            tool_names(&[("git-hub", "list.issues")]),
-            ["mcp__git_hub__list_issues"]
-        );
-        assert_eq!(namespace("git-hub"), "mcp__git_hub");
-    }
-
-    #[test]
-    fn collisions_hash_every_member() {
-        let names = tool_names(&[("a", "b__c"), ("a__b", "c"), ("x", "y")]);
-        assert_eq!(names[2], "mcp__x__y");
-        assert_ne!(names[0], names[1]);
-        assert!(names[0].starts_with("mcp__a__b__c_"));
-        assert_eq!(names[0].len(), "mcp__a__b__c_".len() + 8);
-    }
-
-    #[test]
-    fn long_names_are_cut() {
-        let tool = "t".repeat(100);
-        let name = &tool_names(&[("s", &tool)])[0];
-        assert_eq!(name.len(), MAX_LEN);
-    }
-}

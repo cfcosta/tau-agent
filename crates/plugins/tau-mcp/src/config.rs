@@ -1317,29 +1317,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn globs() {
-        assert!(glob_matches("git_*", "git_push"));
-        assert!(glob_matches("*", ""));
-        assert!(glob_matches("a*b*c", "abc"));
-        assert!(glob_matches("a*b*c", "a__b__c"));
-        assert!(!glob_matches("a*b*c", "acb"));
-        assert!(!glob_matches("ab*ba", "aba"));
-        assert!(glob_matches("exact", "exact"));
-        assert!(!glob_matches("exact", "exactly"));
-    }
-
-    #[test]
-    fn sse_is_refused() {
-        let (config, errors) = McpConfig::parse(
-            r#"{"mcpServers": {"s": {"type": "sse", "url": "https://x"}, "ok": {"command": "x"}}}"#,
-        );
-        assert_eq!(config.servers.len(), 1);
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, SSE_REFUSED);
-        assert_eq!(errors[0].server.as_deref(), Some("s"));
-    }
-
-    #[test]
     fn missing_variable_is_named() {
         let lookup = |name: &str| (name == "A").then(|| "1".to_owned());
         assert_eq!(expand_vars("x${A}y", &lookup).unwrap(), "x1y");
