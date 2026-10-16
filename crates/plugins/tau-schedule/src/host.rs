@@ -743,15 +743,51 @@ impl AgentTool for Unschedule {
 
 #[cfg(test)]
 mod tests {
+    use hegel::{TestCase, generators as gs};
+
     use super::*;
 
-    #[test]
-    fn names_are_short_and_plain() {
-        assert!(valid_name("recheck-pr-412"));
-        assert!(valid_name("nightly_build"));
-        assert!(!valid_name(""));
-        assert!(!valid_name("412"));
-        assert!(!valid_name("Recheck"));
-        assert!(!valid_name(&"a".repeat(41)));
+    /// A name a wake-up may have: a lowercase letter, then up to 39
+    /// lowercase letters, digits, `-` and `_`, its shortest and longest
+    /// lengths drawn as often as the rest.
+    fn plain_name(tc: &TestCase) -> String {
+        let rest = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0_usize, 39]),
+            gs::integers::<usize>().max_value(39),
+        ));
+        let first = tc.draw(gs::from_regex("[a-z]").fullmatch(true));
+        let tail = tc.draw(
+            gs::from_regex(&format!("[a-z0-9_-]{{{rest}}}")).fullmatch(true),
+        );
+        format!("{first}{tail}")
+    }
+
+    /// Every name of that shape is one; one fault in it, wherever it
+    /// is, makes it none: empty, too long, a first character that is not
+    /// a lowercase letter, or a character outside the set.
+    #[hegel::test(test_cases = 500)]
+    fn names_are_short_and_plain(tc: TestCase) {
+        let name = plain_name(&tc);
+        assert!(valid_name(&name), "{name:?}");
+        let chars: Vec<char> = name.chars().collect();
+        let at = tc.draw(gs::integers::<usize>().max_value(chars.len() - 1));
+        let wrong: String = match tc.draw(gs::integers::<u8>().max_value(3)) {
+            0 => String::new(),
+            1 => format!("{name}{}", "a".repeat(41 - chars.len())),
+            2 => {
+                let first = tc.draw(gs::sampled_from(vec!["0", "-", "_", "R"]));
+                format!("{first}{}", &name[1..])
+            }
+            _ => {
+                let bad =
+                    tc.draw(gs::sampled_from(vec!['A', ' ', '.', '/', 'é']));
+                chars
+                    .iter()
+                    .enumerate()
+                    .map(|(n, c)| if n == at { bad } else { *c })
+                    .collect()
+            }
+        };
+        assert!(!valid_name(&wrong), "{wrong:?}");
     }
 }

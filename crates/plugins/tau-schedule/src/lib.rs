@@ -135,26 +135,54 @@ impl Woken {
 
 #[cfg(test)]
 mod tests {
+    use hegel::{TestCase, generators as gs};
+
     use super::*;
 
-    #[test]
-    fn a_message_reads_back_as_written() {
-        let woken = vec![
-            Woken {
-                name: "recheck".into(),
-                due: "2026-10-13 09:30".into(),
-                note: "Did #412 merge?\nIf not, read its review.".into(),
-            },
-            Woken {
-                name: "release".into(),
-                due: "2026-10-13 09:31".into(),
-                note: "Is 1.4 out?".into(),
-            },
-        ];
-        let text = message(&woken);
-        assert!(text.starts_with("[scheduled · recheck · 2026-10-13 09:30]\n"));
-        assert_eq!(Woken::parse(&text), Some(woken));
-        assert_eq!(Woken::parse("Did #412 merge?"), None);
-        assert_eq!(Woken::parse(""), None);
+    /// A note as a chat writes one: lines of text, blank ones only
+    /// between them, none that looks like a wake-up's header.
+    fn note(tc: &TestCase) -> String {
+        let line = || {
+            gs::from_regex("[A-Za-z0-9#?.,:'() -]{0,24}[A-Za-z0-9?.]")
+                .fullmatch(true)
+        };
+        let mut lines: Vec<String> = vec![tc.draw(line())];
+        for more in tc.draw(gs::vecs(gs::optional(line())).max_size(3)) {
+            lines.push(more.unwrap_or_default());
+        }
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+        lines.join("\n")
+    }
+
+    fn woken(tc: &TestCase) -> Woken {
+        Woken {
+            name: tc
+                .draw(gs::from_regex("[a-z][a-z0-9_-]{0,12}").fullmatch(true)),
+            due: format!(
+                "2026-{:02}-{:02} {:02}:{:02}",
+                tc.draw(gs::integers::<u8>().min_value(1).max_value(12)),
+                tc.draw(gs::integers::<u8>().min_value(1).max_value(28)),
+                tc.draw(gs::integers::<u8>().max_value(23)),
+                tc.draw(gs::integers::<u8>().max_value(59)),
+            ),
+            note: note(tc),
+        }
+    }
+
+    /// The wake-ups a message names read back from it as they were, in
+    /// order; text that does not start with a wake-up's header is no
+    /// message.
+    #[hegel::test(test_cases = 300)]
+    fn a_message_reads_back_as_written(tc: TestCase) {
+        let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
+        let all: Vec<Woken> = (0..count).map(|_| woken(&tc)).collect();
+        let text = message(&all);
+        assert!(text.starts_with(&format!("[scheduled · {} · ", all[0].name)));
+        assert_eq!(Woken::parse(&text), Some(all), "{text:?}");
+        let before = tc.draw(gs::sampled_from(vec!["", "Did it merge?", " "]));
+        assert_eq!(Woken::parse(&format!("{before}\n{text}")), None);
+        assert_eq!(Woken::parse(before), None);
     }
 }

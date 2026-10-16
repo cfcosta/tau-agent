@@ -207,65 +207,196 @@ fn civil(days: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    use hegel::{TestCase, generators as gs};
+
     use super::*;
 
-    #[test]
-    fn days_are_the_hosts_local_ones() {
-        // 2026-10-11T23:30:00Z, a Sunday.
-        let at = 1_791_761_400;
-        let utc = FakeClock::new(at, 0);
-        assert_eq!(day(&utc, at), "2026-10-11");
-        assert_eq!(weekday(&utc, at), 6);
-        assert_eq!(midnight(&utc, at), at - 23 * 3600 - 1800);
-        // Three hours east, it is Monday already.
-        let east = FakeClock::new(at, 3 * 3600);
-        assert_eq!(day(&east, at), "2026-10-12");
-        assert_eq!(weekday(&east, at), 0);
-        assert_eq!(midnight(&east, at), at - 2 * 3600 - 1800);
-        // Three hours west, still Sunday.
-        let west = FakeClock::new(at, -3 * 3600);
-        assert_eq!(day(&west, at), "2026-10-11");
-        assert_eq!(midnight(&west, at), at - 20 * 3600 - 1800);
-    }
-
-    #[test]
-    fn stamps_are_utc_as_the_store_writes_them() {
-        assert_eq!(stamp(0), "1970-01-01T00:00:00.000Z");
-        // 2026-10-11T23:30:00Z.
-        assert_eq!(stamp(1_791_761_400), "2026-10-11T23:30:00.000Z");
-    }
-
-    #[test]
-    fn the_calendar_holds_across_eras() {
-        assert_eq!(civil(0), (1970, 1, 1));
-        assert_eq!(civil(-1), (1969, 12, 31));
-        assert_eq!(civil(11_016), (2000, 2, 29));
-        assert_eq!(civil(20_737), (2026, 10, 11));
-    }
-
-    #[test]
-    fn local_times_read_back_as_they_were_written() {
-        // 2026-10-11T23:30:00Z: Monday 02:30 three hours east.
-        let at = 1_791_761_400;
-        let east = FakeClock::new(at, 3 * 3600);
-        assert_eq!(local(&east, at), "2026-10-12 02:30");
-        assert_eq!(parse_local(&east, "2026-10-12 02:30"), Some(at));
-        assert_eq!(parse_local(&east, " 2026-10-12 02:30 "), Some(at));
-        assert_eq!(parse_local(&east, "2026-02-29 09:00"), None);
-        assert!(parse_local(&east, "2028-02-29 09:00").is_some());
-        assert_eq!(parse_local(&east, "2026-13-01 09:00"), None);
-        assert_eq!(parse_local(&east, "2026-10-12"), None);
-        assert_eq!(parse_local(&east, "2026-10-12 25:00"), None);
-        for days in [-1, 0, 11_016, 20_737] {
-            let (year, month, day) = civil(days);
-            assert_eq!(days_from_civil(year, month, day), Some(days));
+    /// The days in `month` of `year`, by the Gregorian leap rule.
+    fn month_days(year: i64, month: u32) -> u32 {
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        match month {
+            2 if leap => 29,
+            2 => 28,
+            4 | 6 | 9 | 11 => 30,
+            _ => 31,
         }
     }
 
+    /// A `YYYY-MM-DD` day as its year, month and day.
+    fn read_day(text: &str) -> (i64, u32, u32) {
+        let mut parts = text.split('-');
+        let mut part = || parts.next().unwrap().parse::<i64>().unwrap();
+        let (year, month, day) = (part(), part(), part());
+        (year, month as u32, day as u32)
+    }
+
+    /// The calendar day after `date`.
+    fn next((year, month, day): (i64, u32, u32)) -> (i64, u32, u32) {
+        if day < month_days(year, month) {
+            (year, month, day + 1)
+        } else if month < 12 {
+            (year, month + 1, 1)
+        } else {
+            (year + 1, 1, 1)
+        }
+    }
+
+    /// The calendar day before `date`.
+    fn previous((year, month, day): (i64, u32, u32)) -> (i64, u32, u32) {
+        if day > 1 {
+            (year, month, day - 1)
+        } else if month > 1 {
+            (year, month - 1, month_days(year, month - 1))
+        } else {
+            (year - 1, 12, 31)
+        }
+    }
+
+    /// Two 400-year eras either side of 1970, walked a day at a time
+    /// from 1970-01-01, a Thursday: each day is the date the walk
+    /// reached, reads back to its count, and has the weekday after the
+    /// day before's; a day past its month's end is no date.
     #[test]
-    fn the_system_clock_has_an_offset() {
-        let clock = SystemClock;
-        let offset = clock.offset(clock.now());
-        assert!(offset.abs() <= 14 * 3600, "{offset}");
+    fn the_calendar_is_walked_one_day_at_a_time() {
+        const ERAS: i64 = 2 * 146_097;
+        let utc = FakeClock::new(0, 0);
+        assert_eq!(weekday(&utc, 0), 3);
+        for (step, walk) in [
+            (1, next as fn((i64, u32, u32)) -> (i64, u32, u32)),
+            (-1, previous),
+        ] {
+            let mut date = (1970, 1, 1);
+            let mut days: i64 = 0;
+            while days.abs() <= ERAS {
+                assert_eq!(civil(days), date, "{days}");
+                let (year, month, day) = date;
+                assert_eq!(days_from_civil(year, month, day), Some(days));
+                if day == month_days(year, month) {
+                    assert_eq!(days_from_civil(year, month, day + 1), None);
+                }
+                let at = days * DAY;
+                assert_eq!(
+                    weekday(&utc, at + step * DAY),
+                    (weekday(&utc, at) as i64 + step).rem_euclid(7) as usize
+                );
+                days += step;
+                date = walk(date);
+            }
+        }
+        assert_eq!(days_from_civil(2026, 13, 1), None);
+        assert_eq!(days_from_civil(2026, 0, 1), None);
+    }
+
+    /// For any time and any offset to 14 hours either way, in quarter
+    /// hours: the local time reads back as the minute it names, however
+    /// it is spaced; the local day begins at its midnight, which reads
+    /// `00:00`, and the second before is the day before; and the store's
+    /// UTC stamp is the UTC local time with its seconds.
+    #[hegel::test(test_cases = 500)]
+    fn local_times_read_back_and_days_begin_at_midnight(tc: TestCase) {
+        let at = tc.draw(
+            gs::integers::<i64>()
+                .min_value(-4_000_000_000)
+                .max_value(8_000_000_000),
+        );
+        let quarters = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![-56_i32, 0, 56]),
+            gs::integers::<i32>().min_value(-56).max_value(56),
+        ));
+        let clock = FakeClock::new(at, quarters * 900);
+        let minute = at - at.rem_euclid(60);
+        let written = local(&clock, at);
+        assert_eq!(parse_local(&clock, &written), Some(minute), "{written}");
+        assert_eq!(parse_local(&clock, &format!("  {written} ")), Some(minute));
+        let midnight = midnight(&clock, at);
+        assert!(midnight <= at && at < midnight + DAY, "{midnight} {at}");
+        assert_eq!(day(&clock, midnight), day(&clock, at));
+        assert!(local(&clock, midnight).ends_with(" 00:00"));
+        assert!(written.starts_with(&day(&clock, at)));
+        assert_eq!(
+            next(read_day(&day(&clock, midnight - 1))),
+            read_day(&day(&clock, at))
+        );
+        let utc = FakeClock::new(at, 0);
+        assert_eq!(
+            stamp(at),
+            format!(
+                "{}:{:02}.000Z",
+                local(&utc, at).replace(' ', "T"),
+                at.rem_euclid(60)
+            )
+        );
+    }
+
+    /// What is not a local time, or not a date, reads as none.
+    #[test]
+    fn what_is_not_a_local_time_reads_as_none() {
+        let clock = FakeClock::new(0, 3 * 3600);
+        for text in [
+            "2026-02-29 09:00",
+            "2026-13-01 09:00",
+            "2026-10-12",
+            "2026-10-12 25:00",
+            "2026-10-12 09:60",
+            "2026-10-12-01 09:00",
+        ] {
+            assert_eq!(parse_local(&clock, text), None, "{text:?}");
+        }
+        assert!(parse_local(&clock, "2028-02-29 09:00").is_some());
+    }
+
+    /// The machine's offset is its time zone's at the time asked about:
+    /// three hours east, UTC, five and a half hours west, and Central
+    /// Europe in winter and in summer. Each zone is checked in a child
+    /// process of this test binary that starts with `TZ` set, so no test
+    /// changes the environment another one reads, under nextest or
+    /// `cargo test` alike.
+    #[test]
+    fn the_system_clock_follows_the_time_zone() {
+        const NAME: &str =
+            "clock::tests::the_system_clock_follows_the_time_zone";
+        const CHILD: &str = "TAU_SCHEDULE_OFFSETS";
+        // 2026-01-15 and 2026-07-15, 12:00 UTC.
+        const WINTER: i64 = 1_768_478_400;
+        const SUMMER: i64 = 1_784_116_800;
+        if let Ok(offsets) = std::env::var(CHILD) {
+            for pair in offsets.split(',') {
+                let (at, expected) = pair.split_once('=').unwrap();
+                let at: i64 = at.parse().unwrap();
+                assert_eq!(
+                    SystemClock.offset(at).to_string(),
+                    expected,
+                    "{at}"
+                );
+            }
+            return;
+        }
+        for (zone, offsets) in [
+            ("<+03>-3", vec![(WINTER, 10_800), (SUMMER, 10_800)]),
+            ("UTC0", vec![(WINTER, 0), (SUMMER, 0)]),
+            ("<-0530>5:30", vec![(WINTER, -19_800)]),
+            (
+                "CET-1CEST,M3.5.0,M10.5.0/3",
+                vec![(WINTER, 3_600), (SUMMER, 7_200)],
+            ),
+        ] {
+            let offsets: Vec<String> = offsets
+                .iter()
+                .map(|(at, offset)| format!("{at}={offset}"))
+                .collect();
+            let out =
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([NAME, "--exact", "--test-threads=1"])
+                    .env("TZ", zone)
+                    .env(CHILD, offsets.join(","))
+                    .output()
+                    .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success() && stdout.contains("1 passed"),
+                "TZ={zone}: {stdout}{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
     }
 }

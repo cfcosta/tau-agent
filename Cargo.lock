@@ -10011,6 +10011,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "gpui-pre",
+ "hegeltest",
  "libc",
  "serde",
  "serde_json",
