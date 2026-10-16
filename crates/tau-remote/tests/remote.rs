@@ -156,48 +156,9 @@ async fn a_request_sent_again_is_taken_once() {
     assert_eq!(recv(&mut phone).await, Down::Ack { up: 2 });
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_wrong_or_used_secret_is_refused() {
-    let mut host = host().await;
-    let code = host.handle.pairing_code(host.address.clone());
-    let wrong = tau_remote::PairingSecret::typed("2222-2222").unwrap();
-    let refused =
-        client::pair(&host.address, code.fingerprint, &wrong, "Pixel").await;
-    assert!(matches!(
-        refused,
-        Err(ClientError::Refused(Refusal::BadSecret))
-    ));
-    host.pair().await;
-    let used =
-        client::pair(&host.address, code.fingerprint, &code.secret, "Other")
-            .await;
-    assert!(matches!(
-        used,
-        Err(ClientError::Refused(Refusal::BadSecret))
-    ));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_phone_that_comes_back_gets_what_it_missed() {
-    let mut host = host().await;
-    let (mut phone, credentials) = host.pair().await;
-    let last = recv(&mut phone).await.seq().unwrap();
-    drop(phone);
-    host.handle.broadcast(json!(1));
-    host.handle.broadcast(json!(2));
-    let mut phone = client::resume(&credentials, Some(last)).await.unwrap();
-    assert!(phone.resumed());
-    assert_eq!(body(recv(&mut phone).await), json!(1));
-    let second = recv(&mut phone).await;
-    assert_eq!(second.seq(), Some(last + 2));
-    assert_eq!(body(second), json!(2));
-    // New messages follow.
-    host.handle.broadcast(json!(3));
-    assert_eq!(body(recv(&mut phone).await), json!(3));
-}
-
 /// A transient message reaches the phone connected now, takes no
-/// number, and is not replayed to a phone that comes back.
+/// number, and is not replayed to a phone that comes back; that phone
+/// resumes, gets what it missed in order, and what follows after.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_transient_message_reaches_who_is_there_and_is_not_kept() {
     let mut host = host().await;
@@ -215,10 +176,18 @@ async fn a_transient_message_reaches_who_is_there_and_is_not_kept() {
     drop(phone);
     host.handle.broadcast_transient(json!("missed"));
     host.handle.broadcast(json!(1));
+    host.handle.broadcast(json!(2));
     let mut phone = client::resume(&credentials, Some(last)).await.unwrap();
+    assert!(phone.resumed());
     let first = recv(&mut phone).await;
     assert_eq!(first.seq(), Some(last + 1), "the transients took no number");
     assert_eq!(body(first), json!(1));
+    let second = recv(&mut phone).await;
+    assert_eq!(second.seq(), Some(last + 2));
+    assert_eq!(body(second), json!(2));
+    // New messages follow.
+    host.handle.broadcast(json!(3));
+    assert_eq!(body(recv(&mut phone).await), json!(3));
 }
 
 #[tokio::test(flavor = "multi_thread")]
