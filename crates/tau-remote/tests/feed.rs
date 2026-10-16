@@ -143,7 +143,17 @@ impl Machine {
         self.next_conn += 1;
         phone.conn = Some(conn);
         match self.feed.join(conn, phone.last) {
-            Joined::Replay(missed) => phone.inbox.extend(missed),
+            Joined::Replay(missed) => {
+                // A transient message is for who was there: a phone that
+                // comes back never gets one it missed.
+                assert!(
+                    !missed
+                        .iter()
+                        .any(|down| matches!(down, Down::Transient { .. })),
+                    "a transient message replayed: {missed:?}"
+                );
+                phone.inbox.extend(missed)
+            }
             Joined::NeedSnapshot => phone.waiting = true,
         }
     }
