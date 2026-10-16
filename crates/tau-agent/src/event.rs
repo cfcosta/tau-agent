@@ -202,75 +202,249 @@ impl RunEvent {
 
 #[cfg(all(test, feature = "serde"))]
 mod tests {
+    use hegel::{
+        TestCase,
+        generators::{self as gs, Generator as _},
+    };
     use serde_json::json;
+    use tau_ai::message::{ImageContent, InputBlock, TextContent, UsageCost};
 
     use super::*;
 
-    #[test]
-    fn events_round_trip_through_json() {
-        let run = RunId(Arc::from("r1"));
-        let events = [
-            RunEvent::RunStart {
-                run: run.clone(),
-                parent: None,
-                agent: Arc::from("coder"),
-                call: None,
-            },
-            RunEvent::RunStart {
-                run: RunId(Arc::from("r2")),
-                parent: Some(run.clone()),
-                agent: Arc::from("coder"),
-                call: Some(Arc::from("c1")),
-            },
-            RunEvent::ToolEnd {
-                run: run.clone(),
-                call_id: "c1".into(),
-                output: Arc::new(ToolOutput::text("ok")),
-                is_error: false,
-                parent: None,
-            },
-            RunEvent::ToolEnd {
-                run: run.clone(),
-                call_id: "c1/1".into(),
-                output: Arc::new(ToolOutput {
-                    structured: Some(json!({"n": 1})),
-                    ..ToolOutput::text("ok")
-                }),
-                is_error: true,
-                parent: Some("c1".into()),
-            },
-            RunEvent::TurnEnd {
-                run: run.clone(),
-                turn: 1,
-                usage: Usage::default(),
-            },
-            RunEvent::Retry {
-                run: run.clone(),
-                turn: 1,
-                attempt: 2,
-                delay: Duration::from_millis(1500),
-                error: "429".into(),
-            },
-            RunEvent::PluginReport {
-                run: run.clone(),
-                plugin: Arc::from("tau-constitution"),
-                body: json!({"verdict": "block"}),
-            },
-            RunEvent::PluginCharged {
-                run: run.clone(),
-                plugin: Arc::from("tau-goal"),
-                usage: Usage::default(),
-            },
-            RunEvent::RunEnd {
-                run,
-                parent: None,
-                stop: StopReason::Limit(LimitKind::Turns),
-                cost: 0.25,
-            },
-        ];
-        for event in events {
-            let text = serde_json::to_string(&event).unwrap();
-            assert_eq!(serde_json::from_str::<RunEvent>(&text).unwrap(), event);
+    /// Text with the characters JSON escapes, and some it does not, or
+    /// none at all.
+    fn text(tc: &TestCase) -> String {
+        tc.draw(hegel::one_of!(
+            gs::just(String::new()),
+            gs::text().max_size(8),
+            gs::text().alphabet("a\"\\\n\u{0}/é😀").max_size(8),
+        ))
+    }
+
+    fn run_id(tc: &TestCase) -> RunId {
+        RunId(Arc::from(
+            tc.draw(gs::sampled_from(vec!["r1", "r2", "r1/2"])),
+        ))
+    }
+
+    /// Any JSON value without floats (whose text form `serde_json` may
+    /// not read back to the same bits), nested a little.
+    fn value(tc: &TestCase, depth: u8) -> Value {
+        let kinds = if depth == 0 { 4 } else { 6 };
+        match tc.draw(gs::integers::<u8>().max_value(kinds - 1)) {
+            0 => Value::Null,
+            1 => json!(tc.draw(gs::booleans())),
+            2 => json!(tc.draw(gs::integers::<i64>())),
+            3 => json!(text(tc)),
+            4 => {
+                let n = tc.draw(gs::integers::<usize>().max_value(3));
+                Value::Array((0..n).map(|_| value(tc, depth - 1)).collect())
+            }
+            _ => {
+                let n = tc.draw(gs::integers::<usize>().max_value(3));
+                Value::Object(
+                    (0..n).map(|_| (text(tc), value(tc, depth - 1))).collect(),
+                )
+            }
         }
+    }
+
+    /// Costs in 1/1024ths of a dollar, which print and read back exactly.
+    fn usage(tc: &TestCase) -> Usage {
+        let tokens = || gs::integers::<u64>().max_value(1 << 40);
+        let usd = || {
+            gs::integers::<u32>()
+                .max_value(1 << 20)
+                .map(|n| f64::from(n) / 1024.0)
+        };
+        Usage {
+            input: tc.draw(tokens()),
+            output: tc.draw(tokens()),
+            cache_read: tc.draw(tokens()),
+            cache_write: tc.draw(tokens()),
+            reasoning: tc.draw(gs::optional(tokens())),
+            total_tokens: tc.draw(tokens()),
+            cost: UsageCost {
+                input: tc.draw(usd()),
+                output: tc.draw(usd()),
+                cache_read: tc.draw(usd()),
+                cache_write: tc.draw(usd()),
+                total: tc.draw(usd()),
+            },
+        }
+    }
+
+    fn output(tc: &TestCase) -> Arc<ToolOutput> {
+        let blocks = tc.draw(gs::integers::<usize>().max_value(2));
+        let content = (0..blocks)
+            .map(|_| {
+                if tc.draw(gs::booleans()) {
+                    InputBlock::Text(TextContent {
+                        text: text(tc),
+                        text_signature: None,
+                    })
+                } else {
+                    InputBlock::Image(ImageContent {
+                        data: "AAAA".into(),
+                        mime_type: "image/png".into(),
+                    })
+                }
+            })
+            .collect();
+        // Not `Some(Value::Null)`: `None` and an explicit `null` both write
+        // `null`, which reads back as `None`. Telling them apart would
+        // change the JSON every interface reads, so it is left as it is.
+        let present =
+            |tc: &TestCase| Some(value(tc, 2)).filter(|value| !value.is_null());
+        let details = if tc.draw(gs::booleans()) {
+            present(tc)
+        } else {
+            None
+        };
+        let structured = if tc.draw(gs::booleans()) {
+            present(tc)
+        } else {
+            None
+        };
+        Arc::new(ToolOutput {
+            content,
+            details,
+            structured,
+        })
+    }
+
+    fn arc(tc: &TestCase) -> Arc<str> {
+        Arc::from(text(tc))
+    }
+
+    /// One event of any kind, every field drawn.
+    fn event(tc: &TestCase) -> RunEvent {
+        let run = run_id(tc);
+        let parent_run = || tc.draw(gs::booleans()).then(|| run_id(tc));
+        let parent_call = || tc.draw(gs::booleans()).then(|| text(tc));
+        let turn = || tc.draw(gs::integers::<u32>());
+        match tc.draw(gs::integers::<u8>().max_value(17)) {
+            0 => RunEvent::RunStart {
+                run,
+                parent: parent_run(),
+                agent: arc(tc),
+                call: tc.draw(gs::booleans()).then(|| arc(tc)),
+            },
+            1 => RunEvent::TurnStart { run, turn: turn() },
+            2 => RunEvent::TextDelta {
+                run,
+                parent: parent_run(),
+                delta: text(tc),
+            },
+            3 => RunEvent::ThinkingDelta {
+                run,
+                delta: text(tc),
+            },
+            4 => RunEvent::ToolCallDelta {
+                run,
+                call_id: text(tc),
+                json_fragment: text(tc),
+            },
+            5 => RunEvent::ToolStart {
+                run,
+                call_id: text(tc),
+                tool: arc(tc),
+                args: value(tc, 2),
+                parent: parent_call(),
+            },
+            6 => RunEvent::ToolUpdate {
+                run,
+                call_id: text(tc),
+                partial: output(tc),
+                parent: parent_call(),
+            },
+            7 => RunEvent::ToolEnd {
+                run,
+                call_id: text(tc),
+                output: output(tc),
+                is_error: tc.draw(gs::booleans()),
+                parent: parent_call(),
+            },
+            8 => RunEvent::TurnEnd {
+                run,
+                turn: turn(),
+                usage: usage(tc),
+            },
+            9 => RunEvent::ContextRewritten {
+                run,
+                plugin: arc(tc),
+                tokens_before: tc.draw(gs::integers::<u64>()),
+                tokens_after: tc.draw(gs::integers::<u64>()),
+                trigger: [
+                    Trigger::TurnEnd,
+                    Trigger::Start,
+                    Trigger::Overflow,
+                    Trigger::Idle,
+                ][tc.draw(gs::integers::<usize>().max_value(3))],
+            },
+            10 => RunEvent::Retry {
+                run,
+                turn: turn(),
+                attempt: turn(),
+                delay: Duration::new(
+                    tc.draw(gs::integers::<u64>()),
+                    tc.draw(gs::integers::<u32>().max_value(999_999_999)),
+                ),
+                error: text(tc),
+            },
+            11 => RunEvent::Steered {
+                run,
+                text: text(tc),
+            },
+            12 => RunEvent::Continued {
+                run,
+                plugin: arc(tc),
+                message: text(tc),
+            },
+            13 => RunEvent::PluginReport {
+                run,
+                plugin: arc(tc),
+                body: value(tc, 2),
+            },
+            14 => RunEvent::PluginCharged {
+                run,
+                plugin: arc(tc),
+                usage: usage(tc),
+            },
+            15 => RunEvent::PluginError {
+                run,
+                plugin: arc(tc),
+                message: text(tc),
+            },
+            _ => RunEvent::RunEnd {
+                run,
+                parent: parent_run(),
+                stop: match tc.draw(gs::integers::<u8>().max_value(3)) {
+                    0 => StopReason::Stop,
+                    1 => StopReason::Cancelled,
+                    2 => StopReason::Error(text(tc)),
+                    _ => StopReason::Limit(
+                        [
+                            LimitKind::Turns,
+                            LimitKind::Tokens,
+                            LimitKind::Usd,
+                            LimitKind::Time,
+                        ][tc.draw(gs::integers::<usize>().max_value(3))],
+                    ),
+                },
+                cost: f64::from(tc.draw(gs::integers::<u32>())) / 1024.0,
+            },
+        }
+    }
+
+    /// Any event, of every kind, reads back from its JSON as it was
+    /// written, so an interface across a wire (decision 0013) sees what
+    /// the run emitted.
+    #[hegel::test(test_cases = 500)]
+    fn events_round_trip_through_json(tc: TestCase) {
+        let event = event(&tc);
+        let text = serde_json::to_string(&event).unwrap();
+        tc.note(&text);
+        assert_eq!(serde_json::from_str::<RunEvent>(&text).unwrap(), event);
     }
 }
