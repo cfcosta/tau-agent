@@ -523,7 +523,8 @@ enum Failure {
 
 /// A failed edit leaves the file byte-for-byte unchanged: edits are
 /// all applied, or none are (`tools.md`, "edit", step 8), whichever
-/// check fails, and the error names that check.
+/// check fails, and the error is that check's exact string from
+/// `tools.md` ("Error strings"), in its one-edit or several-edit form.
 #[hegel::test(test_cases = 100)]
 fn a_failed_edit_leaves_the_file_unchanged(tc: TestCase) {
     let mut case = tc.draw(exact_case());
@@ -535,17 +536,41 @@ fn a_failed_edit_leaves_the_file_unchanged(tc: TestCase) {
         Failure::Empty,
     ]));
     let bad = tc.draw(gs::integers::<usize>().max_value(case.edits.len() - 1));
-    let expected = match failure {
+    // The error `tools.md` gives, in its form for one edit or for
+    // several (named by index), from the edits as the call sends them.
+    // Every edit holds a marker found once, so the edits before `bad`
+    // pass every check and the error is about `bad`.
+    let expected: fn(bool, usize, usize) -> String = match failure {
         Failure::NotFound => {
             case.edits[bad].0 = "#none#".to_owned();
-            "Could not find"
+            |one, bad, _| {
+                if one {
+                    "Could not find the exact text in f.txt. The old text must match exactly including all whitespace and newlines.".to_owned()
+                } else {
+                    format!(
+                        "Could not find edits[{bad}] in f.txt. The oldText must match exactly including all whitespace and newlines."
+                    )
+                }
+            }
         }
         Failure::Duplicate => {
+            // The copy holds `bad`'s marker, the only one it holds: two
+            // occurrences, and no other edit's count changes.
             let copy = case.edits[bad].0.clone();
             case.original.push_str(&copy);
-            "occurrences"
+            |one, bad, _| {
+                if one {
+                    "Found 2 occurrences of the text in f.txt. The text must be unique. Please provide more context to make it unique.".to_owned()
+                } else {
+                    format!(
+                        "Found 2 occurrences of edits[{bad}] in f.txt. Each oldText must be unique. Please provide more context to make it unique."
+                    )
+                }
+            }
         }
         Failure::Overlap => {
+            // `bad` starts at or before its own marker, which the new,
+            // last edit targets: `bad` is named first.
             let old = &case.edits[bad].0;
             let marker_start = old.find('#').unwrap();
             let marker_end = marker_start
@@ -554,20 +579,42 @@ fn a_failed_edit_leaves_the_file_unchanged(tc: TestCase) {
                 + 1;
             let marker = old[marker_start..marker_end].to_owned();
             case.edits.push((marker, "Z".to_owned()));
-            "overlap"
+            |_, bad, total| {
+                format!(
+                    "edits[{bad}] and edits[{}] overlap in f.txt. Merge them into one edit or target disjoint regions.",
+                    total - 1
+                )
+            }
         }
         Failure::NoChange => {
             for (old, new) in &mut case.edits {
                 new.clone_from(old);
             }
-            "No changes made"
+            |one, _, _| {
+                if one {
+                    "No changes made to f.txt. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.".to_owned()
+                } else {
+                    "No changes made to f.txt. The replacements produced identical content.".to_owned()
+                }
+            }
         }
         Failure::Empty => {
             case.edits[bad].0 = String::new();
-            "must not be empty"
+            |one, bad, _| {
+                if one {
+                    "oldText must not be empty in f.txt.".to_owned()
+                } else {
+                    format!("edits[{bad}].oldText must not be empty in f.txt.")
+                }
+            }
         }
     };
     tc.event(format!("{failure:?}"));
+    let one = case.edits.len() == 1;
+    if one {
+        tc.event("one edit");
+    }
+    let expected = expected(one, bad, case.edits.len());
 
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("f.txt");
@@ -577,7 +624,7 @@ fn a_failed_edit_leaves_the_file_unchanged(tc: TestCase) {
         call(&edit, json!({"path": "f.txt", "edits": case.edits_json()}))
             .unwrap_err();
 
-    assert!(error.to_string().contains(expected), "{failure:?}: {error}");
+    assert_eq!(error.to_string(), expected, "{failure:?}");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), case.original);
 }
 
@@ -763,8 +810,10 @@ fn enoent_when_the_file_is_missing() {
     );
 }
 
-/// `edit` on a read-only file (`tools.md`, "Error strings"). Skips
-/// itself under root, which ignores file modes.
+/// `edit` on a read-only file (`tools.md`, "Error strings"): the write
+/// fails with Node's code, and the file is as it was. Root ignores file
+/// modes, so there the edit lands instead; either way something is
+/// checked.
 #[test]
 fn eacces_when_the_file_is_read_only() {
     let dir = tempfile::tempdir().unwrap();
@@ -780,14 +829,17 @@ fn eacces_when_the_file_is_read_only() {
         json!({"path": "ro.txt", "edits": [{"oldText": "hello", "newText": "world"}]}),
     );
 
-    if result.is_ok() {
+    match result {
         // Running as root: permissions are not enforced.
-        return;
+        Ok(_) => assert_eq!(std::fs::read_to_string(&file).unwrap(), "world\n"),
+        Err(error) => {
+            assert_eq!(
+                error.to_string(),
+                "Could not edit file: ro.txt. Error code: EACCES."
+            );
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello\n");
+        }
     }
-    assert_eq!(
-        result.unwrap_err().to_string(),
-        "Could not edit file: ro.txt. Error code: EACCES."
-    );
 }
 
 /// `edit` with no edits (`tools.md`, "Error strings").
@@ -800,132 +852,6 @@ fn no_edits_is_rejected() {
     assert_eq!(
         error.to_string(),
         "Edit tool input is invalid. edits must contain at least one replacement."
-    );
-}
-
-/// Empty `oldText`, one edit (`tools.md`, "Error strings").
-#[test]
-fn empty_old_text_single_edit() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "hello\n").unwrap();
-    let edit = new_edit(dir.path());
-    let error = call(
-        &edit,
-        json!({"path": "f.txt", "edits": [{"oldText": "", "newText": "x"}]}),
-    )
-    .unwrap_err();
-    assert_eq!(error.to_string(), "oldText must not be empty in f.txt.");
-}
-
-/// Empty `oldText`, several edits (`tools.md`, "Error strings").
-#[test]
-fn empty_old_text_several_edits() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "hello\nworld\n").unwrap();
-    let edit = new_edit(dir.path());
-    let error = call(
-        &edit,
-        json!({"path": "f.txt", "edits": [
-            {"oldText": "hello\n", "newText": "HELLO\n"},
-            {"oldText": "", "newText": "x"},
-        ]}),
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "edits[1].oldText must not be empty in f.txt."
-    );
-}
-
-/// Text not found, one edit (`tools.md`, "Error strings").
-#[test]
-fn not_found_single_edit() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "hello\n").unwrap();
-    let edit = new_edit(dir.path());
-    let error = call(
-        &edit,
-        json!({"path": "f.txt", "edits": [{"oldText": "nonexistent", "newText": "x"}]}),
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "Could not find the exact text in f.txt. The old text must match exactly including all whitespace and newlines."
-    );
-}
-
-/// Text not found, several edits (`tools.md`, "Error strings").
-#[test]
-fn not_found_several_edits() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "hello\nworld\n").unwrap();
-    let edit = new_edit(dir.path());
-    let error = call(
-        &edit,
-        json!({"path": "f.txt", "edits": [
-            {"oldText": "hello\n", "newText": "HELLO\n"},
-            {"oldText": "nonexistent", "newText": "x"},
-        ]}),
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "Could not find edits[1] in f.txt. The oldText must match exactly including all whitespace and newlines."
-    );
-}
-
-/// Not unique, several edits (`tools.md`, "Error strings").
-#[test]
-fn not_unique_several_edits() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "one\nfoo foo foo\n").unwrap();
-    let edit = new_edit(dir.path());
-    let error = call(
-        &edit,
-        json!({"path": "f.txt", "edits": [
-            {"oldText": "one\n", "newText": "ONE\n"},
-            {"oldText": "foo", "newText": "bar"},
-        ]}),
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "Found 3 occurrences of edits[1] in f.txt. Each oldText must be unique. Please provide more context to make it unique."
-    );
-}
-
-/// No change, one edit (`tools.md`, "Error strings").
-#[test]
-fn no_change_single_edit() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "hello\n").unwrap();
-    let edit = new_edit(dir.path());
-    let error =
-        call(&edit, json!({"path": "f.txt", "edits": [{"oldText": "hello", "newText": "hello"}]}))
-            .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "No changes made to f.txt. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected."
-    );
-}
-
-/// No change, several edits (`tools.md`, "Error strings").
-#[test]
-fn no_change_several_edits() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "hello\nworld\n").unwrap();
-    let edit = new_edit(dir.path());
-    let error = call(
-        &edit,
-        json!({"path": "f.txt", "edits": [
-            {"oldText": "hello\n", "newText": "hello\n"},
-            {"oldText": "world\n", "newText": "world\n"},
-        ]}),
-    )
-    .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "No changes made to f.txt. The replacements produced identical content."
     );
 }
 
