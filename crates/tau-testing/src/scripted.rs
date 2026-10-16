@@ -791,6 +791,14 @@ impl TurnBuilder {
         self
     }
 
+    /// Scripts a failed response with `message` as it is and `class` as
+    /// its retry class, for a failure whose wording does not say what it
+    /// is: [`Self::error`] puts the code in the message.
+    pub fn failure(mut self, message: impl Into<String>, class: Class) -> Self {
+        self.special = Some(Special::Error(message.into(), class));
+        self
+    }
+
     /// Scripts a connection dropped mid-stream: `Start`, then `Error` with
     /// message [`DROPPED_MESSAGE`]. Any content already added is discarded.
     /// It classifies as a transport failure after output began, which is
