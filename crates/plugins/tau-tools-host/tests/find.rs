@@ -123,23 +123,46 @@ enum GitignoreCase {
 #[derive(Debug, hegel::PrettyPrintable)]
 struct FindCase {
     present: Vec<&'static str>,
+    /// Generated root files, `<stem>.txt`, none of them a candidate.
+    extra: Vec<String>,
     gitignore: GitignoreCase,
-    pattern: &'static str,
+    pattern: String,
     limit: u32,
 }
 
 #[hegel::composite]
 fn find_case(tc: &TestCase) -> FindCase {
     let present = tc.draw(gs::subsequences(CANDIDATES));
+    let mut extra: Vec<String> = tc
+        .draw(gs::vecs(safe_stem()).max_size(8))
+        .into_iter()
+        .map(|stem| format!("{stem}.txt"))
+        .filter(|name| !CANDIDATES.contains(&name.as_str()))
+        .collect();
+    extra.sort();
+    extra.dedup();
     let gitignore = tc.draw(gs::sampled_from(vec![
         GitignoreCase::None,
         GitignoreCase::ByExt,
         GitignoreCase::ByName,
     ]));
-    let pattern = tc.draw(gs::sampled_from(PATTERNS.to_vec()));
+    // Mostly a fixed pattern, else a generated `<prefix>*.txt`.
+    let pattern = if tc.draw(gs::weighted_booleans(0.75)) {
+        tc.draw(gs::sampled_from(PATTERNS.to_vec())).to_owned()
+    } else {
+        let prefix: String = tc
+            .draw(
+                gs::vecs(gs::sampled_from(SAFE_STEM_CHARS.to_vec()))
+                    .max_size(3),
+            )
+            .into_iter()
+            .collect();
+        format!("{prefix}*.txt")
+    };
     let limit = tc.draw(gs::integers::<u32>().min_value(1).max_value(6));
     FindCase {
         present,
+        extra,
         gitignore,
         pattern,
         limit,
@@ -154,34 +177,6 @@ fn safe_stem(tc: &TestCase) -> String {
             .max_size(10),
     );
     chars.into_iter().collect()
-}
-
-#[derive(Debug, hegel::PrettyPrintable)]
-struct GeneratedFindCase {
-    filenames: Vec<String>,
-    prefix: String,
-    use_prefix: bool,
-}
-
-#[hegel::composite]
-fn generated_find_case(tc: &TestCase) -> GeneratedFindCase {
-    let stems = tc.draw(gs::vecs(safe_stem()).max_size(12));
-    let mut filenames: Vec<String> = stems
-        .into_iter()
-        .map(|stem| format!("{stem}.txt"))
-        .collect();
-    filenames.sort();
-    filenames.dedup();
-
-    let prefix_chars = tc
-        .draw(gs::vecs(gs::sampled_from(SAFE_STEM_CHARS.to_vec())).max_size(4));
-    let prefix = prefix_chars.into_iter().collect();
-    let use_prefix = tc.draw(gs::booleans());
-    GeneratedFindCase {
-        filenames,
-        prefix,
-        use_prefix,
-    }
 }
 
 /// A naive recursive walk with `std::fs::read_dir`, sorted per
@@ -248,15 +243,15 @@ fn effective_pattern(pattern: &str) -> (bool, String) {
 // Property inventory: find_matches_a_naive_walk is differential against
 // an independent recursive filesystem walk plus a narrow .gitignore model;
 // it checks display text, selected paths, ordering, and entry-limit reporting.
-// generated_file_names_match_the_naive_prefix_oracle independently checks
-// generated filename sets against a plain starts_with oracle for the safe
-// prefix*.txt / *.txt glob subset. These laws catch path selection and
-// ordering regressions without reusing the production walker or glob matcher.
+// A generated `<prefix>*.txt` pattern is also checked against a plain
+// starts_with/ends_with oracle, without globset. These laws catch path
+// selection and ordering regressions without reusing the production walker.
 //
-// Generator plan: generated stems use a bounded ASCII alphabet with no path
-// separators, control characters, or glob metacharacters. A vector is sorted
-// and deduplicated after drawing, so every case is a valid filesystem tree and
-// shrinking keeps it valid without rejection. Prefixes use the same alphabet.
+// Generator plan: fixed candidates at several depths, plus generated root
+// stems from a bounded ASCII alphabet with no path separators, control
+// characters, or glob metacharacters, sorted and deduplicated after drawing,
+// so every case is a valid filesystem tree and shrinking keeps it valid
+// without rejection. Prefixes use the same alphabet.
 //
 // CI: Hegel auto-selects its ci profile (derandomized, with database use
 // disabled); workspace-wide case counts belong in hegel.toml. This property
@@ -266,7 +261,12 @@ fn find_matches_a_naive_walk(tc: TestCase) {
     let case = tc.draw(find_case());
 
     let dir = tempfile::tempdir().unwrap();
-    for candidate in &case.present {
+    for candidate in case
+        .present
+        .iter()
+        .copied()
+        .chain(case.extra.iter().map(String::as_str))
+    {
         let path = dir.path().join(candidate);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
@@ -294,33 +294,53 @@ fn find_matches_a_naive_walk(tc: TestCase) {
     // Oracle: a naive walk plus the same globset pattern, not `ignore`.
     let mut all_files = Vec::new();
     naive_walk(dir.path(), "", &mut all_files);
-    let (full_path_mode, glob_pattern) = effective_pattern(case.pattern);
+    let (full_path_mode, glob_pattern) = effective_pattern(&case.pattern);
     let glob = GlobBuilder::new(&glob_pattern)
         .literal_separator(true)
         .build()
         .unwrap()
         .compile_matcher();
 
-    let mut matched: Vec<String> = Vec::new();
-    let mut limit_reached = false;
-    for rel in &all_files {
-        if rel == ".gitignore" || gitignore_excludes(case.gitignore, rel) {
-            continue;
-        }
-        let candidate = if full_path_mode {
-            rel.clone()
-        } else {
-            rel.rsplit('/').next().unwrap_or(rel).to_owned()
-        };
-        if !glob.is_match(&candidate) {
-            continue;
-        }
-        if matched.len() >= case.limit as usize {
-            limit_reached = true;
-            break;
-        }
-        matched.push(rel.clone());
+    let kept: Vec<&String> = all_files
+        .iter()
+        .filter(|rel| {
+            *rel != ".gitignore" && !gitignore_excludes(case.gitignore, rel)
+        })
+        .collect();
+    let base = |rel: &str| rel.rsplit('/').next().unwrap_or(rel).to_owned();
+    let selected: Vec<String> = kept
+        .iter()
+        .filter(|rel| {
+            glob.is_match(if full_path_mode {
+                (**rel).clone()
+            } else {
+                base(rel)
+            })
+        })
+        .map(|rel| (*rel).clone())
+        .collect();
+    // A generated `<prefix>*.txt` is checked without globset too: a
+    // file's name starts with the prefix and ends in `.txt`.
+    if let Some(prefix) = case
+        .pattern
+        .strip_suffix("*.txt")
+        .filter(|_| !PATTERNS.contains(&case.pattern.as_str()))
+    {
+        let by_name: Vec<String> = kept
+            .iter()
+            .filter(|rel| {
+                let name = base(rel);
+                name.starts_with(prefix)
+                    && name.ends_with(".txt")
+                    && name.len() >= prefix.len() + 4
+            })
+            .map(|rel| (*rel).clone())
+            .collect();
+        assert_eq!(selected, by_name, "{:?}", case.pattern);
     }
+    let limit_reached = selected.len() > case.limit as usize;
+    let matched: Vec<String> =
+        selected.into_iter().take(case.limit as usize).collect();
 
     let expected = if matched.is_empty() && !limit_reached {
         "No files found matching pattern".to_owned()
@@ -348,8 +368,8 @@ fn find_matches_a_naive_walk(tc: TestCase) {
 
     assert_eq!(
         actual, expected,
-        "pattern = {:?}, present = {:?}, gitignore = {:?}, limit = {}",
-        case.pattern, case.present, case.gitignore, case.limit
+        "pattern = {:?}, present = {:?}, extra = {:?}, gitignore = {:?}, limit = {}",
+        case.pattern, case.present, case.extra, case.gitignore, case.limit
     );
     let structured = structured_of(&output);
     common::assert_matches_output_schema(&Find::new(root.clone()), structured);
@@ -359,51 +379,6 @@ fn find_matches_a_naive_walk(tc: TestCase) {
     assert_eq!(structured["truncated"], limit_reached);
     assert_eq!(structured["complete"], !limit_reached);
     assert_eq!(structured["skipped"], 0);
-}
-
-/// Compares real results against a minimal naive oracle for generated file
-/// names and a safe subset of prefix globs. The oracle enumerates with
-/// read_dir and checks string prefixes directly, independently of ignore and
-/// globset.
-#[hegel::test(test_cases = 50)]
-fn generated_file_names_match_the_naive_prefix_oracle(tc: TestCase) {
-    let case = tc.draw(generated_find_case());
-    let dir = tempfile::tempdir().unwrap();
-    for filename in &case.filenames {
-        std::fs::write(dir.path().join(filename), "x").unwrap();
-    }
-
-    let prefix = if case.use_prefix {
-        case.prefix.as_str()
-    } else {
-        ""
-    };
-    let pattern = if case.use_prefix {
-        format!("{prefix}*.txt")
-    } else {
-        "*.txt".to_owned()
-    };
-    let root = Root::new(dir.path());
-    let output = call_output(&root, json!({"pattern": pattern})).unwrap();
-
-    let mut expected: Vec<String> = std::fs::read_dir(dir.path())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|filename| {
-            filename.starts_with(prefix) && filename.ends_with(".txt")
-        })
-        .collect();
-    expected.sort();
-
-    assert_eq!(structured_of(&output)["paths"], json!(expected));
-    let expected_text = if expected.is_empty() {
-        "No files found matching pattern".to_owned()
-    } else {
-        expected.join("\n")
-    };
-    assert_eq!(text_of(&output), expected_text);
-    assert_eq!(structured_of(&output)["complete"], true);
-    assert_eq!(structured_of(&output)["truncated"], false);
 }
 
 /// A nested `.gitignore` applies only to its own subtree, not to
@@ -436,8 +411,8 @@ fn slash_pattern_matches_the_full_path() {
     let root = Root::new(dir.path());
 
     let output = call(&root, json!({"pattern": "src/**/*.spec.ts"})).unwrap();
-    assert!(output.contains("src/lib.spec.ts"), "{output}");
-    assert!(!output.contains("\nlib.spec.ts"), "{output}");
+    // Only the nested file: the root's `lib.spec.ts` is not under `src/`.
+    assert_eq!(output, "src/lib.spec.ts");
 }
 
 /// Searching from an absolute path outside the tool's own root works
