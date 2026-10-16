@@ -84,7 +84,10 @@ fn read(
 
 #[cfg(test)]
 mod tests {
-    use hegel::{TestCase, generators as gs};
+    use hegel::{
+        TestCase,
+        generators::{self as gs, Generator as _},
+    };
 
     use super::*;
 
@@ -205,17 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_without_a_code_reads_nothing() {
-        let blank = Shot {
-            luma: vec![0xf0; 320 * 240],
-            width: 320,
-            height: 240,
-            stride: 320,
-        };
-        assert_eq!(pairing_code(blank.frame()), None);
-    }
-
-    #[test]
     fn other_qr_codes_are_passed_over() {
         let pose = upright(480, 480, 6.);
         for text in [
@@ -232,14 +224,37 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_short_buffer_is_not_a_frame() {
-        assert!(Frame::new(&[0; 99], 10, 10, 10).is_none());
-        assert!(Frame::new(&[0; 100], 10, 10, 10).is_some());
-        // The last row needs no padding after it.
-        assert!(Frame::new(&[0; 118], 10, 10, 12).is_some());
-        assert!(Frame::new(&[0; 100], 10, 10, 9).is_none());
-        assert!(Frame::new(&[], 0, 0, 0).is_none());
+    /// A buffer is a frame exactly when it has pixels and holds every
+    /// row: `stride` bytes for each row but the last, which needs only
+    /// its `width`, and no row is narrower than the picture. Lengths
+    /// are drawn at the bound, and strides past any size, too.
+    #[hegel::test(test_cases = 300)]
+    fn a_buffer_is_a_frame_when_it_holds_every_row(tc: TestCase) {
+        let width: usize = tc.draw(gs::integers::<usize>().max_value(12));
+        let height: usize = tc.draw(gs::integers::<usize>().max_value(12));
+        let stride: usize = tc.draw(hegel::one_of!(
+            gs::integers::<usize>().max_value(16),
+            gs::just(usize::MAX),
+        ));
+        let rows = |w: u128, h: u128, s: u128| s * (h.max(1) - 1) + w;
+        let needed = rows(width as u128, height as u128, stride as u128);
+        let len: usize = tc.draw(hegel::one_of!(
+            gs::integers::<usize>().max_value(200),
+            gs::integers::<i64>()
+                .min_value(-2)
+                .max_value(2)
+                .map(move |off| {
+                    (needed.min(200) as i64 + off).max(0) as usize
+                }),
+        ));
+        let luma = vec![0; len];
+        let expected =
+            width > 0 && height > 0 && stride >= width && len as u128 >= needed;
+        assert_eq!(
+            Frame::new(&luma, width, height, stride).is_some(),
+            expected,
+            "{len} bytes for {width}×{height}, stride {stride}"
+        );
     }
 
     /// Turned any way, a code held up to the camera reads from six
@@ -310,11 +325,15 @@ mod tests {
         let height =
             tc.draw(gs::integers::<usize>().min_value(1).max_value(96));
         let stride = width + tc.draw(gs::integers::<usize>().max_value(16));
-        let luma: Vec<u8> = tc.draw(
-            gs::vecs(gs::integers::<u8>())
-                .min_size(stride * height)
-                .max_size(stride * height),
-        );
+        // Noise, or one flat shade, as a blank screen gives.
+        let luma: Vec<u8> = match tc.draw(gs::optional(gs::integers::<u8>())) {
+            Some(shade) => vec![shade; stride * height],
+            None => tc.draw(
+                gs::vecs(gs::integers::<u8>())
+                    .min_size(stride * height)
+                    .max_size(stride * height),
+            ),
+        };
         let frame = Frame::new(&luma, width, height, stride).unwrap();
         assert_eq!(pairing_code(frame), None);
     }
