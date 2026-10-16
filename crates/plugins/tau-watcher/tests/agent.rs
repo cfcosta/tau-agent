@@ -1,13 +1,13 @@
 //! The watcher in an agent loop, driven with `ScriptedModel`: the 6th
 //! step asks once, `learn: none` leaves no record, a note leaves one,
-//! and a run without the plugin asks nothing.
+//! and the host adds the plugin only when it is switched on, and never
+//! to a sub-agent.
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
     error::ToolError,
-    plugin::Plugin,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_store::Store;
@@ -247,42 +247,24 @@ fn a_message_written_past_a_waiting_note_is_recorded() {
     });
 }
 
-#[test]
-fn off_by_default_nothing_is_added_and_nothing_is_asked() {
-    let ctx = run_ctx(RunKind::Chat);
-    let plugins: Vec<Box<dyn Plugin>> =
-        block_on_io(WatcherHost.agent_plugins(&(), &ctx, &Settings::default()))
-            .unwrap();
-    assert!(plugins.is_empty());
-    // A run built from what the host gives: six steps, no check.
-    let model = script(5, None, 0);
-    let mut agent = Agent::new(model.clone()).tool(Echo::new());
-    for plugin in plugins {
-        agent = agent.boxed_plugin(plugin);
-    }
-    block_on_io(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let outcome = agent.run("run the tests", &store).await.unwrap();
-        assert!(records(&store, &outcome.run).await.is_empty());
-    });
-    model.assert_exhausted();
-    assert!(checks(&model).is_empty());
-}
-
+/// Off by default, the watcher is added to no run; switched on, to every
+/// run but a sub-agent's.
 #[test]
 fn switched_on_it_is_added_but_not_for_sub_agents() {
     let on = Settings {
         enabled: true,
         ..Settings::default()
     };
-    for (kind, expected) in [
-        (RunKind::Main, 1),
-        (RunKind::Chat, 1),
-        (RunKind::SubAgent, 0),
-    ] {
-        let plugins =
-            block_on_io(WatcherHost.agent_plugins(&(), &run_ctx(kind), &on))
-                .unwrap();
-        assert_eq!(plugins.len(), expected, "{kind:?}");
+    for (settings, enabled) in [(Settings::default(), false), (on, true)] {
+        for kind in [RunKind::Main, RunKind::Chat, RunKind::SubAgent] {
+            let plugins = block_on_io(WatcherHost.agent_plugins(
+                &(),
+                &run_ctx(kind),
+                &settings,
+            ))
+            .unwrap();
+            let expected = usize::from(enabled && kind != RunKind::SubAgent);
+            assert_eq!(plugins.len(), expected, "{enabled} {kind:?}");
+        }
     }
 }

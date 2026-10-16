@@ -59,19 +59,6 @@ fn a_note_with_an_explanation_reads() {
 }
 
 #[test]
-fn a_note_may_leave_the_explanation_out() {
-    let text = "learn: The key expires tomorrow.\ntag: You should know\n";
-    assert_eq!(
-        parse(text),
-        Ok(Reply::Note {
-            tag: Tag::YouShouldKnow,
-            line: "The key expires tomorrow.".into(),
-            explain: None,
-        })
-    );
-}
-
-#[test]
 fn a_note_without_a_tag_is_not_read() {
     assert_eq!(parse("learn: The key expires."), Err(Unreadable::NoTag));
     assert_eq!(
@@ -167,13 +154,23 @@ fn explanation(tc: &TestCase) -> Explain {
     }
 }
 
-/// A note written the way the parser reads it reads back as written.
+/// White space a reply may come wrapped in.
+fn padding() -> impl gs::PrintableGenerator<String> {
+    gs::sampled_from(vec!["", "\n", "  ", "\n\n", " \n "]).map(str::to_owned)
+}
+
+/// A note written the way the parser reads it, with or without an
+/// explanation and wrapped in white space, reads back as written.
 #[hegel::test(test_cases = 200)]
 fn a_written_note_reads_back(tc: TestCase) {
     let line = tc.draw(line());
     let tag = tc.draw(gs::sampled_from(Tag::ALL.to_vec()).print_as_debug());
     let explain = tc.draw(gs::optional(explanation().print_as_debug()));
-    let text = reply::write(tag, &line, explain.as_ref());
+    let (before, after) = (tc.draw(padding()), tc.draw(padding()));
+    let text = format!(
+        "{before}{}{after}",
+        reply::write(tag, &line, explain.as_ref())
+    );
     assert_eq!(parse(&text), Ok(Reply::Note { tag, line, explain }));
 }
 

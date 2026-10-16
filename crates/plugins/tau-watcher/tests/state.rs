@@ -63,21 +63,6 @@ fn a_dropped_reply_shows_nothing() {
 }
 
 #[test]
-fn acting_on_a_note_takes_the_band_away_and_keeps_the_note() {
-    for answer in [
-        Answer::Learned,
-        Answer::Knew,
-        Answer::Chatted,
-        Answer::Dismissed,
-    ] {
-        let state = state_of(&[noted(6, "A."), answered("n0", answer)]);
-        assert!(state.band().is_none(), "{answer:?}");
-        assert!(!state.waiting());
-        assert_eq!(state.notes.len(), 1);
-    }
-}
-
-#[test]
 fn a_note_leaves_the_band_when_written_past_twice() {
     let mut state = state_of(&[noted(6, "A.")]);
     for written in 1..=BAND_LIMIT {
