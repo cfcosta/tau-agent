@@ -2,7 +2,7 @@
 //! claimed, exactly once, over the gate.
 
 use hegel::{TestCase, generators as gs, generators::Generator as _};
-use tau_fast_compaction::{OutputPruning, state::estimate_tokens};
+use tau_fast_compaction::{OutputPruning, output, state::estimate_tokens};
 use tau_output_pruning_eval::{
     runner::exec_result,
     workload::{Kind, generate},
@@ -46,6 +46,7 @@ fn needles_are_where_claimed_exactly_once(tc: TestCase) {
 
 /// The kinds that promise a place keep it: cut-middle's needle is
 /// above the tail `exec_command` keeps; multi-needle's three are far apart;
+/// needle-error's error is in neither end chunk;
 /// earlier-requirement's needle is named only by its earlier read,
 /// which is larger than the half of a state the history gets beside a
 /// large output.
@@ -64,6 +65,20 @@ fn kinds_keep_their_promises(tc: TestCase) {
     let lines = multi.output.split('\n').count();
     for pair in multi.needles.windows(2) {
         assert!(pair[1].line - pair[0].line > lines / 5);
+    }
+
+    // needle-error's error is in neither end chunk, which pruning keeps
+    // whatever Jev says, so only Jev's answer can keep it.
+    let error = generate(Kind::NeedleError, seed);
+    let lines = output::lines(&error.output).len();
+    let chunks = output::chunks(lines, OutputPruning::default().chunk_lines);
+    let (first, last) = (&chunks[0], &chunks[chunks.len() - 1]);
+    for needle in &error.needles {
+        assert!(
+            !first.contains(&needle.line) && !last.contains(&needle.line),
+            "line {} of {lines}",
+            needle.line
+        );
     }
 
     let earlier = generate(Kind::EarlierRequirement, seed);

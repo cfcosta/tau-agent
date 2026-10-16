@@ -201,11 +201,6 @@ fn keeping_nothing_keeps_the_ends() {
             "{kind:?}: {trial:?}"
         );
     }
-    // The totals line of summary-line sits in the last chunk or near it;
-    // the error of needle-error never does.
-    let error = generate(Kind::NeedleError, 3);
-    let (trial, _work) = trial(&error, FakeJev::nouls(|_| 0.0), Exec::Whole);
-    assert_eq!(trial.retained, 0);
 }
 
 /// Jev's answers decide against the threshold alone: a Jev uncertain
