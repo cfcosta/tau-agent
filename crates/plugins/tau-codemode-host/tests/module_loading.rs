@@ -189,12 +189,15 @@ async fn rejects_missing_names_paths_cycles_and_mismatched_pins() {
         assert!(texts(&output)[1].contains(expected), "{output:?}");
     }
     // The digest includes dependency pins, so a real cyclic pair cannot be
-    // constructed from Definition::new without solving a hash fixed point.
-    // The graph walker still checks the active dependency chain explicitly.
+    // constructed from Definition::new without solving a hash fixed point,
+    // and a forged one fails its digest first.
 }
 
+/// A host that hands back a definition whose version is not the digest
+/// of its content (here, one forged to depend on itself) is refused
+/// before any of its source runs.
 #[tokio::test]
-async fn rejects_a_forged_self_cycle_before_running_source() {
+async fn a_module_whose_version_does_not_match_its_content_never_runs() {
     struct ForgedHost(Definition);
     #[async_trait]
     impl Host for ForgedHost {
@@ -255,22 +258,6 @@ async fn syntax_errors_and_invalid_exports_are_string_catchable() {
         assert_eq!(texts(&output)[0], "false");
         assert!(texts(&output)[1].contains(expected), "{output:?}");
     }
-}
-
-#[tokio::test]
-async fn module_functions_call_tools_and_heaps_are_fresh_per_vm() {
-    let module = definition(
-        "counter",
-        "local n = 0; return function() n += 1; return tools.echo({ n = n }).n end",
-        &[],
-    );
-    let host = ModuleHost::new(&[module]);
-    let code = "local f = require('counter'); return f(), f()";
-    let first = host.script(code).await;
-    let second = host.script(code).await;
-    assert_eq!(texts(&first), ["1", "2"]);
-    assert_eq!(texts(&second), ["1", "2"]);
-    assert_eq!(host.tools.names(), ["echo", "echo", "echo", "echo"]);
 }
 
 #[tokio::test]
@@ -386,7 +373,13 @@ fn graph_module(
         ));
         dependencies.push((dependency_name, dependency.version()));
     }
-    source.push_str("\nreturn { value = value, label = init.label }");
+    source.push_str(
+        "\nlocal calls = 0\n\
+         return { value = value, label = init.label, again = function()\n\
+         calls += 1\n\
+         return tools.echo({ n = value + calls }).n\n\
+         end }",
+    );
     definition(name, &source, &dependencies)
 }
 
@@ -433,7 +426,8 @@ fn count_initializations(
 
 // Property inventory: exact imports and a later bare import return the
 // independently summed graph values, while each reachable exact version
-// executes once per VM. Five fixed leaves, a forced diamond, two root versions,
+// executes once per VM, and a module's function calls a tool with state that
+// starts afresh in each VM. Five fixed leaves, a forced diamond, two root versions,
 // and eight optional earlier-node edges construct valid DAGs without filtering;
 // the edge mask shrinks toward the minimal diamond and bases toward one.
 #[hegel::test(test_cases = 24)]
@@ -470,7 +464,7 @@ fn generated_exact_definition_graphs_preserve_values_pins_and_vm_cache(
          local current = require('root')\n\
          return old.value, newer.value, current.value, old.label, newer.label, current.label, \
          old == require('root', '{}'), current == require('root'), newer == require('root', '{}'), \
-         current == newer, old ~= newer",
+         current == newer, old ~= newer, old.again(), old.again()",
         old_root.version(),
         new_root.version(),
         old_root.version(),
@@ -492,6 +486,10 @@ fn generated_exact_definition_graphs_preserve_values_pins_and_vm_cache(
         "true".into(),
         "true".into(),
         "true".into(),
+        // A module's function calls a tool, and its own state starts
+        // afresh in each VM: the same two answers every run.
+        (values[7] + 1).to_string(),
+        (values[7] + 2).to_string(),
     ];
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

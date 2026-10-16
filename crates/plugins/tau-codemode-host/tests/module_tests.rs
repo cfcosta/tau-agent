@@ -226,7 +226,11 @@ return {a=a,b=b}
                 .unwrap()
                 .contains("broken source")
         );
-        assert!(report["b"]["error"].as_str().unwrap().contains("dep"));
+        // The pin is named whole: `dep` alone also matches "dependency".
+        let missing =
+            format!("module dep@{} is not registered", "0".repeat(64));
+        let error = report["b"]["error"].as_str().unwrap();
+        assert!(error.contains(&missing), "{error}");
         let records = records(&store, &run.run.0).await;
         assert_eq!(records.len(), 4);
         let library = modules::fold(&records);

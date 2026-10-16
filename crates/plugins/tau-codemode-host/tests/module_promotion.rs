@@ -125,6 +125,20 @@ impl Fixture {
         root: Definition,
         dependencies: &[Definition],
     ) -> Request {
+        let request = self.capture(root, dependencies);
+        self.append_codemode(store::Record::Promotion(
+            PromotionRecord::Requested(Box::new(request.clone())),
+        ));
+        request
+    }
+
+    /// Records `root` and the pin, and captures a request for it without
+    /// recording the request.
+    fn capture(
+        &self,
+        root: Definition,
+        dependencies: &[Definition],
+    ) -> Request {
         let mut scratch = Library::default();
         scratch
             .apply(&ModuleRecord::Define {
@@ -138,7 +152,7 @@ impl Fixture {
         if !self.has_pin() {
             self.append_codemode(store::Record::RepositoryPin(pin.clone()));
         }
-        let request = Request::capture(
+        Request::capture(
             &self.run.0,
             &self.repository.scope(),
             &self.repository.key(),
@@ -146,11 +160,7 @@ impl Fixture {
             &scratch,
             &pin,
         )
-        .unwrap();
-        self.append_codemode(store::Record::Promotion(
-            PromotionRecord::Requested(Box::new(request.clone())),
-        ));
-        request
+        .unwrap()
     }
 
     fn has_pin(&self) -> bool {
@@ -178,13 +188,17 @@ impl Fixture {
     }
 
     fn act(&self, request: &Request, decision: Decision) -> Option<Value> {
+        self.act_on(&request.id, decision)
+    }
+
+    fn act_on(&self, request_id: &str, decision: Decision) -> Option<Value> {
         self.runtime
             .block_on(
                 CodemodeHost.act(
                     &(),
                     serde_json::to_value(Action::Promote {
                         run: self.run.clone(),
-                        request_id: request.id.clone(),
+                        request_id: request_id.to_owned(),
                         decision,
                     })
                     .unwrap(),
@@ -256,38 +270,22 @@ fn exact_old_request_approves_saved_bytes_after_scratch_replacement() {
     assert_eq!(f.selected()["math"], old.version());
 }
 
-#[test]
-fn decline_never_activates_and_cannot_be_reversed() {
-    let f = Fixture::new();
-    let root = definition("math", "return 1", BTreeMap::new());
-    let request = f.request(root, &[]);
-    assert!(f.act(&request, Decision::Declined).is_none());
-    let before = f
-        .runtime
-        .block_on(f.store.records(&f.run.0, PLUGIN))
-        .unwrap();
-    assert!(f.act(&request, Decision::Declined).is_none());
-    assert_eq!(
-        f.runtime
-            .block_on(f.store.records(&f.run.0, PLUGIN))
-            .unwrap(),
-        before,
-        "a repeated decline must not append another terminal record"
-    );
-    assert!(f.selected().is_empty());
-    assert!(
-        f.act(&request, Decision::Approved).unwrap()["error"]
-            .as_str()
-            .unwrap()
-            .contains("declined")
-    );
-    assert!(f.selected().is_empty());
-}
-
+/// A request whose record was changed after it was captured (its source,
+/// digest, dependencies, id, owner or repository scope) neither verifies
+/// nor, approved through the host, selects anything. The unchanged
+/// request, recorded the same way, is approved: the refusals are the
+/// changes'.
 #[test]
 fn changed_request_source_digest_dependencies_id_owner_and_scope_fail() {
-    for changed in ["source", "digest", "dependencies", "id", "owner", "scope"]
-    {
+    for changed in [
+        "none",
+        "source",
+        "digest",
+        "dependencies",
+        "id",
+        "owner",
+        "scope",
+    ] {
         let f = Fixture::new();
         let dependency = definition("base", "return 3", BTreeMap::new());
         let root = definition(
@@ -295,14 +293,13 @@ fn changed_request_source_digest_dependencies_id_owner_and_scope_fail() {
             "return require('base')",
             BTreeMap::from([("base".into(), dependency.version().into())]),
         );
-        let request = f.request(root, &[dependency]);
-        let mut records =
-            f.runtime.block_on(f.cx().records(&f.run, PLUGIN)).unwrap();
-        let value = records
-            .iter_mut()
-            .find(|value| value.get("kind") == Some(&json!("promotion")))
-            .unwrap();
+        let captured = f.capture(root.clone(), &[dependency]);
+        let mut value = serde_json::to_value(store::Record::Promotion(
+            PromotionRecord::Requested(Box::new(captured)),
+        ))
+        .unwrap();
         match changed {
+            "none" => {}
             "source" => value["root"]["source"] = json!("return 99"),
             "digest" => value["digest"] = json!("0".repeat(64)),
             "dependencies" => {
@@ -318,25 +315,30 @@ fn changed_request_source_digest_dependencies_id_owner_and_scope_fail() {
         else {
             panic!("expected requested promotion record");
         };
-        let altered = *altered;
+        f.append(PLUGIN, value);
+        let records =
+            f.runtime.block_on(f.cx().records(&f.run, PLUGIN)).unwrap();
         let scratch = tau_codemode::modules::fold(&records);
         let pin = tau_codemode::modules::pin_for_run(&records, &f.run.0)
             .unwrap()
             .unwrap();
-        assert!(
-            altered
-                .verify(
-                    &scratch,
-                    &pin,
-                    &f.run.0,
-                    &f.repository.scope(),
-                    &f.repository.key()
-                )
-                .is_err(),
-            "{changed}"
+        let verified = altered.verify(
+            &scratch,
+            &pin,
+            &f.run.0,
+            &f.repository.scope(),
+            &f.repository.key(),
         );
-        assert!(f.selected().is_empty());
-        assert_eq!(request.root.name(), "math");
+        let reply = f.act_on(&altered.id, Decision::Approved);
+        if changed == "none" {
+            assert!(verified.is_ok(), "{verified:?}");
+            assert_eq!(reply, None);
+            assert_eq!(f.selected()["math"], root.version());
+        } else {
+            assert!(verified.is_err(), "{changed}");
+            assert!(reply.is_some(), "{changed}: approved");
+            assert!(f.selected().is_empty(), "{changed}");
+        }
     }
 }
 
@@ -425,7 +427,7 @@ fn wrong_run_repository_duplicate_and_store_payload_cannot_authorize() {
 }
 
 /// Where a request stands in the authorization model.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Standing {
     Pending,
     Granted,
@@ -437,8 +439,10 @@ enum Standing {
 /// grants it and points its name at its version, the latest grant
 /// winning; approving it again changes nothing and is no error; a
 /// declined request can never be approved, and a granted one never
-/// declined, both refused with a reply; declining again is a no-op. The
-/// model decides each reply on its own, never from the host's.
+/// declined, both refused with a reply (an approval saying it was
+/// declined); declining again is a no-op. A decided request's records
+/// never grow. The model decides each reply on its own, never from the
+/// host's.
 #[hegel::test]
 fn requests_approvals_and_declines_match_the_authorization_model(
     tc: hegel::TestCase,
@@ -463,6 +467,7 @@ fn requests_approvals_and_declines_match_the_authorization_model(
         let index = byte as usize % requests.len();
         let (request, standing) = &mut requests[index];
         let approve = choice % 3 == 1;
+        let was = *standing;
         let refused = match (approve, *standing) {
             (true, Standing::Pending) => {
                 *standing = Standing::Granted;
@@ -484,8 +489,23 @@ fn requests_approvals_and_declines_match_the_authorization_model(
         } else {
             Decision::Declined
         };
+        let records = || {
+            f.runtime
+                .block_on(f.store.records(&f.run.0, PLUGIN))
+                .unwrap()
+        };
+        let before = records();
         let reply = f.act(request, decision);
         assert_eq!(reply.is_some(), refused, "{reply:?}");
+        if approve && was == Standing::Declined {
+            let error = reply.as_ref().unwrap()["error"].as_str().unwrap();
+            assert!(error.contains("declined"), "{error}");
+        }
+        // Only a pending request's decision is written down; a repeat or
+        // a refusal appends nothing.
+        if was != Standing::Pending {
+            assert_eq!(records(), before, "a decided request's records grew");
+        }
         assert_eq!(f.selected(), aliases);
     }
 }
