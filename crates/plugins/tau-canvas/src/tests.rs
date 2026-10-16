@@ -81,30 +81,66 @@ fn records_of_other_plugins_are_skipped() {
     assert_eq!(canvas.items.len(), 1);
 }
 
-#[test]
-fn a_record_reads_back_as_it_was_written() {
-    let record = Record::Revised {
-        call: "call-1".to_owned(),
-        item: 3,
-        title: "Loss".to_owned(),
-        content: Content::Image {
+/// A revision as the plugin writes one: of a document, or of an image
+/// with or without a size.
+#[hegel::composite]
+fn record(tc: &hegel::TestCase) -> Record {
+    let content = if tc.draw(gs::booleans()) {
+        Content::Document {
+            text: tc.draw(gs::text().max_size(40)),
+        }
+    } else {
+        let size = tc.draw(gs::optional(hegel::tuples!(
+            gs::integers::<u32>().min_value(1),
+            gs::integers::<u32>().min_value(1),
+        )));
+        Content::Image {
             image: ImageRef {
                 blob: Blob {
-                    id: "0190f0c0-0000-7000-8000-000000000000".to_owned(),
-                    digest: "ab".repeat(32),
-                    size_bytes: 10,
+                    id: tc
+                        .draw(gs::from_regex("[0-9a-f-]{36}").fullmatch(true)),
+                    digest: tc
+                        .draw(gs::from_regex("[0-9a-f]{64}").fullmatch(true)),
+                    size_bytes: tc
+                        .draw(gs::integers::<u64>().max_value(MAX_IMAGE_BYTES)),
                 },
-                mime: "image/png".to_owned(),
-                width: Some(12),
-                height: Some(8),
-                path: "plots/loss.png".to_owned(),
+                mime: tc
+                    .draw(gs::sampled_from(vec![
+                        "image/png",
+                        "image/svg+xml",
+                        "image/jpeg",
+                    ]))
+                    .to_owned(),
+                width: size.map(|(width, _)| width),
+                height: size.map(|(_, height)| height),
+                path: tc.draw(gs::text().max_size(20)),
             },
-            caption: "Training loss".to_owned(),
-        },
+            caption: tc.draw(gs::text().max_size(20)),
+        }
     };
+    Record::Revised {
+        call: tc.draw(gs::text().min_size(1).max_size(12)),
+        item: tc.draw(gs::integers::<u32>().min_value(1)),
+        title: tc.draw(gs::text().max_size(20)),
+        content,
+    }
+}
+
+/// Any revision reads back as it was written, tagged as a revision and
+/// by what it holds, as the store keeps it.
+#[hegel::test(test_cases = 300)]
+fn a_record_reads_back_as_it_was_written(tc: hegel::TestCase) {
+    use hegel::generators::Generator as _;
+    // Record is tau's own type: it prints through Debug.
+    let record = tc.draw(record().print_as_debug());
     let body = serde_json::to_value(&record).unwrap();
+    let Record::Revised { content, .. } = &record;
     assert_eq!(body["kind"], "revised");
-    assert_eq!(body["content"]["type"], "image");
+    let tag = match content {
+        Content::Document { .. } => "document",
+        Content::Image { .. } => "image",
+    };
+    assert_eq!(body["content"]["type"], tag);
     assert_eq!(Record::parse(&body), Some(record));
 }
 
