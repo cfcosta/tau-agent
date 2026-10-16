@@ -568,17 +568,58 @@ impl PluginRun for Attend {
 
 #[cfg(test)]
 mod tests {
+    use hegel::{TestCase, generators as gs};
+
     use super::*;
 
-    #[test]
-    fn escapes_are_dropped_and_the_tail_kept() {
-        assert_eq!(
-            plain("\u{1b}[31mdirenv: error exit status 1\u{1b}[0m"),
-            "direnv: error exit status 1"
+    /// Text with escape sequences anywhere in it reads as the text alone.
+    #[hegel::test(test_cases = 500)]
+    fn escapes_are_dropped(tc: TestCase) {
+        let pieces: Vec<String> = tc.draw(
+            gs::vecs(gs::text().exclude_characters("\u{1b}").max_size(12))
+                .max_size(5),
         );
-        let long: String = (1..=20).map(|n| format!("line {n}\n")).collect();
-        let kept = tail(&long);
-        assert_eq!(kept.lines().count(), OUTPUT_LINES);
-        assert!(kept.ends_with("line 20"));
+        let mut colored = String::new();
+        for piece in &pieces {
+            let escape = tc.draw(gs::sampled_from(vec![
+                "",
+                "\u{1b}[31m",
+                "\u{1b}[0m",
+                "\u{1b}[1;32m",
+                "\u{1b}[2K",
+                "\u{1b}[?25l",
+            ]));
+            colored.push_str(escape);
+            colored.push_str(piece);
+        }
+        assert_eq!(plain(&colored), pieces.concat(), "{colored:?}");
+    }
+
+    /// Of any number of lines, the card shows the last [`OUTPUT_LINES`],
+    /// or all of them when there are fewer, whatever ends the text.
+    #[hegel::test(test_cases = 300)]
+    fn the_tail_is_the_last_lines(tc: TestCase) {
+        let count = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![
+                0,
+                1,
+                OUTPUT_LINES - 1,
+                OUTPUT_LINES,
+                OUTPUT_LINES + 1
+            ]),
+            gs::integers::<usize>().max_value(3 * OUTPUT_LINES),
+        ));
+        let lines: Vec<String> = (0..count)
+            .map(|_| {
+                tc.draw(
+                    gs::from_regex("[a-z0-9:. ]{0,10}[a-z0-9:.]")
+                        .fullmatch(true),
+                )
+            })
+            .collect();
+        let end = tc.draw(gs::sampled_from(vec!["", "\n", "\n\n", "  \n"]));
+        let text = format!("{}{end}", lines.join("\n"));
+        let kept = &lines[count.saturating_sub(OUTPUT_LINES)..];
+        assert_eq!(tail(&text), kept.join("\n"), "{text:?}");
     }
 }

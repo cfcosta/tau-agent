@@ -6,7 +6,7 @@
 #   (tau's whitelist) is a prefix of its directory, and denied when
 #   direnv's deny record for it is in $XDG_DATA_HOME/direnv/deny.
 # - `export json` sources the `.envrc` (failing as it fails), after
-#   $FAKE_DIRENV_DELAY seconds, and prints `{}`.
+#   $FAKE_DIRENV_GATE exists, when that is set, and prints `{}`.
 # - `exec` sources it into the environment, when allowed, then runs CMD.
 # - Each call appends its first argument to $FAKE_DIRENV_LOG, if set.
 
@@ -29,7 +29,9 @@ status)
   printf '{"state":{"foundRC":{"allowed":%s,"path":"%s/.envrc"}}}\n' "$(state "$PWD")" "$PWD"
   ;;
 export)
-  sleep "${FAKE_DIRENV_DELAY:-0}"
+  if [ -n "$FAKE_DIRENV_GATE" ]; then
+    while [ ! -e "$FAKE_DIRENV_GATE" ]; do sleep 0.01; done
+  fi
   [ "$(state "$PWD")" = 0 ] || { echo "direnv: $PWD/.envrc is blocked" >&2; exit 1; }
   ( . "$PWD/.envrc" ) > /dev/null || exit $?
   echo '{}'

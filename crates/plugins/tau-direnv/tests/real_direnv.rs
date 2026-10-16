@@ -1,5 +1,5 @@
-//! tau-direnv with the real direnv, when it is on `PATH` (skipped
-//! otherwise): tau's whitelist loads an `.envrc` nobody ran `direnv
+//! tau-direnv with the real direnv, which the dev shell puts on `PATH`:
+//! tau's whitelist loads an `.envrc` nobody ran `direnv
 //! allow` on, a command sees what it exports, and a `direnv deny` still
 //! holds. direnv's data directory is the test's own, so the person's
 //! allow and deny records are never read or written.
@@ -37,10 +37,10 @@ fn run(launch: &Launch, dir: &Path, script: &str) -> String {
 #[test]
 fn the_real_direnv_loads_through_taus_whitelist() {
     let dir = tempfile::tempdir().unwrap();
-    let Some(mut direnv) = Direnv::find(&dir.path().join("tau")) else {
-        eprintln!("direnv is not on PATH: skipped");
-        return;
-    };
+    // The dev shell has direnv (flake.nix): without it this test fails
+    // rather than passing having checked nothing.
+    let mut direnv = Direnv::find(&dir.path().join("tau"))
+        .expect("direnv is on PATH, as the dev shell puts it");
     // The test's own direnv data, and none of the person's configuration.
     let data = dir.path().join("data");
     direnv

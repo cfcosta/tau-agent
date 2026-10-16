@@ -219,16 +219,18 @@ fn without_the_persons_leave_commands_run_as_they_are() {
     assert_eq!(run(&launch, &dir, "echo $TAU_PROBE"), "1");
 }
 
-/// A command waits while the environment loads.
+/// A command waits while the environment loads, and runs in it once
+/// it has: the fake direnv's load waits for a file the test makes.
 #[test]
 fn a_command_waits_while_the_environment_loads() {
     let fixture = Fixture::new();
-    let host =
-        fixture.host(Some(fixture.direnv(&[("FAKE_DIRENV_DELAY", "1")])));
+    let gate = fixture.dir.path().join("loaded");
+    let host = fixture.host(Some(
+        fixture.direnv(&[("FAKE_DIRENV_GATE", gate.to_str().unwrap())]),
+    ));
     fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     let launcher = host.launcher(&fixture.repo).unwrap();
     let dir = fixture.workspace("slow", Some(PROBE));
-    let started = Instant::now();
     let waiting = {
         let (launcher, dir) = (launcher.clone(), dir.clone());
         fixture
@@ -236,8 +238,10 @@ fn a_command_waits_while_the_environment_loads() {
             .spawn(async move { launcher.launch(&dir).await })
     };
     wait_for(&host, &dir, &Status::Loading);
+    assert!(!waiting.is_finished(), "the command waits for the load");
+    std::fs::write(&gate, "").unwrap();
     let launch = fixture.runtime.block_on(waiting).unwrap();
-    assert!(started.elapsed() >= Duration::from_millis(900));
+    assert_eq!(host.status(&dir), Status::Ready);
     assert_eq!(run(&launch, &dir, "echo $TAU_PROBE"), "1");
 }
 

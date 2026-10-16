@@ -407,6 +407,8 @@
                 cargo-watch
 
                 curl
+                # tau-direnv's test of the real direnv runs it.
+                direnv
                 jq
                 sqlx-cli
               ]

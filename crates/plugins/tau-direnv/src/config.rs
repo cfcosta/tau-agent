@@ -165,18 +165,21 @@ mod tests {
     }
 
     /// Every key of the person's survives, their prefixes come first,
-    /// then each allowed root once and nothing else; merging again with
-    /// the same roots changes nothing.
+    /// then each allowed root once and nothing else, with or without a
+    /// configuration of theirs; merging again with the same roots
+    /// changes nothing.
     #[hegel::test(test_cases = 200)]
     fn the_merge_keeps_the_persons_keys_and_adds_the_roots(tc: TestCase) {
-        let user = tc.draw(user_config().print_as_debug());
+        // No configuration at all reads as an empty one.
+        let user = tc.draw(gs::optional(user_config().print_as_debug()));
         let words: Vec<String> = tc.draw(gs::vecs(word()).max_size(4));
         let roots: Vec<PathBuf> = words
             .iter()
             .map(|w| PathBuf::from(format!("/tau/{w}")))
             .collect();
-        let text = toml::to_string(&user).unwrap();
-        let merged_text = merged(Some(&text), &roots).unwrap();
+        let text = user.as_ref().map(|user| toml::to_string(user).unwrap());
+        let merged_text = merged(text.as_deref(), &roots).unwrap();
+        let user = user.unwrap_or_default();
         let out: Table = merged_text.parse().unwrap();
 
         // Every key but the whitelist's prefix is as it was.
@@ -217,14 +220,6 @@ mod tests {
         let again: Table =
             merged(Some(&merged_text), &roots).unwrap().parse().unwrap();
         assert_eq!(again, out);
-    }
-
-    #[test]
-    fn no_configuration_gives_the_whitelist_alone() {
-        let text = merged(None, &[PathBuf::from("/tau/a")]).unwrap();
-        let out: Table = text.parse().unwrap();
-        assert_eq!(prefixes(&out), ["/tau/a"]);
-        assert_eq!(out.len(), 1);
     }
 
     #[test]
