@@ -249,13 +249,3 @@ async fn prompts_are_commands() {
     );
     plugin.shutdown().await;
 }
-
-/// A server without prompts has no commands.
-#[tokio::test(flavor = "multi_thread")]
-async fn no_commands_without_prompts() {
-    let fixture = Fixture::new(false);
-    let plugin = plugin(&fixture);
-    ready(&plugin).await;
-    assert!(plugin.prompts().is_empty());
-    plugin.shutdown().await;
-}

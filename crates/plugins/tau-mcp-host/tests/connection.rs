@@ -134,8 +134,10 @@ async fn lists_every_page_and_calls_a_tool() {
 }
 
 /// Progress reaches the caller and starts the timeout again; without
-/// progress the call times out.
-#[tokio::test(flavor = "multi_thread")]
+/// progress the call times out. The server is in process on a duplex
+/// stream, so the clock is tokio's paused one: six 100 ms steps outlast
+/// the 300 ms timeout only because each step restarts it.
+#[tokio::test(start_paused = true)]
 async fn progress_restarts_the_timeout() {
     both(|fixture| async move {
         let connection = connect(&fixture, 0.3);
@@ -428,7 +430,8 @@ fn http_connection(url: String) -> Arc<Connection> {
 }
 
 /// A 503 is transient: the connect is tried three times, after 250 ms
-/// and 1 s. A 404 is not: one try.
+/// and 1 s. A 404 is not: one try, which the request count shows; a
+/// wall-clock bound on it would only measure the machine's load.
 #[tokio::test(flavor = "multi_thread")]
 async fn http_connects_retry_transient_errors() {
     let (url, requests) = http_server(503).await;
@@ -446,15 +449,9 @@ async fn http_connects_retry_transient_errors() {
 
     let (url, requests) = http_server(404).await;
     let connection = http_connection(url);
-    let started = Instant::now();
     connection.connect();
     settle(&connection).await;
     assert_eq!(connection.status().state, State::Failed);
-    assert!(
-        started.elapsed() < HTTP_RETRY_DELAYS[0],
-        "{:?}",
-        started.elapsed()
-    );
     // `server/discover`, then `initialize` after the 404 marks a legacy
     // server; no second try.
     assert_eq!(requests.load(Ordering::SeqCst), 2);

@@ -1170,32 +1170,6 @@ async fn quick_echo(connection: &Arc<Connection>) {
     );
 }
 
-/// A server behind a sign-in that restarted, forgetting the session,
-/// and answers it with 400 and an error naming no request: the signed-in
-/// connection begins a new session, with its token, and the call runs
-/// once. Through a turned-down token too: the refresh comes first, then
-/// the new session.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_signed_in_connection_gets_a_new_session_after_a_restart() {
-    let fake = Fake::start().await;
-    let dir = tempfile::tempdir().unwrap();
-    let connection = signed_in_with_sessions(&fake, dir.path()).await;
-    quick_echo(&connection).await;
-    assert_eq!(fake.books(|b| b.initializes), 1);
-
-    fake.forget_sessions();
-    quick_echo(&connection).await;
-    assert_eq!(fake.books(|b| (b.initializes, b.tool_calls)), (2, 2));
-
-    fake.forget_sessions();
-    fake.revoke_access();
-    quick_echo(&connection).await;
-    assert_eq!(fake.books(|b| (b.initializes, b.tool_calls)), (3, 3));
-    assert_eq!(fake.books(|b| b.refreshes), 1);
-    assert_eq!(connection.status().state, State::Connected);
-    connection.shutdown().await;
-}
-
 /// What happens to a signed-in connection between two calls.
 #[derive(
     Debug, Clone, Copy, hegel::PrettyPrintable, hegel::DefaultGenerator,
@@ -1212,7 +1186,10 @@ enum Between {
 /// Whatever mix of calls, restarts that forget the session and
 /// turned-down tokens a signed-in connection meets, every call answers
 /// at once and runs on the server exactly once: a session or a token
-/// that went bad never makes a call fail, wait, or run twice.
+/// that went bad never makes a call fail, wait, or run twice. The repair
+/// is the least that works: the first call after a restart begins one
+/// new session, and the first call after a revocation refreshes once,
+/// however many of either came between two calls.
 #[hegel::test(test_cases = 30)]
 fn a_signed_in_connection_outlives_restarts_and_revocations(tc: TestCase) {
     let steps: Vec<Between> =
@@ -1225,18 +1202,37 @@ fn a_signed_in_connection_outlives_restarts_and_revocations(tc: TestCase) {
         let fake = Fake::start().await;
         let dir = tempfile::tempdir().unwrap();
         let connection = signed_in_with_sessions(&fake, dir.path()).await;
-        let mut calls = 0;
+        // The model: calls made, sessions begun (signing in began one),
+        // refreshes, and what went bad since the last call.
+        let (mut calls, mut sessions, mut refreshes) = (0, 1, 0);
+        let (mut forgotten, mut revoked) = (false, false);
         for step in steps.into_iter().chain([Between::Call]) {
             match step {
                 Between::Call => {
                     quick_echo(&connection).await;
                     calls += 1;
+                    sessions += usize::from(std::mem::take(&mut forgotten));
+                    refreshes += usize::from(std::mem::take(&mut revoked));
+                    assert_eq!(
+                        fake.books(|b| (
+                            b.tool_calls,
+                            b.initializes,
+                            b.refreshes
+                        )),
+                        (calls, sessions, refreshes),
+                        "calls, sessions and refreshes after call {calls}"
+                    );
                 }
-                Between::Restart => fake.forget_sessions(),
-                Between::Revoke => fake.revoke_access(),
+                Between::Restart => {
+                    fake.forget_sessions();
+                    forgotten = true;
+                }
+                Between::Revoke => {
+                    fake.revoke_access();
+                    revoked = true;
+                }
             }
         }
-        assert_eq!(fake.books(|b| b.tool_calls), calls);
         assert_eq!(connection.status().state, State::Connected);
         connection.shutdown().await;
     });
