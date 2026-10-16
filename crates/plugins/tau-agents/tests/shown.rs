@@ -85,28 +85,6 @@ fn a_time_is_said_from_now_in_its_largest_whole_unit(tc: hegel::TestCase) {
     assert_eq!(relative(now + gap, now), said(gap), "gap {gap}");
 }
 
-#[test]
-fn triggers_say_what_wakes_it() {
-    let schedule = trigger(TriggerKind::Schedule {
-        every: None,
-        at: Some("09:00".into()),
-        days: vec!["Mon".into(), "Fri".into()],
-    });
-    assert_eq!(schedule.label(), "09:00 Mon Fri");
-    assert_eq!(schedule.kind_label(), "schedule");
-    let every = trigger(TriggerKind::Schedule {
-        every: Some("15m".into()),
-        at: None,
-        days: Vec::new(),
-    });
-    assert_eq!(every.label(), "every 15m");
-    let command = trigger(TriggerKind::Command {
-        command: "triage".into(),
-        hint: Some("<number>".into()),
-    });
-    assert_eq!(command.label(), "/triage <number>");
-}
-
 /// Words a purpose is made of: ones that name something, in any case,
 /// the small words a name leaves out, ones that start with a digit, and
 /// long ones.
@@ -214,48 +192,178 @@ fn every_command_trigger_is_a_composer_command() {
     );
 }
 
+/// Finite inventory: every kind of trigger, each way a schedule can say
+/// when and a command can hint, says what wakes it and its kind in a
+/// word; a stream says whether it is open and an `mcp` trigger whether
+/// it watches, once the host knows, and nothing before. The literal
+/// table is the oracle.
 #[test]
-fn an_agent_needs_the_person_at_its_cap_or_broken() {
-    let mut agent = agent("a", Vec::new());
-    assert!(!agent.needs_you());
-    agent.status = Status::AtCap;
-    assert!(agent.needs_you());
-    agent.status = Status::Broken {
-        error: "no agent.luau".into(),
+fn every_trigger_says_what_wakes_it_and_whether_it_is_live() {
+    let schedule = |every: Option<&str>, at: Option<&str>, days: &[&str]| {
+        TriggerKind::Schedule {
+            every: every.map(str::to_owned),
+            at: at.map(str::to_owned),
+            days: days.iter().map(|day| (*day).to_owned()).collect(),
+        }
     };
-    assert!(agent.needs_you());
-    agent.spend_today = 3.0;
-    assert_eq!(agent.spent_share(), 1.0);
+    let url = "https://ci.example.com/events";
+    let cases = [
+        (schedule(Some("15m"), None, &[]), "every 15m", "schedule"),
+        (
+            schedule(Some("1h"), Some("09:00"), &["Mon"]),
+            "every 1h Mon",
+            "schedule",
+        ),
+        (
+            schedule(None, Some("09:00"), &["Mon", "Fri"]),
+            "09:00 Mon Fri",
+            "schedule",
+        ),
+        (schedule(None, Some("09:00"), &[]), "09:00", "schedule"),
+        (schedule(None, None, &[]), "on a schedule", "schedule"),
+        (
+            schedule(None, None, &["Sat"]),
+            "on a schedule Sat",
+            "schedule",
+        ),
+        (
+            TriggerKind::Command {
+                command: "triage".into(),
+                hint: Some("<number>".into()),
+            },
+            "/triage <number>",
+            "command",
+        ),
+        (
+            TriggerKind::Command {
+                command: "digest".into(),
+                hint: None,
+            },
+            "/digest",
+            "command",
+        ),
+        (
+            TriggerKind::Poll {
+                source: "releases".into(),
+                every: "1h".into(),
+                tool: Some("t".into()),
+                args: None,
+                http: None,
+            },
+            "releases every 1h",
+            "poll",
+        ),
+        (
+            TriggerKind::Stream {
+                url: url.into(),
+                via: tau_agents::StreamVia::Sse,
+                headers: None,
+            },
+            url,
+            "stream",
+        ),
+        (
+            TriggerKind::Stream {
+                url: url.into(),
+                via: tau_agents::StreamVia::Websocket,
+                headers: None,
+            },
+            url,
+            "stream",
+        ),
+        (
+            TriggerKind::Mcp {
+                server: "ci".into(),
+                uri: "ci://tau-agent/main".into(),
+            },
+            "ci ci://tau-agent/main",
+            "mcp",
+        ),
+        (TriggerKind::Message, "messages from agents", "message"),
+    ];
+    for (kind, label, kind_label) in cases {
+        let watch = matches!(kind, TriggerKind::Mcp { .. });
+        let mut shown = trigger(kind);
+        assert_eq!(shown.label(), label);
+        assert_eq!(shown.kind_label(), kind_label, "{label}");
+        assert_eq!(shown.connection(), None, "{label}");
+        for (live, open, closed) in [
+            (true, "open", "watching"),
+            (false, "closed", "not watching"),
+        ] {
+            shown.live = Some(live);
+            let expected = if watch { closed } else { open };
+            assert_eq!(shown.connection(), Some(expected), "{label} {live}");
+        }
+    }
 }
 
+/// Finite inventory: an agent waits on the person once for each note or
+/// question it left, and once more when it spent its day or nothing
+/// loads; it needs them when anything waits. All five states, with none,
+/// one and two notices.
 #[test]
-fn a_stream_says_whether_it_is_open() {
-    let mut stream = trigger(TriggerKind::Stream {
-        url: "https://ci.example.com/events".into(),
-        via: tau_agents::StreamVia::Sse,
-        headers: None,
-    });
-    assert_eq!(stream.label(), "https://ci.example.com/events");
-    assert_eq!(stream.kind_label(), "stream");
-    assert_eq!(stream.connection(), None);
-    stream.live = Some(true);
-    assert_eq!(stream.connection(), Some("open"));
-    stream.live = Some(false);
-    assert_eq!(stream.connection(), Some("closed"));
+fn what_waits_on_the_person_is_its_notices_and_a_stuck_state() {
+    let statuses = [
+        (Status::Waiting, false),
+        (Status::Working, false),
+        (Status::Paused, false),
+        (Status::AtCap, true),
+        (
+            Status::Broken {
+                error: "no agent.luau".into(),
+            },
+            true,
+        ),
+    ];
+    for (status, stuck) in statuses {
+        for notices in 0..=2 {
+            let agent = Agent {
+                status: status.clone(),
+                notices: (0..notices)
+                    .map(|n| tau_agents::Notice {
+                        id: format!("n{n}"),
+                        at: 0,
+                        text: "a note".into(),
+                        choices: None,
+                    })
+                    .collect(),
+                ..agent("a", Vec::new())
+            };
+            let waits = notices + usize::from(stuck);
+            assert_eq!(agent.waits_on_you(), waits, "{status:?} {notices}");
+            assert_eq!(agent.needs_you(), waits > 0, "{status:?} {notices}");
+        }
+    }
 }
 
-#[test]
-fn an_mcp_trigger_says_whether_it_watches() {
-    let mut watch = trigger(TriggerKind::Mcp {
-        server: "ci".into(),
-        uri: "ci://tau-agent/main".into(),
-    });
-    assert_eq!(watch.label(), "ci ci://tau-agent/main");
-    assert_eq!(watch.kind_label(), "mcp");
-    watch.live = Some(true);
-    assert_eq!(watch.connection(), Some("watching"));
-    watch.live = Some(false);
-    assert_eq!(watch.connection(), Some("not watching"));
+/// The share of today's cap spent is the spend over the cap, from 0 to 1;
+/// with no cap to spend, all of it. Caps reach zero and below.
+#[hegel::test(test_cases = 300)]
+fn the_share_spent_is_the_spend_over_the_cap_at_most_all(tc: hegel::TestCase) {
+    let spend = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![0.0f64, 1.0, 2.0]),
+        gs::floats::<f64>().min_value(0.0).max_value(10.0),
+    ));
+    let cap = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![-1.0f64, 0.0, 1.0]),
+        gs::floats::<f64>().min_value(0.001).max_value(10.0),
+    ));
+    let agent = Agent {
+        spend_today: spend,
+        cap_today: cap,
+        ..agent("a", Vec::new())
+    };
+    let expected = if cap <= 0.0 {
+        tc.event("no cap");
+        1.0
+    } else if spend >= cap {
+        tc.event("spent it all");
+        1.0
+    } else {
+        (spend / cap) as f32
+    };
+    assert_eq!(agent.spent_share(), expected, "{spend} of {cap}");
 }
 
 #[test]

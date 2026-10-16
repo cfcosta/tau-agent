@@ -113,23 +113,72 @@ fn an_event_message_reads_as_the_decision_shows() {
     assert!(one.message(0).starts_with("[events · 1 · 18:00:00]\n"));
 }
 
-/// Data larger than a message holds is cut, and says so.
-#[test]
-fn large_data_is_cut_and_says_how_large_it_was() {
-    let big = "é".repeat(INLINE_DATA);
+/// Data whose JSON fits [`INLINE_DATA`] bytes is held whole; longer data
+/// is cut at the last character that ends within the limit, never inside
+/// one, followed by how many bytes it had in all. Lengths gather at the
+/// limit, and characters of one to four bytes reach the cut.
+#[hegel::test(test_cases = 300)]
+fn data_past_the_inline_limit_is_cut_at_a_character_and_says_its_size(
+    tc: hegel::TestCase,
+) {
+    let json_bytes = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![
+            INLINE_DATA - 1,
+            INLINE_DATA,
+            INLINE_DATA + 1,
+            INLINE_DATA + 2,
+            INLINE_DATA + 3,
+        ]),
+        gs::integers::<usize>()
+            .min_value(2)
+            .max_value(INLINE_DATA + 40),
+    ));
+    let pattern: Vec<char> = tc.draw(
+        gs::vecs(gs::sampled_from(vec!['a', 'é', '日', '🦀']))
+            .min_size(1)
+            .max_size(6),
+    );
+    // A string whose JSON, its quotes included, is `json_bytes` long:
+    // the pattern while it fits, then single bytes.
+    let mut text = String::new();
+    for c in pattern.iter().cycle() {
+        if text.len() + c.len_utf8() > json_bytes - 2 {
+            break;
+        }
+        text.push(*c);
+    }
+    while text.len() < json_bytes - 2 {
+        text.push('a');
+    }
+    let json = format!("\"{text}\"");
+    assert_eq!(json.len(), json_bytes);
     let batch = Batch {
         events: vec![Event {
             trigger: "feed".into(),
             kind: Kind::Poll,
             id: "feed:1".into(),
             at: 0,
-            data: json!(big),
+            data: json!(text),
         }],
     };
     let message = Message::parse(&batch.message(0)).unwrap();
-    let data = &message.events[0].data;
-    assert!(data.len() < INLINE_DATA + 64, "{}", data.len());
-    assert!(data.ends_with(&format!("(cut: {} bytes in all)", big.len() + 2)));
+    let expected = if json_bytes <= INLINE_DATA {
+        tc.event("whole");
+        json
+    } else {
+        let mut head = String::new();
+        for c in json.chars() {
+            if head.len() + c.len_utf8() > INLINE_DATA {
+                break;
+            }
+            head.push(c);
+        }
+        if head.len() < INLINE_DATA {
+            tc.event("cut before a character that crosses the limit");
+        }
+        format!("{head} … (cut: {json_bytes} bytes in all)")
+    };
+    assert_eq!(message.events[0].data, expected);
 }
 
 /// Text that is not an event message is not read as one.
