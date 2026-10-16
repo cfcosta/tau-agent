@@ -91,6 +91,9 @@ fn chat_text_quotes_the_note_and_defuses_commands() {
     assert!(!text.contains("@s"), "{text:?}");
     assert!(!text.contains("ultrathink"), "{text:?}");
     assert!(text.contains("src/lib.rs"));
+    // A word that starts `ultra` twice is cut at each.
+    let text = chat_text("Ultraultrathink");
+    assert!(!text.to_ascii_lowercase().contains("ultrathink"), "{text:?}");
 }
 
 /// Whatever the note says, no `@` is followed by anything that could

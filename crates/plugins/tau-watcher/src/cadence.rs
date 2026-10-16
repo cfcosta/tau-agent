@@ -56,13 +56,15 @@ pub fn chat_text(line: &str) -> String {
     let mut quoted = String::new();
     let mut word = String::new();
     let flush = |word: &mut String, quoted: &mut String| {
-        if word.to_ascii_lowercase().starts_with("ultra") {
-            quoted.push_str(&word[..5]);
+        // Each `ultra` the word starts with, again after the one before
+        // (`ultraultrathink`), is cut.
+        let mut rest = word.as_str();
+        while rest.to_ascii_lowercase().starts_with("ultra") {
+            quoted.push_str(&rest[..5]);
             quoted.push('\u{200b}');
-            quoted.push_str(&word[5..]);
-        } else {
-            quoted.push_str(word);
+            rest = &rest[5..];
         }
+        quoted.push_str(rest);
         word.clear();
     };
     for c in line.chars().filter(|c| !c.is_control() || *c == ' ') {
