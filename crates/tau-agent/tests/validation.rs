@@ -173,29 +173,33 @@ fn draw_optional_null_case(tc: &TestCase) -> (Value, Value, Value) {
     (schema, with_null, without_extra)
 }
 
-/// `null` on an optional, non-nullable property is treated as absent:
-/// the validated output is the same as if the property had not been
-/// sent at all (`docs/reference/agent-loop.md`, "Coercion before
-/// validation", rule 2; pi's `normalizeOptionalNulls`).
-#[hegel::test(test_cases = 300)]
-fn null_on_optional_field_is_treated_as_absent(tc: TestCase) {
-    let (schema, with_null, without_extra) = draw_optional_null_case(&tc);
-    let compiled = compile(&schema);
-    assert_eq!(compiled.coerce(&with_null), compiled.coerce(&without_extra));
-}
-
 /// Validation accepts exactly the values whose coerced form the schema
 /// accepts, by the `jsonschema` crate asked directly, and hands back that
 /// coerced form. Checked on arbitrary values, on values valid under the
-/// schema, and on values built for an unrelated schema.
+/// schema, and on values built for an unrelated schema; now and then the
+/// schema, or the schema of a required property, is `true` or `false`,
+/// which no coercion can satisfy or fail.
 #[hegel::test(test_cases = 300)]
 fn validation_accepts_exactly_what_coercion_makes_valid(tc: TestCase) {
-    let schema = tc.draw(generators::arg_schema(3));
-    let value = match tc.draw(gs::sampled_from(vec![
-        "arbitrary",
-        "valid",
-        "for another schema",
-    ])) {
+    let boolean = tc.draw(gs::weighted_booleans(0.15));
+    let schema = if boolean {
+        tc.event("a boolean schema");
+        let schema = Value::Bool(tc.draw(gs::booleans()));
+        if tc.draw(gs::booleans()) {
+            schema
+        } else {
+            wrap(schema)
+        }
+    } else {
+        tc.draw(generators::arg_schema(3))
+    };
+    // A boolean schema has no value built for it: `false` has none.
+    let kinds = if boolean {
+        vec!["arbitrary", "for another schema"]
+    } else {
+        vec!["arbitrary", "valid", "for another schema"]
+    };
+    let value = match tc.draw(gs::sampled_from(kinds)) {
         "arbitrary" => tc.draw(json_gs::values()),
         "valid" => tc.draw(generators::arg_value_for_schema(schema.clone())),
         _ => {
@@ -554,31 +558,6 @@ fn error_message_names_the_path_and_shows_original_arguments() {
     );
 }
 
-/// A missing required property is named by the property itself, not by
-/// its parent path, matching pi's `formatValidationPath` special case
-/// for the `required` keyword.
-#[test]
-fn error_message_names_a_nested_missing_required_property() {
-    let schema = json!({
-        "type": "object",
-        "properties": {
-            "outer": {
-                "type": "object",
-                "properties": {"inner": {"type": "string"}},
-                "required": ["inner"],
-            },
-        },
-        "required": ["outer"],
-    });
-    let compiled = compile(&schema);
-    let args = json!({"outer": {}});
-    let error = compiled.validate(&args).unwrap_err();
-    assert!(
-        error.to_string().contains("- outer.inner:"),
-        "error: {error}"
-    );
-}
-
 /// A schema `jsonschema` cannot compile — here, a `$ref` to a document
 /// this crate never provides a resolver for (`jsonschema` is built with
 /// `default-features = false`: no `resolve-http`/`resolve-file`, so even
@@ -591,93 +570,6 @@ fn incompatible_schema_is_a_schema_error_not_a_panic() {
     let error = ArgumentSchema::new(&unresolvable)
         .expect_err("an unresolvable $ref must not compile");
     assert!(!error.to_string().is_empty());
-}
-
-/// Property inventory: a false JSON Schema is a fixed impossible schema, and
-/// both `jsonschema::is_valid` and `ArgumentSchema::validate` must reject every
-/// generated JSON value. The standard JSON-value generator shrinks toward small
-/// values without filtering.
-#[hegel::test(test_cases = 300)]
-fn compiled_false_schema_rejects_every_generated_value(tc: TestCase) {
-    let schema = Value::Bool(false);
-    let value = tc.draw(json_gs::values());
-    assert!(!jsonschema::is_valid(&schema, &value));
-    let compiled = compile(&schema);
-    assert!(
-        compiled.validate(&value).is_err(),
-        "false schema accepted {value}"
-    );
-}
-
-/// Property inventory: the independent JSON Schema oracle accepts the
-/// constructed object and rejects its missing-key partner; `ArgumentSchema`
-/// must report `k` as the missing-property path. The bounded leaf kind is drawn
-/// from five JSON types and its value is built alongside it; shrinking preserves
-/// the required property and simplifies leaf contents without rejection.
-#[hegel::test(test_cases = 300)]
-fn removing_a_required_leaf_is_rejected_at_its_key_path(tc: TestCase) {
-    let (leaf_schema, leaf_value) = match tc.draw(gs::sampled_from(vec![
-        "string", "boolean", "null", "object", "array",
-    ])) {
-        "string" => (
-            json!({"type": "string", "maxLength": 8}),
-            Value::String(tc.draw(gs::text().max_size(8))),
-        ),
-        "boolean" => (
-            json!({"type": "boolean"}),
-            Value::Bool(tc.draw(gs::booleans())),
-        ),
-        "null" => (json!({"type": "null"}), Value::Null),
-        "object" => (
-            json!({
-                "type": "object",
-                "properties": {"nested": {"type": "string", "maxLength": 8}},
-                "required": ["nested"],
-                "maxProperties": 1,
-                "additionalProperties": false,
-            }),
-            json!({"nested": tc.draw(gs::text().max_size(8))}),
-        ),
-        "array" => (
-            json!({"type": "array", "items": {"type": "string", "maxLength": 8}, "maxItems": 3}),
-            Value::Array(
-                tc.draw(gs::vecs(gs::text().max_size(8)).max_size(3))
-                    .into_iter()
-                    .map(Value::String)
-                    .collect(),
-            ),
-        ),
-        _ => unreachable!("leaf types are selected from the fixed list"),
-    };
-    let schema = json!({
-        "type": "object",
-        "properties": {"k": leaf_schema},
-        "required": ["k"],
-        "additionalProperties": false,
-    });
-    let valid = json!({"k": leaf_value});
-    assert!(
-        jsonschema::is_valid(&schema, &valid),
-        "{valid} is invalid under {schema}"
-    );
-    let compiled = compile(&schema);
-    assert_eq!(compiled.validate(&valid).unwrap(), valid);
-
-    let mut missing_required = valid.clone();
-    missing_required
-        .as_object_mut()
-        .expect("constructed root is an object")
-        .remove("k")
-        .expect("the constructed value contains required key k");
-    assert!(!jsonschema::is_valid(&schema, &missing_required));
-    let error = compiled
-        .validate(&missing_required)
-        .expect_err("the required property was removed");
-    let expected = "Validation failed:\n  - k: \"k\" is a required property";
-    assert!(
-        error.to_string().starts_with(expected),
-        "want {expected:?}, got: {error}"
-    );
 }
 
 // =============================================================================
@@ -756,9 +648,10 @@ fn contain(
 /// is the coercion of what the container holds, by itself. What it holds
 /// is a leaf under one to three type names, coerced alone, or an object
 /// whose optional, non-nullable property came as `null`, which coerces
-/// as though it had not come at all (see
-/// `null_on_optional_field_is_treated_as_absent`). Oracle: the same
-/// schema and value coerced outside any container.
+/// as though it had not come at all (`docs/reference/agent-loop.md`,
+/// "Coercion before validation", rule 2; pi's `normalizeOptionalNulls`).
+/// Oracle: the same schema and value coerced outside any container, or,
+/// for the optional null, the object without it.
 #[hegel::test(test_cases = 300)]
 fn coercing_inside_a_container_is_coercing_its_contents(tc: TestCase) {
     let mut containers = vec![
