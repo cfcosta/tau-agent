@@ -13,17 +13,20 @@ use tau_agent::{
 use tau_testing::block_on;
 use tau_vcs_host::{Identity, MAX_NEW_FILE_SIZE, VcsPlugin};
 
-fn status(tools: &[Arc<dyn AgentTool>]) -> Value {
+/// `vcs_status`'s text and details.
+fn status(tools: &[Arc<dyn AgentTool>]) -> (String, Value) {
     let ctx = ToolCtx::detached();
     let tool = tools.iter().find(|t| t.name() == "vcs_status").unwrap();
-    block_on(tool.call(json!({}), ctx))
-        .unwrap()
-        .details
-        .unwrap()
+    let output = block_on(tool.call(json!({}), ctx)).unwrap();
+    let text = match &output.content[0] {
+        tau_ai::message::InputBlock::Text(text) => text.text.clone(),
+        other => panic!("expected text, got {other:?}"),
+    };
+    (text, output.details.unwrap())
 }
 
 /// A new file is left out exactly when it is over the limit, and then
-/// named with its size; a file already tracked stays tracked however
+/// named with its size, in the details and in the text; a file already tracked stays tracked however
 /// large it grows.
 #[hegel::test(test_cases = 12)]
 fn only_new_files_over_the_limit_are_left_out(tc: TestCase) {
@@ -46,7 +49,7 @@ fn only_new_files_over_the_limit_are_left_out(tc: TestCase) {
     }
     std::fs::write(&file, vec![b'x'; size]).unwrap();
 
-    let details = status(&tools);
+    let (text, details) = status(&tools);
     let left_out = !tracked_first && size as u64 > MAX_NEW_FILE_SIZE;
     let too_large = details["too_large"].as_array().unwrap();
     let changes = details["changes"].as_array().unwrap();
@@ -56,8 +59,16 @@ fn only_new_files_over_the_limit_are_left_out(tc: TestCase) {
             &vec![json!({ "path": "big.bin", "size": size })]
         );
         assert!(changes.is_empty(), "{changes:?}");
+        assert!(
+            text.contains(
+                "Left out of @ (new files over 1 MiB are not snapshotted):\n\
+                 big.bin (1.0 MiB)"
+            ),
+            "{text}"
+        );
     } else {
         assert!(too_large.is_empty(), "{too_large:?}");
+        assert!(!text.contains("Left out of @"), "{text}");
         assert_eq!(changes.len(), 1, "{changes:?}");
         assert_eq!(changes[0]["path"], json!("big.bin"));
     }

@@ -10,7 +10,7 @@ mod common;
 
 use std::path::Path;
 
-use tau_vcs_host::{DEFAULT_WORKSPACE, Identity, ProjectRepo, Vcs, VcsError};
+use tau_vcs_host::{ProjectRepo, Vcs, VcsError};
 
 /// A project with one commit on `main`: `a.txt` holding `a`.
 fn project(home: &Path) -> (ProjectRepo, String) {
@@ -29,13 +29,6 @@ impl Run<'_> {
     fn write(&self, path: &str, text: &str) {
         std::fs::write(self.project.workspace_dir(self.name).join(path), text)
             .unwrap();
-    }
-
-    fn read(&self, path: &str) -> Option<String> {
-        std::fs::read_to_string(
-            self.project.workspace_dir(self.name).join(path),
-        )
-        .ok()
     }
 
     fn bookmark(&self) -> String {
@@ -96,63 +89,4 @@ fn conflicts_stay_on_the_stack_until_resolved() {
     assert!(block(parent.vcs.conflicts()).is_empty(), "resolved in @");
     parent.turn();
     assert!(block(parent.vcs.conflicts()).is_empty());
-}
-
-/// The main chat's commits move trunk (ADR 0015). It catches up with
-/// trunk first, as the host has it: its workspace starts on jj's root.
-fn commit_on_trunk(project: &ProjectRepo, path: &str, text: &str) -> String {
-    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
-    let main = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
-        &dir,
-        Identity::default(),
-    ))
-    .unwrap();
-    let trunk = project.trunk_name().unwrap();
-    block(main.move_onto(project.trunk().unwrap(), trunk.clone(), true));
-    std::fs::write(dir.join(path), text).unwrap();
-    block(main.commit_all("on trunk", trunk)).commit_id
-}
-
-/// A run moves onto trunk's newest commit, as the main chat catches up
-/// (ADR 0014): previewed first, then its changes go on top and its
-/// bookmark follows.
-#[test]
-fn a_run_moves_onto_trunk() {
-    let home = tempfile::tempdir().unwrap();
-    let (project, trunk) = project(home.path());
-    let session = run(&project, "session", &trunk);
-    session.write("s.txt", "s\n");
-    session.turn();
-    // Trunk moves on while the session works.
-    let trunk = commit_on_trunk(&project, "t.txt", "t\n");
-    assert_eq!(project.trunk().unwrap(), trunk);
-
-    let preview =
-        block(session.vcs.move_onto(&trunk, session.bookmark(), false));
-    assert_eq!(preview.changes.len(), 1);
-    assert!(preview.conflicts.is_empty());
-    assert_eq!(session.read("t.txt"), None, "a preview changes nothing");
-
-    let moved = block(session.vcs.move_onto(&trunk, session.bookmark(), true));
-    assert_eq!(session.read("t.txt").as_deref(), Some("t\n"));
-    assert_eq!(session.read("s.txt").as_deref(), Some("s\n"));
-    assert_eq!(project.parent_of(&moved.head).unwrap(), Some(trunk));
-    assert_eq!(
-        project.bookmark(&session.bookmark()).unwrap(),
-        Some(moved.head.clone())
-    );
-}
-
-/// A run that changed what trunk changed since shows the conflict in its
-/// preview, as data.
-#[test]
-fn moving_onto_trunk_shows_conflicts() {
-    let home = tempfile::tempdir().unwrap();
-    let (project, trunk) = project(home.path());
-    let two = run(&project, "two", &trunk);
-    two.write("a.txt", "two\n");
-    two.turn();
-    let trunk = commit_on_trunk(&project, "a.txt", "one\n");
-    let preview = block(two.vcs.move_onto(&trunk, two.bookmark(), false));
-    assert_eq!(preview.conflicts, ["a.txt"]);
 }

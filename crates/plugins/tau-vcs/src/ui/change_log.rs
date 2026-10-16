@@ -291,9 +291,10 @@ mod tests {
         assert_eq!(trunk.info.bookmarks, ["main"]);
     }
 
+    /// (Which tool's details read as a log is
+    /// `tau-vcs-host::tools each_tools_details_read_as_its_own_card`.)
     #[test]
-    fn other_details_are_not_a_log() {
-        assert!(ChangeLog::parse(&json!({ "summary": "5 matches" })).is_none());
+    fn an_empty_log_says_so() {
         let empty =
             ChangeLog::parse(&json!({ "changes": [], "more": false })).unwrap();
         assert_eq!(empty.summary(), "No changes yet");

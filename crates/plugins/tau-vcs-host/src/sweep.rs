@@ -308,9 +308,17 @@ mod tests {
                 "{name} stayed"
             );
         }
-        // Only what the project has goes.
+        // Only what the project has goes, never the default workspace
+        // nor a bookmark that is not a run's.
         assert!(sweep.forget.iter().all(|name| workspaces.contains(name)));
         assert!(sweep.remove.iter().all(|name| bookmarks.contains(name)));
+        assert!(!sweep.forget.iter().any(|name| name == DEFAULT_WORKSPACE));
+        assert!(
+            sweep
+                .remove
+                .iter()
+                .all(|name| name.starts_with(RUN_BOOKMARK_PREFIX))
+        );
         // Commits go only for discarded runs, from what goes.
         for abandon in &sweep.abandon {
             let owner = owners
@@ -348,22 +356,5 @@ mod tests {
         }
         // Done once, a sweep has nothing left to do.
         assert!(plan(&owners, &left_workspaces, &left_bookmarks).is_empty());
-    }
-
-    #[test]
-    fn the_default_workspace_and_other_bookmarks_stay() {
-        let sweep = plan(
-            &[],
-            &["default".to_owned(), "stray".to_owned()],
-            &["main".to_owned(), "tau/gone".to_owned()],
-        );
-        assert_eq!(
-            sweep,
-            Sweep {
-                abandon: Vec::new(),
-                forget: vec!["stray".to_owned()],
-                remove: vec!["tau/gone".to_owned()],
-            }
-        );
     }
 }

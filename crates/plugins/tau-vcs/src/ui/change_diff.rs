@@ -368,12 +368,4 @@ Binary files a/logo.png and b/logo.png differ
         assert_eq!(mode.files[0].path, "run.sh");
         assert!(mode.files[0].hunks.is_empty());
     }
-
-    #[test]
-    fn other_details_are_not_a_diff() {
-        assert!(
-            ChangeDiff::parse(&json!({ "changes": [], "more": false }))
-                .is_none()
-        );
-    }
 }

@@ -1248,7 +1248,12 @@ fn a_landing_follows_an_update_made_after_the_head_was_read() {
 /// in their own chat, update, add and forget workspaces, drop commits and
 /// remove bookmarks, all on one repository, all finish, and the main
 /// chat's catch-up and commit after them see one trunk.
+// Real threads, a hundred-odd jj operations and a two-minute guard: a
+// stress run for the nightly tier.
+// `runs_side_by_side_behave_like_one_after_another` races actions
+// from threads in every default run.
 #[test]
+#[ignore = "nightly"]
 fn the_repository_lock_never_deadlocks() {
     let repo = Repo::new();
     let chats: Vec<Vcs> = (0..3)

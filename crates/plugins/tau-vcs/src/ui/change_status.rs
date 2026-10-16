@@ -164,12 +164,4 @@ new file mode 100644
         assert_eq!(status.summary(), "empty");
         assert!(status.counts().is_empty());
     }
-
-    #[test]
-    fn other_details_are_not_a_status() {
-        assert!(
-            ChangeStatus::parse(&json!({ "changes": [], "more": false }))
-                .is_none()
-        );
-    }
 }

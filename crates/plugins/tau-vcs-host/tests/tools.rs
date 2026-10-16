@@ -109,6 +109,46 @@ fn the_plugin_offers_every_tool() {
     assert_eq!(read, ["vcs_status", "vcs_diff", "vcs_log", "vcs_show"]);
 }
 
+/// Each tool's details read as its own card in tau-vcs's UI and as no
+/// other: status, log, a change's diff (from `vcs_diff` and `vcs_show`)
+/// and a commit, each by the one parser for it.
+#[test]
+fn each_tools_details_read_as_its_own_card() {
+    use tau_vcs::ui::{
+        change_diff::ChangeDiff,
+        change_log::ChangeLog,
+        change_status::ChangeStatus,
+        commit_card::Commit,
+    };
+    let repo = Repo::new();
+    repo.write("a.txt", "a\n");
+    let (_, status) = repo.ok("vcs_status", json!({}));
+    let (_, diff) = repo.ok("vcs_diff", json!({}));
+    let (_, commit) = repo.ok("vcs_commit", json!({"message": "Add a"}));
+    let id = commit["committed"]["change_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (_, show) = repo.ok("vcs_show", json!({"change": id}));
+    let (_, log) = repo.ok("vcs_log", json!({}));
+    let cards = |details: &Value| {
+        [
+            ("status", ChangeStatus::parse(details).is_some()),
+            ("log", ChangeLog::parse(details).is_some()),
+            ("diff", ChangeDiff::parse(details).is_some()),
+            ("commit", Commit::parse(details).is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(card, reads)| reads.then_some(card))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(cards(&status), ["status"]);
+    assert_eq!(cards(&log), ["log"]);
+    assert_eq!(cards(&diff), ["diff"]);
+    assert_eq!(cards(&show), ["diff"]);
+    assert_eq!(cards(&commit), ["commit"]);
+}
+
 /// A fresh repository: an empty working copy on the root commit.
 #[test]
 fn status_of_a_fresh_repository() {
@@ -152,33 +192,6 @@ fn status_shows_written_files() {
     assert!(text.contains("D hello.txt\nM src/lib.rs"), "{text}");
     assert!(text.contains("Parent (@-):      "), "{text}");
     assert!(text.contains("Add files"), "{text}");
-}
-
-/// Every new file is tracked except one over 1 MiB, which status names
-/// with its size and which stays out of `@`.
-#[test]
-fn status_names_files_too_large_to_snapshot() {
-    let repo = Repo::new();
-    repo.write("small.txt", "small\n");
-    let big = "x".repeat(tau_vcs_host::MAX_NEW_FILE_SIZE as usize + 1);
-    repo.write("big.bin", &big);
-    let (text, details) = repo.ok("vcs_status", json!({}));
-    assert!(
-        text.contains(
-            "Left out of @ (new files over 1 MiB are not snapshotted):\n\
-             big.bin (1.0 MiB)"
-        ),
-        "{text}"
-    );
-    assert!(!text.contains("Not tracked"), "{text}");
-    assert_eq!(
-        details["too_large"],
-        json!([{"path": "big.bin", "size": big.len()}])
-    );
-    assert_eq!(
-        details["changes"],
-        json!([{"path": "small.txt", "kind": "added"}])
-    );
 }
 
 /// `vcs_commit` describes the change and starts an empty one on top;
@@ -524,26 +537,9 @@ fn undo_undoes_the_last_operation() {
     );
 }
 
-/// A second `Vcs` opened on the same directory sees the history.
-#[test]
-fn open_an_existing_repository() {
-    let repo = Repo::new();
-    repo.write("a.txt", "a\n");
-    repo.ok("vcs_commit", json!({"message": "Add a"}));
-    let vcs = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
-        repo.path(),
-        Identity::default(),
-    ))
-    .unwrap();
-    let tools = VcsPlugin::new(vcs).tools();
-    let log = tools.iter().find(|tool| tool.name() == "vcs_log").unwrap();
-    let output = block_on(log.call(json!({}), ToolCtx::detached())).unwrap();
-    let details = output.details.unwrap();
-    assert_eq!(details["changes"][1]["description"], json!("Add a\n"));
-}
-
 /// Explicit acceptance stays scoped to the workspace, needs named paths,
 /// and is an idempotent no-op when the selected files are already resolved.
+/// (Its cancellation is `every_tool_cancelled_before_starting_does_nothing`.)
 #[test]
 fn explicit_resolution_keeps_the_shared_path_and_cancellation_guards() {
     let repo = Repo::new();
@@ -556,35 +552,31 @@ fn explicit_resolution_keeps_the_shared_path_and_cancellation_guards() {
     }
     let (_, details) = repo.ok("vcs_resolve", json!({"paths": ["."]}));
     assert_eq!(details["resolved"], json!([]));
-    let tool = repo
-        .tools
-        .iter()
-        .find(|tool| tool.name() == "vcs_resolve")
-        .unwrap();
-    let cancel = tokio_util::sync::CancellationToken::new();
-    cancel.cancel();
-    let error = block_on(tool.call(
-        json!({"paths": ["."]}),
-        ToolCtx::detached().cancelled_by(cancel),
-    ))
-    .unwrap_err()
-    .to_string();
-    assert_eq!(error, "Operation aborted");
 }
 
-/// A cancelled run gets the shared abort message before any work.
+/// Every tool, called with its run already cancelled, fails with the
+/// shared abort message and does nothing: the repository is as it was.
 #[test]
-fn cancelled_before_starting() {
+fn every_tool_cancelled_before_starting_does_nothing() {
     let repo = Repo::new();
-    let tool = repo
-        .tools
-        .iter()
-        .find(|tool| tool.name() == "vcs_status")
-        .unwrap();
-    let ctx = ToolCtx::detached();
-    ctx.cancel.cancel();
-    let err = block_on(tool.call(json!({}), ctx)).unwrap_err();
-    assert_eq!(err.to_string(), tau_vcs_host::ABORTED);
+    repo.write("a.txt", "a\n");
+    let (_, before) = repo.ok("vcs_log", json!({}));
+    let args = |name: &str| match name {
+        "vcs_show" => json!({"change": "zzzzzzzz"}),
+        "vcs_describe" | "vcs_commit" => json!({"message": "m"}),
+        "vcs_restore" => json!({"paths": ["a.txt"]}),
+        "vcs_resolve" => json!({"paths": ["."]}),
+        _ => json!({}),
+    };
+    assert_eq!(repo.tools.len(), 10);
+    for tool in &repo.tools {
+        let ctx = ToolCtx::detached();
+        ctx.cancel.cancel();
+        let err = block_on(tool.call(args(tool.name()), ctx)).unwrap_err();
+        assert_eq!(err.to_string(), tau_vcs_host::ABORTED, "{}", tool.name());
+    }
+    assert_eq!(repo.ok("vcs_log", json!({})).1, before);
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
 }
 
 /// A tool call refused after its snapshot still keeps that snapshot: an

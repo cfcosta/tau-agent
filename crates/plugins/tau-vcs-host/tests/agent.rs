@@ -46,28 +46,6 @@ fn a_run_commits_through_the_tools() {
         });
     assert_eq!(outcome.text, "done");
 
-    let names: Vec<String> = llm.requests()[0]
-        .settings
-        .tools
-        .iter()
-        .map(|t| t.name.clone())
-        .collect();
-    assert_eq!(
-        names,
-        [
-            "vcs_status",
-            "vcs_diff",
-            "vcs_log",
-            "vcs_show",
-            "vcs_describe",
-            "vcs_commit",
-            "vcs_new",
-            "vcs_restore",
-            "vcs_resolve",
-            "vcs_undo",
-        ]
-    );
-
     let results: Vec<(String, bool, String)> = entries
         .into_iter()
         .filter_map(|entry| match entry {
