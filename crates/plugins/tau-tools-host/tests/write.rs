@@ -23,6 +23,8 @@ fn new_write(dir: &std::path::Path) -> Write {
 /// (`tools.md`, "write"; round trip). Its details say it created the
 /// file, with a diff that adds every line of it, for its card.
 #[hegel::test(test_cases = 50)]
+// A line of `++` shows as `+++` in the diff, like the `+++` header.
+#[hegel::explicit_test_case(content = String::from("++"))]
 fn write_round_trips_the_content(tc: TestCase) {
     let content: String = tc.draw(gs::text().max_size(200));
     let dir = tempfile::tempdir().unwrap();
@@ -43,10 +45,12 @@ fn write_round_trips_the_content(tc: TestCase) {
     assert_eq!(details["created"], json!(true));
     let diff = details["diff"].as_str().unwrap();
     // Lines end at `\n` only, on both sides: `str::lines` would also
-    // take a `\r` before it.
+    // take a `\r` before it. The two file headers come first; after
+    // them, a line of the file's that starts with `++` is still a line.
     let added: Vec<&str> = diff
         .split('\n')
-        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .skip(2)
+        .filter(|line| line.starts_with('+'))
         .map(|line| &line[1..])
         .collect();
     let lines: Vec<&str> = content
