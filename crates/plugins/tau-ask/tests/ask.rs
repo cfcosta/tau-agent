@@ -25,13 +25,35 @@ fn word(tc: &hegel::TestCase, n: usize) -> String {
     format!("{stem}{n}")
 }
 
+/// `count` characters a header may hold, of one to three bytes each,
+/// none of them white space at an end.
+fn header_of(tc: &hegel::TestCase, count: usize) -> String {
+    let inner = tc.draw(
+        gs::text()
+            .alphabet("aZ1 é漢")
+            .min_size(count.saturating_sub(2))
+            .max_size(count.saturating_sub(2)),
+    );
+    let end = || gs::sampled_from(vec!['a', 'é', '漢']);
+    let first = tc.draw(end());
+    if count == 1 {
+        return first.to_string();
+    }
+    format!("{first}{inner}{}", tc.draw(end()))
+}
+
 fn question(tc: &hegel::TestCase, n: usize) -> Question {
     let multi = tc.draw(gs::booleans());
     let choices =
         tc.draw(gs::integers::<usize>().min_value(2).max_value(MAX_CHOICES));
+    // The shortest and longest headers as often as the rest.
+    let header = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![1, MAX_HEADER]),
+        gs::integers::<usize>().min_value(1).max_value(MAX_HEADER),
+    ));
     Question {
         question: format!("{}?", word(tc, n)),
-        header: word(tc, n).chars().take(MAX_HEADER).collect(),
+        header: header_of(tc, header),
         options: (0..choices)
             .map(|k| Choice {
                 label: word(tc, k),
@@ -56,8 +78,11 @@ fn ask(tc: &hegel::TestCase) -> Ask {
     }
 }
 
-/// Questions within the limits are asked; each kind of fault alone is
-/// refused, with a reason.
+/// Questions within the limits are asked, a header of 1 to
+/// [`MAX_HEADER`] characters however many bytes they take; each kind of
+/// fault alone is refused, with a reason that names the question at
+/// fault. Text is compared trimmed: a question or a label repeated with
+/// white space around it is still repeated.
 #[hegel::test(test_cases = 300)]
 fn questions_within_the_limits_are_asked_and_faults_refused(
     tc: hegel::TestCase,
@@ -70,8 +95,13 @@ fn questions_within_the_limits_are_asked_and_faults_refused(
             .min_value(0)
             .max_value(ask.questions.len() - 1),
     );
+    // The question at fault, when the fault is in one.
+    let mut at = Some(i);
     match tc.draw(gs::integers::<u8>().min_value(0).max_value(7)) {
-        0 => wrong.questions.clear(),
+        0 => {
+            wrong.questions.clear();
+            at = None;
+        }
         1 => {
             let extra = wrong.questions[0].clone();
             while wrong.questions.len() <= MAX_QUESTIONS {
@@ -80,29 +110,44 @@ fn questions_within_the_limits_are_asked_and_faults_refused(
                     format!("{} {}", more.question, wrong.questions.len());
                 wrong.questions.push(more);
             }
+            at = None;
         }
-        2 => wrong.questions[i].header = "x".repeat(MAX_HEADER + 1),
+        2 => {
+            let count = tc.draw(hegel::one_of!(
+                gs::just(MAX_HEADER + 1),
+                gs::integers::<usize>()
+                    .min_value(MAX_HEADER + 1)
+                    .max_value(MAX_HEADER + 6),
+            ));
+            wrong.questions[i].header = header_of(&tc, count);
+        }
         3 => wrong.questions[i].options.truncate(1),
         4 => wrong.questions[i].options[1].label = OTHER.to_lowercase(),
         5 => {
             wrong.questions[i].options[1].label =
-                wrong.questions[i].options[0].label.clone()
+                format!(" {} ", wrong.questions[i].options[0].label)
         }
         6 => {
             wrong.questions[i].multi_select = true;
             wrong.questions[i].options[0].preview = Some("x".into());
         }
         _ => {
+            let again = format!(" {}\t", wrong.questions[0].question);
             if wrong.questions.len() < 2 {
-                wrong.questions.push(wrong.questions[0].clone());
+                let mut copy = wrong.questions[0].clone();
+                copy.question = again;
+                wrong.questions.push(copy);
             } else {
-                wrong.questions[1].question =
-                    wrong.questions[0].question.clone();
+                wrong.questions[1].question = again;
             }
+            at = Some(1);
         }
     }
     let why = wrong.check().expect_err("one fault is refused");
-    assert!(!why.is_empty());
+    if let Some(at) = at {
+        let named = format!("Question {}", at + 1);
+        assert!(why.starts_with(&named), "{why}");
+    }
 }
 
 /// What the person does in the panel.
@@ -229,7 +274,7 @@ fn the_model_reads_every_answer_and_note(tc: hegel::TestCase) {
                 note: tc
                     .draw(gs::optional(gs::sampled_from(vec![
                         "first line\nsecond",
-                        "short",
+                        " short ",
                     ])))
                     .map(String::from),
             }
@@ -239,26 +284,34 @@ fn the_model_reads_every_answer_and_note(tc: hegel::TestCase) {
         answers: answers.clone(),
     };
     assert_eq!(reply.check(&ask), Ok(()));
-    let text = reply.text(&ask);
+    // As ask.md writes it: each question with its picks in the
+    // question's order, then the person's own answer, trimmed, joined
+    // by commas; a note under it, its lines kept in line.
+    let mut want = String::from("The person answered:");
     for (question, answer) in ask.questions.iter().zip(&answers) {
-        assert!(text.contains(&format!(
-            "\"{}\" = \"{}\"",
+        let own = answer.other.as_deref().map(str::trim);
+        let parts: Vec<&str> = answer
+            .picked
+            .iter()
+            .map(String::as_str)
+            .chain(own.filter(|own| !own.is_empty()))
+            .collect();
+        want.push_str(&format!(
+            "\n\"{}\" = \"{}\"",
             question.question,
-            answer.text()
-        )));
-        if let Some(other) = answer.other() {
-            assert!(
-                !other.starts_with(' '),
-                "the person's own answer is trimmed"
-            );
-        }
-        if let Some(note) = &answer.note {
-            for line in note.lines() {
-                assert!(text.contains(line), "{text}");
-            }
+            parts.join(", ")
+        ));
+        if let Some(note) = answer.note.as_deref().map(str::trim) {
+            want.push_str("\n  note: ");
+            want.push_str(&note.lines().collect::<Vec<_>>().join("\n        "));
         }
     }
-    assert!(Reply::Declined.text(&ask).contains("declined"));
+    assert_eq!(reply.text(&ask), want);
+    assert!(
+        Reply::Declined
+            .text(&ask)
+            .starts_with("The person declined to answer.")
+    );
 }
 
 #[hegel::composite]
