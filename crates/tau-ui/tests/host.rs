@@ -117,6 +117,9 @@ fn host_of(
     agent: Agent,
     root: &Path,
 ) -> (Host, UnboundedReceiver<RunEvent>) {
+    // Plugins keep their files beside the repositories, in the parent of
+    // `repos`: a directory of the host's own, not the shared temporary one.
+    let own = fresh_repo_list();
     let config = HostConfig {
         account: test_account(),
         credentials: Credentials::new(
@@ -125,10 +128,10 @@ fn host_of(
         model: Some("gpt-6-luna".into()),
         // Unused but for its directory, where the person's images are
         // kept: the test's own.
-        store: fresh_repo_list().with_extension("db"),
+        store: own.join("runs.db"),
         // Tau's directory for repositories, where memory lives too: the
         // test's own.
-        repos: fresh_repo_list().with_extension("repos"),
+        repos: own.join("repos"),
         // The test's own: a test that saves settings leaves others be.
         settings: fresh_repo_list().with_extension("models"),
         repo_list: fresh_repo_list(),
@@ -155,14 +158,16 @@ fn host_with_skills(
         .build()
         .unwrap();
     let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    // As in `host_of`: plugins' files in a directory of the host's own.
+    let own = fresh_repo_list();
     let config = HostConfig {
         account: test_account(),
         credentials: Credentials::new(
             fresh_repo_list().with_extension("config"),
         ),
         model: Some("gpt-6-luna".into()),
-        store: std::env::temp_dir().join("unused.db"),
-        repos: fresh_repo_list().with_extension("repos"),
+        store: own.join("runs.db"),
+        repos: own.join("repos"),
         settings: fresh_repo_list().with_extension("models"),
         repo_list: fresh_repo_list(),
         skills: skills.to_owned(),
@@ -3875,6 +3880,10 @@ fn a_long_idle_chat_compacts_before_its_cache_lapses() {
         .id;
     until_end(&mut events);
     wait_until_done(&host, &chat);
+    // The lapse counts from the connection's last use, in the turn below.
+    // The test sees that turn end late under load, so it counts from
+    // before the turn: a lower bound that holds however late it looks.
+    let began = std::time::Instant::now();
     host.block_on(host.resume(
         &chat,
         &"second ".repeat(12_000),
@@ -3883,10 +3892,9 @@ fn a_long_idle_chat_compacts_before_its_cache_lapses() {
     .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &chat);
-    let ended = std::time::Instant::now();
     host.watch_idle(&chat);
 
-    let deadline = ended + WAIT;
+    let deadline = std::time::Instant::now() + WAIT;
     let trigger = loop {
         assert!(std::time::Instant::now() < deadline, "no compaction");
         match events.try_recv() {
@@ -3900,11 +3908,13 @@ fn a_long_idle_chat_compacts_before_its_cache_lapses() {
         }
     };
     assert_eq!(trigger, tau_agent::plugin::Trigger::Idle);
-    // Nine tenths of the way to the lapse.
+    // Nine tenths of the way to the lapse, 2.7 s, in the pool's time,
+    // which is as of its last tick, a second apart: well after the turn,
+    // not at once, though up to a tick short of 2.7 s.
     assert!(
-        ended.elapsed() >= Duration::from_secs(2),
+        began.elapsed() >= Duration::from_secs(1),
         "{:?}",
-        ended.elapsed()
+        began.elapsed()
     );
     let summary = &fake.received()[2];
     assert!(summary.cached_tokens > 0);

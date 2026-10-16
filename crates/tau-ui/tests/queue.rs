@@ -31,20 +31,26 @@ use tau_ui_remote::{
 };
 use tau_vcs_host::{Identity, Project};
 
-/// Runs GPUI until `done` holds, while runs work on the host's threads.
+/// Runs GPUI until `done` holds, while runs work on the host's threads:
+/// for a minute at most, since landing works real repositories and a full
+/// test run loads the machine.
 fn until(
     cx: &mut VisualTestContext,
     what: &str,
     mut done: impl FnMut(&mut VisualTestContext) -> bool,
 ) {
-    for _ in 0..1000 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
         cx.run_until_parked();
         if done(cx) {
             return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("timed out waiting for {what}");
 }
 
 /// What the conflicts-on-main hook heard: the repository and files.
