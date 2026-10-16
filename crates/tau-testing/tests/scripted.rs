@@ -162,9 +162,10 @@ fn script_model_with(turn: GenTurn) -> ScriptedModel {
 // =============================================================================
 
 /// For any scripted turn, opened on a fresh session, its response stream
-/// satisfies the `Accumulator` grammar (`crates/tau-ai/src/event.rs`), and
-/// the accumulated message holds exactly the scripted content, usage and
-/// stop reason. A fresh session has no cached prefix, so `cache_read` is
+/// satisfies the `Accumulator` grammar (`crates/tau-ai/src/event.rs`),
+/// streams each text or thought of two or more characters as several
+/// deltas, and the accumulated message holds exactly the scripted
+/// content, usage and stop reason. A fresh session has no cached prefix, so `cache_read` is
 /// always 0 and `usage.input`/`usage.output` equal the scripted override
 /// exactly (see the module docs' "Cache simulation").
 #[hegel::test(test_cases = 200)]
@@ -175,12 +176,40 @@ fn scripted_turn_matches_grammar_and_content(tc: TestCase) {
     let usage = turn.usage;
     let model = script_model_with(turn);
 
-    let message = tau_testing::block_on(async {
+    let events: Vec<AssistantEvent> = tau_testing::block_on(async {
         let mut session = model.open(settings("gpt-test")).await.unwrap();
-        let stream = session.respond(&[], 0);
-        accumulate(stream).await
-    })
-    .expect("a scripted turn's stream always satisfies the grammar");
+        session.respond(&[], 0).collect().await
+    });
+    let mut acc = Accumulator::new();
+    for event in events.iter().cloned() {
+        acc.push(event)
+            .expect("a scripted turn's stream always satisfies the grammar");
+    }
+    let message = acc
+        .finish()
+        .expect("a scripted turn's stream always satisfies the grammar");
+    // A text or a thought two characters long or more streams as more
+    // than one delta, none of them empty.
+    for (index, block) in blocks.iter().enumerate() {
+        let (GenBlock::Text(text) | GenBlock::Thinking(text)) = block else {
+            continue;
+        };
+        let deltas: Vec<&String> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantEvent::TextDelta { index: at, delta }
+                | AssistantEvent::ThinkingDelta { index: at, delta }
+                    if *at == index =>
+                {
+                    Some(delta)
+                }
+                _ => None,
+            })
+            .collect();
+        let long = text.chars().count() >= 2;
+        assert_eq!(deltas.len() > 1, long, "{text:?}: {deltas:?}");
+        assert!(!long || deltas.iter().all(|delta| !delta.is_empty()));
+    }
 
     assert_eq!(message.stop_reason, stop);
     assert_eq!(message.usage.input, usage.0);
@@ -686,35 +715,6 @@ fn response_ids_are_distinct_across_requests() {
         assert!(id1.as_deref().is_some_and(|id| !id.is_empty()));
         assert!(id2.as_deref().is_some_and(|id| !id.is_empty()));
         assert_ne!(id1, id2);
-    });
-}
-
-// =============================================================================
-// Deterministic streaming
-// =============================================================================
-
-/// A turn's text streams as more than one delta when it is long enough to
-/// split, and the deltas concatenate back to exactly the scripted text.
-#[test]
-fn text_deltas_concatenate_to_the_scripted_text() {
-    tau_testing::block_on(async {
-        let text = "the quick brown fox jumps";
-        let model = ScriptedModel::new().turn(|t| t.text(text));
-        let mut session = model.open(settings("gpt-test")).await.unwrap();
-        let mut stream = session.respond(&[], 0);
-
-        let mut deltas = Vec::new();
-        while let Some(event) = stream.next().await {
-            if let AssistantEvent::TextDelta { delta, .. } = event {
-                deltas.push(delta);
-            }
-        }
-
-        assert!(
-            deltas.len() > 1,
-            "a text this long should stream more than one delta, got {deltas:?}"
-        );
-        assert_eq!(deltas.concat(), text);
     });
 }
 
