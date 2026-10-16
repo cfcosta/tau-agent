@@ -6,7 +6,10 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 
 use common::pool_note;
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _},
+};
 use tau_memory_host::{
     index::{B, Bm25, Index, IndexError, K1, index_text},
     note::{By, Note, NoteType, Source},
@@ -353,7 +356,7 @@ fn superseding_never_raises_a_note_whatever_its_score(tc: TestCase) {
 }
 
 /// A word only one note holds finds that note first, with the line that
-/// holds it as the snippet.
+/// holds it, and nothing else, as the snippet.
 #[hegel::test(test_cases = 100)]
 #[hegel::explicit_test_case(
     drawn = vec![plain("a", "retry the header"), plain("b", "a cache")],
@@ -380,5 +383,95 @@ fn a_word_only_one_note_holds_finds_it_first(tc: TestCase) {
     // The word alone: any other word could be one a drawn note holds.
     let hits = recall(&notes, &index, "zanzibar_only_here", 3).unwrap();
     assert_eq!(hits[0].id, note.id);
-    assert!(hits[0].snippet.contains("zanzibar_only_here"));
+    assert_eq!(hits[0].snippet, "zanzibar_only_here");
+}
+
+/// Words of the snippet property: a few the query may hold, some it
+/// never does, and characters of several bytes.
+const SNIPPET_WORDS: [&str; 8] =
+    ["retry", "header", "cache", "lane", "the", "of", "é", "日本"];
+
+/// A hit's snippet is the body line holding the most of the query's
+/// words, trimmed, and cut to 200 characters (not bytes) and an
+/// ellipsis when longer; with no line holding any, it is the note's
+/// description. Lines tie on purpose: any of the tied lines may be the
+/// snippet. Line lengths gather around the cut.
+#[hegel::test(test_cases = 200)]
+fn a_snippet_is_the_line_holding_most_of_the_query(tc: TestCase) {
+    let lines: Vec<String> = tc.draw(
+        gs::vecs(hegel::one_of!(
+            gs::vecs(gs::sampled_from(SNIPPET_WORDS.to_vec()))
+                .max_size(6)
+                .map(|words| words.join(" ")),
+            // A long line: some words, then `é` to a length about the cut.
+            hegel::tuples!(
+                gs::vecs(gs::sampled_from(SNIPPET_WORDS.to_vec())).max_size(3),
+                gs::sampled_from(vec![199usize, 200, 201, 260]),
+            )
+            .map(|(words, length)| {
+                let mut line = words.join(" ");
+                line.push(' ');
+                while line.chars().count() < length {
+                    line.push('é');
+                }
+                line
+            }),
+        ))
+        .max_size(5),
+    );
+    let pad = tc.draw(gs::sampled_from(vec!["", "  "]));
+    let body: String = lines
+        .iter()
+        .map(|line| format!("{pad}{line}{pad}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let asked: Vec<&str> = tc.draw(
+        gs::vecs(gs::sampled_from(vec!["retry", "header", "cache", "lane"]))
+            .min_size(1)
+            .max_size(3),
+    );
+    // `anchor` is in the description alone, so the note is always found.
+    let query = format!("anchor {}", asked.join(" "));
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut notes = Notes::open(dir.path()).unwrap();
+    let mut note = plain("only", "the anchor note");
+    note.body = body;
+    notes.create(note.clone()).unwrap();
+    let mut index = Bm25::new();
+    index.upsert(&note.id, &index_text(&note)).unwrap();
+    let hits = recall(&notes, &index, &query, 3).unwrap();
+    assert_eq!(hits.len(), 1);
+
+    let terms: Vec<String> = tau_memory_host::index::words(&query).collect();
+    let held = |line: &str| {
+        tau_memory_host::index::words(line)
+            .filter(|word| terms.contains(word))
+            .count()
+    };
+    let most = lines.iter().map(|line| held(line)).max().unwrap_or(0);
+    let shown = |line: &str| {
+        let line = line.trim();
+        if line.chars().count() > 200 {
+            tc.event("cut");
+            format!("{}…", line.chars().take(200).collect::<String>())
+        } else {
+            line.to_owned()
+        }
+    };
+    let snippet = &hits[0].snippet;
+    if most == 0 {
+        tc.event("the description");
+        assert_eq!(snippet, &note.description);
+    } else {
+        let tied: Vec<String> = lines
+            .iter()
+            .filter(|line| held(line) == most)
+            .map(|line| shown(line))
+            .collect();
+        if tied.len() > 1 {
+            tc.event("tied lines");
+        }
+        assert!(tied.contains(snippet), "{snippet:?} not among {tied:?}");
+    }
 }

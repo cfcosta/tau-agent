@@ -255,15 +255,44 @@ fn the_store_matches_its_model(tc: TestCase) {
 }
 
 /// A file the store cannot read is reported with its path, and the rest
-/// still load.
+/// still load: notes on either side of it in its folder, and in another
+/// folder.
 #[test]
 fn a_broken_file_is_reported_not_dropped() {
+    use tau_memory_host::note::{By, NoteType, Source};
+    let note = |id: &str, kind: NoteType| Note {
+        id: id.into(),
+        title: format!("about {id}"),
+        description: "a note beside a broken one".into(),
+        kind,
+        tags: Vec::new(),
+        created: 1,
+        updated: 1,
+        valid_from: 1,
+        valid_to: None,
+        stale: None,
+        source: Source::new(By::Agent),
+        links: Vec::new(),
+        body: "It reads.".into(),
+    };
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(dir.path().join("fact")).unwrap();
+    {
+        let mut notes = Notes::open(dir.path()).unwrap();
+        for (id, kind) in [
+            ("a-first", NoteType::Fact),
+            ("retry-after", NoteType::Fact),
+            ("lanes", NoteType::Gotcha),
+        ] {
+            notes.create(note(id, kind)).unwrap();
+        }
+    }
     std::fs::write(dir.path().join("fact/broken.md"), "no front matter")
         .unwrap();
     let notes = Notes::open(dir.path()).unwrap();
-    assert!(notes.is_empty());
+    let mut ids: Vec<&str> =
+        notes.iter().map(|note| note.id.as_str()).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["a-first", "lanes", "retry-after"]);
     assert_eq!(notes.unreadable().len(), 1);
     assert!(notes.unreadable()[0].path.ends_with("fact/broken.md"));
 }

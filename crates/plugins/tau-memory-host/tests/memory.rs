@@ -371,4 +371,32 @@ fn a_replacement_with_the_same_title_gets_its_own_id() {
         hits.iter()
             .any(|hit| hit.id == "retry-after" && hit.superseded)
     );
+    // A third version takes the next free id after those.
+    let mut third = draft("Retry after".into(), "a date, or seconds".into());
+    third.supersedes = Some("retry-after-2".into());
+    let written = memory.write(third, 3).unwrap();
+    assert_eq!(written.id, "retry-after-3");
+}
+
+/// A replacement of a note whose id is as long as an id may be takes the
+/// next free id after the first 60 bytes of it, so the number fits.
+#[test]
+fn a_replacement_of_a_long_id_is_numbered_within_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut memory = open(dir.path());
+    let title = format!("{} {}", "a".repeat(30), "b".repeat(33));
+    let first = memory
+        .write(draft(title.clone(), "the first".into()), 1)
+        .unwrap();
+    assert_eq!(first.id.len(), 64);
+    let base = &first.id[..60];
+    let mut replaced = first.id.clone();
+    for (n, now) in [(2, 2), (3, 3)] {
+        let mut newer = draft(title.clone(), format!("version {n}"));
+        newer.supersedes = Some(replaced.clone());
+        let written = memory.write(newer, now).unwrap();
+        assert_eq!(written.id, format!("{base}-{n}"));
+        assert_eq!(written.action, Action::Superseded(replaced.clone()));
+        replaced = written.id;
+    }
 }

@@ -210,7 +210,10 @@ impl Encoder for Fake {
 }
 
 /// The whole run, with every leg: a row per leg, level, hop setting and
-/// distance, each over the queries it should count.
+/// distance, each over the queries of that distance at that level, and
+/// each leg's rows what its index gives on its own (BM25's, against the
+/// pipeline run by hand); the work directory is left empty, and the
+/// table has a line per level for each hop setting and distance.
 #[test]
 fn a_run_reports_every_leg_at_every_level() {
     let fixture = fixture();
@@ -225,17 +228,65 @@ fn a_run_reports_every_leg_at_every_level() {
         eval::run(&fixture, &legs, work.path(), |k| seen.push(k)).unwrap();
     assert_eq!(seen, LEVELS);
     assert_eq!(report.len(), legs.len() * LEVELS.len() * 2 * 3);
-    for row in &report {
-        assert!((0.0..=1.0).contains(&row.recall_5));
-        assert!(row.recall_5 <= row.recall_10);
-        assert!(row.queries > 0);
-    }
     // The work directory is left empty.
     assert_eq!(std::fs::read_dir(work.path()).unwrap().count(), 0);
-    let table = eval::table(&report);
-    for name in ["bm25", "colbert", "hybrid"] {
-        assert!(table.contains(name), "{table}");
+    for k in LEVELS {
+        let dir = tempfile::tempdir().unwrap();
+        let corpus = corpus(dir.path(), &fixture, k).unwrap();
+        let mut index = Bm25::new();
+        index_all(&mut index, &corpus.notes).unwrap();
+        for hops in [false, true] {
+            let outcomes = evaluate(&corpus, &index, hops).unwrap();
+            for distance in Distance::ALL {
+                let queries = corpus
+                    .queries
+                    .iter()
+                    .filter(|query| query.distance == distance)
+                    .count();
+                let of = |index: &str| {
+                    let rows: Vec<&eval::Row> = report
+                        .iter()
+                        .filter(|row| {
+                            row.index == index
+                                && row.k == k
+                                && row.hops == hops
+                                && row.distance == distance
+                        })
+                        .collect();
+                    assert_eq!(rows.len(), 1, "{index} k={k} {distance}");
+                    rows[0].clone()
+                };
+                for name in ["bm25", "colbert", "hybrid"] {
+                    let row = of(name);
+                    assert_eq!(row.queries, queries, "{name} k={k}");
+                    assert!(row.recall_5 <= row.recall_10);
+                }
+                let found: Vec<Outcome> = outcomes
+                    .iter()
+                    .filter(|o| o.distance == distance)
+                    .copied()
+                    .collect();
+                let bm25 = of("bm25");
+                assert_eq!(bm25.recall_5, recall_at(&found, 5), "k={k}");
+                assert_eq!(bm25.recall_10, recall_at(&found, 10), "k={k}");
+                assert_eq!(bm25.mrr, mrr(&found), "k={k}");
+            }
+        }
     }
+    let table = eval::table(&report);
+    let level_lines = table
+        .lines()
+        .filter(|line| {
+            LEVELS
+                .iter()
+                .any(|k| line.starts_with(&format!("{k:>4} |")))
+        })
+        .count();
+    assert_eq!(
+        level_lines,
+        LEVELS.len() * 2 * Distance::ALL.len(),
+        "{table}"
+    );
 }
 
 /// A ranking: distinct ids, best first.
