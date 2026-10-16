@@ -29,7 +29,6 @@ use tau_ai::chatgpt::{
     query_pairs,
     read_callback,
     refuses_model,
-    unavailable_model,
 };
 use url::Url;
 
@@ -86,10 +85,12 @@ fn some_text() -> impl PrintableGenerator<String> {
 
 /// A body with no documented code, and the code `ApiError::code` reads
 /// from it: malformed text, an error with only a message, an unknown
-/// code, a code of the wrong type, or admission's `{"detail": …}`.
+/// code, a code of the wrong type, admission's `{"detail": …}`, or one
+/// of the fixed shapes a proxy or an empty error sends (no body, an HTML
+/// page, an error object with nothing in it).
 #[hegel::composite]
 fn unrecognized_error_body(tc: &TestCase) -> (String, Option<String>) {
-    match tc.draw(gs::integers::<u8>().min_value(0).max_value(4)) {
+    match tc.draw(gs::integers::<u8>().min_value(0).max_value(5)) {
         0 => {
             let suffix = tc.draw(
                 gs::text()
@@ -120,13 +121,21 @@ fn unrecognized_error_body(tc: &TestCase) -> (String, Option<String>) {
                 .draw(gs::sampled_from(vec!["null", "true", "7", "[]", "{}"]));
             (format!(r#"{{"error":{{"code":{wrong_type}}}}}"#), None)
         }
-        _ => {
+        4 => {
             let detail = tc.draw(
                 gs::text()
                     .alphabet("abcdefghijklmnopqrstuvwxyz0123456789 .")
                     .max_size(40),
             );
             (json!({ "detail": detail }).to_string(), None)
+        }
+        _ => {
+            let fixed = tc.draw(gs::sampled_from(vec![
+                "",
+                "<html>bad gateway</html>",
+                r#"{"error":{}}"#,
+            ]));
+            (fixed.to_owned(), None)
         }
     }
 }
@@ -343,7 +352,8 @@ fn documented_codes_decide_the_recovery_whatever_the_status(tc: TestCase) {
 /// status table below, admission's `{"detail": …}` (401 sign in again,
 /// 403 restricted, 503 retry later) included. Status shrinks within
 /// 0..=700, with the table's boundaries drawn often; body generation
-/// selects malformed, missing, unknown, wrong-type or detail bodies, with
+/// selects malformed, missing, unknown, wrong-type, detail, empty, HTML
+/// or empty-error bodies, with
 /// ASCII bodies capped at 60 bytes so shrinking leaves small, readable
 /// counterexamples.
 #[hegel::test(test_cases = 300)]
@@ -373,40 +383,6 @@ fn bodies_without_a_code_fall_back_to_the_status(tc: TestCase) {
     assert_eq!(error.recovery(), expected_status_fallback(status));
     assert_eq!(error.code(), code.as_deref());
     assert_eq!(error.body, body, "kept verbatim");
-}
-
-#[test]
-fn status_boundaries_apply_to_every_unrecognized_body_shape() {
-    const STATUSES: [u16; 10] =
-        [400, 401, 403, 408, 409, 429, 499, 500, 599, 600];
-    const BODIES: [(&str, &str); 11] = [
-        ("empty malformed body", ""),
-        ("malformed text", "not-json"),
-        ("malformed html", "<html>bad gateway</html>"),
-        ("missing code", r#"{"error":{}}"#),
-        ("missing code with message", r#"{"error":{"message":"m"}}"#),
-        (
-            "unknown string code",
-            r#"{"error":{"code":"future_missing"}}"#,
-        ),
-        ("null code", r#"{"error":{"code":null}}"#),
-        ("boolean code", r#"{"error":{"code":true}}"#),
-        ("number code", r#"{"error":{"code":7}}"#),
-        ("array code", r#"{"error":{"code":[]}}"#),
-        ("object code", r#"{"error":{"code":{}}}"#),
-    ];
-
-    for status in STATUSES {
-        for (shape, body) in BODIES {
-            let error = ApiError::new(status, None, body.as_bytes());
-            assert_eq!(
-                error.recovery(),
-                expected_status_fallback(status),
-                "status {status}, body shape {shape}"
-            );
-            assert_eq!(error.body.as_str(), body, "status {status}, {shape}");
-        }
-    }
 }
 
 #[hegel::composite]
@@ -454,33 +430,6 @@ fn a_record_round_trips_and_never_prints_tokens(tc: TestCase) {
     );
 }
 
-/// The retry policy follows the documented recovery of every plan-usage
-/// code, whatever `type` and HTTP status come with it: only "retry
-/// later" retries, so a usage limit never loops.
-#[hegel::test(test_cases = 200)]
-fn the_retry_policy_follows_the_documented_recovery(tc: TestCase) {
-    use tau_ai::retry::{Class, Failure, classify};
-    let (code, recovery) =
-        CODES[tc.draw(gs::integers::<usize>().max_value(CODES.len() - 1))];
-    let kind = tc.draw(gs::optional(gs::sampled_from(vec![
-        "invalid_request_error",
-        "server_error",
-        "api_error",
-    ])));
-    let status = tc.draw(gs::optional(gs::integers::<u16>()));
-    let class = classify(&Failure::Api {
-        code: Some(code),
-        kind,
-        status,
-    });
-    assert_eq!(class, recovery.class(), "{code}");
-    assert_eq!(
-        class == Class::Retryable,
-        recovery == Recovery::RetryLater,
-        "{code}"
-    );
-}
-
 /// Unix seconds a clock could show; `now + 5 minutes` cannot overflow.
 fn clock() -> impl PrintableGenerator<u64> {
     gs::integers::<u64>().max_value(1 << 62)
@@ -523,29 +472,32 @@ fn a_refresh_is_due_by_expiry_margin_and_earliest_time(tc: TestCase) {
         gs::just(json!(1.5)),
         gs::just(json!(null)),
     )));
+    // A third of the time, a usable token inside the margin, at its edge
+    // too, with the earliest refresh time at `now` or either side of it:
+    // where "not yet" turns into "go ahead".
+    if tc.draw(gs::weighted_booleans(0.3)) {
+        tc.event("inside the margin, earliest time near now");
+        record.access_token = Some("tok_live".into());
+        let left = tc.draw(hegel::one_of!(
+            gs::integers::<u64>().min_value(1).max_value(301),
+            gs::sampled_from(vec![299, 300, 301]),
+        ));
+        record.expires_at = Some(now + left);
+        let earliest = now.saturating_add_signed(
+            tc.draw(gs::integers::<i64>().min_value(-2).max_value(2)),
+        );
+        record.earliest_refresh_at = Some(if tc.draw(gs::booleans()) {
+            json!(earliest)
+        } else {
+            json!(earliest.to_string())
+        });
+    }
     assert_eq!(
         record.needs_refresh(now),
         should_refresh(&record, now),
         "{record:?} {:?} at {now}",
         record.earliest_refresh_at
     );
-}
-
-/// Once a refresh is due it stays due as time passes: the client never
-/// refreshes, then stops wanting to before the token is replaced.
-#[hegel::test(test_cases = 500)]
-fn a_due_refresh_stays_due_as_time_passes(tc: TestCase) {
-    let mut record = tc.draw(credentials().print_as_debug());
-    let now = tc.draw(clock());
-    record.expires_at =
-        Some(now.saturating_add(tc.draw(gs::integers::<u64>().max_value(900))));
-    record.earliest_refresh_at =
-        tc.draw(gs::optional(clock().map(|n| json!(n))));
-    let later =
-        now.saturating_add(tc.draw(gs::integers::<u64>().max_value(2000)));
-    if record.needs_refresh(now) {
-        assert!(record.needs_refresh(later), "{record:?} {now} {later}");
-    }
 }
 
 /// `earliest_refresh_at` counts only as a non-negative integer, or a
@@ -763,21 +715,34 @@ fn an_oauth_error_reads_both_shapes_and_knows_a_dead_refresh_token(
     assert!(!error.is_unusable_refresh_token());
 }
 
-/// The plan's refusal of a model names that model and no other:
-/// `'gpt-5'` is not `'gpt-5.1'`, and ordinary errors are not refusals.
+/// The plan's refusal of a model names that model and no other: a
+/// model whose name extends the asked one, or is cut from it (`gpt-5`
+/// and `gpt-5.1`), is another model, and so is the same name refused as
+/// a parameter rather than a model.
 #[hegel::test(test_cases = 300)]
 fn a_refused_model_is_the_one_the_message_names(tc: TestCase) {
-    let model = || gs::from_regex("[a-z0-9][a-z0-9.-]{0,14}").fullmatch(true);
-    let (named, asked) = (tc.draw(model()), tc.draw(model()));
+    let model = || gs::from_regex("[a-z0-9][a-z0-9.-]{1,14}").fullmatch(true);
+    let asked = tc.draw(model());
+    let named = match tc.draw(gs::integers::<u8>().max_value(4)) {
+        0 => asked.clone(),
+        1 => format!("{asked}.1"),
+        2 => format!("{asked}-mini"),
+        3 => {
+            // ASCII, so any byte offset is a character boundary.
+            let cut = tc.draw(
+                gs::integers::<usize>()
+                    .min_value(1)
+                    .max_value(asked.len() - 1),
+            );
+            asked[..cut].to_owned()
+        }
+        _ => tc.draw(model()),
+    };
     let message = format!(
         "The '{named}' model is not supported when using Codex with a \
          ChatGPT account."
     );
-    assert_eq!(refuses_model(&message, &asked), named == asked);
-    let other = tc.draw(some_text());
-    assert_eq!(
-        refuses_model(&other, &asked),
-        other.starts_with(&format!("The '{asked}' model is not supported"))
-    );
-    assert!(unavailable_model(&asked).starts_with(&asked));
+    assert_eq!(refuses_model(&message, &asked), named == asked, "{message}");
+    let parameter = format!("The '{asked}' parameter is not supported.");
+    assert!(!refuses_model(&parameter, &asked));
 }

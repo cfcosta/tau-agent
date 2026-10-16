@@ -91,8 +91,19 @@ fn a_hint_bounds_the_backoff_from_below(tc: TestCase) {
     );
 }
 
-/// The `code`s `classify` knows, with their class.
-const KNOWN_CODES: [(&str, Class); 8] = [
+/// The `code`s `classify` knows, with their class: OpenAI's, and the
+/// ChatGPT plan's documented codes, of which only the two that ask to
+/// retry later are retryable (a usage limit never loops).
+const KNOWN_CODES: [(&str, Class); 17] = [
+    ("subscription_sharing_user_not_eligible", Class::Fatal),
+    ("subscription_sharing_usage_limit_exceeded", Class::Fatal),
+    ("subscription_sharing_usage_unavailable", Class::Retryable),
+    ("subscription_sharing_unsupported_capability", Class::Fatal),
+    ("subscription_sharing_route_not_supported", Class::Fatal),
+    ("subscription_sharing_invalid_user", Class::Fatal),
+    ("chatpass_v2_scope_not_authorized", Class::Fatal),
+    ("chatpass_v2_invalid_authorization_context", Class::Fatal),
+    ("subscription_sharing_user_unavailable", Class::Retryable),
     ("rate_limit_exceeded", Class::Retryable),
     ("server_error", Class::Retryable),
     ("context_length_exceeded", Class::ContextOverflow),
@@ -149,8 +160,9 @@ fn error_name(tc: &TestCase) -> String {
 /// 600 and up are fatal, like every status the table does not name.
 ///
 /// Pinned: `insufficient_quota` is fatal even at 429 (pi's bug, see
-/// `docs/reference/pi-audit.md`), and a known `code` or `kind` wins over
-/// a status that alone would classify otherwise.
+/// `docs/reference/pi-audit.md`), a known `code` or `kind` wins over
+/// a status that alone would classify otherwise, and the plan's usage
+/// limit stays fatal under a retryable type and status.
 #[hegel::test(test_cases = 500)]
 #[hegel::explicit_test_case(
     code = Some("insufficient_quota".to_owned()),
@@ -166,6 +178,11 @@ fn error_name(tc: &TestCase) -> String {
     code = None::<String>,
     kind = Some("invalid_request_error".to_owned()),
     status = Some(500u16),
+)]
+#[hegel::explicit_test_case(
+    code = Some("subscription_sharing_usage_limit_exceeded".to_owned()),
+    kind = Some("server_error".to_owned()),
+    status = Some(429u16),
 )]
 fn classify_matches_the_first_known_wins_model(tc: TestCase) {
     let code = tc.draw(gs::optional(error_name()));
