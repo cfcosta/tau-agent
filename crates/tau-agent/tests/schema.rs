@@ -12,12 +12,7 @@ use std::collections::HashSet;
 
 use hegel::{TestCase, extras::serde_json as json_gs, generators as gs};
 use serde_json::{Map, Value, json};
-use tau_agent::schema::{
-    STRICT_FORMATS,
-    inline_refs,
-    strip_nulls_for_optional,
-    to_strict,
-};
+use tau_agent::schema::{inline_refs, strip_nulls_for_optional, to_strict};
 use tau_testing::generators;
 
 // =============================================================================
@@ -147,20 +142,6 @@ fn strict_rewrite_is_idempotent(tc: TestCase) {
     let twice =
         to_strict(&once).expect("a strict schema is itself strict-convertible");
     assert_eq!(once, twice);
-}
-
-/// A value valid under the original schema, with missing optional fields
-/// set to `null`, is valid under the strict schema.
-#[hegel::test(test_cases = 300)]
-fn nulled_optional_value_validates_under_strict_schema(tc: TestCase) {
-    let (schema, value) = tc.draw(generators::strict_schema_with_value(3));
-    let strict = to_strict(&schema)
-        .expect("generator only builds strict-convertible schemas");
-    let nulled = nullify_missing_optionals(&schema, &value);
-    assert!(
-        jsonschema::is_valid(&strict, &nulled),
-        "nulled value does not validate under the strict schema\nschema: {schema}\nstrict: {strict}\nvalue: {value}\nnulled: {nulled}"
-    );
 }
 
 /// `strip_nulls_for_optional` reverses the nulled-optional value back to
@@ -328,12 +309,14 @@ fn perturbed(tc: &TestCase, value: &Value) -> Value {
 /// with every object closed, accepts the value (less the `null`s strict
 /// mode reads as omissions). Checked with the `jsonschema` crate, on
 /// values valid under the schema, one edit away from valid, and
-/// arbitrary.
+/// arbitrary. On a valid value it is the inventory's rule that a value
+/// with its missing optionals set to `null` validates under the strict
+/// schema.
 #[hegel::test(test_cases = 300)]
 fn strict_schema_accepts_exactly_what_the_closed_original_accepts(
     tc: TestCase,
 ) {
-    let (schema, valid) = tc.draw(generators::strict_schema_with_value(2));
+    let (schema, valid) = tc.draw(generators::strict_schema_with_value(3));
     let value = match tc.draw(gs::sampled_from(vec![
         "valid",
         "perturbed",
@@ -747,6 +730,21 @@ fn formats(schema: &Value, out: &mut Vec<Value>) {
     }
 }
 
+/// The string formats OpenAI's strict mode takes ("Supported
+/// properties" in its structured-outputs guide), written out apart from
+/// `tau_agent::schema::STRICT_FORMATS`.
+const OPENAI_FORMATS: [&str; 9] = [
+    "date-time",
+    "time",
+    "date",
+    "duration",
+    "email",
+    "hostname",
+    "ipv4",
+    "ipv6",
+    "uuid",
+];
+
 /// A strict-convertible schema with a string property carrying `format`
 /// converts exactly when OpenAI's strict mode takes that format, and a
 /// strict form never holds a format it refuses (as `uri`, which MCP
@@ -769,7 +767,7 @@ fn strict_form_holds_only_formats_openai_takes(tc: TestCase) {
     ];
     let format: String = tc.draw(hegel::one_of!(
         gs::sampled_from(
-            STRICT_FORMATS
+            OPENAI_FORMATS
                 .iter()
                 .map(|f| f.to_string())
                 .collect::<Vec<_>>()
@@ -795,7 +793,7 @@ fn strict_form_holds_only_formats_openai_takes(tc: TestCase) {
         .expect("properties is a map")
         .insert("formatted".to_owned(), property);
 
-    let supported = !string || STRICT_FORMATS.contains(&format.as_str());
+    let supported = !string || OPENAI_FORMATS.contains(&format.as_str());
     match to_strict(&with_format) {
         Ok(strict) => {
             assert!(supported, "format {format:?} kept strict: {strict}");
@@ -807,7 +805,7 @@ fn strict_form_holds_only_formats_openai_takes(tc: TestCase) {
             assert!(
                 found.iter().all(|f| f
                     .as_str()
-                    .is_some_and(|f| STRICT_FORMATS.contains(&f))),
+                    .is_some_and(|f| OPENAI_FORMATS.contains(&f))),
                 "{found:?}"
             );
         }
