@@ -435,42 +435,6 @@ fn wrap(schema: Value) -> Value {
     })
 }
 
-/// pi's "coerces serialized plain JSON schemas with AJV-compatible
-/// primitive rules" (`validation.test.ts:64`).
-#[test]
-fn pi_known_case_passing_primitive_coercions() {
-    let cases: Vec<(Value, Value, Value)> = vec![
-        (json!({"type": "number"}), json!("42"), json!(42)),
-        (json!({"type": "number"}), json!(true), json!(1)),
-        (json!({"type": "number"}), Value::Null, json!(0)),
-        (json!({"type": "integer"}), json!("42"), json!(42)),
-        (json!({"type": "boolean"}), json!("true"), json!(true)),
-        (json!({"type": "boolean"}), json!("false"), json!(false)),
-        (json!({"type": "boolean"}), json!(1), json!(true)),
-        (json!({"type": "boolean"}), json!(0), json!(false)),
-        (json!({"type": "string"}), Value::Null, json!("")),
-        (json!({"type": "string"}), json!(true), json!("true")),
-        (json!({"type": "null"}), json!(""), Value::Null),
-        (json!({"type": "null"}), json!(0), Value::Null),
-        (json!({"type": "null"}), json!(false), Value::Null),
-        (
-            json!({"type": ["number", "string"]}),
-            json!("1"),
-            json!("1"),
-        ),
-        (json!({"type": ["boolean", "number"]}), json!("1"), json!(1)),
-    ];
-    for (leaf, input, expected) in cases {
-        let schema = wrap(leaf.clone());
-        let compiled = compile(&schema);
-        let args = json!({"value": input});
-        let result = compiled
-            .validate(&args)
-            .unwrap_or_else(|e| panic!("{leaf} rejected {args}: {e}"));
-        assert_eq!(result, json!({"value": expected}), "schema {leaf}");
-    }
-}
-
 /// pi's "treats null as omission for optional non-nullable properties"
 /// (`validation.test.ts:101`).
 #[test]
@@ -519,31 +483,6 @@ fn pi_known_case_ref_property_keeps_null() {
     assert_eq!(compiled.validate(&args).unwrap(), args);
 }
 
-/// Unlike pi, the coercion walk follows `$ref`: an optional property
-/// inside a referenced object, sent as `null` by a strict-mode model, is
-/// dropped as it would be inline. Rust schemas put every nested struct
-/// behind a `$ref`, so without this a strict tool with a nested struct
-/// could never omit an optional field.
-#[test]
-fn optional_nulls_inside_referenced_objects_are_dropped() {
-    let schema = json!({
-        "type": "object",
-        "properties": {"inner": {"$ref": "#/$defs/Inner"}},
-        "required": ["inner"],
-        "$defs": {"Inner": {
-            "type": "object",
-            "properties": {"name": {"type": "string"}, "limit": {"type": "integer"}},
-            "required": ["name"],
-        }},
-    });
-    let compiled = compile(&schema);
-    let args = json!({"inner": {"name": "a", "limit": Value::Null}});
-    assert_eq!(
-        compiled.validate(&args).unwrap(),
-        json!({"inner": {"name": "a"}})
-    );
-}
-
 /// pi's "preserves a value that already matches a nullable union arm"
 /// and "... a oneOf nullable union arm" (`validation.test.ts:146,164`).
 #[test]
@@ -580,27 +519,6 @@ fn pi_known_case_null_for_nullable_array() {
     let compiled = compile(&schema);
     let args = json!({"value": Value::Null});
     assert_eq!(compiled.validate(&args).unwrap(), args);
-}
-
-/// pi's "rejects invalid coercions for serialized plain JSON schemas"
-/// (`validation.test.ts:194`).
-#[test]
-fn pi_known_case_rejects_invalid_coercions() {
-    let cases = vec![
-        (json!({"type": "boolean"}), json!("1")),
-        (json!({"type": "boolean"}), json!("0")),
-        (json!({"type": "null"}), json!("null")),
-        (json!({"type": "integer"}), json!("42.1")),
-    ];
-    for (leaf, input) in cases {
-        let schema = wrap(leaf.clone());
-        let compiled = compile(&schema);
-        let args = json!({"value": input.clone()});
-        let error = compiled
-            .validate(&args)
-            .expect_err(&format!("{leaf} should reject {input}"));
-        assert!(error.to_string().contains("Validation failed"));
-    }
 }
 
 // =============================================================================
@@ -763,76 +681,135 @@ fn removing_a_required_leaf_is_rejected_at_its_key_path(tc: TestCase) {
 }
 
 // =============================================================================
-// Mutation-covering tests
-//
-// Each of these pins a rule the property tests above happen not to reach:
-// either because the shapes `generators::arg_schema` draws never include
-// it (a JSON-Schema `"type"` array combining a scalar keyword with
-// another type, an `additionalProperties` schema, a tuple `items`), or
-// because the property tests only check "is this rejected", not the
-// exact coerced value, which is what a few of these guards actually
-// change. `cargo mutants` found the gap in each case; see the module's
-// mutants run for the full list.
+// Containers
 // =============================================================================
 
-/// `null` on an optional, non-nullable field is stripped inside array
-/// elements too, not just at the top level: `normalizeOptionalNulls`
-/// recurses through a single-schema `items`.
-#[test]
-fn null_omission_recurses_into_array_items() {
-    let schema = json!({
-        "type": "object",
-        "properties": {
-            "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {"present": {"type": "string"}, "extra": {"type": "number"}},
-                    "required": ["present"],
-                },
-            },
-        },
-        "required": ["items"],
-    });
-    let compiled = compile(&schema);
-    let args = json!({"items": [{"present": "a", "extra": Value::Null}, {"present": "b"}]});
-    let result = compiled.validate(&args).expect("valid after coercion");
-    assert_eq!(
-        result,
-        json!({"items": [{"present": "a"}, {"present": "b"}]})
-    );
+/// The places a schema can hold a value that the coercion walk follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Container {
+    /// A required property of an object.
+    Property,
+    /// Every element of an array, under a single `items` schema.
+    Items,
+    /// The first position of a draft-07 tuple (`items` as an array).
+    Positional,
+    /// The first position of a 2020-12 tuple (`prefixItems`).
+    Prefix,
+    /// A key `properties` does not declare, under `additionalProperties`.
+    Additional,
+    /// A `$ref` to a definition.
+    Ref,
 }
 
-/// The same, for a tuple `items` (`schema.items` itself an array of
-/// per-position schemas). Draft-07 shape: see the note on `$schema`
-/// below and on [`tuples_coerce_each_position_under_its_schema`].
-#[test]
-fn null_omission_recurses_into_tuple_items() {
-    let schema = json!({
-        // Tuple validation via an array-valued `items` is draft-07
-        // (2020-12 uses `prefixItems` instead, which this port does not
-        // handle — see the doc comment on this test).
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "properties": {
-            "pair": {
-                "type": "array",
-                "items": [
-                    {
-                        "type": "object",
-                        "properties": {"present": {"type": "string"}, "extra": {"type": "number"}},
-                        "required": ["present"],
-                    },
-                    {"type": "string"},
-                ],
-            },
-        },
-        "required": ["pair"],
-    });
-    let compiled = compile(&schema);
-    let args = json!({"pair": [{"present": "a", "extra": Value::Null}, "tag"]});
-    let result = compiled.validate(&args).expect("valid after coercion");
-    assert_eq!(result, json!({"pair": [{"present": "a"}, "tag"]}));
+hegel::pretty_print_as_debug!(Container);
+
+/// The schema, the value and the expected coerced value, each put in
+/// `container`. A tuple's other position and an object's declared key
+/// hold a string that stays as it is; a definition goes into `defs`.
+fn contain(
+    container: Container,
+    (schema, value, expected): (Value, Value, Value),
+    defs: &mut serde_json::Map<String, Value>,
+) -> (Value, Value, Value) {
+    match container {
+        Container::Property => (
+            json!({"type": "object", "properties": {"inner": schema}, "required": ["inner"]}),
+            json!({"inner": value}),
+            json!({"inner": expected}),
+        ),
+        Container::Items => (
+            json!({"type": "array", "items": schema}),
+            json!([value, value]),
+            json!([expected, expected]),
+        ),
+        Container::Positional => (
+            json!({"type": "array", "items": [schema, {"type": "string"}]}),
+            json!([value, "tag"]),
+            json!([expected, "tag"]),
+        ),
+        Container::Prefix => (
+            json!({"type": "array", "prefixItems": [schema]}),
+            json!([value]),
+            json!([expected]),
+        ),
+        // The declared key's "42" would become a number under a number
+        // schema: it must go through its own schema, not the other one.
+        Container::Additional => (
+            json!({
+                "type": "object",
+                "properties": {"known": {"type": "string"}},
+                "additionalProperties": schema,
+                "required": ["known"],
+            }),
+            json!({"known": "42", "extra": value}),
+            json!({"known": "42", "extra": expected}),
+        ),
+        Container::Ref => {
+            let name = format!("D{}", defs.len());
+            defs.insert(name.clone(), schema);
+            (json!({"$ref": format!("#/$defs/{name}")}), value, expected)
+        }
+    }
+}
+
+/// Property inventory: coercion inside any container, one or two deep,
+/// is the coercion of what the container holds, by itself. What it holds
+/// is a leaf under one to three type names, coerced alone, or an object
+/// whose optional, non-nullable property came as `null`, which coerces
+/// as though it had not come at all (see
+/// `null_on_optional_field_is_treated_as_absent`). Oracle: the same
+/// schema and value coerced outside any container.
+#[hegel::test(test_cases = 300)]
+fn coercing_inside_a_container_is_coercing_its_contents(tc: TestCase) {
+    let mut containers = vec![
+        Container::Property,
+        Container::Items,
+        Container::Positional,
+        Container::Prefix,
+        Container::Additional,
+        Container::Ref,
+    ];
+    let inner = if tc.draw(gs::booleans()) {
+        let types = tc.draw(leaf_types());
+        let value = tc.draw(leaf_value());
+        let ty = match types.as_slice() {
+            [one] => json!(one),
+            many => json!(many),
+        };
+        let schema = json!({"type": ty});
+        let alone = compile(&wrap(schema.clone()))
+            .coerce(&json!({"value": value}))["value"]
+            .clone();
+        (schema, value, alone)
+    } else {
+        tc.event("an optional null inside");
+        // The walk that drops optional nulls follows declared properties,
+        // array items and `$ref`, not `additionalProperties`: a null in
+        // an object held there is coerced like any other value.
+        containers.retain(|&c| c != Container::Additional);
+        let (schema, with_null, without) = draw_optional_null_case(&tc);
+        (schema, with_null, without)
+    };
+    let layers = tc.draw(
+        gs::vecs(gs::sampled_from(containers))
+            .min_size(1)
+            .max_size(2),
+    );
+    let mut defs = serde_json::Map::new();
+    let (schema, value, expected) = layers
+        .iter()
+        .fold(inner, |held, &layer| contain(layer, held, &mut defs));
+    let mut root = wrap(schema);
+    if !defs.is_empty() {
+        root["$defs"] = Value::Object(defs);
+    }
+    // A tuple spelled as an `items` array is draft 7; `$schema` only
+    // takes effect at the root.
+    if layers.contains(&Container::Positional) {
+        root["$schema"] = json!("http://json-schema.org/draft-07/schema#");
+    }
+    let coerced = compile(&root).coerce(&json!({"value": value}));
+    assert_eq!(coerced["value"], expected, "{root}");
 }
 
 // =============================================================================
@@ -1026,6 +1003,16 @@ fn reference_leaf(types: &[String], value: &Value) -> Value {
     types = vec!["integer".to_owned(), "string".to_owned()],
     value = Value::from(5.5),
 )]
+// pi's "coerces serialized plain JSON schemas with AJV-compatible
+// primitive rules" (`validation.test.ts:64`): its two type-array rows.
+#[hegel::explicit_test_case(
+    types = vec!["number".to_owned(), "string".to_owned()],
+    value = json!("1"),
+)]
+#[hegel::explicit_test_case(
+    types = vec!["boolean".to_owned(), "number".to_owned()],
+    value = json!("1"),
+)]
 fn leaf_coercion_follows_pis_primitive_table(tc: TestCase) {
     let types = tc.draw(leaf_types());
     let value = tc.draw(leaf_value());
@@ -1038,32 +1025,9 @@ fn leaf_coercion_follows_pis_primitive_table(tc: TestCase) {
     assert_eq!(coerced["value"], reference_leaf(&types, &value), "{ty}");
 }
 
-/// `additionalProperties`' schema coerces the extra keys, and *only*
-/// the extra keys: a property already listed under `properties` keeps
-/// going through its own schema, never the `additionalProperties` one.
-#[test]
-fn additional_properties_schema_coerces_only_undeclared_keys() {
-    let schema = json!({
-        "type": "object",
-        "properties": {"known": {"type": "string"}},
-        "additionalProperties": {"type": "number"},
-        "required": ["known"],
-    });
-    let compiled = compile(&schema);
-    let args = json!({"known": "hello", "extra": "42"});
-    let result = compiled.validate(&args).expect("valid after coercion");
-    assert_eq!(result, json!({"known": "hello", "extra": 42}));
-}
-
-/// An array's elements are coerced against a single-schema `items`, not
-/// merely wrapped: each element that needs converting is converted.
-#[test]
-fn array_items_are_coerced_against_a_single_schema() {
-    let schema = wrap(json!({"type": "array", "items": {"type": "number"}}));
-    let compiled = compile(&schema);
-    let args = json!({"value": ["42"]});
-    assert_eq!(compiled.validate(&args).unwrap(), json!({"value": [42]}));
-}
+// =============================================================================
+// Tuples
+// =============================================================================
 
 /// Tuples coerce position by position, differentially: coercing
 /// `[a, b, c]` under a tuple of `S1, S2` with `R` for the rest equals
@@ -1163,25 +1127,5 @@ fn tuple_positions_without_a_schema_are_left_alone() {
     assert_eq!(
         compile(&boolean).coerce(&json!({"v": ["1", "2"]})),
         json!({"v": ["1", 2]})
-    );
-}
-
-/// Optional nulls inside tuple positions are dropped like anywhere
-/// else: the walk follows `prefixItems` too.
-#[test]
-fn optional_nulls_inside_tuple_positions_are_dropped() {
-    let schema = json!({
-        "type": "object",
-        "properties": {"v": {
-            "type": "array",
-            "prefixItems": [{
-                "type": "object",
-                "properties": {"a": {"type": "string"}},
-            }],
-        }},
-    });
-    assert_eq!(
-        compile(&schema).coerce(&json!({"v": [{"a": null}]})),
-        json!({"v": [{}]})
     );
 }
