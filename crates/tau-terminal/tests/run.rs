@@ -266,11 +266,6 @@ async fn an_interactive_program_reads_its_input() {
     let finished = finished.expect("it ended");
     assert_eq!(finished.status.unwrap().code(), Some(3), "{seen:?}");
     assert!(seen.contains("int"), "{seen:?}");
-}
-
-/// A command that is not interactive has no input to write to.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_command_that_is_not_interactive_has_no_input() {
-    let run = sh("true").spawn().unwrap();
-    assert!(run.input().is_none());
+    // A command that is not interactive has no input to write to.
+    assert!(sh("true").spawn().unwrap().input().is_none());
 }

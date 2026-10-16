@@ -71,33 +71,43 @@ fn styled_output(tc: &TestCase) -> Vec<u8> {
 }
 
 /// The palette maps the 16 ANSI colors to its own, the rest to the
-/// xterm cube and gray ramp, and direct colors to themselves.
-#[hegel::test(test_cases = 100)]
-fn palette_entries_resolve(tc: TestCase) {
+/// xterm cube and gray ramp, and direct colors to themselves. Both
+/// domains are small enough to check whole.
+#[test]
+fn every_palette_entry_and_direct_color_resolves() {
     let palette = Palette::default();
-    let index: u8 = tc.draw(gs::integers::<u8>());
-    let rgb = palette.resolve(Color::Palette(index));
-    match index {
-        0..=15 => assert_eq!(rgb, palette.ansi[usize::from(index)]),
-        16..=231 => {
-            let levels = [0, 95, 135, 175, 215, 255];
-            let i = usize::from(index - 16);
-            assert_eq!(
-                (rgb.r, rgb.g, rgb.b),
-                (levels[i / 36], levels[i / 6 % 6], levels[i % 6])
-            );
-        }
-        _ => {
-            assert!(rgb.r == rgb.g && rgb.g == rgb.b);
-            assert_eq!(rgb.r, 8 + (index - 232) * 10);
+    let levels = [0, 95, 135, 175, 215, 255];
+    for index in 0..=u8::MAX {
+        let rgb = palette.resolve(Color::Palette(index));
+        let want = match index {
+            0..=15 => palette.ansi[usize::from(index)],
+            16..=231 => {
+                let i = usize::from(index - 16);
+                Rgb {
+                    r: levels[i / 36],
+                    g: levels[i / 6 % 6],
+                    b: levels[i % 6],
+                }
+            }
+            _ => {
+                let grey = 8 + (index - 232) * 10;
+                Rgb {
+                    r: grey,
+                    g: grey,
+                    b: grey,
+                }
+            }
+        };
+        assert_eq!(rgb, want, "palette entry {index}");
+    }
+    for r in 0..=u8::MAX {
+        for g in 0..=u8::MAX {
+            for b in 0..=u8::MAX {
+                let direct = Rgb { r, g, b };
+                assert_eq!(palette.resolve(Color::Rgb(direct)), direct);
+            }
         }
     }
-    let direct = Rgb {
-        r: tc.draw(gs::integers::<u8>()),
-        g: tc.draw(gs::integers::<u8>()),
-        b: tc.draw(gs::integers::<u8>()),
-    };
-    assert_eq!(palette.resolve(Color::Rgb(direct)), direct);
 }
 
 /// Inverse video swaps a style's colors, the palette's defaults
