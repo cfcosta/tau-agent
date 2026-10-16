@@ -9703,6 +9703,7 @@ dependencies = [
  "tau-testing",
  "tau-ui-kit",
  "tau-ui-plugin",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
 ]

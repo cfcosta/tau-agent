@@ -31,5 +31,6 @@ hegeltest.workspace = true
 tau-compaction.workspace = true
 tau-store.workspace = true
 tau-testing.workspace = true
+tempfile.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt"] }

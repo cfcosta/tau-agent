@@ -63,7 +63,7 @@ fn output_text(tc: &TestCase) -> String {
 }
 
 /// The gate lets through only a successful `exec_command` or `write_stdin` result of text,
-/// without a NUL byte, estimated over the threshold, and then takes the
+/// without a NUL byte, estimated over the threshold (not at it), and then takes the
 /// result's text as the whole output. Everything else goes untouched,
 /// with no Jev call.
 #[hegel::test(test_cases = 200)]
@@ -78,7 +78,17 @@ fn the_gate_passes_only_large_successful_text(tc: TestCase) {
     if tc.draw(gs::booleans()) {
         text.push('\0');
     }
-    let min = tc.draw(gs::integers::<usize>().max_value(3000));
+    // The threshold where the rule changes, at the text's own estimate,
+    // as well as anywhere.
+    let estimate = estimate_tokens(&text);
+    let min = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![
+            estimate.saturating_sub(1),
+            estimate,
+            estimate + 1
+        ]),
+        gs::integers::<usize>().max_value(3000),
+    ));
     let mut content = vec![text_block(&text)];
     let image = tc.draw(gs::integers::<u8>().max_value(5)) == 0;
     if image {

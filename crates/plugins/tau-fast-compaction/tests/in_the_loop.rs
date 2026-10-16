@@ -11,7 +11,7 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::{InputBlock, Message};
-use tau_fast_compaction::{Details, FastCompaction, NAME, Settings};
+use tau_fast_compaction::{Action, Details, FastCompaction, NAME, Settings};
 use tau_jev::{JevError, fake::FakeJev};
 use tau_store::{Entry, Store};
 use tau_testing::{block_on, scripted::ScriptedModel};
@@ -237,47 +237,11 @@ fn a_stale_call_is_dropped() {
     });
 }
 
-/// A pass that would save too little declines: nothing is rewritten, and
-/// the cooldown keeps the next turn from asking again.
-#[test]
-fn a_small_saving_declines_and_cools_down() {
-    let model = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("read", json!({"path": "a.rs", "size": 10}))
-                .usage(100, 10)
-        })
-        .turn(|t| {
-            t.tool_call("read", json!({"path": "b.rs", "size": 10}))
-                .usage(700, 10)
-        })
-        .turn(|t| {
-            t.tool_call("read", json!({"path": "c.rs", "size": 10}))
-                .usage(750, 10)
-        })
-        .turn(|t| t.text("done"));
-    let jev = FakeJev::nouls(|_| 0.0);
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
-            FastCompaction::new(jev.clone()).settings(Settings {
-                min_reduction_ratio: 0.9,
-                ..settings()
-            }),
-        );
-        let (events, outcome) = run(&agent, &store).await;
-        assert_eq!(outcome.text, "done");
-        assert!(rewrites(&events).is_empty());
-        assert_eq!(
-            jev.requests().len(),
-            1,
-            "the cooldown held the second pass"
-        );
-    });
-}
-
-/// The cooldown is a share of the window: on a 100,000-token window,
-/// growing 9,000 tokens after a pass does not run another, and growing
-/// past 10,000 does.
+/// A pass that would save too little declines: nothing is rewritten,
+/// and the cooldown keeps the next turns from asking again. The cooldown
+/// is a share of the window: on a 100,000-token window, growing 9,000
+/// tokens after a pass does not run another, and growing past 10,000
+/// does.
 #[test]
 fn the_cooldown_grows_with_the_window() {
     let read = |path: &str, input| {
@@ -304,8 +268,9 @@ fn the_cooldown_grows_with_the_window() {
                 ..settings()
             }),
         );
-        let (_, outcome) = run(&agent, &store).await;
+        let (events, outcome) = run(&agent, &store).await;
         assert_eq!(outcome.text, "done");
+        assert!(rewrites(&events).is_empty(), "each pass saves too little");
         assert_eq!(jev.requests().len(), 2, "passes at 61k and 72k only");
     });
 }
@@ -401,18 +366,50 @@ fn compaction_follows_when_pruning_cannot_help() {
 }
 
 /// A fork of a pruned run starts from the pruned transcript, and the
-/// plugin resumes its ledger from the stored rewrite.
+/// plugin resumes its ledger from the stored rewrite: a later pass in the
+/// fork, told the old result now matters, still holds its cut, since
+/// decisions only escalate. Started afresh, the fork's ledger would hold
+/// the milder answer.
 #[test]
 fn a_fork_resumes_the_ledger() {
-    let model = two_reads().turn(|t| t.text("forked"));
-    let jev =
-        FakeJev::nouls(|id| if id.starts_with("call_") { 0.9 } else { 0.1 });
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let forked = Arc::new(AtomicBool::new(false));
+    let told = forked.clone();
+    // Before the fork, a.rs's output does not matter; after it, it does,
+    // and c.rs's does not.
+    let jev = FakeJev::nouls(move |id| match id {
+        "result_t1" if !told.load(Ordering::SeqCst) => 0.1,
+        "result_t3" => 0.1,
+        _ => 0.9,
+    });
+    let read = |path: &str, size: u64, input: u64| {
+        let path = path.to_owned();
+        move |t: tau_testing::scripted::TurnBuilder| {
+            t.tool_call("read", json!({"path": path, "size": size}))
+                .usage(input, 10)
+        }
+    };
+    let model = two_reads()
+        // The fork's turns: c.rs is the last call, and kept, at the first
+        // pass; the second, past the cooldown, may judge it.
+        .turn(read("c.rs", 4000, 100))
+        .turn(read("d.rs", 10, 1300))
+        .turn(|t| t.text("forked"));
+    let archives = tempfile::tempdir().unwrap();
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone())
-            .tool(Read::new())
-            .plugin(FastCompaction::new(jev).settings(settings()));
+        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
+            FastCompaction::new(jev).settings(Settings {
+                archive_dir: archives.path().to_owned(),
+                start_reserve_tokens: 0,
+                ..settings()
+            }),
+        );
         let (_, base) = run(&agent, &store).await;
+        forked.store(true, Ordering::SeqCst);
         let fork = agent
             .fork(&base.checkpoint())
             .run("and now", &store)
@@ -421,6 +418,24 @@ fn a_fork_resumes_the_ledger() {
         assert_eq!(fork.text, "forked");
         let seen = &model.requests()[3].transcript;
         assert!(result_text(&seen[2]).contains("[fast-compaction truncated"));
+
+        let entries = store.transcript(&fork.run.0).await.unwrap();
+        let Entry::Context { plugin, body, .. } = &entries[0] else {
+            panic!("{entries:?}");
+        };
+        assert_eq!(plugin, NAME);
+        let details: Details = serde_json::from_str(body).unwrap();
+        let action = |call: &str| {
+            details
+                .decisions
+                .iter()
+                .find(|decision| decision.call_id == call)
+                .map(|decision| decision.action)
+        };
+        // Jev's questions name calls `t1`, `t2`… in order; the ledger
+        // names them by their ids.
+        assert_eq!(action("call_2|fc_2"), Some(Action::DropResult), "c.rs");
+        assert_eq!(action("call_0|fc_0"), Some(Action::DropResult), "a.rs");
     });
 }
 

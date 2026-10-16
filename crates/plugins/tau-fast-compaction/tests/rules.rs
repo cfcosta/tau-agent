@@ -591,9 +591,42 @@ fn the_history_stage_asks_about_every_call_in_every_segment(tc: TestCase) {
     }
 }
 
-/// A short transcript: prompts, an answer, a tool result, a blank and a
-/// long prompt.
-fn sample() -> Vec<Message> {
+/// A message to build a goal from: a prompt, the assistant's words, or a
+/// tool result.
+#[derive(Debug, Clone)]
+enum Said {
+    Prompt(String),
+    Answer(String),
+    Output(String),
+}
+
+/// Text of a drawn length, some of its characters several bytes long;
+/// lengths gather around the 500-character cut.
+#[hegel::composite]
+fn prompt_text(tc: &TestCase) -> String {
+    let chars = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![1usize, 499, 500, 501, 502]),
+        gs::integers::<usize>().min_value(1).max_value(700),
+    ));
+    tc.draw(
+        gs::text()
+            .alphabet("ab .\né日🦀")
+            .min_size(chars)
+            .max_size(chars),
+    )
+}
+
+#[hegel::composite]
+fn said(tc: &TestCase) -> Said {
+    match tc.draw(gs::integers::<u8>().max_value(4)) {
+        0 => Said::Prompt(tc.draw(gs::text().alphabet(" \t\n").max_size(3))),
+        1 | 2 => Said::Prompt(tc.draw(prompt_text())),
+        3 => Said::Answer(tc.draw(prompt_text())),
+        _ => Said::Output(tc.draw(prompt_text())),
+    }
+}
+
+fn said_message(said: &Said) -> Message {
     use tau_ai::message::{
         AssistantMessage,
         TextContent,
@@ -601,69 +634,158 @@ fn sample() -> Vec<Message> {
         UserContent,
         UserMessage,
     };
-    let user = |text: &str| {
-        Message::User(UserMessage {
-            content: UserContent::Text(text.into()),
-            timestamp: 0,
-        })
+    let text = |text: &str| TextContent {
+        text: text.to_owned(),
+        text_signature: None,
     };
-    let assistant = Message::Assistant(AssistantMessage {
-        content: vec![AssistantBlock::Text(TextContent {
-            text: "not a prompt".into(),
-            text_signature: None,
-        })],
-        model: String::new(),
-        response_id: None,
-        usage: Default::default(),
-        stop_reason: tau_ai::message::StopReason::Stop,
-        error_message: None,
-        timestamp: 0,
-    });
-    let result = Message::ToolResult(ToolResultMessage {
-        tool_call_id: "c".into(),
-        tool_name: "t".into(),
-        content: vec![InputBlock::Text(TextContent {
-            text: "not a prompt either".into(),
-            text_signature: None,
-        })],
-        details: None,
-        is_error: false,
-        timestamp: 0,
-    });
-    vec![
-        user("one"),
-        assistant,
-        user("two"),
-        result,
-        user("   "),
-        user("three"),
-        user(&"y".repeat(600)),
-    ]
+    match said {
+        Said::Prompt(prompt) => Message::User(UserMessage {
+            content: UserContent::Text(prompt.clone()),
+            timestamp: 0,
+        }),
+        Said::Answer(answer) => Message::Assistant(AssistantMessage {
+            content: vec![AssistantBlock::Text(text(answer))],
+            model: String::new(),
+            response_id: None,
+            usage: Default::default(),
+            stop_reason: tau_ai::message::StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        }),
+        Said::Output(output) => Message::ToolResult(ToolResultMessage {
+            tool_call_id: "c".into(),
+            tool_name: "t".into(),
+            content: vec![InputBlock::Text(text(output))],
+            details: None,
+            is_error: false,
+            timestamp: 0,
+        }),
+    }
 }
 
 /// Without a goal, the state's is the user's last three prompts, each cut
-/// to 500 characters; tool results and the assistant's words are not
-/// prompts, and neither is a blank.
-#[test]
-fn the_goal_is_the_last_prompts() {
-    let entries = state::entries(&sample());
-    let goal = format!("two\nthree\n{}…", "y".repeat(499));
+/// to 500 characters (499 and an ellipsis), not bytes, joined by
+/// newlines; tool results and the assistant's words are not prompts,
+/// and neither is a blank one. A goal that is set wins; an empty one is
+/// none.
+#[hegel::test(test_cases = 300)]
+fn the_goal_is_the_users_last_three_prompts(tc: TestCase) {
+    let saids: Vec<Said> =
+        tc.draw(gs::vecs(said().print_as_debug()).max_size(8));
+    let transcript: Vec<Message> = saids.iter().map(said_message).collect();
+    let prompts: Vec<String> = saids
+        .iter()
+        .filter_map(|said| match said {
+            Said::Prompt(prompt)
+                if !prompt.chars().all(char::is_whitespace) =>
+            {
+                Some(prompt.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let kept: Vec<String> = prompts[prompts.len().saturating_sub(3)..]
+        .iter()
+        .map(|prompt| {
+            if prompt.chars().count() <= 500 {
+                prompt.clone()
+            } else {
+                tc.event("a prompt cut");
+                let head: String = prompt.chars().take(499).collect();
+                format!("{head}…")
+            }
+        })
+        .collect();
+    if prompts.len() > 3 {
+        tc.event("more than three prompts");
+    }
+    let goal = kept.join("\n");
+    let entries = state::entries(&transcript);
     assert_eq!(state::goal_from(&entries), goal);
     assert_eq!(state::goal_or_prompts(None, &entries), goal);
     assert_eq!(state::goal_or_prompts(Some(""), &entries), goal);
     assert_eq!(state::goal_or_prompts(Some("ship it"), &entries), "ship it");
 }
 
-/// The history keeps every message with text or calls, whole: the long
-/// prompt is not abridged, and the blank one and the result are left
-/// out.
-#[test]
-fn the_history_is_whole() {
-    let entries = state::entries(&sample());
-    let history = state::history_records(&entries, &[]);
-    let indices: Vec<usize> = history.iter().map(|record| record.i).collect();
-    assert_eq!(indices, [0, 1, 2, 5, 6]);
-    assert_eq!(history[4].text, "y".repeat(600));
+/// The history keeps every message with words or with tool calls that
+/// have results, whole and in order, a long prompt included; a blank
+/// message and a tool result are left out. Each call comes with the
+/// message that made it, named `t1`, `t2`… in order, with its input as
+/// JSON and a note of its result's status and size, never the result.
+#[hegel::test(test_cases = 200)]
+fn the_history_keeps_every_message_with_words_or_calls_whole(tc: TestCase) {
+    use tau_fast_compaction::{history::CallRecord, state::Role};
+    let transcript = tc.draw(transcript_with_long_texts().print_as_debug());
+    let entries = state::entries(&transcript);
+    let calls = state::collect_calls(&entries, 1);
+    let records = state::history_records(&entries, &calls);
+
+    let results: std::collections::BTreeMap<
+        &str,
+        &tau_ai::message::ToolResultMessage,
+    > = transcript
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => {
+                Some((result.tool_call_id.as_str(), result))
+            }
+            _ => None,
+        })
+        .collect();
+    let blank = |text: &str| text.chars().all(char::is_whitespace);
+    let mut named = 0;
+    let mut expected = Vec::new();
+    for (i, message) in transcript.iter().enumerate() {
+        match message {
+            Message::User(user) => {
+                let tau_ai::message::UserContent::Text(text) = &user.content
+                else {
+                    unreachable!("the generator writes text prompts")
+                };
+                if blank(text) {
+                    tc.event("a blank prompt");
+                } else {
+                    expected.push((i, Role::User, text.clone(), Vec::new()));
+                }
+            }
+            Message::Assistant(assistant) => {
+                let mut made = Vec::new();
+                for call in assistant.tool_calls() {
+                    let Some(result) = results.get(call.id.as_str()) else {
+                        continue;
+                    };
+                    named += 1;
+                    let output = state::block_text(&result.content);
+                    made.push(CallRecord {
+                        id: format!("t{named}"),
+                        tool: call.name.clone(),
+                        input: serde_json::to_string(&call.arguments).unwrap(),
+                        result: Some(format!(
+                            "{}, {} chars (omitted)",
+                            if result.is_error { "error" } else { "ok" },
+                            output.chars().count()
+                        )),
+                    });
+                }
+                let text = &entries[i].text;
+                if blank(text) && !made.is_empty() {
+                    tc.event("calls without words");
+                }
+                if !blank(text) || !made.is_empty() {
+                    expected.push((i, Role::Assistant, text.clone(), made));
+                }
+            }
+            Message::ToolResult(_) => {}
+        }
+    }
+    let got: Vec<_> = records
+        .into_iter()
+        .map(|record| {
+            assert!(record.tool_results.is_empty() && record.part.is_none());
+            (record.i, record.role, record.text, record.tool_calls)
+        })
+        .collect();
+    assert_eq!(got, expected);
 }
 
 /// A fresh directory for one test case's archives.
