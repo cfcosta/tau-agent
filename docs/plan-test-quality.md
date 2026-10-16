@@ -181,3 +181,70 @@ Open findings:
   restated their formulas.
 - `tau-constitution`'s rule edits are tested from `tau-constitution-host`, so
   `cargo mutants -p tau-constitution` alone shows survivors there.
+
+### Round two
+
+Status: complete (2026-10-16). The same six audits read the suite again,
+2,005 tests, and nominated 280 with fresh severities. Little was plainly
+wasted this time: 38 rows reached severity 3 and 189 were severity 2. The cut
+was severity 2 and up, 227 tests, 11%, with clusters done whole and the same
+rules as the first round.
+
+159 test functions went and 41 came; the suite runs 1,886 tests. Besides
+redundant examples, the round went after tests that could not fail:
+
+- `concurrent_writes_never_interleave` passed without the per-path lock: one
+  write of a few KB is one system call. `concurrent_writes_run_one_after_another`
+  checks that each call's diff starts from what the one before it left, and
+  fails with the lock removed.
+- `read_equals_pis_whole_file_read` never reached its 2,000-line cut; its
+  generator now draws line counts and offsets around it.
+- Assertions the input already met: `contains("dep")` held through
+  "dependency", `contains("missing")` matched the model's own tool arguments,
+  and `contains("\"maxItems\":4")` matched another field with the same limit.
+- A fold whose comment promised "folding the stored records again gives the
+  same state" now asserts it, and grep, find and ls check every generated
+  result against their output schemas, without coercion.
+- Wall-clock waits gave way to the events they stood for: a fake direnv waits
+  for a file the test writes, exec's "not told" tests wait for the watcher to
+  end, a too-long hook uses the 200 ms card limit instead of the 2 s one, and
+  the system clock's offset is checked under fixed time zones in child
+  processes.
+
+Nine rows stay, each the only test of its behaviour or needing a production
+seam: the signature-id row (below), `jitter_samples_the_unit_interval`, the
+host's `Act::Prompt` reply path and the older protocol's `prompts/get` in
+`tau-mcp-host`, `every_demo_screen_opens`, the no-AGENTS-file host test,
+`Type::mono()`'s only test, the clone into a missing parent with a token, and
+the write debounce in `tau-agents-host`.
+
+Fault probes: about 120, each caught by the test named for it, except two
+noted by their agents: an artificial wrap in the backoff exponent at attempts
+past 1,000, and an equivalent `>`/`>=` at the skip cap. Several probes were
+only caught after a generator learned to draw a rare shape (several values in
+one list, a century turn, leading white space before a bare query), which is
+now a rule in [Testing](reference/testing.md#generators).
+
+Two agents' probes once restored each other's backups through a shared file,
+and one wrote into the default workspace; both were caught before anything was
+committed, and the guide now says how to revert a probe.
+
+Findings:
+
+- **Fixed:** `chat_text` cut only the first `ultra` of a word, so
+  `Ultraultrathink` reached the composer as a live keyword (`tau-watcher`).
+- **tau departs from pi:** a signature id is shortened when longer than 64
+  bytes (`tau-ai/src/responses/input.rs`); pi counts JavaScript string length,
+  so 33 × `é` is kept by pi and shortened by tau. Undecided; the property is
+  left out until it is.
+- An optional `null` inside an object held under `additionalProperties` is
+  coerced, not dropped: `normalize_optional_nulls` does not walk
+  `additionalProperties` (`tau-agent`).
+- `field()` in `tau-agents/src/event.rs` is not idempotent: an id holding
+  `· ·` keeps a `·` after the replace and breaks its line.
+- A `/goal` prompt's branch slug comes from the goal's first line only.
+- `Commit::label` (`tau-vcs`) has no test of its own; a demo test is its only
+  coverage.
+- The intro in [Codemode](reference/codemode.md) "The description" is older
+  than `tau_codemode::description::INTRO`, so only the closing paragraph is
+  pinned to the doc.
