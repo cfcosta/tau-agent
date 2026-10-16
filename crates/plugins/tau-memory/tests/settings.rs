@@ -17,38 +17,29 @@ fn newest(family: &str) -> &'static tau_ai::model::Model {
         .unwrap_or_else(|| panic!("no {family} on the plan"))
 }
 
-/// Nothing saved, or an empty object saved: luna, low, not the chat's,
-/// and a pass after each run.
-#[test]
-fn memory_writes_with_luna_at_low_by_default() {
-    let saved: Settings = serde_json::from_str("{}").unwrap();
-    assert_eq!(saved, Settings::default());
-    assert_eq!(saved.family, "luna");
-    assert_eq!(saved.reasoning.as_deref(), Some("low"));
-    assert!(!saved.follow_chat);
-    assert!(saved.after_each_run);
-    let luna = newest("luna");
-    let low = luna
-        .efforts
-        .contains(&ReasoningEffort::Low)
-        .then_some(ReasoningEffort::Low);
-    assert_eq!(saved.model(), Some((luna.id.clone(), low)));
-    assert_eq!(
-        saved.runs_as(),
-        format!(
-            "Runs as {} · {}.",
-            luna.id,
-            low.map_or("auto", ReasoningEffort::as_str)
-        )
-    );
-}
-
 /// Every family and effort the pane offers resolves to the plan's
 /// newest model of that family, with the effort when it takes it and
 /// the model's default otherwise; auto is the model's default.
-/// Finite inventory: 4 families × 4 efforts.
+/// Finite inventory: 4 families × 4 efforts. Nothing saved is luna at
+/// low, a pass after each run, and the pane says what it runs as.
 #[test]
 fn each_choice_resolves_against_the_plan() {
+    let saved: Settings = serde_json::from_str("{}").unwrap();
+    assert_eq!(
+        (saved.family.as_str(), saved.reasoning.as_deref()),
+        ("luna", Some("low"))
+    );
+    assert!(!saved.follow_chat);
+    assert!(saved.after_each_run);
+    let (luna, low) = saved.model().expect("luna is on the plan");
+    assert_eq!(luna, newest("luna").id);
+    assert_eq!(
+        saved.runs_as(),
+        format!(
+            "Runs as {luna} · {}.",
+            low.map_or("auto", ReasoningEffort::as_str)
+        )
+    );
     for family in tau_ai::model::PLAN_FAMILIES {
         for effort in EFFORTS {
             let settings = Settings {

@@ -166,9 +166,10 @@ fn a_note_written_through_the_tools_reads_back(tc: TestCase) {
     });
 }
 
-/// Each message of a chat is a run, and each starts with memory: a note
-/// the chat already has stays out, and so does the index until it
-/// changes.
+/// Each message of a chat is a run, and each starts with memory: the
+/// first with the index and the notes for its task, fenced, and the
+/// memory tools; a note the chat already has stays out, and so does the
+/// index until it changes.
 #[test]
 fn a_chat_gets_each_note_and_index_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -211,6 +212,32 @@ fn a_chat_gets_each_note_and_index_once() {
             .run("and the retry after header", &store)
             .await
             .unwrap();
+        // The first message started with memory: the index, the note
+        // its task finds, fenced, and the memory tools offered.
+        let opening = first_user_text(&model.requests());
+        assert!(opening.contains("<memory"), "{opening}");
+        assert!(
+            opening.contains("HTTP dates too"),
+            "the index note: {opening}"
+        );
+        assert!(
+            opening.contains("`retry-after` [gotcha]"),
+            "the hit: {opening}"
+        );
+        let tools: Vec<String> = model.requests()[0]
+            .settings
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        for name in [
+            "memory_write",
+            "memory_search",
+            "memory_read",
+            "memory_link",
+        ] {
+            assert!(tools.contains(&name.to_owned()), "{tools:?}");
+        }
         assert_eq!(times("`retry-after` [gotcha]"), 1, "the note, once");
         assert_eq!(times("HTTP dates too"), 1, "the index, once");
         // The index changed: it goes in again, as it is now.
@@ -229,57 +256,6 @@ fn a_chat_gets_each_note_and_index_once() {
     });
     assert_eq!(times("seconds or a date"), 1, "the new index");
     assert_eq!(times("`retry-after` [gotcha]"), 1, "the note, still once");
-}
-
-#[test]
-fn a_run_starts_with_the_index_and_the_notes_for_its_task() {
-    let dir = tempfile::tempdir().unwrap();
-    let scopes = scopes(dir.path(), false);
-    {
-        let mut repo = scopes.repo.lock().unwrap();
-        repo.write(
-            draft(NoteType::Index, "Index", "- `retry-after`: HTTP dates too"),
-            1,
-        )
-        .unwrap();
-        repo.write(
-            draft(
-                NoteType::Gotcha,
-                "Retry after",
-                "retry-after can be an HTTP date",
-            ),
-            1,
-        )
-        .unwrap();
-    }
-    let model = ScriptedModel::new().turn(|t| t.text("done"));
-    let agent = Agent::new(model.clone()).plugin(MemoryPlugin::new(scopes));
-    block_on_io(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        agent
-            .run("fix the retry after parsing", &store)
-            .await
-            .unwrap();
-    });
-    let text = first_user_text(&model.requests());
-    assert!(text.contains("<memory"), "{text}");
-    assert!(text.contains("HTTP dates too"), "the index note: {text}");
-    assert!(text.contains("`retry-after` [gotcha]"), "the hit: {text}");
-    // The tools are offered.
-    let tools: Vec<String> = model.requests()[0]
-        .settings
-        .tools
-        .iter()
-        .map(|t| t.name.clone())
-        .collect();
-    for name in [
-        "memory_write",
-        "memory_search",
-        "memory_read",
-        "memory_link",
-    ] {
-        assert!(tools.contains(&name.to_owned()), "{tools:?}");
-    }
 }
 
 /// Rewrites at every turn end, keeping only the last user message.
@@ -514,42 +490,11 @@ fn editing_a_file_marks_the_notes_about_it() {
     assert!(repo.notes().get("unrelated").unwrap().stale.is_none());
 }
 
-/// Off by default; on, it runs once the run ended, and its notes are
-/// marked inferred.
-#[test]
-fn consolidation_runs_only_when_turned_on() {
-    let dir = tempfile::tempdir().unwrap();
-    let write = json!({
-        "type": "case",
-        "title": "Fixed a flaky lane test",
-        "description": "a race on drain; resend in full",
-        "body": "Task: flaky lane test. Approach: resend after drain. Outcome: fixed."
-    });
-    for on in [false, true] {
-        let scopes = scopes(&dir.path().join(on.to_string()), false);
-        let mut model = ScriptedModel::new().turn(|t| t.text("fixed"));
-        if on {
-            let write = write.clone();
-            model = model.turn(move |t| t.tool_call("memory_write", write));
-        }
-        let agent = Agent::new(model.clone())
-            .plugin(MemoryPlugin::new(scopes.clone()).consolidate(on));
-        block_on_io(async {
-            let store = tau_store_sqlite::memory().await.unwrap();
-            agent.run("fix the flaky lane test", &store).await.unwrap();
-        });
-        assert_eq!(model.requests().len(), if on { 2 } else { 1 });
-        let repo = scopes.repo.lock().unwrap();
-        let note = repo.notes().get("fixed-a-flaky-lane-test");
-        assert_eq!(note.is_some(), on);
-        if let Some(note) = note {
-            assert_eq!(note.source.by, By::Inferred);
-        }
-    }
-}
-
-/// A search before a write comes back to the model, which then writes:
-/// the pass is not over after one reply.
+/// On, the pass runs once the run ended, and a search before a write
+/// comes back to the model, which then writes: the pass is not over after
+/// one reply. Its notes are marked inferred. (Off by default:
+/// `pruning_asks_memory_for_nothing` runs a default plugin and the model
+/// is asked only the run's turns.)
 #[test]
 fn consolidation_writes_after_it_searched() {
     let dir = tempfile::tempdir().unwrap();
@@ -592,6 +537,11 @@ fn consolidation_writes_after_it_searched() {
     let repo = scopes.repo.lock().unwrap();
     assert_eq!(repo.notes().len(), 1, "one note, from the write");
     let note = repo.notes().get("fixed-a-flaky-lane-test").unwrap();
+    assert_eq!(
+        note.source.by,
+        By::Inferred,
+        "the pass's notes are inferred"
+    );
     assert_eq!(
         (&note.title[..], &note.description[..], note.kind.as_str()),
         (

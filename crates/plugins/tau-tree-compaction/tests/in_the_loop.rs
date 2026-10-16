@@ -223,42 +223,6 @@ fn older_messages_fold_into_the_view() {
     });
 }
 
-/// After a compaction, `zoom` opens a line down to its message, whole.
-#[test]
-fn zoom_gives_a_folded_message_back_whole() {
-    let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("read", json!({"path": "src/lib.rs"}))
-                .usage(5_000, 10)
-        })
-        .turn_with(line)
-        .turn(|t| t.tool_call("zoom", json!({"id": 2, "n": 1})).usage(10, 10))
-        .turn(|t| t.tool_call("zoom", json!({"id": 0, "n": 2})).usage(10, 10))
-        .turn(|t| t.tool_call("zoom", json!({"id": 1, "n": 2})).usage(10, 10))
-        .turn(|t| t.text("done").usage(10, 10));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let (_, outcome) =
-            run(&agent(&llm), &store, "go", "and then this").await;
-        assert_eq!(outcome.text, "done");
-        let last = llm.requests().pop().unwrap().transcript;
-        let results: Vec<String> = last
-            .iter()
-            .filter(|message| matches!(message, Message::ToolResult(_)))
-            .map(text)
-            .collect();
-        assert_eq!(
-            results[0],
-            format!("2+1|echo: [read] {}", contents("src/lib.rs"))
-        );
-        assert_eq!(
-            results[1],
-            "0+1|user: go\n1+1|tool: read {\"path\":\"src/lib.rs\"}"
-        );
-        assert_eq!(results[2], "No line 1+2.");
-    });
-}
-
 /// A second compaction folds only what came since: the history keeps
 /// its first messages' lines and ids, the view grows, and the new
 /// lines' requests read the old lines as context.
@@ -316,7 +280,8 @@ fn a_second_compaction_folds_only_what_came_since() {
 }
 
 /// A fork of a compacted run starts from the view and can still zoom
-/// into what was folded: its history comes back from the run's records.
+/// into what was folded, down to a message whole: its history comes back
+/// from the run's records.
 #[test]
 fn a_fork_of_a_compacted_run_can_zoom_into_the_history() {
     let llm = ScriptedModel::new()
@@ -327,6 +292,8 @@ fn a_fork_of_a_compacted_run_can_zoom_into_the_history() {
         .turn_with(line)
         .turn(|t| t.text("done").usage(10, 10))
         .turn(|t| t.tool_call("zoom", json!({"id": 2, "n": 1})).usage(10, 10))
+        .turn(|t| t.tool_call("zoom", json!({"id": 0, "n": 2})).usage(10, 10))
+        .turn(|t| t.tool_call("zoom", json!({"id": 1, "n": 2})).usage(10, 10))
         .turn(|t| t.text("forked").usage(10, 10));
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
@@ -341,13 +308,24 @@ fn a_fork_of_a_compacted_run_can_zoom_into_the_history() {
         let requests = llm.requests();
         // The fork opens with the base's view.
         assert_eq!(requests[3].transcript[0], requests[2].transcript[0]);
-        let last = &requests[4].transcript;
-        let Some(Message::ToolResult(result)) = last.last() else {
-            panic!("the zoom's result")
-        };
+        // A leaf opens to its message whole, a pair to its two lines, and
+        // a line that is not one says so.
+        let results: Vec<String> = requests
+            .last()
+            .unwrap()
+            .transcript
+            .iter()
+            .filter(|message| matches!(message, Message::ToolResult(_)))
+            .map(text)
+            .collect();
         assert_eq!(
-            tau_ai::message::text_of(&result.content),
-            format!("2+1|echo: [read] {}", contents("src/lib.rs"))
+            results,
+            [
+                format!("2+1|echo: [read] {}", contents("src/lib.rs")),
+                "0+1|user: go\n1+1|tool: read {\"path\":\"src/lib.rs\"}"
+                    .to_owned(),
+                "No line 1+2.".to_owned(),
+            ]
         );
         llm.assert_exhausted();
     });

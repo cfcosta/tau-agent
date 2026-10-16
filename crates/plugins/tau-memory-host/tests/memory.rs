@@ -131,6 +131,7 @@ impl Scope {
             )
         };
         let before = self.memory.notes().len();
+        let landed_on = self.memory.notes().get(&slug(&title)).cloned();
         let draft = leaky(title, place);
         let title = draft.title.clone();
         match self.memory.write(draft, now) {
@@ -149,8 +150,15 @@ impl Scope {
             }
             Err(WriteError::Refused(why)) => {
                 assert!(collide, "{why}");
+                // It names both ways to say what was meant.
                 assert!(why.contains("pass id"), "{why}");
+                assert!(why.contains("supersedes"), "{why}");
                 assert_eq!(self.memory.notes().len(), before);
+                assert_eq!(
+                    self.memory.notes().get(&slug(&title)),
+                    landed_on.as_ref(),
+                    "the note it landed on is untouched"
+                );
             }
             Err(other) => panic!("{other}"),
         }
@@ -325,31 +333,6 @@ fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
-}
-
-#[test]
-fn a_title_never_overwrites_another_note() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut memory = open(dir.path());
-    memory
-        .write(draft("Retry after".into(), "one".into()), 1)
-        .unwrap();
-    // Same title, no id: refused, with the ways to say what was meant.
-    let Err(WriteError::Refused(why)) =
-        memory.write(draft("Retry after".into(), "two".into()), 2)
-    else {
-        panic!("a second note took the first's id");
-    };
-    assert!(
-        why.contains("pass id") && why.contains("supersedes"),
-        "{why}"
-    );
-    assert_eq!(memory.notes().get("retry-after").unwrap().body, "one");
-    // Named, it is an update, and the first version stays in history.
-    let mut update = draft("Retry after".into(), "two".into());
-    update.id = Some("retry-after".into());
-    assert_eq!(memory.write(update, 3).unwrap().action, Action::Updated);
-    assert_eq!(memory.notes().history("retry-after").len(), 1);
 }
 
 #[test]

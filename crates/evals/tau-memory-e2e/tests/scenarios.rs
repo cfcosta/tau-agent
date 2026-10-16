@@ -2,7 +2,9 @@
 //! repository whose checks fail until the task is done and pass once it
 //! is done by hand, the second task needs the fact, and the change makes
 //! the old fact fail, touches exactly the files it lists, and leaves no
-//! trace of the old fact for the agent to find.
+//! trace of the old fact for the agent to find. That the second task
+//! done by hand passes, in either variant, is checked through the runner
+//! (`runner.rs`, `success_is_the_checks_verdict_on_the_repository`).
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -76,24 +78,6 @@ fn the_first_task_done_by_hand_passes_its_check() {
             "{}",
             scenario.name
         );
-    }
-}
-
-#[test]
-fn the_second_task_done_by_hand_passes_in_either_variant() {
-    for scenario in SCENARIOS {
-        for variant in Variant::ALL {
-            let dir = tempfile::tempdir().unwrap();
-            after_first(scenario, dir.path());
-            scenario.between(dir.path(), variant).unwrap();
-            run_script(dir.path(), scenario.second_solution(variant)).unwrap();
-            assert!(
-                scenario.second_done(dir.path()).unwrap(),
-                "{} {}",
-                scenario.name,
-                variant.name()
-            );
-        }
     }
 }
 
