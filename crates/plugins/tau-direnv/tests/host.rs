@@ -2,8 +2,9 @@
 //! (`tests/fixtures/fake-direnv.sh`): the person is asked once per
 //! repository, commands wait while they are asked and while the
 //! environment loads, then run through `direnv exec` only when allowed
-//! and loaded; a failed load, a `direnv deny` and a "no" run commands
-//! as they are.
+//! and loaded; a failed load and a "no" run commands as they are. A
+//! `direnv deny` is tested against the real direnv
+//! (`tests/real_direnv.rs`).
 
 #![allow(
     clippy::disallowed_methods,
@@ -162,9 +163,9 @@ fn the_person_is_asked_once_then_commands_run_in_the_environment() {
             .spawn(async move { launcher.launch(&first).await })
     };
     wait_for(&host, &first, &Status::Asking);
-    std::thread::sleep(Duration::from_millis(100));
-    assert!(!waiting.is_finished(), "the command waits for the answer");
 
+    // Only a launch that waited for the answer goes through direnv: one
+    // made while asking would run the command as it is.
     fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     let launch = fixture.runtime.block_on(waiting).unwrap();
     assert_eq!(
@@ -264,33 +265,6 @@ fn a_failed_load_runs_commands_without_it() {
             output: "no flake here".into(),
         }
     );
-}
-
-/// An `.envrc` the person denied with direnv is not loaded, allowed or
-/// not.
-#[test]
-fn a_denied_envrc_is_not_loaded() {
-    let fixture = Fixture::new();
-    let host = fixture.host(Some(fixture.direnv(&[])));
-    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
-    let dir = fixture.workspace("denied", Some(PROBE));
-    let record = dir.join(".envrc");
-    let hash = {
-        use sha2::{Digest as _, Sha256};
-        let digest =
-            Sha256::digest(format!("{}\n", record.display()).as_bytes());
-        digest
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    };
-    let deny = fixture.data().join("direnv/deny");
-    std::fs::create_dir_all(&deny).unwrap();
-    std::fs::write(deny.join(hash), record.display().to_string()).unwrap();
-
-    let launch = fixture.launch(&host.launcher(&fixture.repo).unwrap(), &dir);
-    assert_eq!(launch, Launch::default());
-    assert_eq!(host.status(&dir), Status::Denied);
 }
 
 /// Without direnv the plugin is off; without an `.envrc` nothing waits.

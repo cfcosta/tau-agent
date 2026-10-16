@@ -3,8 +3,8 @@
 # `exec DIR CMD...`, as tau calls them.
 #
 # - An `.envrc` is allowed when a quoted path in $DIRENV_CONFIG/direnv.toml
-#   (tau's whitelist) is a prefix of its directory, and denied when
-#   direnv's deny record for it is in $XDG_DATA_HOME/direnv/deny.
+#   (tau's whitelist) is a prefix of its directory. A deny is tested with
+#   the real direnv.
 # - `export json` sources the `.envrc` (failing as it fails), after
 #   $FAKE_DIRENV_GATE exists, when that is set, and prints `{}`.
 # - `exec` sources it into the environment, when allowed, then runs CMD.
@@ -12,12 +12,7 @@
 
 [ -n "$FAKE_DIRENV_LOG" ] && echo "$1" >> "$FAKE_DIRENV_LOG"
 
-state() { # dir -> 0 allowed, 1 not allowed, 2 denied
-  rc="$1/.envrc"
-  hash=$(printf '%s\n' "$rc" | sha256sum | cut -d' ' -f1)
-  if [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/direnv/deny/$hash" ]; then
-    echo 2; return
-  fi
+state() { # dir -> 0 allowed, 1 not allowed
   for root in $(grep -o '"[^"]*"' "$DIRENV_CONFIG/direnv.toml" 2>/dev/null | tr -d '"'); do
     case "$1" in "$root"*) echo 0; return ;; esac
   done

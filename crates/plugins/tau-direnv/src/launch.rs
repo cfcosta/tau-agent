@@ -206,14 +206,25 @@ mod tests {
         }
     }
 
-    /// Each workspace has a layout directory of its own, under tau's.
+    /// Each workspace has a layout directory of its own, under tau's,
+    /// by its whole path: two repositories' workspaces of one name too.
     #[test]
     fn layouts_are_per_workspace() {
         let direnv = direnv();
-        let a = direnv.layout(Path::new("/tau/repo/main"));
-        let b = direnv.layout(Path::new("/tau/repo/runs/fix"));
-        assert_ne!(a, b);
-        assert!(a.starts_with("/tau/layouts") && b.starts_with("/tau/layouts"));
-        assert_eq!(a, direnv.layout(Path::new("/tau/repo/main")));
+        let workspaces = [
+            "/tau/repo/main",
+            "/tau/repo/runs/fix",
+            "/tau/other/runs/fix",
+            "/tau/repo/runs/fix/nested",
+        ];
+        let layouts: Vec<PathBuf> = workspaces
+            .iter()
+            .map(|workspace| direnv.layout(Path::new(workspace)))
+            .collect();
+        for (n, layout) in layouts.iter().enumerate() {
+            assert_eq!(layout.parent(), Some(Path::new("/tau/layouts")));
+            assert!(layouts[..n].iter().all(|other| other != layout));
+            assert_eq!(*layout, direnv.layout(Path::new(workspaces[n])));
+        }
     }
 }
