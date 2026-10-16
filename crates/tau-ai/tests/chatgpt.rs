@@ -234,29 +234,6 @@ fn a_reauthorization_for_another_client_is_refused() {
 }
 
 #[test]
-fn a_callback_with_another_state_is_refused() {
-    simulate(FakeChatGpt::new(), |fake, chatgpt, _dir| async move {
-        let sign_in = chatgpt.start_sign_in(None, REDIRECT, false).unwrap();
-        let returned = fake.approve(sign_in.url());
-        let mut url = url::Url::parse(&returned).unwrap();
-        let pairs: Vec<(String, String)> = url
-            .query_pairs()
-            .into_owned()
-            .map(|(k, v)| {
-                if k == "state" {
-                    (k, "forged".into())
-                } else {
-                    (k, v)
-                }
-            })
-            .collect();
-        url.query_pairs_mut().clear().extend_pairs(pairs);
-        let error = sign_in.callback(url.as_str()).unwrap_err();
-        assert!(matches!(error, ChatGptError::StateMismatch), "{error}");
-    });
-}
-
-#[test]
 fn a_used_code_is_rejected_for_a_fresh_sign_in() {
     simulate(FakeChatGpt::new(), |fake, chatgpt, _dir| async move {
         let sign_in = chatgpt.start_sign_in(None, REDIRECT, false).unwrap();

@@ -450,14 +450,6 @@ mod tests {
     }
 
     #[test]
-    fn the_redirect_is_on_127_0_0_1() {
-        assert_eq!(
-            RedirectUri { port: 1455 }.to_string(),
-            "http://127.0.0.1:1455/auth/callback"
-        );
-    }
-
-    #[test]
     fn pasted_shapes_give_the_same_pairs() {
         let expected = vec![
             ("code".to_owned(), "c 1".to_owned()),

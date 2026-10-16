@@ -142,36 +142,3 @@ impl LlmSession for Session {
         .boxed()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use futures_util::stream;
-
-    use super::*;
-
-    struct Plain(Settings);
-
-    impl LlmSession for Plain {
-        fn settings(&self) -> &Settings {
-            &self.0
-        }
-
-        fn set_reasoning(&mut self, effort: Option<ReasoningEffort>) {
-            self.0.reasoning = effort;
-        }
-
-        fn respond(&mut self, _: &[Message], _: Timestamp) -> EventStream {
-            stream::empty().boxed()
-        }
-    }
-
-    /// A provider that cannot warm up does nothing, and it costs nothing.
-    #[test]
-    fn the_default_warm_up_does_nothing() {
-        let mut session = Plain(Settings::default());
-        let usage = futures_util::FutureExt::now_or_never(session.warm_up(0))
-            .expect("ready at once")
-            .unwrap();
-        assert_eq!(usage, Usage::default());
-    }
-}

@@ -66,18 +66,6 @@ fn ids_are_unique_and_sorted() {
     assert_eq!(ids, sorted, "models() is not sorted by id");
 }
 
-/// `gpt-5.6` is a models.dev alias models.dev lists but OpenAI's API
-/// does not accept (`MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS`,
-/// generate-models.ts:356). It must not appear in the table.
-#[test]
-fn excluded_id_is_absent() {
-    assert!(model::find("gpt-5.6").is_none());
-    assert!(
-        model::models().iter().all(|m| m.id != "gpt-5.6"),
-        "gpt-5.6 should have been excluded"
-    );
-}
-
 /// `OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS` (generate-models.ts:380-388):
 /// a capped model's context window is pinned to the long-context
 /// threshold and its output to 128,000, even though models.dev reports

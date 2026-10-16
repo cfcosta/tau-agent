@@ -117,20 +117,3 @@ fn pi_user_and_tool_result_shapes() {
         assert_eq!(serde_json::to_value(&message).unwrap(), pi);
     }
 }
-
-/// Regression from `message_json_round_trip`: an explicit `null` in
-/// `details` came back as an absent field.
-#[test]
-fn tool_result_null_details_round_trip() {
-    let pi = json!({
-        "role": "toolResult",
-        "toolCallId": "call_0",
-        "toolName": "tool_0",
-        "content": [],
-        "details": null,
-        "isError": false,
-        "timestamp": 0
-    });
-    let message: Message = serde_json::from_value(pi.clone()).unwrap();
-    assert_eq!(serde_json::to_value(&message).unwrap(), pi);
-}

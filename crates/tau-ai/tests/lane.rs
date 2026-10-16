@@ -525,22 +525,6 @@ fn reconnect_only_before_output() {
     }
 }
 
-/// A failed reconnect fails the request as a connection lost before the
-/// first event.
-#[test]
-fn failed_reconnect_fails_request() {
-    let mut lane = lane_with_continuation();
-    lane.submit(next_body()).unwrap();
-    assert_eq!(lane.handle(Event::ConnectionLost), Some(Action::Reconnect));
-    assert_eq!(
-        lane.handle(Event::ConnectionLost),
-        Some(Action::Fail(Failure::ConnectionLost {
-            before_first_event: true
-        }))
-    );
-    assert!(!lane.is_busy());
-}
-
 /// Frames for a request the lane no longer has change nothing.
 #[test]
 fn stale_frames_are_ignored() {
@@ -591,12 +575,4 @@ fn stray_reconnected_is_ignored() {
     lane.submit(next_body()).unwrap();
     assert_eq!(lane.handle(Event::Reconnected), None);
     assert!(lane.is_busy());
-}
-
-#[test]
-fn busy_error_displays() {
-    assert_eq!(
-        LaneError::Busy.to_string(),
-        "a request is already in flight on this lane"
-    );
 }

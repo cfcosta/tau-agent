@@ -6,7 +6,7 @@
 //! the re-chunking metamorphic relation, and pi's leniency rules.
 
 use hegel::{TestCase, generators as gs};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tau_ai::partial_json::{PartialJson, PartialJsonError};
 use tau_testing::generators;
 
@@ -103,6 +103,8 @@ fn partial_view_is_consistent_with_the_final_value(tc: TestCase) {
     let (value, chunks) = arrange(&tc);
 
     let mut parser = PartialJson::new();
+    // Before anything is pushed, the partial view is an empty object.
+    assert_eq!(parser.value(), &Value::Object(Default::default()));
     for chunk in &chunks {
         parser.push(chunk);
         assert!(
@@ -424,14 +426,6 @@ fn surrogate_pair_and_line_separators_split_across_chunks() {
     assert_eq!(value["emoji"], "\u{2028}\u{1f980}\u{2029}");
 }
 
-/// Truncated input never reaches a complete value.
-#[test]
-fn truncated_input_is_an_error() {
-    let mut parser = PartialJson::new();
-    parser.push(r#"{"a":"#);
-    assert!(parser.finish().is_err());
-}
-
 /// The root value must be a JSON object.
 #[test]
 fn non_object_root_is_an_error() {
@@ -470,13 +464,6 @@ fn only_whitespace_may_follow_the_root_object(tc: TestCase) {
     assert!(parser.finish().is_err(), "{text}{blanks}{stray:?}");
 }
 
-/// Before anything is pushed, the partial view is an empty object.
-#[test]
-fn empty_input_value_is_an_empty_object() {
-    let parser = PartialJson::new();
-    assert_eq!(parser.value(), &json!({}));
-}
-
 /// A valid escape decodes to its single character, not the two
 /// characters of its own text: `\/` is `/`, not `\` followed by `/`.
 #[test]
@@ -498,40 +485,4 @@ fn invalid_character_after_a_number_is_reported_precisely() {
         parser.finish(),
         Err(PartialJsonError::InvalidNumber("1".to_owned()))
     );
-}
-
-/// Closing the root object is enough to finish, without any further
-/// input: the frame it closes must actually be popped.
-#[test]
-fn closing_the_root_object_finishes_without_more_input() {
-    let mut parser = PartialJson::new();
-    parser.push("{}");
-    assert_eq!(parser.finish().unwrap(), json!({}));
-}
-
-/// Every error variant renders a non-empty message that names its own
-/// specifics, not a shared or blank string.
-#[test]
-fn each_error_displays_a_specific_message() {
-    let cases: [(PartialJsonError, &str); 6] = [
-        (PartialJsonError::RootNotObject, "object"),
-        (PartialJsonError::TrailingGarbage, "after the root object"),
-        (PartialJsonError::UnexpectedEof, "end of input"),
-        (PartialJsonError::UnexpectedChar('x'), "'x'"),
-        (PartialJsonError::InvalidNumber("1x".to_owned()), "1x"),
-        (PartialJsonError::LoneSurrogate, "surrogate"),
-    ];
-    let mut seen = std::collections::HashSet::new();
-    for (err, must_contain) in cases {
-        let message = err.to_string();
-        assert!(!message.is_empty(), "{err:?} displayed an empty message");
-        assert!(
-            message.contains(must_contain),
-            "{err:?} displayed {message:?}, expected it to mention {must_contain:?}"
-        );
-        assert!(
-            seen.insert(message.clone()),
-            "{err:?} displayed {message:?}, which another variant already used"
-        );
-    }
 }

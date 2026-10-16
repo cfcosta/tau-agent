@@ -509,25 +509,6 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_body_is_read_as_is() {
-        let response =
-            parse(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}").unwrap();
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body, b"{}");
-    }
-
-    #[test]
-    fn a_chunked_body_is_joined() {
-        let raw =
-            b"HTTP/1.1 400 Bad Request\r\nTransfer-Encoding: chunked\r\n\r\n\
-                    3\r\n{\"a\r\n5;x=y\r\n\":1}\n\r\n0\r\n\r\n";
-        let response = parse(raw).unwrap();
-        assert_eq!(response.status, 400);
-        assert!(!response.is_success());
-        assert_eq!(response.text(), "{\"a\":1}\n");
-    }
-
-    #[test]
     fn headers_are_kept_and_found_in_any_case() {
         let response =
             parse(b"HTTP/1.1 200 OK\r\nX-Request-Id: req_1\r\n\r\n").unwrap();

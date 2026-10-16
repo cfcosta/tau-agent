@@ -644,7 +644,8 @@ fn host_ids_are_uuid_v4_urns_and_parse_only_the_documented_forms(tc: TestCase) {
     assert!(uuid.bytes().all(|b| b == b'-' || b.is_ascii_hexdigit()));
     assert!(groups[2].starts_with('4'));
     assert!(groups[3].starts_with(['8', '9', 'a', 'b']));
-    assert_eq!(HostId::parse(made.as_str()), Some(made));
+    assert_eq!(HostId::parse(made.as_str()), Some(made.clone()));
+    assert_ne!(HostId::new_uuid(), made, "each made id is fresh");
 
     let rest = tc.draw(gs::text().max_size(10));
     for prefix in [

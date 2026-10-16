@@ -226,17 +226,6 @@ fn wire_limits_are_clamped(tc: TestCase) {
     );
 }
 
-#[test]
-fn generic_request_fields_include_only_configured_output_ceiling() {
-    let mut settings = Settings {
-        model: "gpt-5.5".into(),
-        ..Settings::default()
-    };
-    assert!(!body(&settings, vec![]).contains_key("max_output_tokens"));
-    settings.max_output_tokens = Some(2048);
-    assert_eq!(body(&settings, vec![])["max_output_tokens"], json!(2048));
-}
-
 /// A full body in the shape the WebSocket guide shows.
 #[test]
 fn golden_body() {

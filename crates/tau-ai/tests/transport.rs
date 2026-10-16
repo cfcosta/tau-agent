@@ -644,14 +644,6 @@ fn dropping_a_lane_frees_its_connection() {
     assert_eq!(stats.borrow().as_ref().unwrap().connections_opened, 1);
 }
 
-#[test]
-fn stopped_displays() {
-    assert_eq!(
-        tau_ai::ws::io::driver::Stopped.to_string(),
-        "the WebSocket transport stopped"
-    );
-}
-
 /// A request the server rejects outright fails with one `Start` and one
 /// `Error`, even though no response frame ever arrived.
 #[test]

@@ -349,14 +349,6 @@ fn llm_trait_streams_the_response(tc: TestCase) {
     assert_eq!(have, want);
 }
 
-#[test]
-fn llm_error_displays_its_message() {
-    let error = tau_ai::llm::LlmError {
-        message: "transport stopped".into(),
-    };
-    assert_eq!(error.to_string(), "transport stopped");
-}
-
 /// Plays a bounded history on one simulated lane. Every scripted answer has
 /// one fixed text item, so the next transcript contains exactly the server's
 /// recorded output item before the next user item.

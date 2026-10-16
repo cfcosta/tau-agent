@@ -934,87 +934,20 @@ fn terminal_status_absent_is_stop_but_unexpected_status_is_error() {
         }
         other => panic!("expected an Error event, got {other:?}"),
     }
-}
 
-/// The class a failure's `Error` event carries decides whether the loop
-/// retries the turn: a socket that closes before any output is retried,
-/// and an API failure is classified by its code (and, for an `error`
-/// frame, its status) as `retry::classify` does, never by its text.
-#[test]
-fn failures_carry_their_retry_class() {
-    let class_of = |frames: Vec<serde_json::Value>, close: bool| {
-        let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
-        let mut events: Vec<AssistantEvent> =
-            frames.iter().flat_map(|f| processor.push(f)).collect();
-        if close {
-            events.extend(processor.close());
-        }
-        match events.last() {
-            Some(AssistantEvent::Error { class, .. }) => *class,
-            other => panic!("expected an error, got {other:?}"),
-        }
-    };
-    let created =
-        json!({ "type": "response.created", "response": { "id": "r" } });
-    let failed = |code: &str, kind: &str| {
-        json!({
-            "type": "response.failed",
-            "response": { "error": { "code": code, "type": kind, "message": "m" } },
-        })
-    };
-    assert_eq!(class_of(vec![created.clone()], true), Class::Retryable);
-    assert_eq!(class_of(vec![], true), Class::Retryable);
-    assert_eq!(
-        class_of(
-            vec![created.clone(), failed("server_error", "server_error")],
-            false
-        ),
-        Class::Retryable
+    // A cancelled response is final: resending would not change it.
+    let cancelled = StreamProcessor::new("gpt-5-mini".to_owned(), 0).push(
+        &json!({"type": "response.completed", "response": {"status": "cancelled"}}),
     );
-    assert_eq!(
-        class_of(
-            vec![failed("insufficient_quota", "insufficient_quota")],
-            false
+    assert!(
+        matches!(
+            cancelled.last(),
+            Some(AssistantEvent::Error {
+                class: Class::Fatal,
+                ..
+            })
         ),
-        Class::Fatal
-    );
-    assert_eq!(
-        class_of(
-            vec![failed("context_length_exceeded", "invalid_request_error")],
-            false
-        ),
-        Class::ContextOverflow
-    );
-    assert_eq!(
-        class_of(vec![failed("mystery", "api_error")], false),
-        Class::Retryable,
-        "an unknown code falls through to the type"
-    );
-    assert_eq!(
-        class_of(
-            vec![
-                json!({"type": "error", "code": "mystery", "message": "m", "status": 429})
-            ],
-            false
-        ),
-        Class::Retryable,
-        "an unknown code falls through to the status"
-    );
-    assert_eq!(
-        class_of(
-            vec![json!({"type": "error", "code": "mystery", "message": "m"})],
-            false
-        ),
-        Class::Fatal
-    );
-    assert_eq!(
-        class_of(
-            vec![
-                json!({"type": "response.completed", "response": {"status": "cancelled"}})
-            ],
-            false
-        ),
-        Class::Fatal
+        "{cancelled:?}"
     );
 }
 

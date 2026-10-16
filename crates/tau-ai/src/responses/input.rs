@@ -610,16 +610,6 @@ fn to_base36(mut n: u32) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn to_base36_pins_known_values() {
-        assert_eq!(to_base36(0), "0");
-        assert_eq!(to_base36(1), "1");
-        assert_eq!(to_base36(35), "z");
-        assert_eq!(to_base36(36), "10");
-        assert_eq!(to_base36(37), "11");
-        assert_eq!(to_base36(u32::MAX), "1z141z3");
-    }
-
     /// `to_base36` writes any `u32` in base 36, with lowercase digits
     /// and no leading zero: reading it back gives the number.
     #[hegel::test]

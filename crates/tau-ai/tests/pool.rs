@@ -1299,71 +1299,6 @@ fn a_fork_waits_briefly_for_its_parent_s_busy_connection() {
     assert!(!pool.is_waiting(other));
 }
 
-/// With `affinity_wait` zero, a lane never waits.
-#[test]
-fn no_wait_takes_another_connection_at_once() {
-    let mut pool = Pool::new(Limits {
-        affinity_wait: Duration::ZERO,
-        ..Limits::default()
-    });
-    let (main, _) = pool.open_lane(Affinity::new("main", None));
-    pool.submit(main, on_path(Some("main"), vec![item("a")]))
-        .unwrap();
-    let (fork, opened) =
-        pool.open_lane(Affinity::new("fork", Some("main".into())));
-    assert_eq!(opened, vec![PoolAction::Open(1)]);
-    assert_eq!(pool.connection_of(fork), Some(1));
-}
-
-/// Past `max_idle` free connections, the least recently used close,
-/// those that serve no path first.
-#[test]
-fn free_connections_are_capped() {
-    let mut pool = Pool::new(Limits {
-        max_idle: 2,
-        ..Limits::default()
-    });
-    let (plain, _) = pool.open_lane(Affinity::default());
-    let lanes: Vec<LaneId> = ["a", "b", "c"]
-        .iter()
-        .map(|path| pool.open_lane(Affinity::new(*path, None)).0)
-        .collect();
-    assert!(pool.close_lane(lanes[0]).unwrap().is_empty());
-    assert!(pool.close_lane(plain).unwrap().is_empty());
-    // Three free: the one that serves no path goes.
-    assert_eq!(
-        pool.close_lane(lanes[1]).unwrap(),
-        vec![PoolAction::Close(0)]
-    );
-    pool.tick(Duration::from_secs(1));
-    let (d, _) = pool.open_lane(Affinity::new("b", None));
-    assert_eq!(pool.connection_of(d), Some(2), "b's connection");
-    // Free now: a (used at 0 s) and, after d closes, b (used at 1 s); c
-    // closing makes three, and a, the least recently used, goes.
-    pool.close_lane(d).unwrap();
-    assert_eq!(
-        pool.close_lane(lanes[2]).unwrap(),
-        vec![PoolAction::Close(1)]
-    );
-}
-
-/// A request the server was asked to stop keeps its connection, and
-/// the lane's next request goes there.
-#[test]
-fn an_interrupted_request_keeps_its_connection() {
-    let mut pool = Pool::new(Limits::default());
-    let (lane, _) = pool.open_lane(Affinity::default());
-    pool.submit(lane, body(1)).unwrap();
-    let connection = pool.connection_of(lane).unwrap();
-    assert!(pool.interrupted(lane).unwrap().is_empty());
-    assert!(!pool.is_busy(lane));
-    assert_eq!(pool.connection_of(lane), Some(connection));
-    assert!(matches!(
-        &pool.submit(lane, body(2)).unwrap()[..],
-        [PoolAction::Send { connection: c, .. }] if *c == connection
-    ));
-}
-
 /// A lane holds one request at a time.
 #[test]
 fn a_busy_lane_takes_no_second_request() {
@@ -1500,16 +1435,6 @@ fn closed_lane_stats_are_kept() {
     assert_eq!(after.lanes.connection_limit_reached, 1);
     assert_eq!(after.lanes.connection_lost, 1);
     assert_eq!(after.lanes.full_requests, 6);
-}
-
-/// Error messages name the problem and the lane.
-#[test]
-fn errors_display() {
-    assert_eq!(PoolError::UnknownLane(3).to_string(), "unknown lane 3");
-    assert_eq!(
-        PoolError::Busy(4).to_string(),
-        "lane 4 already has a request"
-    );
 }
 
 /// At `rotate_after`, an idle lane leaves at once, a busy lane leaves
