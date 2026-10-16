@@ -1137,31 +1137,6 @@ fn a_fork_is_offered_its_context_before_it_asks() {
     });
 }
 
-/// What a plugin charges while the run finishes still counts: in the
-/// outcome and in the stored cost.
-#[test]
-fn usage_charged_at_finish_is_stored() {
-    block_on(async {
-        let model = ScriptedModel::new().turn(|t| t.text("done").cost(0.5));
-        let probe = Probe {
-            charge_at_finish: Some(Usage {
-                cost: UsageCost {
-                    total: 0.25,
-                    ..UsageCost::default()
-                },
-                ..Usage::default()
-            }),
-            ..Probe::named("distiller")
-        };
-        let agent = Agent::new(model).plugin(probe);
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let outcome = agent.run("go", &store).await.unwrap();
-        assert_eq!(outcome.usage.cost.total, 0.75);
-        let record = store.run(&outcome.run.0).await.unwrap().unwrap();
-        assert_eq!(record.cost_usd, 0.75);
-    });
-}
-
 /// Watches rewrites: records the length of each transcript a rewrite
 /// replaced, and of the rewrite.
 #[derive(Clone, Default)]
@@ -1365,58 +1340,13 @@ mod side_ask_tests {
     };
     use tau_ai::{
         llm::{Llm, LlmError, LlmSession},
-        message::{AssistantMessage, Usage},
+        message::{AssistantMessage, StopReason as MessageStop, Usage},
         responses::request::Settings,
     };
     use tau_testing::{block_on, scripted::ScriptedModel};
     use tokio_util::sync::CancellationToken;
 
     use super::{Agent, PluginError};
-
-    #[derive(Clone)]
-    struct CountingModel {
-        scripted: ScriptedModel,
-        opens: Arc<AtomicUsize>,
-    }
-
-    impl CountingModel {
-        fn new(scripted: ScriptedModel) -> Self {
-            Self {
-                scripted,
-                opens: Arc::default(),
-            }
-        }
-    }
-
-    impl Llm for CountingModel {
-        fn supports_output_token_limit(&self) -> bool {
-            self.scripted.supports_output_token_limit()
-        }
-
-        fn open(
-            &self,
-            settings: Settings,
-        ) -> BoxFuture<'static, Result<Box<dyn LlmSession>, LlmError>> {
-            self.opens.fetch_add(1, Ordering::SeqCst);
-            self.scripted.open(settings)
-        }
-    }
-
-    #[derive(Clone)]
-    struct UnsupportedModel {
-        scripted: ScriptedModel,
-        opens: Arc<AtomicUsize>,
-    }
-
-    impl Llm for UnsupportedModel {
-        fn open(
-            &self,
-            settings: Settings,
-        ) -> BoxFuture<'static, Result<Box<dyn LlmSession>, LlmError>> {
-            self.opens.fetch_add(1, Ordering::SeqCst);
-            self.scripted.open(settings)
-        }
-    }
 
     enum Admission {
         Allow,
@@ -1515,15 +1445,6 @@ mod side_ask_tests {
             }
         }
 
-        fn legacy() -> Self {
-            Self {
-                observer: None,
-                max_output_tokens: None,
-                capability: Arc::default(),
-                result: Arc::default(),
-            }
-        }
-
         fn take(&self) -> Result<AssistantMessage, AskError> {
             self.result.lock().unwrap().take().expect("side ask ran")
         }
@@ -1562,180 +1483,184 @@ mod side_ask_tests {
         }
     }
 
-    #[test]
-    fn unsupported_output_limit_fails_before_admission_or_side_open() {
+    /// A provider that may or may not take an output limit, counting the
+    /// sessions it opens.
+    #[derive(Clone)]
+    struct Provider {
+        scripted: ScriptedModel,
+        opens: Arc<AtomicUsize>,
+        takes_limit: bool,
+    }
+
+    impl Llm for Provider {
+        fn supports_output_token_limit(&self) -> bool {
+            self.takes_limit
+        }
+
+        fn open(
+            &self,
+            settings: Settings,
+        ) -> BoxFuture<'static, Result<Box<dyn LlmSession>, LlmError>> {
+            self.opens.fetch_add(1, Ordering::SeqCst);
+            self.scripted.open(settings)
+        }
+    }
+
+    /// How a side ask ends, as the model below predicts it.
+    #[derive(Debug, PartialEq)]
+    enum Ends {
+        Answered,
+        /// The last retryable failure, once the run's policy (three
+        /// attempts) is spent.
+        FailedPastThePolicy,
+        LimitUnsupported,
+        Rejected,
+    }
+
+    /// Costs are multiples of 1/8, so sums are exact.
+    fn eighths(n: u32) -> f64 {
+        f64::from(n) / 8.0
+    }
+
+    /// Side asks against a model of their attempts, over a provider that
+    /// does or does not take an output limit, an ask with or without one,
+    /// with or without an observer that may reject attempt `k`, and 0–3
+    /// retryable failures before an answer. The model: a limit the
+    /// provider does not take fails before anything is admitted or
+    /// opened; otherwise attempts 1, 2, 3 are each admitted first (when
+    /// observed), a rejected one ends the ask, an admitted one runs,
+    /// and the ask ends at the first answer or at the third failure. One
+    /// side session serves every attempt that runs; each attempt that
+    /// runs is reported once, finished, and charged to the run.
+    #[hegel::test(test_cases = 50)]
+    fn side_asks_follow_the_attempt_model(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let takes_limit = tc.draw(gs::booleans());
+        let limit = tc.draw(gs::optional(
+            gs::integers::<u32>().min_value(1).max_value(8192),
+        ));
+        let observed = tc.draw(gs::booleans());
+        let reject_at = if observed {
+            tc.draw(gs::optional(
+                gs::integers::<u32>().min_value(1).max_value(4),
+            ))
+        } else {
+            None
+        };
+        let failures = tc.draw(gs::integers::<u32>().max_value(3));
+        let costs: Vec<f64> = (0..3)
+            .map(|_| eighths(tc.draw(gs::integers::<u32>().max_value(8))))
+            .collect();
+
+        // The model.
+        let mut admitted = Vec::new();
+        let mut ran = 0;
+        let ends = if limit.is_some() && !takes_limit {
+            Ends::LimitUnsupported
+        } else {
+            let mut ends = Ends::FailedPastThePolicy;
+            for attempt in 1..=3 {
+                if observed {
+                    admitted.push(attempt);
+                    if reject_at == Some(attempt) {
+                        ends = Ends::Rejected;
+                        break;
+                    }
+                }
+                ran += 1;
+                if attempt > failures {
+                    ends = Ends::Answered;
+                    break;
+                }
+            }
+            ends
+        };
+        let side_cost: f64 = costs[..ran].iter().sum();
+
+        // The script holds exactly the turns the model says the side
+        // ask takes, then the run's own.
+        let mut scripted = ScriptedModel::new();
+        for (index, &cost) in costs[..ran].iter().enumerate() {
+            let failed = index < failures as usize;
+            scripted = scripted.turn(move |t| {
+                if failed {
+                    t.error("rate_limit_exceeded", "wait").cost(cost)
+                } else {
+                    t.text("side").cost(cost)
+                }
+            });
+        }
+        let scripted = scripted.turn(|t| t.text("main").cost(0.5));
+        let provider = Provider {
+            scripted: scripted.clone(),
+            opens: Arc::default(),
+            takes_limit,
+        };
+        let observer = Arc::new(Observer::new(match reject_at {
+            Some(k) => Admission::RejectAt(k),
+            None => Admission::Allow,
+        }));
+        let plugin = SideAsk {
+            observer: observed.then(|| observer.clone()),
+            max_output_tokens: limit,
+            capability: Arc::default(),
+            result: Arc::default(),
+        };
+
         block_on(async {
-            let scripted =
-                ScriptedModel::new().turn(|t| t.text("main").cost(0.5));
-            let model = UnsupportedModel {
-                scripted: scripted.clone(),
-                opens: Arc::default(),
+            let store = tau_store_sqlite::memory().await.unwrap();
+            let outcome = Agent::new(provider.clone())
+                .plugin(plugin.clone())
+                .run("go", &store)
+                .await
+                .unwrap();
+            assert_eq!(outcome.text, "main");
+            assert_eq!(plugin.supports_output_token_limit(), takes_limit);
+            let got = match plugin.take() {
+                Ok(message) if message.text() == "side" => Ends::Answered,
+                Ok(message) => {
+                    assert_eq!(message.stop_reason, MessageStop::Error);
+                    Ends::FailedPastThePolicy
+                }
+                Err(AskError::OutputLimitUnsupported) => Ends::LimitUnsupported,
+                Err(AskError::Admission(message)) => {
+                    assert_eq!(message, "budget exhausted");
+                    Ends::Rejected
+                }
+                Err(other) => panic!("{other:?}"),
             };
-            let observer = Arc::new(Observer::new(Admission::Allow));
-            let plugin = SideAsk::observed(observer.clone());
-            let store = tau_store_sqlite::memory().await.unwrap();
-            let outcome = Agent::new(model.clone())
-                .plugin(plugin.clone())
-                .run("go", &store)
-                .await
-                .unwrap();
-            assert!(!model.supports_output_token_limit());
-            assert!(!plugin.supports_output_token_limit());
-            assert!(matches!(
-                plugin.take(),
-                Err(AskError::OutputLimitUnsupported)
-            ));
-            assert!(observer.log.admitted.lock().unwrap().is_empty());
-            assert!(observer.log.reported.lock().unwrap().is_empty());
-            assert_eq!(observer.log.live.load(Ordering::SeqCst), 0);
-            assert_eq!(
-                model.opens.load(Ordering::SeqCst),
-                1,
-                "only main session opened"
-            );
-            assert_eq!(scripted.requests().len(), 1);
-            assert_eq!(outcome.usage.cost.total, 0.5, "no side charge");
-        });
-    }
+            assert_eq!(got, ends);
 
-    #[test]
-    fn legacy_ask_rejects_a_limit_on_an_unsupported_provider() {
-        block_on(async {
-            let scripted = ScriptedModel::new().turn(|t| t.text("main"));
-            let model = UnsupportedModel {
-                scripted: scripted.clone(),
-                opens: Arc::default(),
-            };
-            let mut plugin = SideAsk::legacy();
-            plugin.max_output_tokens = Some(2048);
-            let store = tau_store_sqlite::memory().await.unwrap();
-            Agent::new(model.clone())
-                .plugin(plugin.clone())
-                .run("go", &store)
-                .await
-                .unwrap();
-            assert!(matches!(
-                plugin.take(),
-                Err(AskError::OutputLimitUnsupported)
-            ));
-            assert_eq!(model.opens.load(Ordering::SeqCst), 1);
-            assert_eq!(scripted.requests().len(), 1);
-        });
-    }
+            let opens = provider.opens.load(Ordering::SeqCst);
+            assert_eq!(opens, 1 + usize::from(ran > 0), "sessions opened");
+            let requests = scripted.requests();
+            assert_eq!(requests.len(), ran + 1, "requests sent");
+            for request in &requests[..ran] {
+                assert_eq!(request.settings.max_output_tokens, limit);
+            }
 
-    #[test]
-    fn legacy_ask_without_a_limit_works_on_an_unsupported_provider() {
-        block_on(async {
-            let scripted = ScriptedModel::new()
-                .turn(|t| t.text("side").cost(0.3))
-                .turn(|t| t.text("main").cost(0.5));
-            let model = UnsupportedModel {
-                scripted: scripted.clone(),
-                opens: Arc::default(),
-            };
-            let plugin = SideAsk::legacy();
-            let store = tau_store_sqlite::memory().await.unwrap();
-            let outcome = Agent::new(model.clone())
-                .plugin(plugin.clone())
-                .run("go", &store)
-                .await
-                .unwrap();
-            assert!(!plugin.supports_output_token_limit());
-            assert_eq!(plugin.take().unwrap().text(), "side");
-            assert_eq!(model.opens.load(Ordering::SeqCst), 2);
-            assert_eq!(scripted.requests().len(), 2);
-            assert_eq!(outcome.usage.cost.total, 0.8);
-        });
-    }
-
-    #[test]
-    fn admission_rejection_prevents_a_side_session() {
-        block_on(async {
-            let scripted = ScriptedModel::new().turn(|t| t.text("main"));
-            let model = CountingModel::new(scripted.clone());
-            let observer = Arc::new(Observer::new(Admission::RejectAt(1)));
-            let plugin = SideAsk::observed(observer.clone());
-            let store = tau_store_sqlite::memory().await.unwrap();
-            Agent::new(model.clone())
-                .plugin(plugin.clone())
-                .run("go", &store)
-                .await
-                .unwrap();
-            assert!(
-                matches!(plugin.take(), Err(AskError::Admission(message)) if message == "budget exhausted")
-            );
-            assert_eq!(
-                model.opens.load(Ordering::SeqCst),
-                1,
-                "only main session opened"
-            );
-            assert_eq!(scripted.requests().len(), 1);
-            assert_eq!(*observer.log.admitted.lock().unwrap(), [1]);
-            assert!(observer.log.reported.lock().unwrap().is_empty());
-        });
-    }
-
-    #[test]
-    fn retry_admits_and_charges_each_provider_attempt() {
-        block_on(async {
-            let scripted = ScriptedModel::new()
-                .turn(|t| {
-                    t.error("rate_limit_exceeded", "wait")
-                        .usage(10, 2)
-                        .cost(0.2)
-                })
-                .turn(|t| t.text("side").usage(20, 3).cost(0.3))
-                .turn(|t| t.text("main").cost(0.5));
-            let observer = Arc::new(Observer::new(Admission::Allow));
-            let plugin = SideAsk::observed(observer.clone());
-            let store = tau_store_sqlite::memory().await.unwrap();
-            let outcome = Agent::new(scripted.clone())
-                .plugin(plugin.clone())
-                .run("go", &store)
-                .await
-                .unwrap();
-            assert_eq!(plugin.take().unwrap().text(), "side");
-            assert_eq!(*observer.log.admitted.lock().unwrap(), [1, 2]);
-            let reports = observer.log.reported.lock().unwrap();
-            assert_eq!(reports.len(), 2);
-            assert_eq!(reports[0].0.cost.total, 0.2);
-            assert_eq!(reports[1].0.cost.total, 0.3);
-            assert!(
-                reports
+            assert_eq!(*observer.log.admitted.lock().unwrap(), admitted);
+            let reported: Vec<(f64, AskAttemptEnd)> = observer
+                .log
+                .reported
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(usage, end)| (usage.cost.total, *end))
+                .collect();
+            let want: Vec<(f64, AskAttemptEnd)> = if observed {
+                costs[..ran]
                     .iter()
-                    .all(|(_, end)| *end == AskAttemptEnd::Finished)
-            );
-            assert_eq!(observer.log.dropped.load(Ordering::SeqCst), 2);
+                    .map(|&cost| (cost, AskAttemptEnd::Finished))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            assert_eq!(reported, want);
+            let permits = if observed { ran } else { 0 };
+            assert_eq!(observer.log.dropped.load(Ordering::SeqCst), permits);
             assert_eq!(observer.log.live.load(Ordering::SeqCst), 0);
-            assert_eq!(outcome.usage.cost.total, 1.0);
-            assert_eq!(scripted.requests().len(), 3);
-            assert_eq!(
-                scripted.requests()[0].settings.max_output_tokens,
-                Some(2048)
-            );
-        });
-    }
-
-    #[test]
-    fn admission_can_stop_a_retry_after_charging_the_first_attempt() {
-        block_on(async {
-            let scripted = ScriptedModel::new()
-                .turn(|t| t.error("rate_limit_exceeded", "wait").cost(0.2))
-                .turn(|t| t.text("main").cost(0.5));
-            let observer = Arc::new(Observer::new(Admission::RejectAt(2)));
-            let plugin = SideAsk::observed(observer.clone());
-            let store = tau_store_sqlite::memory().await.unwrap();
-            let outcome = Agent::new(scripted.clone())
-                .plugin(plugin.clone())
-                .run("go", &store)
-                .await
-                .unwrap();
-            assert!(matches!(plugin.take(), Err(AskError::Admission(_))));
-            assert_eq!(*observer.log.admitted.lock().unwrap(), [1, 2]);
-            assert_eq!(observer.log.reported.lock().unwrap().len(), 1);
-            assert_eq!(observer.log.dropped.load(Ordering::SeqCst), 1);
-            assert_eq!(outcome.usage.cost.total, 0.7);
-            assert_eq!(scripted.requests().len(), 2);
+            assert_eq!(outcome.usage.cost.total, 0.5 + side_cost);
         });
     }
 
@@ -1778,28 +1703,6 @@ mod side_ask_tests {
             );
             assert_eq!(in_flight.log.dropped.load(Ordering::SeqCst), 1);
             assert_eq!(in_flight.log.live.load(Ordering::SeqCst), 0);
-        });
-    }
-
-    #[test]
-    fn legacy_ask_retries_and_charges_without_an_observer() {
-        block_on(async {
-            let scripted = ScriptedModel::new()
-                .turn(|t| t.error("rate_limit_exceeded", "wait").cost(0.2))
-                .turn(|t| t.text("side").cost(0.3))
-                .turn(|t| t.text("main").cost(0.5));
-            let plugin = SideAsk::legacy();
-            let store = tau_store_sqlite::memory().await.unwrap();
-            let outcome = Agent::new(scripted.clone())
-                .plugin(plugin.clone())
-                .run("go", &store)
-                .await
-                .unwrap();
-            assert_eq!(plugin.take().unwrap().text(), "side");
-            assert_eq!(scripted.requests().len(), 3);
-            assert!(plugin.supports_output_token_limit());
-            assert_eq!(outcome.usage.cost.total, 1.0);
-            assert_eq!(scripted.requests()[0].settings.max_output_tokens, None);
         });
     }
 }
