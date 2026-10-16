@@ -537,19 +537,23 @@ fn undo_undoes_the_last_operation() {
     );
 }
 
-/// Explicit acceptance stays scoped to the workspace, needs named paths,
-/// and is an idempotent no-op when the selected files are already resolved.
-/// (Its cancellation is `every_tool_cancelled_before_starting_does_nothing`.)
+/// Explicit acceptance needs named paths inside the workspace, refused
+/// as `vcs_restore` refuses them, and is a no-op when the selected files
+/// are already resolved. (Its cancellation is
+/// `every_tool_cancelled_before_starting_does_nothing`.)
 #[test]
-fn explicit_resolution_keeps_the_shared_path_and_cancellation_guards() {
+fn explicit_resolution_needs_paths_inside_and_resolves_nothing_resolved() {
     let repo = Repo::new();
-    for paths in [
-        json!([]),
-        json!(["../outside.txt"]),
-        json!(["/outside.txt"]),
-    ] {
-        assert!(repo.call("vcs_resolve", json!({"paths": paths})).is_err());
-    }
+    let err = repo
+        .call("vcs_resolve", json!({"paths": ["../outside.txt"]}))
+        .unwrap_err();
+    assert_eq!(err, "`../outside.txt` is not a path inside the repository");
+    let err = repo
+        .call("vcs_resolve", json!({"paths": ["/outside.txt"]}))
+        .unwrap_err();
+    assert_eq!(err, "`/outside.txt` is outside the repository");
+    let err = repo.call("vcs_resolve", json!({"paths": []})).unwrap_err();
+    assert!(err.starts_with("Name at least one path"), "{err}");
     let (_, details) = repo.ok("vcs_resolve", json!({"paths": ["."]}));
     assert_eq!(details["resolved"], json!([]));
 }

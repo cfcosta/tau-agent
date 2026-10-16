@@ -24,7 +24,10 @@ use tau_agent::{
     event::RunEvent,
     tool::{AgentTool, RunId, ToolCtx, ToolError, ToolOutput},
 };
-use tau_ai::responses::request::ReasoningEffort;
+use tau_ai::{
+    message::{InputBlock, Message},
+    responses::request::ReasoningEffort,
+};
 use tau_testing::scripted::{ScriptedModel, TurnBuilder};
 use tau_vcs_host::{
     Identity,
@@ -166,9 +169,24 @@ fn a_sub_agent_works_on_the_callers_code() {
             asked.contains("You are the sub-agent running this call"),
             "{asked}"
         );
-        // It read the caller's file: it worked on its code.
-        let read = format!("{:?}", child_llm.requests()[1].transcript);
-        assert!(read.contains("parent.txt\\n"), "{read}");
+        // It read the caller's file: it worked on its code. (Its whole
+        // transcript would not do: the caller's own write of the file
+        // came with the fork.)
+        let read = child_llm.requests()[1].transcript.last().cloned();
+        let Some(Message::ToolResult(read)) = read else {
+            panic!("{read:?} is no tool result")
+        };
+        assert_eq!(read.tool_name, "read");
+        assert!(!read.is_error, "{read:?}");
+        let text: Vec<&str> = read
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                InputBlock::Text(text) => Some(text.text.as_str()),
+                InputBlock::Image(_) => None,
+            })
+            .collect();
+        assert_eq!(text, ["parent.txt\n"]);
 
         // Its work waits on its stack, on the caller's commit; the caller
         // has none of it.
@@ -219,12 +237,14 @@ fn a_failed_sub_agent_is_dropped() {
 }
 
 /// Counts the calls running at once, and the most it saw. Each call
-/// waits until [`MAX_RUNNING`] run at once, or five seconds pass: the
-/// sub-agents' workspaces are made one at a time, under the repository's
-/// lock, so they reach the call at different times.
+/// waits until [`MAX_RUNNING`] have run at once: the sub-agents'
+/// workspaces are made one at a time, under the repository's lock, so
+/// they reach the call at different times, and only that many start.
 #[derive(Clone, Default)]
 struct Gauge {
     now: Arc<Mutex<(usize, usize)>>,
+    /// Told when the most reaches [`MAX_RUNNING`].
+    reached: Arc<tokio::sync::Notify>,
 }
 
 #[async_trait]
@@ -249,15 +269,26 @@ impl AgentTool for Gauge {
             let mut now = self.now.lock().unwrap();
             now.0 += 1;
             now.1 = now.1.max(now.0);
+            if now.1 >= MAX_RUNNING {
+                self.reached.notify_waiters();
+            }
         }
-        // Wait for the most to run at once, so they overlap however
-        // slowly they start; the calls past them never see that many.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while self.now.lock().unwrap().0 < MAX_RUNNING
-            && tokio::time::Instant::now() < deadline
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        // Wait for the most to have run at once, so they overlap however
+        // slowly they start. Registered before looking, so the news is
+        // not missed. The time limit only keeps a broken store from
+        // hanging the test: the most it saw then falls short and fails.
+        let wait = async {
+            loop {
+                let reached = self.reached.notified();
+                tokio::pin!(reached);
+                reached.as_mut().enable();
+                if self.now.lock().unwrap().1 >= MAX_RUNNING {
+                    break;
+                }
+                reached.await;
+            }
+        };
+        let _ = tokio::time::timeout(Duration::from_secs(120), wait).await;
         self.now.lock().unwrap().0 -= 1;
         Ok(ToolOutput::text("waited"))
     }
