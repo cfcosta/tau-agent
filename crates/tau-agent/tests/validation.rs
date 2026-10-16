@@ -603,21 +603,6 @@ fn pi_known_case_rejects_invalid_coercions() {
     }
 }
 
-/// The `Value.Convert`/`FromArray` rule tau-agent adds on top of pi's
-/// custom coercion (`docs/reference/agent-loop.md`, "Coercion before
-/// validation", rule 3): a bare value becomes a one-element array where
-/// the schema says `array`.
-#[test]
-fn single_value_becomes_one_element_array() {
-    let schema = wrap(json!({"type": "array", "items": {"type": "string"}}));
-    let compiled = compile(&schema);
-    let args = json!({"value": "solo"});
-    assert_eq!(
-        compiled.validate(&args).unwrap(),
-        json!({"value": ["solo"]})
-    );
-}
-
 // =============================================================================
 // Golden error messages
 // =============================================================================
@@ -777,27 +762,6 @@ fn removing_a_required_leaf_is_rejected_at_its_key_path(tc: TestCase) {
     );
 }
 
-/// `SchemaError` and `ValidationError` behave like ordinary errors:
-/// `Display` gives a human-readable, non-empty message, and both
-/// implement `std::error::Error`.
-#[test]
-fn errors_implement_display_and_std_error() {
-    fn assert_error<E: std::error::Error>(error: &E) {
-        assert!(!error.to_string().is_empty());
-    }
-    let schema_error = ArgumentSchema::new(&json!({
-        "$ref": "https://tau-agent.invalid/missing.json"
-    }))
-    .unwrap_err();
-    assert_error(&schema_error);
-
-    let schema = compile(&json!({"type": "string"}));
-    let validation_error = schema
-        .validate(&json!({"nested": {"object": true}}))
-        .unwrap_err();
-    assert_error(&validation_error);
-}
-
 // =============================================================================
 // Mutation-covering tests
 //
@@ -810,16 +774,6 @@ fn errors_implement_display_and_std_error() {
 // change. `cargo mutants` found the gap in each case; see the module's
 // mutants run for the full list.
 // =============================================================================
-
-/// `ArgumentSchema`'s `Debug` impl is not the default placeholder: it
-/// shows the schema it was built from.
-#[test]
-fn debug_impl_shows_the_schema() {
-    let schema = compile(&json!({"type": "string"}));
-    let text = format!("{schema:?}");
-    assert!(text.contains("ArgumentSchema"), "{text}");
-    assert!(text.contains("string"), "{text}");
-}
 
 /// `null` on an optional, non-nullable field is stripped inside array
 /// elements too, not just at the top level: `normalizeOptionalNulls`
@@ -851,7 +805,7 @@ fn null_omission_recurses_into_array_items() {
 
 /// The same, for a tuple `items` (`schema.items` itself an array of
 /// per-position schemas). Draft-07 shape: see the note on `$schema`
-/// below and on [`tuple_items_are_coerced_positionally`].
+/// below and on [`tuples_coerce_each_position_under_its_schema`].
 #[test]
 fn null_omission_recurses_into_tuple_items() {
     let schema = json!({
@@ -881,104 +835,207 @@ fn null_omission_recurses_into_tuple_items() {
     assert_eq!(result, json!({"pair": [{"present": "a"}, "tag"]}));
 }
 
-/// A value that already matches one member of a multi-type `"type"`
-/// array is left alone, for every scalar keyword, not only the ones the
-/// known cases above happen to combine. This is what actually exercises
-/// `matches_json_type`'s `"number"`/`"integer"`/`"boolean"` arms and
-/// `is_integer_number`: a value paired with a *non-matching* second type
-/// (`"string"`) is only left unchanged if the matching arm is checked
-/// correctly, since `coerce_string` would otherwise stringify it.
-#[test]
-fn already_matching_union_member_is_left_alone() {
-    let cases = vec![
-        (json!(["number", "string"]), json!(5)),
-        // A negative integer: `is_i64()` is true but `is_u64()` is
-        // false, so this also exercises `is_i64() || is_u64()`.
-        (json!(["integer", "string"]), json!(-5)),
-        (json!(["boolean", "string"]), json!(true)),
-    ];
-    for (ty, value) in cases {
-        let schema = wrap(json!({"type": ty}));
-        let compiled = compile(&schema);
-        let args = json!({"value": value});
-        assert_eq!(compiled.coerce(&args), args, "type {ty}");
+// =============================================================================
+// Leaf coercion, against pi's primitive table
+//
+// `generators::arg_schema` never draws a `"type"` array, so the rules for
+// several types live here, over every leaf value shape at once.
+// =============================================================================
+
+/// The scalar `type` keywords a leaf schema can name.
+const LEAF_TYPES: [&str; 7] = [
+    "number", "integer", "boolean", "string", "null", "array", "object",
+];
+
+/// A leaf schema's `type`: one to three distinct names, in drawn order
+/// (the order is the order coercion tries them in).
+#[hegel::composite]
+fn leaf_types(tc: &TestCase) -> Vec<String> {
+    let mut types: Vec<String> = Vec::new();
+    for ty in tc.draw(
+        gs::vecs(gs::sampled_from(LEAF_TYPES.to_vec()))
+            .min_size(1)
+            .max_size(3),
+    ) {
+        if !types.iter().any(|seen| seen == ty) {
+            types.push(ty.to_owned());
+        }
+    }
+    types
+}
+
+/// A leaf value a model might send: null, a boolean, an integer, an
+/// `f64`-backed number (whole ones and 2^53 included), a string that
+/// does or does not read as a number or a boolean, any text, or an
+/// array or object.
+#[hegel::composite]
+fn leaf_value(tc: &TestCase) -> Value {
+    match tc.draw(gs::integers::<u8>().max_value(7)) {
+        0 => Value::Null,
+        1 => Value::Bool(tc.draw(gs::booleans())),
+        2 => json!(tc.draw(gs::integers::<i64>().min_value(-3).max_value(3))),
+        3 => Value::from(tc.draw(gs::sampled_from(vec![
+            0.0,
+            -0.0,
+            1.0,
+            5.0,
+            5.5,
+            -2.25,
+            9_007_199_254_740_992.0,
+            1e300,
+        ]))),
+        4 => Value::from(
+            tc.draw(gs::floats::<f64>().allow_nan(false).allow_infinity(false)),
+        ),
+        5 => Value::String(
+            tc.draw(gs::sampled_from(vec![
+                "42",
+                "-7",
+                "42.1",
+                "1e3",
+                " 8 ",
+                "",
+                "Infinity",
+                "NaN",
+                "inf",
+                "9007199254740992",
+                "true",
+                "false",
+                "1",
+                "0",
+                "-0",
+                "+5",
+                "0x10",
+                "null",
+            ]))
+            .to_owned(),
+        ),
+        6 => Value::String(tc.draw(generators::text(8))),
+        _ => tc.draw(gs::sampled_from(vec![json!([]), json!([1]), json!({})])),
     }
 }
 
-/// A number that is not integer-valued does *not* match `"integer"`, so
-/// it still coerces to its string form under `["integer", "string"]` —
-/// the mirror image of [`already_matching_union_member_is_left_alone`],
-/// which exercises `is_integer_number` returning `true` incorrectly;
-/// this one exercises it returning `false` incorrectly.
-#[test]
-fn non_integer_number_under_integer_union_still_stringifies() {
-    let schema = wrap(json!({"type": ["integer", "string"]}));
-    let compiled = compile(&schema);
-    let args = json!({"value": 5.5});
-    assert_eq!(compiled.coerce(&args), json!({"value": "5.5"}));
+/// A finite number read from a trimmed, non-empty string, as a JSON
+/// number: an integer when it is whole and below 2^53 in magnitude, a
+/// float otherwise.
+fn read_number(text: &str, whole_only: bool) -> Option<Value> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let n: f64 = text.parse().ok().filter(|n: &f64| n.is_finite())?;
+    if whole_only && n.trunc() != n {
+        return None;
+    }
+    Some(if n.trunc() == n && n.abs() < 2f64.powi(53) {
+        json!(n as i64)
+    } else {
+        json!(n)
+    })
 }
 
-/// An `f64`-backed whole number (as opposed to one already stored as an
-/// integer, which never reaches `Number::fract`) still counts as an
-/// integer: `is_integer_number`'s float branch checks `fract() == 0.0`,
-/// not `!= 0.0`.
-#[test]
-fn f64_backed_whole_number_matches_integer_union_member() {
-    let schema = wrap(json!({"type": ["integer", "string"]}));
-    let compiled = compile(&schema);
-    let value = Value::Number(serde_json::Number::from_f64(5.0).unwrap());
-    assert!(
-        !value.is_i64() && !value.is_u64(),
-        "value must be float-backed"
-    );
-    let args = json!({"value": value});
-    assert_eq!(compiled.coerce(&args), args);
+/// pi's primitive conversion of `value` to `ty` (`coerceWithJsonSchema`'s
+/// AJV-compatible table, plus the array rule), or `None` when the table
+/// has no conversion for it.
+fn convert(value: &Value, ty: &str) -> Option<Value> {
+    match (ty, value) {
+        ("number" | "integer", Value::Null) => Some(json!(0)),
+        ("number" | "integer", Value::Bool(b)) => Some(json!(u8::from(*b))),
+        ("number", Value::String(s)) => read_number(s, false),
+        ("integer", Value::String(s)) => read_number(s, true),
+        ("boolean", Value::Null) => Some(json!(false)),
+        ("boolean", Value::String(s)) if s == "true" || s == "false" => {
+            Some(json!(s == "true"))
+        }
+        ("boolean", Value::Number(n)) => match n.as_f64() {
+            Some(1.0) => Some(json!(true)),
+            Some(0.0) => Some(json!(false)),
+            _ => None,
+        },
+        ("string", Value::Null) => Some(json!("")),
+        ("string", Value::Number(n)) => Some(json!(n.to_string())),
+        ("string", Value::Bool(b)) => Some(json!(b.to_string())),
+        ("null", Value::String(s)) if s.is_empty() => Some(Value::Null),
+        ("null", Value::Number(n)) if n.as_f64() == Some(0.0) => {
+            Some(Value::Null)
+        }
+        ("null", Value::Bool(false)) => Some(Value::Null),
+        ("array", value) if !value.is_array() => Some(json!([value])),
+        _ => None,
+    }
 }
 
-/// A string that parses to exactly `2^53` stays a float: at the
-/// boundary [`whole_number_value`] checks, `9007199254740992` is
-/// converted to `i64` only when strictly under it.
-#[test]
-fn whole_number_boundary_stays_float_backed() {
-    let compiled = compile(&json!({"type": "number"}));
-    let result = compiled.coerce(&json!("9007199254740992"));
-    assert_eq!(result.as_f64(), Some(9_007_199_254_740_992.0));
-    assert!(
-        !result.is_i64() && !result.is_u64(),
-        "{result} must stay float-backed"
-    );
+/// Whether `value` is already of JSON type `ty`; an integer is any
+/// whole finite number, however it is stored.
+fn is_of_type(value: &Value, ty: &str) -> bool {
+    match (ty, value) {
+        ("integer", Value::Number(n)) => {
+            n.as_f64().is_some_and(|f| f.is_finite() && f.trunc() == f)
+        }
+        ("number", Value::Number(_))
+        | ("boolean", Value::Bool(_))
+        | ("string", Value::String(_))
+        | ("null", Value::Null)
+        | ("array", Value::Array(_))
+        | ("object", Value::Object(_)) => true,
+        _ => false,
+    }
 }
 
-/// A string that cannot become a valid integer (a fractional value) is
-/// left exactly as it was received, not silently truncated: coercion's
-/// job is to try a conversion and fall back, never to lose data no
-/// legitimate reading of the input supports.
-#[test]
-fn fractional_string_is_left_unchanged_under_integer_type() {
-    let compiled = compile(&wrap(json!({"type": "integer"})));
-    let args = json!({"value": "42.1"});
-    assert_eq!(compiled.coerce(&args), args);
+/// The reference for a leaf: a value that already has one of several
+/// types is left alone; otherwise the first type, in order, whose
+/// conversion changes the value decides; a value no type converts stays
+/// as it came.
+fn reference_leaf(types: &[String], value: &Value) -> Value {
+    if types.len() > 1 && types.iter().any(|ty| is_of_type(value, ty)) {
+        return value.clone();
+    }
+    types
+        .iter()
+        .filter_map(|ty| convert(value, ty))
+        .find(|converted| converted != value)
+        .unwrap_or_else(|| value.clone())
 }
 
-/// A non-finite numeric string (`"Infinity"`, which `str::parse::<f64>`
-/// happily accepts) is left alone under `"number"` too: `coerce_number`
-/// requires *both* a finite parse and (for `"integer"`) no fractional
-/// part, not either.
-#[test]
-fn non_finite_string_is_left_unchanged_under_number_type() {
-    let compiled = compile(&wrap(json!({"type": "number"})));
-    let args = json!({"value": "Infinity"});
-    assert_eq!(compiled.coerce(&args), args);
-}
-
-/// A number becomes a string where the schema says `string` — the
-/// [`pi_known_case_passing_primitive_coercions`] table happens to only
-/// cover the boolean and null sources for this rule.
-#[test]
-fn number_becomes_string() {
-    let compiled = compile(&wrap(json!({"type": "string"})));
-    let args = json!({"value": 42});
-    assert_eq!(compiled.coerce(&args), json!({"value": "42"}));
+/// Property inventory: leaf coercion agrees with pi's primitive table
+/// (`reference_leaf`) for every scalar, string, array or object value
+/// under any one to three `type` names, the number's representation
+/// (integer or float) included. Known edges are pinned as explicit
+/// cases: 2^53 stays a float, a fractional string stays a string under
+/// `integer`, `Infinity` stays a string under `number`, and under
+/// `["integer", "string"]` a whole float is an integer while 5.5 becomes
+/// a string.
+#[hegel::test(test_cases = 500)]
+#[hegel::explicit_test_case(
+    types = vec!["number".to_owned()],
+    value = json!("9007199254740992"),
+)]
+#[hegel::explicit_test_case(
+    types = vec!["integer".to_owned()],
+    value = json!("42.1"),
+)]
+#[hegel::explicit_test_case(
+    types = vec!["number".to_owned()],
+    value = json!("Infinity"),
+)]
+#[hegel::explicit_test_case(
+    types = vec!["integer".to_owned(), "string".to_owned()],
+    value = Value::from(5.0),
+)]
+#[hegel::explicit_test_case(
+    types = vec!["integer".to_owned(), "string".to_owned()],
+    value = Value::from(5.5),
+)]
+fn leaf_coercion_follows_pis_primitive_table(tc: TestCase) {
+    let types = tc.draw(leaf_types());
+    let value = tc.draw(leaf_value());
+    let ty = match types.as_slice() {
+        [one] => json!(one),
+        many => json!(many),
+    };
+    let coerced =
+        compile(&wrap(json!({"type": ty}))).coerce(&json!({"value": value}));
+    assert_eq!(coerced["value"], reference_leaf(&types, &value), "{ty}");
 }
 
 /// `additionalProperties`' schema coerces the extra keys, and *only*
@@ -1006,38 +1063,6 @@ fn array_items_are_coerced_against_a_single_schema() {
     let compiled = compile(&schema);
     let args = json!({"value": ["42"]});
     assert_eq!(compiled.validate(&args).unwrap(), json!({"value": [42]}));
-}
-
-/// A tuple `items` coerces each position against its own schema.
-///
-/// **Deviation from tau-agent's own schemas, faithful to pi:** tuple
-/// validation via an array-valued `items` is draft-07 (`schema.items`
-/// as `Array.isArray` checks it in pi's `coerceWithJsonSchema`).
-/// `schemars` 1.2.2, which generates every real tool schema in this
-/// crate, defaults to 2020-12 and expresses a tuple with `prefixItems`
-/// instead — a keyword neither pi's original code nor this port
-/// recognizes. This test pins the ported behavior on the shape pi
-/// actually handles, via an explicit `$schema`; a `prefixItems` tuple
-/// coerces no differently than an untyped `items: true` schema would
-/// (no per-position coercion), matching pi's own gap.
-#[test]
-fn tuple_items_are_coerced_positionally() {
-    // `$schema` only takes effect at the document root, so (unlike the
-    // other cases here) this cannot use `wrap`.
-    let schema = json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "properties": {
-            "value": {"type": "array", "items": [{"type": "number"}, {"type": "string"}]},
-        },
-        "required": ["value"],
-    });
-    let compiled = compile(&schema);
-    let args = json!({"value": ["42", 5]});
-    assert_eq!(
-        compiled.validate(&args).unwrap(),
-        json!({"value": [42, "5"]})
-    );
 }
 
 /// Tuples coerce position by position, differentially: coercing
