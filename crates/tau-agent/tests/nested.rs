@@ -495,45 +495,30 @@ fn before_tool_blocks_a_nested_call() {
     });
 }
 
-/// Unknown names, `ModelOnly` tools and invalid arguments fail the
-/// nested call with the message the model would get; `Nested` tools
-/// are callable from tools and not declared, and the model cannot call
-/// them.
+/// A `Nested` tool is callable from a tool but unknown to the model: the
+/// model's own call to it fails as an unknown tool's would. (Who sees and
+/// calls what is runner's `exposure_decides_who_sees_and_calls_a_tool`;
+/// what nested calls return is `nested_calls_are_numbered_in_order`.)
 #[test]
-fn exposure_decides_what_a_tool_and_the_model_can_call() {
+fn the_model_cannot_call_a_nested_tool() {
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
                 t.tool_call(
                     "caller",
-                    json!({"calls": [
-                        {"name": "missing", "args": {}},
-                        {"name": "caller", "args": {"calls": []}},
-                        {"name": "hidden", "args": {"text": "nested"}},
-                        {"name": "hidden", "args": {}},
-                    ]}),
+                    json!({"calls": [{"name": "hidden", "args": {"text": "nested"}}]}),
                 )
                 .tool_call("hidden", json!({"text": "model"}))
             })
             .turn(|t| t.text("done"));
         let agent = Agent::new(llm.clone())
-            .tool(Caller {
-                exposure: Exposure::ModelOnly,
-                ..Caller::default()
-            })
+            .tool(Caller::default())
             .tool(Echo::new("hidden").exposure(Exposure::Nested));
         let run = agent.start("go", &store);
         let id = run.id();
         run.outcome().await.unwrap();
 
-        let declared: Vec<String> = llm.requests()[0]
-            .settings
-            .tools
-            .iter()
-            .map(|tool| tool.name.clone())
-            .collect();
-        assert_eq!(declared, ["caller"]);
         let transcript = stored(&store, &id.0).await;
         let results: Vec<_> = transcript
             .iter()
@@ -543,26 +528,7 @@ fn exposure_decides_what_a_tool_and_the_model_can_call() {
             })
             .collect();
         assert_eq!(results.len(), 2);
-        let first = results[0]
-            .content
-            .iter()
-            .filter_map(|block| match block {
-                InputBlock::Text(text) => Some(text.text.clone()),
-                InputBlock::Image(_) => None,
-            })
-            .collect::<String>();
-        let first: Value = serde_json::from_str(&first).unwrap();
-        assert_eq!(first[0], json!({"err": "Tool missing not found"}));
-        assert_eq!(
-            first[1],
-            json!({"err": "Tool caller cannot be called from a tool"})
-        );
-        assert_eq!(first[2]["ok"], "nested");
-        assert!(
-            first[3]["err"].as_str().unwrap().contains("text"),
-            "{first}"
-        );
-        // The model's call to the nested tool is unknown to it.
+        assert!(!results[0].is_error);
         assert!(results[1].is_error);
         assert!(matches!(
             &results[1].content[0],
@@ -806,7 +772,8 @@ fn a_sequential_tools_nested_calls_run_one_at_a_time() {
 }
 
 /// For any list of nested calls, made one after another or together,
-/// to tools that answer, fail or cannot be called: the calls are
+/// to tools that answer, fail, cannot be called or are called without a
+/// required argument: the calls are
 /// numbered `<parent>/1` to `<parent>/n` in the order they start, each
 /// starts and ends once under its parent, the caller gets each result
 /// in order, and the transcript holds only the outer call's result.
@@ -814,7 +781,7 @@ fn a_sequential_tools_nested_calls_run_one_at_a_time() {
 fn nested_calls_are_numbered_in_order(tc: hegel::TestCase) {
     let names: Vec<&str> = tc.draw(
         gs::vecs(gs::sampled_from(vec![
-            "echo", "hidden", "missing", "caller",
+            "echo", "hidden", "missing", "caller", "invalid",
         ]))
         .max_size(6),
     );
@@ -825,8 +792,11 @@ fn nested_calls_are_numbered_in_order(tc: hegel::TestCase) {
         let calls: Vec<Value> = names
             .iter()
             .enumerate()
-            .map(|(i, name)| {
-                json!({"name": name, "args": {"text": format!("{i}")}})
+            .map(|(i, name)| match *name {
+                // A call to a tool that exists, without its required
+                // argument.
+                "invalid" => json!({"name": "hidden", "args": {"ms": 1}}),
+                _ => json!({"name": name, "args": {"text": format!("{i}")}}),
             })
             .collect();
         let agent = Agent::new(script(json!({
@@ -876,6 +846,11 @@ fn nested_calls_are_numbered_in_order(tc: hegel::TestCase) {
                 "missing" => {
                     assert_eq!(result["err"], "Tool missing not found")
                 }
+                "invalid" => assert_eq!(
+                    result["err"],
+                    "Validation failed:\n  - text: \"text\" is a required \
+                     property\n\nReceived arguments:\n{\n  \"ms\": 1\n}"
+                ),
                 _ => assert_eq!(
                     result["err"],
                     "Tool caller cannot be called from a tool"
