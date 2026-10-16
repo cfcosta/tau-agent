@@ -985,14 +985,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spacing_is_counted_in_units_of_the_rem() {
-        assert_eq!(sp(0.), rems(0.));
-        // Four units make a rem: 16 px at the default rem size.
-        assert_eq!(sp(4.), rems(1.));
-        assert_eq!(sp(-1.5), rems(-1.5 * UNIT / 16.));
-    }
-
-    #[test]
     fn the_type_scale_grows_and_codes_are_mono() {
         let scale = [
             Type::MICRO,

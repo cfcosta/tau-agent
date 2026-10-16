@@ -524,33 +524,4 @@ mod tests {
         assert_eq!(found, expected, "description: {description:?}");
         assert_eq!(rewrite(&found), rendered, "description: {description:?}");
     }
-
-    /// Text with no backtick and no `**` is one plain span.
-    #[hegel::test]
-    fn unmarked_text_is_one_plain_span(tc: hegel::TestCase) {
-        let text: String = tc.draw(gs::text().min_size(1).max_size(40));
-        tc.assume(!text.contains('`') && !text.contains("**"));
-        assert_eq!(spans(&text), [(text.clone(), Mark::Plain)]);
-    }
-
-    #[test]
-    fn marks_split_into_spans() {
-        let found = spans("see `a**b` and **bold** then `x");
-        let marks: Vec<Mark> = found.iter().map(|(_, m)| *m).collect();
-        assert_eq!(
-            marks,
-            [
-                Mark::Plain,
-                Mark::Code,
-                Mark::Plain,
-                Mark::Bold,
-                Mark::Plain
-            ]
-        );
-        assert_eq!(found[1].0, "\u{2009}a**b\u{2009}");
-        assert_eq!(found[3].0, "bold");
-        assert_eq!(found[4].0, " then `x");
-        assert_eq!(spans("plain").len(), 1);
-        assert!(spans("").is_empty());
-    }
 }

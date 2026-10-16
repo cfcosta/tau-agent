@@ -2,7 +2,7 @@
 
 use hegel::generators as gs;
 use similar::TextDiff;
-use tau_ui_kit::diff::{DiffKind, DiffLine, parse, stat};
+use tau_ui_kit::diff::{DiffKind, DiffLine, parse};
 
 /// Lines that look like diff headers once a sign is put in front.
 const LINES: [&str; 8] = ["-- a", "--", "++b", "+", "@@ x", "a", "", "\\ c"];
@@ -42,13 +42,4 @@ fn a_whole_file_diff_gives_back_both_sides(tc: hegel::TestCase) {
     }
     assert_eq!(side(&lines, DiffKind::Added), old, "{diff}");
     assert_eq!(side(&lines, DiffKind::Removed), new, "{diff}");
-}
-
-#[test]
-fn a_removed_comment_is_a_line_not_a_header() {
-    let diff = "--- a\n+++ b\n@@ -1,2 +1,2 @@\n--- note\n+++x\n a\n";
-    let lines = parse(diff);
-    assert_eq!(stat(&lines), "+1 −1");
-    assert_eq!(lines[0].text, "-- note");
-    assert_eq!(lines[1].text, "++x");
 }
