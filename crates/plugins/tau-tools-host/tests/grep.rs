@@ -6,7 +6,7 @@ mod common;
 
 use hegel::{TestCase, generators as gs};
 use regex::RegexBuilder;
-use serde_json::json;
+use serde_json::{Value, json};
 use tau_agent::{
     error::ToolError,
     tool::{AgentTool, ToolCtx, ToolOutput},
@@ -70,85 +70,6 @@ file paths and line numbers. Respects .gitignore. Output is truncated to \
         schema["properties"]["ignoreCase"]["description"],
         json!("Case-insensitive search (default: false)")
     );
-}
-
-#[test]
-fn structured_context_records_keep_kind_and_order() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("context.txt");
-    std::fs::write(&file, "before\nneedle one\nbetween\nneedle two\nafter")
-        .unwrap();
-
-    let output = call_output(
-        &Root::new(dir.path()),
-        json!({"pattern": "needle", "context": 1}),
-    )
-    .unwrap();
-    let structured = structured_of(&output);
-    let lines = structured["lines"].as_array().unwrap();
-    let actual: Vec<_> = lines
-        .iter()
-        .map(|line| {
-            (
-                line["line"].as_u64().unwrap(),
-                line["kind"].as_str().unwrap(),
-                line["text"].as_str().unwrap(),
-            )
-        })
-        .collect();
-    assert_eq!(
-        actual,
-        [
-            (1, "before", "before"),
-            (2, "match", "needle one"),
-            (3, "after", "between"),
-            (4, "match", "needle two"),
-            (5, "after", "after"),
-        ]
-    );
-}
-
-#[test]
-fn structured_match_limit_distinguishes_exact_from_exceeded() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("limits.txt");
-    let root = Root::new(dir.path());
-
-    std::fs::write(&file, "needle\nneedle").unwrap();
-    let exact =
-        call_output(&root, json!({"pattern": "needle", "limit": 2})).unwrap();
-    let exact = structured_of(&exact);
-    assert_eq!(exact["match_count"], 2);
-    assert_eq!(exact["limit_reached"], false);
-    assert_eq!(exact["complete"], true);
-
-    std::fs::write(&file, "needle\nneedle\nneedle").unwrap();
-    let exceeded =
-        call_output(&root, json!({"pattern": "needle", "limit": 2})).unwrap();
-    let exceeded = structured_of(&exceeded);
-    assert_eq!(exceeded["match_count"], 2);
-    assert_eq!(exceeded["lines"].as_array().unwrap().len(), 2);
-    assert_eq!(exceeded["limit_reached"], true);
-    assert_eq!(exceeded["truncated"], true);
-    assert_eq!(exceeded["complete"], false);
-}
-
-#[test]
-fn structured_long_lines_keep_the_existing_500_character_cut() {
-    let dir = tempfile::tempdir().unwrap();
-    let line = format!("needle{}", "é".repeat(600));
-    std::fs::write(dir.path().join("long.txt"), &line).unwrap();
-    let output =
-        call_output(&Root::new(dir.path()), json!({"pattern": "needle"}))
-            .unwrap();
-    let structured = structured_of(&output);
-    let record = &structured["lines"][0];
-    let expected_prefix: String = line.chars().take(500).collect();
-    assert_eq!(record["text"], format!("{expected_prefix}... [truncated]"));
-    assert_eq!(record["truncated"], true);
-    assert_eq!(structured["lines_truncated"], true);
-    assert_eq!(structured["truncated"], true);
-    assert_eq!(structured["complete"], false);
 }
 
 #[test]
@@ -218,104 +139,16 @@ fn structured_paths_preserve_colons_newlines_and_unicode() {
     assert_eq!(text_of(&output), format!("{name}:1: needle"));
 }
 
-/// Property inventory: `literal_marker_records_match_naive_scan` uses a
-/// differential oracle (`str::contains`) to check match identity and
-/// path/line ordering independently of the grep crates. This matters
-/// because structured records must survive presentation formatting.
-///
-/// Generator plan: each valid line has at most two newline-free fragments
-/// on either side of an optional literal marker; at most 16 lines split
-/// over two fixed files. Hegel shrinks toward fewer lines and shorter
-/// fragments, without rejection. CI uses Hegel's `ci` profile
-/// (derandomized, database disabled); the per-property 50 cases are bounded
-/// for filesystem work, while suite-wide defaults belong in `hegel.toml`.
-#[hegel::composite]
-fn marker_lines(tc: &TestCase) -> Vec<String> {
-    let count = tc.draw(gs::integers::<usize>().max_value(16));
-    let mut lines = Vec::with_capacity(count);
-    for _ in 0..count {
-        let prefix: Vec<&str> = tc.draw(
-            gs::vecs(gs::sampled_from(vec!["a", "b", "雪", ":"])).max_size(2),
-        );
-        let has_marker = tc.draw(gs::booleans());
-        let suffix: Vec<&str> = tc.draw(
-            gs::vecs(gs::sampled_from(vec!["x", "y", "é", "."])).max_size(2),
-        );
-        lines.push(format!(
-            "{}{}{}",
-            prefix.concat(),
-            if has_marker { "needle" } else { "" },
-            suffix.concat()
-        ));
-    }
-    lines
-}
-
-#[hegel::test(test_cases = 50)]
-fn literal_marker_records_match_naive_scan(tc: TestCase) {
-    let lines = tc.draw(marker_lines());
-    let a_lines: Vec<&str> =
-        lines.iter().step_by(2).map(String::as_str).collect();
-    let b_lines: Vec<&str> = lines
-        .iter()
-        .skip(1)
-        .step_by(2)
-        .map(String::as_str)
-        .collect();
-    let contents =
-        [("a.txt", a_lines.join("\n")), ("b.txt", b_lines.join("\n"))];
-    let dir = tempfile::tempdir().unwrap();
-    for (name, content) in &contents {
-        std::fs::write(dir.path().join(name), content).unwrap();
-    }
-
-    let output = call_output(
-        &Root::new(dir.path()),
-        json!({"pattern": "needle", "literal": true}),
-    )
-    .unwrap();
-    common::assert_matches_output_schema(
-        &Grep::new(Root::new(dir.path())),
-        structured_of(&output),
-    );
-    let actual: Vec<_> = structured_of(&output)["lines"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|line| {
-            (
-                line["path"].as_str().unwrap().to_owned(),
-                line["line"].as_u64().unwrap(),
-                line["text"].as_str().unwrap().to_owned(),
-            )
-        })
-        .collect();
-    let mut expected = Vec::new();
-    for (path, content) in &contents {
-        for (index, line) in lines_of(content).into_iter().enumerate() {
-            if line.contains("needle") {
-                expected.push((
-                    (*path).to_owned(),
-                    index as u64 + 1,
-                    line.to_owned(),
-                ));
-            }
-        }
-    }
-    assert_eq!(actual, expected);
-    assert_eq!(structured_of(&output)["match_count"], expected.len());
-    assert_eq!(structured_of(&output)["complete"], true);
-}
-
 /// The pieces a generated line is built from: the search tokens in
 /// either case, the look-alike `NEEXLE` (matched by the regex `NEE.LE`
 /// but not by the literal), runs of `a`/`b` for `a+b`, a multi-byte
-/// letter in both cases, and U+2028, which pi's `rg --json` parsing
+/// letter in both cases, `:` and `雪` (a record's text is not cut at a
+/// colon or a wide letter), and U+2028, which pi's `rg --json` parsing
 /// drops the match line for (`grep.ts:169`) but a native scan must not
 /// (`docs/reference/tools.md`, "grep").
 const TOKENS: &[&str] = &[
     "NEEDLE", "needle", "NEE.LE", "nee.le", "NEEXLE", "a", "b", "ab", "aab",
-    "X", "é", "É", " ", "\t", "\u{2028}", "\u{2029}",
+    "X", "é", "É", ":", "雪", " ", "\t", "\u{2028}", "\u{2029}",
 ];
 
 /// The patterns searched for. Each is tried both as a regex and as a
@@ -517,7 +350,7 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
         (0..file_count).filter(|&i| kept(&names[i])).collect();
     order.sort_by_key(|&i| names[i].split('/').collect::<Vec<_>>());
 
-    let mut out_lines: Vec<String> = Vec::new();
+    let mut out_lines: Vec<(String, Value)> = Vec::new();
     let mut match_count = 0u32;
     let mut limit_reached = false;
     let mut lines_cut = false;
@@ -538,11 +371,23 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
         {
             tc.event("context windows merged");
         }
-        let mut push = |k: usize, sep: char, out: &mut Vec<String>| {
-            let (text, cut) = cut_line(lines[k]);
-            lines_cut |= cut;
-            out.push(format!("{}{sep}{}{sep} {text}", names[fi], k + 1));
-        };
+        // Each shown line: its display text and its structured record.
+        let mut push =
+            |k: usize, kind: &str, out: &mut Vec<(String, Value)>| {
+                let (text, cut) = cut_line(lines[k]);
+                lines_cut |= cut;
+                let sep = if kind == "match" { ':' } else { '-' };
+                out.push((
+                    format!("{}{sep}{}{sep} {text}", names[fi], k + 1),
+                    json!({
+                        "path": names[fi],
+                        "line": k + 1,
+                        "text": text,
+                        "kind": kind,
+                        "truncated": cut,
+                    }),
+                ));
+            };
         let mut pending = Vec::new();
         for (k, kind) in shown {
             match kind {
@@ -554,21 +399,35 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
                     }
                     match_count += 1;
                     for before in pending.drain(..) {
-                        push(before, '-', &mut out_lines);
+                        push(before, "before", &mut out_lines);
                     }
-                    push(k, ':', &mut out_lines);
+                    push(k, "match", &mut out_lines);
                 }
-                Shown::After => push(k, '-', &mut out_lines),
+                Shown::After => push(k, "after", &mut out_lines),
             }
         }
     }
 
+    // The structured result: every record whose display line is shown
+    // whole (the byte cut ends at a line), and what was cut and why.
+    let mut bytes_cut = false;
+    let mut records: Vec<Value> = Vec::new();
     let expected = if match_count == 0 {
         "No matches found".to_owned()
     } else {
-        let raw = out_lines.join("\n");
+        let raw = out_lines
+            .iter()
+            .map(|(display, _)| display.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         let truncation = truncate_head(&raw, usize::MAX, MAX_BYTES);
         let truncated = truncation.truncated();
+        bytes_cut = truncated;
+        records = out_lines
+            .iter()
+            .take(truncation.output_lines)
+            .map(|(_, record)| record.clone())
+            .collect();
         let mut text = truncation.content;
         let mut notices = Vec::new();
         if limit_reached {
@@ -599,6 +458,15 @@ fn grep_matches_a_naive_scan(tc: TestCase) {
         actual, expected,
         "pattern = {pattern:?}, literal = {literal}, context = {context}, limit = {limit}"
     );
+    let structured = structured_of(&output);
+    assert_eq!(structured["lines"], json!(records));
+    assert_eq!(structured["match_count"], match_count);
+    assert_eq!(structured["limit_reached"], limit_reached);
+    assert_eq!(structured["bytes_truncated"], bytes_cut);
+    assert_eq!(structured["lines_truncated"], lines_cut);
+    let cut = limit_reached || bytes_cut || lines_cut;
+    assert_eq!(structured["truncated"], cut);
+    assert_eq!(structured["complete"], !cut);
 }
 
 /// A single file passed as `path` is searched directly, and reported
@@ -617,7 +485,7 @@ fn single_file_path_reports_its_own_name() {
         json!({"pattern": "match", "path": file.to_string_lossy()}),
     )
     .unwrap();
-    assert!(output.contains("example.txt:2: match line"), "{output}");
+    assert_eq!(output, "example.txt:2: match line");
 }
 
 /// A path that does not exist is an error, not an empty result.
