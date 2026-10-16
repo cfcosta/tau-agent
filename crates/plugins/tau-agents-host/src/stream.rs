@@ -483,6 +483,8 @@ async fn open_websocket(
 
 #[cfg(test)]
 mod tests {
+    use hegel::generators as gs;
+
     use super::*;
 
     fn frames(reads: Vec<Read>) -> Vec<Value> {
@@ -581,16 +583,40 @@ mod tests {
         assert_eq!(at(40, 1.0), 300.0);
     }
 
-    #[test]
-    fn a_stream_remembers_the_last_thousand_ids() {
+    /// A stream fires an event only when its id is not among the last
+    /// [`RECENT`] it fired, so a repeat fires nothing and an id it let go
+    /// fires again. Model: the ids fired, as a queue, oldest first. The
+    /// stream may start with the queue nearly full of earlier ids, the
+    /// oldest of which (`f0`, `f1`) a few new ids push out.
+    #[hegel::test(test_cases = 100)]
+    fn a_stream_fires_an_id_it_has_not_fired_lately(tc: hegel::TestCase) {
+        let fill = tc.draw(hegel::one_of!(
+            gs::integers::<usize>().max_value(8),
+            gs::integers::<usize>()
+                .min_value(RECENT - 8)
+                .max_value(RECENT),
+        ));
+        let ids: Vec<&str> = tc.draw(
+            gs::vecs(gs::sampled_from(vec!["a", "b", "c", "f0", "f1"]))
+                .max_size(20),
+        );
         let mut streamed = Streamed::new(TriggerKind::Message);
-        assert!(streamed.fresh("a"));
-        assert!(!streamed.fresh("a"));
-        for n in 0..RECENT {
-            streamed.fresh(&n.to_string());
+        let mut fired: VecDeque<String> = VecDeque::new();
+        let earlier = (0..fill).map(|n| format!("f{n}"));
+        let ids = earlier.chain(ids.into_iter().map(str::to_owned));
+        for (at, id) in ids.enumerate() {
+            let fresh = !fired.contains(&id);
+            if fresh {
+                fired.push_back(id.clone());
+                if fired.len() > RECENT {
+                    fired.pop_front();
+                }
+                if at >= fill && id.starts_with('f') && fill > 8 {
+                    tc.event("an id let go fires again");
+                }
+            }
+            assert_eq!(streamed.fresh(&id), fresh, "{id}");
+            assert_eq!(streamed.recent, fired);
         }
-        assert_eq!(streamed.recent.len(), RECENT);
-        // `a` was let go: seen again, it is new.
-        assert!(streamed.fresh("a"));
     }
 }

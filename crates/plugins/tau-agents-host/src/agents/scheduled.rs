@@ -269,16 +269,43 @@ impl Agents {
 
 #[cfg(test)]
 mod tests {
+    use hegel::generators as gs;
+
     use super::*;
 
-    #[test]
-    fn names_are_short_and_plain() {
-        assert!(valid_name("check-pr-412"));
-        assert!(valid_name("morning_digest"));
-        assert!(!valid_name(""));
-        assert!(!valid_name("412"));
-        assert!(!valid_name("Check"));
-        assert!(!valid_name("check pr"));
-        assert!(!valid_name(&"a".repeat(41)));
+    /// What a scheduled event's name must be: one to forty characters of
+    /// lower-case ASCII letters, digits, dashes and underscores, starting
+    /// with a letter, as a regular expression. Lengths reach both ends of
+    /// the range and one past each; names are drawn in the rule's
+    /// alphabet, valid but for their length, or from a wider one with
+    /// capitals, spaces, slashes and `é`.
+    #[hegel::test(test_cases = 500)]
+    fn a_name_is_short_and_plain(tc: hegel::TestCase) {
+        let rule = regex::Regex::new(r"\A[a-z][a-z0-9_-]{0,39}\z").unwrap();
+        let length = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0usize, 1, 2, 39, 40, 41]),
+            gs::integers::<usize>().max_value(42),
+        ));
+        let name: String = if length > 0 && tc.draw(gs::booleans()) {
+            let first: String =
+                tc.draw(gs::text().alphabet("abcxyz").min_size(1).max_size(1));
+            let rest: String = tc.draw(
+                gs::text()
+                    .alphabet("abcxyz019-_")
+                    .min_size(length - 1)
+                    .max_size(length - 1),
+            );
+            first + &rest
+        } else {
+            tc.draw(
+                gs::text()
+                    .alphabet("abcxyzAZ019-_ /é")
+                    .min_size(length)
+                    .max_size(length),
+            )
+        };
+        let valid = rule.is_match(&name);
+        tc.event(if valid { "valid" } else { "invalid" });
+        assert_eq!(valid_name(&name), valid, "{name:?}");
     }
 }

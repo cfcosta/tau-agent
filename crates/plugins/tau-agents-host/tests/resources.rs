@@ -406,20 +406,6 @@ async fn a_watch_that_ends_watches_again_and_reads() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_server_that_cannot_subscribe_says_so() {
-    let f = Fixture::new(Server::new(false)).await;
-    f.until("it says why", || async {
-        f.trigger().await.unwrap().error.is_some()
-    })
-    .await;
-    let trigger = f.trigger().await.unwrap();
-    assert_eq!(trigger.live, Some(false));
-    assert!(trigger.error.unwrap().contains("poll"));
-    assert!(f.heard().is_empty());
-    f.agents.close_watches().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_new_version_without_the_trigger_stops_watching() {
     let server = Server::new(true);
     let f = Fixture::new(server.clone()).await;
@@ -448,8 +434,9 @@ async fn a_new_version_without_the_trigger_stops_watching() {
     assert_eq!(f.trigger().await, None);
 }
 
-/// A server that could not subscribe is tried again as soon as its
-/// connection changes, not only after the longest wait.
+/// A server that cannot subscribe says so on the agent's page and fires
+/// nothing; it is tried again as soon as its connection changes, not only
+/// after the longest wait.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_server_that_could_not_subscribe_is_tried_again_when_it_changes() {
     let server = Server::new(false);
@@ -468,6 +455,12 @@ async fn a_server_that_could_not_subscribe_is_tried_again_when_it_changes() {
         f.trigger().await.unwrap().error.is_some()
     })
     .await;
+    // It is not watching, says a poll can read it instead, and hears
+    // nothing.
+    let trigger = f.trigger().await.unwrap();
+    assert_eq!(trigger.live, Some(false));
+    assert!(trigger.error.unwrap().contains("poll"));
+    assert!(f.heard().is_empty());
     // It learns to, and its connection says so.
     server.subscribes.store(true, Ordering::SeqCst);
     server.reconnected.notify_one();

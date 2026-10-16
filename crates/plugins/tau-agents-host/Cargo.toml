@@ -45,6 +45,8 @@ tokio-util.workspace = true
 tau-schedule.workspace = true
 
 [dev-dependencies]
+hegeltest.workspace = true
+regex.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = [

@@ -1,10 +1,10 @@
 //! The agents' shared types: the event message an agent reads and its
-//! card reads back, names, and what an agent starts with.
+//! card reads back, and names. What an agent starts with is checked
+//! where it shows: its first turns and its cap, in `tau-agents-host`.
 
 use hegel::generators::{self as gs, Generator as _};
 use serde_json::{Value, json};
 use tau_agents::{
-    Settings,
     event::{Batch, Event, INLINE_DATA, Kind, Message, clock},
     valid_name,
 };
@@ -133,39 +133,38 @@ fn other_text_is_not_an_event_message() {
     }
 }
 
-#[test]
-fn names_are_lower_case_words_with_dashes() {
-    for name in ["triage", "pr-triage", "ci2", "a"] {
-        assert!(valid_name(name), "{name}");
-    }
-    let long = "a".repeat(41);
-    for name in ["", "Triage", "2fast", "-x", "a b", "a/b", "a_b", "é", &long]
-    {
-        assert!(!valid_name(name), "{name}");
-    }
-}
-
-/// A new agent runs on the plan's newest small model, at low effort, may
-/// spend a dollar a day and gathers events for half a minute.
-#[test]
-fn an_agent_starts_small_and_cheap() {
-    let settings: Settings = serde_json::from_str("{}").unwrap();
-    assert_eq!(settings, Settings::default());
-    assert_eq!(settings.daily_cap, 1.0);
-    assert_eq!(settings.window_secs, 30);
-    assert_eq!(settings.effort(), "low");
-    assert!(settings.model().contains("luna"), "{}", settings.model());
-}
-
-/// What the person allows on top of the cap is for the day they allowed
-/// it.
-#[test]
-fn more_allowed_is_for_its_day_only() {
-    let settings = Settings {
-        extra_today: 2.5,
-        extra_day: Some("2026-10-11".into()),
-        ..Settings::default()
+/// What an agent's name must be (ADR 0037): one to forty characters of
+/// lower-case ASCII letters, digits and dashes, starting with a letter.
+/// The oracle is that rule as a regular expression. Lengths reach both
+/// ends of the range and one past each; names are drawn in the rule's
+/// alphabet, valid but for their length, or from a wider one with
+/// capitals, underscores, spaces, slashes and `é`.
+#[hegel::test(test_cases = 500)]
+fn a_name_is_lower_case_words_with_dashes(tc: hegel::TestCase) {
+    let rule = regex::Regex::new(r"\A[a-z][a-z0-9-]{0,39}\z").unwrap();
+    let length = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![0usize, 1, 2, 39, 40, 41]),
+        gs::integers::<usize>().max_value(42),
+    ));
+    let name: String = if length > 0 && tc.draw(gs::booleans()) {
+        let first: String =
+            tc.draw(gs::text().alphabet("abcxyz").min_size(1).max_size(1));
+        let rest: String = tc.draw(
+            gs::text()
+                .alphabet("abcxyz019-")
+                .min_size(length - 1)
+                .max_size(length - 1),
+        );
+        first + &rest
+    } else {
+        tc.draw(
+            gs::text()
+                .alphabet("abcxyzAZ019-_ /é")
+                .min_size(length)
+                .max_size(length),
+        )
     };
-    assert_eq!(settings.cap_on("2026-10-11"), 3.5);
-    assert_eq!(settings.cap_on("2026-10-12"), 1.0);
+    let valid = rule.is_match(&name);
+    tc.event(if valid { "valid" } else { "invalid" });
+    assert_eq!(valid_name(&name), valid, "{name:?}");
 }

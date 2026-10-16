@@ -23,4 +23,5 @@ tau-ui-plugin.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true
+regex.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }

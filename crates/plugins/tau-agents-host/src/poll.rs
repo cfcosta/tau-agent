@@ -177,6 +177,8 @@ pub fn items(found: Value) -> Result<Vec<(String, Value)>, String> {
 
 #[cfg(test)]
 mod tests {
+    use hegel::generators as gs;
+
     use super::*;
 
     fn poll() -> Polled {
@@ -205,31 +207,72 @@ mod tests {
         assert!(every("soon").unwrap_err().contains("not a duration"));
     }
 
-    #[test]
-    fn the_first_poll_records_and_the_next_fire_what_is_new() {
+    /// A poll's first result only records its keys; each later one fires,
+    /// in order, the items whose key it does not hold, once each, and it
+    /// holds the last [`KEYS`] keys it saw, so a key it let go fires
+    /// again. Every result sets the next poll an interval on. Model: the
+    /// keys held, as a queue, oldest first. The first result may fill the
+    /// queue nearly to its bound, so later ones push keys out.
+    #[hegel::test(test_cases = 100)]
+    fn a_poll_fires_each_key_it_does_not_hold_once(tc: hegel::TestCase) {
+        let fill = tc.draw(hegel::one_of!(
+            gs::integers::<usize>().max_value(8),
+            gs::integers::<usize>().min_value(KEYS - 8).max_value(KEYS),
+        ));
+        let results: Vec<Vec<&str>> = tc.draw(
+            gs::vecs(
+                // `f0` and `f1` are the oldest of the first result's
+                // fillers: the first to be let go.
+                gs::vecs(gs::sampled_from(vec!["a", "b", "c", "f0", "f1"]))
+                    .max_size(6),
+            )
+            .min_size(1)
+            .max_size(5),
+        );
+        let fillers: Vec<String> = (0..fill).map(|n| format!("f{n}")).collect();
         let mut polled = poll();
-        assert!(polled.found("r", keyed(&["a", "b"]), 600, 10).is_empty());
-        assert_eq!(polled.next, 610);
-        let events = polled.found("r", keyed(&["a", "b", "c", "c"]), 600, 20);
-        let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, ["r:c"]);
-        assert_eq!(events[0].kind, Kind::Poll);
-        assert_eq!(events[0].data, json!({ "id": "c" }));
-        assert!(polled.found("r", keyed(&["c"]), 600, 30).is_empty());
-    }
-
-    #[test]
-    fn a_poll_keeps_the_last_ten_thousand_keys() {
-        let mut polled = poll();
-        let first: Vec<String> = (0..KEYS + 5).map(|n| n.to_string()).collect();
-        let refs: Vec<&str> = first.iter().map(String::as_str).collect();
-        polled.found("r", keyed(&refs), 600, 0);
-        assert_eq!(polled.seen.len(), KEYS);
-        assert_eq!(polled.seen.front().map(String::as_str), Some("5"));
-        // The oldest were let go: seen again, they are new.
-        let again = polled.found("r", keyed(&["0", "9"]), 600, 1);
-        assert_eq!(again.len(), 1);
-        assert_eq!(again[0].id, "r:0");
+        let mut held: VecDeque<String> = VecDeque::new();
+        for (n, result) in results.iter().enumerate() {
+            let mut keys: Vec<&str> = result.clone();
+            if n == 0 {
+                keys.splice(0..0, fillers.iter().map(String::as_str));
+            }
+            let now = 1_000 * n as i64;
+            let events = polled.found("r", keyed(&keys), 600, now);
+            let mut fired = Vec::new();
+            if n == 0 {
+                // Distinct, and the first held: each is new.
+                held.extend(fillers.iter().cloned());
+            }
+            for key in result {
+                if held.iter().any(|kept| kept.as_str() == *key) {
+                    continue;
+                }
+                held.push_back((*key).to_owned());
+                if n > 0 {
+                    fired.push(*key);
+                }
+            }
+            while held.len() > KEYS {
+                held.pop_front();
+            }
+            if fill > 8 && fired.iter().any(|key| key.starts_with('f')) {
+                tc.event("a key let go fires again");
+            }
+            let ids: Vec<String> =
+                fired.iter().map(|key| format!("r:{key}")).collect();
+            assert_eq!(
+                events.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+                ids
+            );
+            for (event, key) in events.iter().zip(&fired) {
+                assert_eq!(event.kind, Kind::Poll);
+                assert_eq!(event.at, now);
+                assert_eq!(event.data, json!({ "id": key }));
+            }
+            assert_eq!(polled.seen, held);
+            assert_eq!(polled.next, now + 600);
+        }
     }
 
     #[test]

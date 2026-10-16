@@ -45,30 +45,44 @@ fn agent(name: &str, triggers: Vec<Trigger>) -> Agent {
     }
 }
 
-#[test]
-fn times_are_said_from_now() {
-    assert_eq!(relative(1000, 1000), "now");
-    assert_eq!(relative(1000 + 360, 1000), "in 6m");
-    assert_eq!(relative(1000 - 240, 1000), "4m ago");
-    assert_eq!(relative(1000 + 7200, 1000), "in 2h");
-    assert_eq!(relative(1000 - 3 * 86_400, 1000), "3d ago");
+/// The unit a time is said in, independently of how `relative` picks it:
+/// the largest of days, hours and minutes that fits the gap, counted
+/// whole; under a minute either way is now.
+fn said(gap: i64) -> String {
+    let far = gap.unsigned_abs();
+    if far < 60 {
+        return "now".to_owned();
+    }
+    let (count, unit) = [(86_400, "d"), (3_600, "h"), (60, "m")]
+        .into_iter()
+        .find(|(seconds, _)| far >= *seconds)
+        .map(|(seconds, unit)| (far / seconds, unit))
+        .unwrap();
+    if gap > 0 {
+        format!("in {count}{unit}")
+    } else {
+        format!("{count}{unit} ago")
+    }
 }
 
-#[hegel::test]
-fn a_time_reads_as_future_or_past_by_its_side_of_now(tc: hegel::TestCase) {
+/// A time is said from now, in the largest whole unit its distance fits,
+/// as ahead or behind (the agents page's times). Gaps reach every unit's
+/// edges on both sides of now.
+#[hegel::test(test_cases = 500)]
+fn a_time_is_said_from_now_in_its_largest_whole_unit(tc: hegel::TestCase) {
     let now: i64 =
         tc.draw(gs::integers::<i64>().min_value(0).max_value(1 << 40));
-    let gap: i64 = tc.draw(
+    let edges: Vec<i64> = [0, 59, 60, 3_599, 3_600, 86_399, 86_400]
+        .into_iter()
+        .flat_map(|gap| [gap, -gap])
+        .collect();
+    let gap: i64 = tc.draw(hegel::one_of!(
+        gs::sampled_from(edges),
         gs::integers::<i64>()
             .min_value(-(1 << 30))
             .max_value(1 << 30),
-    );
-    let said = relative(now + gap, now);
-    match gap {
-        -59..=59 => assert_eq!(said, "now"),
-        60.. => assert!(said.starts_with("in "), "{said}"),
-        _ => assert!(said.ends_with(" ago"), "{said}"),
-    }
+    ));
+    assert_eq!(relative(now + gap, now), said(gap), "gap {gap}");
 }
 
 #[test]
