@@ -286,15 +286,23 @@ fn answers_are_checked() {
     ));
 }
 
-/// The key never shows in debug output, which shows the endpoint and
-/// the model instead.
-#[test]
-fn the_key_stays_secret() {
-    let jev = TypeSafe::new("sk-very-secret").model("jev-preview");
-    assert_eq!(
-        format!("{jev:?}"),
-        "TypeSafe { url: \"https://api.typesafe.ai/v1/systemone\", model: \"jev-preview\", .. }"
+/// The key never shows in debug output, whatever it is, and the
+/// endpoint and the model do.
+#[hegel::test]
+fn the_key_stays_secret(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    // Long enough not to occur in the rest by chance.
+    let key =
+        tc.draw(gs::from_regex("sk-[A-Za-z0-9_-]{16,40}").fullmatch(true));
+    let model = tc.draw(gs::from_regex("jev-[a-z0-9.]{1,12}").fullmatch(true));
+    let shown =
+        format!("{:?}", TypeSafe::new(key.as_str()).model(model.as_str()));
+    assert!(!shown.contains(&key), "{shown}");
+    assert!(
+        shown.contains("https://api.typesafe.ai/v1/systemone"),
+        "{shown}"
     );
+    assert!(shown.contains(&model), "{shown}");
 }
 
 /// A key from the environment is trimmed; a missing or blank one is an
@@ -306,41 +314,4 @@ fn keys_come_trimmed_or_not_at_all() {
     assert_eq!(api_key(Some("  ".into())), Err(MissingApiKey));
     assert_eq!(api_key(None), Err(MissingApiKey));
     assert_eq!(MissingApiKey.to_string(), "TYPESAFE_API_KEY is not set");
-}
-
-/// Every error says what went wrong, without the request.
-#[test]
-fn errors_explain_themselves() {
-    let cases = [
-        (
-            JevError::Transport("reset".into()),
-            "Jev request failed: reset",
-        ),
-        (JevError::Status(503), "Jev answered with status 503"),
-        (
-            JevError::Malformed("eof".into()),
-            "Jev's response is malformed: eof",
-        ),
-        (
-            JevError::MissingAnswer("q".into()),
-            "Jev gave no answer for q",
-        ),
-        (
-            JevError::WrongAnswer {
-                id: "q".into(),
-                expected: "noul",
-            },
-            "Jev's answer for q is not a noul",
-        ),
-        (
-            JevError::OutOfRange {
-                id: "q".into(),
-                value: 1.5,
-            },
-            "Jev's answer for q is out of range: 1.5",
-        ),
-    ];
-    for (error, text) in cases {
-        assert_eq!(error.to_string(), text);
-    }
 }

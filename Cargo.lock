@@ -9734,6 +9734,7 @@ name = "tau-jev"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "hegeltest",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
