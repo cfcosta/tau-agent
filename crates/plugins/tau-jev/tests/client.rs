@@ -255,34 +255,100 @@ fn malformed_responses_are_errors() {
     });
 }
 
-/// Answers are checked when read: a missing one, one of the wrong kind,
-/// or a probability outside `[0, 1]` is an error.
-#[test]
-fn answers_are_checked() {
-    let response: tau_jev::Response = serde_json::from_value(json!({
-        "model": "jev-1.13.0",
-        "answers": {
-            "high": {"type": "noul", "noul": 1.2},
-            "team": {"type": "choice", "choice": "a", "probabilities": {"a": 1.0}, "confidence": 1.0},
-        },
-        "usage": {"input_tokens": 1},
-    }))
-    .unwrap();
+/// A probability as Jev may send one: at and just past either end of
+/// `[0, 1]`, inside, outside, or not a number.
+fn probability() -> impl hegel::generators::PrintableGenerator<f64> {
+    use hegel::generators as gs;
+    hegel::one_of!(
+        gs::sampled_from(vec![
+            0.0,
+            -0.0,
+            1.0,
+            0.0_f64.next_down(),
+            1.0_f64.next_up(),
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ]),
+        gs::floats::<f64>().min_value(0.0).max_value(1.0),
+        gs::floats::<f64>().min_value(-2.0).max_value(3.0),
+    )
+}
+
+/// Answers are checked when read: a Noul's probability, and a choice's
+/// or a score's confidence, reads back when it is from 0 to 1 and is
+/// out of range otherwise; an answer of another kind, or none, is an
+/// error.
+#[hegel::test(test_cases = 300)]
+fn answers_are_read_only_within_range(tc: hegel::TestCase) {
+    use std::collections::BTreeMap;
+
+    use tau_jev::Answer;
+    let value = tc.draw(probability());
+    // NaN clamps to itself and equals nothing, so it is not within.
+    let within = value.clamp(0.0, 1.0) == value;
+    let answers = BTreeMap::from([
+        ("noul".to_owned(), Answer::Noul { noul: value }),
+        (
+            "choice".to_owned(),
+            Answer::Choice {
+                choice: "billing".into(),
+                probabilities: BTreeMap::from([("billing".into(), 1.0)]),
+                confidence: value,
+            },
+        ),
+        (
+            "score".to_owned(),
+            Answer::Score {
+                score: 2.0,
+                probabilities: BTreeMap::from([("2".into(), 1.0)]),
+                confidence: value,
+            },
+        ),
+    ]);
+    let response = tau_jev::fake::response(answers, &request());
+    let out_of_range = |result: Result<f64, JevError>, id: &str| match result {
+        Ok(read) => {
+            assert!(within, "{id}: {value} read as {read}");
+            assert_eq!(read.to_bits(), value.to_bits(), "{id}");
+        }
+        Err(JevError::OutOfRange { id: at, value: got }) => {
+            assert!(!within, "{id}: {value} refused");
+            assert_eq!((at.as_str(), got.to_bits()), (id, value.to_bits()));
+        }
+        Err(other) => panic!("{id}: {other:?}"),
+    };
+    out_of_range(response.noul("noul"), "noul");
+    out_of_range(
+        response.choice("choice").map(|(choice, confidence)| {
+            assert_eq!(choice, "billing");
+            confidence
+        }),
+        "choice",
+    );
+    out_of_range(
+        response.score("score").map(|(score, confidence)| {
+            assert_eq!(score, 2.0);
+            confidence
+        }),
+        "score",
+    );
+
     assert!(matches!(
-        response.noul("high"),
-        Err(JevError::OutOfRange { .. })
+        response.noul("choice"),
+        Err(JevError::WrongAnswer { .. })
     ));
     assert!(matches!(
-        response.noul("team"),
+        response.choice("score"),
+        Err(JevError::WrongAnswer { .. })
+    ));
+    assert!(matches!(
+        response.score("noul"),
         Err(JevError::WrongAnswer { .. })
     ));
     assert!(matches!(
         response.noul("gone"),
         Err(JevError::MissingAnswer(_))
-    ));
-    assert!(matches!(
-        response.score("team"),
-        Err(JevError::WrongAnswer { .. })
     ));
 }
 
