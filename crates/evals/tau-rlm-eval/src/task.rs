@@ -561,19 +561,6 @@ pub fn score(kind: Kind, expected: &str, reply: &str) -> Score {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_same_seed_makes_the_same_file_and_answer() {
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
-        let one = generate(Kind::Count, 300, 7, a.path()).unwrap();
-        let two = generate(Kind::Count, 300, 7, b.path()).unwrap();
-        assert_eq!(one.expected, two.expected);
-        assert_eq!(
-            std::fs::read(a.path().join(FILE)).unwrap(),
-            std::fs::read(b.path().join(FILE)).unwrap()
-        );
-    }
-
     /// Whether `text` is exactly `core` with its slots filled: `{item}`
     /// and `{month}` from their lists, `{n}` with digits.
     fn fills(text: &str, core: &str) -> bool {
@@ -626,25 +613,43 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn the_count_is_the_number_of_billing_lines() {
-        let dir = tempfile::tempdir().unwrap();
-        let one = generate(Kind::Count, 500, 3, dir.path()).unwrap();
-        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
-        assert_eq!(text.lines().count(), 500);
-        let billing = text
-            .lines()
-            .filter(|line| categories_of(line).contains(&0))
-            .count();
-        assert_eq!(one.expected, billing.to_string());
-    }
-
-    #[test]
-    fn the_needle_is_in_the_file_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let one = generate(Kind::Needle, 400, 5, dir.path()).unwrap();
-        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
-        assert_eq!(text.matches(&one.expected).count(), 1);
+    /// For any kind, seed and length, the file has that many lines and
+    /// the same seed makes the same file and answer; a `needle` answer
+    /// occurs in the file once, and a `count` answer is the number of
+    /// lines written from the billing pool.
+    #[hegel::test(test_cases = 50)]
+    fn generated_tasks_keep_their_promises(tc: hegel::TestCase) {
+        use hegel::generators::{self as gs, Generator as _};
+        let kind = tc.draw(
+            gs::sampled_from(vec![Kind::Count, Kind::Top, Kind::Needle])
+                .print_as_debug(),
+        );
+        let seed = tc.draw(gs::integers::<u64>());
+        let lines = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![100_usize, 2_000]),
+            gs::integers::<usize>().min_value(100).max_value(2_000),
+        ));
+        let (a, b) =
+            (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let one = generate(kind, lines, seed, a.path()).unwrap();
+        let two = generate(kind, lines, seed, b.path()).unwrap();
+        let text = std::fs::read_to_string(a.path().join(FILE)).unwrap();
+        assert_eq!(text.lines().count(), lines);
+        assert_eq!(one.expected, two.expected);
+        assert_eq!(text, std::fs::read_to_string(b.path().join(FILE)).unwrap());
+        match kind {
+            Kind::Needle => {
+                assert_eq!(text.matches(&one.expected).count(), 1);
+            }
+            Kind::Count => {
+                let billing = text
+                    .lines()
+                    .filter(|line| categories_of(line).contains(&0))
+                    .count();
+                assert_eq!(one.expected, billing.to_string());
+            }
+            _ => {}
+        }
     }
 
     #[test]
@@ -689,15 +694,104 @@ mod tests {
         assert_eq!(one.expected, "performance", "{counts:?}");
     }
 
-    #[test]
-    fn answers_are_read_from_the_last_answer_line() {
-        let good = score(Kind::Count, "42", "I counted.\nANSWER: 42");
-        assert!(good.exact && good.score == 1.0);
-        let near = score(Kind::Count, "100", "ANSWER: 90");
-        assert!(!near.exact);
-        assert!((near.score - 0.9).abs() < 1e-9);
-        assert!(score(Kind::Top, "login", "**ANSWER: Login.**").exact);
-        assert_eq!(score(Kind::Count, "4", "no idea").answer, None);
-        assert!(score(Kind::Count, "1234", "ANSWER: 1,234").exact);
+    /// `n` as a person may write it: plain, or with thousands commas.
+    fn written(n: u64, commas: bool) -> String {
+        let digits = n.to_string();
+        if !commas {
+            return digits;
+        }
+        let mut out = String::new();
+        for (at, digit) in digits.chars().enumerate() {
+            if at > 0 && (digits.len() - at).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(digit);
+        }
+        out
+    }
+
+    /// An `ANSWER:` line, decorated as models write them.
+    fn answer_line(tc: &hegel::TestCase, answer: &str) -> String {
+        use hegel::generators as gs;
+        match tc.draw(gs::integers::<u8>().max_value(3)) {
+            0 => format!("ANSWER: {answer}"),
+            1 => format!("**ANSWER: {answer}**"),
+            2 => format!("`ANSWER: {answer}`"),
+            _ => format!("  ANSWER: {answer}."),
+        }
+    }
+
+    /// Prose and answer lines in any order: the last `ANSWER:` line is
+    /// the answer; a count is exact when it is the number, commas aside,
+    /// and otherwise scores one minus its relative error, at least 0; a
+    /// reply with no answer line scores 0.
+    #[hegel::test(test_cases = 500)]
+    fn a_count_is_read_from_the_last_answer_line(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let expected =
+            tc.draw(gs::integers::<u64>().min_value(1).max_value(100_000));
+        let answers: Vec<u64> = tc.draw(
+            gs::vecs(hegel::one_of!(
+                gs::just(expected),
+                gs::integers::<u64>().max_value(250_000),
+            ))
+            .max_size(4),
+        );
+        let mut reply = Vec::new();
+        for answer in &answers {
+            if tc.draw(gs::booleans()) {
+                let prose = tc.draw(gs::sampled_from(vec![
+                    "I counted.",
+                    "",
+                    "Let me check again.",
+                ]));
+                reply.push(prose.to_owned());
+            }
+            let commas = tc.draw(gs::booleans());
+            reply.push(answer_line(&tc, &written(*answer, commas)));
+        }
+        let read = score(Kind::Count, &expected.to_string(), &reply.join("\n"));
+        let Some(&last) = answers.last() else {
+            assert_eq!(
+                (read.answer, read.exact, read.score),
+                (None, false, 0.0)
+            );
+            return;
+        };
+        assert_eq!(
+            read.answer.as_deref().map(|answer| answer.replace(',', "")),
+            Some(last.to_string()),
+            "{reply:?}"
+        );
+        assert_eq!(read.exact, last == expected, "{reply:?}");
+        let error = last.abs_diff(expected) as f64 / expected as f64;
+        let want = if last == expected {
+            1.0
+        } else {
+            (1.0 - error).max(0.0)
+        };
+        assert!((read.score - want).abs() < 1e-9, "{} != {want}", read.score);
+    }
+
+    /// A category is exact whatever its case, and scores nothing when it
+    /// is another one.
+    #[hegel::test(test_cases = 200)]
+    fn a_category_is_exact_in_any_case(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let expected = tc.draw(gs::sampled_from(CATEGORIES.to_vec()));
+        let given = tc.draw(gs::sampled_from(CATEGORIES.to_vec()));
+        let cased: String = given
+            .chars()
+            .map(|c| {
+                if tc.draw(gs::booleans()) {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let read = score(Kind::Top, expected, &answer_line(&tc, &cased));
+        assert_eq!(read.exact, given == expected);
+        assert_eq!(read.score, if given == expected { 1.0 } else { 0.0 });
     }
 }
