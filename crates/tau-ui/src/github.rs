@@ -794,11 +794,19 @@ mod tests {
     use super::*;
 
     /// Every value encodes to unreserved characters and `%XX` escapes
-    /// only, and decodes back to itself.
+    /// only, escaping exactly the bytes that are not unreserved, and
+    /// decodes back to itself.
     #[hegel::test(test_cases = 300)]
     fn a_form_value_decodes_to_itself(tc: hegel::TestCase) {
         use hegel::generators as gs;
-        let value: String = tc.draw(gs::text().max_size(40));
+        // Any text, and text of the characters a grant type and ids are
+        // made of, unreserved and not.
+        let value: String = tc.draw(hegel::one_of!(
+            gs::text().max_size(40),
+            gs::text().alphabet("aZ09-_.~:/ %+&=é").max_size(40),
+        ));
+        let unreserved =
+            |byte: u8| byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte);
         let encoded = encode(&value);
         let mut bytes = Vec::new();
         let mut rest = encoded.as_bytes();
@@ -806,27 +814,17 @@ mod tests {
             if byte == b'%' {
                 let hex = std::str::from_utf8(&tail[..2]).unwrap();
                 assert_eq!(hex, hex.to_uppercase(), "{encoded}");
-                bytes.push(u8::from_str_radix(hex, 16).unwrap());
+                let byte = u8::from_str_radix(hex, 16).unwrap();
+                assert!(!unreserved(byte), "needless escape in {encoded}");
+                bytes.push(byte);
                 rest = &tail[2..];
             } else {
-                assert!(
-                    byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte),
-                    "{encoded}"
-                );
+                assert!(unreserved(byte), "{encoded}");
                 bytes.push(byte);
                 rest = tail;
             }
         }
         assert_eq!(String::from_utf8(bytes).unwrap(), value);
-    }
-
-    #[test]
-    fn form_values_are_encoded() {
-        assert_eq!(
-            encode("urn:ietf:params:oauth:grant-type:device_code"),
-            "urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code"
-        );
-        assert_eq!(encode("Iv23-a_b.c~"), "Iv23-a_b.c~");
     }
 
     #[test]
@@ -852,12 +850,5 @@ mod tests {
         tau_testing::block_on_io(Token::forget(&credentials)).unwrap();
         tau_testing::block_on_io(Token::forget(&credentials)).unwrap();
         assert!(!credentials.github().exists());
-    }
-
-    #[test]
-    fn a_disabled_device_flow_says_how_to_fix_it() {
-        let text = explain("device_flow_disabled", &Value::Null);
-        assert!(text.contains("Device Flow"), "{text}");
-        assert!(text.contains("personal access token"), "{text}");
     }
 }

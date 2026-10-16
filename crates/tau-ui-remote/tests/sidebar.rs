@@ -646,24 +646,40 @@ fn a_row_says_where_its_run_stands_and_how_much() {
 }
 
 /// A repository menu's entry does what it says, not what the row drawn
-/// under the menu does.
+/// under the menu does: Memory opens the repository's notes, and Fetch
+/// new commits asks the host to fetch, and the menu closes after each.
 #[gpui::test]
-fn the_repo_menu_opens_memory(cx: &mut TestAppContext) {
+fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
+    use std::{cell::RefCell, rc::Rc};
+
     use gpui::{Modifiers, size};
-    use tau_ui_remote::route::Route;
+    use tau_ui_remote::{route::Route, workspace::WorkspaceEvent};
 
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         Workspace::new("tau", runs(), catalog(), window, cx)
     });
     let workspace = window.root(cx).unwrap();
+    let events: Rc<RefCell<Vec<WorkspaceEvent>>> = Rc::default();
+    let seen = events.clone();
+    cx.update(|cx| {
+        cx.subscribe(&workspace, move |_, event: &WorkspaceEvent, _| {
+            seen.borrow_mut().push(event.clone())
+        })
+        .detach()
+    });
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.simulate_resize(size(gpui::px(1200.), gpui::px(800.)));
-    workspace.update(&mut cx, |ws, cx| ws.toggle_repo_menu(REPO, cx));
-    cx.run_until_parked();
-    let entry = cx.debug_bounds("menu-memory").expect("the menu is drawn");
-    cx.simulate_click(entry.center(), Modifiers::none());
-    cx.run_until_parked();
+    let click = |cx: &mut VisualTestContext, id: &'static str| {
+        workspace.update(cx, |ws, cx| ws.toggle_repo_menu(REPO, cx));
+        cx.run_until_parked();
+        let entry = cx.debug_bounds(id).expect("the menu is drawn");
+        cx.simulate_click(entry.center(), Modifiers::none());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds(id).is_none(), "the menu closed");
+    };
+
+    click(&mut cx, "menu-memory");
     workspace.update(&mut cx, |ws, _| {
         assert!(
             matches!(
@@ -675,4 +691,11 @@ fn the_repo_menu_opens_memory(cx: &mut TestAppContext) {
             ws.route(),
         );
     });
+
+    events.borrow_mut().clear();
+    click(&mut cx, "menu-update");
+    assert_eq!(
+        events.borrow().as_slice(),
+        [WorkspaceEvent::UpdateRepo { repo: REPO.into() }]
+    );
 }

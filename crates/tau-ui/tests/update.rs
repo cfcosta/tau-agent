@@ -1,12 +1,14 @@
-//! What the host and an interface send each other reads back the same:
-//! the demo's runs, its updates and the workspace's events.
+//! What the host sends an interface reads back the same: the demo's
+//! runs and its updates. (What an interface sends up crosses the wire in
+//! `sync_model`, and which events a phone may send is `tau_ui_remote`'s
+//! `phones` table.)
 
 use serde::{Deserialize, Serialize};
 use tau_ui::demo;
 use tau_ui_remote::{
     update::HostUpdate,
     view::{CodeState, RunUpdate},
-    workspace::{Synced, WorkspaceEvent},
+    workspace::Synced,
 };
 
 fn round_trip<T>(value: &T) -> T
@@ -82,29 +84,5 @@ fn updates_round_trip() {
     for event in events {
         let update = HostUpdate::Event(event);
         assert_eq!(round_trip(&update), update);
-    }
-}
-
-#[test]
-fn workspace_events_round_trip() {
-    let events = [
-        WorkspaceEvent::Say {
-            run: demo::run_id(),
-            text: "honor retry-after".into(),
-            model: Default::default(),
-            images: Vec::new(),
-        },
-        WorkspaceEvent::Cancel {
-            run: demo::run_id(),
-        },
-        WorkspaceEvent::Push {
-            repo: "tau-agent".into(),
-            fetch: true,
-        },
-    ];
-    for event in events {
-        assert_eq!(round_trip(&event), event);
-        // A phone can ask for each of these.
-        assert!(event.from_phone(), "{event:?}");
     }
 }

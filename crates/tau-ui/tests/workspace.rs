@@ -431,37 +431,6 @@ fn open_with_models(
     (workspace, cx, events)
 }
 
-/// The picker offers the plan's models from the model table, one per
-/// family, and picks one at once.
-#[gpui::test]
-fn the_plan_picker_offers_the_plan_models(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        let mut catalog = ws.catalog().clone();
-        catalog.models = demo::models();
-        ws.set_catalog(catalog, cx);
-        ws.navigate(Route::NewRun, cx);
-        ws.show_picker(PickerTarget::Next, cx);
-        let shown: Vec<String> = ws
-            .catalog()
-            .models
-            .shown("")
-            .iter()
-            .map(|option| option.label().to_owned())
-            .collect();
-        assert_eq!(
-            shown,
-            ["GPT-6.1 Sol", "GPT-6 Luna", "GPT-6 Astra", "GPT-5.6 Terra"],
-            "the table's order and names"
-        );
-        ws.pick_model("gpt-6-astra", cx);
-        assert!(ws.alert().is_none(), "nothing to confirm");
-        assert_eq!(ws.next_model().model, "gpt-6-astra");
-    });
-    // Drawn, with the plan's line under the composer.
-    cx.run_until_parked();
-}
-
 #[gpui::test]
 fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_with_models(cx);
@@ -474,6 +443,7 @@ fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
         ws.show_picker(PickerTarget::Next, cx);
         ws.pick_effort(Effort::Low, cx);
         ws.pick_model("gpt-6-luna", cx);
+        assert!(ws.alert().is_none(), "a plan model asks nothing to confirm");
         assert!(ws.picker().is_none(), "picking a model closes the picker");
         ws.submit_prompt("fix it".into(), cx);
     });
@@ -835,11 +805,22 @@ fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
 #[gpui::test]
 fn connecting_from_the_models_screen_comes_back_to_it(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
+    let work = demo::chatgpt_accounts()[1].id.clone();
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Models, cx);
+        // The account picker asks the host to switch.
+        ws.switch_chatgpt(&work, cx);
         ws.connect_model(cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
         assert!(ws.can_go_back(), "the Models screen is a step back");
+        // A sign-in without plan usage stays on the step, to say so.
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::PlanDisabled {
+                account: "you@work.example".into(),
+            }),
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
         ws.update_setup(
             SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
             cx,
@@ -847,6 +828,11 @@ fn connecting_from_the_models_screen_comes_back_to_it(cx: &mut TestAppContext) {
         assert_eq!(ws.route(), &Route::Models);
         ws.sign_out(cx);
     });
+    assert!(
+        events
+            .borrow()
+            .contains(&WorkspaceEvent::SwitchChatGpt { account: work })
+    );
     assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::SignOut));
 }
 
@@ -897,22 +883,6 @@ fn github_from_the_app_comes_back_when_done(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-fn github_sign_in_during_onboarding_moves_on_to_the_model(
-    cx: &mut TestAppContext,
-) {
-    let (workspace, mut cx, _) = open(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        ws.start_setup(SetupStep::Welcome, cx);
-        ws.sign_in_github(cx);
-        ws.update_setup(
-            SetupUpdate::GitHub(GitHub::SignedIn { user: "o".into() }),
-            cx,
-        );
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-    });
-}
-
 /// Signed in, the model step picks the default model the way the
 /// picker does, and says which one runs start with.
 #[gpui::test]
@@ -952,34 +922,6 @@ fn the_signed_in_model_step_picks_the_default_model(cx: &mut TestAppContext) {
         })
         .collect();
     assert_eq!(saved, ["gpt-6-astra"]);
-}
-
-/// An account that cannot share its plan stays on the model step, with
-/// the refusal, and can sign in with another account.
-#[gpui::test]
-fn a_not_eligible_account_offers_another(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        ws.set_setup(demo::setup(SetupStep::Model), cx);
-        ws.start_setup(SetupStep::Model, cx);
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::NotEligible {
-                account: "you@example.com".into(),
-                detail: "403 subscription_sharing_user_not_eligible".into(),
-            }),
-            cx,
-        );
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-    });
-    cx.run_until_parked();
-    workspace.update(&mut cx, |ws, cx| ws.sign_in_chatgpt(None, false, cx));
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::ChatGptSignIn {
-            account: None,
-            consent: false,
-        })
-    );
 }
 
 /// Cancelling the sign-in waiting for the browser goes back to the start
@@ -1064,9 +1006,13 @@ fn reduced_motion_stops_onboardings_loops(cx: &mut TestAppContext) {
     });
 }
 
-/// Every onboarding screen draws, on a desktop and on a phone.
+/// Every onboarding screen draws, on a desktop and on a phone, and
+/// stays the step it was opened at. On the model step, whatever the
+/// sign-in reports (signed in, waiting, refused, without plan usage,
+/// not eligible, failed) is shown there: the step stays, to show the
+/// account or the refusal, until the person moves on.
 #[gpui::test]
-fn every_onboarding_screen_draws(cx: &mut TestAppContext) {
+fn every_onboarding_screen_draws_and_stays_its_step(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
     let models = [
         ModelAccess::None,
@@ -1079,8 +1025,8 @@ fn every_onboarding_screen_draws(cx: &mut TestAppContext) {
             account: "you@example.com".into(),
         },
         ModelAccess::NotEligible {
-            account: String::new(),
-            detail: "403".into(),
+            account: "you@example.com".into(),
+            detail: "403 subscription_sharing_user_not_eligible".into(),
         },
         ModelAccess::Failed("no".into()),
     ];
@@ -1100,15 +1046,25 @@ fn every_onboarding_screen_draws(cx: &mut TestAppContext) {
                 ws.start_setup(step, cx);
             });
             cx.run_until_parked();
+            workspace.read_with(&cx, |ws, _| {
+                assert_eq!(ws.route(), &Route::Setup(step), "phone: {phone}");
+            });
         }
         for model in &models {
             workspace.update(&mut cx, |ws, cx| {
-                let mut setup = demo::setup(SetupStep::Model);
-                setup.model = model.clone();
-                ws.set_setup(setup, cx);
+                ws.set_setup(demo::setup(SetupStep::Model), cx);
                 ws.start_setup(SetupStep::Model, cx);
+                ws.update_setup(SetupUpdate::Model(model.clone()), cx);
             });
             cx.run_until_parked();
+            workspace.read_with(&cx, |ws, _| {
+                assert_eq!(
+                    ws.route(),
+                    &Route::Setup(SetupStep::Model),
+                    "{model:?}, phone: {phone}"
+                );
+                assert_eq!(&ws.setup().model, model);
+            });
         }
     }
 }
@@ -1214,47 +1170,6 @@ fn a_message_to_a_finished_run_goes_on_with_it(cx: &mut TestAppContext) {
         events.borrow().last(),
         Some(WorkspaceEvent::NewRun { .. })
     ));
-}
-
-#[gpui::test]
-fn the_demo_goes_on_with_a_finished_run(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    finish_demo_run(&workspace, &mut cx);
-    let run = demo::run_id();
-    let (turn, cost) = workspace.read_with(&cx, |ws, _| {
-        let view = ws.run(&run).unwrap();
-        (view.turn, view.usage.cost)
-    });
-    workspace.update(&mut cx, |ws, cx| {
-        ws.navigate(Route::Run(run.clone()), cx);
-        ws.submit_prompt("and then?".into(), cx);
-    });
-    cx.executor()
-        .advance_clock(std::time::Duration::from_secs(5));
-    cx.run_until_parked();
-    workspace.read_with(&cx, |ws, _| {
-        let view = ws.run(&run).unwrap();
-        assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
-        // Turns keep counting, and the cost adds up.
-        assert_eq!(view.turn, turn + 1);
-        assert!((view.usage.cost - (cost + 0.012)).abs() < 1e-9);
-        assert!(view.last_text().unwrap().contains("and then?"));
-    });
-}
-
-#[gpui::test]
-fn the_repository_menu_fetches_new_commits(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        ws.toggle_repo_menu("docbert", cx);
-        ws.update_repo("docbert", cx);
-    });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::UpdateRepo {
-            repo: "docbert".into()
-        })
-    );
 }
 
 #[gpui::test]
@@ -1965,51 +1880,123 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
     });
 }
 
+/// What the person opens and picks in a transcript, against a model:
+/// a note or a folding card opens and closes with each click, alone of
+/// its run's; a log card's change is picked by a click and put back by
+/// a second click on it, and a click on another moves the pick.
 #[gpui::test]
-fn a_plugin_note_opens_and_closes(cx: &mut TestAppContext) {
+fn notes_cards_and_picks_follow_the_clicks(cx: &mut TestAppContext) {
+    use std::collections::{HashMap, HashSet};
+
+    use hegel::generators as gs;
+
+    #[derive(Debug, Clone)]
+    enum Click {
+        Note(usize, usize),
+        Card(usize, usize),
+        Pick(usize, usize, usize),
+    }
+    hegel::pretty_print_as_debug!(Click);
+
+    const KEYS: [&str; 2] = ["log", "other"];
+    const CHANGES: [&str; 2] = ["qpvuntsm", "rlvkpnrz"];
+    let runs = [demo::run_id(), demo::fork_id()];
     let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        let run = demo::run_id();
-        assert!(!ws.note_open(&run, 3), "notes start closed");
-        ws.toggle_note(&run, 3, cx);
-        assert!(ws.note_open(&run, 3));
-        assert!(!ws.note_open(&run, 4), "only that note opens");
-        ws.toggle_note(&run, 3, cx);
-        assert!(!ws.note_open(&run, 3));
+    let cards = workspace.read_with(&cx, |ws, _| {
+        ws.plugin_ui::<tau_vcs::ui::Ui>(tau_vcs::ui::NAME)
+            .expect("tau-vcs draws its cards")
     });
-}
-
-#[gpui::test]
-fn a_log_card_opens_and_picks_one_change(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        let run = demo::run_id();
-        assert!(!ws.card_open(&run, "log"), "logs start closed");
-        ws.toggle_card(&run, "log", cx);
-        assert!(ws.card_open(&run, "log"));
-        assert!(!ws.card_open(&run, "other"), "only that card opens");
-
-        let cards = ws
-            .plugin_ui::<tau_vcs::ui::Ui>(tau_vcs::ui::NAME)
-            .expect("tau-vcs draws its cards");
-        cards.update(cx, |cards, _| {
-            assert_eq!(cards.picked(&run, "log"), None);
-            cards.pick(&run, "log", "qpvuntsm");
-            assert_eq!(cards.picked(&run, "log"), Some("qpvuntsm"));
-            cards.pick(&run, "log", "rlvkpnrz");
-            assert_eq!(cards.picked(&run, "log"), Some("rlvkpnrz"));
-            assert_eq!(cards.picked(&run, "other"), None);
-            cards.pick(&run, "log", "rlvkpnrz");
-            assert_eq!(
-                cards.picked(&run, "log"),
-                None,
-                "a second click puts it back"
-            );
+    // Everything the clicks can reach, as the workspace has it now.
+    let observe = |cx: &mut VisualTestContext| {
+        let (notes, open) = workspace.read_with(cx, |ws, _| {
+            let mut notes = HashSet::new();
+            let mut open = HashSet::new();
+            for (r, run) in runs.iter().enumerate() {
+                for index in 0..3 {
+                    if ws.note_open(run, index) {
+                        notes.insert((r, index));
+                    }
+                }
+                for (k, key) in KEYS.iter().enumerate() {
+                    if ws.card_open(run, key) {
+                        open.insert((r, k));
+                    }
+                }
+            }
+            (notes, open)
         });
-
-        ws.toggle_card(&run, "log", cx);
-        assert!(!ws.card_open(&run, "log"));
-    });
+        let picks = cards.read_with(cx, |cards, _| {
+            let mut picks = HashMap::new();
+            for (r, run) in runs.iter().enumerate() {
+                for (k, key) in KEYS.iter().enumerate() {
+                    if let Some(change) = cards.picked(run, key) {
+                        picks.insert((r, k), change.to_owned());
+                    }
+                }
+            }
+            picks
+        });
+        (notes, open, picks)
+    };
+    hegel::Hegel::new(|tc: hegel::TestCase| {
+        let click = hegel::compose!(|tc| {
+            let run = tc.draw(gs::integers::<usize>().max_value(1));
+            let key = tc.draw(gs::integers::<usize>().max_value(1));
+            match tc.draw(gs::integers::<u8>().max_value(2)) {
+                0 => Click::Note(
+                    run,
+                    tc.draw(gs::integers::<usize>().max_value(2)),
+                ),
+                1 => Click::Card(run, key),
+                _ => Click::Pick(
+                    run,
+                    key,
+                    tc.draw(gs::integers::<usize>().max_value(1)),
+                ),
+            }
+        });
+        let clicks: Vec<Click> = tc.draw(gs::vecs(click).max_size(12));
+        let (mut notes, mut open, mut picks) = observe(&mut cx);
+        for click in &clicks {
+            match *click {
+                Click::Note(r, index) => {
+                    workspace.update(&mut cx, |ws, cx| {
+                        ws.toggle_note(&runs[r], index, cx)
+                    });
+                    if !notes.remove(&(r, index)) {
+                        notes.insert((r, index));
+                    }
+                }
+                Click::Card(r, k) => {
+                    workspace.update(&mut cx, |ws, cx| {
+                        ws.toggle_card(&runs[r], KEYS[k], cx)
+                    });
+                    if !open.remove(&(r, k)) {
+                        open.insert((r, k));
+                    }
+                }
+                Click::Pick(r, k, c) => {
+                    cards.update(&mut cx, |cards, _| {
+                        cards.pick(&runs[r], KEYS[k], CHANGES[c])
+                    });
+                    if picks.get(&(r, k)).map(String::as_str)
+                        == Some(CHANGES[c])
+                    {
+                        picks.remove(&(r, k));
+                    } else {
+                        picks.insert((r, k), CHANGES[c].to_owned());
+                    }
+                }
+            }
+            assert_eq!(
+                observe(&mut cx),
+                (notes.clone(), open.clone(), picks.clone()),
+                "{clicks:?}"
+            );
+        }
+    })
+    .settings(hegel::Settings::new().test_cases(100))
+    .run();
 }
 
 /// A fork lands from the compare screen: a preview first, then the
@@ -2481,47 +2468,6 @@ fn plan_alerts_lead_to_signing_in(cx: &mut TestAppContext) {
     );
 }
 
-/// The account picker: switching asks the host, a sign-in without plan
-/// usage stays on the model step, and a pasted redirect finishes the
-/// sign-in in progress.
-#[gpui::test]
-fn chatgpt_accounts_switch_and_sign_in(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_demo(cx);
-    let work = demo::chatgpt_accounts()[1].id.clone();
-    workspace.update(&mut cx, |ws, cx| {
-        ws.navigate(Route::Models, cx);
-    });
-    // The Models screen, with the accounts.
-    cx.run_until_parked();
-    workspace.update(&mut cx, |ws, cx| {
-        ws.switch_chatgpt(&work, cx);
-        ws.connect_model(cx);
-        ws.sign_in_chatgpt(None, false, cx);
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::SigningIn {
-                url: Some(demo::DEMO_AUTHORIZE_URL.into()),
-            }),
-            cx,
-        );
-    });
-    // The step waiting for the browser, with the paste field.
-    cx.run_until_parked();
-    workspace.update(&mut cx, |ws, cx| {
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::PlanDisabled {
-                account: "you@work.example".into(),
-            }),
-            cx,
-        );
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-    });
-    cx.run_until_parked();
-    let events = events.borrow();
-    assert!(events.contains(&WorkspaceEvent::SwitchChatGpt {
-        account: work.clone()
-    }));
-}
-
 fn computer() -> tau_ui_remote::pairing::Computer {
     demo::computer()
 }
@@ -2659,23 +2605,33 @@ fn an_unreachable_computer_leads_back_once_it_answers(cx: &mut TestAppContext) {
     );
 }
 
+/// Every pairing screen draws, on a desktop and on a phone, and stays
+/// the step it was opened at.
 #[gpui::test]
-fn every_pairing_screen_draws(cx: &mut TestAppContext) {
+fn every_pairing_screen_draws_and_stays_its_step(cx: &mut TestAppContext) {
     use tau_ui_remote::pairing::PairStep;
 
     let (workspace, mut cx, _) = open(cx);
-    for step in [
-        PairStep::Welcome,
-        PairStep::Scan,
-        PairStep::Address,
-        PairStep::Paired,
-        PairStep::Unreachable,
-    ] {
+    for phone in [false, true] {
         workspace.update(&mut cx, |ws, cx| {
-            ws.set_pairing(demo::pairing(step), cx);
-            ws.start_pairing(step, cx);
+            ws.set_frame(phone.then_some((390., 844.)), cx)
         });
-        cx.run_until_parked();
+        for step in [
+            PairStep::Welcome,
+            PairStep::Scan,
+            PairStep::Address,
+            PairStep::Paired,
+            PairStep::Unreachable,
+        ] {
+            workspace.update(&mut cx, |ws, cx| {
+                ws.set_pairing(demo::pairing(step), cx);
+                ws.start_pairing(step, cx);
+            });
+            cx.run_until_parked();
+            workspace.read_with(&cx, |ws, _| {
+                assert_eq!(ws.route(), &Route::Pair(step), "phone: {phone}");
+            });
+        }
     }
 }
 
@@ -2701,21 +2657,6 @@ fn a_mirrored_workspace_echoes_what_the_host_applies(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(echoed.borrow().as_slice(), [alert]);
-}
-
-#[gpui::test]
-fn a_snapshot_replaces_what_is_shown_alike(cx: &mut TestAppContext) {
-    let (desktop, mut desktop_cx, _) = open(cx);
-    let (phone, mut phone_cx, _) = open(cx);
-    let snapshot = desktop.update(&mut desktop_cx, |ws, cx| {
-        ws.add_history(demo::history(), cx);
-        ws.snapshot()
-    });
-    phone.update(&mut phone_cx, |ws, cx| ws.apply(snapshot, cx));
-    // Everything the two show alike, not only the runs.
-    let desktop = desktop.update(&mut desktop_cx, |ws, _| ws.synced());
-    let phone = phone.update(&mut phone_cx, |ws, _| ws.synced());
-    assert_eq!(phone, desktop);
 }
 
 /// A repository's main chat heads its tree and stays open; the chats

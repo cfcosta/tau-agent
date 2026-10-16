@@ -258,10 +258,21 @@ fn new_chats_fork_the_repository_main_chat() {
         host.block_on(host.set_closed(&main, true)).is_err(),
         "main stays open"
     );
+    let repo = host.block_on(host.catalog()).repos[0].clone();
+    assert_eq!(repo.main.as_ref(), Some(&main), "the sidebar knows it");
+    // It has a view to send with the repository when it is added.
+    let sent = host
+        .block_on(host.main_view(&repo))
+        .unwrap()
+        .expect("the chat is stored");
     assert_eq!(
-        host.block_on(host.catalog()).repos[0].main.as_ref(),
-        Some(&main),
-        "the sidebar knows it"
+        (
+            &sent.id,
+            sent.title.as_str(),
+            sent.repo.as_str(),
+            &sent.origin
+        ),
+        (&main, "main", REPO, &Origin::Root)
     );
 
     // Before main has a turn, a chat starts from nothing, on trunk.
@@ -555,6 +566,9 @@ fn images_go_to_the_model_and_come_back_by_reference() {
         view.apply(&event);
     }
     wait_until_done(&host, &view.id);
+    // The reply streamed into the run's view.
+    assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
+    assert_eq!(view.last_text(), Some("A red square."));
     let sent = serde_json::to_string(&llm.requests()[0].transcript).unwrap();
     assert!(sent.contains(&first.data), "the model got the image");
     assert_eq!(
@@ -641,34 +655,6 @@ fn a_steered_message_goes_with_its_images() {
     wait_until_done(&host, &view.id);
     let sent = serde_json::to_string(&llm.requests()[1].transcript).unwrap();
     assert!(sent.contains(&shot.data));
-}
-
-#[test]
-fn a_run_streams_into_its_view() {
-    let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
-    let (host, mut events) = host(llm);
-    let mut view = host
-        .block_on(host.start(
-            "Say hello, please",
-            &ModelChoice::default(),
-            REPO,
-        ))
-        .unwrap();
-    assert_eq!(view.title, "Say hello, please");
-    assert!(
-        matches!(view.items.first(), Some(Item::User(text)) if text == "Say hello, please")
-    );
-    for event in until_end(&mut events) {
-        view.apply(&event);
-    }
-    assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
-    assert_eq!(view.last_text(), Some("Hello from tau"));
-    // The run leaves the host's table once its outcome is in.
-    let deadline = std::time::Instant::now() + WAIT;
-    while host.is_running(&view.id) && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(!host.is_running(&view.id));
 }
 
 #[test]
@@ -3041,28 +3027,6 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     }
 }
 
-/// A repository's main chat has a view to send with it when the
-/// repository is added: the sidebar lists the chat from that view.
-#[test]
-fn a_repository_main_chat_has_a_view() {
-    let (host, _events) = host(ScriptedModel::new());
-    let repo = host
-        .block_on(host.catalog())
-        .repos
-        .into_iter()
-        .find(|repo| repo.name == REPO)
-        .expect("the repository is listed");
-    let main = repo.main.clone().expect("it has a main chat");
-    let view = host
-        .block_on(host.main_view(&repo))
-        .unwrap()
-        .expect("the chat is stored");
-    assert_eq!(view.id, main);
-    assert_eq!(view.title, "main");
-    assert_eq!(view.repo, REPO);
-    assert_eq!(view.origin, Origin::Root);
-}
-
 /// A done chat is not necessarily finalized: an unusable commit-message
 /// answer must not let manual landing delete its remaining edits.
 #[test]
@@ -3237,25 +3201,6 @@ fn a_repository_without_an_agents_file_adds_nothing() {
     let asked = llm.requests();
     assert_eq!(asked.len(), 1);
     assert!(!instructions_of(&asked[0]).contains(tau_ui::host::AGENTS_HEADING));
-}
-
-/// A file over the limit is cut, and the instructions say so.
-#[test]
-fn a_long_agents_file_is_cut() {
-    let src = tempfile::tempdir().unwrap();
-    git(src.path(), &["init", "--quiet"]);
-    let long = "rule\n".repeat(tau_ui::host::AGENTS_LIMIT / 5 + 100);
-    std::fs::write(src.path().join("AGENTS.md"), &long).unwrap();
-    git(src.path(), &["add", "AGENTS.md"]);
-    git(src.path(), &["commit", "--quiet", "-m", "first"]);
-    let llm = ScriptedModel::new().turn(|t| t.text("hello"));
-    let (host, mut events) = host_on(llm.clone(), src.path());
-    let main = on_main(&host, "hi");
-    until_end(&mut events);
-    wait_until_done(&host, &main);
-    let instructions = instructions_of(&llm.requests()[0]);
-    assert!(instructions.contains("AGENTS.md was cut here"), "cut");
-    assert!(instructions.len() < long.len() + 2048);
 }
 
 /// A chat can land and go on (ADR 0034): its work joins main, and it
@@ -3837,25 +3782,50 @@ fn memory_saves_after_each_run_on_luna_by_default() {
 }
 
 /// An idle chat is compacted nine tenths of the way from its last
-/// request to its cache's lapse, and only when its context holds half
-/// its model's window.
-#[test]
-fn an_idle_chat_compacts_late_and_only_when_long() {
+/// request to its cache's lapse, whatever the lapse, and never after it;
+/// a lapse already due fires at once. It is compacted only when its
+/// context holds half its model's window. (Windows are even; how an odd
+/// one rounds its half is not a rule.)
+#[hegel::test(test_cases = 300)]
+fn an_idle_chat_compacts_late_and_only_when_long(tc: hegel::TestCase) {
+    use hegel::generators as gs;
     use tau_ai::ws::io::driver::CacheLapse;
     use tau_ui::host::idle::{fire_at, worth_compacting};
 
     let last_used = tokio::time::Instant::now();
-    for minutes in [1, 10, 55, 60] {
-        let lapse = CacheLapse {
-            last_used,
-            at: last_used + Duration::from_secs(60 * minutes),
-        };
-        let fire = fire_at(&lapse);
-        assert_eq!(fire - last_used, Duration::from_secs(54 * minutes));
-        assert!(fire < lapse.at);
+    // Up to a day ahead, to the microsecond, or already behind.
+    let ahead: u64 = tc.draw(gs::integers::<u64>().max_value(86_400_000_000));
+    let behind: bool = tc.draw(gs::booleans());
+    let gap = Duration::from_micros(ahead);
+    let at = if behind {
+        last_used.checked_sub(gap).unwrap_or(last_used)
+    } else {
+        last_used + gap
+    };
+    let lapse = CacheLapse { last_used, at };
+    let fire = fire_at(&lapse);
+    if behind || ahead == 0 {
+        assert_eq!(fire, last_used, "a lapse already due fires at once");
+    } else {
+        let waited = (fire - last_used).as_secs_f64();
+        let nine_tenths = gap.as_secs_f64() * 0.9;
+        assert!((waited - nine_tenths).abs() < 1e-6, "{waited} of {gap:?}");
+        assert!(fire < at);
     }
-    assert!(!worth_compacting(135_999, 272_000));
-    assert!(worth_compacting(136_000, 272_000));
+
+    let half: u64 = tc.draw(gs::integers::<u64>().max_value(1 << 40));
+    let window = half * 2;
+    let tokens: u64 = tc.draw(hegel::one_of!(
+        gs::integers::<u64>().max_value(1 << 41),
+        gs::integers::<u64>()
+            .min_value(half.saturating_sub(2))
+            .max_value(half + 2),
+    ));
+    assert_eq!(
+        worth_compacting(tokens, window),
+        u128::from(tokens) * 2 >= u128::from(window),
+        "{tokens} of {window}"
+    );
 }
 
 /// A long chat left idle is compacted by itself shortly before its

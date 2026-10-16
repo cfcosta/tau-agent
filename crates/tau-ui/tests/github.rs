@@ -93,7 +93,9 @@ fn a_disabled_device_flow_is_explained() {
     });
     let api = Api::at(&base, &base);
     let error = runtime().block_on(api.start_device()).unwrap_err();
+    // It says how to fix it: turn the flow on, or use a token.
     assert!(error.contains("turn on Device Flow"), "{error}");
+    assert!(error.contains("personal access token"), "{error}");
     let (base, _) = fake(|_| (200, json!({ "error": "access_denied" })));
     let poll = runtime().block_on(Api::at(&base, &base).poll("d")).unwrap();
     assert_eq!(
