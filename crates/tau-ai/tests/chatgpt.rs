@@ -247,15 +247,15 @@ fn a_used_code_is_rejected_for_a_fresh_sign_in() {
     });
 }
 
+/// A token signed with another key, or whose nonce or expiry the sign-in
+/// must supply to check, is refused and nothing is saved. The claim rules
+/// themselves are `id_token`'s property; a wrong audience or issuer would
+/// already fail every good sign-in, so only the checks fed by this
+/// sign-in's own nonce and clock, and the signature, are run here.
 #[test]
 fn bad_id_tokens_are_refused_and_nothing_is_saved() {
     let cases = [
         (IdTokenFault::WrongNonce, IdTokenError::Nonce),
-        (IdTokenFault::WrongAudience, IdTokenError::Audience),
-        (
-            IdTokenFault::WrongIssuer,
-            IdTokenError::Issuer(Some("https://auth.example".into())),
-        ),
         (IdTokenFault::Expired, IdTokenError::Expired),
         (IdTokenFault::WrongKey, IdTokenError::Signature),
     ];
@@ -356,38 +356,30 @@ fn concurrent_refreshes_take_turns() {
     });
 }
 
+/// A refresh token OpenAI calls dead signs the account out and keeps its
+/// registration and hint. Which codes call it dead is
+/// `an_oauth_error_reads_both_shapes_and_knows_a_dead_refresh_token`'s.
 #[test]
 fn a_dead_refresh_token_asks_for_a_new_sign_in() {
-    for code in [
-        "invalid_grant",
-        "invalid_refresh_token",
-        "token_expired",
-        "refresh_token_expired",
-        "refresh_token_invalidated",
-        "refresh_token_reused",
-    ] {
-        let fake = FakeChatGpt::new();
-        fake.fail_refresh(400, json!({"error": code}));
-        simulate(fake, move |fake, chatgpt, _dir| async move {
-            let account = sign_in(&chatgpt, &fake, None).await.unwrap().account;
-            let error = chatgpt.refresh(&account).await.unwrap_err();
-            assert!(
-                matches!(&error, ChatGptError::SignInRequired { reason: Some(r) } if r == code),
-                "{code}: {error}"
-            );
-            assert_eq!(error.recovery(), Recovery::SignInAgain);
-            let saved = chatgpt.store().load(&account).unwrap();
-            assert_eq!(saved.status(), AccountStatus::SignedOut);
-            assert_eq!(
-                saved.client_id, "oaiapp_test1",
-                "the registration stays"
-            );
-            assert!(saved.id_token.is_some(), "the hint stays");
-            // The next sign-in reuses the client.
-            sign_in(&chatgpt, &fake, Some(&account)).await.unwrap();
-            assert_eq!(fake.clients().len(), 1);
-        });
-    }
+    let code = "refresh_token_reused";
+    let fake = FakeChatGpt::new();
+    fake.fail_refresh(400, json!({"error": code}));
+    simulate(fake, move |fake, chatgpt, _dir| async move {
+        let account = sign_in(&chatgpt, &fake, None).await.unwrap().account;
+        let error = chatgpt.refresh(&account).await.unwrap_err();
+        assert!(
+            matches!(&error, ChatGptError::SignInRequired { reason: Some(r) } if r == code),
+            "{code}: {error}"
+        );
+        assert_eq!(error.recovery(), Recovery::SignInAgain);
+        let saved = chatgpt.store().load(&account).unwrap();
+        assert_eq!(saved.status(), AccountStatus::SignedOut);
+        assert_eq!(saved.client_id, "oaiapp_test1", "the registration stays");
+        assert!(saved.id_token.is_some(), "the hint stays");
+        // The next sign-in reuses the client.
+        sign_in(&chatgpt, &fake, Some(&account)).await.unwrap();
+        assert_eq!(fake.clients().len(), 1);
+    });
 }
 
 #[test]
