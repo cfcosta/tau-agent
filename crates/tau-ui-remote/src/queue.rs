@@ -87,16 +87,29 @@ pub fn conflicts_remain(files: &[String]) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_chat_needs_confirmation_only_for_files_not_confirmed() {
-        let waiting = |conflicts: &[&str], confirmed: &[&str]| Waiting {
+    /// A chat waits for the person exactly when its landing would
+    /// conflict in a file they have not confirmed; a sub-agent never
+    /// waits, whatever it conflicts in.
+    #[hegel::test(test_cases = 200)]
+    fn a_chat_needs_confirmation_only_for_files_not_confirmed(
+        tc: hegel::TestCase,
+    ) {
+        use hegel::generators as gs;
+        let files = || {
+            gs::vecs(gs::sampled_from(vec!["a.rs", "b.rs", "c.rs", "d.rs"]))
+                .max_size(4)
+        };
+        let conflicts: Vec<&str> = tc.draw(files());
+        let confirmed: Vec<&str> = tc.draw(files());
+        let sub_agent = tc.draw(gs::booleans());
+        let waiting = Waiting {
             conflicts: conflicts.iter().map(|f| f.to_string()).collect(),
             confirmed: confirmed.iter().map(|f| f.to_string()).collect(),
+            sub_agent: sub_agent.then(SubAgentEnd::default),
             ..Waiting::default()
         };
-        assert!(!waiting(&[], &[]).needs_confirmation());
-        assert!(!waiting(&["a.rs"], &["a.rs", "b.rs"]).needs_confirmation());
-        assert!(waiting(&["a.rs", "c.rs"], &["a.rs"]).needs_confirmation());
+        let unconfirmed = conflicts.iter().any(|f| !confirmed.contains(f));
+        assert_eq!(waiting.needs_confirmation(), !sub_agent && unconfirmed);
     }
 
     #[test]

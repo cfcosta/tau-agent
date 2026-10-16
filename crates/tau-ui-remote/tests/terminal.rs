@@ -139,15 +139,11 @@ fn the_result_ends_the_terminal() {
     assert_eq!(term.size_label(), "120×40");
 }
 
-/// A failed exit says so; a clean exit is done, and so is a call that
-/// left its command running.
+/// A clean exit is done, and so is a call that left its command
+/// running. (A failed exit is `the_result_ends_the_terminal`'s.)
 #[test]
 fn how_a_command_ended_shows_on_its_card() {
-    for (code, status, failure) in [
-        (Some(100), "exited", Some("exit 100")),
-        (None, "running", None),
-        (Some(0), "exited", None),
-    ] {
+    for (code, status) in [(None, "running"), (Some(0), "exited")] {
         let mut view = started();
         view.apply(&RunEvent::ToolEnd {
             run: run(),
@@ -156,18 +152,16 @@ fn how_a_command_ended_shows_on_its_card() {
                 details: Some(result_details(b"ok\r\n", code, status)),
                 ..ToolOutput::text("ok")
             }),
-            is_error: !matches!(code, Some(0) | None),
+            is_error: false,
             parent: None,
         });
-        assert_eq!(term(&view).unwrap().failure().as_deref(), failure);
-        if failure.is_none() {
-            assert_eq!(
-                card(&view).state,
-                ToolState::Done {
-                    summary: Some("1 line".into())
-                }
-            );
-        }
+        assert_eq!(term(&view).unwrap().failure(), None, "{status}");
+        assert_eq!(
+            card(&view).state,
+            ToolState::Done {
+                summary: Some("1 line".into())
+            }
+        );
     }
 }
 

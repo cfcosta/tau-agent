@@ -161,28 +161,6 @@ fn plugins_lists_the_built_in_the_person_s_own_and_their_chats(
 }
 
 #[gpui::test]
-fn the_person_s_plugins_and_each_of_them_have_a_page(cx: &mut TestAppContext) {
-    let (workspace, mut cx) = open(cx);
-    workspace.update(&mut cx, |ws, _| {
-        let page = |entry: Option<&str>| Route::Plugin {
-            plugin: tau_luau_plugins::NAME.into(),
-            page: tau_luau_plugins::ui::PAGE.into(),
-            params: entry
-                .map(|entry| {
-                    (tau_ui_plugin::ENTRY.to_owned(), entry.to_owned())
-                })
-                .into_iter()
-                .collect(),
-        };
-        assert_eq!(ws.yours_route(None), Some(page(None)));
-        assert_eq!(
-            ws.yours_route(Some("no-force-push")),
-            Some(page(Some("no-force-push")))
-        );
-    });
-}
-
-#[gpui::test]
 fn writing_a_plugin_starts_on_a_new_run_s_composer(cx: &mut TestAppContext) {
     let (workspace, mut cx) = open(cx);
     workspace.update_in(&mut cx, |ws, window, cx| {

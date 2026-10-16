@@ -120,11 +120,8 @@ fn agents_are_tau_s_own_and_neither_the_person_s_nor_the_plugins_repository() {
     assert!(!catalog.is_agent(OWN));
     assert!(!catalog.is_agent(REPO));
     assert!(!catalog.is_listed("triage"));
-}
-
-#[test]
-fn a_catalog_with_only_agents_has_no_plugins_repository() {
-    let mut catalog = with_agents();
+    // Agents are not the plugins repository: without it, there is none.
+    let mut catalog = catalog;
     catalog.repos.retain(|repo| repo.own != Some(Own::Plugins));
     assert!(catalog.own_repo().is_none());
     assert_eq!(catalog.agents().count(), 2);

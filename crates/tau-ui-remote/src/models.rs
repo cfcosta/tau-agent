@@ -330,17 +330,18 @@ pub fn plan_models() -> Vec<ModelOption> {
 mod tests {
     use super::*;
 
-    /// Model settings come back from their file as they were saved, and
-    /// a file from before a field existed takes that field's default.
+    /// Model settings, per-agent defaults among them, come back from
+    /// their file as they were saved, and a file from before a field
+    /// existed takes that field's default.
     #[hegel::test(test_cases = 200)]
     fn model_settings_round_trip(tc: hegel::TestCase) {
-        use hegel::generators as gs;
+        use hegel::generators::{self as gs, Generator as _};
         let ids: Vec<String> = tau_ai::model::plan_models()
             .into_iter()
             .map(|model| model.id.clone())
             .collect();
         let mut settings = ModelSettings::default();
-        for id in tc.draw(gs::subsequences(ids)) {
+        for id in tc.draw(gs::subsequences(ids.clone())) {
             settings.toggle_hidden(&id);
         }
         if tc.draw(gs::booleans()) {
@@ -349,6 +350,24 @@ mod tests {
                 serde_json::json!({ "redecide": true }),
             );
         }
+        // Defaults are per agent: each agent set reads its own choice;
+        // any other reads the default.
+        let mut chosen = Vec::new();
+        for agent in
+            tc.draw(gs::subsequences(vec!["coder", "reviewer", "triage"]))
+        {
+            let model = tc.draw(gs::sampled_from(ids.clone()));
+            let effort = tc.draw(
+                gs::sampled_from(Effort::offered(&model)).print_as_debug(),
+            );
+            let choice = ModelChoice::new(model, effort);
+            settings.set_default(agent, choice.clone());
+            chosen.push((agent, choice));
+        }
+        for (agent, choice) in &chosen {
+            assert_eq!(&settings.default_for(agent), choice);
+        }
+        assert_eq!(settings.default_for("nobody"), ModelChoice::default());
         let text = serde_json::to_string(&settings).unwrap();
         let back: ModelSettings = serde_json::from_str(&text).unwrap();
         assert_eq!(back, settings);
@@ -357,6 +376,9 @@ mod tests {
         let back: ModelSettings = serde_json::from_value(older).unwrap();
         assert!(back.plugins.is_empty());
         assert_eq!(back.hidden, settings.hidden);
+        // A file from before any field existed reads as the defaults.
+        let old: ModelSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old, ModelSettings::default());
     }
 
     fn option(id: &str) -> ModelOption {
@@ -392,23 +414,6 @@ mod tests {
         assert_eq!(ids(&models, "PR"), ["pro"]);
         models.settings.toggle_hidden("pro");
         assert_eq!(ids(&models, ""), ["mid", "cheap"]);
-    }
-
-    #[test]
-    fn defaults_are_per_agent() {
-        let mut settings = ModelSettings::default();
-        settings.set_default(
-            "reviewer",
-            ModelChoice::new("gpt-6-luna", Effort::Low),
-        );
-        assert_eq!(settings.default_for("reviewer").model, "gpt-6-luna");
-        assert_eq!(settings.default_for("nobody"), ModelChoice::default());
-        let text = serde_json::to_string(&settings).unwrap();
-        let back: ModelSettings = serde_json::from_str(&text).unwrap();
-        assert_eq!(back, settings);
-        // A file from before a field existed still reads.
-        let old: ModelSettings = serde_json::from_str("{}").unwrap();
-        assert_eq!(old, ModelSettings::default());
     }
 
     /// The picker offers the plan's four, from the model table, by
