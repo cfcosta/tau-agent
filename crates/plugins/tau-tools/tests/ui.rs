@@ -179,13 +179,23 @@ fn a_read_numbers_its_lines(tc: hegel::TestCase) {
     let read = ReadView::of(&data).unwrap();
     assert_eq!(read.first, first);
     assert_eq!(read.lines, lines);
-    let label = read.label();
-    if first == 1 && returned == total {
-        assert!(label.ends_with(if total == 1 { " line" } else { " lines" }));
+    // The whole file is its line count; a part, its first and last
+    // line of the total (a part with no lines names its first).
+    let expected = if first == 1 && returned == total {
+        if total == 1 {
+            "1 line".to_owned()
+        } else {
+            format!("{total} lines")
+        }
     } else {
-        assert!(label.starts_with(&format!("{first}–")), "{label}");
-        assert!(label.ends_with(&format!(" of {total}")), "{label}");
-    }
+        let last = if returned == 0 {
+            first
+        } else {
+            first + returned - 1
+        };
+        format!("{first}–{last} of {total}")
+    };
+    assert_eq!(read.label(), expected);
 }
 
 /// An image, or a failed read, has no lines to show.
