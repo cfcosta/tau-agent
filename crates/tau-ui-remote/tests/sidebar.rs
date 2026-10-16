@@ -681,11 +681,13 @@ fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
 
     click(&mut cx, "menu-memory");
     workspace.update(&mut cx, |ws, _| {
+        assert_eq!(ws.selected_repo(), Some(REPO), "its repository's");
         assert!(
             matches!(
                 ws.route(),
-                Route::Plugin { plugin, page, .. }
+                Route::Plugin { plugin, page, params }
                     if plugin == tau_memory::NAME && page == "notes"
+                        && params.get("repo").map(String::as_str) == Some(REPO)
             ),
             "the menu opened {:?}",
             ws.route(),

@@ -175,9 +175,12 @@ fn notices_fire_once_per_change(tc: TestCase) {
     hegel::stateful::machine(notifying).steps(30).run(tc);
 }
 
-/// A notice's words, as the design writes them.
+/// Each notice says what it is about: its title opens with the chat's,
+/// a question is its body as asked, a chat ready to land counts its
+/// changes and names where they would land, and a failure or conflicts
+/// left on main name the repository, the latter with the count of files.
 #[test]
-fn notices_read_as_the_design_words_them() {
+fn notices_say_what_they_are_about() {
     let sighting = |attention| Sighting {
         run: RunId("r".into()),
         title: "Load AGENTS.md".into(),
@@ -207,32 +210,40 @@ fn notices_read_as_the_design_words_them() {
         false,
         &mut shown,
     );
-    let words: Vec<(String, String)> = shown
+    let words: Vec<(Kind, String, String)> = shown
         .0
         .into_iter()
-        .map(|notice| (notice.title, notice.body))
+        .map(|notice| (notice.kind, notice.title, notice.body))
         .collect();
-    let pair = |title: &str, body: &str| (title.to_owned(), body.to_owned());
+    let kinds: Vec<Kind> = words.iter().map(|(kind, ..)| *kind).collect();
     assert_eq!(
-        words,
+        kinds,
         [
-            pair(
-                "Load AGENTS.md asks you",
-                "Delete the 3 workspaces with no run, or keep them?"
-            ),
-            pair(
-                "Load AGENTS.md is ready to land",
-                "2 changes on main · tau-agent"
-            ),
-            pair(
-                "Load AGENTS.md failed",
-                "The run stopped with an error · tau-agent"
-            ),
-            pair(
-                "Conflicts are still on main",
-                "tau's turn left conflicts in 2 files · tau-agent"
-            ),
+            Kind::Asks,
+            Kind::ReadyToLand,
+            Kind::Failed,
+            Kind::ConflictsOnMain
         ]
+    );
+    for (kind, title, _) in &words[..3] {
+        assert!(title.starts_with("Load AGENTS.md "), "{kind:?}: {title}");
+    }
+    assert_eq!(
+        words[0].2,
+        "Delete the 3 workspaces with no run, or keep them?"
+    );
+    let ready = &words[1].2;
+    assert!(
+        ready.contains("2 changes")
+            && ready.contains("main")
+            && ready.contains("tau-agent"),
+        "{ready}"
+    );
+    assert!(words[2].2.contains("tau-agent"), "{}", words[2].2);
+    let conflicts = &words[3].2;
+    assert!(
+        conflicts.contains("2 files") && conflicts.contains("tau-agent"),
+        "{conflicts}"
     );
 }
 

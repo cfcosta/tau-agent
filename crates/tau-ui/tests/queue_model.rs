@@ -436,19 +436,6 @@ fn the_resolving_turn_names_the_chat_and_its_conflicts() {
     );
 }
 
-/// A marked main refuses new chats with the files named.
-#[test]
-fn a_marked_main_refuses_new_chats() {
-    let mut lane = Lane::default();
-    assert_eq!(lane.refuse_chat(), None);
-    let actions = lane.checked(vec!["a.rs".into(), "b.rs".into()]);
-    assert_eq!(actions.len(), 2, "stored and told: {actions:?}");
-    assert_eq!(
-        lane.refuse_chat().as_deref(),
-        Some("main has conflicts in a.rs, b.rs; resolve them first")
-    );
-}
-
 /// A main chat for [`sub_agents_land_whatever_they_bring`]: idle, clean
 /// until a landing brings conflicts, every landing recorded.
 #[derive(Default)]

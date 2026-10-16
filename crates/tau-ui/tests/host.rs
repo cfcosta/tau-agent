@@ -851,15 +851,19 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
     );
 
     // Runs nest one level: the fork, a chat under the main chat,
-    // cannot be forked in turn.
-    assert!(
-        host.block_on(host.fork(
+    // cannot be forked in turn, and says why.
+    let refused = host
+        .block_on(host.fork(
             &fork.id,
             Some(1),
             "a third way",
-            &ModelChoice::default()
+            &ModelChoice::default(),
         ))
-        .is_err()
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("Only a repository's main chat"),
+        "{refused}"
     );
 
     // Keeping the fork keeps the main chat's checkout: it is the
@@ -1081,60 +1085,6 @@ fn a_chat_drops_after_an_update() {
         let at = after.project.blocking().file_at(&trunk, file).unwrap();
         assert!(at.is_some(), "{file} on trunk");
     }
-}
-
-/// Runs nest one level: a chat under the main chat cannot be forked,
-/// and it lands on the main chat.
-#[test]
-fn a_chat_under_main_is_not_forked() {
-    let src = tempfile::tempdir().unwrap();
-    git(src.path(), &["init", "--quiet"]);
-    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
-    git(src.path(), &["add", "README.md"]);
-    git(src.path(), &["commit", "--quiet", "-m", "first"]);
-    let repos = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        repos.path().join("p"),
-        Identity::default(),
-    )
-    .map(Project::from)
-    .unwrap();
-
-    let write =
-        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
-    let commit = |message: &str| serde_json::json!({ "message": message });
-    let llm = ScriptedModel::new()
-        .turn(|t| t.tool_call("write", write("a.txt")))
-        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
-        .turn(|t| t.text("done"))
-        .turn(|t| t.tool_call("write", write("b.txt")))
-        .turn(|t| t.tool_call("vcs_commit", commit("feat: a and b")))
-        .turn(|t| t.text("forked"));
-    let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_repo(REPO, project.clone());
-    let choice = ModelChoice::default();
-
-    let main = on_main(&host, "write a");
-    until_end(&mut events);
-    wait_until_done(&host, &main);
-    let child = host
-        .block_on(host.fork(&main, Some(1), "write b", &choice))
-        .unwrap();
-    until_end(&mut events);
-    wait_until_done(&host, &child.id);
-    // A chat under the main chat has nothing under it: it cannot be
-    // forked, and so it lands with nothing waiting on it.
-    let err = host
-        .block_on(host.fork(&child.id, Some(2), "write c", &choice))
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("Only a repository's main chat"), "{err}");
-
-    let landed = host.block_on(host.land(&child.id)).unwrap();
-    assert_eq!(landed.changes.len(), 1, "b.txt");
-    let main_dir = host.block_on(host.workspace(&main)).unwrap();
-    assert!(main_dir.join("b.txt").exists());
 }
 
 /// A sub-agent's chat stops on its own: it is dropped, nothing reports

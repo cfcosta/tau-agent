@@ -1879,11 +1879,11 @@ mod tests {
 
     /// A name is the slug, a dash and the creation time in hex: parsing
     /// the hex gives a time inside the window the call happened in, so
-    /// names sort by when they were made.
-    #[hegel::test(test_cases = 200)]
-    fn workspace_names_are_the_slug_then_the_time_in_hex(tc: hegel::TestCase) {
-        use hegel::generators as gs;
-        let slug = tc.draw(gs::from_regex("[a-z0-9]+(-[a-z0-9]+){0,3}"));
+    /// names sort by when they were made. (The slug is only put in
+    /// front, so one slug is enough.)
+    #[test]
+    fn workspace_names_are_the_slug_then_the_time_in_hex() {
+        let slug = "fix-the-retry-loop";
         let now = || {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1891,7 +1891,7 @@ mod tests {
                 .as_millis()
         };
         let before = now();
-        let name = workspace_name(&slug);
+        let name = workspace_name(slug);
         let after = now();
         let hex = name
             .strip_prefix(&format!("{slug}-"))
@@ -1901,17 +1901,51 @@ mod tests {
         assert!((before..=after).contains(&millis), "{name}");
     }
 
-    #[test]
-    fn branch_slugs_come_from_the_first_words() {
-        assert_eq!(
-            branch_slug("Fix the retry loop, please!"),
-            "fix-the-retry-loop"
+    /// A branch's slug is the prompt's first four words, lowercase and
+    /// joined by dashes, whatever separates them, or `untitled` when it
+    /// has none; a goal's slug is its condition's.
+    #[hegel::test(test_cases = 300)]
+    fn branch_slugs_are_the_first_four_words(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let words: Vec<String> = tc.draw(
+            gs::vecs(gs::text().alphabet("aZq09éÅ").min_size(1).max_size(6))
+                .max_size(7),
         );
-        assert_eq!(branch_slug("  ?! "), "untitled");
-        assert_eq!(
-            branch_slug("/goal --continuations 3 all tests pass"),
-            "all-tests-pass"
-        );
+        let separator = || gs::text().alphabet(" ,.!?_/\n\t'").min_size(1);
+        let lead: String = tc.draw(gs::text().alphabet(" ,.!?").max_size(3));
+        let mut prompt = String::new();
+        let mut body = String::new();
+        for (n, word) in words.iter().enumerate() {
+            if n > 0 {
+                body.push_str(&tc.draw(separator()));
+            }
+            body.push_str(word);
+        }
+        body.push_str(&tc.draw(gs::text().alphabet(" .!?").max_size(3)));
+        prompt.push_str(&lead);
+        prompt.push_str(&body);
+        let expected = if words.is_empty() {
+            "untitled".to_owned()
+        } else {
+            words
+                .iter()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("-")
+                .to_lowercase()
+        };
+        assert_eq!(branch_slug(&prompt), expected, "{prompt:?}");
+        if !words.is_empty() {
+            let continuations: u32 =
+                tc.draw(gs::integers::<u32>().min_value(1).max_value(20));
+            // A goal is its first line: its words, on one line.
+            let goal = format!(
+                "/goal --continuations {continuations} {}",
+                words.join(" ")
+            );
+            assert_eq!(branch_slug(&goal), expected, "{goal:?}");
+        }
     }
 
     #[test]

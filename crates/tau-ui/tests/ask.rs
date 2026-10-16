@@ -198,13 +198,8 @@ fn the_panel_does_not_take_the_keys_from_a_message_being_written(
     cx.simulate_keystrokes("2 right enter");
     cx.run_until_parked();
     assert!(sent(&events).is_empty());
-}
-
-/// A plugin can cancel a run, as the run's Cancel button does: the
-/// panel offers it on a phone, where the header's is not there.
-#[gpui::test]
-fn a_plugin_cancels_a_run(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open(cx);
+    // The panel's Cancel, which a phone shows for want of the header's,
+    // cancels the run through the plugin's handle, as that button does.
     workspace.update(&mut cx, |ws, cx| {
         ws.plugin_handle(tau_ask::NAME).cancel(&demo::run_id(), cx);
     });

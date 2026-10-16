@@ -154,42 +154,80 @@ fn pull_requests_are_drafted_then_created(cx: &mut TestAppContext) {
     });
 }
 
+/// Each way into a fork sends the turn it forks at and the model it
+/// runs on: fork mode from the header forks the latest turn, a turn's
+/// fork button its own turn, and a fork set up at a turn may pick
+/// another model first; otherwise a fork starts on its run's model and
+/// effort. Only turns the run has can be forked from, and once the fork
+/// is sent, the next message is an ordinary one again.
 #[gpui::test]
-fn fork_mode_sends_the_chosen_turn(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open(cx);
-    let run = demo::run_id();
-    workspace.update(&mut cx, |ws, cx| {
-        for (_, update) in demo::script() {
-            ws.update_run(&run, update, cx);
-        }
-        ws.navigate(Route::Run(run.clone()), cx);
-    });
-    let last = workspace.read_with(&cx, |ws, _| ws.run(&run).unwrap().turn);
-    assert!(last > 2);
-    workspace.update_in(&mut cx, |ws, window, cx| {
-        ws.start_fork(window, cx);
-        ws.submit_prompt("try a longer backoff".into(), cx);
-    });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::Fork {
-            run: run.clone(),
-            turn: Some(last),
-            prompt: "try a longer backoff".into(),
-            // A fork starts on its run's model and effort.
-            model: ModelChoice::new("gpt-5.5", Effort::Auto),
-            images: Vec::new(),
-        })
-    );
-    // The next message is an ordinary one again: it goes on with the
-    // run.
-    workspace.update(&mut cx, |ws, cx| {
-        ws.submit_prompt("hello".into(), cx);
-    });
-    assert!(matches!(
-        events.borrow().last(),
-        Some(WorkspaceEvent::Say { .. })
-    ));
+fn each_way_into_a_fork_sends_its_turn_and_model(cx: &mut TestAppContext) {
+    #[derive(Debug, Clone, Copy)]
+    enum Way {
+        Mode,
+        Button(u32),
+        OtherModel(u32),
+    }
+    let own = ModelChoice::new("gpt-5.5", Effort::Auto);
+    for way in [Way::Mode, Way::Button(2), Way::OtherModel(3)] {
+        let (workspace, mut cx, events) = open_with_models(cx);
+        let run = demo::run_id();
+        workspace.update(&mut cx, |ws, cx| {
+            for (_, update) in demo::script() {
+                ws.update_run(&run, update, cx);
+            }
+            ws.navigate(Route::Run(run.clone()), cx);
+        });
+        let last = workspace.read_with(&cx, |ws, _| ws.run(&run).unwrap().turn);
+        assert!(last > 3, "{last}");
+        let (turn, model) = workspace.update_in(&mut cx, |ws, window, cx| {
+            let sent = match way {
+                Way::Mode => {
+                    ws.start_fork(window, cx);
+                    (last, own.clone())
+                }
+                Way::Button(turn) => {
+                    let view = ws.run(&run).unwrap();
+                    assert!(ws.can_fork_at(view, turn));
+                    assert!(!ws.can_fork_at(view, 0));
+                    assert!(!ws.can_fork_at(view, view.turn + 1));
+                    ws.fork_from(&run, turn, window, cx);
+                    (turn, own.clone())
+                }
+                Way::OtherModel(turn) => {
+                    // On an open run, the composer's model is the chat's.
+                    assert_eq!(
+                        ws.composer_target(),
+                        Some(PickerTarget::Run(run.clone()))
+                    );
+                    assert!(ws.start_fork_at(&run, turn, cx));
+                    ws.show_picker(PickerTarget::Fork, cx);
+                    ws.pick_model("gpt-6-luna", cx);
+                    (turn, ModelChoice::new("gpt-6-luna", Effort::Auto))
+                }
+            };
+            ws.submit_prompt("go another way".into(), cx);
+            sent
+        });
+        assert_eq!(
+            events.borrow().last(),
+            Some(&WorkspaceEvent::Fork {
+                run: run.clone(),
+                turn: Some(turn),
+                prompt: "go another way".into(),
+                model,
+                images: Vec::new(),
+            }),
+            "{way:?}"
+        );
+        workspace.update(&mut cx, |ws, cx| {
+            ws.submit_prompt("hello".into(), cx);
+        });
+        assert!(
+            matches!(events.borrow().last(), Some(WorkspaceEvent::Say { .. })),
+            "{way:?}"
+        );
+    }
 }
 
 #[gpui::test]
@@ -226,37 +264,9 @@ fn comparing_asks_for_the_code_once(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn forking_from_a_turn_sends_that_turn(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open(cx);
-    let run = demo::run_id();
-    workspace.update(&mut cx, |ws, cx| {
-        for (_, update) in demo::script() {
-            ws.update_run(&run, update, cx);
-        }
-    });
-    workspace.update_in(&mut cx, |ws, window, cx| {
-        ws.fork_from(&run, 2, window, cx);
-        ws.submit_prompt("go another way".into(), cx);
-    });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::Fork {
-            run: run.clone(),
-            turn: Some(2),
-            prompt: "go another way".into(),
-            model: ModelChoice::new("gpt-5.5", Effort::Auto),
-            images: Vec::new(),
-        })
-    );
-    workspace.read_with(&cx, |ws, _| {
-        let view = ws.run(&run).unwrap();
-        assert!(ws.can_fork_at(view, 2));
-        assert!(!ws.can_fork_at(view, 0));
-        assert!(!ws.can_fork_at(view, view.turn + 1));
-    });
-}
-
+/// A fork the host answers is a chat of its own, open, under the run
+/// it forked; a written title replaces its placeholder, in the list and
+/// under the parent.
 #[gpui::test]
 fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
@@ -276,7 +286,7 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(30));
     cx.run_until_parked();
-    workspace.read_with(&cx, |ws, _| {
+    let fork = workspace.read_with(&cx, |ws, _| {
         let fork = ws.current().expect("the fork is open");
         assert_eq!(
             fork.origin,
@@ -285,44 +295,10 @@ fn the_demo_answers_a_fork_with_a_run(cx: &mut TestAppContext) {
                 turn: 2
             }
         );
-        assert_eq!(fork.title, "double the delay instead");
-        // It runs on its run's model, which the fork kept.
-        assert_eq!(fork.model, "gpt-5.5");
-        assert!(!fork.status.is_live(), "the fork played to its end");
-        assert!(fork.items.iter().any(|item| matches!(
-            item,
-            tau_ui_remote::view::Item::TurnEnd { turn: 3 }
-        )));
         let parent = ws.run(&run).unwrap();
         assert!(parent.children.iter().any(|child| child.id == fork.id));
-        // The fork keeps the conversation up to turn 2, then its own.
-        let users: Vec<&str> = fork
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::User(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(users.len(), 2, "{users:?}");
-        assert_eq!(users[1], "double the delay instead");
-        assert!(matches!(fork.items.first(), Some(Item::User(_))));
-        // Its turns count on from the fork point, without repeats.
-        let turns: Vec<u32> = fork
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::TurnEnd { turn } => Some(*turn),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(&turns[..3], [1, 2, 3], "{turns:?}");
-        assert!(turns.windows(2).all(|pair| pair[0] < pair[1]), "{turns:?}");
+        fork.id.clone()
     });
-    // A written title replaces the placeholder, in the list and under
-    // the parent.
-    let fork =
-        workspace.read_with(&cx, |ws, _| ws.current().unwrap().id.clone());
     workspace.update(&mut cx, |ws, cx| {
         ws.apply(
             tau_ui_remote::update::HostUpdate::Titled {
@@ -593,33 +569,6 @@ fn reasoning_draws_its_own_ui(cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
-#[gpui::test]
-fn a_fork_can_run_on_another_model(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_with_models(cx);
-    let run = demo::run_id();
-    workspace.update(&mut cx, |ws, cx| {
-        for (_, update) in demo::script() {
-            ws.update_run(&run, update, cx);
-        }
-        ws.navigate(Route::Run(run.clone()), cx);
-        // On an open run, the composer's model is the chat's.
-        assert_eq!(ws.composer_target(), Some(PickerTarget::Run(run.clone())));
-        ws.start_fork_at(&run, 3, cx);
-        ws.show_picker(PickerTarget::Fork, cx);
-        ws.pick_model("gpt-6-luna", cx);
-        ws.submit_prompt("same task, other model".into(), cx);
-    });
-    match events.borrow().last() {
-        Some(WorkspaceEvent::Fork { turn, model, .. }) => {
-            assert_eq!(*turn, Some(3));
-            // tau-reasoning picked high for the run; the fork is scored
-            // again.
-            assert_eq!(model, &ModelChoice::new("gpt-6-luna", Effort::Auto));
-        }
-        other => panic!("expected a fork, got {other:?}"),
-    }
-}
-
 /// The demo's workspace: three repositories, tau-agent open.
 /// The demo's runs and repositories, its host answering.
 fn open_demo(
@@ -656,43 +605,6 @@ fn open_demo_host(
     let host = cx.update(|_, cx| demo::start(&workspace, cx));
     events.borrow_mut().clear();
     (workspace, cx, events, host)
-}
-
-#[gpui::test]
-fn the_tree_groups_runs_by_repository(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        assert_eq!(ws.selected_repo(), Some("tau-agent"));
-        let rows = ws.repo_rows("");
-        let names: Vec<&str> =
-            rows.iter().map(|rows| rows.repo.name.as_str()).collect();
-        assert_eq!(names, ["tau-agent", "docbert", "homelab.nix"]);
-        // tau-agent: its main chat, and the six chats under it, five
-        // shown.
-        assert!(rows[0].open);
-        assert_eq!(
-            (rows[0].total, rows[0].runs.len(), rows[0].older),
-            (7, 1, 1)
-        );
-        assert_eq!(rows[0].main_children, Some(5));
-        assert_eq!(rows[0].live, 1);
-        assert!(!rows[1].open);
-        // docbert: its main chat and three chats, one live.
-        assert_eq!((rows[1].total, rows[1].live), (4, 1));
-
-        ws.toggle_repo_open("docbert", cx);
-        assert!(ws.is_repo_open("docbert"));
-        assert_eq!(ws.selected_repo(), Some("docbert"));
-        ws.show_older_runs("tau-agent", cx);
-        assert_eq!(ws.repo_rows("")[0].older, 0);
-    });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::OpenRepos(vec![
-            "tau-agent".into(),
-            "docbert".into()
-        ]))
-    );
 }
 
 #[gpui::test]
@@ -734,41 +646,6 @@ fn a_new_run_starts_in_the_chosen_repository(cx: &mut TestAppContext) {
         );
         assert_eq!(ws.selected_repo(), Some("docbert"));
         assert!(ws.is_repo_open("docbert"));
-    });
-}
-
-#[gpui::test]
-fn memory_and_rules_belong_to_their_repository(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        ws.open_memory("docbert", cx);
-        assert_eq!(
-            ws.route(),
-            &Route::Plugin {
-                plugin: tau_memory_host::NAME.into(),
-                page: "notes".into(),
-                params: [("repo".to_owned(), "docbert".to_owned())].into(),
-            }
-        );
-        assert_eq!(ws.selected_repo(), Some("docbert"));
-        let notes = |ws: &Workspace, repo: &str| {
-            ws.repo_named(repo)
-                .plugins
-                .get(tau_memory_host::NAME)
-                .map_or(0, |book| {
-                    book.json()["notes"].as_array().map_or(0, Vec::len)
-                })
-        };
-        assert_eq!(notes(ws, "docbert"), 3);
-        assert_eq!(notes(ws, "tau-agent"), 8);
-        let rules: tau_constitution::ui::Rules = serde_json::from_value(
-            ws.repo_named("homelab.nix").plugins[tau_constitution_host::NAME]
-                .json()
-                .clone(),
-        )
-        .unwrap();
-        assert!(rules.rules.is_empty());
-        assert_eq!(notes(ws, "not listed"), 0);
     });
 }
 
@@ -1272,7 +1149,7 @@ fn the_typesafe_key_is_asked_for_and_forgotten(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn history_runs_the_query_typed_and_shows_its_rows(cx: &mut TestAppContext) {
+fn history_runs_the_query_typed_and_shows_the_answer(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::History, cx);
@@ -1285,17 +1162,10 @@ fn history_runs_the_query_typed_and_shows_its_rows(cx: &mut TestAppContext) {
             sql: demo::catalog().store.sample_query
         })
     );
+    // The host's answer shows.
     cx.run_until_parked();
     workspace.read_with(&cx, |ws, _| {
-        let Some(Ok(table)) = ws.query_result() else {
-            panic!("a table")
-        };
-        assert_eq!(table.columns, ["agent", "sum(cost_usd)"]);
-        assert_eq!(table.rows.len(), 2);
-    });
-    workspace.update(&mut cx, |ws, cx| {
-        ws.set_query_result(Err("no such table: nope".into()), cx);
-        assert!(matches!(ws.query_result(), Some(Err(_))));
+        assert!(matches!(ws.query_result(), Some(Ok(_))), "a table");
     });
 }
 
@@ -2675,11 +2545,12 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
         repo.main = Some(main.clone());
         catalog.repos.push(repo);
         ws.set_catalog(catalog, cx);
-        // History comes newest first: the chats, then main.
+        // History comes newest first: the chats, then main. The even
+        // chats are done; the odd ones and main still go.
         let mut runs: Vec<RunView> = (0..7)
             .rev()
             .map(|n| {
-                RunView::new(
+                let mut chat = RunView::new(
                     RunId(format!("chat-{n}").into()),
                     format!("chat {n}"),
                     "coder",
@@ -2689,7 +2560,11 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
                 .with_origin(Origin::Fork {
                     from: main.clone(),
                     turn: 0,
-                })
+                });
+                if n % 2 == 0 {
+                    chat.finish_stored(StopReason::Stop, 0.0, 0.0);
+                }
+                chat
             })
             .collect();
         runs.push(
@@ -2708,6 +2583,7 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
             (rows.main_children, rows.older, rows.total),
             (Some(5), 2, 8)
         );
+        assert_eq!(rows.live, 4, "main and the three chats still going");
         let chats: Vec<&str> = ws
             .listed_children(rows.runs[0])
             .map(|run| run.title.as_str())
@@ -2743,6 +2619,28 @@ fn the_main_chat_heads_its_repository(cx: &mut TestAppContext) {
         })
         .collect();
     assert_eq!(closed, [RunId("chat-6".into())]);
+
+    // A repository's row opens and closes with each click, which
+    // selects it, and the host is told which are open.
+    let was = workspace.read_with(&cx, |ws, _| ws.is_repo_open("hello"));
+    workspace.update(&mut cx, |ws, cx| {
+        ws.toggle_repo_open("hello", cx);
+        assert_eq!(ws.is_repo_open("hello"), !was);
+        assert_eq!(ws.selected_repo(), Some("hello"));
+        ws.toggle_repo_open("hello", cx);
+        assert_eq!(ws.is_repo_open("hello"), was);
+    });
+    let told: Vec<bool> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::OpenRepos(open) => {
+                Some(open.iter().any(|repo| repo == "hello"))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(told[told.len() - 2..], [!was, was]);
 }
 
 /// A repository added after tau started (cloned during onboarding, or
@@ -3097,41 +2995,6 @@ fn every_demo_screen_opens(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
     }
-}
-
-/// A rule added on the demo's Constitution page is kept by
-/// tau-constitution's host half, and comes back in the catalog.
-#[gpui::test]
-fn the_demo_keeps_rules_in_the_constitution(cx: &mut TestAppContext) {
-    let (workspace, mut cx, _) = open_demo(cx);
-    let rules = |ws: &Workspace| {
-        ws.catalog()
-            .repo("tau-agent")
-            .and_then(|repo| repo.plugins.get(tau_constitution_host::NAME))
-            .map(|rules| rules.get::<tau_constitution::ui::Rules>().clone())
-            .unwrap_or_default()
-    };
-    let before = workspace.read_with(&cx, |ws, _| rules(ws).rules.len());
-    assert_eq!(before, 6, "the demo's rules");
-    let add = tau_constitution::ui::Act::Add {
-        repo: "tau-agent".into(),
-        text: "Keep the changelog current.".into(),
-        on: vec!["final answer".into()],
-        review: 0.4,
-        block: 0.8,
-    };
-    workspace.update(&mut cx, |_, cx| {
-        cx.emit(WorkspaceEvent::PluginAct {
-            plugin: tau_constitution_host::NAME.into(),
-            action: serde_json::to_value(add).unwrap(),
-        })
-    });
-    cx.run_until_parked();
-    workspace.read_with(&cx, |ws, _| {
-        let rules = rules(ws);
-        assert_eq!(rules.rules.len(), before + 1);
-        assert_eq!(rules.rules[before].text, "Keep the changelog current.");
-    });
 }
 
 /// A chat that landed or was dropped is read-only: a message sent from

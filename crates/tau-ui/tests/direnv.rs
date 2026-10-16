@@ -353,11 +353,16 @@ fn the_repositorys_mcp_servers_start_in_the_environment() {
         },
     );
     exec_output(&host, &main, &mut events);
+    // The shell makes the file before `echo` writes its line: wait for
+    // the whole line, not for the file.
     let deadline = Instant::now() + WAIT;
-    while !seen.exists() {
+    let saw = loop {
+        let text = std::fs::read_to_string(&seen).unwrap_or_default();
+        if text.ends_with('\n') {
+            break text;
+        }
         assert!(Instant::now() < deadline, "the server never started");
         std::thread::sleep(Duration::from_millis(10));
-    }
-    std::thread::sleep(Duration::from_millis(50));
-    assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), "1");
+    };
+    assert_eq!(saw.trim(), "1");
 }

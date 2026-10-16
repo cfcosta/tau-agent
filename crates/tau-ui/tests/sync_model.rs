@@ -1451,30 +1451,3 @@ fn every_device_shows_what_any_device_did(tc: TestCase) {
     let tau = Tau::new(phones);
     hegel::stateful::machine(tau).steps(30).run(tc);
 }
-
-/// A phone's message the computer took, its answer lost with the
-/// connection, is sent again on the next and shows once.
-#[test]
-fn a_message_whose_answer_was_lost_shows_once() {
-    let mut tau = Tau::new(1);
-    let main = tau.computer.runs()[0].id.clone();
-    tau.say_to(Who::Phone(0), &main, "hello".into());
-    assert!(tau.deliver(0, false), "it went up");
-    {
-        let mut wire = tau.wire.borrow_mut();
-        let link = &mut wire.links[0];
-        let conn = link.conn.take().unwrap();
-        link.down.clear();
-        wire.feed.leave(conn);
-    }
-    tau.settle();
-    let view = tau.computer.runs().into_iter().find(|run| run.id == main);
-    let said = view
-        .unwrap()
-        .items
-        .iter()
-        .filter(|item| matches!(item, Item::User(text) if text == "hello"))
-        .count();
-    assert_eq!(said, 1);
-    assert!(tau.asked.borrow().twice.is_empty());
-}

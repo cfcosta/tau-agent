@@ -197,10 +197,13 @@ fn every_page_of_repositories_is_read() {
     let repos = runtime()
         .block_on(Api::at(&base, &base).repos("github_pat_x"))
         .unwrap();
+    // A personal token cannot list installations: its own repositories.
     assert_eq!(repos.len(), 100);
+    assert_eq!(repos[0].name, "octocat/r000");
 }
 
-/// A page that fails is an error, not a shorter list.
+/// A page that fails is an error, not a shorter list, and a token
+/// GitHub refuses is an error that says so.
 #[test]
 fn a_failed_page_is_an_error() {
     let (base, _) = fake(|line| match line {
@@ -213,24 +216,7 @@ fn a_failed_page_is_an_error() {
         .block_on(Api::at(&base, &base).repos("ghu_token"))
         .unwrap_err();
     assert!(error.contains("502"), "{error}");
-}
-
-#[test]
-fn a_personal_token_lists_the_users_repositories() {
-    let (base, _) = fake(|line| match line {
-        // Personal tokens cannot list app installations.
-        "GET /user/installations?per_page=100&page=1" => (403, json!({})),
-        "GET /user/repos?sort=pushed&per_page=100&page=1" => (
-            200,
-            json!([{ "full_name": "octocat/hello", "default_branch": "main" }]),
-        ),
-        _ => (404, json!({})),
-    });
-    let repos = runtime()
-        .block_on(Api::at(&base, &base).repos("github_pat_x"))
-        .unwrap();
-    assert_eq!(repos.len(), 1);
-    assert_eq!(repos[0].name, "octocat/hello");
+    // A token GitHub refuses says so.
     let (base, _) = fake(|_| (401, json!({ "message": "Bad credentials" })));
     let error = runtime()
         .block_on(Api::at(&base, &base).user("bad"))
