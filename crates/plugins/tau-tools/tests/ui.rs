@@ -19,59 +19,43 @@ use tau_tools::{
         output_lines,
     },
 };
+use tau_ui_kit::diff::{DiffKind, DiffLine};
 use tau_ui_plugin::{CallData, CallResult, Fold, testing::FakeRun};
 
-/// A result's diff reads back line for line, counted as it adds and
-/// removes; a failed call shows none.
-#[hegel::test(test_cases = 200)]
-fn a_diff_reads_back(tc: hegel::TestCase) {
-    let lines: Vec<(u8, String)> = tc.draw(gs::vecs(hegel::tuples!(
-        gs::integers::<u8>().max_value(2),
-        gs::text().alphabet("abc xyz").max_size(6),
-    )));
-    let text: String = lines
-        .iter()
-        .map(|(kind, line)| {
-            let sign = match kind {
-                0 => ' ',
-                1 => '+',
-                _ => '-',
-            };
-            format!("{sign}{line}\n")
-        })
-        .collect();
-    // The hunk's header counts the old (context and removed) and new
-    // (context and added) lines it holds.
-    let old = lines.iter().filter(|(kind, _)| *kind != 1).count();
-    let new = lines.iter().filter(|(kind, _)| *kind != 2).count();
-    let header = format!("@@ -1,{old} +1,{new} @@");
-    let error = tc.draw(gs::booleans());
-    let data = CallData {
+/// A result's diff is read as tau-ui-kit reads any diff (its property
+/// is `a_whole_file_diff_gives_back_both_sides`): a successful call's
+/// `diff`, line for line. A failed call, a result without details, or
+/// details without a diff show none.
+#[test]
+fn only_a_successful_result_with_a_diff_reads_one() {
+    let diff = "--- a\n+++ b\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n";
+    let data = |details: Option<serde_json::Value>, error: bool| CallData {
         result: Some(CallResult {
             text: String::new(),
-            details: Some(
-                json!({ "diff": format!("--- a\n+++ b\n{header}\n{text}") }),
-            ),
+            details,
             error,
         }),
         ..CallData::default()
     };
-    let read = diff_of(&data);
-    if error {
-        assert!(read.is_none());
-        return;
-    }
-    let read = read.unwrap();
-    assert_eq!(read.len(), lines.len());
-    let added = lines.iter().filter(|(kind, _)| *kind == 1).count();
-    let removed = lines.iter().filter(|(kind, _)| *kind == 2).count();
+    let line = |kind, text: &str| DiffLine {
+        kind,
+        text: text.to_owned(),
+    };
     assert_eq!(
-        tau_ui_kit::diff::stat(&read),
-        format!("+{added} −{removed}")
+        diff_of(&data(Some(json!({ "diff": diff })), false)),
+        Some(vec![
+            line(DiffKind::Context, "keep"),
+            line(DiffKind::Removed, "old"),
+            line(DiffKind::Added, "new"),
+        ])
     );
-    for ((_, line), read) in lines.iter().zip(&read) {
-        assert_eq!(&read.text, line);
-    }
+    assert_eq!(diff_of(&data(Some(json!({ "diff": diff })), true)), None);
+    assert_eq!(diff_of(&data(None, false)), None);
+    assert_eq!(
+        diff_of(&data(Some(json!({ "created": true })), false)),
+        None
+    );
+    assert_eq!(diff_of(&CallData::default()), None);
 }
 
 /// A command's lines are its result's once it ends, else what it has
