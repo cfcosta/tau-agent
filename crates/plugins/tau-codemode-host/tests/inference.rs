@@ -3,17 +3,13 @@
 //!   an object-shape predicate over 1..=4 required integer keys.
 //! - `accepts_generated_integers_without_coercing_numeric_strings` uses an
 //!   integer-token predicate for values in -1000..=1000.
-//! - `accepts_booleans_without_coercing_strings` exhausts booleans
-//!   and their string-form invalid partners.
-//! - `accepts_bounded_numbers_and_rejects_outside_the_interval` uses literal
-//!   inclusive bounds and both neighboring out-of-range values.
-//! - `accepts_bounded_enum_numbers_and_rejects_a_neighbor` checks the numeric
-//!   range and singleton enum independently for values in -999..=999.
-//! - `accepts_string_arrays_and_rejects_a_numeric_member` checks 1..=4 string
-//!   members, each at most 16 bytes, against a numeric-member mutation.
-//! - `accepts_nullable_strings_and_rejects_numbers` and
-//!   `accepts_nonnullable_strings_and_rejects_null` use independent type
-//!   predicates for nullable and nonnullable schemas.
+//! - `answers_follow_their_schemas_keywords` draws one keyword case at a
+//!   time (an uncoerced boolean, inclusive number bounds, an enum, a string
+//!   array's items and size, nullable and non-null strings of at most 16
+//!   characters) with an allowed value at the keyword's edge and a refused
+//!   partner just past it, each checked against a written-out predicate.
+//! - `arguments_are_accepted_up_to_their_byte_limits` draws the task's,
+//!   context's and schema's sizes at and around their byte limits.
 //! - `a_true_schema_decodes_bounded_generated_json_trees_exactly` remains a
 //!   separate general JSON parse/tree-preservation property.
 //!
@@ -114,31 +110,71 @@ fn rejects_missing_empty_and_unknown_arguments() {
     );
 }
 
-#[test]
-fn enforces_byte_limits() {
-    assert!(
-        InferRequest::parse(
-            json!({"task": "x".repeat(16 * 1024 + 1), "context": null})
-        )
-        .is_err()
-    );
-    assert!(
-        InferRequest::parse(
-            json!({"task": "x", "context": "x".repeat(256 * 1024)})
-        )
-        .is_err()
-    );
-    assert!(InferRequest::parse(json!({"task": "x", "context": null, "schema": {"description": "x".repeat(64 * 1024)}})).is_err());
-    let mut deep = json!(true);
-    for _ in 0..70 {
-        deep = json!({"items": deep});
+/// The three arguments' byte limits: the task's UTF-8 bytes, and the
+/// context's and the schema's serialized bytes.
+const ARGUMENT_LIMITS: [(&str, usize); 3] = [
+    ("task", 16 * 1024),
+    ("context", 256 * 1024),
+    ("schema", 64 * 1024),
+];
+
+/// Each argument is accepted up to its byte limit and refused past it,
+/// counting bytes, not characters: the task holds two-byte characters
+/// and the context escaped quotes. Sizes are drawn at the limit, either
+/// side of it, and in the bytes around it.
+#[hegel::test(test_cases = 300)]
+fn arguments_are_accepted_up_to_their_byte_limits(tc: TestCase) {
+    let (field, limit) = ARGUMENT_LIMITS
+        [tc.draw(gs::integers::<usize>().max_value(ARGUMENT_LIMITS.len() - 1))];
+    let doubled = tc.draw(gs::integers::<usize>().max_value(8));
+    // The edge twice over: just past it, a text of `doubled` two-byte
+    // characters is still within the limit counted in characters.
+    let edge = || gs::sampled_from(vec![limit - 1, limit, limit + 1]);
+    let size = tc.draw(hegel::one_of!(
+        edge(),
+        edge(),
+        gs::integers::<usize>()
+            .min_value(limit - 64)
+            .max_value(limit + 64),
+    ));
+    let mut arguments = json!({"task": "answer", "context": null});
+    match field {
+        "task" => {
+            // `doubled` two-byte characters, the rest one byte each.
+            let text = format!(
+                "{}{}",
+                "é".repeat(doubled),
+                "x".repeat(size - 2 * doubled)
+            );
+            assert_eq!(text.len(), size);
+            arguments["task"] = json!(text);
+        }
+        "context" => {
+            // Each quote serializes as two bytes; the string's own
+            // quotes are the last two.
+            let text = format!(
+                "{}{}",
+                "\"".repeat(doubled),
+                "x".repeat(size - 2 - 2 * doubled)
+            );
+            arguments["context"] = json!(text);
+        }
+        _ => {
+            let overhead = r#"{"description":""}"#.len();
+            arguments["schema"] =
+                json!({"description": "x".repeat(size - overhead)});
+        }
     }
-    assert!(
-        InferRequest::parse(
-            json!({"task": "x", "context": null, "schema": deep})
-        )
-        .is_err()
-    );
+    if field != "task" {
+        assert_eq!(serde_json::to_vec(&arguments[field]).unwrap().len(), size);
+    }
+    let parsed = InferRequest::parse(arguments);
+    if size <= limit {
+        assert!(parsed.is_ok(), "{field} of {size} bytes: {parsed:?}");
+    } else {
+        let error = parsed.unwrap_err();
+        assert!(error.starts_with(field), "{field} of {size} bytes: {error}");
+    }
 }
 
 #[test]
@@ -188,6 +224,17 @@ fn schema_annotation_depth_obeys_the_64_level_guard() {
         }));
         assert_eq!(parsed.is_ok(), depth == 64, "depth {depth}: {parsed:?}");
     }
+    // Nested subschemas count toward the same guard.
+    let mut deep = json!(true);
+    for _ in 0..70 {
+        deep = json!({"items": deep});
+    }
+    assert!(
+        InferRequest::parse(
+            json!({"task": "x", "context": null, "schema": deep})
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -502,125 +549,172 @@ fn accepts_generated_integers_without_coercing_numeric_strings(tc: TestCase) {
     );
 }
 
-#[test]
-fn accepts_booleans_without_coercing_strings() {
-    for boolean in [false, true] {
-        assert_schema_pair_matches_predicate(
-            json!({"type": "boolean"}),
-            json!(boolean),
-            json!(boolean.to_string()),
-            Value::is_boolean,
-            "the JSON value is a string, not a boolean",
-        );
-    }
+/// The predicate an answer must meet for one schema keyword case.
+type Accepts = Box<dyn Fn(&Value) -> bool>;
+
+fn ascii_text(
+    len: usize,
+) -> impl hegel::generators::PrintableGenerator<String> {
+    gs::text().alphabet(ASCII_TEXT).min_size(len).max_size(len)
 }
 
-#[hegel::test]
-fn accepts_bounded_numbers_and_rejects_outside_the_interval(tc: TestCase) {
-    let center = tc.draw(gs::integers::<i64>().min_value(-999).max_value(999));
-    let radius = tc.draw(gs::integers::<i64>().min_value(1).max_value(8));
-    let minimum = center - radius;
-    let maximum = center + radius;
-    let accepted = json!(center as f64 + 0.25);
-    for invalid in [minimum - 1, maximum + 1] {
-        assert_schema_pair_matches_predicate(
-            json!({"type": "number", "minimum": minimum, "maximum": maximum}),
-            accepted.clone(),
-            json!(invalid),
-            |value| {
-                value.as_f64().is_some_and(|number| {
-                    (minimum as f64..=maximum as f64).contains(&number)
-                })
-            },
-            "the number lies just outside the inclusive bounds",
-        );
-    }
-}
-
-#[hegel::test]
-fn accepts_bounded_enum_numbers_and_rejects_a_neighbor(tc: TestCase) {
-    let number: i64 =
-        tc.draw(gs::integers().min_value(-999_i64).max_value(999));
-    let accepted = json!(number);
-    let rejected = json!(number + 1);
-    assert_schema_pair_matches_predicate(
-        json!({
-            "type": "number",
-            "minimum": -1000,
-            "maximum": 1000,
-            "enum": [number]
-        }),
-        accepted,
-        rejected,
-        move |value| {
-            value.as_f64().is_some_and(|value| {
-                (-1000.0..=1000.0).contains(&value) && value == number as f64
-            })
-        },
-        "the neighboring number is in range but absent from the enum",
-    );
-}
-
-#[hegel::test]
-fn accepts_string_arrays_and_rejects_a_numeric_member(tc: TestCase) {
-    let values: Vec<String> = tc.draw(
-        gs::vecs(gs::text().alphabet(ASCII_TEXT).max_size(16))
-            .min_size(1)
-            .max_size(4),
-    );
-    let accepted = json!(values);
-    let mut rejected_values = accepted.as_array().unwrap().clone();
-    rejected_values[0] = json!(0);
-    let rejected = Value::Array(rejected_values);
-    assert_schema_pair_matches_predicate(
-        json!({
-            "type": "array",
-            "items": {"type": "string", "maxLength": 16},
-            "minItems": 1,
-            "maxItems": 4
-        }),
-        accepted,
-        rejected,
-        |value| {
-            value.as_array().is_some_and(|items| {
-                (1..=4).contains(&items.len())
-                    && items.iter().all(|item| {
-                        item.as_str().is_some_and(|text| text.len() <= 16)
+/// Whatever keyword a schema leans on (a type that must not be coerced,
+/// inclusive bounds, an enum, an array's item type and size, a string's
+/// length, null allowed or not), an answer it allows decodes as itself
+/// and one it does not is refused. Each case is a pair: an allowed
+/// value, drawn at the keyword's edge where it has one, and a refused
+/// partner just past it. The predicates are written out here, and each
+/// pair is checked against its predicate before the schema sees it.
+#[hegel::test(test_cases = 300)]
+fn answers_follow_their_schemas_keywords(tc: TestCase) {
+    let (schema, accepted, rejected, accepts, reason): (
+        Value,
+        Value,
+        Value,
+        Accepts,
+        &str,
+    ) = match tc.draw(gs::integers::<u8>().max_value(5)) {
+        0 => {
+            let boolean: bool = tc.draw(gs::booleans());
+            (
+                json!({"type": "boolean"}),
+                json!(boolean),
+                json!(boolean.to_string()),
+                Box::new(Value::is_boolean),
+                "a string is not a boolean",
+            )
+        }
+        1 => {
+            let center =
+                tc.draw(gs::integers::<i64>().min_value(-999).max_value(999));
+            let radius =
+                tc.draw(gs::integers::<i64>().min_value(1).max_value(8));
+            let (minimum, maximum) = (center - radius, center + radius);
+            let accepted = tc.draw(gs::sampled_from(vec![
+                json!(minimum),
+                json!(maximum),
+                json!(center as f64 + 0.25),
+            ]));
+            let rejected = tc.draw(gs::sampled_from(vec![
+                json!(minimum - 1),
+                json!(maximum + 1),
+                json!(minimum as f64 - 0.5),
+            ]));
+            (
+                json!({"type": "number", "minimum": minimum, "maximum": maximum}),
+                accepted,
+                rejected,
+                Box::new(move |value: &Value| {
+                    value.as_f64().is_some_and(|number| {
+                        (minimum as f64..=maximum as f64).contains(&number)
                     })
-            })
-        },
-        "the first array member is numeric rather than a string",
-    );
-}
-
-#[hegel::test]
-fn accepts_nullable_strings_and_rejects_numbers(tc: TestCase) {
-    let text: Option<String> =
-        tc.draw(gs::optional(gs::text().alphabet(ASCII_TEXT).max_size(16)));
-    let accepted = match text {
-        Some(text) => json!(text),
-        None => Value::Null,
+                }),
+                "the number lies outside the inclusive bounds",
+            )
+        }
+        2 => {
+            let number =
+                tc.draw(gs::integers::<i64>().min_value(-999).max_value(999));
+            let neighbor = number + tc.draw(gs::sampled_from(vec![-1_i64, 1]));
+            (
+                json!({"type": "number", "minimum": -1000, "maximum": 1000, "enum": [number]}),
+                json!(number),
+                json!(neighbor),
+                Box::new(move |value: &Value| {
+                    value.as_f64() == Some(number as f64)
+                }),
+                "the neighbor is in range but not in the enum",
+            )
+        }
+        3 => {
+            let count =
+                tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
+            let items: Vec<String> = (0..count)
+                .map(|_| {
+                    let len = tc.draw(gs::sampled_from(vec![0_usize, 1, 16]));
+                    tc.draw(ascii_text(len))
+                })
+                .collect();
+            let accepted = json!(items);
+            let mut rejected =
+                items.iter().map(|item| json!(item)).collect::<Vec<_>>();
+            match tc.draw(gs::integers::<u8>().max_value(3)) {
+                0 => {
+                    let at =
+                        tc.draw(gs::integers::<usize>().max_value(count - 1));
+                    rejected[at] = json!(0);
+                }
+                1 => {
+                    let at =
+                        tc.draw(gs::integers::<usize>().max_value(count - 1));
+                    rejected[at] = json!(tc.draw(ascii_text(17)));
+                }
+                2 => rejected.clear(),
+                _ => rejected.resize(5, json!("x")),
+            }
+            (
+                json!({
+                    "type": "array",
+                    "items": {"type": "string", "maxLength": 16},
+                    "minItems": 1,
+                    "maxItems": 4
+                }),
+                accepted,
+                Value::Array(rejected),
+                Box::new(|value: &Value| {
+                    value.as_array().is_some_and(|items| {
+                        (1..=4).contains(&items.len())
+                            && items.iter().all(|item| {
+                                item.as_str().is_some_and(|text| {
+                                    text.chars().count() <= 16
+                                })
+                            })
+                    })
+                }),
+                "a member, the length or a member's length is wrong",
+            )
+        }
+        4 => {
+            let accepted = if tc.draw(gs::booleans()) {
+                Value::Null
+            } else {
+                json!(tc.draw(ascii_text(16)))
+            };
+            let rejected = tc
+                .draw(gs::sampled_from(vec![json!(0), json!("x".repeat(17))]));
+            (
+                json!({"type": ["string", "null"], "maxLength": 16}),
+                accepted,
+                rejected,
+                Box::new(|value: &Value| {
+                    value.is_null()
+                        || value
+                            .as_str()
+                            .is_some_and(|text| text.chars().count() <= 16)
+                }),
+                "neither null nor a string of at most 16 characters",
+            )
+        }
+        _ => {
+            let len = tc.draw(gs::integers::<usize>().max_value(16));
+            let rejected = tc.draw(gs::sampled_from(vec![
+                Value::Null,
+                json!("x".repeat(17)),
+            ]));
+            (
+                json!({"type": "string", "maxLength": 16}),
+                json!(tc.draw(ascii_text(len))),
+                rejected,
+                Box::new(|value: &Value| {
+                    value
+                        .as_str()
+                        .is_some_and(|text| text.chars().count() <= 16)
+                }),
+                "not a string of at most 16 characters",
+            )
+        }
     };
     assert_schema_pair_matches_predicate(
-        json!({"type": ["string", "null"], "maxLength": 16}),
-        accepted,
-        json!(0),
-        |value| {
-            value.is_null()
-                || value.as_str().is_some_and(|text| text.len() <= 16)
-        },
-        "a number is neither a string nor null",
-    );
-}
-
-#[hegel::test]
-fn accepts_nonnullable_strings_and_rejects_null(tc: TestCase) {
-    let text: String = tc.draw(gs::text().alphabet(ASCII_TEXT).max_size(16));
-    assert_schema_pair_matches_predicate(
-        json!({"type": "string", "maxLength": 16}),
-        json!(text),
-        Value::Null,
-        |value| value.as_str().is_some_and(|text| text.len() <= 16),
-        "null is not a string",
+        schema, accepted, rejected, accepts, reason,
     );
 }

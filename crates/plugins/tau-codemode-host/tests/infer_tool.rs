@@ -609,15 +609,29 @@ return { a.ok, b.ok }
         assert_eq!(calls.len(), 2);
         assert!(
             calls.iter().all(|(body, is_error, _)| {
-                *is_error
-                    && body["ok"] == false
-                    && body["value"] == Value::Null
-                    && body["error"].as_str().is_some_and(|error| {
-                        error.contains("deadline")
-                            || error.contains("incomplete inference budget")
-                            || error.contains("incomplete attempt usage")
-                    })
+                *is_error && body["ok"] == false && body["value"] == Value::Null
             }),
+            "nested replies: {calls:?}"
+        );
+        // The running attempt is cut off with its usage unknown; the
+        // queued call never gets a slot before the deadline.
+        let mut errors: Vec<String> = calls
+            .iter()
+            .map(|(body, _, _)| {
+                let error = body["error"].as_str().unwrap();
+                if error.ends_with(
+                    "has incomplete attempt usage; use a new run or fork",
+                ) {
+                    "incomplete attempt usage".to_owned()
+                } else {
+                    error.to_owned()
+                }
+            })
+            .collect();
+        errors.sort();
+        assert_eq!(
+            errors,
+            ["incomplete attempt usage", "inference deadline reached"],
             "nested replies: {calls:?}"
         );
         assert_eq!(
