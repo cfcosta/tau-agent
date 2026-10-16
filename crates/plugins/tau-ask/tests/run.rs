@@ -320,9 +320,29 @@ fn only_the_model_can_call_ask() {
     use tau_agent::tool::{AgentTool, Exposure};
     let tool = tau_ask::host::AskTool::new(Waiting::default());
     assert_eq!(tool.exposure(), Exposure::ModelOnly);
-    // The limits are in the schema the model reads.
-    let schema = tool.parameters().to_string();
-    assert!(schema.contains("\"maxItems\":4"), "{schema}");
+    // The limits the check enforces are the ones in the schema the model
+    // reads.
+    use tau_ask::ask::{MAX_CHOICES, MAX_HEADER, MAX_QUESTIONS, MIN_CHOICES};
+    let schema = tool.parameters();
+    // A `$ref` read in the schema's own definitions.
+    let at = |node: &Value| -> Value {
+        match node["$ref"].as_str() {
+            Some(path) => schema
+                .pointer(path.trim_start_matches('#'))
+                .unwrap_or_else(|| panic!("{path} in {schema}"))
+                .clone(),
+            None => node.clone(),
+        }
+    };
+    let questions = &schema["properties"]["questions"];
+    assert_eq!(questions["minItems"], 1, "{schema}");
+    assert_eq!(questions["maxItems"], MAX_QUESTIONS, "{schema}");
+    let question = at(&questions["items"]);
+    assert_eq!(question["properties"]["header"]["minLength"], 1);
+    assert_eq!(question["properties"]["header"]["maxLength"], MAX_HEADER);
+    let options = &question["properties"]["options"];
+    assert_eq!(options["minItems"], MIN_CHOICES, "{question}");
+    assert_eq!(options["maxItems"], MAX_CHOICES, "{question}");
 }
 
 /// A plugin whose tool runs `ask` under a short timeout: the timeout
