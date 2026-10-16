@@ -21,7 +21,6 @@ use tau_codemode_host::{
         Type,
         catalog,
         input_type,
-        quote,
         render_tool,
         schema_type,
     },
@@ -570,16 +569,74 @@ fn luau_type(schema: &Value) -> String {
     }
 }
 
-/// An object's type keeps every property under its key, with the type
-/// written out above, and marks with `?` exactly the ones not required.
+/// Luau's reserved words, which cannot be bare property names.
+const LUAU_KEYWORDS: [&str; 21] = [
+    "and", "break", "do", "else", "elseif", "end", "false", "for", "function",
+    "if", "in", "local", "nil", "not", "or", "repeat", "return", "then",
+    "true", "until", "while",
+];
+
+/// `name` as a Luau string literal: `"` and `\\` escaped, line breaks and
+/// tabs as their letters, other control characters as three decimal
+/// digits. Luau itself checks below that it reads back as `name`.
+fn luau_literal(name: &str) -> String {
+    let mut out = String::from("\"");
+    for c in name.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\{:03}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// A property name: an identifier, a reserved word, any text without
+/// NUL, text of the characters a string literal escapes, or a short name
+/// behind a one-character prefix, so that one key ending another (`ab`
+/// and `bab`) is common.
+#[hegel::composite]
+fn property_name(tc: &TestCase) -> String {
+    match tc.draw(gs::integers::<u8>().max_value(4)) {
+        0 => tc.draw(gs::from_regex("[a-z_][a-z0-9_]{0,3}").fullmatch(true)),
+        1 => tc.draw(gs::sampled_from(LUAU_KEYWORDS.to_vec())).to_owned(),
+        2 => tc.draw(gs::text().exclude_characters("\0").max_size(12)),
+        3 => {
+            let escaped = tc.draw(gs::sampled_from(vec![
+                "\"", "\\", "\n", "\r", "\t", "\u{1}", "\u{1f}", "\u{7f}",
+            ]));
+            let rest: String = tc.draw(
+                gs::text()
+                    .alphabet("a \"\\\n\r\t\u{1}\u{1f}\u{7f}é")
+                    .max_size(4),
+            );
+            format!("{escaped}{rest}")
+        }
+        _ => format!(
+            "{}{}",
+            tc.draw(gs::sampled_from(vec!["b", " ", "_", "1"])),
+            tc.draw(gs::from_regex("[a-z]{1,3}").fullmatch(true))
+        ),
+    }
+}
+
+/// An object's type is exactly `{ key: T, ... }` with its properties
+/// sorted by name, each under its name when that is an identifier and
+/// not a reserved word and under a string literal Luau reads back as the
+/// name otherwise, its type written out above, and `?` on exactly the
+/// ones not required. It parses as Luau.
 #[hegel::test]
 fn objects_keep_every_property_and_mark_only_optional_ones(tc: TestCase) {
     // Luau cannot write a key holding NUL; those go to the indexer.
-    let names: Vec<String> = tc.draw(
-        gs::vecs(gs::text().exclude_characters("\0").max_size(12))
-            .unique(true)
-            .max_size(6),
-    );
+    let names: Vec<String> =
+        tc.draw(gs::vecs(property_name()).unique(true).max_size(6));
     let mut properties = Map::new();
     let mut required = Vec::new();
     for name in &names {
@@ -590,24 +647,37 @@ fn objects_keep_every_property_and_mark_only_optional_ones(tc: TestCase) {
     }
     let schema = json!({ "type": "object", "properties": properties, "required": required });
     let rendered = schema_type(&schema).render(0);
-    assert!(parses(&Lua::new(), &rendered), "{rendered}");
-    for name in &names {
-        let key = if tau_codemode_host::signature::is_identifier(name) {
-            name.clone()
-        } else {
-            format!("[{}]", quote(name))
-        };
-        let ty = luau_type(&properties[name]);
-        let field = if required.contains(name) {
-            format!("{key}: {ty},")
-        } else {
-            format!("{key}: {ty}?,")
-        };
-        // Every field is followed by `,` or ` }`.
-        let field_end = field.trim_end_matches(',').to_owned() + " }";
-        assert!(
-            rendered.contains(&field) || rendered.ends_with(&field_end),
-            "{field} missing from {rendered}"
-        );
-    }
+    let lua = Lua::new();
+    assert!(parses(&lua, &rendered), "{rendered}");
+    let mut sorted = names.clone();
+    sorted.sort();
+    let fields: Vec<String> = sorted
+        .iter()
+        .map(|name| {
+            let bare = name
+                .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !LUAU_KEYWORDS.contains(&name.as_str());
+            let key = if bare {
+                name.clone()
+            } else {
+                let literal = luau_literal(name);
+                let read: String = lua
+                    .load(format!("return {literal}"))
+                    .eval()
+                    .unwrap_or_else(|error| panic!("{literal}: {error}"));
+                assert_eq!(&read, name, "the oracle's literal reads back");
+                format!("[{literal}]")
+            };
+            let ty = luau_type(&properties[name]);
+            let mark = if required.contains(name) { "" } else { "?" };
+            format!("{key}: {ty}{mark}")
+        })
+        .collect();
+    let expected = if fields.is_empty() {
+        "{ [string]: any }".to_owned()
+    } else {
+        format!("{{ {} }}", fields.join(", "))
+    };
+    assert_eq!(rendered, expected);
 }
