@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, fs, path::Path};
 use hegel::{TestCase, generators as gs};
 use tau_skills::{
     SKILL_FILE,
-    scan::{self, HEADING},
+    scan::{self, DESCRIPTION_LIMIT, HEADING, NAME_LIMIT},
 };
 
 /// One folder as a test writes it.
@@ -33,15 +33,77 @@ enum Folder {
 
 hegel::pretty_print_as_debug!(Folder);
 
+/// A name as a folder or its frontmatter may give it: lower-case
+/// letters, digits and hyphens, a hyphen at either end now and then,
+/// and lengths at and past [`NAME_LIMIT`] as often as the rest.
 fn name(tc: &TestCase) -> String {
+    let count = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![1, NAME_LIMIT, NAME_LIMIT + 1]),
+        gs::integers::<usize>()
+            .min_value(1)
+            .max_value(NAME_LIMIT + 1),
+    ));
     tc.draw(
         gs::text()
-            .alphabet("abcdefghijklmnopqrstuvwxyz0123456789-")
-            .min_size(1)
-            .max_size(12),
+            .alphabet("abcz09-")
+            .min_size(count)
+            .max_size(count),
     )
-    .trim_matches('-')
-    .to_owned()
+}
+
+/// Whether `name` names a skill: 1 to [`NAME_LIMIT`] lower-case
+/// letters, digits and hyphens, with no hyphen at either end.
+fn valid(name: &str) -> bool {
+    (1..=NAME_LIMIT).contains(&name.chars().count())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+}
+
+/// What the instructions say of a description: its words joined by
+/// single spaces, cut after [`DESCRIPTION_LIMIT`] characters with `…`.
+fn one_line(text: &str) -> String {
+    let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars: Vec<char> = words.chars().collect();
+    if chars.len() > DESCRIPTION_LIMIT {
+        format!("{}…", chars[..DESCRIPTION_LIMIT].iter().collect::<String>())
+    } else {
+        words
+    }
+}
+
+/// A description: a short one of what YAML must escape, or a long one
+/// whose words, joined, come to just under, at or past
+/// [`DESCRIPTION_LIMIT`] characters, some of them two bytes long.
+fn description(tc: &TestCase) -> String {
+    if tc.draw(gs::booleans()) {
+        // Words, colons, quotes and lines: what YAML must escape.
+        return tc
+            .draw(gs::text().alphabet("ab :#'\"\n-").min_size(1).max_size(40));
+    }
+    let target = tc.draw(gs::sampled_from(vec![
+        DESCRIPTION_LIMIT - 1,
+        DESCRIPTION_LIMIT,
+        DESCRIPTION_LIMIT + 1,
+        DESCRIPTION_LIMIT + 30,
+    ]));
+    let mut text = String::new();
+    let mut length = 0;
+    while length < target {
+        if length > 0 {
+            text.push_str(tc.draw(gs::sampled_from(vec![" ", "\n", "  "])));
+            length += 1;
+        }
+        let word =
+            tc.draw(gs::text().alphabet("abé:'").min_size(1).max_size(12));
+        let word: String =
+            word.chars().take(target.max(length + 1) - length).collect();
+        length += word.chars().count();
+        text.push_str(&word);
+    }
+    text
 }
 
 #[hegel::composite]
@@ -53,10 +115,7 @@ fn folder(tc: &hegel::TestCase) -> Folder {
         _ => Folder::Skill {
             name: name(tc),
             named: tc.draw(gs::booleans()),
-            // Words, colons, quotes and lines: what YAML must escape.
-            description: tc.draw(
-                gs::text().alphabet("ab :#'\"\n-").min_size(1).max_size(40),
-            ),
+            description: description(tc),
             style: tc.draw(gs::integers::<u8>().max_value(2)),
             other: tc.draw(
                 gs::vecs(gs::sampled_from(vec![
@@ -138,7 +197,7 @@ fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
         let folder_name = match folder {
             Folder::Skill {
                 name, named: false, ..
-            } if !name.is_empty() && !used.contains(name) => name.clone(),
+            } if !used.contains(name) => name.clone(),
             _ => format!("folder-{n}"),
         };
         used.insert(folder_name.clone());
@@ -177,8 +236,8 @@ fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
                 } else {
                     folder_name.clone()
                 };
-                let valid = scan::check_name(&want).is_ok();
-                let words = scan::one_line(description);
+                let valid = valid(&want);
+                let words = one_line(description);
                 // Only a skill claims its name.
                 let fresh =
                     valid && !words.is_empty() && names.insert(want.clone());
