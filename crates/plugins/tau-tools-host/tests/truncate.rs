@@ -157,20 +157,6 @@ fn tail_keeps_the_longest_suffix(tc: TestCase) {
     }
 }
 
-/// A last line over the byte limit keeps its end after `…`, the marker
-/// counted in the limit; a limit too small for the marker keeps the end
-/// unmarked.
-#[test]
-fn a_cut_last_line_starts_with_the_marker() {
-    let line = "abcdefghij\n";
-    assert_eq!(truncate_tail(line, 10, 6).content, "…hij");
-    assert_eq!(truncate_tail(line, 10, 3).content, "…");
-    assert_eq!(truncate_tail(line, 10, 2).content, "ij");
-    let result = truncate_tail("abc\nabcdefghij", 10, 6);
-    assert_eq!(result.content, "…hij");
-    assert!(result.last_line_partial);
-}
-
 /// Truncation is idempotent: truncating the output again cuts nothing.
 #[hegel::test(test_cases = 500)]
 fn truncation_is_idempotent(tc: TestCase) {
@@ -244,16 +230,4 @@ fn format_size_is_the_size_to_one_decimal(tc: TestCase) {
         (value - bytes as f64 / unit).abs() <= 0.05 + 1e-9,
         "{bytes} printed as {text}"
     );
-}
-
-/// Sizes read as pi prints them.
-#[test]
-fn sizes_read_as_pi_prints_them() {
-    assert_eq!(format_size(0), "0B");
-    assert_eq!(format_size(1023), "1023B");
-    assert_eq!(format_size(1024), "1.0KB");
-    assert_eq!(format_size(1536), "1.5KB");
-    assert_eq!(format_size(1024 * 1024 - 1), "1024.0KB");
-    assert_eq!(format_size(1024 * 1024), "1.0MB");
-    assert_eq!(format_size(5 * 1024 * 1024 / 2), "2.5MB");
 }

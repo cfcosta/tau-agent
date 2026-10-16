@@ -261,20 +261,6 @@ fn shrink(w: u32, h: u32) -> Option<(u32, u32)> {
 mod tests {
     use super::*;
 
-    /// Wide, tall and doubly oversized images fit within 2000 on both
-    /// sides with their aspect ratio; small ones are left alone.
-    #[test]
-    fn images_fit_within_the_maximum() {
-        assert_eq!(fit(4000, 1000), (2000, 500));
-        assert_eq!(fit(1000, 4000), (500, 2000));
-        assert_eq!(fit(6000, 3000), (2000, 1000));
-        assert_eq!(fit(3000, 6000), (1000, 2000));
-        assert_eq!(fit(2001, 3), (2000, 3));
-        assert_eq!(fit(2000, 2000), (2000, 2000));
-        assert_eq!(fit(1999, 7), (1999, 7));
-        assert_eq!(fit(9000, 1), (2000, 1));
-    }
-
     /// The limit is strict: a payload whose base64 is exactly 4.5 MB does
     /// not fit, one three bytes smaller does.
     #[test]
@@ -286,13 +272,18 @@ mod tests {
 
     /// `fit` keeps an image within the maximum as it is; a larger one
     /// gets its long side at exactly the maximum and its short side
-    /// scaled by the same factor, to within one pixel (it is rounded,
-    /// twice when both sides were over), never below 1.
+    /// scaled by the same factor and rounded to the nearest pixel, never
+    /// below 1. Only a tall image whose width is over too is scaled
+    /// twice (by its width, then by its rounded height), so its short
+    /// side may be a pixel off.
     #[hegel::test(test_cases = 1000)]
     fn fit_scales_the_long_side_to_the_maximum(tc: hegel::TestCase) {
         use hegel::generators as gs;
+        // The points where the rule changes come up on purpose: 1, the
+        // maximum and its neighbours, and twice it.
         let side = || {
             hegel::one_of!(
+                gs::sampled_from(vec![1u32, 3, 1_999, 2_000, 2_001, 4_000]),
                 gs::integers::<u32>().min_value(1).max_value(2_100),
                 gs::integers::<u32>().min_value(1).max_value(50_000),
             )
@@ -317,8 +308,10 @@ mod tests {
         assert!((1..=MAX_DIMENSION).contains(&short_out));
         let exact =
             f64::from(short) * f64::from(MAX_DIMENSION) / f64::from(long);
+        let twice = width > MAX_DIMENSION && height > width;
+        let off = if twice { 1.0 } else { 0.5 };
         assert!(
-            (f64::from(short_out) - exact).abs() <= 1.0
+            (f64::from(short_out) - exact).abs() <= off
                 || (short_out == 1 && exact < 1.0),
             "{width}x{height} -> {w}x{h}, exact short side {exact}"
         );
