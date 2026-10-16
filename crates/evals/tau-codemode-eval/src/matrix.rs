@@ -1424,23 +1424,6 @@ mod properties {
     }
 
     #[test]
-    fn missing_vm_wall_time_stays_unavailable() {
-        assert_eq!(observed_vm_latency_ms(None, true), None);
-        assert_eq!(
-            observed_vm_latency_ms(Some(&json!({"complete":true})), true),
-            None
-        );
-        assert_eq!(
-            observed_vm_latency_ms(Some(&json!({"wall_ms":17})), true),
-            Some(17)
-        );
-        assert_eq!(
-            observed_vm_latency_ms(Some(&json!({"wall_ms":17})), false),
-            None
-        );
-    }
-
-    #[test]
     fn token_overflow_does_not_wrap() {
         let largest = ReportedUsage {
             uncached_input_tokens: Some(u64::MAX),

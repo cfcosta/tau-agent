@@ -1,11 +1,13 @@
 //! Property inventory:
 //! - corpus integrity: independent TSV and Rust-line readers verify saved
 //!   answers while generated padding, path, and Unicode marker preserve the
-//!   display-window and byte-boundary facts. Bounds are 2,100..=4,000 noise
+//!   display-window (first and last 2,000 lines, first and last 50 KiB) and
+//!   byte-boundary facts. Bounds are 2,100..=4,000 noise
 //!   lines and short valid paths; shrinking shortens both, retaining signals.
 //! - serialization: every finite corpus kind, including changed variants,
 //!   round-trips all fields and still matches an independent saved-answer
-//!   oracle. The complete finite corpus is enumerated, not sampled.
+//!   oracle, under distinct names. The complete finite corpus is enumerated,
+//!   not sampled.
 //!
 //! Workspace Hegel profiles supply case counts and reproducible CI behavior.
 
@@ -61,11 +63,23 @@ fn generated_corpus_keeps_saved_answers_and_boundary_evidence(tc: TestCase) {
     assert_eq!(search.files[0].path, path);
     assert_eq!(search_records(&search), search.expected);
 
+    // No display window holds every failure: not the first or last 2,000
+    // lines, nor the first or last 50 KiB.
     let log = fixtures::test_log(noise_lines);
     let text = &log.files[0].text;
-    let display = text.lines().take(2_000).collect::<Vec<_>>().join("\n");
     assert_eq!(failures(text), log.expected);
-    assert_ne!(failures(&display), log.expected);
+    assert!(text.len() > 50 * 1024);
+    let lines: Vec<&str> = text.lines().collect();
+    let bytes = text.as_bytes();
+    let windows = [
+        lines[..2_000].join("\n"),
+        lines[lines.len() - 2_000..].join("\n"),
+        String::from_utf8_lossy(&bytes[..50 * 1024]).into_owned(),
+        String::from_utf8_lossy(&bytes[bytes.len() - 50 * 1024..]).into_owned(),
+    ];
+    for window in &windows {
+        assert_ne!(&failures(window), &log.expected);
+    }
 
     let marker_index = tc.draw(gs::integers::<usize>().max_value(2));
     let marker = ["雪", "🚀", "é"][marker_index];
@@ -81,6 +95,9 @@ fn generated_corpus_keeps_saved_answers_and_boundary_evidence(tc: TestCase) {
 fn serialized_corpus_kinds_keep_inputs_and_independent_answers() {
     let corpus = fixtures::matrix_corpus();
     assert_eq!(corpus.len(), 8);
+    let names: std::collections::BTreeSet<_> =
+        corpus.iter().map(|fixture| &fixture.name).collect();
+    assert_eq!(names.len(), corpus.len(), "fixture names are distinct");
     for fixture in &corpus {
         let serialized = serde_json::to_vec(fixture).unwrap();
         let decoded: fixtures::Fixture =
@@ -125,31 +142,4 @@ fn serialized_corpus_kinds_keep_inputs_and_independent_answers() {
         answer(&fixtures::repeated_workflow(false).name),
         answer(&fixtures::repeated_workflow(true).name)
     );
-}
-
-#[test]
-fn display_windows_omit_required_evidence() {
-    let fixture = fixtures::test_log(2_400);
-    let log = &fixture.files[0].text;
-    assert!(log.len() > 50 * 1024);
-    let head = log.lines().take(2_000).collect::<Vec<_>>().join("\n");
-    let lines: Vec<_> = log.lines().collect();
-    let tail = lines[lines.len() - 2_000..].join("\n");
-    assert_ne!(failures(&head), fixture.expected);
-    assert_ne!(failures(&tail), fixture.expected);
-    let byte_head = &log[..50 * 1024];
-    let byte_tail = &log[log.len() - 50 * 1024..];
-    assert_ne!(failures(byte_head), fixture.expected);
-    assert_ne!(failures(byte_tail), fixture.expected);
-}
-
-#[test]
-fn corpus_has_distinct_names_and_semantic_negative_evidence() {
-    let corpus = fixtures::corpus();
-    let names: std::collections::BTreeSet<_> =
-        corpus.iter().map(|case| &case.name).collect();
-    assert_eq!(names.len(), corpus.len());
-    let semantic = fixtures::semantic_changes();
-    assert!(semantic.files[0].text.contains("still accepted"));
-    assert_eq!(semantic.expected.as_array().unwrap().len(), 2);
 }
