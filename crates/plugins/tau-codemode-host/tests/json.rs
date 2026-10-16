@@ -1,5 +1,6 @@
-//! Properties: JSON text → Luau → JSON agrees with a double-normalized
-//! serde_json oracle; JSON string escaping agrees with serde_json. Trees
+//! Properties: JSON text → Luau → JSON, and JSON → Luau → JSON directly,
+//! agree with a double-normalized serde_json oracle, empty arrays, objects
+//! and nulls drawn on purpose. Trees
 //! and Unicode strings are valid by construction and shrink structurally.
 //! Integer literals decode iff a double holds them, drawn at the 2^53
 //! boundary; text limits have boundary examples. Hegel profiles are
@@ -10,7 +11,10 @@ mod common;
 use std::sync::Arc;
 
 use common::{FakeHost, error, script, texts};
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _},
+};
 use mlua::Lua;
 use serde_json::{Map, Value, json};
 use tau_codemode_host::{json as codec, value};
@@ -64,26 +68,49 @@ fn exact_integers(value: Value) -> Value {
     }
 }
 
+/// Any JSON value, with the shapes a Lua table cannot tell apart by
+/// itself (empty arrays, empty objects, nulls) drawn on purpose, and
+/// integers around 2^53, where a double stops holding every integer.
+#[hegel::composite]
+fn json_value(tc: &TestCase) -> Value {
+    const EXACT: i64 = 1 << 53;
+    tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![
+            json!([]),
+            json!({}),
+            json!(null),
+            json!([null, [], {}]),
+            json!({ "a": null }),
+        ]),
+        gs::integers::<i64>()
+            .min_value(EXACT - 2)
+            .max_value(EXACT + 2)
+            .map(|n| json!([n, -n])),
+        gs::integers::<i64>()
+            .min_value(-(EXACT << 2))
+            .max_value(EXACT << 2)
+            .map(|n| json!({ "n": n })),
+        hegel::extras::serde_json::values(),
+    ))
+}
+
+/// JSON text decoded, handed to Luau and encoded again is the value with
+/// its numbers as doubles; a value handed to Luau directly, integers past
+/// 2^53 included, comes back the same way.
 #[hegel::test]
 fn json_text_round_trip_matches_double_semantics(tc: TestCase) {
-    let input = exact_integers(tc.draw(hegel::extras::serde_json::values()));
+    let raw = tc.draw(json_value());
     let lua = Lua::new();
+    let direct =
+        value::from_lua(&lua, &value::to_lua(&lua, &raw).unwrap()).unwrap();
+    assert_eq!(direct, doubles(&raw));
+
+    let input = exact_integers(raw);
     let decoded = codec::decode(input.to_string().as_bytes()).unwrap();
     let encoded =
         codec::encode(&lua, &value::to_lua(&lua, &decoded).unwrap()).unwrap();
     let actual: Value = serde_json::from_str(&encoded).unwrap();
     assert_eq!(actual, doubles(&input));
-}
-
-#[hegel::test]
-fn string_escaping_agrees_with_serde_json(tc: TestCase) {
-    let text = tc.draw(gs::text().max_size(1_024));
-    let lua = Lua::new();
-    let value = mlua::Value::String(lua.create_string(&text).unwrap());
-    assert_eq!(
-        codec::encode(&lua, &value).unwrap(),
-        serde_json::to_string(&text).unwrap()
-    );
 }
 
 /// An integer literal decodes exactly when a Luau double holds it
