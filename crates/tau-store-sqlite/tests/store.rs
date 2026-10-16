@@ -417,6 +417,25 @@ impl StoreMachine {
         );
     }
 
+    /// Finishing a run that does not exist fails and changes nothing.
+    #[rule]
+    fn finish_unknown_run(&mut self, tc: TestCase) {
+        let status = tc.draw(
+            gs::sampled_from(vec![Status::Done, Status::Failed])
+                .print_as_debug(),
+        );
+        let result = self.runtime.block_on(self.store.finish_run(
+            "run_missing",
+            status,
+            None,
+            None,
+        ));
+        assert!(
+            matches!(result, Err(StoreError::UnknownRun(_))),
+            "{result:?}"
+        );
+    }
+
     #[rule]
     fn finish(&mut self, tc: TestCase) {
         let run = self.pick(&tc);
@@ -523,6 +542,12 @@ impl StoreMachine {
 impl StoreMachine {
     async fn check_reads(&self) {
         let (store, model) = (&self.store, &self.model);
+        // A run that does not exist reads as none, with no transcript.
+        assert_eq!(store.run("run_missing").await.unwrap(), None);
+        assert_eq!(
+            store.transcript("run_missing").await.unwrap(),
+            Vec::<Entry>::new()
+        );
         for (id, m) in &model.runs {
             assert_eq!(
                 store.transcript(id).await.ok(),
@@ -717,20 +742,6 @@ fn file_store_survives_reopen() {
             }]
         );
         std::fs::remove_dir_all(&dir).unwrap();
-    });
-}
-
-/// Unknown runs are reported, not silently ignored.
-#[test]
-fn unknown_runs_are_errors() {
-    block_on_io(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        assert!(matches!(
-            store.finish_run("x", Status::Done, None, None).await,
-            Err(StoreError::UnknownRun(_))
-        ));
-        assert_eq!(store.run("x").await.unwrap(), None);
-        assert_eq!(store.transcript("x").await.unwrap(), Vec::<Entry>::new());
     });
 }
 
