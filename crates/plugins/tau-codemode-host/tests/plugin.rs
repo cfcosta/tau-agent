@@ -599,7 +599,9 @@ fn start_lists_the_direct_tools_signatures() {
 
 /// Among one script's calls, a `Sequential` tool's call runs alone; the
 /// others overlap. Calls start in the order the script made them, so a
-/// call after a sequential one waits for it.
+/// call after a sequential one waits for it. `parallel` returns every
+/// function's value in the order the functions were given, a function
+/// that calls no tool among them.
 #[test]
 fn a_sequential_tool_runs_alone_within_a_script() {
     block_on(async {
@@ -610,18 +612,21 @@ fn a_sequential_tool_runs_alone_within_a_script() {
         let par = Echo::new("par");
         let par_log = par.log.clone();
         let agent = Agent::new(model(&[r#"
-parallel(
-    function() return tools.par({ ms = 100 }) end,
-    function() return tools.par({ ms = 100 }) end,
-    function() return tools.seq({ ms = 100 }) end,
-    function() return tools.par({ ms = 100 }) end,
-    function() return tools.seq({ ms = 100 }) end
-)
+return { parallel(
+    function() return tools.par({ text = "p1", ms = 100 }) end,
+    function() return tools.par({ text = "p2", ms = 100 }) end,
+    function() return tools.seq({ text = "s1", ms = 100 }) end,
+    function() return tools.par({ text = "p3", ms = 100 }) end,
+    function() return tools.seq({ text = "s2", ms = 100 }) end,
+    function() return "plain" end
+) }
 "#]))
         .tool(seq)
         .tool(par)
         .plugin(Codemode::new(None));
-        agent.run("go", &store).await.unwrap();
+        let outcome = agent.run("go", &store).await.unwrap();
+        let result = only_result(&store, &outcome.run.0).await;
+        assert_eq!(items(&result), [r#"["p1","p2","s1","p3","s2","plain"]"#]);
 
         let seqs = seq_log.lock().unwrap().clone();
         let pars = par_log.lock().unwrap().clone();

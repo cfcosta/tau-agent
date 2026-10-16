@@ -121,25 +121,6 @@ async fn an_mcp_error_result_is_returned_not_raised() {
     assert_eq!(outcome.calls[0].error.as_deref(), Some("no access"));
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn parallel_calls_overlap() {
-    let host = host();
-    let outcome = script(
-        &host,
-        "local a, b, c = parallel(\n\
-             function() return tools.sleep({ ms = 300 }) end,\n\
-             function() return tools.sleep({ ms = 300 }) end,\n\
-             function() return 'plain' end\n\
-         )\n\
-         return { a, b, c }",
-    )
-    .await;
-    assert_eq!(texts(&outcome), ["[300,300,\"plain\"]"]);
-    // Both sleeps were running at once; a wall-clock bound would only
-    // measure the machine's load.
-    assert_eq!(host.peak.load(Ordering::SeqCst), 2);
-}
-
 #[tokio::test]
 async fn parallel_raises_the_first_error_after_every_function() {
     let outcome = script(
@@ -180,22 +161,6 @@ async fn parallel_refuses_what_is_not_a_function() {
         error(&outcome),
         "codemode:1: parallel: argument 2 is a number, not a function"
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn sequential_tools_run_one_at_a_time() {
-    let host = host();
-    let outcome = script(
-        &host,
-        "parallel(\n\
-             function() return tools.slow_one({ ms = 150 }) end,\n\
-             function() return tools.slow_one({ ms = 150 }) end\n\
-         )",
-    )
-    .await;
-    assert_eq!(outcome.failure, None);
-    // Never two at once; the elapsed time would add nothing to that.
-    assert_eq!(host.peak.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -249,8 +214,12 @@ async fn cancel_stops_a_waiting_call() {
     let host = host();
     let cancel = CancellationToken::new();
     let trigger = cancel.clone();
+    // Cancelled once the call is running, however long the VM took.
+    let watched = host.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        while watched.calls.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
         trigger.cancel();
     });
     let outcome = script_with(
