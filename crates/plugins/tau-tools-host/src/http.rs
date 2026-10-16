@@ -186,14 +186,15 @@ impl Request {
                     .as_f64()
                     .filter(|seconds| *seconds > 0.0)
                     .ok_or("`timeout` is a number of seconds")?;
-                let timeout = Duration::from_secs_f64(seconds);
-                if timeout > MAX_TIMEOUT {
+                // Bounded before it becomes a `Duration`, which a number
+                // past `u64::MAX` seconds would overflow.
+                if seconds > MAX_TIMEOUT.as_secs_f64() {
                     return Err(format!(
                         "`timeout` is at most {} seconds",
                         MAX_TIMEOUT.as_secs()
                     ));
                 }
-                timeout
+                Duration::from_secs_f64(seconds)
             }
         };
         Ok(Self {

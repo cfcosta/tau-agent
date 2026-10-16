@@ -10,7 +10,7 @@ use std::{
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use hegel::{TestCase, generators as gs};
+use hegel::{Generator as _, TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
@@ -425,6 +425,57 @@ fn a_request_says_what_is_wrong_with_it() {
             .unwrap();
     assert_eq!(fine.method, reqwest::Method::GET);
     assert_eq!(fine.timeout.as_millis(), 2500);
+}
+
+/// A request's `timeout` is a number of seconds above 0 and at most 60
+/// (`docs/reference/tools.md`, "http"): within that it is the request's
+/// time limit, and anything else is refused with the rule's words, a
+/// number too large for a `Duration` included. Drawn at the bounds, at
+/// the edge of what a `Duration` holds, and far past it.
+#[hegel::test(test_cases = 500)]
+#[hegel::explicit_test_case(timeout = json!(1e20))]
+#[hegel::explicit_test_case(timeout = json!(u64::MAX))]
+fn a_timeout_is_a_positive_number_of_seconds_up_to_60(tc: TestCase) {
+    let timeout: Value = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![
+            json!(0),
+            json!(1),
+            json!(60),
+            json!(61),
+            json!(u64::MAX),
+            json!(0.0),
+            json!(-0.5),
+            json!(1e-9),
+            json!(59.999),
+            json!(60.0),
+            json!(60.000001),
+            json!(1.8e19),
+            json!(1e20),
+            json!(1e300),
+            json!(f64::MAX),
+        ]),
+        gs::floats::<f64>()
+            .min_value(-1.0)
+            .max_value(120.0)
+            .map(|seconds| json!(seconds)),
+        gs::floats::<f64>()
+            .min_value(1e15)
+            .max_value(f64::MAX)
+            .allow_infinity(false)
+            .map(|seconds| json!(seconds)),
+    ));
+    let seconds = timeout.as_f64().unwrap();
+    let parsed = Request::parse(
+        &json!({"url": "https://example.com", "timeout": timeout}),
+    );
+    if seconds <= 0.0 {
+        assert_eq!(parsed.unwrap_err(), "`timeout` is a number of seconds");
+    } else if seconds > 60.0 {
+        assert_eq!(parsed.unwrap_err(), "`timeout` is at most 60 seconds");
+    } else {
+        let limit = parsed.unwrap().timeout.as_secs_f64();
+        assert!((limit - seconds).abs() < 1e-9, "{seconds} became {limit}");
+    }
 }
 
 #[test]
