@@ -67,6 +67,16 @@ async fn hears(watch: &mut ResourceWatch) -> bool {
         .expect("a change in time")
 }
 
+/// Waits until a 2026-07-28 server takes `count` listens of
+/// `file:///status`: rmcp acknowledges a listen before the server's
+/// handler holds its sink, so a change made in between reaches no one.
+/// A 2025-11-25 server holds a subscription before it answers.
+async fn listening(fixture: &Fixture, count: usize) {
+    if !fixture.legacy {
+        eventually(|| fixture.listening_to(STATUS) == count).await;
+    }
+}
+
 /// What `file:///status` reads now.
 async fn status(connection: &Arc<Connection>) -> String {
     let read = connection
@@ -94,6 +104,7 @@ async fn a_watch_hears_each_change(legacy: bool) {
         .watch_resource(STATUS, &CancellationToken::new())
         .await
         .unwrap();
+    listening(&fixture, 1).await;
     fixture.set_status("red").await;
     assert!(hears(&mut watch).await);
     assert_eq!(status(&connection).await, "red");
@@ -174,9 +185,11 @@ async fn a_watch_ends_with_its_connection(legacy: bool) {
     // It ends, rather than wait for changes that cannot come.
     assert!(!hears(&mut watch).await);
     assert_eq!(connection.subscriptions(), 0);
+    listening(&fixture, 0).await;
     // Watching again connects again, and hears.
     let mut watch = connection.watch_resource(STATUS, &cancel).await.unwrap();
     assert!(fixture.dials() > dialled);
+    listening(&fixture, 1).await;
     fixture.set_status("red").await;
     assert!(hears(&mut watch).await);
 }
