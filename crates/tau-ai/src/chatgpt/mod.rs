@@ -801,11 +801,41 @@ mod tests {
         );
     }
 
-    #[test]
-    fn scopes_are_split_and_sorted() {
-        assert_eq!(
-            sorted_scopes("openid chatgpt.tokens.use.direct  email openid"),
-            vec!["chatgpt.tokens.use.direct", "email", "openid"]
+    /// A granted scope string reads as its words, each once, in order:
+    /// whatever whitespace separates them, and in whatever order or
+    /// however often the server lists them.
+    #[hegel::test(test_cases = 200)]
+    fn scopes_are_split_and_sorted(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let word = || {
+            gs::sampled_from(vec![
+                "openid".to_owned(),
+                "email".to_owned(),
+                "profile".to_owned(),
+                "offline_access".to_owned(),
+                "chatgpt.tokens.use.direct".to_owned(),
+            ])
+        };
+        // Whitespace around the list may be empty; between words it may not.
+        let gap = |min| gs::text().alphabet(" \t\n").min_size(min).max_size(3);
+        let words: Vec<String> = tc.draw(gs::vecs(word()).max_size(8));
+        let mut granted = String::new();
+        for (index, word) in words.iter().enumerate() {
+            granted.push_str(&tc.draw(gap(usize::from(index > 0))));
+            granted.push_str(word);
+        }
+        granted.push_str(&tc.draw(gap(0)));
+        let scopes = sorted_scopes(&granted);
+        assert!(
+            scopes.windows(2).all(|pair| pair[0] < pair[1]),
+            "{scopes:?}"
         );
+        assert!(scopes.iter().all(|scope| words.contains(scope)));
+        assert!(words.iter().all(|word| scopes.contains(word)));
+        // Reordered and with some listed twice, the same scopes.
+        let mut again = tc.draw(gs::permutations(words.clone()));
+        again.extend(words.iter().take(2).cloned());
+        let shuffled = again.join(" ");
+        assert_eq!(sorted_scopes(&shuffled), scopes);
     }
 }

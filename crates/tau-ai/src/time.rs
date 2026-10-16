@@ -40,21 +40,31 @@ pub fn date(days: u64) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn dates_read_as_utc() {
-        assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
-        assert_eq!(rfc3339(951_782_400), "2000-02-29T00:00:00Z");
-        assert_eq!(rfc3339(1_790_032_532), "2026-09-21T23:15:32Z");
-    }
-
-    /// [`date`] agrees with counting the days off one year and
-    /// one month at a time.
+    /// [`rfc3339`]'s date agrees with counting the days off one year
+    /// and one month at a time, and its time of day reads back as the
+    /// seconds into that day, each part in range.
     #[hegel::test(test_cases = 500)]
     fn dates_match_counting_days(tc: hegel::TestCase) {
         use hegel::generators as gs;
         // Up to the year 2400 or so, past a century that is not a leap
         // year (2100) and one that is (2000).
         let days: u64 = tc.draw(gs::integers::<u64>().max_value(157_000));
+        let into_day: u64 = tc.draw(hegel::one_of!(
+            gs::integers::<u64>().max_value(86_399),
+            gs::sampled_from(vec![0, 59, 60, 3_599, 3_600, 86_399]),
+        ));
+        let stamp = rfc3339(days * 86_400 + into_day);
+        let (day, time) = stamp.split_once('T').expect("a date and a time");
+        assert_eq!(day, date(days));
+        let time = time.strip_suffix('Z').expect("UTC");
+        let parts: Vec<u64> =
+            time.split(':').map(|part| part.parse().unwrap()).collect();
+        assert!(time.split(':').all(|part| part.len() == 2), "{stamp}");
+        let [hours, minutes, seconds] = parts[..] else {
+            panic!("{stamp}");
+        };
+        assert!(hours < 24 && minutes < 60 && seconds < 60, "{stamp}");
+        assert_eq!(hours * 3600 + minutes * 60 + seconds, into_day);
         let leap = |year: u64| {
             (year.is_multiple_of(4) && !year.is_multiple_of(100))
                 || year.is_multiple_of(400)

@@ -508,11 +508,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn headers_are_kept_and_found_in_any_case() {
-        let response =
-            parse(b"HTTP/1.1 200 OK\r\nX-Request-Id: req_1\r\n\r\n").unwrap();
-        assert_eq!(response.request_id(), Some("req_1"));
+    /// The request id is found under its header name in any letter
+    /// case, among other headers, and the first one wins.
+    #[hegel::test(test_cases = 200)]
+    fn headers_are_kept_and_found_in_any_case(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let name: String = "x-request-id"
+            .chars()
+            .map(|c| {
+                if tc.draw(gs::booleans()) {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let id =
+            tc.draw(gs::from_regex("req_[A-Za-z0-9]{1,12}").fullmatch(true));
+        let before = tc.draw(
+            gs::vecs(gs::sampled_from(vec![
+                "Content-Type: application/json",
+                "X-Request: other",
+                "Request-Id: other",
+            ]))
+            .max_size(3),
+        );
+        let mut raw = String::from("HTTP/1.1 200 OK\r\n");
+        for header in &before {
+            raw.push_str(header);
+            raw.push_str("\r\n");
+        }
+        raw.push_str(&format!("{name}: {id}\r\nX-Request-Id: later\r\n\r\n"));
+        let response = parse(raw.as_bytes()).unwrap();
+        assert_eq!(response.request_id(), Some(id.as_str()), "{raw:?}");
     }
 
     /// A stream that hands out its bytes `step` at a time.

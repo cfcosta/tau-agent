@@ -243,43 +243,62 @@ fn present<'de, D: Deserializer<'de>>(
 mod usage_tests {
     use super::*;
 
-    /// Usage adds up field by field, cost included.
-    #[test]
-    fn usage_adds_field_by_field() {
-        let part = |n: u64| Usage {
-            input: n,
-            output: n + 1,
-            cache_read: n + 2,
-            cache_write: n + 3,
-            reasoning: None,
-            total_tokens: n + 4,
-            cost: UsageCost {
-                input: n as f64,
-                output: n as f64 + 0.5,
-                cache_read: n as f64 + 0.25,
-                cache_write: n as f64 + 0.125,
-                total: n as f64 + 1.0,
-            },
+    /// A usage, its token counts bounded so sums fit, its costs whole
+    /// multiples of 1/1024 so sums are exact.
+    fn usage(tc: &hegel::TestCase) -> Usage {
+        use hegel::generators::{self as gs, Generator as _};
+        let tokens = || gs::integers::<u64>().max_value(1 << 40);
+        let usd = || {
+            gs::integers::<u32>()
+                .max_value(1 << 20)
+                .map(|n| f64::from(n) / 1024.0)
         };
-        let mut total = part(1);
-        total += &part(10);
+        Usage {
+            input: tc.draw(tokens()),
+            output: tc.draw(tokens()),
+            cache_read: tc.draw(tokens()),
+            cache_write: tc.draw(tokens()),
+            reasoning: tc.draw(gs::optional(tokens())),
+            total_tokens: tc.draw(tokens()),
+            cost: UsageCost {
+                input: tc.draw(usd()),
+                output: tc.draw(usd()),
+                cache_read: tc.draw(usd()),
+                cache_write: tc.draw(usd()),
+                total: tc.draw(usd()),
+            },
+        }
+    }
+
+    /// Adding a usage adds each count and each cost, field by field;
+    /// `reasoning` is the first usage's own, not a sum. Either order
+    /// gives the same counts and costs.
+    #[hegel::test(test_cases = 200)]
+    fn usage_adds_field_by_field(tc: hegel::TestCase) {
+        let (a, b) = (usage(&tc), usage(&tc));
+        let mut sum = a.clone();
+        sum += &b;
         assert_eq!(
-            total,
+            sum,
             Usage {
-                input: 11,
-                output: 13,
-                cache_read: 15,
-                cache_write: 17,
-                reasoning: None,
-                total_tokens: 19,
+                input: a.input + b.input,
+                output: a.output + b.output,
+                cache_read: a.cache_read + b.cache_read,
+                cache_write: a.cache_write + b.cache_write,
+                reasoning: a.reasoning,
+                total_tokens: a.total_tokens + b.total_tokens,
                 cost: UsageCost {
-                    input: 11.0,
-                    output: 12.0,
-                    cache_read: 11.5,
-                    cache_write: 11.25,
-                    total: 13.0,
+                    input: a.cost.input + b.cost.input,
+                    output: a.cost.output + b.cost.output,
+                    cache_read: a.cost.cache_read + b.cost.cache_read,
+                    cache_write: a.cost.cache_write + b.cost.cache_write,
+                    total: a.cost.total + b.cost.total,
                 },
             }
         );
+        let mut other_way = b.clone();
+        other_way += &a;
+        other_way.reasoning = a.reasoning;
+        assert_eq!(other_way, sum);
     }
 }
