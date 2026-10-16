@@ -176,7 +176,7 @@ async fn settle(connections: &[Arc<Connection>]) {
     }
 }
 
-/// Changing one server's entry connects that one again, and only it; a
+/// Changing one server's entry dials that server again, and only it; a
 /// run that holds the old connection keeps it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_changed_entry_reconnects_only_its_server() {
@@ -193,18 +193,15 @@ async fn a_changed_entry_reconnects_only_its_server() {
 
     let mut changed = b_config.clone();
     changed.description = Some("Now described.".into());
-    let changes = pool.update(vec![
+    pool.update(vec![
         (Origin::Settings, a_config),
         (Origin::Settings, changed),
     ]);
-    assert_eq!(changes.kept, BTreeSet::from(["a".to_owned()]));
-    assert_eq!(changes.connected, BTreeSet::from(["b".to_owned()]));
-    assert_eq!(changes.closed, BTreeSet::from(["b".to_owned()]));
     let second = pool.connections();
     second.iter().for_each(Connection::start);
     settle(&second).await;
-    assert!(Arc::ptr_eq(&first[0], &second[0]));
-    assert!(!Arc::ptr_eq(&first[1], &second[1]));
+    // Which connections the pool keeps is the diff property's; here the
+    // servers themselves show it: `a` was dialed once, `b` twice.
     assert_eq!((a.dials(), b.dials()), (1, 2));
     // The old connection is still the run's that holds it.
     assert_eq!(first[1].status().state, State::Connected);

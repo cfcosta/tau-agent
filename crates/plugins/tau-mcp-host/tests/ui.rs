@@ -611,7 +611,8 @@ const MISSING: &str = "/nonexistent/tau-mcp-test-server";
 
 /// Approving a repository's server through the page saves the hash of
 /// the entry it showed; from then on the server is the repository's,
-/// not pending.
+/// not pending, and approving starts nothing. Which hashes approve is
+/// `an_approval_holds_for_the_entry_shown`'s.
 #[test]
 fn approving_saves_the_hash_shown() {
     let fixture = Fixture::new(
@@ -624,21 +625,6 @@ fn approving_saves_the_hash_shown() {
     assert_eq!(data.pending.len(), 1);
     let pending = data.pending[0].clone();
     assert_eq!(pending.entry, json!({ "command": MISSING, "args": ["x"] }));
-    let (file, _) = McpConfig::from_value(
-        &json!({ "mcpServers": { "git": { "command": MISSING, "args": ["x"] } } }),
-    );
-    assert_eq!(pending.hash, file.servers[0].approval_hash());
-    // Another hash is not the entry shown.
-    assert!(
-        fixture
-            .act(Act::Approve {
-                repo: "r".into(),
-                server: "git".into(),
-                hash: "0".repeat(64),
-            })
-            .is_err()
-    );
-    assert!(fixture.settings().approved.is_empty());
     fixture
         .act(Act::Approve {
             repo: "r".into(),
@@ -654,8 +640,10 @@ fn approving_saves_the_hash_shown() {
     assert!(!data.started, "approving starts nothing");
 }
 
-/// The page adds, edits, turns off and removes its own servers, and
-/// refuses a name the user's file has.
+/// Through the host, the page refuses a name the user's file has, saying
+/// so, and lists its own servers apart from the user's, with their
+/// entries for the editor. What each action may change is
+/// `settings_follow_the_actions`'s.
 #[test]
 fn the_page_edits_only_its_own_servers() {
     let fixture = Fixture::new(
@@ -670,14 +658,6 @@ fn the_page_edits_only_its_own_servers() {
     });
     assert!(refused.unwrap_err().to_string().contains("mcp.json"));
     assert!(fixture.settings().servers.is_empty());
-    // Nor can it edit or remove the user's.
-    assert!(
-        fixture
-            .act(Act::Remove {
-                name: "linear".into()
-            })
-            .is_err()
-    );
 
     fixture
         .act(Act::Add {
@@ -718,19 +698,6 @@ fn the_page_edits_only_its_own_servers() {
     // Only the page's own server carries its entry, for the editor.
     assert!(data.servers[0].entry.is_none());
     assert!(data.servers[1].entry.is_some());
-
-    fixture
-        .act(Act::Edit {
-            name: "git".into(),
-            entry: json!({ "command": MISSING, "args": ["serve"] }),
-        })
-        .unwrap();
-    assert_eq!(
-        fixture.settings().servers["git"],
-        json!({ "command": MISSING, "args": ["serve"] })
-    );
-    fixture.act(Act::Remove { name: "git".into() }).unwrap();
-    assert!(fixture.settings().servers.is_empty());
 }
 
 /// The host keeps one plugin per repository, built when a run or the

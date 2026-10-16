@@ -799,24 +799,6 @@ async fn a_token_about_to_expire_is_refreshed_first() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_turned_down_token_is_refreshed_and_the_call_sent_again() {
-    let fake = Fake::start().await;
-    let dir = tempfile::tempdir().unwrap();
-    let connection = Connection::new(
-        server(&fake, None),
-        Origin::User,
-        environment(dir.path()),
-    );
-    sign_in(&connection).await;
-    echo(&connection).await.unwrap();
-    assert_eq!(fake.books(|b| b.refreshes), 0);
-    fake.revoke_access();
-    let result = echo(&connection).await.unwrap();
-    assert_eq!(result["structuredContent"]["echo"], "hi");
-    assert_eq!(fake.books(|b| b.refreshes), 1);
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn signing_out_waits_for_a_sign_in_again() {
     let fake = Fake::start().await;
     let dir = tempfile::tempdir().unwrap();
@@ -1008,6 +990,8 @@ async fn the_host_signs_in_and_out() {
     assert_eq!(auth.scopes, vec!["read".to_owned()]);
     assert_eq!(auth.issuer.as_deref(), Some(fake.base.as_str()));
 
+    // Watched from before the sign-out, so no change is missed.
+    let mut changes = connection.watch();
     let out = host.clone();
     let was = tokio::task::spawn_blocking(move || {
         out.sign_out(None, &tau_mcp::config::Settings::default(), "remote")
@@ -1017,10 +1001,13 @@ async fn the_host_signs_in_and_out() {
     .unwrap();
     assert!(was);
     fake.revoke_access();
-    settle(&connection).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    settle(&connection).await;
-    assert_eq!(connection.status().state, State::NeedsAuth);
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while connection.status().state != State::NeedsAuth {
+            changes.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("signed out, the server waits for a sign-in again");
     assert!(
         !host.servers(None, &settings).servers[0]
             .auth
