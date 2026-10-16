@@ -1,7 +1,8 @@
 //! Properties: JSON text → Luau → JSON agrees with a double-normalized
 //! serde_json oracle; JSON string escaping agrees with serde_json. Trees
 //! and Unicode strings are valid by construction and shrink structurally.
-//! Integer refusal and limits have boundary examples. Hegel profiles are
+//! Integer literals decode iff a double holds them, drawn at the 2^53
+//! boundary; text limits have boundary examples. Hegel profiles are
 //! inherited from the workspace; no provider or wall-clock randomness.
 
 mod common;
@@ -83,27 +84,6 @@ fn string_escaping_agrees_with_serde_json(tc: TestCase) {
         codec::encode(&lua, &value).unwrap(),
         serde_json::to_string(&text).unwrap()
     );
-}
-
-#[test]
-fn integer_literals_refuse_silent_rounding_at_both_boundaries() {
-    for literal in ["9007199254740992", "-9007199254740992"] {
-        assert!(codec::decode(literal.as_bytes()).is_ok());
-    }
-    for literal in [
-        "9007199254740993",
-        "-9007199254740993",
-        "18446744073709551615",
-        "18446744073709551616",
-        "-18446744073709551616",
-        r#"{"nested":[9007199254740993]}"#,
-    ] {
-        assert!(
-            codec::decode(literal.as_bytes())
-                .unwrap_err()
-                .contains("exact range")
-        );
-    }
 }
 
 /// An integer literal decodes exactly when a Luau double holds it

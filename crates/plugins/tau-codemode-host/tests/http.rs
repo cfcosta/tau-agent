@@ -113,9 +113,19 @@ async fn a_secret_follows_text_only() {
     assert!(error(&outcome).contains("a secret's name"), "{outcome:?}");
 }
 
+/// `http` is read-only, as the other globals are: neither replacing
+/// nor adding a field reaches the host.
 #[tokio::test]
 async fn http_cannot_be_replaced() {
     let agent = Arc::new(Agent::default());
-    let outcome = on(&agent, "http.request = nil").await;
-    assert!(outcome.failure.is_some());
+    for code in ["http.request = nil", "http.extra = 1"] {
+        let outcome = on(&agent, code).await;
+        assert!(
+            error(&outcome).contains("attempt to modify a readonly table"),
+            "{code}: {outcome:?}"
+        );
+    }
+    let outcome =
+        on(&agent, "return http.request({ url = 'https://a' }).status").await;
+    assert_eq!(texts(&outcome), ["200"]);
 }

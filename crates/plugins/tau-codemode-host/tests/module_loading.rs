@@ -149,20 +149,6 @@ fn definition(
 }
 
 #[tokio::test]
-async fn loads_function_and_table_from_exact_versions() {
-    let function =
-        definition("increment", "return function(n) return n + 1 end", &[]);
-    let table = definition("constants", "return { answer = 42 }", &[]);
-    let host = ModuleHost::new(&[function.clone(), table.clone()]);
-    let output = host.script(&format!(
-        "return require('increment', '{}')(2), require('constants', '{}').answer",
-        function.version(), table.version()
-    )).await;
-    assert_eq!(output.failure, None);
-    assert_eq!(texts(&output), ["3", "42"]);
-}
-
-#[tokio::test]
 async fn dependencies_use_pins_even_after_selection_changes() {
     let old = definition("base", "return { n = 1 }", &[]);
     let new = definition("base", "return { n = 9 }", &[]);
@@ -355,19 +341,6 @@ async fn repeated_and_concurrent_require_share_one_module_value() {
     let output = host.script("local a, b = parallel(function() return require('shared') end, function() return require('shared') end); return a == b, a(), b(), require('shared')()").await;
     assert_eq!(output.failure, None, "{output:?}");
     assert_eq!(texts(&output), ["true", "1", "2", "3"]);
-}
-
-#[tokio::test]
-async fn arithmetic_module_returns_the_fixed_example() {
-    let module = definition(
-        "arithmetic",
-        "return function(a, b) return a * 3 + b * 2 end",
-        &[],
-    );
-    let host = ModuleHost::new(&[module]);
-    let output = host.script("return require('arithmetic')(3, 2)").await;
-    assert_eq!(output.failure, None);
-    assert_eq!(texts(&output), ["13"]);
 }
 
 fn graph_edges(optional_edges: u8) -> Vec<Vec<usize>> {

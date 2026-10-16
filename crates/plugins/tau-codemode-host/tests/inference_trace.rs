@@ -1,12 +1,16 @@
 //! Durable inference provenance.
 //!
-//! Property inventory: `roundtrip_and_restore_match_counter_oracle` checks
-//! record serialization and owner-scoped budget reconstruction against a
-//! direct counter model. It catches counting inherited attempts, lost retry
-//! charges, and totals reconstructed from only the final response.
-//! Generator plan: short vectors of small token charges and fork ownership
-//! flags shrink to individual attempts. CI uses workspace `hegel.toml`;
-//! no per-test count override is needed.
+//! Property inventory: `restored_budget_matches_the_reservation_model`
+//! checks owner-scoped budget reconstruction against a direct model of
+//! reservations, reported usage and completeness. It catches counting
+//! inherited attempts, lost retry charges, totals taken from only the final
+//! attempt, and an unfinished, uncertain or incomplete attempt that reopens
+//! the budget.
+//! Generator plan: up to six traces, each owned or inherited, with up to
+//! three reservations and an optional terminal whose attempts match them;
+//! shrinking removes traces and attempts and simplifies outcomes toward
+//! clean finished ones. The fixed examples below keep the legacy label,
+//! malformed records and the budget's own refusal.
 
 #![allow(
     clippy::disallowed_methods,
@@ -56,19 +60,6 @@ fn started(trace_id: &str, owner: RunId) -> Record {
         schema: Some(json!({"type": "integer"})),
         model: "test-model".into(),
         effort: Some("medium".into()),
-    }
-}
-
-fn attempt(number: u32, tokens: u64, outcome: AttemptOutcome) -> Attempt {
-    Attempt {
-        number,
-        outcome,
-        reported_usage: usage(tokens),
-        usage_provenance: if tokens == 0 {
-            UsageProvenance::SdkZeroOrDefault
-        } else {
-            UsageProvenance::SdkReported
-        },
     }
 }
 
@@ -162,130 +153,6 @@ fn missing_finish_is_incomplete_and_blocks_same_run() {
 }
 
 #[test]
-fn started_without_reservation_did_not_reach_provider() {
-    let restored = inference_trace::restore_budget(
-        &[stored(started("open", owner("run")))],
-        &owner("run"),
-    )
-    .unwrap();
-    assert_eq!(restored.calls, 0);
-    assert!(!restored.incomplete_attempt);
-}
-
-#[test]
-fn stored_interrupted_attempt_still_blocks_resume() {
-    let mut terminal = finished(
-        "interrupted",
-        owner("run"),
-        vec![Attempt {
-            number: 1,
-            outcome: AttemptOutcome::Interrupted,
-            reported_usage: Usage::default(),
-            usage_provenance: UsageProvenance::Unknown,
-        }],
-        Some("cancelled".into()),
-    );
-    if let Record::Finished { complete, .. } = &mut terminal {
-        *complete = false;
-    }
-    let records = vec![
-        stored(started("interrupted", owner("run"))),
-        stored(Record::Attempt {
-            trace_id: "interrupted".into(),
-            owner: owner("run"),
-            number: 1,
-        }),
-        stored(terminal),
-    ];
-    let restored =
-        inference_trace::restore_budget(&records, &owner("run")).unwrap();
-    assert_eq!(restored.calls, 1);
-    assert!(restored.incomplete_attempt);
-}
-
-#[test]
-fn retries_restore_each_reserved_call_and_open_failure_blocks_resume() {
-    let attempts = vec![
-        attempt(1, 0, AttemptOutcome::Finished),
-        attempt(2, 4, AttemptOutcome::Finished),
-    ];
-    let records = vec![
-        stored(started("x", owner("run"))),
-        stored(Record::Attempt {
-            trace_id: "x".into(),
-            owner: owner("run"),
-            number: 1,
-        }),
-        stored(Record::Attempt {
-            trace_id: "x".into(),
-            owner: owner("run"),
-            number: 2,
-        }),
-        stored(finished("x", owner("run"), attempts, None)),
-        stored(started("open-failed", owner("run"))),
-        stored(Record::Attempt {
-            trace_id: "open-failed".into(),
-            owner: owner("run"),
-            number: 1,
-        }),
-        stored(finished(
-            "open-failed",
-            owner("run"),
-            vec![Attempt {
-                number: 1,
-                outcome: AttemptOutcome::OpenFailed,
-                reported_usage: Usage::default(),
-                usage_provenance: UsageProvenance::Unknown,
-            }],
-            Some("open failed".into()),
-        )),
-    ];
-    let restored =
-        inference_trace::restore_budget(&records, &owner("run")).unwrap();
-    assert_eq!(restored.calls, 3);
-    assert_eq!(restored.usage, usage(4));
-    assert!(restored.incomplete_attempt);
-}
-
-#[test]
-fn no_terminal_with_reported_partial_usage_still_blocks_resume() {
-    let partial = usage(7);
-    for complete in [false, true] {
-        let mut terminal = finished(
-            "partial",
-            owner("run"),
-            vec![Attempt {
-                number: 1,
-                outcome: AttemptOutcome::NoTerminal,
-                reported_usage: partial.clone(),
-                usage_provenance: UsageProvenance::Unknown,
-            }],
-            Some("no terminal event".into()),
-        );
-        if let Record::Finished {
-            complete: stored, ..
-        } = &mut terminal
-        {
-            *stored = complete;
-        }
-        let records = vec![
-            stored(started("partial", owner("run"))),
-            stored(Record::Attempt {
-                trace_id: "partial".into(),
-                owner: owner("run"),
-                number: 1,
-            }),
-            stored(terminal),
-        ];
-        let restored =
-            inference_trace::restore_budget(&records, &owner("run")).unwrap();
-        assert_eq!(restored.calls, 1);
-        assert_eq!(restored.usage, partial);
-        assert!(restored.incomplete_attempt);
-    }
-}
-
-#[test]
 fn legacy_open_failure_label_is_still_uncertain() {
     let records = vec![
         stored(started("legacy", owner("run"))),
@@ -376,54 +243,138 @@ fn raw_output_is_bounded_without_confusing_trace_completion() {
     assert!(!bounded.ends_with('é'));
 }
 
-#[hegel::test]
-fn roundtrip_and_restore_match_counter_oracle(tc: TestCase) {
-    let charges: Vec<(u8, bool)> = tc.draw(
-        gs::vecs(gs::tuples2(
-            gs::integers::<u8>().max_value(8),
-            gs::booleans(),
-        ))
-        .max_size(12),
-    );
+/// What one generated trace leaves in the records: whose it is, how many
+/// attempts it reserved, and its terminal record, if it wrote one, with
+/// one attempt report per reservation.
+#[derive(Debug, Clone)]
+struct Trace {
+    inherited: bool,
+    reservations: u32,
+    terminal: Option<(bool, Vec<Attempt>)>,
+}
+
+hegel::pretty_print_as_debug!(Trace);
+
+const OUTCOMES: [AttemptOutcome; 6] = [
+    AttemptOutcome::Finished,
+    AttemptOutcome::Cancelled,
+    AttemptOutcome::BrokeGrammar,
+    AttemptOutcome::NoTerminal,
+    AttemptOutcome::OpenFailed,
+    AttemptOutcome::Interrupted,
+];
+
+const PROVENANCES: [UsageProvenance; 4] = [
+    UsageProvenance::SdkReported,
+    UsageProvenance::SdkZeroOrDefault,
+    UsageProvenance::NoProviderResponse,
+    UsageProvenance::Unknown,
+];
+
+/// A valid trace: attempts are numbered as they were reserved. Half the
+/// attempts are clean (a finished attempt whose usage the SDK reported)
+/// so traces that complete are common; the rest draw any outcome and
+/// provenance, partial usage included.
+#[hegel::composite]
+fn trace(tc: &TestCase) -> Trace {
+    let reservations = tc.draw(gs::integers::<u32>().max_value(3));
+    let terminal = tc.draw(gs::booleans()).then(|| {
+        let attempts = (1..=reservations)
+            .map(|number| {
+                let tokens: u64 = tc.draw(gs::integers::<u64>().max_value(9));
+                let (outcome, usage_provenance) = if tc.draw(gs::booleans()) {
+                    (AttemptOutcome::Finished, UsageProvenance::SdkReported)
+                } else {
+                    (
+                        OUTCOMES[tc.draw(
+                            gs::integers::<usize>()
+                                .max_value(OUTCOMES.len() - 1),
+                        )],
+                        PROVENANCES[tc.draw(
+                            gs::integers::<usize>()
+                                .max_value(PROVENANCES.len() - 1),
+                        )],
+                    )
+                };
+                Attempt {
+                    number,
+                    outcome,
+                    reported_usage: usage(tokens),
+                    usage_provenance,
+                }
+            })
+            .collect();
+        (tc.draw(gs::booleans()), attempts)
+    });
+    Trace {
+        inherited: tc.draw(gs::booleans()),
+        reservations,
+        terminal,
+    }
+}
+
+/// A run's restored budget, from any mix of its own traces and inherited
+/// ones, matches a direct model of the rule: every attempt the run
+/// reserved counts as a call, whether or not it finished; usage is what
+/// its terminal records report, partial usage included; and a later call
+/// is blocked when any of its reservations has no terminal, a terminal
+/// marked incomplete, or an attempt that did not finish with
+/// SDK-reported usage. Inherited traces count for nothing.
+#[hegel::test(test_cases = 300)]
+fn restored_budget_matches_the_reservation_model(tc: TestCase) {
+    let traces: Vec<Trace> = tc.draw(gs::vecs(trace()).max_size(6));
     let mut records = Vec::new();
-    let mut expected_calls = 0;
-    let mut expected_tokens = 0;
-    for (index, (tokens, inherited)) in charges.iter().enumerate() {
-        let run = if *inherited {
-            owner("parent")
-        } else {
-            owner("run")
-        };
+    let (mut calls, mut tokens, mut incomplete) = (0, 0, false);
+    for (index, trace) in traces.iter().enumerate() {
         let id = format!("trace-{index}");
-        let retry_tokens = u64::from(*tokens) + 1;
+        let run = owner(if trace.inherited { "parent" } else { "run" });
         records.push(stored(started(&id, run.clone())));
-        for number in 1..=2 {
+        for number in 1..=trace.reservations {
             records.push(stored(Record::Attempt {
                 trace_id: id.clone(),
                 owner: run.clone(),
                 number,
             }));
         }
-        records.push(stored(finished(
-            &id,
-            run,
-            vec![
-                attempt(1, u64::from(*tokens), AttemptOutcome::Finished),
-                attempt(2, retry_tokens, AttemptOutcome::Finished),
-            ],
-            None,
-        )));
-        if !*inherited {
-            expected_calls += 2;
-            expected_tokens += u64::from(*tokens) + retry_tokens;
+        let mut reported = 0;
+        let mut clean = true;
+        if let Some((complete, attempts)) = &trace.terminal {
+            let mut total = Usage::default();
+            for attempt in attempts {
+                total += &attempt.reported_usage;
+                reported += attempt.reported_usage.input;
+                clean &= attempt.outcome == AttemptOutcome::Finished
+                    && matches!(
+                        attempt.usage_provenance,
+                        UsageProvenance::SdkReported
+                            | UsageProvenance::SdkZeroOrDefault
+                    );
+            }
+            clean &= *complete;
+            records.push(stored(Record::Finished {
+                trace_id: id.clone(),
+                owner: run,
+                complete: *complete,
+                selected: None,
+                raw_output: None,
+                raw_output_truncated: false,
+                error: None,
+                attempts: attempts.clone(),
+                total_usage: total,
+            }));
+        } else {
+            clean = trace.reservations == 0;
+        }
+        if !trace.inherited {
+            calls += trace.reservations as usize;
+            tokens += reported;
+            incomplete |= !clean;
         }
     }
-    let serialized = serde_json::to_string(&records).unwrap();
-    let roundtrip: Vec<Value> = serde_json::from_str(&serialized).unwrap();
     let restored =
-        inference_trace::restore_budget(&roundtrip, &owner("run")).unwrap();
-    assert_eq!(restored.calls, expected_calls);
-    assert_eq!(restored.usage.input, expected_tokens);
-    assert_eq!(restored.usage.cost.total, expected_tokens as f64);
-    assert!(!restored.incomplete_attempt);
+        inference_trace::restore_budget(&records, &owner("run")).unwrap();
+    assert_eq!(restored.calls, calls);
+    assert_eq!(restored.usage.input, tokens);
+    assert_eq!(restored.usage.cost.total, tokens as f64);
+    assert_eq!(restored.incomplete_attempt, incomplete);
 }

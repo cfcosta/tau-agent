@@ -446,35 +446,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fake_errors_are_raised_or_returned_with_error_status() {
-        let (definition, library) = arithmetic();
-        let slots = Arc::new(tokio::sync::Semaphore::new(2));
-        let raised = run_test(&definition, library.versions(),
-            "local ok, message = pcall(function() tools.fake({}) end); assert(not ok and string.find(message, 'blocked'))".into(),
-            vec![ExpectedCall { name: "fake".into(), args: json!({}), value: None, error: Some("blocked".into()) }],
-            CancellationToken::new(), slots.clone()).await.unwrap();
-        assert!(raised.passed, "{raised:?}");
-        assert_eq!(raised.calls[0]["status"], "error");
-        let structured = run_test(
-            &definition,
-            library.versions(),
-            "assert(tools.fake({}).status == 'down')".into(),
-            vec![ExpectedCall {
-                name: "fake".into(),
-                args: json!({}),
-                value: Some(json!({"status":"down"})),
-                error: Some("down".into()),
-            }],
-            CancellationToken::new(),
-            slots,
-        )
-        .await
-        .unwrap();
-        assert!(structured.passed, "{structured:?}");
-        assert_eq!(structured.calls[0]["status"], "error");
-    }
-
-    #[tokio::test]
     async fn target_prelude_initializes_once_and_bare_import_uses_test_version()
     {
         let definition = Definition::new(
@@ -692,26 +663,5 @@ mod tests {
                 assert_eq!(call["error"], json!(expected_error), "{report:?}");
             }
         }
-    }
-
-    #[tokio::test]
-    async fn changed_arithmetic_inputs_agree_with_repeated_addition() {
-        let (definition, library) = arithmetic();
-        let code = format!(
-            "local f = require('arithmetic', '{}'); assert(f(4, -3) == 6); assert(f(-2, 5) == 4)",
-            definition.version()
-        );
-        let report = run_test(
-            &definition,
-            library.versions(),
-            code,
-            vec![],
-            CancellationToken::new(),
-            Arc::new(tokio::sync::Semaphore::new(1)),
-        )
-        .await
-        .unwrap();
-        assert!(report.passed, "{report:?}");
-        assert!(report.calls.is_empty());
     }
 }

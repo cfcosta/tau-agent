@@ -1,7 +1,7 @@
 //! Inventory: exact saved bytes, request identity, repository scope, decline,
 //! replay, concurrent aliases, and later grants.
-//! The generated sequence property uses a BTreeMap authorization oracle and
-//! valid definitions, shrinking toward shorter histories and simple
+//! The generated sequence property compares requests, approvals and declines
+//! with an independent authorization model, shrinking toward shorter histories and simple
 //! versions. Workspace hegel.toml supplies case counts and CI's deterministic
 //! profile; no per-test override is needed.
 
@@ -341,22 +341,6 @@ fn changed_request_source_digest_dependencies_id_owner_and_scope_fail() {
 }
 
 #[test]
-fn old_approval_replay_cannot_roll_back_newer_grant() {
-    let f = Fixture::new();
-    let first = f.request(definition("math", "return 1", BTreeMap::new()), &[]);
-    assert!(f.act(&first, Decision::Approved).is_none());
-    assert!(f.act(&first, Decision::Declined).is_some());
-    let second =
-        f.request(definition("math", "return 2", BTreeMap::new()), &[]);
-    assert!(f.act(&second, Decision::Approved).is_none());
-    assert_eq!(f.selected()["math"], second.root.version());
-    assert!(f.act(&first, Decision::Approved).is_none());
-    assert_eq!(f.selected()["math"], second.root.version());
-    assert!(f.act(&first, Decision::Approved).is_none());
-    assert_eq!(f.selected()["math"], second.root.version());
-}
-
-#[test]
 fn concurrent_approvals_preserve_both_aliases() {
     let f = Arc::new(Fixture::new());
     let a = f.request(definition("alpha", "return 1", BTreeMap::new()), &[]);
@@ -440,15 +424,32 @@ fn wrong_run_repository_duplicate_and_store_payload_cannot_authorize() {
     assert!(f.selected().is_empty());
 }
 
+/// Where a request stands in the authorization model.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Standing {
+    Pending,
+    Granted,
+    Declined,
+}
+
+/// Whatever requests, approvals and declines come, in whatever order, the
+/// repository's aliases are a model's: a pending request's approval
+/// grants it and points its name at its version, the latest grant
+/// winning; approving it again changes nothing and is no error; a
+/// declined request can never be approved, and a granted one never
+/// declined, both refused with a reply; declining again is a no-op. The
+/// model decides each reply on its own, never from the host's.
 #[hegel::test]
-fn request_replace_approve_matches_exact_version_oracle(tc: hegel::TestCase) {
+fn requests_approvals_and_declines_match_the_authorization_model(
+    tc: hegel::TestCase,
+) {
     let sequence: Vec<(u8, u8)> = tc.draw(
         gs::vecs(hegel::tuples!(gs::integers::<u8>(), gs::integers::<u8>()))
             .max_size(16),
     );
     let f = Fixture::new();
-    let mut requests = Vec::new();
-    let mut granted_ids = Vec::<String>::new();
+    let mut requests: Vec<(Request, Standing)> = Vec::new();
+    let mut aliases = BTreeMap::<String, String>::new();
     for (choice, byte) in sequence {
         if choice % 3 == 0 || requests.is_empty() {
             let name = if byte % 2 == 0 { "alpha" } else { "beta" };
@@ -456,25 +457,35 @@ fn request_replace_approve_matches_exact_version_oracle(tc: hegel::TestCase) {
                 definition(name, &format!("return {byte}"), BTreeMap::new()),
                 &[],
             );
-            requests.push(request);
-        } else {
-            let request = &requests[byte as usize % requests.len()];
-            if f.act(request, Decision::Approved).is_none()
-                && !granted_ids.contains(&request.id)
-            {
-                granted_ids.push(request.id.clone());
-            }
-            // The oracle grants each ID once. A replay never changes aliases.
-            let mut oracle = BTreeMap::new();
-            for id in &granted_ids {
-                let granted =
-                    requests.iter().find(|item| &item.id == id).unwrap();
-                oracle.insert(
-                    granted.root.name().to_owned(),
-                    granted.root.version().to_owned(),
-                );
-            }
-            assert_eq!(f.selected(), oracle);
+            requests.push((request, Standing::Pending));
+            continue;
         }
+        let index = byte as usize % requests.len();
+        let (request, standing) = &mut requests[index];
+        let approve = choice % 3 == 1;
+        let refused = match (approve, *standing) {
+            (true, Standing::Pending) => {
+                *standing = Standing::Granted;
+                aliases.insert(
+                    request.root.name().to_owned(),
+                    request.root.version().to_owned(),
+                );
+                false
+            }
+            (false, Standing::Pending) => {
+                *standing = Standing::Declined;
+                false
+            }
+            (true, Standing::Granted) | (false, Standing::Declined) => false,
+            (true, Standing::Declined) | (false, Standing::Granted) => true,
+        };
+        let decision = if approve {
+            Decision::Approved
+        } else {
+            Decision::Declined
+        };
+        let reply = f.act(request, decision);
+        assert_eq!(reply.is_some(), refused, "{reply:?}");
+        assert_eq!(f.selected(), aliases);
     }
 }

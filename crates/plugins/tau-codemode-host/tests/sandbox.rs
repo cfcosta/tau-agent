@@ -124,7 +124,6 @@ async fn an_mcp_error_result_is_returned_not_raised() {
 #[tokio::test(flavor = "multi_thread")]
 async fn parallel_calls_overlap() {
     let host = host();
-    let started = Instant::now();
     let outcome = script(
         &host,
         "local a, b, c = parallel(\n\
@@ -136,7 +135,8 @@ async fn parallel_calls_overlap() {
     )
     .await;
     assert_eq!(texts(&outcome), ["[300,300,\"plain\"]"]);
-    assert!(started.elapsed() < Duration::from_millis(550));
+    // Both sleeps were running at once; a wall-clock bound would only
+    // measure the machine's load.
     assert_eq!(host.peak.load(Ordering::SeqCst), 2);
 }
 

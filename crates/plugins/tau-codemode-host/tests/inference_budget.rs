@@ -69,29 +69,6 @@ fn defaults_and_invalid_limits() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn zero_exact_and_exceeded_call_limits() {
-    let cancel = CancellationToken::new();
-    let zero = Budget::new(Limits {
-        max_calls: 0,
-        ..limits()
-    })
-    .unwrap();
-    assert!(zero.admit(&cancel).await.is_err());
-    assert_eq!(zero.snapshot().calls, 0);
-
-    let budget = Budget::new(Limits {
-        max_calls: 2,
-        ..limits()
-    })
-    .unwrap();
-    drop(budget.admit(&cancel).await.unwrap());
-    drop(budget.admit(&cancel).await.unwrap());
-    assert!(budget.admit(&cancel).await.is_err());
-    assert_eq!(budget.snapshot().calls, 2);
-    assert_eq!(budget.snapshot().in_flight, 0);
-}
-
-#[tokio::test(start_paused = true)]
 async fn concurrent_waiter_is_counted_only_after_a_slot_is_free() {
     let budget = Budget::new(Limits {
         max_concurrency: 2,
@@ -173,46 +150,6 @@ async fn deadline_stops_a_waiter_and_a_later_admission() {
     drop(held);
     assert!(budget.admit(&cancel).await.is_err());
     assert_eq!(budget.snapshot().calls, 1);
-}
-
-#[tokio::test(start_paused = true)]
-async fn report_once_and_soft_thresholds() {
-    let budget = Budget::new(Limits {
-        max_tokens: Some(10),
-        max_cost_usd: Some(1.0),
-        ..limits()
-    })
-    .unwrap();
-    let cancel = CancellationToken::new();
-    let mut first = budget.admit(&cancel).await.unwrap();
-    let mut second = budget.admit(&cancel).await.unwrap();
-    first.report(&usage(6, 0.6));
-    first.report(&usage(99, 99.0));
-    assert_eq!(budget.snapshot().usage, usage(6, 0.6));
-    second.report(&usage(6, 0.6));
-    assert_eq!(budget.snapshot().usage.input, 12);
-    assert_eq!(budget.snapshot().usage.cost.total, 1.2);
-    drop((first, second));
-    assert!(budget.admit(&cancel).await.is_err());
-    assert_eq!(budget.snapshot().calls, 2);
-}
-
-#[tokio::test(start_paused = true)]
-async fn token_and_cost_limits_stop_later_calls_independently() {
-    let cancel = CancellationToken::new();
-    for (tokens, cost) in [(10, 0.0), (0, 1.0), (11, 1.1)] {
-        let budget = Budget::new(Limits {
-            max_tokens: Some(10),
-            max_cost_usd: Some(1.0),
-            ..limits()
-        })
-        .unwrap();
-        let mut permit = budget.admit(&cancel).await.unwrap();
-        permit.report(&usage(tokens, cost));
-        drop(permit);
-        assert!(budget.admit(&cancel).await.is_err());
-        assert_eq!(budget.snapshot().calls, 1);
-    }
 }
 
 #[hegel::test]

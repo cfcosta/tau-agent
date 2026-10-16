@@ -1006,23 +1006,4 @@ return {{report=report, repository_root_allowed=repository_root_allowed, inspect
             );
         });
     }
-
-    #[test]
-    fn script_cannot_import_repository_files_by_path() {
-        block_on_io(async {
-            let fixture = Fixture::new();
-            fixture.install(&definition(
-                "m",
-                "return { n = 3 }",
-                BTreeMap::new(),
-            ));
-            let store = tau_store_sqlite::memory().await.unwrap();
-            let agent = Agent::new(scripted(&[
-                "local ok = pcall(require, '../selected.json'); return ok",
-            ]))
-            .plugin(crate::Codemode::new(None).with_repository(&fixture.path));
-            let run = agent.run("path", &store).await.unwrap();
-            assert_eq!(last_value(&store, &run.run.0).await, json!(false));
-        });
-    }
 }

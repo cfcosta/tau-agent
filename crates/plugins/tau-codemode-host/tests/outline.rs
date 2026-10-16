@@ -1,6 +1,7 @@
 //! A script's output on its card: the details keep each item as the
 //! script made it, strings as text and other values as JSON, and the
-//! outline gives each a line.
+//! outline gives each a line. How the details are cut is
+//! `tau-codemode`'s `output_details_keep_what_fits_and_cut_the_rest`.
 
 #![allow(
     clippy::disallowed_methods,
@@ -12,12 +13,8 @@ mod common;
 use std::{collections::BTreeSet, sync::Arc};
 
 use common::{FakeHost, script};
-use hegel::generators as gs;
 use serde_json::{Value, json};
-use tau_codemode::{
-    outline::{self, Line, Shown, line},
-    result::{CUT_HEAD_BYTES, MAX_OUTPUT_DETAIL_BYTES, output_details},
-};
+use tau_codemode::outline::{self, Line, Shown, line};
 use tau_codemode_host::Item;
 use tau_ui_kit::assets::Icon;
 
@@ -55,36 +52,6 @@ async fn the_model_reads_json_as_text() {
             .all(|item| !matches!(item, Item::Json(_)))
     );
     assert_eq!(rendered.content[1], Item::Text(r#"{"n":1}"#.into()));
-}
-
-/// Past the limit, an item keeps its head, its size and that it was
-/// cut; whatever the items, the details stay near the limit.
-#[hegel::test(test_cases = 100)]
-fn the_details_are_bounded(tc: hegel::TestCase) {
-    let sizes: Vec<usize> = tc.draw(
-        gs::vecs(gs::integers::<usize>().max_value(MAX_OUTPUT_DETAIL_BYTES))
-            .max_size(6),
-    );
-    let items: Vec<Item> = sizes
-        .iter()
-        .map(|&n| Item::Text("é".repeat(n / 2)))
-        .collect();
-    let details = output_details(&items);
-    assert_eq!(details.len(), items.len());
-    let kept: usize = details
-        .iter()
-        .map(|item| item["text"].as_str().unwrap().len())
-        .sum();
-    assert!(kept <= MAX_OUTPUT_DETAIL_BYTES + items.len() * CUT_HEAD_BYTES);
-    for (item, shown) in items.iter().zip(&details) {
-        let text = item.text().unwrap();
-        if shown["cut"] == true {
-            assert_eq!(shown["bytes"], text.len());
-            assert!(text.starts_with(shown["text"].as_str().unwrap()));
-        } else {
-            assert_eq!(shown["text"], text);
-        }
-    }
 }
 
 /// Fields read in the object's order (a script's come back sorted).

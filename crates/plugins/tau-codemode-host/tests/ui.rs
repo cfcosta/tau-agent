@@ -1055,19 +1055,6 @@ fn infer_progress_and_partial_cost_survive_channel_interleaving() {
     );
 }
 
-/// Jev is optional: the catalog says what it adds, with a key or not.
-#[test]
-fn the_catalog_entry_says_jev_is_optional() {
-    assert_eq!(
-        ui::description(true),
-        "Runs Luau scripts that call tools, with Jev"
-    );
-    assert!(
-        ui::description(false).starts_with("Runs Luau scripts that call tools")
-    );
-    assert_eq!(CodemodeUi.name(), PLUGIN);
-}
-
 fn info() -> RunInfo {
     RunInfo {
         id: RunId("r".into()),

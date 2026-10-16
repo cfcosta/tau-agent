@@ -464,13 +464,14 @@ fn jev_requests_reach_the_run_as_updates() {
     });
 }
 
-/// Without a Jev, `jev` is nil and the description says so.
+/// The tool's description is the fixed one for whether the run has a
+/// Jev: with one it teaches `jev`, without one it says there is none.
 #[test]
-fn without_jev_the_global_is_nil() {
-    let plugin = Codemode::new(None);
-    assert!(plugin.tool().description().contains("Jev is not available"));
+fn the_tool_description_follows_whether_there_is_a_jev() {
+    use tau_codemode::description::description;
+    assert_eq!(Codemode::new(None).tool().description(), description(false));
     let plugin = Codemode::new(Some(Arc::new(FakeJev::nouls(|_| 0.5))));
-    assert!(plugin.tool().description().contains("jev.noul"));
+    assert_eq!(plugin.tool().description(), description(true));
 }
 
 /// The store holds across runs along the fork chain: a fork sees what
