@@ -6,6 +6,8 @@
 
 #![cfg(feature = "host")]
 
+use std::sync::Arc;
+
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tau_agent::{
@@ -23,6 +25,7 @@ use tau_ask::{
 };
 use tau_store::{Entry, Store, TurnUsage};
 use tau_testing::scripted::ScriptedModel;
+use tokio::sync::Notify;
 
 /// Runs `future` with real time and I/O, failing it after `secs`: a
 /// question that never reaches the person would wait forever.
@@ -85,8 +88,9 @@ fn run(
         {
             let mut stream = run.events();
             while let Some(event) = stream.next().await {
+                // Asked by `ask` itself, or by a tool that runs it.
                 if let RunEvent::PluginReport { plugin, body, .. } = &event
-                    && &**plugin == NAME
+                    && [NAME, RACER].contains(&&**plugin)
                     && let Some(Record::Asked { call, .. }) =
                         Record::parse(body)
                 {
@@ -345,17 +349,19 @@ fn only_the_model_can_call_ask() {
     assert_eq!(options["maxItems"], MAX_CHOICES, "{question}");
 }
 
-/// A plugin whose tool runs `ask` under a short timeout: the timeout
-/// drops the call's future while it waits, as a script that ends drops
-/// the calls it made.
+/// A plugin whose tool runs `ask` until told to give up: giving up drops
+/// the call's future while it waits, as a script that ends drops the
+/// calls it made.
 struct Racer {
     waiting: Waiting,
+    give_up: Arc<Notify>,
 }
 
 const RACER: &str = "racer";
 
 struct RacerTool {
     ask: tau_ask::host::AskTool,
+    give_up: Arc<Notify>,
 }
 
 #[async_trait::async_trait]
@@ -377,10 +383,11 @@ impl tau_agent::tool::AgentTool for RacerTool {
         args: Value,
         ctx: tau_agent::tool::ToolCtx,
     ) -> Result<tau_agent::tool::ToolOutput, tau_agent::error::ToolError> {
-        let wait = std::time::Duration::from_millis(50);
-        match tokio::time::timeout(wait, self.ask.call(args, ctx)).await {
-            Ok(output) => output,
-            Err(_) => Ok(tau_agent::tool::ToolOutput::text("gave up")),
+        tokio::select! {
+            output = self.ask.call(args, ctx) => output,
+            () = self.give_up.notified() => {
+                Ok(tau_agent::tool::ToolOutput::text("gave up"))
+            }
         }
     }
 }
@@ -391,9 +398,10 @@ impl tau_agent::plugin::Plugin for Racer {
         RACER
     }
 
-    fn tools(&self) -> Vec<std::sync::Arc<dyn tau_agent::tool::AgentTool>> {
-        vec![std::sync::Arc::new(RacerTool {
+    fn tools(&self) -> Vec<Arc<dyn tau_agent::tool::AgentTool>> {
+        vec![Arc::new(RacerTool {
             ask: tau_ask::host::AskTool::new(self.waiting.clone()),
+            give_up: self.give_up.clone(),
         })]
     }
 }
@@ -405,10 +413,20 @@ fn a_call_dropped_while_it_waits_is_closed() {
         .turn(|t| t.text("ok"));
     let store = block_on(tau_store_sqlite::memory()).unwrap();
     let waiting = Waiting::default();
+    let give_up = Arc::new(Notify::new());
     let agent = Agent::new(llm.clone()).plugin(Racer {
         waiting: waiting.clone(),
+        give_up: give_up.clone(),
     });
-    let (id, events, _) = run(&agent, &store, "go", |_, _, _, _| {}, &waiting);
+    // The tool gives up once the question has reached the interface: the
+    // permit waits for it if it has not started waiting yet.
+    let (id, events, _) = run(
+        &agent,
+        &store,
+        "go",
+        |_, _, _, _| give_up.notify_one(),
+        &waiting,
+    );
     assert!(!waiting.waits(&id.0, "call_1"), "forgotten once dropped");
     // The close was reported at once, and is stored in the background.
     let reported: Vec<Record> = events
@@ -422,15 +440,16 @@ fn a_call_dropped_while_it_waits_is_closed() {
         matches!(&reported[..], [Record::Asked { .. }, Record::Closed { .. }]),
         "{reported:?}"
     );
+    assert_eq!(tool_results(&events), [("gave up".to_owned(), false)]);
+    // Stored in the background: wait for it on the runtime, no clock.
     let stored = block_on(async {
-        for _ in 0..100 {
+        loop {
             let stored = store.records(&id.0, RACER).await.unwrap();
             if stored.len() == 2 {
                 return stored;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
-        store.records(&id.0, RACER).await.unwrap()
     });
     assert!(stored[1].contains("\"closed\""), "{stored:?}");
 }
