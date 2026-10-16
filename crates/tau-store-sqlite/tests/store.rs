@@ -997,53 +997,6 @@ fn recent_runs_skip_subagents() {
     });
 }
 
-/// A plugin's own records come back with their `seq`, to fork at.
-#[test]
-fn plugin_entries_carry_their_seq() {
-    block_on_io(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        store
-            .create_run(&NewRun {
-                id: "r",
-                workflow_id: None,
-                agent: "coder",
-                kind: RunKind::Root,
-                model: "m",
-                turns: 0,
-            })
-            .await
-            .unwrap();
-        let message = Entry::Message {
-            role: "user".into(),
-            body: json!({"text": "hi"}).to_string(),
-        };
-        let record = |n: u32| Entry::Plugin {
-            plugin: "workspace".into(),
-            body: json!({ "turn": n }).to_string(),
-        };
-        let other = Entry::Plugin {
-            plugin: "memory".into(),
-            body: json!({}).to_string(),
-        };
-        store
-            .append_turn(
-                "r",
-                &[message.clone(), record(1), other, message, record(2)],
-                TurnUsage::default(),
-            )
-            .await
-            .unwrap();
-        let entries = store.plugin_entries("r", "workspace").await.unwrap();
-        assert_eq!(
-            entries,
-            vec![
-                (1, json!({"turn": 1}).to_string()),
-                (4, json!({"turn": 2}).to_string()),
-            ]
-        );
-    });
-}
-
 /// A typed query reads, and only reads.
 #[test]
 fn typed_queries_only_read() {

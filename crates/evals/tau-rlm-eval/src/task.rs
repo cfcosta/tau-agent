@@ -574,37 +574,67 @@ mod tests {
         );
     }
 
+    /// Whether `text` is exactly `core` with its slots filled: `{item}`
+    /// and `{month}` from their lists, `{n}` with digits.
+    fn fills(text: &str, core: &str) -> bool {
+        let Some(open) = core.find('{') else {
+            return text == core;
+        };
+        let close = open + core[open..].find('}').unwrap();
+        let Some(rest) = text.strip_prefix(&core[..open]) else {
+            return false;
+        };
+        let after = &core[close + 1..];
+        let values: Vec<String> = match &core[open + 1..close] {
+            "item" => ITEMS.iter().map(|item| (*item).to_owned()).collect(),
+            "month" => MONTHS.iter().map(|month| (*month).to_owned()).collect(),
+            "n" => (1..=rest.len())
+                .map(|end| &rest[..end])
+                .take_while(|digits| digits.bytes().all(|b| b.is_ascii_digit()))
+                .map(str::to_owned)
+                .collect(),
+            slot => panic!("unknown slot {slot}"),
+        };
+        values.iter().any(|value| {
+            rest.strip_prefix(value.as_str())
+                .is_some_and(|rest| fills(rest, after))
+        })
+    }
+
+    /// The categories whose pool could have written the message on
+    /// `line`: an opener or none, a filled core and its period, then a
+    /// filler or none.
+    fn categories_of(line: &str) -> Vec<usize> {
+        let text = line.split(" | ").nth(1).unwrap();
+        let openers = std::iter::once(String::new())
+            .chain(OPENERS.iter().map(|opener| format!("{opener} ")));
+        let bodies: Vec<&str> = openers
+            .filter_map(|opener| text.strip_prefix(opener.as_str()))
+            .flat_map(|body| {
+                std::iter::once(body).chain(FILLERS.iter().filter_map(
+                    move |filler| body.strip_suffix(&format!(" {filler}")),
+                ))
+            })
+            .filter_map(|body| body.strip_suffix('.'))
+            .collect();
+        (0..CATEGORIES.len())
+            .filter(|category| {
+                pool(*category)
+                    .iter()
+                    .any(|core| bodies.iter().any(|body| fills(body, core)))
+            })
+            .collect()
+    }
+
     #[test]
     fn the_count_is_the_number_of_billing_lines() {
         let dir = tempfile::tempdir().unwrap();
         let one = generate(Kind::Count, 500, 3, dir.path()).unwrap();
         let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
         assert_eq!(text.lines().count(), 500);
-        // A line is billing when its words are one of the pool's, in
-        // order around the filled slots.
-        let matches = |text: &str, core: &str| {
-            let mut rest = text;
-            let mut parts = core.split(['{', '}']).enumerate();
-            parts.all(|(at, part)| {
-                // Odd parts are slot names.
-                if at % 2 == 1 || part.is_empty() {
-                    return true;
-                }
-                match rest.find(part) {
-                    Some(found) => {
-                        rest = &rest[found + part.len()..];
-                        true
-                    }
-                    None => false,
-                }
-            })
-        };
         let billing = text
             .lines()
-            .filter(|line| {
-                let text = line.split(" | ").nth(1).unwrap();
-                BILLING.iter().any(|core| matches(text, core))
-            })
+            .filter(|line| categories_of(line).contains(&0))
             .count();
         assert_eq!(one.expected, billing.to_string());
     }
@@ -635,11 +665,28 @@ mod tests {
         assert!(!text.contains("title") && text.contains("### DOCUMENT 3"));
     }
 
-    #[test]
-    fn top_has_a_clear_winner() {
+    /// For any seed, `top` names the category the most messages in the
+    /// file were written from, counted from the file itself; and its
+    /// weights make that `performance` once there are a thousand lines.
+    #[hegel::test(test_cases = 50)]
+    fn top_names_the_category_with_the_most_messages(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let seed = tc.draw(gs::integers::<u64>());
+        let lines =
+            tc.draw(gs::integers::<usize>().min_value(1_000).max_value(3_000));
         let dir = tempfile::tempdir().unwrap();
-        let one = generate(Kind::Top, 2000, 9, dir.path()).unwrap();
-        assert_eq!(one.expected, "performance");
+        let one = generate(Kind::Top, lines, seed, dir.path()).unwrap();
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        let mut counts = [0usize; 5];
+        for line in text.lines() {
+            let [category] = categories_of(line)[..] else {
+                panic!("not from exactly one pool: {line}");
+            };
+            counts[category] += 1;
+        }
+        let most = (0..counts.len()).max_by_key(|at| counts[*at]).unwrap();
+        assert_eq!(one.expected, CATEGORIES[most], "{counts:?}");
+        assert_eq!(one.expected, "performance", "{counts:?}");
     }
 
     #[test]

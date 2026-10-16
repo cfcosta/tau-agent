@@ -328,6 +328,9 @@ fn the_configuration_mirrors_the_persons_and_allows_the_repositories() {
         std::fs::read_link(direnv.config.join("lib")).unwrap(),
         user.join("lib")
     );
+    // The person has no `direnvrc`, so there is no link to one, not
+    // even a dangling one.
+    assert!(std::fs::symlink_metadata(direnv.config.join("direnvrc")).is_err());
 
     fixture.runtime.block_on(host.decide("repo", true)).unwrap();
     let prefixes = read()["whitelist"]["prefix"].clone();

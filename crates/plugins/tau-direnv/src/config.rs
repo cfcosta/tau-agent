@@ -240,38 +240,4 @@ mod tests {
             "direnv.toml's `whitelist.prefix` is not an array"
         );
     }
-
-    /// tau's directory gets the merged file and links to the person's
-    /// `lib` and `direnvrc`, or none where they have none.
-    #[test]
-    fn writing_links_the_persons_extensions() {
-        let user = tempfile::tempdir().unwrap();
-        std::fs::write(
-            user.path().join("direnv.toml"),
-            "[global]\nstrict_env = true\n",
-        )
-        .unwrap();
-        std::fs::create_dir(user.path().join("lib")).unwrap();
-        let ours = tempfile::tempdir().unwrap();
-        let dir = ours.path().join("config");
-        write(&dir, Some(user.path()), &[PathBuf::from("/tau/a")]).unwrap();
-        let out: Table = std::fs::read_to_string(dir.join("direnv.toml"))
-            .unwrap()
-            .parse()
-            .unwrap();
-        assert_eq!(out["global"]["strict_env"], Value::Boolean(true));
-        assert_eq!(prefixes(&out), ["/tau/a"]);
-        assert_eq!(
-            std::fs::read_link(dir.join("lib")).unwrap(),
-            user.path().join("lib")
-        );
-        assert!(!dir.join("direnvrc").exists());
-        // Written again with nobody allowed: the whitelist is empty.
-        write(&dir, Some(user.path()), &[]).unwrap();
-        let out: Table = std::fs::read_to_string(dir.join("direnv.toml"))
-            .unwrap()
-            .parse()
-            .unwrap();
-        assert!(prefixes(&out).is_empty());
-    }
 }

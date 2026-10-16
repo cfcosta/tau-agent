@@ -72,28 +72,6 @@ fn an_edit_replaces_only_its_text(tc: hegel::TestCase) {
 }
 
 #[test]
-fn a_record_revises_its_item_or_makes_one() {
-    let mut canvas = Canvas::default();
-    assert_eq!(canvas.next_id(), 1);
-    canvas.revise(document("a", 1, "first"));
-    canvas.revise(document("b", 2, "other"));
-    canvas.revise(document("c", 1, "second"));
-    assert_eq!(canvas.items.len(), 2);
-    assert_eq!(canvas.fresh, 3);
-    assert_eq!(canvas.last, Some(1));
-    assert_eq!(canvas.next_id(), 3);
-    let (item, revision) = canvas.by_call("c").unwrap();
-    assert_eq!((item.id, revision), (1, 1));
-    assert_eq!(
-        item.latest().content,
-        Content::Document {
-            text: "second".to_owned()
-        }
-    );
-    assert!(canvas.by_call("missing").is_none());
-}
-
-#[test]
 fn records_of_other_plugins_are_skipped() {
     let bodies = vec![
         serde_json::to_value(document("a", 1, "kept")).unwrap(),
@@ -132,8 +110,9 @@ fn a_record_reads_back_as_it_was_written() {
 
 // Property: folding any sequence of revisions keeps the items in the
 // order they were first named, gives each one revision per record that
-// named it, in order, and finds each call's revision. The model is a
-// plain list of (item, call) pairs.
+// named it, in order, shows the last one, and finds each call's item and
+// revision, and no other call's. The model is a plain list of (item,
+// call) pairs.
 #[hegel::test]
 fn the_canvas_keeps_every_revision_in_order(tc: hegel::TestCase) {
     let items: Vec<u32> = tc.draw(
@@ -154,11 +133,11 @@ fn the_canvas_keeps_every_revision_in_order(tc: hegel::TestCase) {
         first_seen
     );
     for found in &canvas.items {
-        let calls: Vec<String> = items
+        let named: Vec<usize> = items
             .iter()
             .enumerate()
             .filter(|(_, item)| **item == found.id)
-            .map(|(n, _)| format!("call-{n}"))
+            .map(|(n, _)| n)
             .collect();
         assert_eq!(
             found
@@ -166,13 +145,25 @@ fn the_canvas_keeps_every_revision_in_order(tc: hegel::TestCase) {
                 .iter()
                 .map(|revision| revision.call.clone())
                 .collect::<Vec<_>>(),
-            calls
+            named
+                .iter()
+                .map(|n| format!("call-{n}"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            found.latest().content,
+            Content::Document {
+                text: named.last().unwrap().to_string()
+            }
         );
     }
     for (n, item) in items.iter().enumerate() {
-        let (found, _) = canvas.by_call(&format!("call-{n}")).unwrap();
+        let (found, revision) = canvas.by_call(&format!("call-{n}")).unwrap();
         assert_eq!(found.id, *item);
+        let earlier = items[..n].iter().filter(|other| *other == item).count();
+        assert_eq!(revision, earlier, "call-{n}");
     }
+    assert!(canvas.by_call("missing").is_none());
     assert_eq!(canvas.fresh, items.len() as u64);
     assert_eq!(canvas.last, items.last().copied());
     assert_eq!(

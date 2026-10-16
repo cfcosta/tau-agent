@@ -20,9 +20,6 @@ use tau_agent::{
 use tau_ai::message::{Message, UserContent};
 use tau_goal::{
     CONTINUATION_PREFIX,
-    Command,
-    DEFAULT_BUDGET,
-    DEFAULT_CONTINUATIONS,
     Exhausted,
     Goal,
     GoalPlugin,
@@ -30,7 +27,6 @@ use tau_goal::{
     Record,
     Status,
     set_input,
-    set_message,
 };
 use tau_jev::{Answer, JevError, fake::FakeJev};
 use tau_store::{Entry, Store, TurnUsage};
@@ -142,44 +138,6 @@ impl TypedTool for Tests {
     ) -> Result<ToolOutput, ToolError> {
         Ok(ToolOutput::text("14 tests run: 14 passed"))
     }
-}
-
-#[test]
-fn commands_are_read_with_their_limits() {
-    assert_eq!(
-        Command::parse("/goal tests pass"),
-        Some(Command::Set {
-            condition: "tests pass".into(),
-            continuations: DEFAULT_CONTINUATIONS,
-            budget: DEFAULT_BUDGET,
-        })
-    );
-    assert_eq!(
-        Command::parse("/goal --continuations 3 --budget $0.50 all green"),
-        Some(Command::Set {
-            condition: "all green".into(),
-            continuations: 3,
-            budget: 0.5,
-        })
-    );
-    assert_eq!(Command::parse("/goal clear"), Some(Command::Clear));
-    for not in [
-        "/goal",
-        "/goal   ",
-        "/goals x",
-        "fix /goal x",
-        "/goal --budget",
-        "/goal --budget nan tests pass",
-        "/goal --budget inf tests pass",
-        "/goal --budget -3 tests pass",
-    ] {
-        assert_eq!(Command::parse(not), None, "{not}");
-    }
-    // The model's input names the condition, which reads back.
-    let input = set_input("tests pass");
-    assert!(input.starts_with("/goal tests pass\n\n"));
-    assert_eq!(set_message(&input).as_deref(), Some("tests pass"));
-    assert_eq!(set_message("fix the tests"), None);
 }
 
 #[test]

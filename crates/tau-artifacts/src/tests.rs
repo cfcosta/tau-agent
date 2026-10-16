@@ -38,36 +38,6 @@ fn published(input: &[u8]) -> (tempfile::TempDir, Bytes, Artifact) {
 }
 
 #[test]
-fn base64_ranges_keep_binary_bytes_and_report_artifact_end() {
-    let input = [0, 0xff, b'a', 0, 0x80];
-    let (_directory, bytes, artifact) = published(&input);
-    let cancel = CancellationToken::new();
-    let first = bytes
-        .read_range(&artifact, 1, 2, Encoding::Base64, &cancel)
-        .unwrap();
-    assert_eq!(first.id, artifact.id());
-    assert_eq!(first.offset, 1);
-    assert_eq!(first.size_bytes, input.len() as u64);
-    assert_eq!(STANDARD.decode(first.data).unwrap(), input[1..3]);
-    assert_eq!(first.next_offset, Some(3));
-    assert!(!first.eof && !first.complete);
-    let last = bytes
-        .read_range(&artifact, 3, 2, Encoding::Base64, &cancel)
-        .unwrap();
-    assert_eq!(STANDARD.decode(last.data).unwrap(), input[3..]);
-    assert_eq!(last.next_offset, None);
-    assert!(last.eof);
-    assert!(!last.complete);
-    let empty = bytes
-        .read_range(&artifact, 5, 1, Encoding::Base64, &cancel)
-        .unwrap();
-    assert_eq!(empty.data, "");
-    assert_eq!(empty.next_offset, None);
-    assert!(empty.eof);
-    assert!(!empty.complete);
-}
-
-#[test]
 fn utf8_pages_end_on_codepoint_boundaries_and_never_stall() {
     let input = "Aé🦀Z";
     let (_directory, bytes, artifact) = published(input.as_bytes());
@@ -202,6 +172,7 @@ fn base64_ranges_match_independent_slices(tc: TestCase) {
         STANDARD.decode(range.data).unwrap(),
         input[offset..expected_end]
     );
+    assert_eq!(range.id, artifact.id());
     assert_eq!(range.offset, offset as u64);
     assert_eq!(range.size_bytes, input.len() as u64);
     assert_eq!(

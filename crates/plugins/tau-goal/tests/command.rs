@@ -1,6 +1,7 @@
 //! How `/goal` reads: a command written out with its limits reads back
 //! as itself, a budget is a finite amount of at least zero, and the
-//! condition a command set reads back from the input the model gets.
+//! condition a command set reads back from the input the model gets;
+//! what is not a command reads as none.
 
 use hegel::{Generator as _, TestCase, generators as gs};
 use tau_goal::{
@@ -213,4 +214,22 @@ fn a_quoted_condition_reads_exactly() {
         }),
     );
     assert_eq!(Command::parse(r#"/goal "  ""#), None);
+}
+
+/// Input that is not a `/goal` command reads as none: no condition, a
+/// longer word than `/goal`, the command not at the start, or a limit
+/// with no amount. A message that is not a goal's input names no
+/// condition.
+#[test]
+fn what_is_not_a_goal_command_is_not_read() {
+    for not in [
+        "/goal",
+        "/goal   ",
+        "/goals x",
+        "fix /goal x",
+        "/goal --budget",
+    ] {
+        assert_eq!(Command::parse(not), None, "{not:?}");
+    }
+    assert_eq!(set_message("fix the tests"), None);
 }

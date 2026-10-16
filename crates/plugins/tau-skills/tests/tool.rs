@@ -110,6 +110,12 @@ fn an_unknown_skill_names_the_ones_there_are() {
         "Reviews the diff",
         "Look for bugs.",
     );
+    skill(
+        home.path(),
+        "release-notes",
+        "Writes release notes between two tags",
+        "Group the commits by kind.",
+    );
     let llm = ScriptedModel::new()
         // A name like a path does not reach outside the folder.
         .turn(|t| t.tool_call("skill", json!({ "name": "../code-review" })))
@@ -121,5 +127,8 @@ fn an_unknown_skill_names_the_ones_there_are() {
         panic!("{:?}", results(&events));
     };
     assert!(text.contains("no skill \"../code-review\""), "{text}");
-    assert!(text.contains("code-review"), "{text}");
+    assert!(
+        text.ends_with("The skills are: code-review, release-notes."),
+        "{text}"
+    );
 }
