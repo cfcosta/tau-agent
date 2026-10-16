@@ -144,6 +144,15 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
             .await
             .unwrap();
         llm.assert_exhausted();
+        if dirty {
+            // Stopping with work in `@`, the run was asked to commit it.
+            let asked =
+                format!("{:?}", llm.requests()[turns.len() + 1].transcript);
+            assert!(
+                asked.contains("Commit your work with `vcs_commit`"),
+                "{asked}"
+            );
+        }
 
         let turns_linked =
             links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
@@ -160,6 +169,15 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
                 tc.event("a turn changes files");
             } else {
                 tc.event("a turn changes nothing");
+                // A turn that changed nothing links the snapshot before.
+                if n > 0 {
+                    assert_eq!(
+                        link.commit_id,
+                        turns_linked[n - 1].1.commit_id,
+                        "turn {} snapshots the same commit",
+                        n + 1
+                    );
+                }
             }
             assert_eq!(
                 project.parent_of(&link.commit_id).unwrap(),

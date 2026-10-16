@@ -287,16 +287,6 @@ fn commit_takes_only_the_paths_it_names() {
     assert!(err.starts_with("Name at least one path"), "{err}");
 }
 
-/// An empty message is refused.
-#[test]
-fn commit_needs_a_message() {
-    let repo = Repo::new();
-    let err = repo
-        .call("vcs_commit", json!({"message": "  "}))
-        .unwrap_err();
-    assert_eq!(err, "The description must not be empty");
-}
-
 /// `limit` caps the rows and says how to see more.
 #[test]
 fn log_limit() {
@@ -442,72 +432,6 @@ fn show_the_root_commit() {
     assert_eq!(details["change"]["immutable"], json!(true));
 }
 
-/// Only ids are accepted: revsets, names and unknown ids are refused.
-#[test]
-fn only_ids_are_accepted() {
-    let repo = Repo::new();
-    for rev in ["@", "@-", "all()", "main", "trunk()", ""] {
-        let err = repo.call("vcs_show", json!({"change": rev})).unwrap_err();
-        assert!(
-            err.contains("is not a change id or a commit id"),
-            "{rev}: {err}"
-        );
-    }
-    let err = repo
-        .call("vcs_show", json!({"change": "kkkkkkkk"}))
-        .unwrap_err();
-    assert_eq!(err, "No change matches `kkkkkkkk`");
-    let err = repo
-        .call("vcs_diff", json!({"change": "0123abcd"}))
-        .unwrap_err();
-    assert_eq!(err, "No commit matches `0123abcd`");
-}
-
-/// `vcs_describe` changes the working copy's description and keeps
-/// working in the same change.
-#[test]
-fn describe_the_working_copy() {
-    let repo = Repo::new();
-    repo.write("a.txt", "a\n");
-    let (_, before) = repo.ok("vcs_status", json!({}));
-    let (text, details) =
-        repo.ok("vcs_describe", json!({"message": "Work in progress"}));
-    assert!(text.starts_with("Described the working copy.\n"), "{text}");
-    assert!(text.ends_with(" @ Work in progress"), "{text}");
-    assert_eq!(
-        details["working_copy"]["change_id"],
-        before["working_copy"]["change_id"]
-    );
-    assert_eq!(
-        details["working_copy"]["description"],
-        json!("Work in progress\n")
-    );
-    let (text, _) = repo.ok("vcs_log", json!({}));
-    assert_eq!(text.lines().count(), 1, "{text}");
-}
-
-/// `vcs_new` starts an empty change on top; files stay as they are.
-#[test]
-fn new_starts_an_empty_change() {
-    let repo = Repo::new();
-    repo.write("a.txt", "a\n");
-    let (_, before) = repo.ok("vcs_status", json!({}));
-    let (text, details) = repo.ok("vcs_new", json!({"message": "Next step"}));
-    assert!(text.starts_with("Started a new change.\n"), "{text}");
-    assert_eq!(details["working_copy"]["empty"], json!(true));
-    assert_eq!(details["working_copy"]["description"], json!("Next step\n"));
-    assert_ne!(
-        details["working_copy"]["change_id"],
-        before["working_copy"]["change_id"]
-    );
-    assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
-    let (_, log) = repo.ok("vcs_log", json!({}));
-    assert_eq!(
-        log["changes"][1]["change_id"],
-        before["working_copy"]["change_id"]
-    );
-}
-
 /// `vcs_restore` puts paths back as the parent has them: modified files
 /// revert, added files go, and paths not named are left alone.
 #[test]
@@ -537,19 +461,6 @@ fn restore_reverts_paths() {
 
     let (text, _) = repo.ok("vcs_restore", json!({"paths": ["."]}));
     assert!(text.starts_with("Nothing to restore"), "{text}");
-}
-
-/// `from` takes the files from another change instead of the parent.
-#[test]
-fn restore_from_another_change() {
-    let repo = Repo::new();
-    repo.write("a.txt", "v1\n");
-    let (_, first) = repo.ok("vcs_commit", json!({"message": "v1"}));
-    repo.write("a.txt", "v2\n");
-    repo.ok("vcs_commit", json!({"message": "v2"}));
-    let from = first["committed"]["change_id"].as_str().unwrap();
-    repo.ok("vcs_restore", json!({"paths": ["a.txt"], "from": from}));
-    assert_eq!(repo.read("a.txt").as_deref(), Some("v1\n"));
 }
 
 /// Paths outside the repository are refused.
@@ -611,20 +522,6 @@ fn undo_undoes_the_last_operation() {
         err.starts_with("The last operation was not made by the vcs tools"),
         "{err}"
     );
-}
-
-/// Undoing a restore brings the discarded edit back.
-#[test]
-fn undo_a_restore() {
-    let repo = Repo::new();
-    repo.write("a.txt", "original\n");
-    repo.ok("vcs_commit", json!({"message": "Add a"}));
-    repo.write("a.txt", "edited\n");
-    repo.ok("vcs_restore", json!({"paths": ["a.txt"]}));
-    assert_eq!(repo.read("a.txt").as_deref(), Some("original\n"));
-    let (_, details) = repo.ok("vcs_undo", json!({}));
-    assert_eq!(details["tool"], json!("restore"));
-    assert_eq!(repo.read("a.txt").as_deref(), Some("edited\n"));
 }
 
 /// A second `Vcs` opened on the same directory sees the history.

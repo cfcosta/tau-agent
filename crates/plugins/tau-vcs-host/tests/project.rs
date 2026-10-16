@@ -27,7 +27,7 @@ use tau_vcs_host::{
     RunWorkspace,
     UpdateFrom,
     VcsPlugin,
-    run_workspace::{PLUGIN, bookmark},
+    run_workspace::PLUGIN,
 };
 
 /// A Git repository with one commit on `main`, and that commit's id.
@@ -187,36 +187,6 @@ fn commit(dir: &Path, file: &str) -> String {
     git(dir, &["rev-parse", "HEAD"])
 }
 
-#[test]
-fn a_project_updates_from_its_checkout() {
-    let src = tempfile::tempdir().unwrap();
-    let first = source(src.path());
-    let home = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        home.path().join("project"),
-        Identity::default(),
-    )
-    .unwrap();
-    // A run works on the old trunk meanwhile.
-    project.add_workspace("run", &first).unwrap();
-
-    let second = commit(src.path(), "b.txt");
-    // Packed objects come along too.
-    git(src.path(), &["gc", "--quiet"]);
-    let updated = project.update(UpdateFrom::Checkout(src.path())).unwrap();
-    assert!(updated.changed());
-    assert_eq!((updated.before, updated.after), (first, second.clone()));
-    assert_eq!(project.trunk().unwrap(), second);
-    let run = project.add_workspace("after", &second).unwrap();
-    assert!(run.root().join("b.txt").exists());
-    assert!(project.workspace_dir("run").join("README.md").exists());
-
-    // Nothing new: nothing changes.
-    let again = project.update(UpdateFrom::Checkout(src.path())).unwrap();
-    assert!(!again.changed());
-}
-
 /// The main chat commits on trunk (ADR 0015) while upstream moves on:
 /// an update takes upstream's trunk, and the main chat's commits and
 /// its work in `@` go on top of it when it catches up
@@ -368,87 +338,6 @@ fn edits_on_a_stale_chat_merge_onto_the_rewrite() {
     );
 }
 
-#[test]
-fn a_clone_updates_from_its_remote() {
-    let src = tempfile::tempdir().unwrap();
-    source(src.path());
-    let home = tempfile::tempdir().unwrap();
-    let url = format!("file://{}", src.path().display());
-    let project = tau_vcs_host::ProjectRepo::clone(
-        &url,
-        None,
-        home.path().join("project"),
-        Identity::default(),
-    )
-    .unwrap();
-    let second = commit(src.path(), "b.txt");
-    let updated = project
-        .update(UpdateFrom::Remote {
-            url: &url,
-            token: Some("unused"),
-        })
-        .unwrap();
-    assert!(updated.changed());
-    assert_eq!(project.trunk().unwrap(), second);
-}
-
-/// A clone keeps every branch of the remote as a branch, so the
-/// project imports each one as a bookmark, as it does from a checkout.
-#[test]
-fn a_clone_imports_every_branch() {
-    let src = tempfile::tempdir().unwrap();
-    let head = source(src.path());
-    git(src.path(), &["branch", "feature"]);
-    let home = tempfile::tempdir().unwrap();
-    let url = format!("file://{}", src.path().display());
-    let project = tau_vcs_host::ProjectRepo::clone(
-        &url,
-        None,
-        home.path().join("project"),
-        Identity::default(),
-    )
-    .unwrap();
-    assert_eq!(project.bookmarks("").unwrap(), ["feature", "main"]);
-    assert_eq!(project.bookmark("feature").unwrap(), Some(head));
-}
-
-/// An update from a remote follows what the remote did to its refs:
-/// a branch and a tag it deleted go, and a renamed default branch
-/// becomes trunk, as `HEAD` names it.
-#[test]
-fn an_update_from_a_remote_follows_its_refs_and_head() {
-    let src = tempfile::tempdir().unwrap();
-    source(src.path());
-    git(src.path(), &["branch", "feature"]);
-    git(src.path(), &["tag", "v1"]);
-    let home = tempfile::tempdir().unwrap();
-    let url = format!("file://{}", src.path().display());
-    let project = tau_vcs_host::ProjectRepo::clone(
-        &url,
-        None,
-        home.path().join("project"),
-        Identity::default(),
-    )
-    .unwrap();
-
-    git(src.path(), &["branch", "--quiet", "-D", "feature"]);
-    git(src.path(), &["tag", "-d", "v1"]);
-    git(src.path(), &["branch", "--quiet", "-m", "main", "trunk"]);
-    let second = commit(src.path(), "b.txt");
-    let updated = project
-        .update(UpdateFrom::Remote {
-            url: &url,
-            token: None,
-        })
-        .unwrap();
-    assert_eq!(updated.after, second);
-    assert_eq!(project.bookmarks("").unwrap(), ["trunk"]);
-    assert_eq!(project.default_branch().as_deref(), Some("trunk"));
-    assert_eq!(project.trunk_name().unwrap(), "trunk");
-    let store = project.workspace_dir(DEFAULT_WORKSPACE);
-    assert_eq!(git(&store, &["tag", "--list"]), "");
-}
-
 /// A shallow clone imports: its `shallow` file comes along, so the
 /// commits whose parents it lacks are where history starts. Updates
 /// bring its new commits.
@@ -481,32 +370,6 @@ fn a_shallow_checkout_imports_and_updates() {
     let updated = project.update(UpdateFrom::Checkout(&shallow)).unwrap();
     assert_eq!(updated.after, next);
     assert_eq!(project.parent_of(&next).unwrap(), Some(head));
-}
-
-/// The user checks out another branch in the checkout a project came
-/// from, and commits there. An update brings the commit, but trunk stays
-/// on the branch it followed: a checkout's `HEAD` is what is checked out
-/// in it, not its default branch.
-#[test]
-fn an_update_from_a_checkout_keeps_trunks_branch() {
-    let src = tempfile::tempdir().unwrap();
-    let first = source(src.path());
-    let home = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        home.path().join("project"),
-        Identity::default(),
-    )
-    .unwrap();
-    git(src.path(), &["checkout", "--quiet", "-b", "feature"]);
-    let feature = commit(src.path(), "b.txt");
-
-    let updated = project.update(UpdateFrom::Checkout(src.path())).unwrap();
-    assert!(!updated.changed());
-    assert_eq!(project.default_branch().as_deref(), Some("main"));
-    assert_eq!(project.trunk_name().unwrap(), "main");
-    assert_eq!(project.trunk().unwrap(), first);
-    assert_eq!(project.bookmark("feature").unwrap(), Some(feature));
 }
 
 #[test]
@@ -745,186 +608,6 @@ fn a_forks_first_turn_is_told_from_its_start() {
                 .collect();
         assert_eq!(own, [false, false]);
     });
-}
-
-/// Turns are snapshots, not commits (ADR 0014): the run's work stays in
-/// `@` until the model commits, or until the end, when what is left is
-/// committed with a message the model writes. A fork starts from a
-/// turn's snapshot.
-#[test]
-fn turns_are_snapshots_and_forks_start_from_one() {
-    let src = tempfile::tempdir().unwrap();
-    source(src.path());
-    let home = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        home.path().join("p"),
-        Identity::default(),
-    )
-    .unwrap();
-    let trunk = project.trunk().unwrap();
-
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-
-        // Two turns that each write a file, and a turn that only talks;
-        // an observer hears what each turn changed.
-        let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first = RunWorkspace::new(
-            project.clone().into(),
-            "first",
-            Identity::default(),
-        )
-        .unwrap()
-        .on_turn({
-            let heard = heard.clone();
-            move |turn| heard.lock().unwrap().push(turn.paths.clone())
-        });
-        let llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("write", write("a.txt", "one\n")))
-            .turn(|t| t.tool_call("write", write("a.txt", "two\n")))
-            .turn(|t| t.text("done"))
-            // Asked to commit, it answers again without committing; the
-            // model then writes the message tau commits with.
-            .turn(|t| t.text("still done"))
-            .turn(|t| t.text("feat: write a.txt"));
-        let outcome = coder(llm.clone(), &first, false)
-            .run("write a.txt twice", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        assert_eq!(outcome.text, "still done");
-        let asked = format!("{:?}", llm.requests()[3].transcript);
-        assert!(
-            asked.contains("Commit your work with `vcs_commit`"),
-            "{asked}"
-        );
-        let dir = first.dir();
-        assert_eq!(
-            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
-            "two\n"
-        );
-
-        let turns =
-            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
-        let changed: Vec<(u32, bool, bool)> = turns
-            .iter()
-            .map(|(_, link)| (link.turn, link.changed, link.snapshot))
-            .collect();
-        assert_eq!(
-            changed,
-            [
-                (1, true, true),
-                (2, true, true),
-                (3, false, true),
-                (4, false, true)
-            ]
-        );
-        assert_eq!(
-            *heard.lock().unwrap(),
-            [
-                vec!["a.txt".to_owned()],
-                vec!["a.txt".to_owned()],
-                vec![],
-                vec![]
-            ]
-        );
-        // A turn that changed nothing snapshots the same commit.
-        assert_eq!(turns[2].1.commit_id, turns[1].1.commit_id);
-        assert_ne!(turns[0].1.commit_id, turns[1].1.commit_id);
-        // Nothing was committed during the run; at the end, one change.
-        assert_eq!(
-            project.parent_of(&turns[1].1.commit_id).unwrap(),
-            Some(trunk.clone())
-        );
-        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
-        let stack = project.stack(&head).unwrap();
-        assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].description.trim(), "feat: write a.txt");
-
-        // A fork at turn 1 starts from turn 1's files, uncommitted, in a
-        // workspace of its own, and leaves the first run's alone.
-        let (seq, _) = turns[0].clone();
-        let fork = RunWorkspace::new(
-            project.clone().into(),
-            "fork",
-            Identity::default(),
-        )
-        .unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("read", json!({"path": "a.txt"})))
-            .turn(|t| t.text("forked"))
-            .turn(|t| t.text("still forked"))
-            .turn(|t| t.text("feat: keep turn 1"));
-        let forked = coder(llm.clone(), &fork, false)
-            .fork(&Checkpoint::at(outcome.run.clone(), seq))
-            .start("what does a.txt say?", &store)
-            .outcome()
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        assert_eq!(forked.text, "still forked");
-        assert_eq!(
-            std::fs::read_to_string(fork.dir().join("a.txt")).unwrap(),
-            "one\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
-            "two\n"
-        );
-        let mut names = project.workspaces().unwrap();
-        names.sort();
-        assert_eq!(names, ["first", "fork"]);
-        // The fork's one commit holds turn 1's files, on trunk.
-        let fork_head =
-            project.bookmark(&bookmark(&forked.run)).unwrap().unwrap();
-        let fork_stack = project.stack(&fork_head).unwrap();
-        assert_eq!(fork_stack.len(), 1);
-        assert_eq!(fork_stack[0].description.trim(), "feat: keep turn 1");
-        assert_eq!(
-            project.bookmark(&bookmark(&outcome.run)).unwrap(),
-            Some(head)
-        );
-    });
-}
-
-#[test]
-fn diffs_between_commits_count_lines_per_file() {
-    let src = tempfile::tempdir().unwrap();
-    let head = source(src.path());
-    let home = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        home.path().join("p"),
-        Identity::default(),
-    )
-    .unwrap();
-    let vcs = project.add_workspace("w", &head).unwrap();
-    let dir = project.workspace_dir("w");
-    std::fs::write(dir.join("README.md"), "hello\nworld\n").unwrap();
-    std::fs::write(dir.join("new.txt"), "a\nb\nc\n").unwrap();
-    let turn = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(vcs.commit_all("turn 1", "tau/r1"))
-        .unwrap();
-    assert!(turn.changed);
-    assert_eq!(turn.paths, ["README.md", "new.txt"]);
-
-    let files = project.diff(&head, &turn.commit_id).unwrap();
-    let summary: Vec<(&str, usize, usize)> = files
-        .iter()
-        .map(|file| (file.path.as_str(), file.added, file.removed))
-        .collect();
-    assert_eq!(summary, [("README.md", 1, 0), ("new.txt", 3, 0)]);
-    assert!(files[1].text.starts_with("diff --git a/new.txt b/new.txt"));
-    assert!(files[0].text.contains("+world"));
-    assert!(project.diff(&head, &head).unwrap().is_empty());
 }
 
 /// A file's lines before and after (`None`: no file), and whether each

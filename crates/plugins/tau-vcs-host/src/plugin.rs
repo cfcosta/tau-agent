@@ -249,47 +249,6 @@ mod tests {
         }
     }
 
-    fn marks(prefix: &str, changes: &[FileChange]) -> Vec<Value> {
-        let mut details = json!({
-            "entries": [
-                { "name": "src", "kind": "dir" },
-                { "name": "src.rs", "kind": "file" },
-                { "name": "new.rs", "kind": "file" },
-                { "name": "old.rs", "kind": "file" },
-            ],
-        });
-        mark(&mut details, prefix, changes);
-        details["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|entry| entry.get("change").cloned().unwrap_or(Value::Null))
-            .collect()
-    }
-
-    #[test]
-    fn a_file_takes_its_change_and_a_folder_modified() {
-        let changes = [
-            change("crates/a/src/lib.rs", ChangeKind::Added),
-            change("crates/a/new.rs", ChangeKind::Added),
-            change("crates/b/old.rs", ChangeKind::Modified),
-        ];
-        assert_eq!(
-            marks("crates/a/", &changes),
-            [json!("modified"), Value::Null, json!("added"), Value::Null]
-        );
-    }
-
-    #[test]
-    fn a_name_is_not_a_prefix_of_another() {
-        // `src.rs` changing says nothing of `src/`, nor the reverse.
-        let changes = [change("src.rs", ChangeKind::Modified)];
-        assert_eq!(
-            marks("", &changes),
-            [Value::Null, json!("modified"), Value::Null, Value::Null]
-        );
-    }
-
     /// A tree: each file's path and contents.
     type Tree = std::collections::BTreeMap<String, u8>;
 

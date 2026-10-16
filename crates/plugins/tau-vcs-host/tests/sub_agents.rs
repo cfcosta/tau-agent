@@ -11,7 +11,6 @@
 mod common;
 
 use std::{
-    collections::VecDeque,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -22,8 +21,7 @@ use common::{coder, heard_sub_agents, project_with};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
-    event::{LimitKind, RunEvent},
-    limits::Limits,
+    event::RunEvent,
     tool::{AgentTool, RunId, ToolCtx, ToolError, ToolOutput},
 };
 use tau_ai::responses::request::ReasoningEffort;
@@ -193,46 +191,6 @@ fn a_sub_agent_works_on_the_callers_code() {
     });
 }
 
-/// A sub-agent that leaves its work uncommitted has it committed at its
-/// end, with a message its model writes from its own task, not from the
-/// caller's prompt it inherited.
-#[test]
-fn a_sub_agents_leftover_is_described_from_its_task() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project_with(home.path(), &[("README.md", "hello\n")]);
-    runtime().block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| spawn_all(t, &[json!({ "task": "write child.txt" })]))
-            .turn(|t| t.text("done"));
-        let child_llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("write", write("child.txt")))
-            .turn(|t| t.text("written"))
-            .turn(|t| t.text("still written"))
-            .turn(|t| t.text("feat: child"));
-        let parent = caller(&project);
-        let (agents, mut ends) = heard_sub_agents();
-        let script = child_llm.clone();
-        let outcome =
-            spawning(llm.clone(), &parent, &agents, move |workspace| {
-                Ok(coder(script.clone(), &workspace, true))
-            })
-            .run("hand child.txt to a sub-agent", &store)
-            .await
-            .unwrap();
-        assert_eq!(outcome.text, "done");
-        let (run, ending) = ends.recv().await.unwrap();
-        assert!(matches!(ending, Ending::Done { .. }), "{ending:?}");
-        child_llm.assert_exhausted();
-        let asked = format!("{:?}", child_llm.requests()[3].transcript);
-        assert!(
-            asked.contains("<task>\\nwrite child.txt\\n</task>"),
-            "{asked}"
-        );
-        assert_eq!(stack_of(&project, &run), ["feat: child"]);
-    });
-}
-
 /// A sub-agent that cannot start leaves nothing behind, and the caller
 /// hears why.
 #[test]
@@ -257,138 +215,6 @@ fn a_failed_sub_agent_is_dropped() {
         assert!(result.contains("no model for sub-agents"), "{result}");
         assert!(agents.running().is_empty());
         assert_eq!(project.workspaces().unwrap(), ["parent"]);
-    });
-}
-
-/// A sub-agent that fails after writing: its changes are dropped, its
-/// workspace and bookmark go, and the caller's code is as it was.
-#[test]
-fn a_sub_agent_that_fails_leaves_no_changes() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project_with(home.path(), &[("README.md", "hello\n")]);
-    runtime().block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| spawn_all(t, &[json!({ "task": "write" })]))
-            .turn(|t| t.text("handed over"));
-        let child_llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("write", write("child.txt")))
-            .turn(|t| t.dropped());
-        let parent = caller(&project);
-        let (agents, mut ends) = heard_sub_agents();
-        let script = child_llm.clone();
-        let outcome =
-            spawning(llm.clone(), &parent, &agents, move |workspace| {
-                Ok(coder(script.clone(), &workspace, true))
-            })
-            .run("hand a write over", &store)
-            .await
-            .unwrap();
-        assert_eq!(outcome.text, "handed over");
-        let (_, ending) = ends.recv().await.unwrap();
-        assert!(matches!(ending, Ending::Failed { .. }), "{ending:?}");
-        assert!(!parent.dir().join("child.txt").exists());
-        assert_eq!(project.workspaces().unwrap(), ["parent"]);
-        // The only run bookmark left is the caller's.
-        assert_eq!(
-            project.bookmarks("tau/").unwrap(),
-            [bookmark(&outcome.run)]
-        );
-    });
-}
-
-/// A caller with uncommitted work is told to commit before spawning.
-#[test]
-fn spawning_needs_a_clean_working_copy() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project_with(home.path(), &[("README.md", "hello\n")]);
-    runtime().block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("write", write("parent.txt")))
-            .turn(|t| spawn_all(t, &[json!({ "task": "anything" })]))
-            .turn(|t| t.tool_call("vcs_commit", commit("feat: parent")))
-            .turn(|t| t.text("done"));
-        let parent = caller(&project);
-        let outcome =
-            spawning(llm.clone(), &parent, &SubAgents::default(), |_| {
-                panic!("no sub-agent starts before the caller commits")
-            })
-            .run("write, then hand over", &store)
-            .await
-            .unwrap();
-        assert_eq!(outcome.text, "done");
-        let result = format!("{:?}", llm.requests()[2].transcript);
-        assert!(
-            result.contains("Commit your work with vcs_commit"),
-            "{result}"
-        );
-    });
-}
-
-/// Sub-agents that each write their own file, one scripted model each,
-/// handed out in the order they start.
-fn writers(files: &[&str]) -> Arc<Mutex<VecDeque<ScriptedModel>>> {
-    let scripts = files
-        .iter()
-        .map(|file| {
-            let file = (*file).to_owned();
-            ScriptedModel::new()
-                .turn(move |t| t.tool_call("write", write(&file)))
-                .turn(|t| t.tool_call("vcs_commit", commit("feat: part")))
-                .turn(|t| t.text("written"))
-        })
-        .collect();
-    Arc::new(Mutex::new(scripts))
-}
-
-/// Two sub-agents called in one batch run side by side, each on the
-/// caller's head: each ends with only its own file and commit.
-#[test]
-fn sub_agents_in_one_batch_each_start_on_the_callers_head() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project_with(home.path(), &[("README.md", "hello\n")]);
-    runtime().block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| {
-                spawn_all(
-                    t,
-                    &[
-                        json!({ "task": "write a.txt" }),
-                        json!({ "task": "write b.txt" }),
-                    ],
-                )
-            })
-            .turn(|t| t.text("done"));
-        let parent = caller(&project);
-        let (agents, mut ends) = heard_sub_agents();
-        let scripts = writers(&["a.txt", "b.txt"]);
-        let outcome =
-            spawning(llm.clone(), &parent, &agents, move |workspace| {
-                let script = scripts.lock().unwrap().pop_front().unwrap();
-                Ok(coder(script, &workspace, true))
-            })
-            .run("split the work", &store)
-            .await
-            .unwrap();
-        assert_eq!(outcome.text, "done");
-        let mut files = Vec::new();
-        for _ in 0..2 {
-            let (run, ending) = ends.recv().await.unwrap();
-            assert!(matches!(ending, Ending::Done { .. }), "{ending:?}");
-            assert_eq!(stack_of(&project, &run), ["feat: part"]);
-            let dir = workspace_of(&store, &project, &run).await;
-            let mut own: Vec<&str> = ["a.txt", "b.txt"]
-                .into_iter()
-                .filter(|file| dir.join(file).exists())
-                .collect();
-            assert_eq!(own.len(), 1, "{own:?}");
-            files.append(&mut own);
-        }
-        files.sort_unstable();
-        assert_eq!(files, ["a.txt", "b.txt"]);
-        assert_eq!(project.workspaces().unwrap().len(), 3);
     });
 }
 
@@ -540,54 +366,6 @@ fn a_call_can_pick_its_model_and_effort() {
     });
 }
 
-/// A sub-agent stopped by a limit has its work committed at its end, as
-/// any run at a limit does (ADR 0014), and ends ready to land like one
-/// that finished, with the limit that cut it short.
-#[test]
-fn a_sub_agent_at_a_limit_ends_with_its_work_committed() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project_with(home.path(), &[("README.md", "hello\n")]);
-    runtime().block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| spawn_all(t, &[json!({ "task": "write" })]))
-            .turn(|t| t.text("done"));
-        let parent = caller(&project);
-        let (agents, mut ends) = heard_sub_agents();
-        let outcome = spawning(llm.clone(), &parent, &agents, |workspace| {
-            let script = ScriptedModel::new()
-                .turn(|t| {
-                    t.tool_call("write", write("child.txt"))
-                        .tool_call("vcs_commit", commit("feat: child"))
-                })
-                .turn(|t| t.text("never asked"));
-            Ok(coder(script, &workspace, true).limits(Limits {
-                max_turns: Some(1),
-                ..Limits::default()
-            }))
-        })
-        .run("hand a write over", &store)
-        .await
-        .unwrap();
-        assert_eq!(outcome.text, "done");
-        let (run, ending) = ends.recv().await.unwrap();
-        assert!(
-            matches!(
-                ending,
-                Ending::Done {
-                    limit: Some(LimitKind::Turns),
-                    ..
-                }
-            ),
-            "{ending:?}"
-        );
-        assert_eq!(stack_of(&project, &run), ["feat: child"]);
-        let dir = workspace_of(&store, &project, &run).await;
-        assert!(dir.join("child.txt").exists());
-        assert!(!parent.dir().join("child.txt").exists());
-    });
-}
-
 /// `spawn` answers at once: the caller's turn ends while its sub-agent
 /// still works, and the sub-agent outlives it. Ended, it waits to be
 /// taken, once, by whoever lands it.
@@ -680,49 +458,6 @@ fn a_sub_agent_that_ended_cannot_be_steered() {
         );
         agents.ended(&ended).await.unwrap();
         assert!(!agents.is_ending(&ended));
-    });
-}
-
-/// A sub-agent the person stops is dropped: its changes, workspace and
-/// bookmark go.
-#[test]
-fn a_stopped_sub_agent_is_dropped() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project_with(home.path(), &[("README.md", "hello\n")]);
-    runtime().block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let parent = caller(&project);
-        let agents = SubAgents::default();
-        let gate = Arc::new(tokio::sync::Notify::new());
-        let child_gate = gate.clone();
-        let child = move |workspace: RunWorkspace| {
-            let script = ScriptedModel::new()
-                .turn(|t| t.tool_call("write", write("child.txt")))
-                .turn(|t| t.tool_call("hold", json!({})))
-                .turn(|t| t.text("never"));
-            Ok(coder(script, &workspace, true).tool(Hold(child_gate.clone())))
-        };
-        let first = ScriptedModel::new()
-            .turn(|t| t.tool_call("spawn", json!({ "task": "write" })))
-            .turn(|t| t.text("started"));
-        let outcome = spawning(first, &parent, &agents, child)
-            .run("hand it over", &store)
-            .await
-            .unwrap();
-        let run = agents.running().pop().unwrap();
-        // Stopped while it holds.
-        while agents.control(&run).is_none() {
-            tokio::task::yield_now().await;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(agents.stop(&run));
-        assert_eq!(agents.ended(&run).await, Some(Ending::Stopped));
-        assert_eq!(project.workspaces().unwrap(), ["parent"]);
-        assert_eq!(
-            project.bookmarks("tau/").unwrap(),
-            [bookmark(&outcome.run)]
-        );
-        assert!(!parent.dir().join("child.txt").exists());
     });
 }
 

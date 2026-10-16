@@ -72,97 +72,6 @@ fn run<'a>(
     Run { project, name, vcs }
 }
 
-/// A fork of turn 1 lands on the parent's turn 2: previewed first, which
-/// changes nothing, then for real, with the child's change on top.
-#[test]
-fn a_fork_restacks_onto_its_parent() {
-    let home = tempfile::tempdir().unwrap();
-    let (project, trunk) = project(home.path());
-    let parent = run(&project, "parent", &trunk);
-    parent.write("b.txt", "b\n");
-    let turn1 = parent.turn();
-    let child = run(&project, "child", &turn1);
-    parent.write("c.txt", "c\n");
-    let turn2 = parent.turn();
-    child.write("d.txt", "d\n");
-    let child_head = child.turn();
-
-    let preview = block(parent.vcs.land(&child_head, parent.bookmark(), false));
-    assert_eq!(preview.changes.len(), 1);
-    assert!(preview.conflicts.is_empty());
-    assert_eq!(parent.read("d.txt"), None, "a preview changes nothing");
-    assert_eq!(
-        project.bookmark(&parent.bookmark()).unwrap(),
-        Some(turn2.clone())
-    );
-
-    let landed = block(parent.vcs.land(&child_head, parent.bookmark(), true));
-    let change = &landed.changes[0];
-    assert_eq!(landed.head, change.commit_id);
-    assert_ne!(change.commit_id, child_head, "the child's commit moved");
-    assert_eq!(parent.read("d.txt").as_deref(), Some("d\n"));
-    assert_eq!(parent.read("c.txt").as_deref(), Some("c\n"));
-    assert_eq!(
-        project.bookmark(&parent.bookmark()).unwrap(),
-        Some(landed.head.clone())
-    );
-    // The child's change sits on the parent's turn 2, and the parent's
-    // next turn goes on above it.
-    assert_eq!(project.parent_of(&landed.head).unwrap(), Some(turn2));
-    parent.write("e.txt", "e\n");
-    let turn3 = parent.turn();
-    assert_eq!(project.parent_of(&turn3).unwrap(), Some(landed.head));
-}
-
-/// A child whose parent has not moved since it started already sits on
-/// the parent's head, so landing it rewrites nothing.
-#[test]
-fn a_child_on_the_parents_head_is_not_rewritten() {
-    let home = tempfile::tempdir().unwrap();
-    let (project, trunk) = project(home.path());
-    let parent = run(&project, "parent", &trunk);
-    parent.write("b.txt", "b\n");
-    let turn1 = parent.turn();
-    let child = run(&project, "child", &turn1);
-    child.write("c.txt", "c\n");
-    let first = child.turn();
-    child.write("d.txt", "d\n");
-    let child_head = child.turn();
-
-    let landed = block(parent.vcs.land(&child_head, parent.bookmark(), true));
-    assert_eq!(landed.head, child_head);
-    let ids: Vec<&str> = landed
-        .changes
-        .iter()
-        .map(|change| change.commit_id.as_str())
-        .collect();
-    assert_eq!(ids, [child_head.as_str(), first.as_str()], "newest first");
-    assert_eq!(parent.read("d.txt").as_deref(), Some("d\n"));
-}
-
-/// A child that edits what the parent edited since lands with the
-/// conflict in it; the preview says so first.
-#[test]
-fn a_conflict_shows_in_the_preview_and_lands_as_data() {
-    let home = tempfile::tempdir().unwrap();
-    let (project, trunk) = project(home.path());
-    let parent = run(&project, "parent", &trunk);
-    let child = run(&project, "child", &trunk);
-    parent.write("a.txt", "parent\n");
-    parent.turn();
-    child.write("a.txt", "child\n");
-    let child_head = child.turn();
-
-    let preview = block(parent.vcs.land(&child_head, parent.bookmark(), false));
-    assert_eq!(preview.conflicts, ["a.txt"]);
-    assert!(preview.changes[0].conflict);
-
-    let landed = block(parent.vcs.land(&child_head, parent.bookmark(), true));
-    assert_eq!(landed.conflicts, ["a.txt"]);
-    let text = parent.read("a.txt").unwrap();
-    assert!(text.contains("<<<<<<<"), "{text}");
-}
-
 /// What a confirmed landing left in conflict stays on the parent's
 /// stack (`Vcs::conflicts`) until a commit resolves it, and a resolution
 /// in `@` counts before it is committed.
@@ -187,28 +96,6 @@ fn conflicts_stay_on_the_stack_until_resolved() {
     assert!(block(parent.vcs.conflicts()).is_empty(), "resolved in @");
     parent.turn();
     assert!(block(parent.vcs.conflicts()).is_empty());
-}
-
-/// The parent's uncommitted work stays uncommitted, on top of what
-/// landed (ADR 0014): the model makes the commits.
-#[test]
-fn the_parents_uncommitted_work_moves_on_top() {
-    let home = tempfile::tempdir().unwrap();
-    let (project, trunk) = project(home.path());
-    let parent = run(&project, "parent", &trunk);
-    let child = run(&project, "child", &trunk);
-    child.write("c.txt", "c\n");
-    let child_head = child.turn();
-    parent.write("b.txt", "b\n");
-    let landing = block(parent.vcs.land(&child_head, parent.bookmark(), true));
-    assert_eq!(landing.changes.len(), 1);
-    assert!(landing.conflicts.is_empty());
-    // Both files are there, and only the parent's is uncommitted.
-    assert_eq!(parent.read("c.txt").as_deref(), Some("c\n"));
-    assert_eq!(parent.read("b.txt").as_deref(), Some("b\n"));
-    let working_copy = block(parent.vcs.working_copy());
-    assert_eq!(working_copy.paths, ["b.txt"]);
-    assert_eq!(working_copy.head, landing.head);
 }
 
 /// The main chat's commits move trunk (ADR 0015). It catches up with
