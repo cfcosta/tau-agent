@@ -309,22 +309,75 @@ fn exposure_is_the_widest_among_servers_with_resources(tc: TestCase) {
     assert_eq!(exposure(reversed), expected);
 }
 
-/// `ui://` URIs and the MCP app type are apps whatever their case and
-/// spacing; a type that only starts like it, or a URI that has `ui://`
-/// past its start, is not.
-#[hegel::test(test_cases = 200)]
+/// `text`, each ASCII letter in either case.
+#[hegel::composite]
+fn any_case(tc: &TestCase, text: &'static str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_alphabetic() && tc.draw(gs::booleans()) {
+                c.to_ascii_uppercase()
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// `text` with runs of white space drawn before any of its characters
+/// and after the last.
+#[hegel::composite]
+fn spaced(tc: &TestCase, text: String) -> String {
+    let gap = || gs::text().alphabet(" \t\n").max_size(2);
+    let mut out = String::new();
+    for c in text.chars() {
+        out.push_str(&tc.draw(gap()));
+        out.push(c);
+    }
+    out.push_str(&tc.draw(gap()));
+    out
+}
+
+/// A resource is an MCP app's exactly when its URI starts with `ui://`
+/// or its type is the MCP app type, case and white space aside. URIs
+/// and types are drawn in every case and spacing, beside the near
+/// misses: `ui://` past the start, schemes that only look like it, and
+/// types that are a prefix, an extension or a neighbour of the app's.
+/// The oracle reads the rule as the docs give it.
+#[hegel::test(test_cases = 300)]
 fn mcp_apps_are_recognized(tc: TestCase) {
-    let rest: String = tc.draw(gs::from_regex("[a-z/]{0,12}"));
-    let upper: bool = tc.draw(gs::booleans());
-    let scheme = if upper { "UI://" } else { "ui://" };
-    assert!(is_app(&format!("{scheme}{rest}"), None));
-    assert!(!is_app(&format!("file:///{rest}ui://"), None));
-    let spaces: String = tc.draw(gs::from_regex("[ \t]{0,3}"));
-    let mime = format!("Text/HTML;{spaces}profile=MCP-app");
-    assert!(is_app("file:///x", Some(&mime)));
-    assert!(!is_app("file:///x", Some("text/html")));
-    assert!(!is_app(
-        "file:///x",
-        Some("text/html;profile=mcp-application")
-    ));
+    let rest: String = tc.draw(gs::from_regex("[a-z/]{0,12}").fullmatch(true));
+    let uri = match tc.draw(gs::integers::<u8>().max_value(2)) {
+        0 => format!("{}{rest}", tc.draw(any_case("ui://"))),
+        1 => format!("file:///{rest}{}", tc.draw(any_case("ui://"))),
+        _ => {
+            let near = tc
+                .draw(gs::sampled_from(vec!["ui:/", "u://", "uix://", "ui:"]));
+            format!("{}{rest}", tc.draw(any_case(near)))
+        }
+    };
+    let mime: Option<String> = if tc.draw(gs::booleans()) {
+        let base = tc.draw(gs::sampled_from(vec![
+            "text/html;profile=mcp-app",
+            "text/html;profile=mcp-app",
+            "text/html",
+            "text/html;profile=mcp-ap",
+            "text/html;profile=mcp-application",
+            "text/plain;profile=mcp-app",
+        ]));
+        let cased = tc.draw(any_case(base));
+        Some(tc.draw(spaced(cased)))
+    } else {
+        None
+    };
+    let flat = |text: &str| {
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            .to_lowercase()
+    };
+    let expected = uri.to_lowercase().starts_with("ui://")
+        || mime
+            .as_deref()
+            .is_some_and(|mime| flat(mime) == "text/html;profile=mcp-app");
+    assert_eq!(is_app(&uri, mime.as_deref()), expected, "{uri:?} {mime:?}");
 }

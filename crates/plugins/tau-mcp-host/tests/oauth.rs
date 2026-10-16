@@ -32,7 +32,7 @@ use std::{
     os::unix::fs::PermissionsExt,
     path::Path,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use base64::{
@@ -1144,17 +1144,11 @@ async fn signed_in_with_sessions(fake: &Fake, dir: &Path) -> Arc<Connection> {
     connection
 }
 
-/// A call that answers at once: a forgotten session used to make it
-/// wait out the server's timeout.
+/// A call that succeeds: a forgotten session used to make it wait out
+/// the server's 5 s timeout and fail, so success is the whole check.
 async fn quick_echo(connection: &Arc<Connection>) {
-    let started = Instant::now();
     let result = echo(connection).await.unwrap();
     assert_eq!(result["structuredContent"]["echo"], "hi");
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "{:?}",
-        started.elapsed()
-    );
 }
 
 /// What happens to a signed-in connection between two calls.

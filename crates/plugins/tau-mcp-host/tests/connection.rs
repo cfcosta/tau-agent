@@ -261,8 +261,10 @@ async fn cancel_tells_the_server() {
         let connection = connect(&fixture, 60.0);
         let cancel = CancellationToken::new();
         let canceller = cancel.clone();
+        // Cancelled once the server holds the call, so it can hear of it.
+        let server = fixture.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            eventually(|| server.calls("hang") == 1).await;
             canceller.cancel();
         });
         let error = connection
@@ -663,15 +665,11 @@ async fn an_http_server_that_forgot_the_session_gets_a_new_one() {
     assert_eq!(first["content"][0]["text"], "echoed");
 
     server.forget();
-    let started = Instant::now();
+    // A call that waited out its 5 s timeout would fail here, as it
+    // used to: no wall-clock bound is needed to see it.
     let second = connection
         .call("echo", json!({}), &no_progress(), &cancel)
         .await;
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "{:?}",
-        started.elapsed()
-    );
     assert_eq!(second.unwrap()["content"][0]["text"], "echoed");
     assert_eq!(server.calls.load(Ordering::SeqCst), 2);
     assert_eq!(server.initializes.load(Ordering::SeqCst), 2);

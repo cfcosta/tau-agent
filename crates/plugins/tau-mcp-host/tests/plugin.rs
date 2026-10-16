@@ -468,14 +468,50 @@ async fn ready_stops_on_cancel() {
     plugin.shutdown().await;
 }
 
-/// The block stays within 4,096 characters, each description within
-/// 250; the servers it keeps come first, in order, and a last line
-/// counts the rest.
+/// A description as the docs say the block shows it: on one line, its
+/// white space runs as single spaces, and past 250 characters its first
+/// 249 and `…`.
+fn shown_description(description: &str) -> String {
+    let flat = description.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= DESCRIPTION_LIMIT {
+        flat
+    } else {
+        let mut short: String =
+            flat.chars().take(DESCRIPTION_LIMIT - 1).collect();
+        short.push('…');
+        short
+    }
+}
+
+/// A description that is plain text, text with white space runs and
+/// line breaks, or one of exactly 249, 250 or 251 characters, multi-byte
+/// ones among them, so the cut is drawn at its edge.
+#[hegel::composite]
+fn description(tc: &TestCase) -> String {
+    match tc.draw(gs::integers::<u8>().max_value(2)) {
+        0 => tc.draw(gs::text().max_size(400)),
+        1 => tc.draw(gs::text().alphabet("ab é\t\n").max_size(300)),
+        _ => {
+            let len = tc.draw(gs::sampled_from(vec![
+                DESCRIPTION_LIMIT - 1,
+                DESCRIPTION_LIMIT,
+                DESCRIPTION_LIMIT + 1,
+            ]));
+            tc.draw(gs::text().alphabet("aé雪").min_size(len).max_size(len))
+        }
+    }
+}
+
+/// The block stays within 4,096 characters. Its lines are the servers'
+/// in order, each with its description as `shown_description` gives it,
+/// and the ones it keeps are as many as fit: the next one's line would
+/// not fit beside an overflow line, which counts exactly the servers
+/// left out.
 #[hegel::test(test_cases = 200)]
 fn the_server_list_fits_its_limits(tc: TestCase) {
     let servers: Vec<(String, usize)> = tc.draw(
         gs::vecs(hegel::tuples!(
-            gs::text().max_size(400),
+            description(),
             gs::integers().max_value(1_usize)
         ))
         .max_size(60),
@@ -495,37 +531,51 @@ fn the_server_list_fits_its_limits(tc: TestCase) {
         assert!(servers.is_empty());
         return;
     };
-    assert!(
-        block.chars().count() <= SERVERS_LIMIT,
-        "{}",
-        block.chars().count()
-    );
-    assert!(block.starts_with(&format!("<mcp_servers>\n{SERVERS_INTRO}\n")));
-    assert!(block.ends_with("</mcp_servers>"));
-    let lines: Vec<&str> = block.lines().collect();
-    let body = &lines[2..lines.len() - 1];
-    let (kept, overflow) = match body.last() {
-        Some(last) if last.starts_with("- … ") => {
-            (&body[..body.len() - 1], Some(*last))
-        }
-        _ => (body, None),
+    let chars = |text: &str| text.chars().count();
+    assert!(chars(&block) <= SERVERS_LIMIT, "{}", chars(&block));
+    let head = format!("<mcp_servers>\n{SERVERS_INTRO}\n");
+    let tail = "</mcp_servers>";
+    let lines: Vec<String> = servers
+        .iter()
+        .map(|(namespace, exposure, description)| {
+            match shown_description(description) {
+                shown if shown.is_empty() => {
+                    format!("- {namespace} ({exposure})\n")
+                }
+                shown => format!("- {namespace} ({exposure}): {shown}\n"),
+            }
+        })
+        .collect();
+    let overflow = |left: usize| {
+        format!(
+            "- … {left} more servers; find their tools with search_tools()\n"
+        )
     };
-    for (line, (namespace, exposure, _)) in kept.iter().zip(&servers) {
-        let prefix = format!("- {namespace} ({exposure})");
-        assert!(line.starts_with(&prefix), "{line}");
-        let description =
-            line[prefix.len()..].strip_prefix(": ").unwrap_or_default();
-        assert!(description.chars().count() <= DESCRIPTION_LIMIT);
-    }
-    match overflow {
-        Some(line) => assert_eq!(
-            line,
-            format!(
-                "- … {} more servers; find their tools with search_tools()",
-                servers.len() - kept.len()
-            )
-        ),
-        None => assert_eq!(kept.len(), servers.len()),
+    let body = block
+        .strip_prefix(&head)
+        .and_then(|rest| rest.strip_suffix(tail))
+        .unwrap_or_else(|| panic!("{block}"));
+    let kept = (0..=lines.len())
+        .rev()
+        .find(|&count| body.starts_with(&lines[..count].concat()))
+        .unwrap();
+    let rest = &body[lines[..kept].concat().len()..];
+    if kept == lines.len() {
+        assert_eq!(rest, "");
+    } else {
+        assert_eq!(rest, overflow(lines.len() - kept));
+        // The next server would not fit, even beside an overflow line
+        // as wide as the count of all servers.
+        let mut longer = format!("{head}{}", lines[..=kept].concat());
+        if kept + 1 < lines.len() {
+            longer.push_str(&overflow(lines.len()));
+        }
+        longer.push_str(tail);
+        assert!(
+            chars(&longer) > SERVERS_LIMIT,
+            "kept {kept} of {}",
+            lines.len()
+        );
     }
 }
 
