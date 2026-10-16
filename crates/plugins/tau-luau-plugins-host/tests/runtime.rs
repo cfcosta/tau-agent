@@ -260,8 +260,9 @@ async fn state_carries_from_hook_to_hook() {
 }
 
 /// Answers `exec_command` with what it was asked; has `read` too, which the
-/// plugin does not use.
-struct Shell;
+/// plugin does not use. Keeps the name of every call that reached it.
+#[derive(Default)]
+struct Shell(std::sync::Mutex<Vec<String>>);
 
 #[async_trait]
 impl Reach for Shell {
@@ -280,6 +281,7 @@ impl Reach for Shell {
     }
 
     async fn call(&self, call: ToolCall) -> Result<ToolReply, String> {
+        self.0.lock().unwrap().push(call.name.clone());
         Ok(ToolReply::success(json!(format!(
             "ran {}",
             call.args["cmd"]
@@ -287,16 +289,20 @@ impl Reach for Shell {
     }
 }
 
+/// A plugin's tool reaches the run's tools it declares in `uses`, and no
+/// other: `read`, which the run has but the plugin does not declare, is
+/// not there for it, and the run's `read` is never called.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_tool_reaches_only_what_it_uses() {
     let loaded = load("no-friday-deploys", files(FRIDAY)).await.unwrap();
     let ctx = context("Monday");
+    let shell = Arc::new(Shell::default());
     let ran = loaded
         .call(
             &Hook::Tool("run_it".into()),
             json!({ "cmd": "ls" }),
             &ctx,
-            Arc::new(Shell),
+            shell.clone(),
             CancellationToken::new(),
         )
         .await;
@@ -306,11 +312,17 @@ async fn a_tool_reaches_only_what_it_uses() {
             &Hook::Tool("sneak".into()),
             json!({}),
             &ctx,
-            Arc::new(Shell),
+            shell.clone(),
             CancellationToken::new(),
         )
         .await;
-    assert!(sneaked.error.is_some(), "{sneaked:?}");
+    let error = sneaked
+        .error
+        .as_deref()
+        .unwrap_or_else(|| panic!("{sneaked:?}"));
+    // `ctx.tools.read` is nil: the plugin never sees the tool.
+    assert!(error.ends_with("attempt to call a nil value"), "{error}");
+    assert_eq!(*shell.0.lock().unwrap(), ["exec_command"]);
 }
 
 /// A hook that fails says why and leaves the state as it was; one that
