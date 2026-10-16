@@ -3,12 +3,15 @@
 //! its cap, and once, in one alert, for what was there when tau first
 //! saw it.
 
+use std::collections::BTreeMap;
+
+use hegel::generators::{self as gs, Generator as _};
 use tau_agents::{
     Agent,
     Notice,
     Overview,
     Status,
-    alert::{AlertKind, Watch},
+    alert::{Alert, AlertKind, Watch},
 };
 
 fn agent(status: Status, notices: Vec<Notice>) -> Agent {
@@ -41,92 +44,169 @@ fn notice(id: &str, text: &str, choices: Option<Vec<String>>) -> Notice {
     }
 }
 
-fn of(agents: Vec<Agent>) -> Overview {
-    Overview { agents }
+/// The notices an agent may leave: a note or a question, by id.
+const NOTICES: [(&str, bool); 4] =
+    [("n1", false), ("q2", true), ("n3", false), ("q4", true)];
+
+/// One agent as an overview shows it at one look, or gone.
+#[derive(Debug, Clone)]
+struct Look {
+    present: bool,
+    at_cap: bool,
+    /// Which of [`NOTICES`] wait on the person.
+    notices: Vec<bool>,
 }
 
-#[test]
-fn what_was_there_first_alerts_once_in_one_alert() {
-    let mut watch = Watch::default();
-    let first = of(vec![agent(
-        Status::AtCap,
-        vec![
-            notice("n1", "old news", None),
-            notice("n2", "Close #398?", Some(Vec::new())),
-        ],
-    )]);
-    let alerts = watch.observe(&first);
-    assert_eq!(alerts.len(), 1);
-    assert_eq!(alerts[0].kind, AlertKind::Question);
-    assert_eq!(alerts[0].title, "triage needs you");
-    assert_eq!(
-        alerts[0].body,
-        "While you were away: 1 question, 1 note, it spent its $1.00 for today"
-    );
-    assert_eq!(alerts[0].main.as_deref(), Some("main-of-triage"));
-    assert!(watch.observe(&first).is_empty());
-    // An agent with nothing waiting alerts nothing.
-    let mut quiet = Watch::default();
-    assert!(
-        quiet
-            .observe(&of(vec![agent(Status::Waiting, Vec::new())]))
-            .is_empty()
-    );
+#[hegel::composite]
+fn look(tc: &hegel::TestCase) -> Look {
+    Look {
+        present: tc.draw(gs::weighted_booleans(0.85)),
+        at_cap: tc.draw(gs::booleans()),
+        notices: tc.draw(
+            gs::vecs(gs::weighted_booleans(0.4))
+                .min_size(NOTICES.len())
+                .max_size(NOTICES.len()),
+        ),
+    }
 }
 
-#[test]
-fn each_new_note_and_question_alerts_once() {
-    let mut watch = Watch::default();
-    watch.observe(&of(vec![agent(Status::Waiting, Vec::new())]));
-    let now = of(vec![agent(
-        Status::Waiting,
-        vec![
-            notice("n1", "Build 2318 failed", None),
-            notice("n2", "Quarantine it?", Some(vec!["Yes".into()])),
-        ],
-    )]);
-    let alerts = watch.observe(&now);
-    let said: Vec<(AlertKind, &str, &str)> = alerts
+/// The agent `name` as `look` shows it.
+fn shown(name: &str, look: &Look) -> Agent {
+    let notices = NOTICES
         .iter()
-        .map(|alert| (alert.kind, alert.title.as_str(), alert.body.as_str()))
+        .zip(&look.notices)
+        .filter(|(_, waits)| **waits)
+        .map(|((id, asks), _)| {
+            notice(id, &format!("{name} {id}"), asks.then(Vec::new))
+        })
         .collect();
-    assert_eq!(
-        said,
-        [
-            (AlertKind::Note, "triage says", "Build 2318 failed"),
-            (AlertKind::Question, "triage asks you", "Quarantine it?"),
-        ]
+    let status = if look.at_cap {
+        Status::AtCap
+    } else {
+        Status::Waiting
+    };
+    Agent {
+        name: name.into(),
+        main: Some(format!("main-of-{name}")),
+        ..agent(status, notices)
+    }
+}
+
+/// When the person hears of their agents (ADR 0037), against a model of
+/// what each was last seen with. An agent seen for the first time (as tau
+/// starts, or back after it was gone) alerts once for all it has
+/// waiting, if anything: "<name> needs you", "While you were away: ",
+/// then its questions, its notes and its spent cap, kind by the first of
+/// those it has. After that, each new note says "<name> says" its text,
+/// each new question "<name> asks you", in order, and reaching the cap
+/// says so once each time it happens. An agent no longer shown is
+/// forgotten.
+#[hegel::test(test_cases = 300)]
+fn alerts_follow_what_is_new_since_each_agent_was_last_seen(
+    tc: hegel::TestCase,
+) {
+    const NAMES: [&str; 2] = ["triage", "digest"];
+    let looks: Vec<Vec<Look>> = tc.draw(
+        gs::vecs(gs::vecs(look()).min_size(2).max_size(2).print_as_debug())
+            .max_size(6),
     );
-    assert_eq!(alerts[0].main.as_deref(), Some("main-of-triage"));
-    assert!(watch.observe(&now).is_empty());
-}
-
-#[test]
-fn reaching_the_cap_alerts_each_time_it_happens() {
     let mut watch = Watch::default();
-    let waiting = of(vec![agent(Status::Waiting, Vec::new())]);
-    let at_cap = of(vec![agent(Status::AtCap, Vec::new())]);
-    watch.observe(&waiting);
-    let alerts = watch.observe(&at_cap);
-    assert_eq!(alerts.len(), 1);
-    assert_eq!(alerts[0].kind, AlertKind::AtCap);
-    assert_eq!(alerts[0].title, "triage reached its cap");
-    assert!(watch.observe(&at_cap).is_empty());
-    watch.observe(&waiting);
-    assert_eq!(watch.observe(&at_cap).len(), 1);
-}
-
-#[test]
-fn an_agent_gone_and_back_starts_over() {
-    let mut watch = Watch::default();
-    let with_note = of(vec![agent(
-        Status::Waiting,
-        vec![notice("n1", "hello", None)],
-    )]);
-    watch.observe(&of(vec![agent(Status::Waiting, Vec::new())]));
-    watch.observe(&of(Vec::new()));
-    // Back, it is seen for the first time again: what it has alerts
-    // once, as at start, and then not again.
-    assert_eq!(watch.observe(&with_note).len(), 1);
-    assert!(watch.observe(&with_note).is_empty());
+    // What each agent had when last seen: its notices, and its cap.
+    let mut seen: BTreeMap<&str, (Vec<bool>, bool)> = BTreeMap::new();
+    for step in &looks {
+        let agents: Vec<Agent> = NAMES
+            .iter()
+            .zip(step)
+            .filter(|(_, look)| look.present)
+            .map(|(name, look)| shown(name, look))
+            .collect();
+        let mut expected = Vec::new();
+        let mut now = BTreeMap::new();
+        for (name, look) in NAMES.iter().zip(step) {
+            if !look.present {
+                continue;
+            }
+            let alert = |kind, title: String, body: String| Alert {
+                agent: (*name).to_owned(),
+                main: Some(format!("main-of-{name}")),
+                kind,
+                title,
+                body,
+            };
+            let waiting =
+                NOTICES.iter().zip(&look.notices).filter(|(_, w)| **w);
+            match seen.get(name) {
+                None => {
+                    let questions =
+                        waiting.clone().filter(|((_, a), _)| *a).count();
+                    let notes = waiting.count() - questions;
+                    let mut parts = Vec::new();
+                    for (count, one, many) in [
+                        (questions, "question", "questions"),
+                        (notes, "note", "notes"),
+                    ] {
+                        match count {
+                            0 => {}
+                            1 => parts.push(format!("1 {one}")),
+                            n => parts.push(format!("{n} {many}")),
+                        }
+                    }
+                    if look.at_cap {
+                        parts.push("it spent its $1.00 for today".to_owned());
+                    }
+                    if !parts.is_empty() {
+                        tc.event("first sight with something waiting");
+                        let kind = if questions > 0 {
+                            AlertKind::Question
+                        } else if notes > 0 {
+                            AlertKind::Note
+                        } else {
+                            AlertKind::AtCap
+                        };
+                        expected.push(alert(
+                            kind,
+                            format!("{name} needs you"),
+                            format!(
+                                "While you were away: {}",
+                                parts.join(", ")
+                            ),
+                        ));
+                    }
+                }
+                Some((before, was_at_cap)) => {
+                    for ((id, asks), _) in waiting {
+                        let at =
+                            NOTICES.iter().position(|(n, _)| n == id).unwrap();
+                        if before[at] {
+                            continue;
+                        }
+                        tc.event("a new notice");
+                        let (kind, title) = if *asks {
+                            (AlertKind::Question, format!("{name} asks you"))
+                        } else {
+                            (AlertKind::Note, format!("{name} says"))
+                        };
+                        expected.push(alert(
+                            kind,
+                            title,
+                            format!("{name} {id}"),
+                        ));
+                    }
+                    if look.at_cap && !was_at_cap {
+                        tc.event("reached the cap");
+                        expected.push(alert(
+                            AlertKind::AtCap,
+                            format!("{name} reached its cap"),
+                            "It spent $1.00 today; its events wait for \
+                             tomorrow or for you"
+                                .to_owned(),
+                        ));
+                    }
+                }
+            }
+            now.insert(*name, (look.notices.clone(), look.at_cap));
+        }
+        seen = now;
+        assert_eq!(watch.observe(&Overview { agents }), expected);
+    }
 }

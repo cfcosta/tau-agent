@@ -200,13 +200,6 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn a_poll_goes_by_at_least_a_minute() {
-        assert_eq!(every("10m"), Ok(600));
-        assert!(every("30s").unwrap_err().contains("shorter than a minute"));
-        assert!(every("soon").unwrap_err().contains("not a duration"));
-    }
-
     /// A poll's first result only records its keys; each later one fires,
     /// in order, the items whose key it does not hold, once each, and it
     /// holds the last [`KEYS`] keys it saw, so a key it let go fires
@@ -275,23 +268,29 @@ mod tests {
         }
     }
 
-    #[test]
-    fn failures_wait_longer_after_three() {
-        let mut polled = poll();
-        polled.failed("no".into(), 600, 0);
-        polled.failed("no".into(), 600, 600);
-        assert_eq!(polled.next, 1200);
-        polled.failed("still no".into(), 600, 1200);
-        assert_eq!(polled.next, 1200 + 2400);
-        assert_eq!(polled.error.as_deref(), Some("still no"));
-        // Four times an interval, at most an hour, unless the interval is
-        // longer.
-        assert_eq!(wait(1800, 3), 3600);
-        assert_eq!(wait(7200, 3), 7200);
-        // A success starts over.
-        polled.found("r", Vec::new(), 600, 4000);
-        assert_eq!((polled.failures, polled.error.clone()), (0, None));
-        assert_eq!(polled.next, 4600);
+    /// After [`BACK_OFF_AFTER`] failures in a row a poll waits four times
+    /// its interval, at most an hour, unless its interval is longer, which
+    /// it keeps; before that, its interval. (The failures themselves, and a
+    /// success starting over, are in `tests/agents.rs`.) Intervals reach
+    /// both sides of the hour and of a quarter of it.
+    #[hegel::test(test_cases = 500)]
+    fn a_failing_poll_waits_four_intervals_at_most_an_hour(
+        tc: hegel::TestCase,
+    ) {
+        let every = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![60i64, 899, 900, 901, 3_599, 3_600, 3_601]),
+            gs::integers::<i64>().min_value(60).max_value(3 * 86_400),
+        ));
+        let failures = tc.draw(gs::integers::<u32>().max_value(6));
+        let expected = if failures < 3 {
+            every
+        } else if every >= 3_600 {
+            tc.event("an interval of an hour or more");
+            every
+        } else {
+            (4 * every).min(3_600)
+        };
+        assert_eq!(wait(every, failures), expected, "{every} after {failures}");
     }
 
     #[test]

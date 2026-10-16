@@ -107,20 +107,71 @@ fn triggers_say_what_wakes_it() {
     assert_eq!(command.label(), "/triage <number>");
 }
 
-#[test]
-fn a_name_comes_from_the_purpose() {
-    assert_eq!(
-        suggest_name("Watch the RustSec advisories feed every morning"),
-        "watch-rustsec-advisories"
-    );
-    assert_eq!(suggest_name("!!!"), "agent");
-    assert_eq!(suggest_name("42 things"), "agent");
-}
+/// Words a purpose is made of: ones that name something, in any case,
+/// the small words a name leaves out, ones that start with a digit, and
+/// long ones.
+const WORDS: [&str; 16] = [
+    "Watch",
+    "RustSec",
+    "advisories",
+    "feed",
+    "morning",
+    "pr2",
+    "the",
+    "a",
+    "every",
+    "to",
+    "of",
+    "42",
+    "7up",
+    "supercalifragilistic",
+    "internationalization",
+    "x",
+];
 
-#[hegel::test]
-fn a_suggested_name_is_always_valid(tc: hegel::TestCase) {
-    let purpose: String = tc.draw(gs::text().max_size(200));
-    assert!(valid_name(&suggest_name(&purpose)));
+/// The small words of [`WORDS`] a name leaves out.
+const LEFT_OUT: [&str; 5] = ["the", "a", "every", "to", "of"];
+
+/// A name for an agent comes from its purpose: the first three of its
+/// words that name something, lower case, joined by dashes, cut to forty
+/// characters with no dash left at the end; when that does not make a
+/// name (an agent's name starts with a letter), `agent`. Purposes are
+/// drawn from [`WORDS`] between runs of punctuation, spaces and `é`;
+/// any other text gives a valid name too.
+#[hegel::test(test_cases = 500)]
+fn a_suggested_name_is_the_purposes_first_words(tc: hegel::TestCase) {
+    let words: Vec<&str> =
+        tc.draw(gs::vecs(gs::sampled_from(WORDS.to_vec())).max_size(7));
+    let mut purpose = tc.draw(gs::sampled_from(vec!["", " ", "!!"])).to_owned();
+    for word in &words {
+        purpose.push_str(word);
+        purpose.push_str(
+            tc.draw(gs::sampled_from(vec![" ", ", ", "-", "/", "é", "!!"])),
+        );
+    }
+    let kept: Vec<String> = words
+        .iter()
+        .map(|word| word.to_ascii_lowercase())
+        .filter(|word| !LEFT_OUT.contains(&word.as_str()))
+        .take(3)
+        .collect();
+    let joined = kept.join("-");
+    let cut: String = joined.chars().take(40).collect();
+    let cut = cut.trim_end_matches('-');
+    let rule = regex::Regex::new(r"\A[a-z][a-z0-9-]{0,39}\z").unwrap();
+    let expected = if rule.is_match(cut) {
+        if joined.len() > 40 {
+            tc.event("cut to forty");
+        }
+        cut.to_owned()
+    } else {
+        tc.event("agent");
+        "agent".to_owned()
+    };
+    assert_eq!(suggest_name(&purpose), expected, "{purpose:?}");
+
+    let any: String = tc.draw(gs::text().max_size(200));
+    assert!(valid_name(&suggest_name(&any)), "{any:?}");
 }
 
 #[test]

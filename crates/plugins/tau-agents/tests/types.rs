@@ -11,9 +11,17 @@ use tau_agents::{
 
 fn event(tc: &hegel::TestCase) -> Event {
     Event {
-        trigger: tc.draw(gs::from_regex("[a-z_]{1,12}")),
+        // A line break or the line's separator inside a name or an id
+        // would break its line: some carry one.
+        trigger: tc.draw(
+            gs::from_regex("[a-z_]{1,8}((\n|\r| · )[a-z_]{1,4}){0,2}")
+                .fullmatch(true),
+        ),
         kind: tc.draw(gs::sampled_from(Kind::ALL.to_vec()).print_as_debug()),
-        id: tc.draw(gs::from_regex("[a-z]{1,8}:[0-9a-z]{1,10}")),
+        id: tc.draw(
+            gs::from_regex("[a-z]{1,8}:[0-9a-z]{1,10}((\n| · )[0-9a-z]{1,4})?")
+                .fullmatch(true),
+        ),
         at: tc
             .draw(gs::integers::<i64>().min_value(0).max_value(4_000_000_000)),
         data: match tc.draw(gs::integers::<u8>().max_value(2)) {
@@ -25,7 +33,8 @@ fn event(tc: &hegel::TestCase) -> Event {
 }
 
 /// What an event message says of each event reads back from it, at any
-/// offset from UTC: the card shows what the agent read.
+/// offset from UTC: the card shows what the agent read. A line break or
+/// ` · ` in a name or an id reads back as a space, keeping it on its line.
 #[hegel::test(test_cases = 300)]
 fn an_event_message_reads_back_as_its_events(tc: hegel::TestCase) {
     let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(5));
@@ -42,9 +51,16 @@ fn an_event_message_reads_back_as_its_events(tc: hegel::TestCase) {
         .expect("an event message reads back");
     assert_eq!(message.events.len(), events.len());
     for (shown, event) in message.events.iter().zip(&events) {
-        assert_eq!(shown.trigger, event.trigger);
+        let on_its_line =
+            |field: &str| field.replace(['\n', '\r'], " ").replace(" · ", " ");
+        if event.trigger.contains(['\n', '\r', '·'])
+            || event.id.contains(['\n', '·'])
+        {
+            tc.event("a field kept on its line");
+        }
+        assert_eq!(shown.trigger, on_its_line(&event.trigger));
         assert_eq!(shown.kind, event.kind);
-        assert_eq!(shown.id, event.id);
+        assert_eq!(shown.id, on_its_line(&event.id));
         assert_eq!(shown.time, clock(event.at, offset));
         let data: Value = serde_json::from_str(&shown.data).unwrap();
         assert_eq!(data, event.data);
@@ -81,23 +97,6 @@ fn an_event_message_reads_as_the_decision_shows() {
         events: batch.events[..1].to_vec(),
     };
     assert!(one.message(0).starts_with("[events · 1 · 18:00:00]\n"));
-}
-
-/// A name or an id that would break a line is kept on it.
-#[test]
-fn a_field_that_would_break_its_line_is_kept_on_it() {
-    let batch = Batch {
-        events: vec![Event {
-            trigger: "odd · name\nhere".into(),
-            kind: Kind::Message,
-            id: "a\nb".into(),
-            at: 0,
-            data: json!("hi"),
-        }],
-    };
-    let message = Message::parse(&batch.message(0)).unwrap();
-    assert_eq!(message.events[0].trigger, "odd name here");
-    assert_eq!(message.events[0].id, "a b");
 }
 
 /// Data larger than a message holds is cut, and says so.

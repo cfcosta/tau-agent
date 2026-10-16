@@ -125,6 +125,8 @@ impl Schedule {
 
 #[cfg(test)]
 mod tests {
+    use hegel::generators as gs;
+
     use super::*;
     use crate::clock::FakeClock;
 
@@ -137,24 +139,80 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn durations_and_times_read_as_written() {
-        assert_eq!(duration("15m"), Some(900));
-        assert_eq!(duration("2h"), Some(7200));
-        assert_eq!(duration("1d"), Some(86_400));
-        assert_eq!(duration("30s"), Some(30));
-        assert_eq!(duration("0m"), None);
-        assert_eq!(duration("m"), None);
-        assert_eq!(duration("5w"), None);
-        assert_eq!(time_of_day("09:30"), Some(34_200));
-        assert_eq!(time_of_day("24:00"), None);
-        assert_eq!(time_of_day("9"), None);
-        let short = Schedule::of(&TriggerKind::Schedule {
-            every: Some("30s".into()),
+    /// A duration is a whole number above zero and a unit, `s`, `m`, `h`
+    /// or `d`, maybe padded with spaces; anything else, or one too large to
+    /// count in seconds, is none. A poll goes by one of at least a minute
+    /// ([`crate::poll::every`]), and so does a schedule's `every`; each
+    /// says why it cannot go by another.
+    #[hegel::test(test_cases = 500)]
+    fn a_duration_is_a_count_and_a_unit(tc: hegel::TestCase) {
+        let count = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![-1i64, 0, 1, 59, 60, 61, i64::MAX]),
+            gs::integers::<i64>().min_value(1).max_value(100_000),
+        ));
+        let unit = tc.draw(gs::sampled_from(vec!["s", "m", "h", "d", "w", ""]));
+        let pad = tc.draw(gs::sampled_from(vec!["", " ", "  "]));
+        let text = format!("{pad}{count}{unit}{pad}");
+        let scale = match unit {
+            "s" => Some(1i128),
+            "m" => Some(60),
+            "h" => Some(3_600),
+            "d" => Some(86_400),
+            _ => None,
+        };
+        let seconds = scale
+            .filter(|_| count > 0)
+            .map(|scale| i128::from(count) * scale)
+            .and_then(|seconds| i64::try_from(seconds).ok());
+        assert_eq!(duration(&text), seconds, "{text:?}");
+
+        let every = crate::poll::every(&text);
+        let schedule = Schedule::of(&TriggerKind::Schedule {
+            every: Some(text.clone()),
             at: None,
             days: Vec::new(),
         });
-        assert!(short.unwrap_err().contains("shorter than a minute"));
+        match seconds {
+            Some(seconds) if seconds >= 60 => {
+                assert_eq!(every, Ok(seconds));
+                assert_eq!(schedule, Ok(Schedule::Every(seconds)));
+            }
+            Some(_) => {
+                tc.event("under a minute");
+                assert!(every.unwrap_err().contains("shorter than a minute"));
+                assert!(
+                    schedule.unwrap_err().contains("shorter than a minute")
+                );
+            }
+            None => {
+                assert!(every.unwrap_err().contains("not a duration"));
+                assert!(schedule.unwrap_err().contains("not a duration"));
+            }
+        }
+    }
+
+    /// A time of day is `HH:MM`, hours under 24 and minutes under 60,
+    /// with or without a leading zero; it is that many seconds into the
+    /// day.
+    #[hegel::test(test_cases = 500)]
+    fn a_time_of_day_is_hours_and_minutes(tc: hegel::TestCase) {
+        let hours = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0i64, 23, 24]),
+            gs::integers::<i64>().min_value(0).max_value(30),
+        ));
+        let minutes = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0i64, 59, 60]),
+            gs::integers::<i64>().min_value(0).max_value(70),
+        ));
+        let text = if tc.draw(gs::booleans()) {
+            format!("{hours:02}:{minutes:02}")
+        } else {
+            format!("{hours}:{minutes}")
+        };
+        let expected = (hours < 24 && minutes < 60)
+            .then_some(hours * 3_600 + minutes * 60);
+        assert_eq!(time_of_day(&text), expected, "{text:?}");
+        assert_eq!(time_of_day(&format!("{hours}")), None);
     }
 
     #[test]

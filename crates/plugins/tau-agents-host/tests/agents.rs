@@ -879,13 +879,14 @@ fn an_http_poll_that_fails_says_why_without_its_secret() {
 }
 
 /// An agent's commands run in its sandbox, with its home under tau's
-/// data; a repository that is not an agent's gets none.
+/// data; a repository that is not an agent's gets none. Without `bwrap`
+/// an agent has no sandbox, so no command tools, and its page says why.
 #[test]
 fn an_agents_commands_run_in_its_sandbox() {
     let f = Fixture::new();
+    let checkout = f._home.path().join("agents").join("greet");
     let agents = open(f._home.path(), &f.clock, &f.host)
         .with_bwrap(Some("/bin/bwrap".into()));
-    let checkout = f._home.path().join("agents").join("greet");
     let sandbox = agents.sandbox("greet", &checkout).unwrap();
     assert_eq!(sandbox.bwrap, Path::new("/bin/bwrap"));
     assert_eq!(sandbox.home, f._home.path().join("state/homes/greet"));
@@ -896,18 +897,11 @@ fn an_agents_commands_run_in_its_sandbox() {
     );
     block_on_io(agents.registry().scan());
     assert_eq!(block_on_io(agents.overview()).agents[0].sandbox, None);
-}
 
-/// Without `bwrap` an agent has no sandbox, so no command tools, and its page
-/// says why.
-#[test]
-fn without_bwrap_an_agent_has_no_commands_and_says_so() {
-    let f = Fixture::new();
-    let agents = open(f._home.path(), &f.clock, &f.host).with_bwrap(None);
-    let checkout = f._home.path().join("agents").join("greet");
-    assert!(agents.sandbox("greet", &checkout).is_none());
-    block_on_io(agents.registry().scan());
-    let problem = block_on_io(agents.overview()).agents[0].sandbox.clone();
+    let without = open(f._home.path(), &f.clock, &f.host).with_bwrap(None);
+    assert!(without.sandbox("greet", &checkout).is_none());
+    block_on_io(without.registry().scan());
+    let problem = block_on_io(without.overview()).agents[0].sandbox.clone();
     assert!(problem.unwrap().contains("bwrap"));
 }
 

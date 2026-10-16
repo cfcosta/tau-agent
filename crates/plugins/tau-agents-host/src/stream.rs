@@ -483,7 +483,7 @@ async fn open_websocket(
 
 #[cfg(test)]
 mod tests {
-    use hegel::generators as gs;
+    use hegel::generators::{self as gs, Generator as _};
 
     use super::*;
 
@@ -497,16 +497,108 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn events_come_whole_across_chunks() {
-        let mut sse = Sse::new(None);
-        assert!(sse.feed(b"event: build\nda").is_empty());
-        let got = frames(sse.feed(b"ta: one\r\ndata: two\nid: 7\n\n"));
-        assert_eq!(
-            got,
-            [json!({ "event": "build", "data": "one\ntwo", "id": "7" })]
+    /// One event as a server writes it: maybe a comment, a name, data
+    /// lines, an id and a `retry:` field, each line ending in `\n`,
+    /// `\r\n` or `\r`, then a blank line.
+    #[derive(Debug, Clone)]
+    struct Written {
+        comment: bool,
+        name: Option<String>,
+        data: Vec<String>,
+        id: Option<String>,
+        retry: Option<u64>,
+        ends: Vec<&'static str>,
+    }
+
+    #[hegel::composite]
+    fn written(tc: &hegel::TestCase) -> Written {
+        let word = |pattern: &str| gs::from_regex(pattern).fullmatch(true);
+        Written {
+            comment: tc.draw(gs::booleans()),
+            name: tc.draw(gs::optional(word("[a-z]{1,5}"))),
+            data: tc.draw(gs::vecs(word("[a-zé日]{0,6}")).max_size(3)),
+            id: tc.draw(gs::optional(word("[a-z0-9]{1,4}"))),
+            retry: tc
+                .draw(gs::optional(gs::integers::<u64>().max_value(9_999))),
+            ends: tc.draw(
+                gs::vecs(gs::sampled_from(vec!["\n", "\r\n", "\r"]))
+                    .min_size(8)
+                    .max_size(8),
+            ),
+        }
+    }
+
+    /// A stream of events, read in chunks cut anywhere (inside a `\r\n`
+    /// or a character included), gives the frames its events say:
+    /// each event with data is one frame, named `message` when the server
+    /// named none, its data lines joined by newlines, with the last id
+    /// given so far; comments and events with no data are none. The last
+    /// id and the last `retry:` are the stream's.
+    #[hegel::test(test_cases = 300)]
+    fn events_come_whole_however_the_stream_is_cut(tc: hegel::TestCase) {
+        let events: Vec<Written> =
+            tc.draw(gs::vecs(written()).max_size(5).print_as_debug());
+        let mut bytes = String::new();
+        let mut expected = Vec::new();
+        let (mut last_id, mut retry) = (None, None);
+        for event in &events {
+            let mut lines = Vec::new();
+            if event.comment {
+                lines.push(": ping".to_owned());
+            }
+            if let Some(name) = &event.name {
+                lines.push(format!("event: {name}"));
+            }
+            lines.extend(event.data.iter().map(|data| format!("data: {data}")));
+            if let Some(id) = &event.id {
+                lines.push(format!("id: {id}"));
+                last_id = Some(id.clone());
+            }
+            if let Some(millis) = event.retry {
+                lines.push(format!("retry: {millis}"));
+                retry = Some(Duration::from_millis(millis));
+            }
+            lines.push(String::new());
+            for (line, end) in lines.iter().zip(&event.ends) {
+                // A `\n` right after a `\r` ends no other line: a blank
+                // line after one ends in `\r\n`.
+                let end =
+                    if line.is_empty() && *end == "\n" && bytes.ends_with('\r')
+                    {
+                        "\r\n"
+                    } else {
+                        end
+                    };
+                bytes.push_str(line);
+                bytes.push_str(end);
+            }
+            if !event.data.is_empty() {
+                let mut frame = json!({
+                    "event": event.name.as_deref().unwrap_or("message"),
+                    "data": event.data.join("\n"),
+                });
+                if let Some(id) = &last_id {
+                    frame["id"] = json!(id);
+                }
+                expected.push(frame);
+            }
+        }
+        let bytes = bytes.into_bytes();
+        let mut cuts: Vec<usize> = tc.draw(
+            gs::vecs(gs::integers::<usize>().max_value(bytes.len()))
+                .max_size(6),
         );
-        assert_eq!(sse.last_id.as_deref(), Some("7"));
+        cuts.extend([0, bytes.len()]);
+        cuts.sort_unstable();
+        cuts.dedup();
+        let mut sse = Sse::new(None);
+        let mut got = Vec::new();
+        for pair in cuts.windows(2) {
+            got.extend(frames(sse.feed(&bytes[pair[0]..pair[1]])));
+        }
+        assert_eq!(got, expected, "{:?}", String::from_utf8_lossy(&bytes));
+        assert_eq!(sse.last_id, last_id);
+        assert_eq!(sse.retry(), retry);
     }
 
     #[test]
@@ -568,19 +660,41 @@ mod tests {
         assert_eq!(frames(sse.feed(&many)), [json!("too large")]);
     }
 
-    #[test]
-    fn waits_double_to_five_minutes_with_jitter() {
-        let at = |failures, jitter| {
+    /// A stream that failed waits [`FIRST_WAIT`], doubling with each
+    /// failure after the first, at most [`LONGEST_WAIT`], give or take a
+    /// fifth by its jitter: none at jitter 0 takes a fifth off, jitter
+    /// one half is the doubled wait itself, and it never passes the
+    /// longest. More failures, or more jitter, never wait less.
+    #[hegel::test(test_cases = 500)]
+    fn a_failed_stream_waits_double_each_time_within_a_fifth(
+        tc: hegel::TestCase,
+    ) {
+        let failures = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0u32, 1, 2, 9, 10, 31, 32]),
+            gs::integers::<u32>().max_value(64),
+        ));
+        let jitter = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![0.0, 0.5, 1.0]),
+            gs::floats::<f64>().min_value(0.0).max_value(1.0),
+        ));
+        let at = |failures: u32, jitter: f64| {
             wait(failures, FIRST_WAIT, LONGEST_WAIT, jitter).as_secs_f64()
         };
-        assert_eq!(at(0, 0.5), 1.0);
-        assert_eq!(at(1, 0.5), 1.0);
-        assert_eq!(at(2, 0.5), 2.0);
-        assert_eq!(at(4, 0.5), 8.0);
-        assert_eq!(at(30, 0.5), 300.0);
-        assert_eq!(at(3, 0.0), 4.0 * 0.8);
-        assert!(at(3, 1.0) > 4.0);
-        assert_eq!(at(40, 1.0), 300.0);
+        let (first, longest) =
+            (FIRST_WAIT.as_secs_f64(), LONGEST_WAIT.as_secs_f64());
+        let doubled =
+            (first * 2f64.powi(failures.max(1) as i32 - 1)).min(longest);
+        let waited = at(failures, jitter);
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+        assert!(waited <= longest + 1e-9, "{waited}");
+        assert!(waited >= 0.8 * doubled - 1e-6, "{waited} of {doubled}");
+        assert!(waited <= 1.2 * doubled + 1e-6, "{waited} of {doubled}");
+        assert!(close(at(failures, 0.0), 0.8 * doubled));
+        assert!(close(at(failures, 0.5), doubled));
+        assert!(at(failures + 1, jitter) >= waited - 1e-9);
+        let more =
+            tc.draw(gs::floats::<f64>().min_value(jitter).max_value(1.0));
+        assert!(at(failures, more) >= waited - 1e-9);
     }
 
     /// A stream fires an event only when its id is not among the last
