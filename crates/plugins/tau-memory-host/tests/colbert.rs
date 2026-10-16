@@ -1,6 +1,6 @@
 //! Late interaction: MaxSim against its definition, the index against a
-//! model of live notes, the cache that spares encoding, and the
-//! paraphrase BM25 alone would miss.
+//! model of live notes, the cache that spares encoding, and, with
+//! docbert's model when asked, the paraphrase BM25 alone would miss.
 
 use std::{
     collections::BTreeMap,
@@ -178,18 +178,6 @@ fn the_index_answers_only_with_live_notes(tc: TestCase) {
     want.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     want.truncate(limit);
     assert_eq!(hits, want, "{live:?}");
-}
-
-#[test]
-fn a_paraphrase_finds_what_its_words_do_not() {
-    let mut index = Colbert::new(Fake::default());
-    index
-        .upsert("slow-car", "the car is sluggish on cold starts")
-        .unwrap();
-    index.upsert("lanes", "lanes drain and retry").unwrap();
-    // No word in common with the note; its synonyms are.
-    let hits = index.search("automobile slow", 5).unwrap();
-    assert_eq!(hits[0].0, "slow-car");
 }
 
 #[hegel::test(test_cases = 50)]

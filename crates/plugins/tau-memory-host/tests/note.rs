@@ -154,11 +154,6 @@ fn wiki_links_are_the_ids_in_brackets(tc: TestCase) {
     assert_eq!(wiki_links(&text), want, "{text:?}");
 }
 
-#[test]
-fn wiki_links_skip_what_is_not_an_id() {
-    assert_eq!(wiki_links("[[a]] [[B]] [[a]] [[c-2]] [[x"), ["a", "c-2"]);
-}
-
 /// A line break in any front-matter field would let a value close the
 /// front matter or start another key, so `validate` refuses it in every
 /// field, whichever break it is and wherever in the value it falls.

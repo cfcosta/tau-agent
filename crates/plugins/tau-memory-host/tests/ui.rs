@@ -2,7 +2,13 @@
 //! long ago a note was edited, and stale marks from turns' commits
 //! bounded by when the notes were written.
 
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::BTreeSet,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use hegel::{
     TestCase,
@@ -13,6 +19,8 @@ use tau_memory::ui::ago;
 use tau_memory_host::{
     Memories,
     Memory,
+    MemoryPlugin,
+    Scopes,
     Search,
     index::Bm25,
     memory::{Draft, WriteError},
@@ -233,10 +241,6 @@ fn commit(paths: &[&str]) -> TurnCommit {
     }
 }
 
-fn wait_a_moment() {
-    std::thread::sleep(std::time::Duration::from_millis(3));
-}
-
 fn about(title: &str, path: &str) -> Draft {
     Draft {
         kind: NoteType::Fact,
@@ -255,59 +259,88 @@ fn about(title: &str, path: &str) -> Draft {
     }
 }
 
-fn stale(memories: &Memories, dir: &Path, id: &str) -> bool {
-    let scope = memories.scope(dir).unwrap();
-    let memory = scope.lock().unwrap();
-    memory.notes().get(id).unwrap().stale.is_some()
+/// One step of a run that writes notes and commits: the clock moves on
+/// by `wait` milliseconds first, possibly none, so a note can share a
+/// commit's millisecond.
+#[derive(Debug, Clone)]
+enum Step {
+    Write { wait: u64, path: &'static str },
+    Commit { wait: u64, paths: Vec<&'static str> },
 }
 
-/// A commit marks notes written before the turn it ends, not the ones
-/// written during it: the change may have come first. The next commit
-/// that touches the file marks those too. A commit that changed nothing
-/// marks nothing.
-#[test]
-fn commits_mark_only_notes_older_than_their_turn() {
-    let data = tempfile::tempdir().unwrap();
-    let (repo, user) = (data.path().join("repo"), data.path().join("user"));
-    let memories = Memories::new(Search::Keywords);
-    let plugin = memories.plugin(&repo, &user).unwrap();
-    let scope = memories.scope(&repo).unwrap();
-    scope
-        .lock()
-        .unwrap()
-        .write(about("before the run", "src/a.rs"), now())
-        .unwrap();
-    wait_a_moment();
-
-    let observe = stale_on_turn(plugin);
-    wait_a_moment();
-    observe(&commit(&[]));
-    assert!(
-        !stale(&memories, &repo, "before-the-run"),
-        "nothing changed"
+/// A commit marks a note about a file it changed when the note was written
+/// no later than the previous commit, or than the run's start for the
+/// first: a note written during the turn may postdate the change. A note
+/// written later is marked by the next commit that touches its file. A
+/// commit that changed nothing marks nothing, and still moves the bound.
+/// The clock is the scopes' own, moved by the test, so every boundary is
+/// exact. Model: each note's path, write time and mark, and the bound.
+#[hegel::test(test_cases = 100)]
+fn commits_mark_only_notes_written_before_the_previous_commit(tc: TestCase) {
+    const PATHS: [&str; 3] = ["src/a.rs", "src/b.rs", "docs/c.md"];
+    let steps: Vec<Step> = tc.draw(
+        gs::vecs(hegel::one_of!(
+            hegel::tuples!(
+                gs::integers::<u64>().max_value(2),
+                gs::sampled_from(PATHS.to_vec())
+            )
+            .map(|(wait, path)| Step::Write { wait, path }),
+            hegel::tuples!(
+                gs::integers::<u64>().max_value(2),
+                gs::subsequences(PATHS.to_vec())
+            )
+            .map(|(wait, paths)| Step::Commit { wait, paths }),
+        ))
+        .max_size(12)
+        .print_as_debug(),
     );
-    wait_a_moment();
-    scope
-        .lock()
-        .unwrap()
-        .write(about("during the turn", "src/a.rs"), now())
-        .unwrap();
-    wait_a_moment();
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(AtomicU64::new(1_000));
+    let read = clock.clone();
+    let scopes = Scopes::new(
+        Memory::open(dir.path(), Box::new(Bm25::new())).unwrap(),
+        None,
+        Arc::new(move || read.load(Ordering::SeqCst)),
+    );
+    // A note written before the run began, at its first millisecond.
+    let first = about("note 0", "src/a.rs");
+    scopes.repo.lock().unwrap().write(first, 1_000).unwrap();
+    let observe = stale_on_turn(MemoryPlugin::new(scopes.clone()));
 
-    observe(&commit(&["src/b.rs"]));
-    assert!(!stale(&memories, &repo, "before-the-run"), "another file");
-    wait_a_moment();
-    // The bound is now past the note written during the turn.
-    scope
-        .lock()
-        .unwrap()
-        .write(about("during the next", "src/a.rs"), now())
-        .unwrap();
-    wait_a_moment();
-    observe(&commit(&["src/a.rs"]));
-    assert!(stale(&memories, &repo, "before-the-run"));
-    assert!(stale(&memories, &repo, "during-the-turn"));
-    assert!(!stale(&memories, &repo, "during-the-next"));
+    // Each note: its id, its path, when it was written, whether marked.
+    let mut notes = vec![("note-0".to_owned(), "src/a.rs", 1_000, false)];
+    let mut bound = 1_000;
+    for step in steps {
+        match step {
+            Step::Write { wait, path } => {
+                let now = clock.fetch_add(wait, Ordering::SeqCst) + wait;
+                let title = format!("note {}", notes.len());
+                let written = scopes
+                    .repo
+                    .lock()
+                    .unwrap()
+                    .write(about(&title, path), now)
+                    .unwrap();
+                notes.push((written.id, path, now, false));
+            }
+            Step::Commit { wait, paths } => {
+                let now = clock.fetch_add(wait, Ordering::SeqCst) + wait;
+                observe(&commit(&paths));
+                let written_by = std::mem::replace(&mut bound, now);
+                for (_, path, at, marked) in &mut notes {
+                    if paths.contains(path) && *at <= written_by {
+                        tc.event("marked");
+                        *marked = true;
+                    }
+                }
+            }
+        }
+        let memory = scopes.repo.lock().unwrap();
+        for (id, _, _, marked) in &notes {
+            let stale = memory.notes().get(id).unwrap().stale.is_some();
+            assert_eq!(stale, *marked, "{id}");
+        }
+    }
 }
 
 /// Scopes open once: every run in a repository shares its notes.
