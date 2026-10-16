@@ -184,6 +184,20 @@ fn ls_matches_a_naive_listing(tc: TestCase) {
         .collect();
     assert_eq!(names, listed);
     assert_eq!(structured["truncated"], limit_reached);
+    assert_eq!(structured["complete"], !limit_reached);
+    // The card's details stop where the text does, and say so; an empty
+    // directory (every drawn name was `.` or `..`) has no card.
+    match &output.details {
+        None => assert!(entries.is_empty(), "no listing of {entries:?}"),
+        Some(details) => {
+            let details: Listing = serde_json::from_value(details.clone())
+                .expect("the details are a listing");
+            let shown: Vec<&str> =
+                details.entries.iter().map(|e| e.name.as_str()).collect();
+            assert_eq!(shown, listed);
+            assert_eq!(details.truncated, limit_reached);
+        }
+    }
 }
 
 /// An empty directory is reported with a fixed string (`ls.ts`).
@@ -281,39 +295,6 @@ fn structured_empty_and_zero_limit_results_are_objects() {
     assert_eq!(zero_limit["entries"], json!([]));
     assert_eq!(zero_limit["truncated"], true);
     assert_eq!(zero_limit["complete"], false);
-}
-
-/// The exact entry limit is complete; only finding an additional name
-/// marks the bounded result incomplete, in the structured result and in
-/// the card's details.
-#[test]
-fn structured_entry_limit_distinguishes_exact_from_exceeded() {
-    let dir = tempfile::tempdir().unwrap();
-    for name in ["a.txt", "b.txt", "c.txt"] {
-        std::fs::write(dir.path().join(name), "x").unwrap();
-    }
-    let root = Root::new(dir.path());
-
-    let exact = structured(&root, json!({"limit": 3}));
-    assert_eq!(exact["entries"].as_array().unwrap().len(), 3);
-    assert!(!listing(&root, json!({"limit": 3})).truncated);
-    assert_eq!(exact["truncated"], false);
-    assert_eq!(exact["complete"], true);
-
-    let exceeded = structured(&root, json!({"limit": 2}));
-    let names: Vec<&str> = exceeded["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["a.txt", "b.txt"]);
-    assert_eq!(exceeded["truncated"], true);
-    assert_eq!(exceeded["complete"], false);
-    // The card's details stop where the text does, and say so.
-    let cut = listing(&root, json!({"limit": 2}));
-    assert_eq!(cut.entries.len(), 2);
-    assert!(cut.truncated);
 }
 
 /// Structured names come from filesystem records, not rendered lines;
