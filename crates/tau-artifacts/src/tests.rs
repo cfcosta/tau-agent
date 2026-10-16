@@ -2,7 +2,7 @@ use std::{
     fs,
     io::{self, Cursor, Read},
     os::unix::fs::PermissionsExt,
-    sync::{Arc, Barrier, Mutex, mpsc},
+    sync::{Arc, Barrier},
     thread,
 };
 
@@ -179,9 +179,18 @@ fn limits_and_offsets_outside_the_artifact_are_refused(tc: TestCase) {
 fn base64_ranges_match_independent_slices(tc: TestCase) {
     let input: Vec<u8> = tc.draw(gs::vecs(gs::integers::<u8>()).max_size(256));
     let offset_seed: u16 = tc.draw(gs::integers());
-    let limit: u32 =
-        tc.draw(gs::integers().min_value(1).max_value(MAX_RANGE_BYTES));
     let offset = usize::from(offset_seed) % (input.len() + 1);
+    // Half the time a limit within what is left past the offset, or one
+    // byte over it, so pages end short of the end as often as at it.
+    let left = (input.len() - offset) as u32;
+    let limit: u32 = if tc.draw(gs::booleans()) {
+        tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![1, left.max(1), left + 1]),
+            gs::integers().min_value(1).max_value(left + 1),
+        ))
+    } else {
+        tc.draw(gs::integers().min_value(1).max_value(MAX_RANGE_BYTES))
+    };
     let expected_end = (offset + limit as usize).min(input.len());
     let (_directory, bytes, artifact) = published(&input);
     let range = bytes
@@ -577,34 +586,55 @@ fn invalid_root_aborts_before_sweeping_any_object() {
     );
 }
 
+/// Whether another open file description could take the publication
+/// lock now, without waiting: what a prune in another process would
+/// find.
+fn lock_is_free(directory: &tempfile::TempDir) -> bool {
+    use std::os::fd::AsRawFd as _;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(directory.path().join(".publish.lock"))
+        .unwrap();
+    // SAFETY: `file` owns a valid descriptor throughout these calls.
+    let status =
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if status == 0 {
+        // SAFETY: as above; the lock is released before `file` closes.
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        return true;
+    }
+    assert_eq!(
+        io::Error::last_os_error().raw_os_error(),
+        Some(libc::EWOULDBLOCK)
+    );
+    false
+}
+
+/// A publication's lease holds the lock a prune takes until the grant
+/// is written and the lease dropped, so a prune that follows sees the
+/// grant; the prune's own lease holds the same lock while it sweeps.
 #[test]
 fn publication_lease_serializes_grant_before_prune_inventory() {
-    let (_directory, bytes) = storage(Quotas::default());
+    let (directory, bytes) = storage(Quotas::default());
+    assert!(lock_is_free(&directory));
     let (artifact, lease) = bytes
         .publish_leased_reader(
             Cursor::new(b"pending grant"),
             &CancellationToken::new(),
         )
         .unwrap();
-    let grants = Arc::new(Mutex::new(Vec::<Artifact>::new()));
-    let worker_bytes = bytes.clone();
-    let worker_grants = grants.clone();
-    let (started_tx, started_rx) = mpsc::channel();
-    let (done_tx, done_rx) = mpsc::channel();
-    let worker = thread::spawn(move || {
-        started_tx.send(()).unwrap();
-        let maintenance = worker_bytes.lock_publication().unwrap();
-        let roots = worker_grants.lock().unwrap().clone();
-        done_tx
-            .send(worker_bytes.prune_with_roots(roots, &maintenance))
-            .unwrap();
-    });
-    started_rx.recv().unwrap();
-    assert!(done_rx.try_recv().is_err());
-    grants.lock().unwrap().push(artifact.clone()); // simulated durable grant
+    assert!(!lock_is_free(&directory), "held while the grant is written");
+    let grants = vec![artifact.clone()]; // simulated durable grant
     drop(lease);
-    assert_eq!(done_rx.recv().unwrap().unwrap().removed_objects, 0);
-    worker.join().unwrap();
+    assert!(lock_is_free(&directory));
+
+    let maintenance = bytes.lock_publication().unwrap();
+    assert!(!lock_is_free(&directory), "held while the prune sweeps");
+    let report = bytes.prune_with_roots(grants, &maintenance).unwrap();
+    assert_eq!(report.removed_objects, 0);
+    drop(maintenance);
+    assert!(lock_is_free(&directory));
     assert_eq!(
         bytes
             .read_range(
