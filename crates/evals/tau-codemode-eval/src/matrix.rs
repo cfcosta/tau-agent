@@ -1298,33 +1298,53 @@ mod properties {
         });
     }
 
-    /// Inventory: switching the config key preserves the current command.
-    /// The key and command suffix are generated directly; shrinking keeps a
-    /// valid JSON object and a nonempty command. The oracle reads that JSON
-    /// independently of the VM program.
+    /// Inventory: a changed workflow is graded on the key its input holds
+    /// now. The fixture holds `verify_command` once changed and
+    /// `test_command` before; a program reads one key, the other, or the
+    /// first that is there. The oracle: the answer is correct exactly when
+    /// the program reads the key the fixture holds, so a program that
+    /// kept reading the old key is graded wrong. Key, command suffix and
+    /// program are drawn directly; shrinking keeps a valid JSON object.
     #[hegel::test]
     fn changed_workflow_inputs_use_current_key(tc: TestCase) {
         let changed = tc.draw(gs::booleans());
         let suffix: String = tc.draw(gs::from_regex("[a-z]{1,8}"));
         let command = format!("printf '{suffix}\\n'");
         let mut fixture = fixtures::repeated_workflow(changed);
-        fixture.files[0].text = if changed {
-            json!({"verify_command": command}).to_string()
+        let held = if changed {
+            "verify_command"
         } else {
-            json!({"test_command": command}).to_string()
+            "test_command"
         };
-        let parsed: Value =
-            serde_json::from_str(&fixture.files[0].text).unwrap();
-        fixture.expected = json!({"command": parsed.get("verify_command").or_else(|| parsed.get("test_command")).unwrap()});
-        const SOURCE: &str = "local c=json.decode(tools.read({path='commands.json'}).text); return {result={command=c.verify_command or c.test_command},incomplete=false}";
+        fixture.files[0].text = json!({ held: command }).to_string();
+        fixture.expected = json!({ "command": command });
+        let read: Vec<&str> = tc.draw(gs::sampled_from(vec![
+            vec!["verify_command"],
+            vec!["test_command"],
+            vec!["verify_command", "test_command"],
+        ]));
+        let lookup = read
+            .iter()
+            .map(|key| format!("c.{key}"))
+            .collect::<Vec<_>>()
+            .join(" or ");
+        let source = format!(
+            "local c=json.decode(tools.read({{path='commands.json'}}).text); \
+             return {{result={{command={lookup}}},incomplete=false}}"
+        );
         let case = block_on_io(grade_case(
             &fixture,
             Mode::StructuredTools,
-            SOURCE,
+            &source,
             false,
         ))
         .unwrap();
-        assert!(case.correct, "{case:?}");
+        assert_eq!(
+            case.correct,
+            read.contains(&held),
+            "{read:?} on {held}: {case:?}"
+        );
+        assert!(!case.incomplete, "{case:?}");
     }
 
     /// Inventory: stage token channels are conserved under amortization.
