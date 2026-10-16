@@ -212,34 +212,6 @@ fn assert_matches_output_schema(output: &ToolOutput) {
     );
 }
 
-/// The notices name the right lines: a file over the line limit shows
-/// its first 2000 lines and says where to go on.
-#[test]
-fn a_long_file_says_where_to_continue() {
-    let dir = tempfile::tempdir().unwrap();
-    let lines: Vec<String> = (1..=2500).map(|i| format!("line {i}")).collect();
-    std::fs::write(dir.path().join("f.txt"), lines.join("\n")).unwrap();
-    let output =
-        call(&Root::new(dir.path()), json!({"path": "f.txt"})).unwrap();
-    let text = text_of(&output);
-    assert!(text.starts_with("line 1\nline 2\n"), "{}", &text[..40]);
-    assert!(
-        text.ends_with("line 2000\n\n[Showing lines 1-2000 of 2500. Use offset=2001 to continue.]"),
-        "{}",
-        &text[text.len() - 100..]
-    );
-    let details = output.details.unwrap();
-    assert_eq!(details["truncation"]["truncatedBy"], "lines");
-    assert_eq!(details["truncation"]["outputLines"], 2000);
-    assert_eq!(details["artifact"], Value::Null);
-    assert_eq!(details["artifact_error"], "artifact storage is unavailable");
-    assert_eq!(details["source_complete"], true);
-    assert_eq!(details["kind"], "text");
-    assert_eq!(details["offset"], 1);
-    assert_eq!(details["total_lines"], 2500);
-    assert_eq!(details["returned_lines"], 2000);
-}
-
 /// The error strings of `read`: an offset past the end, and a missing
 /// file as Node reports it.
 #[test]
@@ -447,31 +419,6 @@ offset until complete."
     assert_eq!(read.parameters()["required"], json!(["path"]));
 }
 
-/// A first line over 50 KiB points to `sed`, with the line's real size
-/// (pi, `read.ts`).
-#[test]
-fn a_first_line_over_the_limit_points_to_sed() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("f.txt"),
-        format!("{}\nshort", "x".repeat(60_000)),
-    )
-    .unwrap();
-    let output =
-        call(&Root::new(dir.path()), json!({"path": "f.txt"})).unwrap();
-    assert_eq!(
-        text_of(&output),
-        "[Line 1 is 58.6KB, exceeds 50.0KB limit. Use exec_command: sed -n '1p' f.txt | head -c 51200]"
-    );
-    let structured = output.structured.unwrap();
-    assert_eq!(structured["text"], "");
-    assert_eq!(structured["returned_lines"], 0);
-    assert_eq!(structured["truncated"], true);
-    assert_eq!(structured["truncated_by"], "bytes");
-    assert_eq!(structured["first_line_exceeds_limit"], true);
-    assert_eq!(structured["next_offset"], Value::Null);
-}
-
 /// Empty output is a complete read of an empty file. The scan's line
 /// count keeps the same split semantics used by the direct reader.
 #[test]
@@ -501,30 +448,6 @@ fn empty_text_has_structured_range() {
     );
 }
 
-/// A zero limit selects no text, preserves offset zero's existing
-/// normalization to line one, and does not underflow a continuation.
-#[test]
-fn zero_limit_has_an_empty_range_without_underflow() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), "one\ntwo").unwrap();
-    let output = call(
-        &Root::new(dir.path()),
-        json!({"path": "f.txt", "offset": 0, "limit": 0}),
-    )
-    .unwrap();
-    assert_eq!(
-        text_of(&output),
-        "\n\n[2 more lines in file. Use offset=1 to continue.]"
-    );
-    let structured = output.structured.unwrap();
-    assert_eq!(structured["offset"], 1);
-    assert_eq!(structured["requested_limit"], 0);
-    assert_eq!(structured["text"], "");
-    assert_eq!(structured["returned_lines"], 0);
-    assert_eq!(structured["next_offset"], 1);
-    assert_eq!(structured["complete"], false);
-}
-
 /// The 2000-line and 50 KiB boundaries are inclusive. Crossing either
 /// one reports the same display cut used by the direct output.
 #[test]
@@ -545,6 +468,18 @@ fn structured_text_tracks_exact_and_exceeded_bounds() {
     let over_lines = vec!["x"; MAX_LINES + 1].join("\n");
     std::fs::write(dir.path().join("f.txt"), &over_lines).unwrap();
     let output = call(&root, json!({"path": "f.txt"})).unwrap();
+    // The card's details say where the display was cut, and why no
+    // artifact holds the rest.
+    let details = output.details.unwrap();
+    assert_eq!(details["truncation"]["truncatedBy"], "lines");
+    assert_eq!(details["truncation"]["outputLines"], MAX_LINES);
+    assert_eq!(details["artifact"], Value::Null);
+    assert_eq!(details["artifact_error"], "artifact storage is unavailable");
+    assert_eq!(details["source_complete"], true);
+    assert_eq!(details["kind"], "text");
+    assert_eq!(details["offset"], 1);
+    assert_eq!(details["total_lines"], MAX_LINES + 1);
+    assert_eq!(details["returned_lines"], MAX_LINES);
     let structured = output.structured.unwrap();
     assert_eq!(structured["total_lines"], MAX_LINES + 1);
     assert_eq!(structured["returned_lines"], MAX_LINES);
@@ -566,6 +501,7 @@ fn structured_text_tracks_exact_and_exceeded_bounds() {
     let output = call(&root, json!({"path": "f.txt"})).unwrap();
     let structured = output.structured.unwrap();
     assert_eq!(structured["text"], "");
+    assert_eq!(structured["returned_lines"], 0);
     assert_eq!(structured["truncated"], true);
     assert_eq!(structured["truncated_by"], "bytes");
     assert_eq!(structured["first_line_exceeds_limit"], true);
@@ -601,7 +537,7 @@ fn an_omitted_image_has_structured_text_content() {
 /// - `structured_text_matches_split_select_ranges` compares the structured
 ///   text, offsets, and continuation with an independent split/select oracle.
 /// Generator plan: draw 1–8 nonempty Unicode lines without `\n`, then draw an
-/// in-range offset and a limit from 0–10. Inputs are valid by construction;
+/// in-range offset (0 included, which reads as 1) and a limit from 0–10. Inputs are valid by construction;
 /// shrinking reduces line count, line text, offset, and limit without rejects.
 /// CI uses Hegel's detected `ci` profile (derandomized, database disabled,
 /// and `TooSlow` suppressed); the local 100-case override keeps this focused
@@ -619,10 +555,10 @@ fn small_valid_lines(tc: &TestCase) -> Vec<String> {
 fn structured_text_matches_split_select_ranges(tc: TestCase) {
     let lines = tc.draw(small_valid_lines());
     let total = lines.len();
-    let offset =
-        tc.draw(gs::integers::<u64>().min_value(1).max_value(total as u64));
+    let offset = tc.draw(gs::integers::<u64>().max_value(total as u64));
     let limit = tc.draw(gs::integers::<u64>().max_value(10));
-    let start = offset as usize - 1;
+    // Offset 0 is the first line, as 1 is.
+    let start = offset.saturating_sub(1) as usize;
     let end = start.saturating_add(limit as usize).min(total);
     let content = lines.join("\n");
     let expected_text =
@@ -637,7 +573,7 @@ fn structured_text_matches_split_select_ranges(tc: TestCase) {
     .unwrap();
     let structured = output.structured.unwrap();
     assert_eq!(structured["text"], expected_text);
-    assert_eq!(structured["offset"], offset);
+    assert_eq!(structured["offset"], start + 1);
     assert_eq!(structured["requested_limit"], limit);
     assert_eq!(structured["total_lines"], total);
     assert_eq!(structured["returned_lines"], end - start);
