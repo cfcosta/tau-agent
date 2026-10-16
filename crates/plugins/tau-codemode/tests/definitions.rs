@@ -162,52 +162,49 @@ fn a_stored_definition_that_was_altered_does_not_verify(tc: TestCase) {
     }
 }
 
-/// Quotas: a source past 64 KiB or more than 32 dependencies is
-/// refused, and one dependency on a bad version names it.
-#[hegel::test(test_cases = 50)]
+/// Quotas: a source is taken up to 64 KiB and refused past it; a
+/// definition takes up to 32 dependencies; a dependency on anything but
+/// a 64-digit lowercase hex version is refused, and the error names that
+/// dependency. Lengths and counts are drawn at their bounds as well as
+/// across the range.
+#[hegel::test(test_cases = 100)]
 fn definitions_past_their_quotas_are_refused(tc: TestCase) {
+    const KIB_64: usize = 64 * 1024;
     let (name, _, signatures, _) = tc.draw(content());
-    let big = "x".repeat(64 * 1024 + 1);
-    assert!(
-        Definition::new(name.clone(), big, signatures.clone(), BTreeMap::new())
-            .is_err()
+    let source_len: usize = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![0, 1, KIB_64 - 1, KIB_64, KIB_64 + 1]),
+        gs::integers::<usize>().max_value(KIB_64 + 4096),
+    ));
+    let sourced = Definition::new(
+        name.clone(),
+        "x".repeat(source_len),
+        signatures.clone(),
+        BTreeMap::new(),
     );
-    let exactly = "x".repeat(64 * 1024);
-    assert!(
-        Definition::new(
-            name.clone(),
-            exactly,
-            signatures.clone(),
-            BTreeMap::new()
-        )
-        .is_ok()
-    );
+    assert_eq!(sourced.is_ok(), source_len <= KIB_64, "{source_len} bytes");
 
-    let deps = |n: usize| -> BTreeMap<String, String> {
-        (0..n)
-            .map(|i| (format!("dep{i}"), "a".repeat(64)))
-            .collect()
-    };
-    assert!(
-        Definition::new(
-            name.clone(),
-            String::new(),
-            signatures.clone(),
-            deps(32)
-        )
-        .is_ok()
-    );
-    assert!(
-        Definition::new(
-            name.clone(),
-            String::new(),
-            signatures.clone(),
-            deps(33)
-        )
-        .is_err()
-    );
-    let bad = BTreeMap::from([("dep".to_owned(), "short".to_owned())]);
-    let error =
-        Definition::new(name, String::new(), signatures, bad).unwrap_err();
-    assert!(error.contains("dep"), "{error}");
+    let count: usize = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![0, 1, 31, 32, 33]),
+        gs::integers::<usize>().max_value(40),
+    ));
+    let deps: BTreeMap<String, String> = (0..count)
+        .map(|i| (format!("dep{i}"), "a".repeat(64)))
+        .collect();
+    let counted =
+        Definition::new(name.clone(), String::new(), signatures.clone(), deps);
+    assert_eq!(counted.is_ok(), count <= 32, "{count} dependencies");
+
+    // `zq` appears nowhere in the error's own words, so finding the key
+    // there means the error names it.
+    let key: String = tc.draw(gs::from_regex("zq[a-z_]{1,6}").fullmatch(true));
+    let version: String = tc.draw(hegel::one_of!(
+        gs::from_regex("[0-9a-f]{0,63}").fullmatch(true),
+        gs::from_regex("[0-9a-f]{65,70}").fullmatch(true),
+        gs::from_regex("[0-9a-f]{0,62}[A-F][0-9a-f]{1}").fullmatch(true),
+        gs::from_regex("[0-9a-f]{63}[g-z ]").fullmatch(true),
+    ));
+    let bad = BTreeMap::from([(key.clone(), version.clone())]);
+    let error = Definition::new(name, String::new(), signatures, bad)
+        .expect_err(&version);
+    assert!(error.contains(&key), "{error} for {key}");
 }

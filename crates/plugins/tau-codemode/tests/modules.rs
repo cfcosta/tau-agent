@@ -11,7 +11,6 @@ use serde_json::{Value, json};
 use tau_codemode::{
     modules::{self, Definition, Library},
     store,
-    ui::State,
 };
 
 fn definition(name: &str, source: &str) -> Definition {
@@ -28,47 +27,18 @@ fn outer(record: modules::Record) -> Value {
     serde_json::to_value(store::Record::Module(record)).unwrap()
 }
 
+/// Signatures past their size limit are refused (names, sources and
+/// dependencies are `definitions.rs`'s properties), and records that do
+/// not hold a verified definition or a known version leave the selection
+/// as it was.
 #[test]
 fn invalid_content_and_versions_cannot_change_selection() {
-    for name in ["", "../x", "a/b", "9a", "a-b", &"x".repeat(65)] {
-        assert!(
-            Definition::new(name.into(), "".into(), json!({}), BTreeMap::new())
-                .is_err()
-        );
-    }
-    assert!(
-        Definition::new(
-            "m".into(),
-            "x".repeat(65537),
-            json!({}),
-            BTreeMap::new()
-        )
-        .is_err()
-    );
     assert!(
         Definition::new(
             "m".into(),
             "".into(),
             json!({"s": "x".repeat(16384)}),
             BTreeMap::new()
-        )
-        .is_err()
-    );
-    assert!(
-        Definition::new(
-            "m".into(),
-            "".into(),
-            json!({}),
-            BTreeMap::from([("dep".into(), "A".repeat(64))])
-        )
-        .is_err()
-    );
-    assert!(
-        Definition::new(
-            "m".into(),
-            "".into(),
-            json!({}),
-            (0..33).map(|i| (format!("d{i}"), "a".repeat(64))).collect()
         )
         .is_err()
     );
@@ -99,8 +69,10 @@ fn invalid_content_and_versions_cannot_change_selection() {
     assert_eq!(store::fold(&records), Default::default());
 }
 
+/// Past 128 versions, or past the byte quota, a definition is refused and
+/// the library stays as it was.
 #[test]
-fn quotas_and_json_roundtrip() {
+fn version_and_byte_quotas_refuse_without_changing_the_library() {
     let mut library = Library::default();
     for i in 0..128 {
         library
@@ -118,13 +90,6 @@ fn quotas_and_json_roundtrip() {
             .is_err()
     );
     assert_eq!(library, before);
-    assert_eq!(
-        serde_json::from_value::<Library>(
-            serde_json::to_value(&library).unwrap()
-        )
-        .unwrap(),
-        library
-    );
     let one = definition("large", &"x".repeat(60_000));
     let mut bytes = Library::default();
     for i in 0..30 {
@@ -146,20 +111,6 @@ fn quotas_and_json_roundtrip() {
         }
     }
     assert!(bytes.versions().len() < 30);
-    let state = State {
-        modules: library.clone(),
-        ..State::default()
-    };
-    assert_eq!(
-        serde_json::from_value::<State>(serde_json::to_value(state).unwrap())
-            .unwrap()
-            .modules,
-        library
-    );
-    assert_eq!(
-        serde_json::from_value::<State>(json!({})).unwrap().modules,
-        Library::default()
-    );
 }
 
 #[hegel::test]

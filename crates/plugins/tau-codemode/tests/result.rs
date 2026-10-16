@@ -190,19 +190,35 @@ fn output_details_keep_what_fits_and_cut_the_rest(tc: TestCase) {
 }
 
 /// A call status reads back from the word it prints as, and no other
-/// word reads as one.
-#[hegel::test(test_cases = 100)]
+/// word reads as one: not another case, not with space around it, not a
+/// prefix or an extension. The words are written out here, as the
+/// details and the cards store them.
+#[hegel::test(test_cases = 300)]
 fn a_call_status_reads_back_from_its_word(tc: TestCase) {
-    for status in [
-        CallStatus::Running,
-        CallStatus::Ok,
-        CallStatus::Error,
-        CallStatus::Cancelled,
-    ] {
-        assert_eq!(CallStatus::parse(status.as_str()), Some(status));
-    }
-    let word = tc.draw(text(10));
-    if let Some(status) = CallStatus::parse(&word) {
+    let table = [
+        (CallStatus::Running, "running"),
+        (CallStatus::Ok, "ok"),
+        (CallStatus::Error, "error"),
+        (CallStatus::Cancelled, "cancelled"),
+    ];
+    for (status, word) in table {
         assert_eq!(status.as_str(), word);
     }
+    let (_, base) = table[tc.draw(gs::integers::<usize>().max_value(3))];
+    let word = match tc.draw(gs::integers::<u8>().max_value(5)) {
+        0 => base.to_owned(),
+        1 => base.to_uppercase(),
+        2 => format!(" {base}"),
+        3 => format!("{base}\n"),
+        4 => format!(
+            "{base}{}",
+            tc.draw(gs::from_regex("[a-z]{1,3}").fullmatch(true))
+        ),
+        _ => base[..base.len() - 1].to_owned(),
+    };
+    let expected = table
+        .iter()
+        .find(|(_, known)| *known == word)
+        .map(|(status, _)| *status);
+    assert_eq!(CallStatus::parse(&word), expected, "{word:?}");
 }
