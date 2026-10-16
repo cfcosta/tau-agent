@@ -453,13 +453,6 @@ fn a_message_is_compressed_with_what_came_before_it() {
     )));
 }
 
-/// The scale line is what it says it is.
-#[test]
-fn the_scale_line_is_exactly_a_line_long() {
-    assert_eq!(SCALE.len(), NODE_BYTES);
-    assert!(!SCALE.contains('\n'));
-}
-
 /// `<recent>` keeps the newest messages that fit in its 6,000
 /// characters, whole lines only: ten of exactly 1,000 before a message
 /// leave the newest six.

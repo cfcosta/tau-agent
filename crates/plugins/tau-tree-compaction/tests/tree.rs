@@ -14,7 +14,7 @@
 //!   can (differential: `wanted` simulates `fit`);
 //! - zooming from any line reaches every message under it, whole;
 //! - `restore` gives back what was kept, and `cap` keeps a long text's
-//!   head and tail.
+//!   head and tail, exactly, around a count of what it cut.
 
 use hegel::{TestCase, generators as gs};
 use serde_json::{Map, json};
@@ -326,24 +326,32 @@ fn restore_gives_back_what_was_kept(tc: TestCase) {
     assert!(short.view().iter().all(|node| node.level == 0));
 }
 
+/// A text of at most [`ENTRY_CHARS`] characters is kept whole; a longer
+/// one keeps its first and last `ENTRY_CHARS / 2` characters, not bytes,
+/// on either side of a line saying how many were cut between them.
 #[hegel::test]
 fn cap_keeps_a_long_texts_head_and_tail(tc: TestCase) {
-    let len = tc.draw(gs::integers::<usize>().max_value(3 * ENTRY_CHARS));
-    let text: String = (0..len)
-        .map(|i| char::from(b'a' + (i % 26) as u8))
-        .collect();
-    let capped = cap(&text);
-    if len <= ENTRY_CHARS {
-        assert_eq!(capped, text);
+    let len = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![ENTRY_CHARS, ENTRY_CHARS + 1]),
+        gs::integers::<usize>().max_value(3 * ENTRY_CHARS),
+    ));
+    let pattern: Vec<char> = tc.draw(
+        gs::vecs(gs::sampled_from(vec!['a', 'z', '\n', 'é', '日', '🦀']))
+            .min_size(1)
+            .max_size(8),
+    );
+    let text: String = pattern.iter().cycle().take(len).collect();
+    let expected = if len <= ENTRY_CHARS {
+        tc.event("whole");
+        text.clone()
     } else {
+        tc.event("cut");
         let half = ENTRY_CHARS / 2;
-        assert!(capped.starts_with(&text[..half]));
-        assert!(capped.ends_with(&text[len - half..]));
-        assert!(
-            capped
-                .contains(&format!("[… {} characters cut …]", len - 2 * half))
-        );
-    }
+        let head: String = text.chars().take(half).collect();
+        let tail: String = text.chars().skip(len - half).collect();
+        format!("{head}\n[… {} characters cut …]\n{tail}", len - 2 * half)
+    };
+    assert_eq!(cap(&text), expected);
 }
 
 fn assistant(content: Vec<AssistantBlock>) -> Message {
@@ -524,28 +532,6 @@ fn a_younger_pair_merges_first_when_it_is_more_due() {
     assert_eq!(
         &history.view()[..3],
         [Node::new(2, 0), Node::new(2, 1), Node::new(1, 4)]
-    );
-}
-
-/// A long text keeps its first and last 15,000 characters, and says how
-/// many were cut between them.
-#[test]
-fn cap_says_how_much_it_cut() {
-    let text = format!(
-        "{}{}{}",
-        "h".repeat(ENTRY_CHARS),
-        "m".repeat(7),
-        "t".repeat(ENTRY_CHARS)
-    );
-    let half = ENTRY_CHARS / 2;
-    assert_eq!(
-        cap(&text),
-        format!(
-            "{}\n[… {} characters cut …]\n{}",
-            "h".repeat(half),
-            ENTRY_CHARS + 7,
-            "t".repeat(half)
-        )
     );
 }
 

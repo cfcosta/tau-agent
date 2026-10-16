@@ -350,6 +350,17 @@ pub fn cut_bytes(text: &str, bytes: usize) -> &str {
 /// a real one is, for scale.
 pub const SCALE: &str = "user: wants the parser to accept trailing commas in arrays and objects, keep errors at the comma's position, and not touch the lexer; said \"the AST shape stays as is\"; tool: read src/parse.rs: parse_list loops on Token::Comma and bails on RBracket; echo: cargo test failed 2 of 41, trailing_comma_array and nested_object, both expected Ok got Err(Unexpected(RBracket)) at 1:9; talk: fixed parse_list to stop on a closer after a comma; echo: tests pass 41 of 41; user: approved the change, asked for a commit next";
 
+// The scale line is what it says it is: one line, exactly a line long.
+const _: () = {
+    let bytes = SCALE.as_bytes();
+    assert!(bytes.len() == NODE_BYTES, "SCALE is not NODE_BYTES long");
+    let mut at = 0;
+    while at < bytes.len() {
+        assert!(bytes[at] != b'\n', "SCALE holds a line break");
+        at += 1;
+    }
+};
+
 /// The compactor's instructions: how a line is built and what it keeps,
 /// written for tau after OptChat's design.
 pub const COMPACT_PROMPT: &str = "\
