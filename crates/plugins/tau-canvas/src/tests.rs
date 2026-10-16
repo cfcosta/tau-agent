@@ -21,20 +21,6 @@ fn edit(old: &str, new: &str) -> Edit {
 }
 
 #[test]
-fn edits_replace_text_that_occurs_once() {
-    let text = "# Plan\n\n- one\n- two\n";
-    assert_eq!(
-        apply_edits(text, &[edit("- two", "- 2"), edit("# Plan", "# Done")]),
-        Ok("# Done\n\n- one\n- 2\n".to_owned())
-    );
-    // Each edit reads the text the ones before it left.
-    assert_eq!(
-        apply_edits("a b", &[edit("a", "c"), edit("c b", "done")]),
-        Ok("done".to_owned())
-    );
-}
-
-#[test]
 fn edits_refuse_what_is_missing_or_ambiguous() {
     let text = "- one\n- one\n- two";
     assert!(apply_edits(text, &[]).unwrap_err().contains("No edits"));
@@ -54,20 +40,49 @@ fn edits_refuse_what_is_missing_or_ambiguous() {
     assert!(ambiguous.contains("more than once"));
 }
 
-// Property: a marker that occurs exactly once is replaced in place, and
-// nothing else in the text changes. The text around it is drawn without
-// the marker's character, so the marker is unique by construction.
+/// Markers each edit finds once: the text around them, and what the
+/// edits put in, never holds one.
+const MARKERS: [&str; 4] = ["§", "¤", "¶", "†"];
+
+// Property: one to four edits, given in any order, each of a marker
+// that occurs exactly once, replace each marker in place, and nothing
+// else in the text changes. Each edit reads the text the ones before it
+// left: an edit of what an earlier one wrote finds it.
 #[hegel::test]
-fn an_edit_replaces_only_its_text(tc: hegel::TestCase) {
-    let before: String =
-        tc.draw(gs::text().exclude_characters("§").max_size(40));
-    let after: String =
-        tc.draw(gs::text().exclude_characters("§").max_size(40));
-    let new: String = tc.draw(gs::text().max_size(20));
-    let text = format!("{before}§{after}");
+fn edits_replace_only_their_text_in_order(tc: hegel::TestCase) {
+    let count = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
+    let plain =
+        |size: usize| gs::text().exclude_characters("§¤¶†").max_size(size);
+    let segments: Vec<String> =
+        (0..=count).map(|_| tc.draw(plain(20))).collect();
+    let news: Vec<String> = (0..count).map(|_| tc.draw(plain(10))).collect();
+    // The order the edits are given in, shuffled.
+    let mut order: Vec<usize> = (0..count).collect();
+    for at in (1..count).rev() {
+        let other = tc.draw(gs::integers::<usize>().max_value(at));
+        order.swap(at, other);
+    }
+    let mut text = segments[0].clone();
+    let mut expected = segments[0].clone();
+    for n in 0..count {
+        text.push_str(MARKERS[n]);
+        text.push_str(&segments[n + 1]);
+        expected.push_str(&news[n]);
+        expected.push_str(&segments[n + 1]);
+    }
+    let edits: Vec<Edit> =
+        order.iter().map(|&n| edit(MARKERS[n], &news[n])).collect();
+    assert_eq!(apply_edits(&text, &edits), Ok(expected));
+
+    // A later edit finds what an earlier one wrote: a marker of its own
+    // keeps it the one place it occurs.
+    let written = format!("†{}", tc.draw(plain(8)));
     assert_eq!(
-        apply_edits(&text, &[edit("§", &new)]),
-        Ok(format!("{before}{new}{after}"))
+        apply_edits(
+            &format!("§ {}", segments[0]),
+            &[edit("§", &written), edit(&format!("{written} "), "done ")]
+        ),
+        Ok(format!("done {}", segments[0]))
     );
 }
 
