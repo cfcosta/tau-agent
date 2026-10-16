@@ -9,25 +9,16 @@
 
 mod common;
 
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::path::Path;
 
-use common::{coder, links};
 use hegel::{Generator as _, TestCase, generators as gs};
-use serde_json::json;
-use tau_agent::agent::Checkpoint;
-use tau_testing::{block_on, git::git, scripted::ScriptedModel};
+use tau_testing::{block_on, git::git};
 use tau_vcs_host::{
     DEFAULT_WORKSPACE,
     Identity,
     Link,
     ProjectRepo,
-    RunWorkspace,
     UpdateFrom,
-    VcsPlugin,
-    run_workspace::PLUGIN,
 };
 
 /// A Git repository with one commit on `main`, and that commit's id.
@@ -225,202 +216,6 @@ fn a_bad_source_fails_to_import() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("is not a Git repository"), "{err}");
-}
-
-fn write(path: &str, content: &str) -> serde_json::Value {
-    json!({ "path": path, "content": content })
-}
-
-/// A first turn that writes a file and commits it changed that file:
-/// what it changed is told from `@` as the run started, not from the
-/// commit the turn left `@` on.
-#[test]
-fn a_first_turn_that_commits_still_changed_files() {
-    let src = tempfile::tempdir().unwrap();
-    source(src.path());
-    let home = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        home.path().join("p"),
-        Identity::default(),
-    )
-    .unwrap();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first = RunWorkspace::new(
-            project.clone().into(),
-            "first",
-            Identity::default(),
-        )
-        .unwrap()
-        .on_turn({
-            let heard = heard.clone();
-            move |turn| heard.lock().unwrap().push(turn.paths.clone())
-        });
-        let llm = ScriptedModel::new()
-            .turn(|t| {
-                t.tool_call("write", write("b.txt", "one\n"))
-                    .tool_call("vcs_commit", json!({ "message": "feat: b" }))
-            })
-            .turn(|t| t.text("done"));
-        let outcome = coder(llm.clone(), &first, false)
-            .plugin(VcsPlugin::new(first.vcs().clone()))
-            .run("write b.txt and commit it", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        let changed: Vec<bool> =
-            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap())
-                .iter()
-                .map(|(_, link)| link.changed)
-                .collect();
-        assert_eq!(changed, [true, false]);
-        assert_eq!(*heard.lock().unwrap(), [vec!["b.txt".to_owned()], vec![]]);
-    });
-}
-
-/// A turn that edits a file and then undoes the commit the turn before
-/// made changed that file: the turn before's parent, back in `@` after the
-/// undo, holds the edit, and is not followed as a catch-up would be.
-#[test]
-fn a_turn_that_undoes_a_commit_keeps_its_paths() {
-    let src = tempfile::tempdir().unwrap();
-    source(src.path());
-    let home = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        home.path().join("p"),
-        Identity::default(),
-    )
-    .unwrap();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first = RunWorkspace::new(
-            project.clone().into(),
-            "first",
-            Identity::default(),
-        )
-        .unwrap()
-        .on_turn({
-            let heard = heard.clone();
-            move |turn| heard.lock().unwrap().push(turn.paths.clone())
-        });
-        let llm = ScriptedModel::new()
-            .turn(|t| {
-                t.tool_call("vcs_commit", json!({ "message": "feat: x" }))
-            })
-            .turn(|t| {
-                t.tool_call("write", write("README.md", ""))
-                    .tool_call("vcs_undo", json!({}))
-            })
-            .turn(|t| t.text("done"))
-            .turn(|t| t.text("still done"))
-            .turn(|t| t.text("feat: empty the readme"));
-        let outcome = coder(llm.clone(), &first, false)
-            .plugin(VcsPlugin::new(first.vcs().clone()))
-            .run("commit, then edit and undo", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        let changed: Vec<bool> =
-            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap())
-                .iter()
-                .map(|(_, link)| link.changed)
-                .collect();
-        assert_eq!(changed, [false, true, false, false]);
-        assert_eq!(
-            *heard.lock().unwrap(),
-            [vec![], vec!["README.md".to_owned()], vec![], vec![]]
-        );
-    });
-}
-
-/// A fork whose turn's parent changed since starts on the files merged
-/// onto the parent as it is now; its first turn, which only reads,
-/// changed nothing.
-#[test]
-fn a_forks_first_turn_is_told_from_its_start() {
-    let src = tempfile::tempdir().unwrap();
-    source(src.path());
-    let home = tempfile::tempdir().unwrap();
-    let project = tau_vcs_host::ProjectRepo::import(
-        src.path().to_str().unwrap(),
-        home.path().join("p"),
-        Identity::default(),
-    )
-    .unwrap();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let first = RunWorkspace::new(
-            project.clone().into(),
-            "first",
-            Identity::default(),
-        )
-        .unwrap();
-        // Turn 1 commits an empty change; turn 2 takes it back into `@`
-        // and writes, and the run commits that at its end.
-        let llm = ScriptedModel::new()
-            .turn(|t| {
-                t.tool_call("vcs_commit", json!({ "message": "feat: x" }))
-            })
-            .turn(|t| {
-                t.tool_call("vcs_undo", json!({}))
-                    .tool_call("write", write("a.txt", "one\n"))
-            })
-            .turn(|t| t.text("done"))
-            .turn(|t| t.text("still done"))
-            .turn(|t| t.text("feat: a"));
-        let outcome = coder(llm.clone(), &first, false)
-            .plugin(VcsPlugin::new(first.vcs().clone()))
-            .run("commit, undo, write", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        let turns =
-            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
-
-        let fork = RunWorkspace::new(
-            project.clone().into(),
-            "fork",
-            Identity::default(),
-        )
-        .unwrap();
-        let fork_llm = ScriptedModel::new()
-            .turn(|t| t.tool_call("read", json!({ "path": "README.md" })))
-            .turn(|t| t.text("forked"));
-        let forked = coder(fork_llm, &fork, false)
-            .fork(&Checkpoint::at(outcome.run.clone(), turns[0].0))
-            .start("go on", &store)
-            .outcome()
-            .await
-            .unwrap();
-        assert_eq!(
-            std::fs::read_to_string(fork.dir().join("a.txt")).unwrap(),
-            "one\n",
-            "the fork starts on its parent as it is now"
-        );
-        let own: Vec<bool> =
-            links(&store.plugin_entries(&forked.run.0, PLUGIN).await.unwrap())
-                .into_iter()
-                .filter(|(_, link)| link.workspace == "fork")
-                .map(|(_, link)| link.changed)
-                .collect();
-        assert_eq!(own, [false, false]);
-    });
 }
 
 /// A file's lines before and after (`None`: no file), and whether each

@@ -458,9 +458,25 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
         .max_size(2),
     );
     let after_fork: &'static str = tc.draw(gs::sampled_from(PATHS.to_vec()));
+    check_turns(&tc, &turns, end, &fork_writes, after_fork, None);
+}
 
-    let (llm, at, model) = plan(&turns, end);
-    for actions in &turns {
+/// Runs `turns` and the end through the real plugins and checks them
+/// against the model, then forks at the turn `fork_at` names (drawn
+/// when `None`), writes `fork_writes` there, and edits `after_fork` in
+/// the run. Whether the fork ran: the model has no terms for a fork
+/// whose start conflicts.
+fn check_turns(
+    tc: &TestCase,
+    turns: &[Vec<Action>],
+    end: End,
+    fork_writes: &[(&'static str, &'static str)],
+    after_fork: &'static str,
+    fork_at: Option<usize>,
+) -> bool {
+    let fork_writes = fork_writes.to_vec();
+    let (llm, at, model) = plan(turns, end);
+    for actions in turns {
         for action in actions {
             tc.event(match action {
                 Action::Write(..) => "write",
@@ -588,7 +604,9 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
         });
 
         // A fork at a drawn turn.
-        let k = tc.draw(gs::integers::<usize>().max_value(linked.len() - 1));
+        let k = fork_at.unwrap_or_else(|| {
+            tc.draw(gs::integers::<usize>().max_value(linked.len() - 1))
+        });
         let (seq, _) = linked[k].clone();
         let base = &at[k];
         if at[k].stack.last().is_some_and(|p| p.id == model.wc.id) {
@@ -597,7 +615,7 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
         let Some((parent_now, start)) = fork_base(&model, base) else {
             // jj would hold the conflict; the model has no terms for it.
             tc.event("the fork's start conflicts");
-            return;
+            return false;
         };
         if parent_now != base.parent {
             tc.event("the fork's parent changed since its turn");
@@ -682,7 +700,79 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
         let mut run_files = model.wc.tree.clone();
         run_files.insert(after_fork, new);
         assert_eq!(files(&first.dir()), run_files);
-    });
+        true
+    })
+}
+
+// Regressions, as histories the model checks. Each runs once, its fork at
+// the turn named.
+
+/// Runs one history through [`check_turns`], answering at the end, with
+/// no writes in the fork, and `a.txt` edited in the run after it.
+fn regression(turns: Vec<Vec<Action>>, fork_at: usize) -> bool {
+    let forked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = forked.clone();
+    hegel::Hegel::new(move |tc| {
+        let ran =
+            check_turns(&tc, &turns, End::Answer, &[], "a.txt", Some(fork_at));
+        seen.store(ran, std::sync::atomic::Ordering::SeqCst);
+    })
+    .settings(hegel::Settings::new().test_cases(1))
+    .run();
+    forked.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// A first turn that writes a file and commits it changed that file:
+/// what it changed is told from `@` as the run started, not from the
+/// commit the turn left `@` on.
+#[test]
+fn a_first_turn_that_commits_still_changed_files() {
+    regression(
+        vec![vec![Action::Write("b.txt", "one\n"), Action::Commit]],
+        0,
+    );
+}
+
+/// A turn that edits a file and then undoes the commit the turn before
+/// made changed that file: the turn before's parent, back in `@` after
+/// the undo, holds the edit, and is not followed as a catch-up would be.
+#[test]
+fn a_turn_that_undoes_a_commit_keeps_its_paths() {
+    regression(
+        vec![
+            vec![Action::Commit],
+            vec![Action::Write("a.txt", ""), Action::Undo],
+        ],
+        0,
+    );
+}
+
+/// A turn that undoes the commit the turn before made, edits, and
+/// commits again changed the file it edited: the run rewriting its own
+/// commit is the turn's work, not a catch-up's.
+#[test]
+fn a_turn_that_recommits_an_undone_commit_keeps_its_paths() {
+    regression(
+        vec![
+            vec![Action::Commit],
+            vec![Action::Undo, Action::Write("a.txt", ""), Action::Commit],
+        ],
+        0,
+    );
+}
+
+/// A fork whose turn's parent changed since starts on the files merged
+/// onto the parent as it is now; its first turn, which only reads,
+/// changed nothing.
+#[test]
+fn a_forks_first_turn_is_told_from_its_start() {
+    assert!(regression(
+        vec![
+            vec![Action::Commit],
+            vec![Action::Undo, Action::Write("a.txt", "two\n")],
+        ],
+        0,
+    ));
 }
 
 /// A fork at a turn whose parent change the run took back with
@@ -695,62 +785,10 @@ fn turns_and_forks_follow_the_model(tc: TestCase) {
 /// starts on `X`'s parent instead, with the turn's files.
 #[test]
 fn a_fork_whose_parent_was_undone_stays_apart() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let first = RunWorkspace::new(
-            project.clone().into(),
-            "first",
-            Identity::default(),
-        )
-        .unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| {
-                t.tool_call("vcs_commit", json!({ "message": "feat: empty" }))
-            })
-            .turn(|t| t.tool_call("vcs_undo", json!({})))
-            .turn(|t| t.text("done"));
-        let outcome = coder(llm.clone(), &first, true)
-            .run("commit, then undo", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        let linked =
-            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
-        let fork = RunWorkspace::new(
-            project.clone().into(),
-            "fork",
-            Identity::default(),
-        )
-        .unwrap();
-        let fork_llm = ScriptedModel::new().turn(|t| t.text("forked"));
-        coder(fork_llm, &fork, true)
-            .fork(&Checkpoint::at(outcome.run.clone(), linked[0].0))
-            .start("go on", &store)
-            .outcome()
-            .await
-            .unwrap();
-
-        let wc = project.workspace_head("fork").unwrap().unwrap();
-        assert_eq!(
-            project.parent_of(&wc).unwrap(),
-            Some(project.trunk().unwrap()),
-            "the fork starts on trunk"
-        );
-        std::fs::write(first.dir().join("a.txt"), "two\n").unwrap();
-        first.vcs().working_copy().await.unwrap();
-        fork.vcs().working_copy().await.unwrap();
-        assert_eq!(
-            files(&fork.dir()),
-            trunk_tree(),
-            "the run's edit reached the fork"
-        );
-    });
+    assert!(regression(
+        vec![vec![Action::Commit], vec![Action::Undo]],
+        0
+    ));
 }
 
 /// Two commits, both undone: the second's change is abandoned, and the
@@ -760,66 +798,15 @@ fn a_fork_whose_parent_was_undone_stays_apart() {
 /// stale. Found by `turns_and_forks_follow_the_model`.
 #[test]
 fn a_fork_whose_parents_were_both_undone_stays_apart() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let first = RunWorkspace::new(
-            project.clone().into(),
-            "first",
-            Identity::default(),
-        )
-        .unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| {
-                t.tool_call("vcs_commit", json!({ "message": "feat: a" }))
-            })
-            .turn(|t| {
-                t.tool_call("vcs_commit", json!({ "message": "feat: b" }))
-            })
-            .turn(|t| t.tool_call("vcs_undo", json!({})))
-            .turn(|t| t.tool_call("vcs_undo", json!({})))
-            .turn(|t| t.text("done"));
-        let outcome = coder(llm.clone(), &first, true)
-            .run("commit twice, then undo both", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        let linked =
-            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
-        let fork = RunWorkspace::new(
-            project.clone().into(),
-            "fork",
-            Identity::default(),
-        )
-        .unwrap();
-        let fork_llm = ScriptedModel::new().turn(|t| t.text("forked"));
-        coder(fork_llm, &fork, true)
-            .fork(&Checkpoint::at(outcome.run.clone(), linked[1].0))
-            .start("go on", &store)
-            .outcome()
-            .await
-            .unwrap();
-
-        let wc = project.workspace_head("fork").unwrap().unwrap();
-        assert_eq!(
-            project.parent_of(&wc).unwrap(),
-            Some(project.trunk().unwrap()),
-            "the fork starts on trunk"
-        );
-        std::fs::write(first.dir().join("a.txt"), "two\n").unwrap();
-        first.vcs().working_copy().await.unwrap();
-        fork.vcs().working_copy().await.unwrap();
-        assert_eq!(
-            files(&fork.dir()),
-            trunk_tree(),
-            "the run's edit reached the fork"
-        );
-    });
+    assert!(regression(
+        vec![
+            vec![Action::Commit],
+            vec![Action::Commit],
+            vec![Action::Undo],
+            vec![Action::Undo],
+        ],
+        1,
+    ));
 }
 
 /// As above, with a file written before the undos: the undos carry the
@@ -829,103 +816,12 @@ fn a_fork_whose_parents_were_both_undone_stays_apart() {
 /// with its turn's files, not on the edit made after it.
 #[test]
 fn a_fork_keeps_its_turns_files_when_later_edits_are_carried_back() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let first = RunWorkspace::new(
-            project.clone().into(),
-            "first",
-            Identity::default(),
-        )
-        .unwrap();
-        let llm = ScriptedModel::new()
-            .turn(|t| {
-                t.tool_call("vcs_commit", json!({ "message": "feat: a" }))
-            })
-            .turn(|t| {
-                t.tool_call("vcs_commit", json!({ "message": "feat: b" }))
-            })
-            .turn(|t| {
-                t.tool_call("write", json!({ "path": "a.txt", "content": "" }))
-                    .tool_call("vcs_undo", json!({}))
-                    .tool_call("vcs_undo", json!({}))
-            })
-            .turn(|t| t.text("done"))
-            // The edit is left in `@`: the run is asked to finish it, then
-            // commits it.
-            .turn(|t| t.text("still done"))
-            .turn(|t| t.text("feat: leftover"));
-        let outcome = coder(llm.clone(), &first, true)
-            .run("commit twice, write, undo both", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        let linked =
-            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
-        let fork = RunWorkspace::new(
-            project.clone().into(),
-            "fork",
-            Identity::default(),
-        )
-        .unwrap();
-        let fork_llm = ScriptedModel::new().turn(|t| t.text("forked"));
-        coder(fork_llm, &fork, true)
-            .fork(&Checkpoint::at(outcome.run.clone(), linked[1].0))
-            .start("go on", &store)
-            .outcome()
-            .await
-            .unwrap();
-        assert_eq!(files(&fork.dir()), trunk_tree(), "the fork's files");
-    });
-}
-
-/// A turn that undoes the commit the turn before made, edits, and commits
-/// again changed the file it edited: the run rewriting its own commit is
-/// the turn's work, not a catch-up's.
-#[test]
-fn a_turn_that_recommits_an_undone_commit_keeps_its_paths() {
-    let home = tempfile::tempdir().unwrap();
-    let project = project(home.path());
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let heard: Arc<Mutex<Vec<Vec<String>>>> = Arc::default();
-        let first = RunWorkspace::new(
-            project.clone().into(),
-            "first",
-            Identity::default(),
-        )
-        .unwrap()
-        .on_turn({
-            let heard = heard.clone();
-            move |turn| heard.lock().unwrap().push(turn.paths.clone())
-        });
-        let llm = ScriptedModel::new()
-            .turn(|t| {
-                t.tool_call("vcs_commit", json!({ "message": "feat: x" }))
-            })
-            .turn(|t| {
-                t.tool_call("vcs_undo", json!({}))
-                    .tool_call(
-                        "write",
-                        json!({ "path": "a.txt", "content": "" }),
-                    )
-                    .tool_call("vcs_commit", json!({ "message": "feat: x" }))
-            })
-            .turn(|t| t.text("done"));
-        coder(llm.clone(), &first, true)
-            .run("commit, undo, write, commit", &store)
-            .await
-            .unwrap();
-        llm.assert_exhausted();
-        assert_eq!(heard.lock().unwrap()[1], ["a.txt"]);
-    });
+    assert!(regression(
+        vec![
+            vec![Action::Commit],
+            vec![Action::Commit],
+            vec![Action::Write("a.txt", ""), Action::Undo, Action::Undo],
+        ],
+        1,
+    ));
 }
