@@ -305,13 +305,29 @@ fn the_key_stays_secret(tc: hegel::TestCase) {
     assert!(shown.contains(&model), "{shown}");
 }
 
-/// A key from the environment is trimmed; a missing or blank one is an
-/// error.
-#[test]
-fn keys_come_trimmed_or_not_at_all() {
+/// A key from the environment is read trimmed; a missing or blank one
+/// is an error that names the variable.
+#[hegel::test(test_cases = 500)]
+fn keys_come_trimmed_or_not_at_all(tc: hegel::TestCase) {
+    use hegel::generators as gs;
     use tau_jev::{MissingApiKey, api_key};
-    assert_eq!(api_key(Some(" sk-1\n".into())), Ok("sk-1".into()));
-    assert_eq!(api_key(Some("  ".into())), Err(MissingApiKey));
-    assert_eq!(api_key(None), Err(MissingApiKey));
+    let space = || {
+        gs::text()
+            .alphabet(" \t\n\r\u{a0}\u{2028}\u{3000}")
+            .max_size(3)
+    };
+    let key = tc.draw(hegel::one_of!(
+        gs::just(String::new()),
+        gs::from_regex("sk-[A-Za-z0-9 _-]{0,20}[A-Za-z0-9]").fullmatch(true),
+    ));
+    let given = tc
+        .draw(gs::booleans())
+        .then(|| format!("{}{key}{}", tc.draw(space()), tc.draw(space())));
+    let expected = if key.is_empty() || given.is_none() {
+        Err(MissingApiKey)
+    } else {
+        Ok(key.clone())
+    };
+    assert_eq!(api_key(given.clone()), expected, "{given:?}");
     assert_eq!(MissingApiKey.to_string(), "TYPESAFE_API_KEY is not set");
 }
