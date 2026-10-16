@@ -175,9 +175,25 @@ fn a_kept_effort_says_what_it_saved() {
          resend 48k tokens uncached."
     );
     assert_eq!(state.status.as_deref(), Some("kept medium"));
-    assert_eq!(tau_reasoning::ui::tokens_text(900), "900");
-    assert_eq!(tau_reasoning::ui::tokens_text(1_499), "1k");
-    assert_eq!(tau_reasoning::ui::tokens_text(1_500), "2k");
+}
+
+/// A token count reads as itself under a thousand, and otherwise as
+/// thousands rounded to the nearest, half up: `1k` for 1,499, `2k` for
+/// 1,500.
+#[hegel::test(test_cases = 500)]
+fn token_counts_read_in_thousands_from_a_thousand(tc: hegel::TestCase) {
+    let tokens = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![
+            0_u64, 999, 1_000, 1_499, 1_500, 999_499, 999_500
+        ]),
+        gs::integers::<u64>().max_value(10_000_000),
+    ));
+    let expected = if tokens < 1_000 {
+        tokens.to_string()
+    } else {
+        format!("{}k", (tokens as f64 / 1_000.0).round())
+    };
+    assert_eq!(tau_reasoning::ui::tokens_text(tokens), expected);
 }
 
 fn run(effort: Option<&str>, jev: bool) -> RunCtx {
