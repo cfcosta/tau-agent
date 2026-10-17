@@ -134,7 +134,7 @@ impl RunWorkspace {
         identity: Identity,
     ) -> Result<Self, VcsError> {
         let name = name.into();
-        let vcs = Vcs::lazy(project.workspace_dir(&name), identity)?;
+        let vcs = Vcs::lazy(project.workspace_dir(&name), identity);
         Ok(Self {
             project,
             name,

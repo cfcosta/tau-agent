@@ -113,6 +113,8 @@ struct Shared {
     root: PathBuf,
     /// Where [`Kept`] is kept.
     kept_path: PathBuf,
+    /// What the agents' repositories are opened with.
+    identity: Identity,
     clock: Arc<dyn Clock>,
     agents: RwLock<BTreeMap<String, Read>>,
     projects: Mutex<BTreeMap<String, Project>>,
@@ -126,13 +128,14 @@ struct Shared {
 type Tell = Box<dyn Fn(&str, Event) + Send + Sync>;
 
 impl Registry {
-    /// A registry of the agents under `root`, keeping what it must
-    /// across restarts at `kept`. `refresh` redraws the catalog; `failed`
-    /// takes the event an agent hears when a version of it fails. Empty
-    /// until it reads the agents' trunks.
+    /// A registry of the agents under `root`, opened as `identity`,
+    /// keeping what it must across restarts at `kept`. `refresh` redraws
+    /// the catalog; `failed` takes the event an agent hears when a
+    /// version of it fails. Empty until it reads the agents' trunks.
     pub fn at(
         root: PathBuf,
         kept: PathBuf,
+        identity: Identity,
         clock: Arc<dyn Clock>,
         refresh: impl Fn() + Send + Sync + 'static,
         failed: impl Fn(&str, Event) + Send + Sync + 'static,
@@ -140,6 +143,7 @@ impl Registry {
         Self(Arc::new(Shared {
             root,
             kept_path: kept,
+            identity,
             clock,
             agents: RwLock::default(),
             projects: Mutex::default(),
@@ -222,7 +226,7 @@ impl Registry {
             return Some(project.clone());
         }
         let project =
-            Project::open(self.0.root.join(name), Identity::default())
+            Project::open(self.0.root.join(name), self.0.identity.clone())
                 .await
                 .ok()?;
         projects.insert(name.to_owned(), project.clone());

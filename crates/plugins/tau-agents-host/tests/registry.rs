@@ -90,6 +90,7 @@ fn open(home: &Path) -> (Registry, Told) {
     let registry = Registry::at(
         home.join("agents"),
         home.join("versions.json"),
+        Identity::default(),
         Arc::new(FakeClock::new(1_000, 0)),
         || {},
         move |agent, event| {

@@ -85,6 +85,7 @@ impl Disk {
             settings: root.join("models.json"),
             repo_list: root.join("repos.json"),
             skills: std::env::temp_dir().join("tau-test-skills-none"),
+            identity: Identity::default(),
         };
         let agent = Agent::new(llm).name("coder");
         let (host, events) = Host::with_agent(runtime, agent, store, config);

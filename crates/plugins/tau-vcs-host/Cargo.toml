@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+etcetera.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 # Clones over HTTPS without the git binary. reqwest brings rustls,
@@ -21,6 +22,8 @@ reqwest.workspace = true
 tokio-rustls.workspace = true
 jj-lib.workspace = true
 pollster.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -32,6 +35,7 @@ tau-ui-plugin.workspace = true
 tau-vcs.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
 uuid.workspace = true
+whoami.workspace = true
 
 [dev-dependencies]
 tau-store-sqlite.workspace = true

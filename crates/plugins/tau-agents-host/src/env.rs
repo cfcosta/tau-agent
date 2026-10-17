@@ -16,6 +16,7 @@ use tau_ui_plugin::{
     WatchError,
     registry::HostFuture,
 };
+use tau_vcs_host::Identity;
 
 /// What the agents reach of the host.
 pub trait Env: Send + Sync {
@@ -111,6 +112,12 @@ pub trait Env: Send + Sync {
     ) -> HostFuture<'a, Result<Value, String>> {
         Box::pin(async { Err("this host reads no MCP resources".into()) })
     }
+
+    /// Who the agents' repositories are opened as, and the jj config
+    /// they follow. The default reads none.
+    fn identity(&self) -> Identity {
+        Identity::default()
+    }
 }
 
 /// The host's [`Env`], over what it gives every plugin.
@@ -119,6 +126,14 @@ pub struct HostEnv(pub HostCx);
 impl Env for HostEnv {
     fn refresh(&self) {
         self.0.refresh();
+    }
+
+    fn identity(&self) -> Identity {
+        self.0
+            .services
+            .get::<Identity>()
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn settings(&self, agent: &str) -> Settings {

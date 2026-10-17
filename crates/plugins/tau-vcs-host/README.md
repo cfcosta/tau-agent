@@ -12,7 +12,7 @@ sweeping what old runs left, and pushing.
 | Item                                       | What it is                                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
 | `Vcs`                                      | A handle on one jj workspace: `Vcs::open`, `Vcs::init` (internal Git store), `Vcs::lazy`       |
-| `Identity`                                 | The author of the commits and operations; defaults to `tau <tau@localhost>`                    |
+| `Identity`, `JjEnv`                        | Who commits, under the person's jj config, which `JjEnv` finds as the jj CLI does              |
 | `VcsPlugin`                                | The tools on one `Vcs`, as a `Plugin` for `Agent::plugin`                                      |
 | `tools`                                    | One `TypedTool` per tool (`Status`, `Diff`, `Commit`, `Land`, ...)                             |
 | `ProjectRepo`, `Project`                   | A repository tau owns, with a workspace per run; `Project` runs its jobs off the async runtime |

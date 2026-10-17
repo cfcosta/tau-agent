@@ -203,7 +203,7 @@ impl Host {
         self.catch_up(&project, DEFAULT_WORKSPACE).await?;
         let vcs = tau_vcs_host::Vcs::open(
             project.workspace_dir(DEFAULT_WORKSPACE),
-            identity(),
+            self.identity(),
         )
         .await?;
         Ok(vcs.conflicts().await?)

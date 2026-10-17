@@ -82,6 +82,7 @@ impl Host {
             .with(self.unattended.clone())
             .with(saved)
             .with(ConfigDir(self.config.credentials.dir.clone()))
+            .with(self.identity())
             .with(tau_skills::SkillsDir(self.config.skills.clone()));
         if let Some(jev) = self.jev() {
             services = services.with(jev);

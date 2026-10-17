@@ -50,7 +50,7 @@ use crate::{
     clone::{CloneError, Head, ORIGIN_HEAD, TRACKING},
     error::VcsError,
     run_workspace::Link,
-    vcs::{Identity, Vcs, settings},
+    vcs::{Identity, Vcs},
 };
 
 mod push;
@@ -529,8 +529,16 @@ impl ProjectRepo {
         Ok(project)
     }
 
+    /// The project at `root`, with the jj config its main workspace
+    /// loads, which need not exist yet. Blocks.
     fn new(root: PathBuf, identity: Identity) -> Result<Self, VcsError> {
-        let settings = settings(&identity)?;
+        // The main workspace's repository is its own `.jj/repo`.
+        let main = root.join(MAIN);
+        let settings = crate::config::settings(
+            &identity,
+            &main,
+            &main.join(".jj").join("repo"),
+        )?;
         Ok(Self {
             inner: Arc::new(Inner {
                 root,
@@ -819,7 +827,10 @@ impl ProjectRepo {
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         drop(lock);
-        Vcs::loaded(dir, self.inner.identity.clone(), workspace)
+        // Made with the main workspace's config, as `jj workspace add`
+        // does; opened again with its own.
+        drop(workspace);
+        Vcs::open_in_job(dir, self.inner.identity.clone())
     }
 
     /// `links` with each `commit_id` moved to where its change is now.
@@ -1091,7 +1102,10 @@ impl ProjectRepo {
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         drop(lock);
-        Vcs::loaded(dir, self.inner.identity.clone(), workspace)
+        // Made with the main workspace's config, as `jj workspace add`
+        // does; opened again with its own.
+        drop(workspace);
+        Vcs::open_in_job(dir, self.inner.identity.clone())
     }
 
     /// Removes run `name`'s workspace: jj forgets it, and its directory

@@ -23,6 +23,10 @@ pub struct HostConfig {
     pub repo_list: PathBuf,
     /// The person's skills, usually `~/.agents/skills` (tau-skills).
     pub skills: PathBuf,
+    /// Who tau's commits are by, and where the jj config they follow
+    /// is: the app's is [`Identity::from_environment`], the person's
+    /// own; the default reads no config.
+    pub identity: Identity,
 }
 
 impl HostConfig {
@@ -31,6 +35,12 @@ impl HostConfig {
         self.model
             .clone()
             .unwrap_or_else(|| DEFAULT_MODEL.to_owned())
+    }
+
+    /// tau's identity under the person's jj config, as this process
+    /// finds it ([`Identity::from_environment`]).
+    pub fn default_identity() -> Identity {
+        Identity::from_environment()
     }
 
     /// `$XDG_DATA_HOME/tau`, or `~/.local/share/tau`.

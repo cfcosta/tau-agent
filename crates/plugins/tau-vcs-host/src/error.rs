@@ -199,6 +199,10 @@ pub enum VcsError {
     CheckOutCommit(#[from] jj_lib::repo::CheckOutCommitError),
     #[error(transparent)]
     Checkout(#[from] jj_lib::working_copy::CheckoutError),
+    #[error("Cannot load jj's config: {}", load_text(.0))]
+    ConfigLoad(#[from] jj_lib::config::ConfigLoadError),
+    #[error("Cannot find the repository's jj config: {0}")]
+    SecureConfig(#[from] jj_lib::secure_config::SecureConfigError),
     #[error(transparent)]
     ConfigGet(#[from] jj_lib::config::ConfigGetError),
     #[error(transparent)]
@@ -231,6 +235,20 @@ pub enum VcsError {
     GitCommit(#[from] gix::object::commit::Error),
     #[error(transparent)]
     GitTryInto(#[from] gix::object::try_into::Error),
+}
+
+/// A config file that cannot be read or parsed, with its path and why.
+fn load_text(error: &jj_lib::config::ConfigLoadError) -> String {
+    use jj_lib::config::ConfigLoadError;
+    match error {
+        ConfigLoadError::Read(error) => {
+            format!("{}: {}", error.path.display(), error.source)
+        }
+        ConfigLoadError::Parse { error, source_path } => match source_path {
+            Some(path) => format!("{}: {error}", path.display()),
+            None => error.to_string(),
+        },
+    }
 }
 
 impl From<VcsError> for tau_agent::tool::ToolError {

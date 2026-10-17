@@ -91,6 +91,7 @@ fn versions_activate_wait_or_keep_the_one_before() {
     let registry = Registry::at(
         home.path().join("x"),
         home.path().join("allowed.json"),
+        Identity::default(),
         move || {
             seen.fetch_add(1, Ordering::SeqCst);
         },
@@ -159,12 +160,22 @@ fn what_was_allowed_is_kept() {
     let home = tempfile::tempdir().unwrap();
     let allowed = home.path().join("allowed.json");
     let (v1, trunk) = project(home.path(), 1, BLOCKING, None);
-    let first = Registry::at(home.path().join("x"), allowed.clone(), || {});
+    let first = Registry::at(
+        home.path().join("x"),
+        allowed.clone(),
+        Identity::default(),
+        || {},
+    );
     block_on_io(first.reload(&v1, &trunk));
     assert!(matches!(standing(&first), Standing::Waiting { .. }));
     block_on_io(first.allow("greet")).unwrap();
 
-    let second = Registry::at(home.path().join("x"), allowed, || {});
+    let second = Registry::at(
+        home.path().join("x"),
+        allowed,
+        Identity::default(),
+        || {},
+    );
     block_on_io(second.reload(&v1, &trunk));
     assert_eq!(standing(&second), Standing::Active);
 }
@@ -192,6 +203,7 @@ return tau.plugin {
     let registry = Registry::at(
         home.path().join("x"),
         home.path().join("allowed.json"),
+        Identity::default(),
         || {},
     );
     let (v1, trunk) = project(home.path(), 1, PAGED, None);
@@ -244,6 +256,7 @@ fn a_workspace_runs_its_own_passing_versions() {
     let registry = Registry::at(
         home.path().join("none"),
         home.path().join("allowed.json"),
+        Identity::default(),
         || {},
     );
     let names = |registry: &Registry| -> Vec<String> {
@@ -282,6 +295,7 @@ fn a_workspace_is_ready_when_what_it_changes_passes() {
     let registry = Registry::at(
         home.path().join("x"),
         home.path().join("allowed.json"),
+        Identity::default(),
         || {},
     );
     let ready = || block_on_io(registry.ready(workspace.path()));

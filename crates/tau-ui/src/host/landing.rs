@@ -754,7 +754,7 @@ impl Host {
         // Open the existing workspace, never recreate a missing one.
         let child_vcs = tau_vcs_host::Vcs::open(
             project.workspace_dir(&child_workspace),
-            identity(),
+            self.identity(),
         )
         .await?;
         let copy = child_vcs.working_copy().await?;
@@ -775,7 +775,7 @@ impl Host {
         let parent_vcs = if parent_busy || !writes {
             tau_vcs_host::Vcs::open(
                 project.workspace_dir(&parent_workspace),
-                identity(),
+                self.identity(),
             )
             .await?
         } else {

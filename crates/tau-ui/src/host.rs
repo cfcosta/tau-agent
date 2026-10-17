@@ -401,14 +401,13 @@ const SUB_AGENTS_DO_NOT_LAND: &str = "A sub-agent's commits land on its \
     caller when it ends, so it has nothing to propose: commit with \
     `vcs_commit`, then answer.";
 
-fn identity() -> Identity {
-    Identity {
-        name: "tau".into(),
-        email: "tau@localhost".into(),
-    }
-}
-
 impl Host {
+    /// Who the host's commits are by, under the person's jj config when
+    /// the app started it ([`HostConfig::identity`]).
+    fn identity(&self) -> Identity {
+        self.config.identity.clone()
+    }
+
     /// What the host knows of `run` this session.
     fn session_of(&self, run: &RunId) -> SessionRun {
         let sessions = self.sessions.lock().expect("not poisoned");
@@ -957,7 +956,8 @@ impl Host {
                     .plugin(RepoInstructions { dir });
                 (agent, services)
             };
-        let workspace = RunWorkspace::new(project.clone(), &name, identity())?;
+        let workspace =
+            RunWorkspace::new(project.clone(), &name, self.identity())?;
         // A main chat commits on trunk: it has nothing to land.
         let workspace = if main {
             workspace
@@ -978,7 +978,7 @@ impl Host {
             let refused = models.clone();
             let spawn = Spawn::new(
                 workspace.clone(),
-                identity(),
+                self.identity(),
                 agents,
                 &models,
                 move |child, asked| {

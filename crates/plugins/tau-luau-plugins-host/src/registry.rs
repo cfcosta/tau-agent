@@ -55,6 +55,8 @@ pub struct Registry(Arc<Shared>);
 
 struct Shared {
     root: PathBuf,
+    /// What the repository is opened with.
+    identity: Identity,
     /// Where what the person allowed is kept.
     allowed_path: PathBuf,
     state: RwLock<State>,
@@ -87,6 +89,7 @@ impl PluginHost for Registry {
         let registry = Self::at(
             cx.dir.join(ROOT),
             cx.plugin_dir(crate::NAME).join("allowed.json"),
+            cx.services.get::<Identity>().cloned().unwrap_or_default(),
             move || refresher.refresh(),
         );
         let watcher = registry.clone();
@@ -96,16 +99,18 @@ impl PluginHost for Registry {
 }
 
 impl Registry {
-    /// A registry of the plugins repository at `root`, keeping what the
-    /// person allowed at `allowed`; `refresh` redraws the catalog. Empty
-    /// until it reads trunk.
+    /// A registry of the plugins repository at `root`, opened as
+    /// `identity`, keeping what the person allowed at `allowed`;
+    /// `refresh` redraws the catalog. Empty until it reads trunk.
     pub fn at(
         root: PathBuf,
         allowed: PathBuf,
+        identity: Identity,
         refresh: impl Fn() + Send + Sync + 'static,
     ) -> Self {
         Self(Arc::new(Shared {
             root,
+            identity,
             allowed_path: allowed,
             state: RwLock::default(),
             tried: tokio::sync::Mutex::default(),
@@ -227,7 +232,7 @@ impl Registry {
         loop {
             if project.is_none() {
                 project =
-                    Project::open(self.0.root.clone(), Identity::default())
+                    Project::open(self.0.root.clone(), self.0.identity.clone())
                         .await
                         .ok();
             }

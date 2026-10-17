@@ -28,6 +28,7 @@
 
 mod clone;
 mod colocate;
+mod config;
 mod diff;
 pub mod error;
 mod half;
@@ -44,6 +45,7 @@ pub mod tools;
 mod vcs;
 
 pub use clone::{CloneError, TransferError};
+pub use config::JjEnv;
 pub use diff::MAX_DIFF_BYTES;
 pub use error::VcsError;
 pub use half::VcsHost;

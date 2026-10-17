@@ -23,24 +23,42 @@ use std::{
 };
 
 use jj_lib::{
-    config::{ConfigLayer, ConfigSource, StackedConfig},
     default_backend_factories::{
         default_backend_factories,
         default_working_copy_factories,
     },
-    settings::UserSettings,
-    workspace::Workspace,
+    workspace::{
+        DefaultWorkspaceLoaderFactory,
+        Workspace,
+        WorkspaceLoaderFactory as _,
+    },
 };
 use pollster::block_on;
 use tokio::sync::Mutex;
 
-use crate::error::VcsError;
+use crate::{config::JjEnv, error::VcsError};
 
-/// Who the commits and operations this crate writes are by.
+/// Who the commits and operations this crate writes are by, and the jj
+/// config they follow (`crate::config`). The person's config wins:
+/// `name` and `email` are only what a commit gets when it sets no
+/// `user.name` or `user.email`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
     pub name: String,
     pub email: String,
+    /// Where jj's config comes from. The default reads none.
+    pub env: JjEnv,
+}
+
+impl Identity {
+    /// tau's identity, under the person's jj config, as this process
+    /// finds it: for the app, never for tests.
+    pub fn from_environment() -> Self {
+        Self {
+            env: JjEnv::from_environment(),
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for Identity {
@@ -48,6 +66,7 @@ impl Default for Identity {
         Self {
             name: "tau".to_owned(),
             email: "tau@localhost".to_owned(),
+            env: JjEnv::default(),
         }
     }
 }
@@ -78,7 +97,7 @@ impl Vcs {
         dir: impl Into<PathBuf>,
         identity: Identity,
     ) -> Result<Self, VcsError> {
-        let vcs = Self::lazy(dir, identity)?;
+        let vcs = Self::lazy(dir, identity);
         vcs.call(|worker| worker.workspace().map(|_| ())).await?;
         Ok(vcs)
     }
@@ -90,7 +109,7 @@ impl Vcs {
         dir: impl Into<PathBuf>,
         identity: Identity,
     ) -> Result<Self, VcsError> {
-        let vcs = Self::lazy(dir, identity)?;
+        let vcs = Self::lazy(dir, identity);
         vcs.call(|worker| {
             std::fs::create_dir_all(&worker.root).map_err(|source| {
                 VcsError::Create {
@@ -98,8 +117,13 @@ impl Vcs {
                     source,
                 }
             })?;
+            let settings = crate::config::settings(
+                &worker.identity,
+                &worker.root,
+                &worker.root.join(".jj").join("repo"),
+            )?;
             let (workspace, _repo) = block_on(Workspace::init_internal_git(
-                &worker.settings,
+                &settings,
                 &worker.root,
                 // jj-lib's gix's kind, SHA-1 by default: named this way,
                 // the call builds even when our gix is not jj-lib's.
@@ -113,33 +137,22 @@ impl Vcs {
     }
 
     /// A handle on the workspace that will be at `dir`, loaded by the
-    /// first job. For a workspace a plugin creates when its run starts,
-    /// after the tools that use it were built.
-    pub fn lazy(
-        dir: impl Into<PathBuf>,
-        identity: Identity,
-    ) -> Result<Self, VcsError> {
+    /// first job, with the jj config there. For a workspace a plugin
+    /// creates when its run starts, after the tools that use it were
+    /// built.
+    pub fn lazy(dir: impl Into<PathBuf>, identity: Identity) -> Self {
         Self::with(dir.into(), identity, None)
     }
 
-    /// A handle on `workspace`, loaded already at `dir` by a job.
-    pub(crate) fn loaded(
-        dir: PathBuf,
-        identity: Identity,
-        workspace: Workspace,
-    ) -> Result<Self, VcsError> {
-        Self::with(dir, identity, Some(workspace))
-    }
-
     /// Opens the jj workspace at `dir` from inside a job, which may
-    /// block.
+    /// block. A workspace a job just made opens this way too, so it
+    /// runs with its own config, not the one it was made with.
     pub(crate) fn open_in_job(
         dir: PathBuf,
         identity: Identity,
     ) -> Result<Self, VcsError> {
-        let settings = settings(&identity)?;
-        let workspace = load(&settings, &dir)?;
-        Self::loaded(dir, identity, workspace)
+        let workspace = load(&identity, &dir)?;
+        Ok(Self::with(dir, identity, Some(workspace)))
     }
 
     /// Commits whatever `@` holds, starts an empty working copy on top,
@@ -249,18 +262,18 @@ impl Vcs {
         root: PathBuf,
         identity: Identity,
         workspace: Option<Workspace>,
-    ) -> Result<Self, VcsError> {
+    ) -> Self {
         let worker = Worker {
             root: root.clone(),
-            settings: settings(&identity)?,
+            identity,
             workspace,
         };
-        Ok(Self {
+        Self {
             inner: Arc::new(Inner {
                 root,
                 worker: Arc::new(Mutex::new(worker)),
             }),
-        })
+        }
     }
 
     /// Runs `job` on the workspace once the jobs before it are done, on
@@ -286,7 +299,7 @@ impl Vcs {
 /// What a job on the workspace gets.
 pub(crate) struct Worker {
     root: PathBuf,
-    settings: UserSettings,
+    identity: Identity,
     /// Loaded on first use, and dropped after a panic.
     workspace: Option<Workspace>,
 }
@@ -295,7 +308,7 @@ impl Worker {
     /// The workspace, loaded if needed.
     pub(crate) fn workspace(&mut self) -> Result<&mut Workspace, VcsError> {
         if self.workspace.is_none() {
-            self.workspace = Some(load(&self.settings, &self.root)?);
+            self.workspace = Some(load(&self.identity, &self.root)?);
         }
         Ok(self.workspace.as_mut().expect("loaded above"))
     }
@@ -306,28 +319,29 @@ impl Worker {
     }
 }
 
-/// Loads the jj workspace at `root`. Blocks.
-fn load(settings: &UserSettings, root: &Path) -> Result<Workspace, VcsError> {
-    Workspace::load(
-        settings,
-        root,
-        &default_backend_factories(),
-        &default_working_copy_factories(),
-    )
-    .map_err(|source| VcsError::NoWorkspace {
+/// Loads the jj workspace at `root` as the jj CLI does: finds its
+/// repository first, then loads it with the config jj would load there,
+/// the repository's and the workspace's included. Blocks.
+fn load(identity: &Identity, root: &Path) -> Result<Workspace, VcsError> {
+    let no_workspace = |source| VcsError::NoWorkspace {
         root: root.to_path_buf(),
         source,
-    })
-}
-
-/// jj's defaults, with `identity` as the user.
-pub(crate) fn settings(identity: &Identity) -> Result<UserSettings, VcsError> {
-    let mut config = StackedConfig::with_defaults();
-    let mut user = ConfigLayer::empty(ConfigSource::User);
-    user.set_value("user.name", identity.name.as_str())?;
-    user.set_value("user.email", identity.email.as_str())?;
-    config.add_layer(user);
-    Ok(UserSettings::from_config(config)?)
+    };
+    let loader = DefaultWorkspaceLoaderFactory
+        .create(root)
+        .map_err(no_workspace)?;
+    let settings = crate::config::settings(
+        identity,
+        loader.workspace_root(),
+        loader.repo_path(),
+    )?;
+    loader
+        .load(
+            &settings,
+            &default_backend_factories(),
+            &default_working_copy_factories(),
+        )
+        .map_err(no_workspace)
 }
 
 fn panic_text(payload: &(dyn Any + Send)) -> String {

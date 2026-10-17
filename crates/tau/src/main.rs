@@ -115,6 +115,7 @@ fn main() {
         settings: HostConfig::default_settings(),
         repo_list: HostConfig::default_repo_list(),
         skills: HostConfig::default_skills(),
+        identity: HostConfig::default_identity(),
     };
     let host = account.and_then(|account| match Host::new(config(account)) {
         Ok(host) => Some(host),

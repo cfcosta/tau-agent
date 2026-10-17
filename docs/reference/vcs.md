@@ -28,8 +28,9 @@ let vcs = Vcs::init("/path/to/new", Identity::default()).await?;
 let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 ```
 
-- `Identity` is the author and committer of the commits and operations
-  the tools write. The default is `tau <tau@localhost>`.
+- `Identity` says who the commits and operations the tools write are
+  by, and where the jj config they follow is (see "Identity and jj
+  config"). The default is `tau <tau@localhost>` and reads no config.
 - `Vcs::open` and `Vcs::init` are async: they load the workspace on
   tokio's blocking pool, so they need a runtime. Call them when you set
   up the agent, not inside a tool.
@@ -41,6 +42,54 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
   the one workspace that `vcs` opened.
 - To use the coding tools on the same files, root `CodingTools` at the
   workspace directory.
+
+## Identity and jj config
+
+tau follows the person's jj config exactly as the jj CLI (0.45.1) would
+in the same workspace. tau-vcs-host's `config` module ports jj-cli's
+loading:
+
+- Layers, lowest first: jj-lib's defaults; tau's `Identity` (`user.name`
+  and `user.email`); the system's `/etc/jj/config.toml` and
+  `/etc/jj/conf.d/`; the variables the person's config overrides
+  (`operation.hostname`, `operation.username`, `NO_COLOR`, `VISUAL`,
+  `EDITOR`); the person's config; the repository's; the workspace's;
+  then the variables that override every file (`JJ_USER`, `JJ_EMAIL`,
+  `JJ_TIMESTAMP`, `JJ_RANDOMNESS_SEED`, `JJ_OP_TIMESTAMP`,
+  `JJ_OP_HOSTNAME`, `JJ_OP_USERNAME`, `JJ_EDITOR`, `JJ_PAGER`). So tau's
+  identity names a commit only when nothing else sets `user.name` or
+  `user.email`.
+- The person's config is `~/.jjconfig.toml` when it exists, then
+  `config.toml` and the `.toml` files of `conf.d/` (in name order) in
+  `$XDG_CONFIG_HOME/jj` or `~/.config/jj`. `JJ_CONFIG`, a list of
+  files and directories, replaces all of them, and the system's too.
+- The repository's and the workspace's configs are where jj 0.45 keeps
+  them, outside the repository: `repos/<id>/config.toml` and
+  `workspaces/<id>/config.toml` in jj's config directory, named by
+  `.jj/repo/config-id` and `.jj/workspace-config-id`. tau reads them
+  with jj-lib's `SecureConfig::maybe_load_config`, as any jj command
+  does, and never makes a config id: `jj config edit --repo` does.
+- `--when` scopes resolve once the repository is known, against the
+  canonical workspace and repository paths, the home directory (for
+  `~`), the host name and the variables. tau runs no jj command, so a
+  `--when.commands` scope never holds.
+- Settings are built when a workspace loads, in its job: a `Vcs` finds
+  its workspace's repository first (`WorkspaceLoader::repo_path`), as
+  jj does, then loads it with the settings for that repository and
+  workspace. A `ProjectRepo` builds its main workspace's settings when
+  it opens. A run workspace that `add_workspace` makes is written with
+  the main workspace's settings, as `jj workspace add` does, then opened
+  again with its own. Config changes reach a `Vcs` or `ProjectRepo`
+  opened after them.
+- jj-lib builds the commit signer from the same settings, so with the
+  person's `signing.*` tau's commits are signed as jj would sign them.
+- The environment is a value, `JjEnv`: config directory, home
+  directory, system directory, host name, user name and variables.
+  Only the app reads the process's (`Identity::from_environment`, which
+  `tau`'s `main` puts in `HostConfig::identity`); everything else,
+  tests included, gets the empty default and reads no file or
+  variable. The host hands the same `Identity` to plugin hosts as a
+  service, for the plugins and agents repositories.
 
 ## Threading
 

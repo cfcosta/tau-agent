@@ -244,13 +244,14 @@ impl Host {
         };
         let cloned = dir == slot.path;
         let catalog = self.catalog_wanted.clone();
+        let identity = self.identity();
         self.runtime.spawn(async move {
             let opened = if let Some(first_files) = first_files {
-                Project::open_or_init(dir, identity(), first_files).await
+                Project::open_or_init(dir, identity, first_files).await
             } else if cloned {
-                Project::open(dir, identity()).await
+                Project::open(dir, identity).await
             } else {
-                Project::open_or_import(source.clone(), dir, identity()).await
+                Project::open_or_import(source.clone(), dir, identity).await
             };
             project.set(match opened {
                 Ok(project) => ProjectState::Ready(project),
@@ -411,9 +412,11 @@ impl Host {
         if !exists {
             return Ok(());
         }
-        let vcs =
-            tau_vcs_host::Vcs::open(project.workspace_dir(name), identity())
-                .await?;
+        let vcs = tau_vcs_host::Vcs::open(
+            project.workspace_dir(name),
+            self.identity(),
+        )
+        .await?;
         vcs.move_onto(trunk, trunk_name, true).await?;
         Ok(())
     }
@@ -537,7 +540,7 @@ impl Host {
                 self.github.clone_url(full_name),
                 Some(token.token),
                 &dir,
-                identity(),
+                self.identity(),
             )
             .await?;
         }

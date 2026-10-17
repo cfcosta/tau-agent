@@ -361,6 +361,7 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         settings: dir.join("models.json"),
         repo_list: dir.join("repos.json"),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
+        identity: tau_vcs_host::Identity::default(),
     };
     // No repository is listed, so the demo's run cannot be forked.
     let (host, events) = Host::with_agent(runtime, agent, store, config);
@@ -3309,6 +3310,7 @@ fn a_host_half_makes_an_agent_and_starts_its_turns(cx: &mut TestAppContext) {
         settings: dir.join("models.json"),
         repo_list: dir.join("repos.json"),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
+        identity: tau_vcs_host::Identity::default(),
     };
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     let host = host.with_plugin_settings(
@@ -3434,6 +3436,7 @@ fn a_host_half_wakes_a_chat_that_is_idle(cx: &mut TestAppContext) {
         settings: dir.join("models.json"),
         repo_list: dir.join("repos.json"),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
+        identity: tau_vcs_host::Identity::default(),
     };
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     let host = host.with_plugin_settings(

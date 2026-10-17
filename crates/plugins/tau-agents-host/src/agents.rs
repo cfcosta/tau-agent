@@ -186,6 +186,7 @@ impl Agents {
         let registry = Registry::at(
             root.clone(),
             dir.join("versions.json"),
+            env.identity(),
             clock.clone(),
             move || refresher.refresh(),
             move |agent, event| {

@@ -105,6 +105,7 @@ fn host(
         settings: data.join("models.json"),
         repo_list: data.join("repos.json"),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
+        identity: Identity::default(),
     };
     let (host, events) =
         Host::with_agent(runtime, Agent::new(llm).name("coder"), store, config);
