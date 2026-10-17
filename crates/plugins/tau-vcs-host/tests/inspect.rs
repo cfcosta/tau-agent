@@ -93,7 +93,9 @@ enum Edit {
     Remove {
         file: usize,
     },
-    /// `git rm --cached`.
+    /// `git rm --cached --force`: forced, since git refuses when the
+    /// staged content differs from both the file and `HEAD`, as after
+    /// a write then a `git mv`.
     Unstage {
         file: usize,
     },
@@ -799,7 +801,14 @@ fn apply(person: &Person, main: &Path, edit: &Edit) {
             if tracked(file) {
                 person.git(
                     main,
-                    &["rm", "--cached", "--quiet", "--", FILES[file]],
+                    &[
+                        "rm",
+                        "--cached",
+                        "--force",
+                        "--quiet",
+                        "--",
+                        FILES[file],
+                    ],
                 );
             }
         }
