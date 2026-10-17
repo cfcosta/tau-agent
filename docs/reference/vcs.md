@@ -188,6 +188,62 @@ loading:
   Under the lock they happen one after another. The lock is
   `.jj/repo/tau.lock`, held with `flock`, so it holds between threads
   and between processes. Reads take no lock.
+- Under it, tau also takes the lock jj-cli 0.46.0 takes around its Git
+  import and export in a colocated workspace,
+  `.jj/repo/git_import_export.lock`: around an import of Git's refs and
+  the operation it goes into, and around writing each operation with
+  the export and the `HEAD` and index reset that follow it. A tool
+  takes it before it snapshots, as the CLI does, and holds it until the
+  tool's operation is written. So a `jj` command and tau never write
+  the Git store at once: each waits for the other. Fetching and pushing
+  over the network happen outside it, as in the CLI.
+- The locks are taken in one order: `tau.lock`, then
+  `git_import_export.lock`, then a working copy's own lock. The CLI
+  takes the second and then the third, and never `tau.lock`, so no two
+  holders wait on each other in a circle.
+
+## Tagged operations
+
+Every operation tau writes in a repository, from the one that makes it
+on, says it is tau's (ADR 0043, decision 6), so tau can tell the
+person's own `jj` commands from its own in the operation log:
+
+- It carries the operation attribute `tau.op` (`TAU_OP_ATTRIBUTE`),
+  whose value is the version of tau-vcs-host that wrote it.
+- Its description starts `tau: ` (`DESCRIPTION_PREFIX`), so
+  `jj op log` shows whose it is:
+
+  | Description                        | Written by                                              |
+  | ---------------------------------- | ------------------------------------------------------- |
+  | `tau: vcs_<tool>`                  | a write tool, `vcs_land` included                       |
+  | `tau: snapshot working copy`       | a tool's or a turn's snapshot                           |
+  | `tau: checkpoint`                  | a turn's end (`end_turn`, `commit_all`)                 |
+  | `tau: move onto`                   | a catch-up (`Vcs::move_onto`)                           |
+  | `tau: make the repository`         | `Project::init`, `Vcs::init`                            |
+  | `tau: import`                      | a clone or an import                                    |
+  | `tau: update`                      | `update`                                                |
+  | `tau: add workspace <name>`        | `add_workspace`, a fork's `add_workspace_from_snapshot` |
+  | `tau: forget workspace <name>`     | a sweep, a landing, a dropped child, a sub-agent's end  |
+  | `tau: abandon <n> changes`         | a sweep, a dropped child, a sub-agent's end             |
+  | `tau: remove bookmark <name>`      | a sweep, a landing, a dropped child, a sub-agent's end  |
+  | `tau: push <branch>`               | `push_trunk`                                            |
+  | `tau: sign commits before pushing` | `push_trunk` with `git.sign-on-push`                    |
+
+- jj-lib writes an operation of its own when it makes a repository or
+  a workspace (`add workspace '<name>'`). tau makes both without it:
+  the operation that adds a workspace's working-copy commit is tau's,
+  and the workspace's working copy starts there.
+- `is_taus(op)` tells whether tau wrote an operation: it carries
+  `tau.op`. Two kinds of operation carry no one's tag. The root
+  operation, which every repository starts from, is no one's, so it is
+  not tau's. A merge (an operation with several parents) is what jj-lib
+  writes when it loads a repository whose operation log forked
+  (`reconcile divergent operations`), in tau or in a `jj` command,
+  whichever loads it first. It is tau's when every operation it merges
+  is. The person's own operations come in as its parents.
+- `vcs_undo` and a landing's record read the tool's own attributes
+  (`tau.vcs.tool`, `tau.vcs.undo`, `tau.vcs.landing`), not the
+  description.
 
 ## Scoping rules
 
@@ -217,8 +273,10 @@ loading:
   `The working-copy commit <id> is immutable` when `@` is one of them,
   and one that cannot read `immutable_heads()` fails naming it.
 - **Tagged operations.** Each write is one operation, described as
-  `tau vcs: <tool>`. It carries the workspace name and the operation
-  attribute `tau.vcs.tool = <tool>`. `vcs_undo` uses these tags.
+  `tau: vcs_<tool>`. It carries the workspace name, `tau.op` (as every
+  operation tau writes, see "Tagged operations"), and the operation
+  attribute `tau.vcs.tool = <tool>`. `vcs_undo` uses these tags, never
+  the description.
 - **New files are tracked as jj would track them.** The snapshot
   takes jj's snapshot options from the config, as the jj CLI does (see
   "Identity and jj config"). With jj's defaults it tracks every new file
@@ -548,7 +606,8 @@ the user's checkout.
   on top of `base` and checks out its files. When `base` was rewritten
   since the caller read it, as the main chat's catch-up rewrites its
   commits, the workspace starts on the commit `base`'s change names
-  now, so the old commit does not come back beside the new one. `forget_workspace(name)`
+  now, so the old commit does not come back beside the new one. It is
+  one operation, `tau: add workspace <name>`. `forget_workspace(name)`
   drops it from the view and deletes the directory; its commits stay.
 - These calls block. Call them off the async executor.
 
