@@ -155,9 +155,9 @@ fn writes(llm: ScriptedModel, file: &str) -> ScriptedModel {
 }
 
 /// Started again, tau sweeps what no open chat owns: a chat whose drop
-/// was cut off after its record loses its workspace, bookmark and
-/// commits, and a workspace no run owns goes. An open chat, finished but
-/// not landed, keeps its workspace and bookmark, and goes on in them;
+/// was cut off after its record loses its workspace, head and commits,
+/// and a workspace no run owns goes. An open chat, finished but not
+/// landed, keeps its workspace and head, and goes on in them;
 /// the main chat's checkout stays.
 #[test]
 fn a_restart_sweeps_what_no_open_chat_owns() {
@@ -185,7 +185,7 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
     let cut_head = disk
         .project
         .blocking()
-        .bookmark(&format!("tau/{}", cut.0))
+        .head(&tau_vcs_host::Head::Run(cut.clone()))
         .unwrap();
     assert!(cut_head.is_some());
 
@@ -201,9 +201,10 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
     assert!(!project.workspace_dir("stray-1").exists());
     assert!(project.main_dir().to_owned().exists());
     assert_eq!(
-        project.blocking().bookmarks("tau/").unwrap(),
-        [format!("tau/{}", kept.0)]
+        project.blocking().run_heads().unwrap(),
+        [tau_vcs_host::heads::run_head_name(&kept)]
     );
+    assert_eq!(project.blocking().bookmarks("tau/").unwrap().len(), 0);
     // The cut chat's commit is no longer on any stack: trunk's has not
     // got it, and sweeping again finds nothing.
     let trunk = project.blocking().trunk().unwrap();
@@ -317,7 +318,7 @@ struct Landed {
     on_trunk: Option<Vec<u8>>,
     in_checkout: bool,
     workspaces: usize,
-    run_bookmarks: usize,
+    run_heads: usize,
     /// The main chat's landing cards: the chat's title, and each change
     /// as `ChangeInfo` says it, less its ids.
     cards: Vec<(String, Vec<ChangeSeen>)>,
@@ -349,7 +350,8 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
             .map(|(bytes, _)| bytes),
         in_checkout: project.main_dir().to_owned().join("a.txt").exists(),
         workspaces: project.blocking().workspaces().unwrap().len(),
-        run_bookmarks: project.blocking().bookmarks("tau/").unwrap().len(),
+        run_heads: project.blocking().run_heads().unwrap().len()
+            + project.blocking().bookmarks("tau/").unwrap().len(),
         cards: main_view
             .items
             .iter()
@@ -438,14 +440,14 @@ fn land_cut_off(cut: Option<tau_ui::host::LandingStep>) -> Landed {
 /// A landing cut off after any of its steps ends, once tau starts again,
 /// as one that ran whole: main has the chat's change on trunk and in its
 /// checkout, the same card and links, and the chat is landed, without a
-/// workspace or a bookmark.
+/// workspace or a head.
 #[test]
 fn a_landing_cut_off_at_any_step_finishes_at_start() {
     let whole = land_cut_off(None);
     assert_eq!(whole.on_trunk.as_deref(), Some(&b"x\n"[..]));
     assert!(whole.in_checkout);
     assert_eq!(whole.workspaces, 0);
-    assert_eq!(whole.run_bookmarks, 0);
+    assert_eq!(whole.run_heads, 0);
     assert_eq!(whole.landed_links, 1);
     assert_eq!(whole.ending, Some(1));
     assert_eq!(whole.cards.len(), 1);

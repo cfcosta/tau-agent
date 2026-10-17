@@ -527,8 +527,8 @@ fn failure(ending: &Ending) -> String {
         Ending::Failed { error } => format!("It failed: {error}"),
         Ending::Stopped => "The person stopped it".into(),
         Ending::Retained { error, workspace } => format!(
-            "It could not finalize its work: {error}. Its workspace and \
-             bookmark were kept at {} for recovery",
+            "It could not finalize its work: {error}. Its workspace was \
+             kept at {}, with its commits, for recovery",
             workspace.display()
         ),
     }

@@ -962,10 +962,11 @@ fn a_fork_lands_on_its_parent_and_closes() {
     for file in ["a.txt", "b.txt", "c.txt"] {
         assert!(main_dir.join(file).exists(), "{file}");
     }
-    // The fork is closed: no workspace, no bookmark.
+    // The fork is closed: no workspace, no head.
     assert!(!fork_dir.exists());
-    let fork_bookmark = format!("tau/{}", fork.id.0);
-    assert_eq!(project.blocking().bookmark(&fork_bookmark).unwrap(), None);
+    let fork_head = tau_vcs_host::Head::Run(fork.id.clone());
+    assert_eq!(project.blocking().head(&fork_head).unwrap(), None);
+    assert!(project.blocking().run_heads().unwrap().is_empty());
     // The main chat commits on trunk: landing on it moves main.
     assert_eq!(project.blocking().trunk().unwrap(), landed.head);
     // Landing again finds nothing to land.
@@ -1326,6 +1327,7 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     );
     // The sub-agent is closed, landed on main.
     assert!(project.blocking().workspaces().unwrap().is_empty());
+    assert!(project.blocking().run_heads().unwrap().is_empty());
     assert!(project.blocking().bookmarks("tau/").unwrap().is_empty());
     assert!(matches!(
         host.block_on(host.ending_of(&child)).unwrap(),
@@ -1550,14 +1552,14 @@ fn a_sub_agent_that_changes_nothing_is_reported_with_its_answer() {
     changes_nothing_and_is_reported(false);
 }
 
-/// The same with no bookmark left to name its head, as when no turn of
-/// it ended with a snapshot: it lands from its working copy.
+/// The same with no head left, as when no turn of it ended with a
+/// snapshot: it lands from its working copy.
 #[test]
-fn a_sub_agent_without_a_bookmark_is_reported_with_its_answer() {
+fn a_sub_agent_without_a_head_is_reported_with_its_answer() {
     changes_nothing_and_is_reported(true);
 }
 
-fn changes_nothing_and_is_reported(without_bookmark: bool) {
+fn changes_nothing_and_is_reported(without_head: bool) {
     let main_llm = ScriptedModel::new()
         .turn(|t| {
             t.tool_call(
@@ -1572,14 +1574,15 @@ fn changes_nothing_and_is_reported(without_bookmark: bool) {
         ScriptedModel::new().turn(|t| t.text("README.md says hello"));
     let (host, mut events, main, child, dirs) =
         detached_sub_agent(&main_llm, &child_llm);
-    if without_bookmark {
-        tau_vcs_host::ProjectRepo::open(
+    if without_head {
+        let project = tau_vcs_host::ProjectRepo::open(
             dirs[1].path().join("p"),
             Identity::default(),
         )
-        .unwrap()
-        .remove_bookmark(&tau_vcs_host::run_workspace::bookmark(&child))
         .unwrap();
+        let head = tau_vcs_host::Head::Run(child.clone());
+        project.remove_head(&head).unwrap();
+        assert_eq!(project.head(&head).unwrap(), None);
     }
     host.block_on(host.main_turn_ended(&main)).unwrap();
     let report = host
@@ -3126,7 +3129,7 @@ fn landing_keeps_a_chat_whose_final_commit_failed() {
     assert!(
         project
             .blocking()
-            .bookmark(&format!("tau/{}", chat.id.0))
+            .head(&tau_vcs_host::Head::Run(chat.id.clone()))
             .unwrap()
             .is_some()
     );
@@ -3264,7 +3267,7 @@ fn a_repository_without_an_agents_file_adds_nothing() {
 }
 
 /// A chat can land and go on (ADR 0034): its work joins main, and it
-/// keeps its workspace and bookmark and takes messages as before; its
+/// keeps its workspace and head and takes messages as before; its
 /// next landing brings only what it did since. Each landing's card is in
 /// main and in the chat, and none ends it. A landing tau closed in the
 /// middle of is finished at start without closing the chat, once.
@@ -3317,10 +3320,10 @@ fn a_chat_lands_and_goes_on() {
     assert_eq!(landed.changes.len(), 1);
     assert_eq!(project.blocking().trunk().unwrap(), landed.head);
     assert!(on_trunk("a.txt"));
-    // It goes on: no ending, its bookmark and workspace stay.
-    let bookmark = format!("tau/{}", chat.0);
+    // It goes on: no ending, its head and workspace stay.
+    let head = tau_vcs_host::Head::Run(chat.clone());
     assert_eq!(host.block_on(host.ending_of(&chat)).unwrap(), None);
-    assert!(project.blocking().bookmark(&bookmark).unwrap().is_some());
+    assert!(project.blocking().head(&head).unwrap().is_some());
     let dir = host.block_on(host.workspace(&chat)).unwrap();
     assert!(dir.join("a.txt").exists());
 
@@ -3344,7 +3347,7 @@ fn a_chat_lands_and_goes_on() {
     assert!(on_trunk("c.txt"));
     assert!(host.block_on(host.finish_landings()).unwrap().is_empty());
     assert_eq!(host.block_on(host.ending_of(&chat)).unwrap(), None);
-    assert!(project.blocking().bookmark(&bookmark).unwrap().is_some());
+    assert!(project.blocking().head(&head).unwrap().is_some());
 
     // From history, main and the chat each show the three landings, and
     // the chat has not ended.
@@ -3367,7 +3370,7 @@ fn a_chat_lands_and_goes_on() {
 
 /// A chat that landed or was dropped takes no more messages: the host
 /// refuses to resume or steer it, saying why, and makes it no new
-/// workspace or bookmark, a branch nothing would land. History still
+/// workspace or head, that nothing would land. History still
 /// loads both, with how they ended.
 #[test]
 fn a_landed_or_dropped_chat_takes_no_more_messages() {
@@ -3431,7 +3434,7 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
         assert_eq!(
             project
                 .blocking()
-                .bookmark(&format!("tau/{}", run.0))
+                .head(&tau_vcs_host::Head::Run(run.clone()))
                 .unwrap(),
             None
         );

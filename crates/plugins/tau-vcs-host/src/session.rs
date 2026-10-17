@@ -45,8 +45,9 @@ pub(crate) const TOOL_ATTRIBUTE: &str = "tau.vcs.tool";
 /// The operation attribute an undo sets to the operation it undid.
 pub(crate) const UNDO_ATTRIBUTE: &str = "tau.vcs.undo";
 /// The operation attribute of a checkpoint that only moved the run's
-/// head: the turn changed nothing. Undo passes over it, as it does over
-/// snapshots.
+/// head, a branch (a main chat's trunk): the turn changed nothing. Undo
+/// passes over it, as it does over snapshots. A run's own head moves
+/// with no operation (`crate::heads`).
 pub(crate) const HEAD_ATTRIBUTE: &str = "tau.vcs.bookmark";
 /// The operation attribute of a landing: the change ids it landed,
 /// separated by spaces. A turn's paths leave them out.
@@ -177,6 +178,10 @@ pub(crate) fn mutate<T>(
         let repo = if tx.repo().has_changes() {
             crate::colocate::commit_in(tx, what(tool), &git, &name, &root)?
         } else {
+            // A run's first turn that changed nothing claims its head
+            // with no operation (`crate::heads::point`): its ref is
+            // written now, as after one.
+            let _ = crate::heads::settle(&before.repo);
             before.repo.clone()
         };
         Ok((repo, value))

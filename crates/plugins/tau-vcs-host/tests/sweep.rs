@@ -1,8 +1,8 @@
 //! A sweep on a real project (`docs/reference/vcs.md`, "Sweeping at
 //! start"): what a kept run has stays, what a landed run left goes with
 //! its commits kept, a discarded run's commits go with its workspace and
-//! bookmark, and a workspace or bookmark no run owns goes. Sweeping
-//! again finds nothing.
+//! head, and a workspace or head no run owns goes. Sweeping again finds
+//! nothing.
 
 #![allow(
     clippy::disallowed_methods,
@@ -20,16 +20,18 @@ use jj_lib::{
     repo::Repo as _,
     workspace::Workspace,
 };
+use tau_agent::tool::RunId;
 use tau_testing::block_on_io as block_on;
 use tau_vcs_host::{
+    Head,
     MAIN_WORKSPACE,
     ProjectRepo,
     Vcs,
-    sweep::{Keep, Owner, RUN_BOOKMARK_PREFIX, Standing},
+    sweep::{Keep, Owner, Standing},
 };
 
 /// A run's workspace `name` on trunk, with `file` committed under the
-/// run's bookmark, `tau/<run>`. Returns the commit's change id.
+/// run's head. Returns the commit's change id.
 fn run_with_commit(
     project: &ProjectRepo,
     run: &str,
@@ -41,9 +43,12 @@ fn run_with_commit(
         .unwrap();
     std::fs::write(project.workspace_dir(name).join(file), "x\n").unwrap();
     let committed =
-        block_on(vcs.commit_all(format!("feat: {file}"), format!("tau/{run}")))
-            .unwrap();
+        block_on(vcs.commit_all(format!("feat: {file}"), head(run))).unwrap();
     (vcs, committed.change_id)
+}
+
+fn head(run: &str) -> Head {
+    Head::Run(RunId(run.into()))
 }
 
 /// Whether a visible commit holds the change `change` (reverse hex).
@@ -76,7 +81,7 @@ fn a_sweep_takes_what_no_kept_run_has() {
         run_with_commit(&project, "l", "wl", "l.txt");
     let (_dropped, dropped_change) =
         run_with_commit(&project, "d", "wd", "d.txt");
-    // The dropped run left work in `@` too, and a workspace and bookmark
+    // The dropped run left work in `@` too, and a workspace and head
     // belong to a run the store no longer has.
     std::fs::write(project.workspace_dir("wd").join("more.txt"), "y\n")
         .unwrap();
@@ -97,12 +102,19 @@ fn a_sweep_takes_what_no_kept_run_has() {
     ];
     let sweep = project.plan_sweep(&owners).unwrap();
     assert_eq!(sweep.forget, ["stray", "wd", "wl"]);
-    assert_eq!(sweep.remove, ["tau/d", "tau/gone", "tau/l"]);
+    let names = |runs: &[&str]| -> Vec<String> {
+        runs.iter().map(|run| head(run).to_string()).collect()
+    };
+    assert_eq!(sweep.remove, names(&["d", "gone", "l"]));
     assert_eq!(sweep.abandon.len(), 1);
     project.sweep(&sweep).unwrap();
 
     assert_eq!(project.workspaces().unwrap(), ["wk"]);
-    assert_eq!(project.bookmarks(RUN_BOOKMARK_PREFIX).unwrap(), ["tau/k"]);
+    assert_eq!(project.run_heads().unwrap(), names(&["k"]));
+    assert!(project.head(&head("k")).unwrap().is_some());
+    for gone in ["d", "gone", "l"] {
+        assert_eq!(project.head(&head(gone)).unwrap(), None, "{gone}");
+    }
     for gone in ["wd", "wl", "stray"] {
         assert!(!project.workspace_dir(gone).exists(), "{gone}");
     }

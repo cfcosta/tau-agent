@@ -26,13 +26,19 @@ use std::{
 };
 
 use hegel::{Generator as _, TestCase, generators as gs};
+use tau_agent::tool::RunId;
 use tau_testing::{block_on, git::git};
-use tau_vcs_host::{Identity, Link, ProjectRepo, UpdateFrom, Vcs};
+use tau_vcs_host::{Head, Identity, Link, ProjectRepo, UpdateFrom, Vcs};
 
 const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
 const TAGS: [&str; 2] = ["v1", "v2"];
 /// jj's root commit, in a Git-backed repository.
 const ROOT: &str = "0000000000000000000000000000000000000000";
+
+/// The head of the chat whose workspace is `name`.
+fn run_head(name: &str) -> Head {
+    Head::Run(RunId(name.into()))
+}
 
 /// The refs under `prefix` in the repository at `dir`, by short name,
 /// each with the object it names (a tag's own object, unpeeled), as
@@ -303,8 +309,8 @@ impl Machine {
         refs(&self.source_git(), "refs/heads/")
     }
 
-    /// The bookmarks the project should have, but for `tau/` ones: the
-    /// source's branches, with the main chat's moves on top.
+    /// The bookmarks the project should have: the source's branches,
+    /// with the main chat's moves on top. A run's head is none.
     fn want_bookmarks(&self) -> BTreeMap<String, Option<String>> {
         self.bookmarks_over(self.branches())
     }
@@ -378,7 +384,6 @@ impl Machine {
             .bookmarks("")
             .unwrap()
             .into_iter()
-            .filter(|name| !name.starts_with("tau/"))
             .map(|name| {
                 let id = self.project.bookmark(&name).unwrap();
                 (name, id)
@@ -611,9 +616,7 @@ impl Machine {
         // Chats stay as they were.
         for chat in &self.chats {
             assert_eq!(
-                self.project
-                    .bookmark(&format!("tau/{}", chat.name))
-                    .unwrap(),
+                self.project.head(&run_head(&chat.name)).unwrap(),
                 Some(chat.commit_id.clone()),
                 "an update moved {}",
                 chat.name
@@ -821,7 +824,7 @@ impl Machine {
         std::fs::write(self.project.workspace_dir(&name).join(&file), "c\n")
             .unwrap();
         let committed =
-            block_on(vcs.commit_all("chat", format!("tau/{name}"))).unwrap();
+            block_on(vcs.commit_all("chat", run_head(&name))).unwrap();
         let wc = self.project.workspace_head(&name).unwrap().unwrap();
         self.chats.push(Chat {
             name,

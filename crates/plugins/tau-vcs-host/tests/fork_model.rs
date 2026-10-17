@@ -21,11 +21,12 @@ use serde_json::json;
 use tau_agent::agent::Checkpoint;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs_host::{
+    Head,
     Identity,
     Link,
     ProjectRepo,
     RunWorkspace,
-    run_workspace::{PLUGIN, bookmark},
+    run_workspace::PLUGIN,
 };
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
@@ -187,7 +188,10 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
             );
             assert_eq!(&at_commit(&project, &link.commit_id), after);
         }
-        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
+        let head = project
+            .head(&Head::Run(outcome.run.clone()))
+            .unwrap()
+            .unwrap();
         if dirty {
             tc.event("the run left work to commit");
             let stack = project.stack(&head).unwrap();
@@ -247,7 +251,7 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
             "the fork's edits reached the run it came from"
         );
         assert_eq!(
-            project.bookmark(&bookmark(&outcome.run)).unwrap(),
+            project.head(&Head::Run(outcome.run.clone())).unwrap(),
             Some(head),
         );
     });

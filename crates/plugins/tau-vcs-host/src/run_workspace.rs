@@ -42,7 +42,7 @@ use tau_ai::{
 use crate::{
     TurnSnapshot,
     error::VcsError,
-    heads::{self, Head},
+    heads::Head,
     project::Project,
     vcs::{Identity, Vcs},
 };
@@ -62,12 +62,6 @@ with the message only.";
 
 /// The name the plugin stores its links under.
 pub const PLUGIN: &str = crate::ui::NAME;
-
-/// The name of a run's head ([`Head::Run`]), as
-/// [`crate::ProjectRepo::run_heads`] lists it.
-pub fn bookmark(run: &RunId) -> String {
-    heads::run_head_name(run)
-}
 
 /// A turn, and the commit that holds the files it left. Stored as the
 /// plugin's record after each turn, and for each change a landing
@@ -162,11 +156,6 @@ impl RunWorkspace {
         self.commits_to
             .clone()
             .unwrap_or_else(|| Head::Run(run.clone()))
-    }
-
-    /// The name of [`Self::head_of`]'s head.
-    pub fn bookmark_of(&self, run: &RunId) -> String {
-        self.head_of(run).to_string()
     }
 
     /// Starts a new run's workspace on `commit` (a full commit id in

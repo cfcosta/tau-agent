@@ -6,11 +6,12 @@
 //! through [`commit`] or [`commit_in`], which do the same: bookmarks
 //! and tags go out as Git's branches and tags, and Git's `HEAD` and
 //! index follow the working copy of the workspace the operation was
-//! written in, so `git` there sees what jj does. They also tag the
-//! operation as tau's ([`crate::operations`]). In a local repository
-//! (ADR 0043), tau's writes import Git's refs first ([`import_git`]),
-//! and the person's checkout, the Git store's own working tree, never
-//! has its `HEAD` or index moved.
+//! written in, so `git` there sees what jj does. Runs' heads, which are
+//! no bookmarks, go out after as `refs/tau/runs/*` ([`crate::heads`]).
+//! They also tag the operation as tau's ([`crate::operations`]). In a
+//! local repository (ADR 0043), tau's writes import Git's refs first
+//! ([`import_git`]), and the person's checkout, the Git store's own
+//! working tree, never has its `HEAD` or index moved.
 
 #![allow(
     clippy::disallowed_methods,
@@ -55,7 +56,8 @@ pub(crate) fn ignore_jj_dir(workspace_root: &Path) -> Result<(), VcsError> {
 }
 
 /// Commits `tx` as tau's operation described `tau: <what>`, with the
-/// bookmarks and tags exported to the Git store first. No workspace's
+/// bookmarks and tags exported to the Git store first, and the runs'
+/// refs written after (`crate::heads::settle`). No workspace's
 /// `HEAD` moves: an operation that changes what a workspace has checked
 /// out goes through [`commit_in`]. `_git` is jj-cli's Git import/export
 /// lock, held from before any import the transaction made until the
@@ -67,7 +69,12 @@ pub(crate) fn commit(
 ) -> Result<Arc<ReadonlyRepo>, VcsError> {
     let description = crate::operations::tag(&mut tx, what.as_ref());
     export(&mut tx)?;
-    Ok(block_on(tx.commit(description))?)
+    let repo = block_on(tx.commit(description))?;
+    // The operation stands whatever happens to the refs: they are
+    // written again after the next one, and while a run's workspace
+    // exists its head is read from the workspace (`crate::heads`).
+    let _ = crate::heads::settle(&repo);
+    Ok(repo)
 }
 
 /// [`commit`], for an operation written in workspace `name`, whose

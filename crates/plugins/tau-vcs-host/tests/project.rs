@@ -359,7 +359,7 @@ fn check_diff_counts(fixture: &DiffFixture, files: &[Sides]) {
             }
         }
         runtime
-            .block_on(vcs.commit_all(format!("side {side}"), "tau/sides"))
+            .block_on(vcs.commit_all(format!("side {side}"), run_head("sides")))
             .unwrap()
             .commit_id
     };
@@ -443,7 +443,7 @@ fn links_follow_their_change() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(vcs.commit_all("turn 1", "tau/r1"))
+        .block_on(vcs.commit_all("turn 1", run_head("r1")))
         .unwrap();
     let link = Link {
         turn: 1,
@@ -525,4 +525,9 @@ fn the_main_chats_workspace_is_tau_main() {
     assert!(dir.join(".jj").is_dir(), "it stays");
     // The project still opens.
     assert_eq!(project.trunk().unwrap(), head);
+}
+
+/// The head of run `run` (`Head::Run`).
+fn run_head(run: &str) -> tau_vcs_host::Head {
+    tau_vcs_host::Head::Run(tau_agent::tool::RunId(run.into()))
 }

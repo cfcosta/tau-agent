@@ -352,8 +352,8 @@ fn ending_text(ending: &Ending) -> String {
             format!("it failed ({error}), and its changes were dropped")
         }
         Ending::Retained { error, workspace } => format!(
-            "it could not finalize its work ({error}); its workspace and \
-             bookmark were kept at {} for recovery",
+            "it could not finalize its work ({error}); its workspace was \
+             kept at {}, with its commits, for recovery",
             workspace.display()
         ),
         Ending::Done { .. } | Ending::Kept { .. } => "it finished".to_owned(),

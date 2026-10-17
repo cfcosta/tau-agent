@@ -130,7 +130,7 @@ fn accepting_markerless_contents_keeps_native_executable_choice() {
                 std::fs::Permissions::from_mode(0o755),
             )
             .unwrap();
-            block_on(parent.commit_all("executable base", "tau/parent"))
+            block_on(parent.commit_all("executable base", run_head("parent")))
                 .unwrap()
                 .commit_id
         } else {
@@ -138,16 +138,18 @@ fn accepting_markerless_contents_keeps_native_executable_choice() {
         };
         let child = project.add_workspace("child", &base).unwrap();
         std::fs::remove_file(parent.root().join("script")).unwrap();
-        block_on(parent.commit_all("delete script", "tau/parent")).unwrap();
+        block_on(parent.commit_all("delete script", run_head("parent")))
+            .unwrap();
         let path = child.root().join("script");
         std::fs::write(&path, "#!/bin/sh\necho hello\n").unwrap();
         let mode = if child_exec { 0o755 } else { 0o644 };
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
             .unwrap();
-        let edit =
-            block_on(child.commit_all("edit script", "tau/child")).unwrap();
+        let edit = block_on(child.commit_all("edit script", run_head("child")))
+            .unwrap();
         let landing =
-            block_on(parent.land(&edit.commit_id, "tau/parent", true)).unwrap();
+            block_on(parent.land(&edit.commit_id, run_head("parent"), true))
+                .unwrap();
         assert_eq!(landing.conflicts, ["script"]);
         let bytes = std::fs::read(parent.root().join("script")).unwrap();
         assert_eq!(bytes, b"#!/bin/sh\necho hello\n");
@@ -205,7 +207,7 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
     let dir = parent.root().to_owned();
     write(&dir, &conflicts[0].path, &conflicts[0].base);
     let checkpoint =
-        block_on(parent.commit_all("common base", "tau/parent")).unwrap();
+        block_on(parent.commit_all("common base", run_head("parent"))).unwrap();
     let child = project
         .add_workspace("child", &checkpoint.commit_id)
         .unwrap();
@@ -216,8 +218,8 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
         }
     }
     let parent_side =
-        block_on(parent.commit_all("parent side", "tau/parent")).unwrap();
-    block_on(child.commit_all("child edits", "tau/child")).unwrap();
+        block_on(parent.commit_all("parent side", run_head("parent"))).unwrap();
+    block_on(child.commit_all("child edits", run_head("child"))).unwrap();
     // A stacked deletion is essential: one flat commit did not expose
     // the historical working-copy representation/cache failure.
     for case in &conflicts {
@@ -226,9 +228,10 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
         }
     }
     let child_side =
-        block_on(child.commit_all("child deletions", "tau/child")).unwrap();
+        block_on(child.commit_all("child deletions", run_head("child")))
+            .unwrap();
     let landing =
-        block_on(parent.land(&child_side.commit_id, "tau/parent", true))
+        block_on(parent.land(&child_side.commit_id, run_head("parent"), true))
             .unwrap();
     let mut expected: BTreeSet<String> =
         conflicts.iter().map(|case| case.path.clone()).collect();
@@ -250,7 +253,7 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
     // The untouched empty-v-deleted sibling must remain conflicted.
     std::fs::remove_file(dir.join(&conflicts[0].path)).unwrap();
     let edited =
-        block_on(parent.commit_all("resolve one conflict", "tau/parent"))
+        block_on(parent.commit_all("resolve one conflict", run_head("parent")))
             .unwrap();
     expected.remove(&conflicts[0].path);
     assert_eq!(
@@ -312,9 +315,10 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
             Step::CommitUnrelated => {
                 let path = format!("unrelated-{index}.txt");
                 std::fs::write(dir.join(&path), b"unrelated\n").unwrap();
-                let committed =
-                    block_on(parent.commit_all("unrelated work", "tau/parent"))
-                        .unwrap();
+                let committed = block_on(
+                    parent.commit_all("unrelated work", run_head("parent")),
+                )
+                .unwrap();
                 assert_eq!(
                     committed.paths,
                     [path],
@@ -433,9 +437,10 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
         };
         selected.insert(case.path.clone(), value.clone());
         remaining.remove(&case.path);
-        let committed =
-            block_on(parent.commit_all("select parent side", "tau/parent"))
-                .unwrap();
+        let committed = block_on(
+            parent.commit_all("select parent side", run_head("parent")),
+        )
+        .unwrap();
         assert_eq!(committed.paths, std::slice::from_ref(&case.path));
         let head = project.workspace_head("parent").unwrap().unwrap();
         assert_eq!(
@@ -453,7 +458,7 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
             None => assert!(!dir.join(&case.path).exists()),
         }
     }
-    let head = project.bookmark("tau/parent").unwrap().unwrap();
+    let head = project.head(&run_head("parent")).unwrap().unwrap();
     for case in &conflicts {
         assert_eq!(
             project.file_at(&head, &case.path).unwrap(),
@@ -462,4 +467,9 @@ fn snapshots_keep_conflicts_until_changed_or_explicitly_resolved(tc: TestCase) {
                 .map(|bytes| (bytes.clone(), false))
         );
     }
+}
+
+/// The head of run `run` (`Head::Run`).
+fn run_head(run: &str) -> tau_vcs_host::Head {
+    tau_vcs_host::Head::Run(tau_agent::tool::RunId(run.into()))
 }

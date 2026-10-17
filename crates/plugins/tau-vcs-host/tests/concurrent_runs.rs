@@ -24,7 +24,8 @@
 //! - `ProjectRepo::current` resolves every change a run committed to one
 //!   commit, and once the main chat has caught up, trunk holds the main
 //!   chat's commits and every landed chat's;
-//! - an open chat's bookmark names its newest commit.
+//! - an open chat's head names its newest commit, and Git has it as
+//!   `refs/tau/runs/<chat>`.
 //!
 //! At the end the main chat catches up and commits once more, and
 //! trunk's files are the model's: the main chat's, upstream's, and the
@@ -48,8 +49,10 @@ use std::{
 };
 
 use hegel::{TestCase, generators as gs};
+use tau_agent::tool::RunId;
 use tau_testing::{block_on, git::git};
 use tau_vcs_host::{
+    Head,
     Identity,
     Link,
     MAIN_WORKSPACE,
@@ -57,6 +60,11 @@ use tau_vcs_host::{
     UpdateFrom,
     Vcs,
 };
+
+/// The head of chat `name`, whose run is named after its workspace.
+fn run_head(name: &str) -> Head {
+    Head::Run(RunId(name.into()))
+}
 
 /// A file's contents; `None` is no file.
 type Val = Option<&'static str>;
@@ -239,8 +247,8 @@ struct Chat {
     wc: Val,
     /// Its file in its newest commit.
     committed: Val,
-    /// A commit has set `tau/<name>`.
-    bookmarked: bool,
+    /// A commit has pointed its head.
+    headed: bool,
     /// The changes it committed, as `(change id, commit id)`.
     changes: Vec<(String, String)>,
     state: State,
@@ -327,13 +335,13 @@ impl Model {
             .collect()
     }
 
-    /// A chat that can land: open, its work committed, with a bookmark.
+    /// A chat that can land: open, its work committed, with a head.
     fn landable(&self) -> Vec<usize> {
         self.open_chats()
             .into_iter()
             .filter(|&c| {
                 let chat = &self.chats[c];
-                chat.bookmarked && chat.wc == chat.committed
+                chat.headed && chat.wc == chat.committed
             })
             .collect()
     }
@@ -367,15 +375,15 @@ impl Model {
             MainAct::Land(c) => {
                 let name = self.chats[c].name.clone();
                 Box::new(move || {
-                    let bookmark = format!("tau/{name}");
+                    let chat_head = run_head(&name);
                     catch_up(&project)?;
                     // After the catch-up, which may restack the chat:
                     // `Host::land` reads it before, and lands a stale
                     // head (`landing_a_chat_after_an_update_makes_it_divergent`).
                     let head = project
-                        .bookmark(&bookmark)
+                        .head(&chat_head)
                         .map_err(|e| e.to_string())?
-                        .ok_or("the chat has no bookmark")?;
+                        .ok_or("the chat has no head")?;
                     let trunk = project.trunk().map_err(|e| e.to_string())?;
                     let parent = project
                         .add_workspace(MAIN_WORKSPACE, &trunk)
@@ -386,21 +394,20 @@ impl Model {
                         .forget_workspace(&name)
                         .map_err(|e| format!("forget: {e}"))?;
                     project
-                        .remove_bookmark(&bookmark)
-                        .map_err(|e| format!("remove bookmark: {e}"))?;
+                        .remove_head(&chat_head)
+                        .map_err(|e| format!("remove head: {e}"))?;
                     Ok(Outcome::Landed(landing))
                 })
             }
             MainAct::Drop(c) => {
                 let name = self.chats[c].name.clone();
                 Box::new(move || {
-                    let bookmark = format!("tau/{name}");
+                    let chat_head = run_head(&name);
                     // As `Host::drop_child`: the main chat catches up,
                     // and keeps what its working copy stands on.
                     catch_up(&project)?;
-                    let head = project
-                        .bookmark(&bookmark)
-                        .map_err(|e| e.to_string())?;
+                    let head =
+                        project.head(&chat_head).map_err(|e| e.to_string())?;
                     if let Some(head) = head {
                         let wc = project
                             .workspace_head(MAIN_WORKSPACE)
@@ -418,8 +425,8 @@ impl Model {
                         .forget_workspace(&name)
                         .map_err(|e| format!("forget: {e}"))?;
                     project
-                        .remove_bookmark(&bookmark)
-                        .map_err(|e| format!("remove bookmark: {e}"))?;
+                        .remove_head(&chat_head)
+                        .map_err(|e| format!("remove head: {e}"))?;
                     Ok(Outcome::Done)
                 })
             }
@@ -476,7 +483,7 @@ impl Model {
         let chat = &self.chats[c];
         let vcs = chat.vcs.clone();
         let dir = self.repo.project.workspace_dir(&chat.name);
-        let bookmark = format!("tau/{}", chat.name);
+        let chat_head = run_head(&chat.name);
         let file = chat_file(c);
         let job: Job = match act {
             ChatAct::Idle => return None,
@@ -486,13 +493,13 @@ impl Model {
             }),
             ChatAct::Snapshot(value) => Box::new(move || {
                 write(&dir, &file, value);
-                block_on(vcs.end_turn(bookmark, None))
+                block_on(vcs.end_turn(chat_head, None))
                     .map(Outcome::Snapshot)
                     .map_err(|e| format!("end_turn: {e}"))
             }),
             ChatAct::Commit(value) => Box::new(move || {
                 write(&dir, &file, value);
-                block_on(vcs.commit_all("chat turn", bookmark))
+                block_on(vcs.commit_all("chat turn", chat_head))
                     .map(Outcome::Committed)
                     .map_err(|e| format!("commit: {e}"))
             }),
@@ -606,7 +613,7 @@ impl Model {
                     vcs,
                     wc: None,
                     committed: None,
-                    bookmarked: false,
+                    headed: false,
                     changes: Vec::new(),
                     state: State::Open,
                 });
@@ -623,7 +630,7 @@ impl Model {
                 ChatAct::Commit(value) => {
                     chat.wc = value;
                     chat.committed = value;
-                    chat.bookmarked = true;
+                    chat.headed = true;
                     let Some(Outcome::Committed(c)) = results.remove(&name)
                     else {
                         unreachable!()
@@ -704,23 +711,44 @@ impl Model {
                 );
             }
         }
+        let mut refs = BTreeMap::new();
         for chat in open {
             let now = project
                 .current(
                     chat.changes.iter().map(|(ch, co)| change_link(ch, co)),
                 )
                 .expect("every committed change is one commit");
-            let bookmark =
-                project.bookmark(&format!("tau/{}", chat.name)).unwrap();
+            let head = project.head(&run_head(&chat.name)).unwrap();
             if let Some(last) = now.last() {
                 assert_eq!(
-                    bookmark.as_ref(),
+                    head.as_ref(),
                     Some(&last.commit_id),
-                    "{}'s bookmark",
+                    "{}'s head",
                     chat.name
                 );
             }
+            if let Some(head) = head {
+                refs.insert(run_head(&chat.name).to_string(), head);
+            }
         }
+        // Git has each open chat's head, and no other run's: a closed
+        // chat's ref went with it.
+        let listed: BTreeMap<String, String> = git(
+            project.main_dir(),
+            &[
+                "for-each-ref",
+                "--format=%(refname) %(objectname)",
+                "refs/tau/",
+            ],
+        )
+        .lines()
+        .map(|line| {
+            let (name, id) = line.split_once(' ').unwrap();
+            (name.to_owned(), id.to_owned())
+        })
+        .collect();
+        assert_eq!(listed, refs, "refs/tau");
+        assert_eq!(project.bookmarks("tau/").unwrap(), Vec::<String>::new());
     }
 
     /// The main chat catches up and commits all it has: trunk's files
@@ -1034,7 +1062,7 @@ fn a_catch_up_racing_a_chat_turn_keeps_the_chats_work() {
             (
                 "chat",
                 Box::new(move || {
-                    block_on(vcs.end_turn("tau/c0", None))
+                    block_on(vcs.end_turn(run_head("c0"), None))
                         .map(Outcome::Snapshot)
                         .map_err(|e| e.to_string())
                 }),
@@ -1119,14 +1147,14 @@ fn dropping_a_chat_after_an_update_keeps_the_main_chats_commits() {
             .unwrap();
     let chat = repo.project.add_workspace("c0", &main.commit_id).unwrap();
     write(&repo.project.workspace_dir("c0"), "chat0.txt", Some("x\n"));
-    block_on(chat.commit_all("chat turn", "tau/c0")).unwrap();
+    block_on(chat.commit_all("chat turn", run_head("c0"))).unwrap();
     repo.push_upstream(Some("x\n"));
     repo.project
         .update(UpdateFrom::Checkout(&repo.src()))
         .unwrap();
     // `Host::drop_child`.
     catch_up(&repo.project).unwrap();
-    let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    let head = repo.project.head(&run_head("c0")).unwrap().unwrap();
     let wc = repo
         .project
         .workspace_head(MAIN_WORKSPACE)
@@ -1142,8 +1170,8 @@ fn dropping_a_chat_after_an_update_keeps_the_main_chats_commits() {
 /// A landing given a chat head that a catch-up rewrote since it was
 /// read is refused, naming the head, and changes nothing.
 ///
-/// `Host::landing` read the chat's head from its bookmark, then caught
-/// the main chat up, which restacked the chat and moved its bookmark.
+/// `Host::landing` read the chat's head, then caught the main chat up,
+/// which restacked the chat and moved its head.
 /// `Vcs::land` then took what the old head had that the main chat's new
 /// head lacked: the old copies of the main chat's commit and the chat's,
 /// rebased again beside the new ones, and failed with
@@ -1158,12 +1186,12 @@ fn a_landing_refuses_a_head_that_was_rewritten() {
             .unwrap();
     let chat = repo.project.add_workspace("c0", &main.commit_id).unwrap();
     write(&repo.project.workspace_dir("c0"), "chat0.txt", Some("x\n"));
-    block_on(chat.commit_all("chat turn", "tau/c0")).unwrap();
+    block_on(chat.commit_all("chat turn", run_head("c0"))).unwrap();
     repo.push_upstream(Some("x\n"));
     repo.project
         .update(UpdateFrom::Checkout(&repo.src()))
         .unwrap();
-    let stale = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    let stale = repo.project.head(&run_head("c0")).unwrap().unwrap();
     catch_up(&repo.project).unwrap();
     let trunk = repo.project.trunk().unwrap();
     let parent = repo.project.add_workspace(MAIN_WORKSPACE, &trunk).unwrap();
@@ -1176,7 +1204,7 @@ fn a_landing_refuses_a_head_that_was_rewritten() {
     );
     assert_eq!(repo.project.trunk().unwrap(), trunk, "nothing moved");
     // The head read after the catch-up lands.
-    let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    let head = repo.project.head(&run_head("c0")).unwrap().unwrap();
     let landing =
         block_on(parent.land(head, repo.trunk_name.clone(), true)).unwrap();
     assert_eq!(landing.changes.len(), 1);
@@ -1203,10 +1231,11 @@ fn a_landing_follows_an_update_made_after_the_head_was_read() {
             .unwrap();
     let chat = repo.project.add_workspace("c0", &main.commit_id).unwrap();
     write(&repo.project.workspace_dir("c0"), "chat0.txt", Some("x\n"));
-    let committed = block_on(chat.commit_all("chat turn", "tau/c0")).unwrap();
+    let committed =
+        block_on(chat.commit_all("chat turn", run_head("c0"))).unwrap();
     // `Host::land`: the catch-up, then the chat's head.
     catch_up(&repo.project).unwrap();
-    let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
+    let head = repo.project.head(&run_head("c0")).unwrap().unwrap();
     // The update, between the read and the landing.
     let up = repo.push_upstream(Some("x\n"));
     repo.project
@@ -1240,7 +1269,7 @@ fn a_landing_follows_an_update_made_after_the_head_was_read() {
 
 /// The repository's lock never deadlocks: threads that each take turns
 /// in their own chat, update, add and forget workspaces, drop commits and
-/// remove bookmarks, all on one repository, all finish, and the main
+/// remove heads, all on one repository, all finish, and the main
 /// chat's catch-up and commit after them see one trunk.
 // Real threads, a hundred-odd jj operations and a two-minute guard: a
 // stress run for the nightly tier.
@@ -1267,11 +1296,11 @@ fn the_repository_lock_never_deadlocks() {
             for turn in 0..10 {
                 let value = ["x\n", "y\n"][turn % 2];
                 write(&dir, &chat_file(c), Some(value));
-                let bookmark = format!("tau/c{c}");
+                let chat_head = run_head(&format!("c{c}"));
                 if turn % 3 == 0 {
-                    block_on(vcs.end_turn(bookmark, None)).unwrap();
+                    block_on(vcs.end_turn(chat_head, None)).unwrap();
                 } else {
-                    block_on(vcs.commit_all("chat turn", bookmark)).unwrap();
+                    block_on(vcs.commit_all("chat turn", chat_head)).unwrap();
                 }
             }
             done.send(()).unwrap();
@@ -1305,11 +1334,12 @@ fn the_repository_lock_never_deadlocks() {
                 let vcs = project.add_workspace(&name, &trunk).unwrap();
                 write(&project.workspace_dir(&name), "s.txt", Some("x\n"));
                 let head =
-                    block_on(vcs.commit_all("scratch", "tau/scratch")).unwrap();
+                    block_on(vcs.commit_all("scratch", run_head("scratch")))
+                        .unwrap();
                 drop(vcs);
                 project.forget_workspace(&name).unwrap();
                 project.abandon_between(&trunk, &head.commit_id).unwrap();
-                project.remove_bookmark("tau/scratch").unwrap();
+                project.remove_head(&run_head("scratch")).unwrap();
             }
             done.send(()).unwrap();
         }));
@@ -1408,7 +1438,7 @@ fn a_divergent_working_copy_is_stale() {
     let before =
         pollster::block_on(workspace.repo_loader().load_at_head()).unwrap();
 
-    block_on(chat.end_turn("tau/c0", None)).unwrap();
+    block_on(chat.end_turn(run_head("c0"), None)).unwrap();
 
     let id = before
         .view()

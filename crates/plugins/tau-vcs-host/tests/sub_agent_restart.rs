@@ -43,7 +43,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
     )
     .unwrap();
     runtime
-        .block_on(stale.commit_all("feat: stale", "tau/old"))
+        .block_on(stale.commit_all("feat: stale", run_head("old")))
         .unwrap();
     drop(stale);
     runtime.block_on(async {
@@ -126,4 +126,9 @@ fn ready_child(
     move |workspace, model| {
         Box::pin(std::future::ready(child(workspace, model)))
     }
+}
+
+/// The head of run `run` (`Head::Run`).
+fn run_head(run: &str) -> tau_vcs_host::Head {
+    tau_vcs_host::Head::Run(tau_agent::tool::RunId(run.into()))
 }

@@ -30,13 +30,14 @@ use tau_ai::{
 };
 use tau_testing::scripted::{ScriptedModel, TurnBuilder};
 use tau_vcs_host::{
+    Head,
     Identity,
     Link,
     ProjectRepo,
     RunWorkspace,
     Spawn,
     SubAgents,
-    run_workspace::{PLUGIN, bookmark},
+    run_workspace::PLUGIN,
     sub_agents::{ChildModel, Ending, MAX_RUNNING, Taken},
 };
 
@@ -104,7 +105,7 @@ async fn workspace_of(
 /// The descriptions on `run`'s bookmark, oldest first: the work it has
 /// for the host to land.
 fn stack_of(project: &ProjectRepo, run: &RunId) -> Vec<String> {
-    let head = project.bookmark(&bookmark(run)).unwrap().unwrap();
+    let head = project.head(&Head::Run(run.clone())).unwrap().unwrap();
     project
         .stack(&head)
         .unwrap()
@@ -639,7 +640,7 @@ fn a_sub_agent_not_to_land_keeps_its_work_beside_the_callers() {
         assert_eq!(text, "child.txt is written");
         // Its one change is on its bookmark, past the caller's head, and
         // its workspace is gone.
-        let head = project.bookmark(&bookmark(&run)).unwrap().unwrap();
+        let head = project.head(&Head::Run(run.clone())).unwrap().unwrap();
         let stack = project.stack(&head).unwrap();
         let ids: Vec<&str> = stack
             .iter()

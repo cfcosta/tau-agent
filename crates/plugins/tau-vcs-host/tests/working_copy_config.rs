@@ -155,11 +155,12 @@ fn a_conflict_is_written_and_shown_in_the_configured_style(tc: TestCase) {
     let parent = project.add_workspace("parent", &trunk).unwrap();
     let child = project.add_workspace("child", &trunk).unwrap();
     std::fs::write(parent.root().join("a.txt"), format!("{ours}\n")).unwrap();
-    block_on(parent.commit_all("ours", "tau/parent")).unwrap();
+    block_on(parent.commit_all("ours", run_head("parent"))).unwrap();
     std::fs::write(child.root().join("a.txt"), format!("{theirs}\n")).unwrap();
-    let edit = block_on(child.commit_all("theirs", "tau/child")).unwrap();
+    let edit = block_on(child.commit_all("theirs", run_head("child"))).unwrap();
     let landing =
-        block_on(parent.land(&edit.commit_id, "tau/parent", true)).unwrap();
+        block_on(parent.land(&edit.commit_id, run_head("parent"), true))
+            .unwrap();
     assert_eq!(landing.conflicts, ["a.txt"]);
     let expected = expected_markers(style);
 
@@ -256,7 +257,7 @@ fn a_diff_shows_the_configured_context(tc: TestCase) {
         })
         .collect();
     std::fs::write(run.root().join("a.txt"), edited).unwrap();
-    let commit = block_on(run.commit_all("edit", "tau/run")).unwrap();
+    let commit = block_on(run.commit_all("edit", run_head("run"))).unwrap();
     let diff = project.diff(&trunk, &commit.commit_id).unwrap();
     let shown = diff[0]
         .text
@@ -271,4 +272,9 @@ fn a_diff_shows_the_configured_context(tc: TestCase) {
         "{}",
         diff[0].text
     );
+}
+
+/// The head of run `run` (`Head::Run`).
+fn run_head(run: &str) -> tau_vcs_host::Head {
+    tau_vcs_host::Head::Run(tau_agent::tool::RunId(run.into()))
 }

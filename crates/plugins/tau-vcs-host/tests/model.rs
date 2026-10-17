@@ -546,8 +546,9 @@ impl Machine {
     #[rule]
     fn checkpoint(&mut self, _tc: TestCase) {
         self.wc.tree = self.disk();
-        let turn = block_on(self.vcs.commit_all("tau: run 1 turn 1", "tau/1"))
-            .unwrap();
+        let turn =
+            block_on(self.vcs.commit_all("tau: run 1 turn 1", run_head("1")))
+                .unwrap();
         let parent = self.parent_tree();
         if self.wc.tree == parent {
             assert!(!turn.changed);
@@ -843,7 +844,8 @@ fn undo_refuses_a_turn_checkpoint() {
     let machine = fresh();
     std::fs::write(machine.dir.path().join("a.txt"), "a\n").unwrap();
     let turn =
-        block_on(machine.vcs.commit_all("tau: run 1 turn 1", "tau/1")).unwrap();
+        block_on(machine.vcs.commit_all("tau: run 1 turn 1", run_head("1")))
+            .unwrap();
     assert!(turn.changed);
     let err = machine.call("vcs_undo", json!({})).unwrap_err();
     assert!(
@@ -955,4 +957,9 @@ fn a_diff_keeps_a_lone_carriage_return_in_its_line() {
         "{}",
         status["diff"]
     );
+}
+
+/// The head of run `run` (`Head::Run`).
+fn run_head(run: &str) -> tau_vcs_host::Head {
+    tau_vcs_host::Head::Run(tau_agent::tool::RunId(run.into()))
 }

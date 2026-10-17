@@ -55,6 +55,52 @@ pub fn project(home: &Path) -> ProjectRepo {
     project_with(home, &[("a.txt", "one\n")])
 }
 
+/// The project's Git refs under `prefix`, as `git for-each-ref` lists
+/// them, by name, at their commits.
+pub fn git_refs(
+    project: &ProjectRepo,
+    prefix: &str,
+) -> std::collections::BTreeMap<String, String> {
+    git(
+        project.main_dir(),
+        &["for-each-ref", "--format=%(refname) %(objectname)", prefix],
+    )
+    .lines()
+    .map(|line| {
+        let (name, id) = line.split_once(' ').unwrap();
+        (name.to_owned(), id.to_owned())
+    })
+    .collect()
+}
+
+/// No run's head is a branch to Git, nor a bookmark to jj (ADR 0043):
+/// none of the refs `git branch -a` lists, local and remote-tracking
+/// branches, is under `tau/`, and the project has no `tau/` bookmark.
+/// (`git branch` itself fails while `main/`'s `HEAD` is jj's unborn
+/// root, before the main chat's first catch-up.)
+pub fn assert_no_run_branches(project: &ProjectRepo) {
+    let branches = git(
+        project.main_dir(),
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    );
+    for name in branches.lines() {
+        assert!(
+            !name.contains("tau/"),
+            "git branch -a lists a run's head: {name}"
+        );
+    }
+    assert_eq!(
+        project.bookmarks("tau/").unwrap(),
+        Vec::<String>::new(),
+        "a run's head is a bookmark"
+    );
+}
+
 /// The coding agent on `workspace`, with the model's vcs tools when
 /// `vcs`.
 pub fn coder(llm: ScriptedModel, workspace: &RunWorkspace, vcs: bool) -> Agent {

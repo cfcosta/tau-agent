@@ -42,11 +42,12 @@ use serde_json::json;
 use tau_agent::{agent::Checkpoint, limits::Limits};
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs_host::{
+    Head,
     Identity,
     Link,
     ProjectRepo,
     RunWorkspace,
-    run_workspace::{PLUGIN, bookmark},
+    run_workspace::PLUGIN,
 };
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
@@ -575,7 +576,10 @@ fn check_turns(
         }
 
         // The run's stack and `@`.
-        let head = project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap();
+        let head = project
+            .head(&Head::Run(outcome.run.clone()))
+            .unwrap()
+            .unwrap();
         let stack: Vec<(String, Tree)> = project
             .stack(&head)
             .unwrap()

@@ -662,23 +662,25 @@ pub(crate) fn commit_all(
                 paths,
             }
         };
-        point_head(tx, head, &committed.commit_id, !committed.changed)?;
+        point_head(tx, head, &name, &committed.commit_id, !committed.changed)?;
         Ok(committed)
     })?;
     record.save(followed.as_ref())?;
     Ok(committed)
 }
 
-/// Points `head` at `commit` (hex) if it points elsewhere. `quiet`
-/// marks an operation that does nothing else, for undo to pass over.
+/// Points `head` at `commit` (hex), the newest commit of the run in
+/// workspace `name`, if it points elsewhere. `quiet` marks an operation
+/// that does nothing else, for undo to pass over.
 fn point_head(
     tx: &mut Transaction,
     head: &Head,
+    name: &WorkspaceName,
     commit: &str,
     quiet: bool,
 ) -> Result<(), VcsError> {
     let commit = CommitId::try_from_hex(commit).ok_or(VcsError::NotHex)?;
-    if heads::point(tx, head, &commit) && quiet {
+    if heads::point(tx, head, name, &commit)? && quiet {
         tx.set_attribute(HEAD_ATTRIBUTE.to_owned(), head.to_string());
     }
     Ok(())
@@ -744,7 +746,7 @@ pub(crate) fn end_turn(
                 .into_iter()
                 .map(|change| change.path)
                 .collect();
-        point_head(tx, run_head, &head.hex(), true)?;
+        point_head(tx, run_head, &name, &head.hex(), true)?;
         Ok(TurnSnapshot {
             commit_id: wc.id().hex(),
             change_id: wc.change_id().reverse_hex(),

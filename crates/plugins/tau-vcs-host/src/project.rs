@@ -538,7 +538,11 @@ impl ProjectRepo {
     }
 
     /// Opens the project at `root`, with each run's workspace made a
-    /// whole Git worktree where it is not one (`Self::link_worktree`).
+    /// whole Git worktree where it is not one (`Self::link_worktree`),
+    /// and runs' heads that were bookmarks moved to their refs
+    /// (`Self::move_run_heads`). Only a clone has those: a local
+    /// repository's `tau/*` branches are the person's, so
+    /// [`Self::open_local`] leaves them alone.
     pub fn open(
         root: impl Into<PathBuf>,
         identity: Identity,
@@ -555,6 +559,7 @@ impl ProjectRepo {
                 project.inner.identity.clone(),
             )?;
         }
+        project.move_run_heads()?;
         // At best: a workspace that cannot be mended now (one whose
         // making died before its working copy) does not keep the
         // project shut; its next use tries again, and says why.
@@ -1423,6 +1428,8 @@ impl ProjectRepo {
             someone_elses |= here && *other != name_buf;
         }
         if repo.view().get_wc_commit_id(&name_buf).is_some() {
+            // Its run's ref is its head once it is gone.
+            self.settle_heads()?;
             let mut tx = repo.start_transaction();
             block_on(tx.repo_mut().remove_workspace(&name_buf))?;
             block_on(tx.repo_mut().rebase_descendants())?;
@@ -1623,11 +1630,11 @@ impl ProjectRepo {
     /// The repository's lock, which every write takes
     /// (`crate::lock`). Reads load the repository at its newest
     /// operation and need none.
-    fn lock(&self) -> Result<crate::lock::RepoLock, VcsError> {
+    pub(crate) fn lock(&self) -> Result<crate::lock::RepoLock, VcsError> {
         crate::lock::lock_repo(&self.inner.layout.repo_path())
     }
 
-    fn load(&self) -> Result<Arc<ReadonlyRepo>, VcsError> {
+    pub(crate) fn load(&self) -> Result<Arc<ReadonlyRepo>, VcsError> {
         let main = self.main()?;
         Ok(block_on(main.repo_loader().load_at_head())?)
     }

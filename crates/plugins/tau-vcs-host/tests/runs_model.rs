@@ -8,8 +8,10 @@
 //! runs that point into it, each with the tree of its `@`, and trunk.
 //! What it holds to:
 //! - a turn commits what it changed on top of the run's head, and a turn
-//!   that changed nothing names the commit before it; the run's bookmark
-//!   `tau/<run>` names its newest commit;
+//!   that changed nothing names the commit before it; the run's head
+//!   (`Head::Run`) names its newest commit, as does its ref
+//!   `refs/tau/runs/<run>` in Git, and no run's head is a bookmark,
+//!   after a restart too;
 //! - a turn that ends as `RunWorkspace` ends one snapshots `@` and leaves
 //!   it uncommitted, listing the paths changed since the last snapshot,
 //!   with what each landing and catch-up since brought to the run's
@@ -24,7 +26,7 @@
 //!   change id, each tree rebased as jj rebases (`onto + old - base`,
 //!   path by path, resolved by jj's trivial merge, else a conflict); a
 //!   child already on the parent's head is not rewritten; the parent's
-//!   files and bookmark follow, and its uncommitted work moves on top;
+//!   files and head follow, and its uncommitted work moves on top;
 //!   the child closes;
 //! - moving a top-level run onto trunk restacks its changes and its `@`
 //!   the same way, reporting conflicts in `@` too; trunk moves forward
@@ -35,7 +37,7 @@
 //!   leaves a link to an abandoned change, or to a snapshot, where it
 //!   was;
 //! - `forget_workspace` deletes the directory and keeps the commits and
-//!   the bookmark.
+//!   the head.
 //!
 //! File contents are one line or empty, so jj's line merge of a file
 //! resolves exactly when its trivial merge of whole files does.
@@ -54,8 +56,10 @@ use std::{
 
 use common::merge::*;
 use hegel::{TestCase, generators as gs};
+use tau_agent::tool::RunId;
 use tau_testing::{block_on, git::git};
 use tau_vcs_host::{
+    Head,
     Identity,
     Link,
     MAIN_WORKSPACE,
@@ -98,8 +102,8 @@ struct Linked {
 struct Run {
     /// Its workspace: `tau-main` for the main chat.
     name: String,
-    /// The bookmark its commits move: trunk's for the main chat.
-    bookmark: String,
+    /// The head its commits move: trunk's branch for the main chat.
+    moves_head: Head,
     parent: Option<usize>,
     /// The run's newest commit.
     head: usize,
@@ -122,8 +126,8 @@ struct Run {
     moves: Vec<(Tree, Tree)>,
     turns: u32,
     state: State,
-    /// A turn has set `tau/<name>`.
-    bookmarked: bool,
+    /// A turn has pointed its head.
+    headed: bool,
     vcs: Vcs,
 }
 
@@ -199,7 +203,7 @@ impl Machine {
         let tree = machine.commits[0].tree.clone();
         machine.runs.push(Run {
             name: MAIN_WORKSPACE.to_owned(),
-            bookmark: machine.project.trunk_name().unwrap(),
+            moves_head: Head::Branch(machine.project.trunk_name().unwrap()),
             parent: None,
             head: 0,
             wc: tree.clone(),
@@ -210,7 +214,7 @@ impl Machine {
             since: None,
             turns: 0,
             state: State::Open,
-            bookmarked: true,
+            headed: true,
             vcs,
         });
         machine
@@ -405,17 +409,15 @@ impl Machine {
         let name = self.runs[run].name.clone();
         self.project.forget_workspace(&name).unwrap();
         self.project
-            .remove_bookmark(&self.runs[run].bookmark.clone())
+            .remove_head(&self.runs[run].moves_head)
             .unwrap();
         assert!(!self.project.workspace_dir(&name).exists());
         assert_eq!(
-            self.project
-                .bookmark(&self.runs[run].bookmark.clone())
-                .unwrap(),
+            self.project.head(&self.runs[run].moves_head).unwrap(),
             None
         );
         self.runs[run].state = state;
-        self.runs[run].bookmarked = false;
+        self.runs[run].headed = false;
     }
 
     /// Whether `run` has no uncommitted work: a run commits what it
@@ -587,7 +589,7 @@ impl Machine {
         let r = &self.runs[run];
         let turn = block_on(r.vcs.commit_all(
             format!("tau: run {} turn {}", r.name, r.turns),
-            r.bookmark.clone(),
+            r.moves_head.clone(),
         ))
         .unwrap();
         self.runs[run].wc = tree.clone();
@@ -627,7 +629,7 @@ impl Machine {
         };
         let r = &mut self.runs[run];
         r.head = at;
-        r.bookmarked = true;
+        r.headed = true;
         if run == MAIN {
             // The main chat commits on trunk.
             self.trunk = at;
@@ -662,7 +664,7 @@ impl Machine {
         let r = &self.runs[run];
         let since = r.since.clone();
         let snapshot = block_on(r.vcs.end_turn(
-            r.bookmark.clone(),
+            r.moves_head.clone(),
             since.as_ref().map(|(id, ..)| id.clone()),
         ))
         .unwrap();
@@ -693,7 +695,7 @@ impl Machine {
         r.wc = tree.clone();
         r.seen = tree.clone();
         r.turns += 1;
-        r.bookmarked = true;
+        r.headed = true;
         r.moves.clear();
         r.since = Some((snapshot.commit_id.clone(), tree.clone()));
         r.links.push(Linked {
@@ -758,7 +760,7 @@ impl Machine {
         let links = self.runs[parent].links[..=k].to_vec();
         let name_of_fork = name.clone();
         self.runs.push(Run {
-            bookmark: format!("tau/{name}"),
+            moves_head: Head::Run(RunId(name.as_str().into())),
             name,
             parent: Some(parent),
             head: linked.at,
@@ -775,7 +777,7 @@ impl Machine {
             )),
             turns: link.turn,
             state: State::Open,
-            bookmarked: false,
+            headed: false,
             vcs,
         });
         // The fork starts on exactly that turn's files.
@@ -796,7 +798,7 @@ impl Machine {
         let trunk = self.commits[self.trunk].commit_id.clone();
         let vcs = self.project.add_workspace(&name, &trunk).unwrap();
         self.runs.push(Run {
-            bookmark: format!("tau/{name}"),
+            moves_head: Head::Run(RunId(name.as_str().into())),
             name,
             parent: Some(MAIN),
             head: self.trunk,
@@ -808,7 +810,7 @@ impl Machine {
             since: None,
             turns: 0,
             state: State::Open,
-            bookmarked: false,
+            headed: false,
             vcs,
         });
         self.check_files(self.runs.len() - 1);
@@ -819,29 +821,26 @@ impl Machine {
         let parent = self.runs[child].parent.unwrap();
         let child_head = self
             .project
-            .bookmark(&self.runs[child].bookmark.clone())
+            .head(&self.runs[child].moves_head)
             .unwrap()
-            .expect("a child's bookmark");
+            .expect("a child's head");
         assert_eq!(child_head, self.commits[self.runs[child].head].commit_id);
         let p = &self.runs[parent];
         let files = self.disk(parent);
-        let bookmark = self.project.bookmark(&p.bookmark.clone()).unwrap();
+        let parent_head = self.project.head(&p.moves_head).unwrap();
         let wc = self.wc_parent(parent);
 
         let preview =
-            block_on(p.vcs.land(&child_head, p.bookmark.clone(), false))
+            block_on(p.vcs.land(&child_head, p.moves_head.clone(), false))
                 .unwrap();
         let p = &self.runs[parent];
         assert_eq!(self.disk(parent), files, "a preview changed files");
-        assert_eq!(
-            self.project.bookmark(&p.bookmark.clone()).unwrap(),
-            bookmark
-        );
+        assert_eq!(self.project.head(&p.moves_head).unwrap(), parent_head);
         // A preview snapshots `@`, which may rewrite it; it stays put.
         assert_eq!(self.wc_parent(parent), wc);
 
         let landing =
-            block_on(p.vcs.land(&child_head, p.bookmark.clone(), true))
+            block_on(p.vcs.land(&child_head, p.moves_head.clone(), true))
                 .unwrap();
 
         // The model's landing.
@@ -929,13 +928,11 @@ impl Machine {
         }
         if !moving.is_empty() {
             assert_eq!(
-                self.project
-                    .bookmark(&self.runs[parent].bookmark.clone())
-                    .unwrap(),
+                self.project.head(&self.runs[parent].moves_head).unwrap(),
                 Some(landing.head.clone()),
-                "the parent's bookmark"
+                "the parent's head"
             );
-            self.runs[parent].bookmarked = true;
+            self.runs[parent].headed = true;
         }
 
         let new_head_tree = self.commits[self.runs[parent].head].tree.clone();
@@ -988,7 +985,7 @@ impl Machine {
         let wc = self.wc_parent(MAIN);
         let preview = block_on(r.vcs.move_onto(
             trunk_id.clone(),
-            r.bookmark.clone(),
+            r.moves_head.clone(),
             false,
         ))
         .unwrap();
@@ -1005,7 +1002,7 @@ impl Machine {
         r.seen = r.wc.clone();
         let r = &self.runs[MAIN];
         let moved =
-            block_on(r.vcs.move_onto(trunk_id, r.bookmark.clone(), true))
+            block_on(r.vcs.move_onto(trunk_id, r.moves_head.clone(), true))
                 .unwrap();
 
         // The model's catch-up.
@@ -1157,10 +1154,10 @@ impl Machine {
         tc.event("a drop");
         let parent = self.runs[child].parent.unwrap();
         let keep = self.runs[parent].head;
-        if self.runs[child].bookmarked {
+        if self.runs[child].headed {
             let head = self
                 .project
-                .bookmark(&self.runs[child].bookmark.clone())
+                .head(&self.runs[child].moves_head)
                 .unwrap()
                 .unwrap();
             let count = self
@@ -1258,7 +1255,7 @@ impl Machine {
         let candidates: Vec<usize> = self
             .closable()
             .into_iter()
-            .filter(|&r| self.runs[r].bookmarked)
+            .filter(|&r| self.runs[r].headed)
             .collect();
         tc.assume(!candidates.is_empty());
         let child = tc.draw(gs::sampled_from(candidates));
@@ -1279,7 +1276,7 @@ impl Machine {
     }
 
     /// Forgets a fork's workspace, as "keep branch" does for the others:
-    /// its directory goes, its commits and bookmark stay.
+    /// its directory goes, its commits and head stay.
     #[rule]
     fn forget(&mut self, tc: TestCase) {
         let candidates: Vec<usize> = self
@@ -1294,6 +1291,27 @@ impl Machine {
         self.project.forget_workspace(&name).unwrap();
         assert!(!self.project.workspace_dir(&name).exists());
         self.runs[run].state = State::Forgotten;
+    }
+
+    /// tau closes and starts again: the project and each open run's
+    /// workspace are opened anew, and the runs' heads read from Git
+    /// where their workspaces are gone.
+    #[rule]
+    fn restart(&mut self, tc: TestCase) {
+        tc.event("a restart");
+        let root = self.project.root().to_owned();
+        self.project = ProjectRepo::open(&root, Identity::default()).unwrap();
+        for r in self.open() {
+            let dir = self.project.workspace_dir(&self.runs[r].name);
+            let dir = if r == MAIN {
+                self.project.main_dir().to_owned()
+            } else {
+                dir
+            };
+            self.runs[r].vcs =
+                tau_testing::block_on_io(Vcs::open(&dir, Identity::default()))
+                    .unwrap();
+        }
     }
 
     /// Every operation in the project's log is tau's, the import that
@@ -1319,6 +1337,7 @@ impl Machine {
         let trunk = &self.commits[self.trunk].commit_id;
         assert_eq!(&self.project.trunk().unwrap(), trunk, "trunk");
 
+        let mut refs = BTreeMap::new();
         for (r, run) in self.runs.iter().enumerate() {
             let head = &self.commits[self.live(run.head)];
             if run.state == State::Open {
@@ -1332,19 +1351,31 @@ impl Machine {
                     run.name
                 );
             }
-            let bookmark =
-                self.project.bookmark(&run.bookmark.clone()).unwrap();
-            // The main chat's bookmark is trunk's, which an update moves
-            // without it.
+            let head_now = self.project.head(&run.moves_head).unwrap();
+            // The main chat's head is trunk's branch, which an update
+            // moves without it.
             let want = match run.state {
                 _ if r == MAIN => Some(trunk.clone()),
-                State::Open | State::Forgotten if run.bookmarked => {
+                State::Open | State::Forgotten if run.headed => {
                     Some(head.commit_id.clone())
                 }
                 _ => None,
             };
-            assert_eq!(bookmark, want, "{}'s bookmark", run.bookmark.clone());
+            assert_eq!(head_now, want, "{}", run.moves_head);
+            if r != MAIN
+                && let Some(want) = want
+            {
+                refs.insert(run.moves_head.to_string(), want);
+            }
         }
+        // Git has each run's head under `refs/tau/runs/`, and no branch
+        // of a run's; jj has no bookmark of a run's.
+        assert_eq!(
+            common::git_refs(&self.project, "refs/tau/"),
+            refs,
+            "refs/tau"
+        );
+        common::assert_no_run_branches(&self.project);
 
         // Every link, of every run, is where its change is now; one to
         // an abandoned change stays where it was, and a snapshot is that
@@ -1441,7 +1472,7 @@ fn chats_land_like_the_model(tc: TestCase) {
         m.do_turn(&tc, run, &edits);
     }
     for &chat in &ids {
-        if !m.runs[chat].bookmarked {
+        if !m.runs[chat].headed {
             m.do_turn(&tc, chat, &[]);
         }
     }

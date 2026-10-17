@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use tau_agent::tool::RunId;
 
-pub use crate::heads::RUN_BOOKMARK_PREFIX;
+pub use crate::heads::RUN_HEAD_PREFIX;
 use crate::{ProjectRepo, error::VcsError, heads::Head};
 
 /// Where a run stands, as far as its workspaces and head go.
@@ -55,7 +55,7 @@ pub struct Owner {
 pub struct Abandon {
     pub run: String,
     /// The name of its head, if the project has it.
-    pub bookmark: Option<String>,
+    pub head: Option<String>,
     /// Its workspaces the project still has: their working copies.
     pub workspaces: Vec<String>,
     pub keep: Keep,
@@ -138,7 +138,7 @@ pub fn plan(
                 .collect();
             (head.is_some() || !workspaces.is_empty()).then(|| Abandon {
                 run: owner.run.clone(),
-                bookmark: head,
+                head,
                 workspaces,
                 keep: owner.keep.clone(),
             })
@@ -187,7 +187,7 @@ impl ProjectRepo {
             for name in &abandon.workspaces {
                 heads.extend(self.workspace_head(name)?);
             }
-            if abandon.bookmark.is_some() {
+            if abandon.head.is_some() {
                 heads.extend(self.head(&head_of(&abandon.run))?);
             }
             for head in heads {
@@ -243,8 +243,14 @@ mod tests {
     }
 
     const WORKSPACES: [&str; 5] = ["w1", "w2", "w3", "w1-sub-0", "w4"];
-    const BOOKMARKS: [&str; 6] =
-        ["tau/a", "tau/b", "tau/c", "tau/d", "tau/gone", "main"];
+    const BOOKMARKS: [&str; 6] = [
+        "refs/tau/runs/a",
+        "refs/tau/runs/b",
+        "refs/tau/runs/c",
+        "refs/tau/runs/d",
+        "refs/tau/runs/gone",
+        "main",
+    ];
 
     /// What the project holds after `sweep`.
     fn after(
@@ -291,7 +297,7 @@ mod tests {
                     owner.run
                 );
             }
-            assert!(!sweep.remove.contains(&format!("tau/{}", owner.run)));
+            assert!(!sweep.remove.contains(&head_of(&owner.run).to_string()));
         }
         // What stays has a kept owner, or is not a run's.
         for name in &left_workspaces {
@@ -302,10 +308,10 @@ mod tests {
         }
         for name in &left_bookmarks {
             assert!(
-                !name.starts_with(RUN_BOOKMARK_PREFIX)
+                !name.starts_with(RUN_HEAD_PREFIX)
                     || kept
                         .iter()
-                        .any(|owner| format!("tau/{}", owner.run) == *name),
+                        .any(|owner| head_of(&owner.run).to_string() == *name),
                 "{name} stayed"
             );
         }
@@ -317,7 +323,7 @@ mod tests {
             sweep
                 .remove
                 .iter()
-                .all(|name| name.starts_with(RUN_BOOKMARK_PREFIX))
+                .all(|name| name.starts_with(RUN_HEAD_PREFIX))
         );
         // Commits go only for discarded runs, from what goes.
         for abandon in &sweep.abandon {
@@ -333,10 +339,7 @@ mod tests {
                     .all(|name| sweep.forget.contains(name))
             );
             assert!(
-                abandon
-                    .bookmark
-                    .iter()
-                    .all(|name| sweep.remove.contains(name))
+                abandon.head.iter().all(|name| sweep.remove.contains(name))
             );
         }
         // A discarded run with something left to sweep has its commits go.
@@ -344,7 +347,7 @@ mod tests {
             .iter()
             .filter(|owner| owner.standing == Standing::Discarded)
         {
-            let has = sweep.remove.contains(&format!("tau/{}", owner.run))
+            let has = sweep.remove.contains(&head_of(&owner.run).to_string())
                 || owner
                     .workspaces
                     .iter()

@@ -250,7 +250,7 @@ fn restack(
     } else {
         block_on(tx.repo_mut().check_out(workspace.to_owned(), &new_head))?;
     }
-    heads::point(tx, into, new_head.id());
+    heads::point(tx, into, workspace, new_head.id())?;
 
     let wc_id = tx
         .repo()
@@ -513,9 +513,9 @@ fn rebase_run(
     // repository whose trunk branch upstream deleted), has no newest
     // commit to name: the head names none rather than the root.
     if head.id() == tx.repo().store().root_commit_id() {
-        heads::clear(tx, run_head);
+        heads::clear(tx, run_head, workspace)?;
     } else {
-        heads::point(tx, run_head, head.id());
+        heads::point(tx, run_head, workspace, head.id())?;
     }
     let mut changes = Vec::new();
     for id in &moving {

@@ -1718,8 +1718,8 @@ impl Host {
     }
 
     /// Fails, saying why, when `run` landed or was dropped: going on
-    /// would rebuild its workspace and a new `tau/<run>` bookmark, a
-    /// branch nothing lands.
+    /// would rebuild its workspace and a new head, `refs/tau/runs/<run>`,
+    /// that nothing lands.
     async fn refuse_ended(&self, run: &RunId) -> anyhow::Result<()> {
         match self.ending_of(run).await? {
             None => Ok(()),

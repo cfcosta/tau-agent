@@ -31,15 +31,15 @@ impl Run<'_> {
             .unwrap();
     }
 
-    fn bookmark(&self) -> String {
-        format!("tau/{}", self.name)
+    fn head(&self) -> tau_vcs_host::Head {
+        tau_vcs_host::Head::Run(tau_agent::tool::RunId(self.name.into()))
     }
 
     /// Ends a turn; returns the commit that holds it.
     fn turn(&self) -> String {
         block(
             self.vcs
-                .commit_all(format!("{} turn", self.name), self.bookmark()),
+                .commit_all(format!("{} turn", self.name), self.head()),
         )
         .commit_id
     }
@@ -79,7 +79,7 @@ fn conflicts_stay_on_the_stack_until_resolved() {
     parent.turn();
     child.write("a.txt", "child\n");
     let child_head = child.turn();
-    block(parent.vcs.land(&child_head, parent.bookmark(), true));
+    block(parent.vcs.land(&child_head, parent.head(), true));
     assert_eq!(block(parent.vcs.conflicts()), ["a.txt"]);
     // Another file changed leaves the conflict where it is.
     parent.write("b.txt", "b\n");

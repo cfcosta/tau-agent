@@ -55,8 +55,10 @@ use jj_lib::{
     workspace_store::WorkspaceStore as _,
 };
 use pollster::block_on;
+use tau_agent::tool::RunId;
 use tau_testing::{block_on_io, git::git};
 use tau_vcs_host::{
+    Head,
     Identity,
     JjEnv,
     MAIN_WORKSPACE,
@@ -519,15 +521,15 @@ impl Twin {
             Step::RunCommit { run } => match self.run(*run) {
                 Some((name, vcs)) => block_on_io(vcs.commit_all(
                     format!("feat: {name}"),
-                    format!("tau/{name}"),
+                    Head::Run(RunId((*name).into())),
                 ))
                 .map(drop),
                 None => Ok(()),
             },
             Step::Land { run } => match self.run(*run) {
                 Some((name, _)) => {
-                    match self.project.bookmark(&format!("tau/{name}")).unwrap()
-                    {
+                    let head = Head::Run(RunId((*name).into()));
+                    match self.project.head(&head).unwrap() {
                         Some(head) => {
                             block_on_io(self.main.land(head, trunk_name, true))
                                 .map(drop)

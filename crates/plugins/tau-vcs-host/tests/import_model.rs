@@ -14,8 +14,14 @@
 use std::collections::BTreeMap;
 
 use hegel::{Generator as _, TestCase, generators as gs};
+use tau_agent::tool::RunId;
 use tau_testing::{block_on, git::git};
-use tau_vcs_host::{Identity, ProjectRepo, UpdateFrom};
+use tau_vcs_host::{Head, Identity, ProjectRepo, UpdateFrom};
+
+/// The head of the run that works beside the updates.
+fn run_head() -> Head {
+    Head::Run(RunId("run".into()))
+}
 
 const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
 /// jj's root commit, in a Git-backed repository.
@@ -174,7 +180,6 @@ fn check(project: &ProjectRepo, source: &Source, head: Option<String>) {
         .bookmarks("")
         .unwrap()
         .into_iter()
-        .filter(|name| !name.starts_with("tau/"))
         .map(|name| {
             let id = project.bookmark(&name).unwrap().expect("a bookmark");
             (name, id)
@@ -252,7 +257,7 @@ fn a_project_mirrors_its_source(tc: TestCase) {
     let run_dir = project.workspace_dir("run");
     std::fs::write(run_dir.join("run.txt"), "run\n").unwrap();
     let turn =
-        block_on(vcs.commit_all("tau: run 1 turn 1", "tau/run")).unwrap();
+        block_on(vcs.commit_all("tau: run 1 turn 1", run_head())).unwrap();
     let wc = project.workspace_head("run").unwrap();
 
     for op in &after {
@@ -273,7 +278,7 @@ fn a_project_mirrors_its_source(tc: TestCase) {
 
     // The run is as it was.
     assert_eq!(
-        project.bookmark("tau/run").unwrap(),
+        project.head(&run_head()).unwrap(),
         Some(turn.commit_id.clone())
     );
     assert_eq!(project.workspace_head("run").unwrap(), wc);
@@ -293,7 +298,7 @@ fn a_project_mirrors_its_source(tc: TestCase) {
     // It can go on working.
     std::fs::write(run_dir.join("run.txt"), "more\n").unwrap();
     let next =
-        block_on(vcs.commit_all("tau: run 1 turn 2", "tau/run")).unwrap();
+        block_on(vcs.commit_all("tau: run 1 turn 2", run_head())).unwrap();
     assert!(next.changed);
     assert_eq!(
         project.parent_of(&next.commit_id).unwrap(),

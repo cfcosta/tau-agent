@@ -17,15 +17,17 @@ use serde_json::json;
 use tau_agent::{
     limits::Limits,
     plugin::{FinishedRun, Plugin, PluginCtx, PluginError, PluginRun, RunPlan},
+    tool::RunId,
 };
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs_host::{
+    Head,
     Identity,
     Link,
     RunWorkspace,
     Spawn,
     Vcs,
-    run_workspace::{PLUGIN, bookmark},
+    run_workspace::PLUGIN,
     sub_agents::Ending,
 };
 
@@ -271,8 +273,9 @@ fn finalization_commits_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                 std::fs::read(parent.dir().join("existing.txt")).unwrap(),
                 b"base\n"
             );
-            let child_bookmark =
-                project.bookmark(&format!("tau/{}", child_run.id)).unwrap();
+            let child_bookmark = project
+                .head(&Head::Run(RunId(child_run.id.as_str().into())))
+                .unwrap();
             assert!(child_bookmark.is_some());
             if !successful {
                 assert!(records.iter().any(|(_, body)| {
@@ -283,7 +286,10 @@ fn finalization_commits_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
                         .is_string()
                 }));
                 assert_eq!(
-                    project.bookmark(&bookmark(&outcome.run)).unwrap().unwrap(),
+                    project
+                        .head(&Head::Run(outcome.run.clone()))
+                        .unwrap()
+                        .unwrap(),
                     project.trunk().unwrap()
                 );
             }
@@ -353,7 +359,7 @@ fn oversized_untracked_child_files_are_not_discarded() {
             let children = store.subagents(&outcome.run.0).await.unwrap();
             assert!(
                 project
-                    .bookmark(&format!("tau/{}", children[0].id))
+                    .head(&Head::Run(RunId(children[0].id.as_str().into())))
                     .unwrap()
                     .is_some()
             );

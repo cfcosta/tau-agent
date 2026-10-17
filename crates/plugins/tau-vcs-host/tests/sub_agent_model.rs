@@ -15,10 +15,10 @@
 //! - each sub-agent starts on the caller's head at the call. One that
 //!   answers, or stops at its limit, ends `Done` with its answer, its
 //!   commits and its leftovers (committed at its end with a message
-//!   asked with its own task) on its bookmark, its workspace kept for
+//!   asked with its own task) under its head, its workspace kept for
 //!   the host to land; nothing reaches the caller;
 //! - one that fails, or that the person stops, has its workspace and
-//!   bookmark dropped.
+//!   head dropped.
 
 #![allow(
     clippy::disallowed_methods,
@@ -47,6 +47,7 @@ use tau_ai::message::{InputBlock, Message, UserContent};
 use tau_store::Entry;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs_host::{
+    Head,
     Identity,
     Link,
     MAIN_WORKSPACE,
@@ -565,12 +566,12 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
             })
             .collect();
         assert_eq!(spawned.len(), calls);
-        let caller_bookmark = caller.bookmark_of(&outcome.run);
-        let caller_head = project.bookmark(&caller_bookmark).unwrap().unwrap();
+        let caller_head_of = caller.head_of(&outcome.run);
+        let caller_head = project.head(&caller_head_of).unwrap().unwrap();
 
         // What each sub-agent left, as it ended.
         let mut kept_workspaces = Vec::new();
-        let mut kept_bookmarks = Vec::new();
+        let mut kept_heads = Vec::new();
         if dirty {
             for (text, error) in &spawned {
                 assert!(*error, "{text}");
@@ -589,7 +590,7 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
             let (commits, held) = &planned[i];
             let run = &runs[&i];
             let name = started[&i].name().to_owned();
-            let sub_bookmark = format!("tau/{}", run.0);
+            let sub_head = Head::Run(run.clone());
             if stop_after.is_some_and(|after| ended.iter().position(|(j, _)| *j == i).unwrap() >= after) {
                 assert_eq!(*ending, Ending::Stopped, "sub-agent {i}");
                 continue;
@@ -632,9 +633,9 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
                     "sub-agent {i}'s leftover was described from {question:?}"
                 );
             }
-            // Its bookmark holds its commits on the caller's head, ready
-            // to land.
-            let head = project.bookmark(&sub_bookmark).unwrap().unwrap();
+            // Its head holds its commits on the caller's head, ready to
+            // land.
+            let head = project.head(&sub_head).unwrap().unwrap();
             let stack = walk(home.path(), &head, &caller_head);
             assert_eq!(stack.len(), commits.len(), "sub-agent {i}: {stack:?}");
             for (change, (desc, tree)) in stack.iter().zip(commits) {
@@ -651,7 +652,7 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
                 }
             }
             kept_workspaces.push(name);
-            kept_bookmarks.push(sub_bookmark);
+            kept_heads.push(sub_head.to_string());
         }
 
         // The caller's stack is its own work: nothing landed on it.
@@ -682,19 +683,28 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
         };
         workspaces.extend(kept_workspaces);
         workspaces.sort();
-        let mut bookmarks = if main_chat {
+        let mut heads = if main_chat {
             Vec::new()
         } else {
-            vec![caller_bookmark]
+            vec![caller_head_of.to_string()]
         };
-        bookmarks.extend(kept_bookmarks);
-        bookmarks.sort();
+        heads.extend(kept_heads);
+        heads.sort();
         let mut got = project.workspaces().unwrap();
         got.sort();
         assert_eq!(got, workspaces);
-        let mut got = project.bookmarks("tau/").unwrap();
-        got.sort();
-        assert_eq!(got, bookmarks);
+        assert_eq!(project.run_heads().unwrap(), heads);
+        // Git has each as `refs/tau/runs/<run>`, at its head: a kept
+        // sub-agent's workspace is gone, and its ref is its head. No
+        // run's head is a branch or a bookmark (ADR 0043).
+        let refs = common::git_refs(&project, "refs/tau/");
+        assert_eq!(refs.keys().cloned().collect::<Vec<_>>(), heads);
+        for (name, id) in &refs {
+            let run = Head::run_of(name).unwrap();
+            let head = project.head(&Head::Run(RunId(run.into()))).unwrap();
+            assert_eq!(head.as_ref(), Some(id), "{name}");
+        }
+        common::assert_no_run_branches(&project);
         // Every operation, each finalization's included, is tau's.
         let mut log = common::ops::OpLog::open(
             &project

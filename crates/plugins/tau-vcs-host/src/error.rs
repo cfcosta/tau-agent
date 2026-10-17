@@ -71,7 +71,7 @@ pub enum VcsError {
     DivergentAfterLanding(String),
     #[error(
         "The child's head {0} is no longer visible: it was rewritten or \
-         abandoned since it was read. Read the child's bookmark again."
+         abandoned since it was read. Read the child's head again."
     )]
     HiddenHead(String),
     #[error(
@@ -194,6 +194,10 @@ pub enum VcsError {
     AddWorkspace(#[source] WorkspaceInitError),
     #[error("Cannot export the bookmarks to Git: {0}")]
     ExportRefs(#[source] jj_lib::git::GitExportError),
+    #[error("Run `{0}` cannot have a head: its id is no Git ref name")]
+    RunHeadName(String),
+    #[error("Cannot write the runs' heads to Git: {0}")]
+    RunHeads(String),
     #[error("Cannot point Git's HEAD at the working copy: {0}")]
     ResetHead(#[source] jj_lib::git::GitResetHeadError),
     #[error("Cannot import the Git branches: {0}")]

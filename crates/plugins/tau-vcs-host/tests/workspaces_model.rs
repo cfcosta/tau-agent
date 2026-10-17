@@ -371,6 +371,9 @@ struct Machine {
     main_landed: Vec<usize>,
     /// The project's operation log, as another program reads it.
     log: common::ops::OpLog,
+    /// The runs, the chat and the idle one, whose heads a turn's end or
+    /// a final commit pointed.
+    headed: BTreeSet<&'static str>,
 }
 
 impl Machine {
@@ -432,6 +435,7 @@ impl Machine {
             main_since: Some((turn.commit_id, first.clone(), 0, first.clone())),
             main_landed: Vec::new(),
             log,
+            headed: BTreeSet::new(),
         }
     }
 
@@ -773,9 +777,11 @@ impl Machine {
     /// host's operation, which undo does not pass over.
     fn do_commit_all(&mut self, tc: &TestCase) {
         self.freshen(tc);
-        let turn =
-            block_on(self.chat.vcs.commit_all("tau: the end", "tau/chat"))
-                .unwrap();
+        let turn = block_on(
+            self.chat.vcs.commit_all("tau: the end", run_head("chat")),
+        )
+        .unwrap();
+        self.headed.insert("chat");
         if self.wc.tree == self.parent_tree() {
             assert!(!turn.changed, "nothing to commit, yet it committed");
             return;
@@ -808,12 +814,12 @@ impl Machine {
     fn do_end_turn(&mut self, tc: &TestCase) {
         self.freshen(tc);
         let since = self.since.clone();
-        let turn =
-            block_on(self.chat.vcs.end_turn(
-                "tau/chat",
-                since.as_ref().map(|s| s.commit_id.clone()),
-            ))
-            .unwrap();
+        let turn = block_on(self.chat.vcs.end_turn(
+            run_head("chat"),
+            since.as_ref().map(|s| s.commit_id.clone()),
+        ))
+        .unwrap();
+        self.headed.insert("chat");
         // From the turn before's snapshot, with each tagged catch-up's
         // move of the chat's newest commit since replayed on it: what a
         // catch-up brought is not the turn's
@@ -1069,7 +1075,8 @@ impl Machine {
         let end_turn = tc.draw(gs::booleans());
         write_edits(&self.dir("idle"), &Tree::new(), &edits);
         if end_turn {
-            block_on(self.idle.vcs.end_turn("tau/idle", None)).unwrap();
+            block_on(self.idle.vcs.end_turn(run_head("idle"), None)).unwrap();
+            self.headed.insert("idle");
         } else {
             self.idle.ok("vcs_status", json!({}));
         }
@@ -1244,6 +1251,29 @@ impl Machine {
             self.note(id, at);
         }
         tc.event_value("stack", self.stack.len() as f64);
+
+        // Once pointed, the chat's head is its newest commit, `@`'s
+        // parent, the model's change after commits and undos alike, as
+        // Git's `refs/tau/runs/chat` is; the idle chat's is its `@`'s
+        // parent. No run's head is a bookmark.
+        let mut refs = BTreeMap::new();
+        for run in &self.headed {
+            let head = self.project.head(&run_head(run)).unwrap();
+            let wc = self.project.workspace_head(run).unwrap().unwrap();
+            let want = self.project.parent_of(&wc).unwrap();
+            assert_eq!(head, want, "{run}'s head");
+            if *run == "chat" {
+                assert_eq!(
+                    head.as_deref(),
+                    rows[1]["commit_id"].as_str(),
+                    "the chat's head"
+                );
+                assert_eq!(rows[1]["change_id"], json!(parent_id));
+            }
+            refs.insert(run_head(run).to_string(), head.unwrap());
+        }
+        assert_eq!(common::git_refs(&self.project, "refs/tau/"), refs);
+        common::assert_no_run_branches(&self.project);
     }
 }
 
@@ -1431,11 +1461,12 @@ fn a_refused_tool_keeps_its_snapshot() {
 #[test]
 fn a_turns_paths_leave_out_what_a_catch_up_brought() {
     let (home, project, main, chat, dir) = a_chat_on_main();
-    let first = block_on(chat.vcs.end_turn("tau/chat", None)).unwrap();
+    let first = block_on(chat.vcs.end_turn(run_head("chat"), None)).unwrap();
     upstream_writes_a(home.path(), &project, &main);
     std::fs::write(dir.join("c.txt"), "c\n").unwrap();
     let second =
-        block_on(chat.vcs.end_turn("tau/chat", Some(first.commit_id))).unwrap();
+        block_on(chat.vcs.end_turn(run_head("chat"), Some(first.commit_id)))
+            .unwrap();
     assert_eq!(second.paths, ["c.txt"], "the turn only wrote c.txt");
 }
 
@@ -1469,7 +1500,8 @@ fn a_turns_paths_leave_out_what_landed() {
 #[test]
 fn an_undone_describe_stays_undone_after_an_update() {
     let (home, project, main, chat, _dir) = a_chat_on_main();
-    // The run's bookmark on `@`: committed, then the commit undone.
+    // A branch on `@`, as a run's head was when heads were bookmarks:
+    // committed, then the commit undone.
     chat.ok("vcs_commit", json!({ "message": "Fix the parser" }));
     block_on(chat.vcs.commit_all("tau: the end", "tau/chat")).unwrap();
     chat.ok("vcs_undo", json!({}));
@@ -1557,8 +1589,8 @@ fn a_restored_conflict_is_nothing_to_commit() {
     chat.ok("vcs_restore", json!({ "paths": ["dir/c.txt"] }));
     let (_, status) = chat.ok("vcs_status", json!({}));
     assert_eq!(status["changes"], json!([]), "{status}");
-    let turn =
-        block_on(chat.vcs.commit_all("tau: the end", "tau/chat")).unwrap();
+    let turn = block_on(chat.vcs.commit_all("tau: the end", run_head("chat")))
+        .unwrap();
     assert!(!turn.changed, "nothing to commit, yet it committed");
 }
 
@@ -1625,8 +1657,9 @@ fn jj_repo(home: &Path) -> std::sync::Arc<jj_lib::repo::ReadonlyRepo> {
     pollster::block_on(workspace.repo_loader().load_at_head()).unwrap()
 }
 
-/// The same with a file edited between the describe and its undo. The
-/// undo's snapshot moved the run's bookmark with `@` onto the edited
+/// The same with a file edited between the describe and its undo, and
+/// a branch on `@` as a run's head was when heads were bookmarks. The
+/// undo's snapshot moved the bookmark with `@` onto the edited
 /// commit, and the undo, putting `@` back with the edit carried over,
 /// abandoned that commit: the bookmark went to `@`'s parent on one side
 /// and back to `@` on the other, a conflict the export could not take to
@@ -1661,4 +1694,9 @@ fn an_undone_describe_with_an_edit_since_stays_undone_after_an_update() {
         rows.iter().all(|row| row["divergent"] == json!(false)),
         "{log}"
     );
+}
+
+/// The head of run `run`, whose workspace has its name.
+fn run_head(run: &str) -> tau_vcs_host::Head {
+    tau_vcs_host::Head::Run(tau_agent::tool::RunId(run.into()))
 }
