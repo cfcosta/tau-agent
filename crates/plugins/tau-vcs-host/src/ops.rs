@@ -42,11 +42,11 @@ use crate::{
         self,
         BOOKMARK_ATTRIBUTE,
         CAUGHT_UP_ATTRIBUTE,
+        Immutable,
         LANDED_ATTRIBUTE,
         Snapshot,
         TOOL_ATTRIBUTE,
         UNDO_ATTRIBUTE,
-        is_immutable,
         resolve,
     },
     vcs::Worker,
@@ -67,6 +67,7 @@ pub(crate) fn change_info(
     repo: &dyn Repo,
     commit: &Commit,
     wc: &CommitId,
+    immutable: &Immutable,
 ) -> Result<ChangeInfo, VcsError> {
     Ok(ChangeInfo {
         change_id: commit.change_id().reverse_hex(),
@@ -74,7 +75,7 @@ pub(crate) fn change_info(
         description: commit.description().to_owned(),
         empty: block_on(commit.is_empty(repo))?,
         conflict: commit.has_conflict(),
-        immutable: is_immutable(repo, commit.id())?,
+        immutable: immutable.contains(repo, commit.id())?,
         working_copy: commit.id() == wc,
         divergent: block_on(repo.resolve_change_id(commit.change_id()))?
             .is_some_and(|targets| {
@@ -147,8 +148,12 @@ fn workspace_name(
 }
 
 fn wc_line(snapshot: &Snapshot) -> Result<(String, ChangeInfo), VcsError> {
-    let info =
-        change_info(snapshot.repo.as_ref(), &snapshot.wc, snapshot.wc.id())?;
+    let info = change_info(
+        snapshot.repo.as_ref(),
+        &snapshot.wc,
+        snapshot.wc.id(),
+        &snapshot.immutable,
+    )?;
     Ok((format!("Working copy (@): {}", log_line(&info)), info))
 }
 
@@ -161,7 +166,7 @@ pub(crate) fn status(worker: &mut Worker) -> Result<Report, VcsError> {
     let parents = block_on(wc.parents())?;
     let mut parent_infos = Vec::new();
     for parent in &parents {
-        let info = change_info(repo, parent, wc.id())?;
+        let info = change_info(repo, parent, wc.id(), &snapshot.immutable)?;
         text.push_str(&format!("\nParent (@-):      {}", log_line(&info)));
         parent_infos.push(info);
     }
@@ -263,7 +268,8 @@ pub(crate) fn diff(
         &commit.tree(),
         matcher.as_ref(),
     )?;
-    let info = change_info(repo, &commit, snapshot.wc.id())?;
+    let info =
+        change_info(repo, &commit, snapshot.wc.id(), &snapshot.immutable)?;
     let (diff, truncated) = diff::cut(text);
     let text = if diff.is_empty() {
         format!("No changes in {}.", log_line(&info))
@@ -300,7 +306,8 @@ pub(crate) fn log(worker: &mut Worker, limit: u32) -> Result<Report, VcsError> {
     let mut infos = Vec::new();
     for id in ids.iter().take(limit) {
         let commit = repo.store().get_commit(id)?;
-        let info = change_info(repo, &commit, snapshot.wc.id())?;
+        let info =
+            change_info(repo, &commit, snapshot.wc.id(), &snapshot.immutable)?;
         rows.push(log_line(&info));
         infos.push(info);
     }
@@ -329,7 +336,8 @@ pub(crate) fn show(
     let snapshot = session::snapshot(worker)?;
     let repo = snapshot.repo.as_ref();
     let commit = resolve(repo, &change)?;
-    let info = change_info(repo, &commit, snapshot.wc.id())?;
+    let info =
+        change_info(repo, &commit, snapshot.wc.id(), &snapshot.immutable)?;
     let author = commit.author();
     let mut text = format!(
         "Change ID: {}\nCommit ID: {}\nAuthor: {} <{}>",
@@ -337,7 +345,8 @@ pub(crate) fn show(
     );
     let mut parents = Vec::new();
     for parent in block_on(commit.parents())? {
-        let parent = change_info(repo, &parent, snapshot.wc.id())?;
+        let parent =
+            change_info(repo, &parent, snapshot.wc.id(), &snapshot.immutable)?;
         text.push_str(&format!("\nParent: {}", log_line(&parent)));
         parents.push(parent);
     }
@@ -499,7 +508,12 @@ pub(crate) fn commit(
     // What the card draws: the change on its parent with its diff, and
     // what stays in the new `@` on top of it.
     let parent = match block_on(commit.parents())?.first() {
-        Some(parent) => Some(change_info(repo, parent, snapshot.wc.id())?),
+        Some(parent) => Some(change_info(
+            repo,
+            parent,
+            snapshot.wc.id(),
+            &snapshot.immutable,
+        )?),
         None => None,
     };
     let (diff_text, files) = diff::unified(
@@ -518,7 +532,8 @@ pub(crate) fn commit(
         &EverythingMatcher,
     )?;
     let (left_text, left_truncated) = diff::cut(left_text);
-    let committed = change_info(repo, &commit, snapshot.wc.id())?;
+    let committed =
+        change_info(repo, &commit, snapshot.wc.id(), &snapshot.immutable)?;
     let (line, info) = wc_line(&snapshot)?;
     let mut text = format!("Committed change {}", log_line(&committed));
     if !left.is_empty() {
@@ -594,6 +609,7 @@ pub(crate) fn commit_all(
 ) -> Result<Committed, VcsError> {
     let name = workspace_name(worker)?;
     let record = crate::land::MovedOnto::load(worker)?;
+    let revsets = worker.revsets()?;
     let mut followed = None;
     let (_, committed) = session::mutate(worker, CHECKPOINT, |tx, wc| {
         let (wc, onto) = crate::land::follow_bookmark(
@@ -602,6 +618,7 @@ pub(crate) fn commit_all(
             &name,
             bookmark,
             record.last(),
+            &revsets,
         )?;
         followed = onto;
         let wc = &wc;
@@ -699,6 +716,7 @@ pub(crate) fn end_turn(
 ) -> Result<TurnSnapshot, VcsError> {
     let name = workspace_name(worker)?;
     let record = crate::land::MovedOnto::load(worker)?;
+    let revsets = worker.revsets()?;
     let mut followed = None;
     let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, snapped| {
         let (wc, onto) = crate::land::follow_bookmark(
@@ -707,6 +725,7 @@ pub(crate) fn end_turn(
             &name,
             bookmark,
             record.last(),
+            &revsets,
         )?;
         followed = onto;
         let wc = &wc;

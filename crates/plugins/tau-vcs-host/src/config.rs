@@ -48,10 +48,13 @@ const REPO_CONFIG_DIR: &str = "repos";
 const WORKSPACE_CONFIG_DIR: &str = "workspaces";
 
 /// jj-cli's defaults for the keys tau reads that jj-lib's defaults lack,
-/// copied from jj-cli 0.45.1's `src/config/misc.toml` (`git` and
-/// `snapshot`) and `src/config/revsets.toml` (`revset-aliases`, every
+/// copied from jj-cli 0.45.1's `src/config/misc.toml` (`diff.git`,
+/// `git` and `snapshot`) and `src/config/revsets.toml` (`revset-aliases`, every
 /// one, since an alias the person writes may call any of them).
 const CLI_DEFAULTS: &str = r#"
+[diff.git]
+context = 3
+
 [git]
 private-commits = "none()"
 sign-on-push = false

@@ -322,6 +322,18 @@ impl Worker {
     pub(crate) fn env(&self) -> &JjEnv {
         &self.identity.env
     }
+
+    /// The revsets of the workspace's config, as jj reads them here.
+    pub(crate) fn revsets(
+        &mut self,
+    ) -> Result<crate::revsets::ConfigRevsets, VcsError> {
+        let workspace = self.workspace()?;
+        crate::revsets::ConfigRevsets::new(
+            workspace.settings(),
+            workspace.workspace_root(),
+            workspace.workspace_name(),
+        )
+    }
 }
 
 /// Loads the jj workspace at `root` as the jj CLI does: finds its

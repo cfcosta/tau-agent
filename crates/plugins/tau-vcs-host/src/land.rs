@@ -30,7 +30,13 @@ use jj_lib::{
 };
 use pollster::block_on;
 
-use crate::{Landing, error::VcsError, session, vcs::Worker};
+use crate::{
+    Landing,
+    error::VcsError,
+    revsets::ConfigRevsets,
+    session::{self, Immutable},
+    vcs::Worker,
+};
 
 /// Lands the child whose newest commit is `child_head` (a full commit
 /// id in hex) on this workspace's run, and points `bookmark`, the
@@ -46,6 +52,7 @@ pub(crate) fn land(
         .ok_or_else(|| VcsError::NotCommitId(child_head.to_owned()))?;
     let name = worker.workspace()?.workspace_name().to_owned();
     let record = MovedOnto::load(worker)?;
+    let revsets = worker.revsets()?;
     if confirm {
         let mut followed = None;
         let (_, landing) = session::mutate(worker, "land", |tx, wc| {
@@ -56,6 +63,7 @@ pub(crate) fn land(
                 &child_head,
                 bookmark,
                 &record,
+                &revsets,
             )?;
             followed = onto;
             let landed: Vec<&str> = landing
@@ -90,6 +98,7 @@ pub(crate) fn land(
         &child_head,
         bookmark,
         &record,
+        &revsets,
     )?;
     Ok(landing)
 }
@@ -111,6 +120,7 @@ fn follow_and_restack(
     child_head: &CommitId,
     bookmark: &str,
     record: &MovedOnto,
+    revsets: &ConfigRevsets,
 ) -> Result<(Landing, Option<CommitId>), VcsError> {
     // A head the caller read before something rewrote it, as the main
     // chat's catch-up restacks the chats on its commits: landing it
@@ -120,12 +130,14 @@ fn follow_and_restack(
         return Err(VcsError::HiddenHead(child_head.hex()));
     }
     let (wc, onto) =
-        follow_bookmark(tx, wc, workspace, bookmark, record.last())?;
+        follow_bookmark(tx, wc, workspace, bookmark, record.last(), revsets)?;
     let child = match onto {
         Some(_) => current(tx.repo(), &child)?,
         None => child,
     };
-    let landing = restack(tx, &wc, workspace, child.id(), bookmark)?;
+    let immutable = Immutable::of(tx.repo(), revsets)?;
+    let landing =
+        restack(tx, &wc, workspace, child.id(), bookmark, &immutable)?;
     Ok((landing, onto))
 }
 
@@ -141,6 +153,7 @@ pub(crate) fn follow_bookmark(
     workspace: &jj_lib::ref_name::WorkspaceName,
     bookmark: &str,
     last: Option<&CommitId>,
+    revsets: &ConfigRevsets,
 ) -> Result<(Commit, Option<CommitId>), VcsError> {
     let Some(target) = upstream(tx, bookmark) else {
         return Ok((wc.clone(), None));
@@ -151,7 +164,8 @@ pub(crate) fn follow_bookmark(
     if block_on(tx.repo().index().is_ancestor(&target, head))? {
         return Ok((wc.clone(), None));
     }
-    rebase_run(tx, wc, workspace, &target, last, bookmark)?;
+    let immutable = Immutable::of(tx.repo(), revsets)?;
+    rebase_run(tx, wc, workspace, &target, last, bookmark, &immutable)?;
     tx.set_attribute(session::CAUGHT_UP_ATTRIBUTE.to_owned(), target.hex());
     let id = tx
         .repo()
@@ -185,6 +199,7 @@ fn restack(
     workspace: &jj_lib::ref_name::WorkspaceName,
     child_head: &CommitId,
     bookmark: &str,
+    immutable: &Immutable,
 ) -> Result<Landing, VcsError> {
     // The parent's uncommitted work stays in its working copy, which
     // moves onto the landed changes.
@@ -269,7 +284,12 @@ fn restack(
     for id in &moving {
         let old = tx.repo().store().get_commit(id)?;
         let new = current(tx.repo(), &old)?;
-        changes.push(crate::ops::change_info(tx.repo(), &new, &wc_id)?);
+        changes.push(crate::ops::change_info(
+            tx.repo(),
+            &new,
+            &wc_id,
+            immutable,
+        )?);
     }
     Ok(Landing {
         changes,
@@ -333,6 +353,7 @@ pub(crate) fn move_onto(
     let name = worker.workspace()?.workspace_name().to_owned();
     let record = MovedOnto::load(worker)?;
     let last = record.last().cloned();
+    let revsets = worker.revsets()?;
     if confirm {
         // Where the run went: past `onto` when an update moved the
         // bookmark on meanwhile; recorded unless it is the run's own.
@@ -346,7 +367,16 @@ pub(crate) fn move_onto(
                 session::CAUGHT_UP_ATTRIBUTE.to_owned(),
                 onto.hex(),
             );
-            rebase_run(tx, wc, &name, &onto, last.as_ref(), bookmark)
+            let immutable = Immutable::of(tx.repo(), &revsets)?;
+            rebase_run(
+                tx,
+                wc,
+                &name,
+                &onto,
+                last.as_ref(),
+                bookmark,
+                &immutable,
+            )
         })?;
         record.save(moved_onto.as_ref())?;
         return Ok(moved);
@@ -354,7 +384,16 @@ pub(crate) fn move_onto(
     let snapshot = session::snapshot(worker)?;
     let mut tx = snapshot.repo.start_transaction();
     let onto = past(&tx, &snapshot.wc, &onto, bookmark)?;
-    rebase_run(&mut tx, &snapshot.wc, &name, &onto, last.as_ref(), bookmark)
+    let immutable = Immutable::of(tx.repo(), &revsets)?;
+    rebase_run(
+        &mut tx,
+        &snapshot.wc,
+        &name,
+        &onto,
+        last.as_ref(),
+        bookmark,
+        &immutable,
+    )
 }
 
 /// Where a workspace keeps the commit it last moved onto, below `.jj`.
@@ -450,6 +489,7 @@ fn rebase_run(
     onto: &CommitId,
     last: Option<&CommitId>,
     bookmark: &str,
+    immutable: &Immutable,
 ) -> Result<Landing, VcsError> {
     let moving: Vec<CommitId> = {
         let mut upstream = ResolvedRevsetExpression::commit(onto.clone());
@@ -516,7 +556,12 @@ fn rebase_run(
         }
         let old = tx.repo().store().get_commit(id)?;
         let new = current(tx.repo(), &old)?;
-        changes.push(crate::ops::change_info(tx.repo(), &new, &wc_id)?);
+        changes.push(crate::ops::change_info(
+            tx.repo(),
+            &new,
+            &wc_id,
+            immutable,
+        )?);
     }
     // The run's own work in `@` can conflict too.
     let mut found = conflicts(&head);

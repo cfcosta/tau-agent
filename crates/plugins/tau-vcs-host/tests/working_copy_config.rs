@@ -5,7 +5,8 @@
 //!   the working copy, and how `vcs_diff` and a project's diff show it;
 //! - `working-copy.eol-conversion` is how a checkout writes line ends;
 //! - `working-copy.exec-bit-change` is whether a snapshot sees a file's
-//!   executable bit change.
+//!   executable bit change;
+//! - `diff.git.context` is how many lines of context a diff shows.
 //!
 //! Each test makes up the person's config in a temporary directory, and
 //! reads no real one.
@@ -226,4 +227,48 @@ fn an_executable_bit_change_is_seen_as_configured() {
         let changes = block_on(run.changes()).unwrap();
         assert_eq!(!changes.is_empty(), seen, "{setting:?}: {changes:?}");
     }
+}
+
+/// A diff shows `diff.git.context` lines of context on each side of a
+/// change, as many as the file has, three when the config sets none.
+#[hegel::test(test_cases = 30)]
+fn a_diff_shows_the_configured_context(tc: TestCase) {
+    let lines: usize = tc.draw(gs::integers().min_value(1).max_value(12));
+    let at: usize = tc.draw(gs::integers().max_value(lines - 1));
+    let context: Option<usize> =
+        tc.draw(gs::optional(gs::integers().max_value(6)));
+    let world = World::new(
+        &context
+            .map(|n| format!("diff.git.context = {n}\n"))
+            .unwrap_or_default(),
+    );
+    let text: String = (0..lines).map(|n| format!("l{n}\n")).collect();
+    let project = world.project(&[("a.txt", &text)]);
+    let trunk = project.trunk().unwrap();
+    let run = project.add_workspace("run", &trunk).unwrap();
+    let edited: String = (0..lines)
+        .map(|n| {
+            if n == at {
+                "changed\n".to_owned()
+            } else {
+                format!("l{n}\n")
+            }
+        })
+        .collect();
+    std::fs::write(run.root().join("a.txt"), edited).unwrap();
+    let commit = block_on(run.commit_all("edit", "tau/run")).unwrap();
+    let diff = project.diff(&trunk, &commit.commit_id).unwrap();
+    let shown = diff[0]
+        .text
+        .lines()
+        .skip_while(|line| !line.starts_with("@@"))
+        .filter(|line| line.starts_with(' '))
+        .count();
+    let context = context.unwrap_or(3);
+    assert_eq!(
+        shown,
+        context.min(at) + context.min(lines - 1 - at),
+        "{}",
+        diff[0].text
+    );
 }

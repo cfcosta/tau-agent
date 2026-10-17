@@ -65,9 +65,10 @@ pub(crate) fn changed_paths(
 }
 
 /// The diff from `from` to `to` under `matcher`, as unified diff text
-/// with three lines of context, and the paths it touches. A conflicted
-/// file shows its markers in the config's `ui.conflict-marker-style`,
-/// merged with the store's merge options, as `jj diff --git` writes it.
+/// with the config's `diff.git.context` lines of context (three by
+/// default), and the paths it touches. A conflicted file shows its
+/// markers in the config's `ui.conflict-marker-style`, merged with the
+/// store's merge options, as `jj diff --git` writes it.
 pub(crate) fn unified(
     repo: &dyn Repo,
     settings: &UserSettings,
@@ -75,6 +76,7 @@ pub(crate) fn unified(
     to: &MergedTree,
     matcher: &dyn Matcher,
 ) -> Result<(String, Vec<FileChange>), VcsError> {
+    let context: usize = settings.get("diff.git.context")?;
     let options = ConflictMaterializeOptions {
         marker_style: settings.get("ui.conflict-marker-style")?,
         marker_len: None,
@@ -116,7 +118,7 @@ pub(crate) fn unified(
                     source,
                 },
             )?;
-            file_diff(&mut text, &name, &before, &after);
+            file_diff(&mut text, &name, &before, &after, context);
             changes.push(FileChange {
                 path: name,
                 kind: change,
@@ -140,6 +142,7 @@ fn file_diff(
     path: &str,
     before: &GitDiffPart,
     after: &GitDiffPart,
+    context: usize,
 ) {
     out.push_str(&format!("diff --git a/{path} b/{path}\n"));
     match (before.mode, after.mode) {
@@ -174,7 +177,7 @@ fn file_diff(
     let old = String::from_utf8_lossy(&before.content.contents);
     let new = String::from_utf8_lossy(&after.content.contents);
     out.push_str(&format!("--- {old_name}\n+++ {new_name}\n"));
-    unified_hunks(out, &git_lines(&old), &git_lines(&new));
+    unified_hunks(out, &git_lines(&old), &git_lines(&new), context);
 }
 
 /// `text`'s lines as Git splits them: each ends at `\n`, and the last
@@ -183,16 +186,17 @@ fn git_lines(text: &str) -> Vec<&str> {
     text.split_inclusive('\n').collect()
 }
 
-/// Appends the hunks from `old` to `new`, with three lines of context.
+/// Appends the hunks from `old` to `new`, with `context` lines of
+/// context.
 /// A line without its `\n` is followed by `\ No newline at end of file`,
 /// as Git writes it. `similar`'s own unified diff is not used: it takes
 /// a lone `\r` for a line end, so it would split lines Git keeps whole
 /// and leave out the marker after a last line that ends in `\r`.
-fn unified_hunks(out: &mut String, old: &[&str], new: &[&str]) {
+fn unified_hunks(out: &mut String, old: &[&str], new: &[&str], context: usize) {
     use similar::{ChangeTag, TextDiff, udiff::UnifiedHunkHeader};
 
     let diff = TextDiff::from_slices(old, new);
-    for group in diff.grouped_ops(3) {
+    for group in diff.grouped_ops(context) {
         out.push_str(&format!("{}\n", UnifiedHunkHeader::new(&group)));
         for op in &group {
             for change in diff.iter_changes(op) {

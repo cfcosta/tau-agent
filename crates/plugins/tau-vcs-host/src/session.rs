@@ -12,10 +12,10 @@ use std::{
     sync::Arc,
 };
 
+use futures_util::StreamExt as _;
 use jj_lib::{
     backend::CommitId,
     commit::Commit,
-    git::REMOTE_NAME_FOR_LOCAL_GIT_REPO,
     matchers::{EverythingMatcher, Matcher, PrefixMatcher},
     merge::Merge,
     merged_tree::MergedTree,
@@ -33,6 +33,7 @@ use crate::{
     TooLarge,
     error::VcsError,
     lock::lock_repo,
+    revsets::ConfigRevsets,
     snapshot_config::SnapshotConfig,
     vcs::Worker,
 };
@@ -73,12 +74,15 @@ pub(crate) struct Snapshot {
     /// New files over the config's `snapshot.max-new-file-size`, which
     /// the snapshot left out of `@`.
     pub too_large: Vec<TooLarge>,
+    /// What is immutable in `repo`.
+    pub immutable: Immutable,
 }
 
 /// Snapshots the working copy, one operation if files changed, and
 /// returns the repo at head.
 pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
     let env = worker.env().clone();
+    let revsets = worker.revsets()?;
     let workspace = worker.workspace()?;
     let _repo = lock_repo(workspace.repo_path())?;
     let name = workspace.workspace_name().to_owned();
@@ -90,7 +94,8 @@ pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
         loader.store(),
     )?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
-    let snapshot = snapshot_locked(&mut locked, &loader, &name, &config)?;
+    let snapshot =
+        snapshot_locked(&mut locked, &loader, &name, &config, &revsets)?;
     block_on(locked.finish(snapshot.repo.op_id().clone()))?;
     Ok(snapshot)
 }
@@ -104,6 +109,7 @@ pub(crate) fn mutate<T>(
     edit: impl FnOnce(&mut Transaction, &Commit) -> Result<T, VcsError>,
 ) -> Result<(Snapshot, T), VcsError> {
     let env = worker.env().clone();
+    let revsets = worker.revsets()?;
     let workspace = worker.workspace()?;
     let _repo = lock_repo(workspace.repo_path())?;
     let name = workspace.workspace_name().to_owned();
@@ -115,9 +121,13 @@ pub(crate) fn mutate<T>(
         loader.store(),
     )?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
-    let before = snapshot_locked(&mut locked, &loader, &name, &config)?;
+    let before =
+        snapshot_locked(&mut locked, &loader, &name, &config, &revsets)?;
     let written = (|| {
-        if is_immutable(before.repo.as_ref(), before.wc.id())? {
+        if before
+            .immutable
+            .contains(before.repo.as_ref(), before.wc.id())?
+        {
             return Err(VcsError::Immutable(short_commit(before.wc.id())));
         }
         let mut tx = before.repo.start_transaction();
@@ -150,6 +160,7 @@ pub(crate) fn mutate<T>(
     block_on(locked.finish(repo.op_id().clone()))?;
     Ok((
         Snapshot {
+            immutable: Immutable::of(repo.as_ref(), &revsets)?,
             repo,
             wc,
             too_large: before.too_large,
@@ -166,6 +177,7 @@ fn snapshot_locked(
     loader: &RepoLoader,
     name: &WorkspaceName,
     config: &SnapshotConfig,
+    revsets: &ConfigRevsets,
 ) -> Result<Snapshot, VcsError> {
     let options = config.options();
     let mut repo = block_on(loader.load_at_head())?;
@@ -255,6 +267,7 @@ fn snapshot_locked(
         wc = new_wc;
     }
     Ok(Snapshot {
+        immutable: Immutable::of(repo.as_ref(), revsets)?,
         repo,
         wc,
         too_large,
@@ -315,27 +328,46 @@ pub(crate) fn wc_commit(
     Ok(repo.store().get_commit(id)?)
 }
 
-/// Whether `id` is immutable: the root commit, or an ancestor of a tag
-/// or a remote bookmark.
-pub(crate) fn is_immutable(
-    repo: &dyn Repo,
-    id: &CommitId,
-) -> Result<bool, VcsError> {
-    if id == repo.store().root_commit_id() {
-        return Ok(true);
+/// The immutable commits of one repository, as jj names them: the root,
+/// and every ancestor of what the config's `immutable_heads()` names
+/// (jj's default: `trunk()`, tags, and untracked remote bookmarks and
+/// tags).
+pub(crate) struct Immutable {
+    heads: Vec<CommitId>,
+}
+
+impl Immutable {
+    /// `repo`'s, under the config `revsets` come from.
+    pub(crate) fn of(
+        repo: &dyn Repo,
+        revsets: &ConfigRevsets,
+    ) -> Result<Self, VcsError> {
+        let heads = revsets.immutable_heads()?.heads();
+        let heads = revsets
+            .resolve(repo, "revset-aliases.immutable_heads()", &heads)?
+            .evaluate(repo)?;
+        let heads = block_on(heads.stream().collect::<Vec<_>>())
+            .into_iter()
+            .collect::<Result<_, _>>()?;
+        Ok(Self { heads })
     }
-    let view = repo.view();
-    let remote = view
-        .all_remote_bookmarks()
-        .filter(|(symbol, _)| symbol.remote != REMOTE_NAME_FOR_LOCAL_GIT_REPO)
-        .flat_map(|(_, remote_ref)| remote_ref.target.added_ids());
-    let tags = view.local_tags().flat_map(|(_, target)| target.added_ids());
-    for head in remote.chain(tags) {
-        if block_on(repo.index().is_ancestor(id, head))? {
+
+    /// Whether `id` is immutable.
+    pub(crate) fn contains(
+        &self,
+        repo: &dyn Repo,
+        id: &CommitId,
+    ) -> Result<bool, VcsError> {
+        if id == repo.store().root_commit_id() {
             return Ok(true);
         }
+        for head in &self.heads {
+            if block_on(repo.index().is_ancestor(id, head))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
-    Ok(false)
 }
 
 /// Finds the commit a change id or a commit id (or a unique prefix of

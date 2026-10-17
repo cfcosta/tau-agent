@@ -111,7 +111,27 @@ loading:
   executable bits as the config says. `vcs_diff`, `vcs_status`'s diff
   and a project's diff show a conflicted file's markers in
   `ui.conflict-marker-style` too, merged with the store's `merge.*`
-  options, as `jj diff --git` does.
+  options, as `jj diff --git` does, with `diff.git.context` lines of
+  context (three by default).
+- jj-cli settings tau does not follow, each because tau's own design
+  decides what they would: `remotes.<name>.auto-track-bookmarks` and
+  `git.track-default-bookmark-on-clone` (a project tracks every
+  upstream branch, so trunk follows upstream, ADR 0015);
+  `git.abandon-unreachable-commits` and
+  `git.record-synthetic-predecessors` on an update (an update keeps
+  what upstream dropped, and catch-ups leave it behind, so a chat's
+  `@` is never abandoned under it);
+  `snapshot.auto-update-stale` (tau always moves a stale workspace's
+  files, as `jj workspace update-stale` does, since the main chat's
+  catch-up restacks its chats); `git.colocate` (a project's layout is
+  tau's); `experimental-advance-branches` (tau moves its trunk and run
+  bookmarks itself); `diff.git.show-path-prefix` (tau's diff readers
+  need the `a/` and `b/` prefixes); `revsets.short-prefixes` and
+  `revsets.log` (tau shows 12-character ids and resolves prefixes in
+  the whole repository); `templates.*`, `ui.*` presentation, editors
+  and pagers, which a model has no use for, including
+  `templates.commit_trailers`, which needs jj-cli's template
+  language.
 - The environment is a value, `JjEnv`: config directory, home
   directory, system directory, host name, user name and variables.
   Only the app reads the process's (`Identity::from_environment`, which
@@ -170,10 +190,14 @@ loading:
 - **The working copy only.** The write tools change only the
   working-copy change (`@`) of this workspace, and they only add new
   changes on top of it.
-- **Immutable commits are refused.** A commit is immutable if it is the
-  root commit, or an ancestor of a tag or of a remote bookmark (all
-  remotes except the internal `git` one). A write tool fails with
-  `The working-copy commit <id> is immutable` when `@` is one of them.
+- **Immutable commits are refused.** A commit is immutable as jj says:
+  the root commit, or an ancestor of what the config's
+  `immutable_heads()` names. jj's default is `trunk()` (`main`,
+  `master` or `trunk` on `origin` or `upstream`), tags, and untracked
+  remote bookmarks and tags (the internal `git` remote left out); the
+  person's `revset-aliases` can say otherwise. A write tool fails with
+  `The working-copy commit <id> is immutable` when `@` is one of them,
+  and one that cannot read `immutable_heads()` fails naming it.
 - **Tagged operations.** Each write is one operation, described as
   `tau vcs: <tool>`. It carries the workspace name and the operation
   attribute `tau.vcs.tool = <tool>`. `vcs_undo` uses these tags.
@@ -917,7 +941,9 @@ another, as for jj. `Remote { url, token }` says where:
   `VcsError::PushRefused` with its reason. Once pushed, the Git store's
   remote-tracking branch names the pushed commit and an import moves
   `<trunk>@origin` there, as a fetch would, so nothing is ahead. The
-  pushed commits are then immutable, as upstream's are (see "Scoping
+  pushed commits are then immutable as upstream's are, when the
+  config's `immutable_heads()` names `<trunk>@origin`, as jj's default
+  `trunk()` does for `main`, `master` and `trunk` (see "Scoping
   rules").
 - `Project::replay(commits, onto)` copies commits (oldest first, each on
   the one before) onto `onto`: each copy's tree is jj's three-way merge
