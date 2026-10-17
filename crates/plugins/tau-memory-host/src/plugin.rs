@@ -696,6 +696,21 @@ pub async fn write_notes(
     prompt: &str,
     by: By,
 ) -> Result<Vec<Saved>, MemoryError> {
+    let input =
+        format!("<conversation>\n{}\n</conversation>", serialize(transcript));
+    write_notes_from(asker, tools, writer, input, prompt, by).await
+}
+
+/// [`write_notes`] on `input` as it is, not a conversation: what an
+/// import shows the model, fenced its own way.
+pub async fn write_notes_from(
+    asker: &impl Asker,
+    tools: &[Arc<dyn AgentTool>],
+    writer: &Writer,
+    input: String,
+    prompt: &str,
+    by: By,
+) -> Result<Vec<Saved>, MemoryError> {
     let settings = AskSettings::new(writer.model.clone(), writer.reasoning)
         .instructions(prompt);
     let definitions: Vec<ToolDefinition> = tools
@@ -708,10 +723,7 @@ pub async fn write_notes(
         })
         .collect();
     let mut input = vec![Message::User(UserMessage {
-        content: UserContent::Text(format!(
-            "<conversation>\n{}\n</conversation>",
-            serialize(transcript)
-        )),
+        content: UserContent::Text(input),
         timestamp: asker.now(),
     })];
     let mut saved = Vec::new();

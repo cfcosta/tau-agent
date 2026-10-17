@@ -12,9 +12,18 @@ use std::{
 use tau_agent::plugin::Plugin;
 use tau_memory::{
     MemoryUi,
+    import::Act,
     note::{By, LinkType, Note as MemoryNote},
     record::Record,
-    ui::{LinkView, NoteView, Notebook, ago, notes_link, settings::Settings},
+    ui::{
+        LinkView,
+        MemoryData,
+        NoteView,
+        Notebook,
+        ago,
+        notes_link,
+        settings::Settings,
+    },
 };
 use tau_ui_plugin::{
     HostCx,
@@ -31,7 +40,10 @@ use tau_ui_plugin::{
 use crate::{
     Memory,
     MemoryPlugin,
+    NAME,
     Scopes,
+    import::{Importer, JOB, Reach},
+    importers::Roots,
     index::{Bm25, Index},
     plugin::{Scope, Writer},
     store::Notes,
@@ -47,11 +59,20 @@ pub enum Search {
     Keywords,
 }
 
-/// The plugin on the host: every scope open this session, and where the
-/// user's notes are.
+/// The plugin on the host: every scope open this session, where the
+/// user's notes are, and its imports.
 pub struct Host {
-    memories: Memories,
+    memories: Arc<Memories>,
     user: PathBuf,
+    reach: Reach,
+}
+
+impl Host {
+    /// What imports reach: the importer, the scopes and the person's
+    /// notes.
+    pub fn imports(&self) -> &Reach {
+        &self.reach
+    }
 }
 
 /// The scopes open this session, by their notes directory.
@@ -219,10 +240,14 @@ fn entry(note: &MemoryNote, now: u64) -> NoteView {
         .collect();
     paths.sort();
     paths.dedup();
-    let by = match note.source.by {
-        By::User => "from the user",
-        By::Agent => "by the agent",
-        By::Inferred => "inferred",
+    let by = match (&note.source.imported, note.source.by) {
+        (Some(imported), _) => match imported.from {
+            tau_memory::import::Tool::ClaudeCode => "from Claude Code",
+            tau_memory::import::Tool::Codex => "from Codex",
+        },
+        (None, By::User) => "from the user",
+        (None, By::Agent) => "by the agent",
+        (None, By::Inferred) => "inferred",
     };
     NoteView {
         id: note.id.clone(),
@@ -319,8 +344,31 @@ impl HostHalf for MemoryHost {
         }
     }
 
-    async fn data(&self, host: &Host, _cx: &HostCx) -> Notebook {
-        host.memories.notebook(&host.user)
+    async fn data(&self, host: &Host, cx: &HostCx) -> MemoryData {
+        let running = cx.jobs().is_some_and(|jobs| jobs.is_running(NAME, JOB));
+        if !running {
+            host.reach.importer.rescan_if_stale(cx);
+        }
+        MemoryData {
+            you: host.memories.notebook(&host.user),
+            imports: host.reach.importer.imports(&cx.repos, running),
+        }
+    }
+
+    /// Starts the import a restart cut off.
+    async fn resume(&self, host: &Host, cx: &HostCx) {
+        host.reach.resume(cx).await;
+    }
+
+    /// Imports, and what the person does with what they propose.
+    async fn act(
+        &self,
+        host: &Host,
+        action: serde_json::Value,
+        cx: &HostCx,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        let act: Act = serde_json::from_value(action)?;
+        host.reach.act(act, cx).await
     }
 
     async fn repo_data(
@@ -336,9 +384,26 @@ impl HostHalf for MemoryHost {
 impl PluginHost for Host {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         let search = cx.services.get::<Search>().copied().unwrap_or_default();
+        let memories = Arc::new(Memories::new(search));
+        let user = cx.dir.join("memory");
+        let importer = Arc::new(
+            Importer::open(
+                cx.home().map(Roots::new),
+                cx.plugin_dir(NAME).join("import"),
+            )
+            .await,
+        );
+        // What the tools have is looked at once the host is up: the
+        // setup step and the banners show from it.
+        importer.rescan_if_stale(cx);
         Ok(Host {
-            memories: Memories::new(search),
-            user: cx.dir.join("memory"),
+            reach: Reach {
+                importer,
+                memories: memories.clone(),
+                user: user.clone(),
+            },
+            memories,
+            user,
         })
     }
 }

@@ -9943,6 +9943,7 @@ dependencies = [
  "tau-agent",
  "tau-ai",
  "tau-memory",
+ "tau-store",
  "tau-store-sqlite",
  "tau-testing",
  "tau-ui-plugin",

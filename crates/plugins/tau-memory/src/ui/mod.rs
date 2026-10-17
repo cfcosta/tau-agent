@@ -39,6 +39,16 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MemoryUi;
 
+/// What memory knows across repositories: the person's notes, and what
+/// imports found and propose (ADR 0044).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryData {
+    /// The person's notes, across repositories.
+    pub you: Notebook,
+    pub imports: crate::import::Imports,
+}
+
 /// A scope's notes, as their page shows them.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -186,14 +196,24 @@ pub fn notes_link(repo: &str) -> Link {
 /// The scope parameter of the user's notes page.
 pub const USER: &str = "you";
 
+/// The review page of what an import proposes: every proposal, or with
+/// `repo`, a repository's or ([`USER`]) the person's.
+pub fn review_link(repo: Option<&str>) -> Link {
+    let link = Link::page("import");
+    match repo {
+        Some(repo) => link.param("repo", repo.to_owned()),
+        None => link,
+    }
+}
+
 /// What memory reads outside repositories: what Claude Code and Codex
 /// kept, when the person imports it (ADR 0044).
 pub const READS: &[&str] = &["~/.claude", "~/.codex"];
 
 impl UiPlugin for MemoryUi {
     type State = State;
-    /// The user's notes, across repositories.
-    type Data = Notebook;
+    /// The user's notes, across repositories, and what imports found.
+    type Data = MemoryData;
     type RepoData = Notebook;
     type Settings = settings::Settings;
     type Ui = page::Ui;
@@ -209,7 +229,7 @@ impl UiPlugin for MemoryUi {
             .contribute_at(points::SIDEBAR, 10, |_: &AtApp, view| {
                 Some(
                     NavEntry::new("Your notes", Icon::Memory, notes_link(USER))
-                        .detail(format!("{} notes", view.data.notes.len())),
+                        .detail(format!("{} notes", view.data.you.notes.len())),
                 )
             })
             .contribute_at(points::SIDEBAR_REPO, -10, |at: &AtRepo, view| {

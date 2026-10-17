@@ -11,6 +11,7 @@ pub mod demo;
 pub mod docbert;
 pub mod eval;
 mod half;
+pub mod import;
 pub mod importers;
 pub mod index;
 pub mod memory;

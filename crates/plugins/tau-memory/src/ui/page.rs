@@ -105,7 +105,7 @@ impl Columns {
 /// scope, the user's.
 fn notebook(view: &ViewCx<'_, MemoryUi>, repo: &str) -> Notebook {
     if repo == USER {
-        view.data.clone()
+        view.data.you.clone()
     } else {
         view.repo(repo).cloned().unwrap_or_default()
     }
