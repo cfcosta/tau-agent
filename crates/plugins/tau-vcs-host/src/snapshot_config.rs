@@ -146,6 +146,19 @@ fn base_ignores(
     Ok(ignores)
 }
 
+/// The person's Git excludes file for the repository whose Git
+/// directory is `git_dir`, checked out at `workspace_root`, as a
+/// snapshot reads it: what a local repository's inspection ignores
+/// besides the `.gitignore` files and `info/exclude`.
+pub(crate) fn excludes_file_of(
+    env: &JjEnv,
+    git_dir: &Path,
+    workspace_root: &Path,
+) -> Result<Option<PathBuf>, VcsError> {
+    let config = git_config(env, Some(git_dir))?;
+    Ok(excludes_file(env, &config, workspace_root))
+}
+
 /// Git's `core.excludesFile`, from the workspace root when relative, as
 /// `git` reads it; `git/ignore` in the person's config directory when
 /// unset. None when the setting is not UTF-8, as in jj.

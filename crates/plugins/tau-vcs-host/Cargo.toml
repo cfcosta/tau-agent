@@ -14,10 +14,12 @@ etcetera.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 # Clones over HTTPS without the git binary. reqwest brings rustls,
-# with the ring provider tokio-rustls already builds.
+# with the ring provider tokio-rustls already builds. `status` lists a
+# local repository's uncommitted files before it is added.
 gix = { workspace = true, features = [
   "blocking-http-transport-reqwest",
   "blocking-network-client",
+  "status",
 ] }
 reqwest.workspace = true
 tokio-rustls.workspace = true

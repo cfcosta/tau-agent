@@ -136,7 +136,8 @@ impl ConfigRevsets {
             .union(&RevsetExpression::root()))
     }
 
-    fn parse(
+    /// `text`, the revset the config's `name` holds, parsed for `repo`.
+    pub(crate) fn parse(
         &self,
         repo: &dyn Repo,
         name: &str,

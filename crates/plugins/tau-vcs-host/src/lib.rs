@@ -37,6 +37,7 @@ mod diff;
 pub mod error;
 mod half;
 mod land;
+pub mod local;
 mod lock;
 mod operations;
 mod ops;
