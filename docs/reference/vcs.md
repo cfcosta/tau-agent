@@ -686,7 +686,8 @@ one the workspace store gives `main/`.
   workspaces and commits.
 - `trunk()` is the commit new runs start from: the bookmark of the
   branch `origin/HEAD` names, else `main`, `master` or `trunk`, else
-  the root commit.
+  the root commit; in a local repository, the branch its setup chose
+  first (see "Setting up a local repository").
 - `add_workspace(name, base)` makes `runs/<name>` on a new empty commit
   on top of `base` and checks out its files. When `base` was rewritten
   since the caller read it, as the main chat's catch-up rewrites its
@@ -785,7 +786,7 @@ In a Git repository the steps are `jj git init --colocate`'s there
 | `ImportRefs` | jj's repository on the folder's `.git` (`init_external_git`), `.jj/.gitignore`, `default` on the root commit, and Git's branches and tags imported with nothing abandoned and the person's `auto-track-bookmarks` (`tau: import git refs`).                    |
 | `Snapshot`   | Git's `HEAD` imported and `default`'s `@` made a new commit on it, its working copy reset with no file written (`tau: import git head`); the files snapshotted with the person's snapshot settings; Git's refs imported again; the `trunk()` alias written.    |
 | `Workspace`  | The main chat's workspace, `main_workspace_name` over the names the repository has, made as a run's is: a Git worktree of the folder's `.git` at `main_dir`, then the jj workspace on a new commit on the root (`tau: add workspace <name>`), after an import. |
-| `Record`     | tau's state, `.jj/repo/tau/state.json` (`local::State`): `repo_id` (a new UUID, kept when the file was there), `main_workspace` and `runs_dir`, the runs' directory's name.                                                                                    |
+| `Record`     | tau's state, `.jj/repo/tau/state.json` (`local::State`): `repo_id` (a new UUID, kept when the file was there), `main_workspace`, `runs_dir`, the runs' directory's name, and `trunk`, trunk's branch (below).                                                  |
 
 - Unlike `jj git init`, tau never moves Git's `HEAD` or index in the
   folder (ADR 0043, decision 1): the CLI resets the index after its
@@ -823,6 +824,17 @@ In a Git repository the steps are `jj git init --colocate`'s there
   tau's, kept, is one change twice, divergent, and tau refuses to move
   onto it. Exports detach `HEAD` on its commit before moving the
   branch it names, as jj's do (`check_and_detach_head`).
+- Trunk's branch is chosen once, at the `Record` step, and kept in
+  `state.json` (ADR 0043, decision 6): of the bookmarks, local or on a
+  remote other than Git, at the commit jj's `trunk()` names, with the
+  person's config and the alias the setup wrote, the branch inspecting
+  found for trunk (`Found::trunk`) or the checked-out branch when one of
+  them is there, else the first by name; when `trunk()` is the root
+  commit or no bookmark is there, the checked-out branch; none with a
+  detached `HEAD`. A local `ProjectRepo`'s `trunk_name()` and `trunk()`
+  take it before the default branch and `main`, `master` or `trunk`.
+  The main chat's workspace stays on the root commit until the host
+  moves it onto trunk (`Vcs::move_onto`, as before each of its turns).
 - `ProjectRepo::open_local(layout, identity)` opens it again, with the
   main chat's workspace `state.json` names (`NotSetUp` without one),
   making tau's workspaces whole worktrees where they are not.

@@ -114,6 +114,12 @@ pub struct State {
     /// The name of the runs' directory, made unique when the repository
     /// was added ([`runs_dir_name`]) and never made again.
     pub runs_dir: String,
+    /// Trunk's branch, chosen as the repository was set up and never
+    /// chosen again: a bookmark at the commit jj's `trunk()` names, under
+    /// the person's config and the alias the setup wrote, else the
+    /// checked-out branch; none when neither is there.
+    #[serde(default)]
+    pub trunk: Option<String>,
 }
 
 impl State {
@@ -239,7 +245,7 @@ pub(crate) fn setup(
         });
     }
     let mut journal = Journal::begin(layout, identity, has_jj)?;
-    match journal.run(progress) {
+    match journal.run(found, progress) {
         Ok(name) => Ok(name),
         Err(error) => match journal.undo() {
             Ok(()) => Err(error),
@@ -357,6 +363,7 @@ impl<'a> Journal<'a> {
     /// The setup's steps. Returns the main chat's workspace's name.
     fn run(
         &mut self,
+        found: &Found,
         progress: &mut dyn FnMut(Step) -> ControlFlow<()>,
     ) -> Result<String, VcsError> {
         let folder = self.layout.repo_root.clone();
@@ -415,10 +422,12 @@ impl<'a> Journal<'a> {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let trunk = self.choose_trunk(found)?;
         State {
             repo_id,
             main_workspace: name.clone(),
             runs_dir,
+            trunk,
         }
         .write(&folder)?;
         let making = tau_dir(&folder).join(MAKING_FILE);
@@ -431,6 +440,35 @@ impl<'a> Journal<'a> {
             })?;
         }
         Ok(name)
+    }
+
+    /// Trunk's branch (decision 6 of ADR 0043): of the bookmarks at the
+    /// commit jj's `trunk()` names, with the person's config and the
+    /// alias the setup wrote, the branch inspecting found for trunk or
+    /// the checked-out branch when one of them is there, else the first
+    /// by name; with none there, the checked-out branch.
+    fn choose_trunk(&self, found: &Found) -> Result<Option<String>, VcsError> {
+        let folder = &self.layout.repo_root;
+        // Read again: the alias was written after the setup's settings.
+        let settings = crate::config::settings(
+            self.identity,
+            folder,
+            &self.layout.repo_path(),
+        )?;
+        let workspace = load(&settings, folder)?;
+        let names = super::jj_trunk_names(&workspace)
+            .map_err(|error| VcsError::SetupTrunk(error.to_string()))?;
+        let preferred = found
+            .trunk
+            .as_ref()
+            .map(|trunk| &trunk.branch)
+            .into_iter()
+            .chain(&found.branch)
+            .find(|branch| names.contains(branch));
+        Ok(preferred
+            .or(names.first())
+            .or(found.branch.as_ref())
+            .cloned())
     }
 
     /// The first steps in a folder with no jj repository: jj's

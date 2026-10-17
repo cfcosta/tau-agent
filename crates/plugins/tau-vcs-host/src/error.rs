@@ -107,6 +107,8 @@ pub enum VcsError {
     SetupStopped(crate::local::Step),
     #[error("Cannot snapshot the working copy: {0}")]
     SetupSnapshot(String),
+    #[error("Cannot read which commit `trunk()` names: {0}")]
+    SetupTrunk(String),
     #[error(
         "{error}; what the setup added could not all be taken away: {undo}"
     )]

@@ -353,6 +353,9 @@ struct Inner {
     layout: Layout,
     identity: Identity,
     settings: UserSettings,
+    /// A local repository's trunk branch, as its setup chose it
+    /// (`local::State::trunk`).
+    trunk: Option<String>,
 }
 
 impl std::fmt::Debug for ProjectRepo {
@@ -797,12 +800,19 @@ impl ProjectRepo {
         {
             layout.main_workspace = main.workspace_name().as_str().to_owned();
         }
+        let trunk = if layout.local {
+            crate::local::State::read(&layout.repo_root)?
+                .and_then(|state| state.trunk)
+        } else {
+            None
+        };
         Ok(Self {
             inner: Arc::new(Inner {
                 root,
                 layout,
                 identity,
                 settings,
+                trunk,
             }),
         })
     }
@@ -940,9 +950,9 @@ impl ProjectRepo {
         &self.inner.layout.main_dir
     }
 
-    /// The commit new runs start from: the source's default branch, as
-    /// the clone's `HEAD` names it, or the root commit of an empty
-    /// repository. A full commit id, in hex.
+    /// The commit new runs start from: trunk's bookmark
+    /// (`Self::trunk_name`), or the root commit of an empty repository. A
+    /// full commit id, in hex.
     pub fn trunk(&self) -> Result<String, VcsError> {
         let repo = self.load()?;
         let id = self
@@ -952,28 +962,37 @@ impl ProjectRepo {
         Ok(id.hex())
     }
 
-    /// The name of trunk's bookmark: the default branch, else `main`,
-    /// `master` or `trunk`, whichever is set; the default branch, else
-    /// `main`, when none is.
+    /// The name of trunk's bookmark: in a local repository the branch
+    /// its setup chose, else the default branch, else `main`, `master` or
+    /// `trunk`, whichever is set; the first of those two, else `main`,
+    /// when none is.
     pub fn trunk_name(&self) -> Result<String, VcsError> {
         let repo = self.load()?;
         Ok(self
             .trunk_bookmark(&repo)
             .map(|(name, _)| name)
             .unwrap_or_else(|| {
-                self.default_branch().unwrap_or_else(|| "main".to_owned())
+                self.inner
+                    .trunk
+                    .clone()
+                    .or_else(|| self.default_branch())
+                    .unwrap_or_else(|| "main".to_owned())
             }))
     }
 
-    /// Trunk's bookmark and the commit it names: the default branch, else
-    /// `main`, `master` or `trunk`.
+    /// Trunk's bookmark and the commit it names: the branch a local
+    /// repository's setup chose, else the default branch, else `main`,
+    /// `master` or `trunk`.
     fn trunk_bookmark(
         &self,
         repo: &ReadonlyRepo,
     ) -> Option<(String, CommitId)> {
         let view = repo.view();
-        self.default_branch()
+        self.inner
+            .trunk
+            .clone()
             .into_iter()
+            .chain(self.default_branch())
             .chain(["main", "master", "trunk"].map(str::to_owned))
             .find_map(|name| {
                 let id = view

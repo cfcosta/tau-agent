@@ -643,9 +643,86 @@ fn setup_leaves_the_persons_git_as_it_was(tc: TestCase) {
             "/*\n"
         );
     }
+    if let Some(jj) = jj.as_deref() {
+        assert_eq!(state.trunk, expected_trunk(jj, &person, &folder, &found));
+    } else if state.trunk.is_none() {
+        assert_eq!(found.branch, None);
+    }
     let opened = ProjectRepo::open_local(layout, person.identity()).unwrap();
     assert_eq!(opened.main_workspace(), "tau-main");
+    // Trunk is the branch chosen, wherever its bookmark is.
+    if let Some(trunk) = &state.trunk
+        && let Some(at) = opened.bookmark(trunk).unwrap()
+    {
+        assert_eq!(&opened.trunk_name().unwrap(), trunk);
+        assert_eq!(opened.trunk().unwrap(), at);
+    }
     assert_eq!(git_view(&person, &folder).index, before.index);
+}
+
+/// The trunk a setup must choose (ADR 0043, decision 6): of the
+/// branches at the commit the jj CLI's `trunk()` names in the folder,
+/// local or remote-tracking, the one inspecting found for trunk, else
+/// the checked-out branch, else the first by name; the checked-out
+/// branch when `trunk()` is the root commit or no branch is there.
+fn expected_trunk(
+    jj: &Path,
+    person: &Person,
+    folder: &Path,
+    found: &Found,
+) -> Option<String> {
+    let commit = person.run_jj(
+        jj,
+        folder,
+        &[
+            "--ignore-working-copy",
+            "log",
+            "--no-graph",
+            "-r",
+            "trunk()",
+            "-T",
+            "commit_id",
+        ],
+    );
+    let commit = commit.trim();
+    let mut names = std::collections::BTreeSet::new();
+    if commit.chars().any(|c| c != '0') {
+        let refs = person.git(
+            folder,
+            &[
+                "for-each-ref",
+                "--points-at",
+                commit,
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes",
+            ],
+        );
+        for name in refs.lines() {
+            let branch = match name.strip_prefix("refs/heads/") {
+                Some(branch) => branch,
+                None => name
+                    .strip_prefix("refs/remotes/")
+                    .and_then(|rest| rest.split_once('/'))
+                    .map(|(_, branch)| branch)
+                    .unwrap(),
+            };
+            if branch != "HEAD" {
+                names.insert(branch.to_owned());
+            }
+        }
+    }
+    let preferred = found
+        .trunk
+        .as_ref()
+        .map(|trunk| &trunk.branch)
+        .into_iter()
+        .chain(&found.branch)
+        .find(|branch| names.contains(*branch));
+    preferred
+        .or(names.first())
+        .or(found.branch.as_ref())
+        .cloned()
 }
 
 /// Where a setup is made to fail.
@@ -897,6 +974,53 @@ fn a_tracked_branch_follows_origin_as_jj_moves_it() {
         jj: None,
     };
     matches_jj_git_init_colocate(&world);
+}
+
+/// Trunk is chosen once, as the repository is set up (ADR 0043, decision
+/// 6), and opening it again keeps it: the checked-out branch when no
+/// remote names one, though `master` is there too; the default branch
+/// `origin/HEAD` names, through the `trunk()` alias, when one does,
+/// whichever branch is checked out.
+#[test]
+fn trunk_is_chosen_as_the_repository_is_set_up() {
+    for (origin, trunk) in [(None, "feature"), (Some(3), "fix")] {
+        let world = World {
+            commits: vec![vec![(0, 0)], vec![(0, 1)]],
+            branches: vec![(1, 0), (3, 1)],
+            tags: Vec::new(),
+            head: HeadAt::Branch(1),
+            remotes: vec![
+                origin.map(|head| Remote {
+                    branches: vec![(head, 1)],
+                    head: Some(head),
+                }),
+                None,
+            ],
+            edits: Vec::new(),
+            abandon: true,
+            auto_track: false,
+            jj: None,
+        };
+        let base = tempfile::tempdir().unwrap();
+        let person = Person::new(&base.path().join("person"));
+        let folder = build(&person, base.path(), &world, None);
+        let found = found(&person, &folder);
+        let layout = layout(base.path(), &folder);
+        ProjectRepo::setup_local(
+            &found,
+            layout.clone(),
+            person.identity(),
+            &mut go_on,
+        )
+        .unwrap();
+        let state = State::read(&folder).unwrap().unwrap();
+        assert_eq!(state.trunk.as_deref(), Some(trunk));
+        let opened =
+            ProjectRepo::open_local(layout, person.identity()).unwrap();
+        assert_eq!(opened.trunk_name().unwrap(), trunk);
+        let at = person.git(&folder, &["rev-parse", trunk]);
+        assert_eq!(opened.trunk().unwrap(), at);
+    }
 }
 
 fn matches_jj_git_init_colocate(world: &World) {

@@ -471,10 +471,17 @@ fn colocated(
 /// is the root commit, names a commit no bookmark is at, or the
 /// operation log has several heads (merging them would write).
 fn jj_trunk(workspace: &Workspace) -> Result<Option<String>, Failed> {
+    Ok(jj_trunk_names(workspace)?.into_iter().next())
+}
+
+/// The names of the bookmarks at the commit jj's `trunk()` names in
+/// `workspace`, local or on a remote other than Git, sorted, each once;
+/// none as [`jj_trunk`] says.
+fn jj_trunk_names(workspace: &Workspace) -> Result<Vec<String>, Failed> {
     let loader = workspace.repo_loader();
     let heads = block_on(loader.op_heads_store().get_op_heads())?;
     let [head] = heads.as_slice() else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let operation = block_on(loader.load_operation(head))?;
     let repo = block_on(loader.load_at(&operation))?;
@@ -488,7 +495,7 @@ fn jj_trunk(workspace: &Workspace) -> Result<Option<String>, Failed> {
     let first = block_on(revset.stream().next()).transpose()?;
     let Some(commit) = first.filter(|id| id != repo.store().root_commit_id())
     else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let view = repo.view();
     let local = view
@@ -501,7 +508,7 @@ fn jj_trunk(workspace: &Workspace) -> Result<Option<String>, Failed> {
                 && remote_ref.target.present_adds().any(|id| *id == commit)
         })
         .map(|(symbol, _)| symbol.name.as_str().to_owned());
-    Ok(local.chain(remote).min())
+    Ok(local.chain(remote).collect::<BTreeSet<_>>().into_iter().collect())
 }
 
 /// The branch `refs/remotes/origin/HEAD` names, when it names one that
