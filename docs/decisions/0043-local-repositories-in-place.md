@@ -43,7 +43,11 @@ small dialog).
   see pointer files or empty folders. Git hooks and clean/smudge
   filters are ignored: they do not run on tau's commits.
 - tau refuses a Git worktree (it offers the main checkout) and a folder
-  inside a repository (it offers the repository).
+  inside a repository (it offers the repository). It refuses a plain
+  folder (it does not make one a repository), a bare repository, and
+  a jj repository not colocated with Git (it hints at
+  `jj git colocation enable`: colocating would move the person's Git
+  store).
 - tau follows the person's jj config, global and the repository's,
   as the jj CLI does, in every repository, clones included. Not doing
   so is a bug. This was fixed before local repositories came back:
@@ -63,15 +67,20 @@ small dialog).
 - The project root is the person's folder. jj's `default` workspace is
   the person's.
 - The main chat works in a named workspace of its own, in every
-  repository, clones included: `default` is never tau's. A local
-  repository can instead put the main chat in the person's checkout,
-  where the two share one working copy.
+  repository, clones included: `default` is never tau's. It is named
+  `tau-main` (`tau-main-<n>` if the person has one already). Putting
+  the main chat in the person's checkout, sharing one working copy,
+  is left out for now: tau would have to move Git's `HEAD` and index
+  there.
 - Runs work in workspaces under tau's data directory, one per run.
   Each is also a Git worktree of the repository, so `git`, nix flakes
   and build scripts that ask Git work in runs; this holds for clones
   too.
 - The person names untracked paths (for example `.env`, `.direnv`)
-  that tau links into each run's workspace. Nothing by default.
+  that tau links into each run's workspace. Nothing by default. Only
+  paths jj leaves untracked in the folder can be named, and runs'
+  snapshots leave linked paths out, so they never reach a commit. A
+  linked folder is shared by the runs.
 - direnv trust follows the repository: allowing it in the folder
   allows it in that repository's workspaces.
 - Plugin data (memory, settings) keys on a stable repository id, not
@@ -84,17 +93,29 @@ small dialog).
   it checked out in Git (`HEAD` attached to trunk), tau detaches
   `HEAD` on its current commit first, as jj does, and the status bar
   says trunk moved.
-- Run heads live in a private namespace, `refs/tau/*`, not as
-  branches: `git branch` and `git push --all` never see them.
+- Run heads live in a private namespace, `refs/tau/runs/<run>`,
+  written by tau, not as branches: `git branch` and `git push --all`
+  never see them. They are not jj bookmarks either, since the jj CLI
+  exports every bookmark to `refs/heads/` in a colocated repository:
+  a run's head is its workspace's `@-`, and the ref records it. This
+  holds for clones too, and replaces the `tau/<run>` bookmarks of
+  [0042](0042-sub-agents-can-start-fresh-and-keep-their-work-aside.md).
 - tau sets the repository's default log revset to leave out run
-  commits that have not landed. Its operations stay in the operation
-  log, each described `tau: …`.
+  commits that have not landed. It builds on the person's own
+  `revsets.log` (from the layers below the repository's), rewrites it
+  when theirs changes, and restores exactly what was there on Remove.
+  Its operations stay in the operation log, each described `tau: …`
+  and tagged as tau's.
 - When the person and tau both move trunk, the person's commit wins:
   tau rebases what it landed on top, as a landing onto a moved trunk
   does, and conflicts go to the main chat.
 - tau watches the operation log for operations it did not write, and
-  reloads: trunk, counts, landing forecasts and the sidebar follow the
-  person's commits, fetches and rebases.
+  Git's refs, and reloads: trunk, counts, landing forecasts and the
+  sidebar follow the person's commits, fetches and rebases, whether
+  made with jj or with `git` alone. Before each write tau imports
+  Git's refs, under jj's own import lock, as the jj CLI does, with the
+  person's `git.abandon-unreachable-commits` and bookmark tracking
+  settings.
 - When the person removes tau's state (a workspace forgotten, a run's
   head abandoned, a `refs/tau/` ref deleted), that run is recorded as
   dropped. The startup sweep removes only what it still finds.
@@ -108,8 +129,11 @@ small dialog).
 - A local repository fetches only when asked: from the repository's
   menu, or by the main chat with a new tool, `vcs_pull`. There is no
   startup fetch, and landing never pulls.
-- `vcs_pull` (main chat only; chats and sub-agents get a refusal, as
-  `vcs_land` on main does) fetches origin and moves trunk to it as a
+- `vcs_pull` is declared in every run, in every repository (clones
+  keep their startup fetch too). The main chat alone may use it:
+  chats and sub-agents get a refusal, as `vcs_land` on main does, and
+  a repository whose pushes go nowhere answers that there is no
+  remote. It fetches origin and moves trunk to it as a
   fast-forward, or rebases main's own unpushed commits on top;
   conflicts land for the main chat to resolve.
 
@@ -138,8 +162,12 @@ small dialog).
   (`git::create_worktree` and `unlink_worktree`, what `jj workspace
   add` and `forget` use) runs `git worktree add --orphan` and `git
   worktree prune`. tau creates the worktree itself with gix (there is
-  no git binary), as jj-lib lays it out, and keeps its `HEAD` and
-  index in step, as `colocate.rs` does for `main/` today.
+  no git binary), as jj-lib lays it out but with absolute paths, so
+  the person's `.git/config` is never changed, and keeps its `HEAD`
+  and index in step, as `colocate.rs` does for `main/` today.
+- "The folder is as before" after a failed setup means its refs,
+  `HEAD`, index, config and files; loose objects tau wrote may stay
+  in `.git/objects` until Git collects them.
 - tau's commits carry the person's name and are signed when their
   config signs. A signing setup that prompts would block tau's
   commits; it surfaces as a failed commit.
