@@ -156,6 +156,7 @@ fn draft(
             turn: None,
             commit: None,
             files: Vec::new(),
+            imported: None,
         },
     })
 }

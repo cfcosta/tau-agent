@@ -7,7 +7,16 @@ use hegel::{
     generators as gs,
     generators::{Generator as _, PrintableGenerator},
 };
-use tau_memory_host::note::{By, Link, LinkType, Note, NoteType, Source};
+use tau_memory_host::note::{
+    By,
+    Imported,
+    Link,
+    LinkType,
+    Note,
+    NoteType,
+    Source,
+    Tool,
+};
 
 #[hegel::composite]
 pub fn id(tc: &TestCase) -> String {
@@ -20,6 +29,24 @@ pub fn line(tc: &TestCase) -> String {
     let text: String =
         tc.draw(gs::text().exclude_characters("\n\r").max_size(40));
     format!("x{text}")
+}
+
+/// Where an imported note came from: either tool, any one-line path
+/// and session.
+pub fn imported() -> impl PrintableGenerator<Imported> {
+    imported_unprinted().print_as_debug()
+}
+
+#[hegel::composite]
+fn imported_unprinted(tc: &TestCase) -> Imported {
+    Imported {
+        from: tc.draw(
+            gs::sampled_from(vec![Tool::ClaudeCode, Tool::Codex])
+                .print_as_debug(),
+        ),
+        path: tc.draw(line()),
+        session: tc.draw(gs::optional(line())),
+    }
 }
 
 pub fn note() -> impl PrintableGenerator<Note> {
@@ -62,6 +89,7 @@ fn note_unprinted(tc: &TestCase) -> Note {
             turn: tc.draw(gs::optional(gs::integers::<u32>())),
             commit: tc.draw(gs::optional(line())),
             files: tc.draw(gs::vecs(line()).max_size(3)),
+            imported: tc.draw(gs::optional(imported())),
         },
         links,
         // Any body, fence lines included: only the first closes the

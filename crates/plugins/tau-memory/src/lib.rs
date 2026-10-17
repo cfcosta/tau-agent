@@ -5,6 +5,7 @@
 //! recalled and saved. Keeping the notes, searching them and the
 //! plugin each run gets are `tau-memory-host`'s (ADR 0030).
 
+pub mod import;
 pub mod note;
 pub mod record;
 pub mod ui;

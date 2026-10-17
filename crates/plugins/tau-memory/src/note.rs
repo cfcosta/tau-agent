@@ -28,6 +28,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::import::Tool;
+
 /// What a note holds. A closed set: the kind decides how the note is
 /// written and read, and task progress is not memory.
 #[derive(
@@ -189,6 +191,10 @@ pub struct Source {
     pub commit: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
+    /// What another coding agent kept, when the note was brought over
+    /// from it (ADR 0044).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported: Option<Imported>,
 }
 
 impl Source {
@@ -199,8 +205,19 @@ impl Source {
             turn: None,
             commit: None,
             files: Vec::new(),
+            imported: None,
         }
     }
+}
+
+/// Where an imported note came from: the tool, the file it read, and
+/// the session, when the file was a chat or a session's summary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Imported {
+    pub from: Tool,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 /// A note, as its file holds it. Times are milliseconds since the Unix
@@ -310,7 +327,10 @@ impl Note {
             .chain(&source.files)
             .chain(&source.run)
             .chain(&source.commit)
-            .chain(&self.stale);
+            .chain(&self.stale)
+            .chain(source.imported.iter().flat_map(|imported| {
+                std::iter::once(&imported.path).chain(&imported.session)
+            }));
         for field in fields {
             if !no_break(field) {
                 return Err(NoteError::BadLine("front matter"));

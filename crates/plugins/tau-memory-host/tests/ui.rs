@@ -47,6 +47,7 @@ fn source(files: Vec<String>) -> Source {
         turn: None,
         commit: None,
         files,
+        imported: None,
     }
 }
 
