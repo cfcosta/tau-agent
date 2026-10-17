@@ -213,21 +213,22 @@ person's own `jj` commands from its own in the operation log:
 - Its description starts `tau: ` (`DESCRIPTION_PREFIX`), so
   `jj op log` shows whose it is:
 
-  | Description                        | Written by                                              |
-  | ---------------------------------- | ------------------------------------------------------- |
-  | `tau: vcs_<tool>`                  | a write tool, `vcs_land` included                       |
-  | `tau: snapshot working copy`       | a tool's or a turn's snapshot                           |
-  | `tau: checkpoint`                  | a turn's end (`end_turn`, `commit_all`)                 |
-  | `tau: move onto`                   | a catch-up (`Vcs::move_onto`)                           |
-  | `tau: make the repository`         | `Project::init`, `Vcs::init`                            |
-  | `tau: import`                      | a clone or an import                                    |
-  | `tau: update`                      | `update`                                                |
-  | `tau: add workspace <name>`        | `add_workspace`, a fork's `add_workspace_from_snapshot` |
-  | `tau: forget workspace <name>`     | a sweep, a landing, a dropped child, a sub-agent's end  |
-  | `tau: abandon <n> changes`         | a sweep, a dropped child, a sub-agent's end             |
-  | `tau: remove bookmark <name>`      | a sweep, a landing, a dropped child, a sub-agent's end  |
-  | `tau: push <branch>`               | `push_trunk`                                            |
-  | `tau: sign commits before pushing` | `push_trunk` with `git.sign-on-push`                    |
+  | Description                           | Written by                                              |
+  | ------------------------------------- | ------------------------------------------------------- |
+  | `tau: vcs_<tool>`                     | a write tool, `vcs_land` included                       |
+  | `tau: snapshot working copy`          | a tool's or a turn's snapshot                           |
+  | `tau: checkpoint`                     | a turn's end (`end_turn`, `commit_all`)                 |
+  | `tau: move onto`                      | a catch-up (`Vcs::move_onto`)                           |
+  | `tau: make the repository`            | `Project::init`, `Vcs::init`                            |
+  | `tau: import`                         | a clone or an import                                    |
+  | `tau: update`                         | `update`                                                |
+  | `tau: add workspace <name>`           | `add_workspace`, a fork's `add_workspace_from_snapshot` |
+  | `tau: name the main chat's workspace` | opening a project made before it had one                |
+  | `tau: forget workspace <name>`        | a sweep, a landing, a dropped child, a sub-agent's end  |
+  | `tau: abandon <n> changes`            | a sweep, a dropped child, a sub-agent's end             |
+  | `tau: remove bookmark <name>`         | a sweep, a landing, a dropped child, a sub-agent's end  |
+  | `tau: push <branch>`                  | `push_trunk`                                            |
+  | `tau: sign commits before pushing`    | `push_trunk` with `git.sign-on-push`                    |
 
 - jj-lib writes an operation of its own when it makes a repository or
   a workspace (`add workspace '<name>'`). tau makes both without it:
@@ -540,10 +541,37 @@ A `Project` is a repository tau owns, in a directory of its own
 clone from GitHub). Runs never work in
 the user's checkout.
 
-| Path           | What it is                                                                     |
-| -------------- | ------------------------------------------------------------------------------ |
-| `main/`        | The jj repository, colocated with its Git store: `main/.jj` beside `main/.git` |
-| `runs/<name>/` | One jj workspace per run, named by the host.                                   |
+| Path           | What it is                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------------- |
+| `main/`        | The jj repository, colocated with its Git store (`.jj` beside `.git`), and the main chat's workspace |
+| `runs/<name>/` | One jj workspace per run, named by the host.                                                         |
+
+A `Layout` says where these are (`ProjectRepo::layout`): the
+repository's directory, the runs' directory, and the main chat's
+workspace, its name and directory. A project tau owns has the layout
+above (`Layout::of_clone`): the repository's directory is the main
+chat's.
+
+The main chat works in a workspace of its own, `tau-main`
+(`MAIN_WORKSPACE`, `ProjectRepo::main_workspace`, `main_dir`). jj's
+`default` workspace is never tau's (ADR 0043): a new project has none.
+Where `tau-main` is taken, `main_workspace_name` picks `tau-main-<n>`,
+the smallest `n` from 2 that is free; a project then keeps the name its
+main directory's working copy has.
+
+A project made before had its main chat in `default`, in `main/`.
+Opening it renames that workspace, as `jj workspace rename tau-main`
+would in `main/` (jj-cli 0.46.0's `commands/workspace/rename.rs`):
+under tau's lock, jj's Git import/export lock and the working copy's
+lock, the workspace store first, then the view, in one operation
+(`tau: name the main chat's workspace`), then the working copy. The
+working-copy commit, the files in `main/`, Git's `HEAD` and index
+there, and `.jj/tau-moved-onto` stay as they were: the operation moves
+no working copy, so it resets neither `HEAD` nor the index. Each step
+is skipped once done, so a rename cut off between steps is finished by
+the next open: it applies while the working copy in `main/` names
+`default`, and when the view has the new name already, the name is the
+one the workspace store gives `main/`.
 
 `main/` is colocated as `jj git init --colocate` makes a repository, so
 `jj` and `git` both work in it:
@@ -555,10 +583,12 @@ the user's checkout.
   upstream's URL (or, for a local source, its path) and no fetch
   refspec.
 - Every operation tau writes exports the bookmarks and tags to Git's
-  `refs/heads/` and `refs/tags/`, and, when the main workspace's `@`
-  moved, points Git's `HEAD` at `@-` and resets the index to it, as
-  the jj CLI does after each command. `git status` in `main/` shows
-  `@`'s changes.
+  `refs/heads/` and `refs/tags/`, and, when the `@` of the workspace
+  in the Git store's working tree moved, points Git's `HEAD` at `@-`
+  and resets the index to it, as the jj CLI does after each command.
+  That workspace is the one the workspace store has in the working
+  tree, `main/`: the main chat's. A workspace renamed in the operation
+  did not move. `git status` in `main/` shows `@`'s changes.
 - Run workspaces are plain jj workspaces, with no `.git`: jj-lib cannot
   make one a Git worktree.
 
@@ -608,7 +638,17 @@ the user's checkout.
   commits, the workspace starts on the commit `base`'s change names
   now, so the old commit does not come back beside the new one. It is
   one operation, `tau: add workspace <name>`. `forget_workspace(name)`
-  drops it from the view and deletes the directory; its commits stay.
+  removes it as `jj workspace remove` does: it drops it from the view,
+  then from the workspace store (`.jj/repo/workspace_store`), then
+  deletes the directory; its commits stay. (`jj workspace forget`
+  keeps the store's entry, for `jj undo`; tau deletes the directory,
+  so there is nothing to point back at.)
+- A run's workspace is one tau made: the workspace store has it in its
+  directory under `runs/`. `workspaces()` lists those, and only those:
+  never the main chat's, and never one the person made with `jj
+  workspace add`, wherever they put it. `forget_workspace` leaves the
+  main chat's workspace and the person's alone, and never deletes a
+  directory the store gives another workspace.
 - These calls block. Call them off the async executor.
 
 ## Inspecting a folder
@@ -897,8 +937,9 @@ and its `Standing`:
   and its workspaces' working copies have that its `Keep` (its parent's
   bookmark, or the main chat's working copy) lacks, as a drop does.
 
-A workspace goes unless a kept run worked in it, and `default`, the
-repository's checkout, never goes. A `tau/<run>` bookmark goes unless
+The workspaces it looks at are the runs' (`ProjectRepo::workspaces`):
+the main chat's and the person's never go. A workspace goes unless a
+kept run worked in it. A `tau/<run>` bookmark goes unless
 that run is kept; other bookmarks are not runs' and stay. What no
 owner names belongs to a run that is gone, and goes. `Project::sweep`
 carries a plan out: abandons, then forgets workspaces (their directories
@@ -939,9 +980,9 @@ below).
 ## A repository's main chat
 
 Each repository has a main chat, a top-level run that every other chat
-forks from. It works in the repository's own checkout, jj's `default`
-workspace under `main/` (`DEFAULT_WORKSPACE`), never in one of its own,
-and `forget_workspace` never removes it. It commits on trunk: its
+forks from. It works in the main workspace, `tau-main` in `main/`
+(`Project::main_workspace`, `main_dir`), never in one of a run's, and
+`forget_workspace` never removes it. It commits on trunk: its
 `RunWorkspace` is built with `commits_to(project.trunk_name())`, so its
 commits, its turns'
 snapshots, the chats that land on it and its sub-agents all move
