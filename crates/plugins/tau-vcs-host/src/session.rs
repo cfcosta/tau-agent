@@ -43,9 +43,9 @@ pub(crate) const TOOL_ATTRIBUTE: &str = "tau.vcs.tool";
 /// The operation attribute an undo sets to the operation it undid.
 pub(crate) const UNDO_ATTRIBUTE: &str = "tau.vcs.undo";
 /// The operation attribute of a checkpoint that only moved the run's
-/// bookmark: the turn changed nothing. Undo passes over it, as it does
-/// over snapshots.
-pub(crate) const BOOKMARK_ATTRIBUTE: &str = "tau.vcs.bookmark";
+/// head: the turn changed nothing. Undo passes over it, as it does over
+/// snapshots.
+pub(crate) const HEAD_ATTRIBUTE: &str = "tau.vcs.bookmark";
 /// The operation attribute of a landing: the change ids it landed,
 /// separated by spaces. A turn's paths leave them out.
 pub(crate) const LANDED_ATTRIBUTE: &str = "tau.vcs.landed";

@@ -1,5 +1,5 @@
 //! Sweeping a project of what runs left behind: the workspaces and
-//! bookmarks of runs that are gone, closed or thrown away, which
+//! heads ([`Head`]) of runs that are gone, closed or thrown away, which
 //! nothing cleans once the process that ran them is gone
 //! (`docs/reference/vcs.md`, "Sweeping at start").
 //!
@@ -8,9 +8,12 @@
 
 use std::collections::BTreeSet;
 
-use crate::{ProjectRepo, error::VcsError, run_workspace};
+use tau_agent::tool::RunId;
 
-/// Where a run stands, as far as its workspaces and bookmark go.
+pub use crate::heads::RUN_BOOKMARK_PREFIX;
+use crate::{ProjectRepo, error::VcsError, heads::Head};
+
+/// Where a run stands, as far as its workspaces and head go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Standing {
     /// It keeps them: running, or open, as a chat that can go on, or a
@@ -27,17 +30,17 @@ pub enum Standing {
 /// parent has stays, and so does trunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Keep {
-    /// What this bookmark's commit has.
-    Bookmark(String),
+    /// What this head's commit has: the parent run's.
+    Head(Head),
     /// What this workspace's working copy has: the main chat's, which
     /// commits on trunk, and whose own commits trunk may be past.
     Workspace(String),
 }
 
-/// One run that may own workspaces and a bookmark in the project.
+/// One run that may own workspaces and a head in the project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Owner {
-    /// The run's id: its bookmark is `tau/<run>`.
+    /// The run's id: its head is [`Head::Run`]'s.
     pub run: String,
     pub standing: Standing,
     /// The workspaces it worked in, by name.
@@ -51,7 +54,7 @@ pub struct Owner {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Abandon {
     pub run: String,
-    /// Its bookmark, if the project has it.
+    /// The name of its head, if the project has it.
     pub bookmark: Option<String>,
     /// Its workspaces the project still has: their working copies.
     pub workspaces: Vec<String>,
@@ -59,7 +62,7 @@ pub struct Abandon {
 }
 
 /// What a sweep does, in this order: abandons, then forgets the
-/// workspaces, then removes the bookmarks.
+/// workspaces, then removes the heads, by name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Sweep {
     pub abandon: Vec<Abandon>,
@@ -75,36 +78,33 @@ impl Sweep {
     }
 }
 
-/// The prefix of a run's bookmark, `tau/<run>`.
-pub const RUN_BOOKMARK_PREFIX: &str = "tau/";
-
 /// What to sweep from a project that holds the run workspaces
 /// `workspaces` ([`ProjectRepo::workspaces`]: never the main chat's, nor
-/// one the person made) and `bookmarks`, given the runs that may own
-/// them:
+/// one the person made) and the heads named `heads`
+/// ([`ProjectRepo::run_heads`]), given the runs that may own them:
 ///
 /// - a workspace goes unless a kept run worked in it;
-/// - a run's bookmark (`tau/<run>`) goes unless that run is kept; other
-///   bookmarks are not runs' and stay;
-/// - a discarded run's own commits go first, from its bookmark and the
+/// - a run's head goes unless that run is kept; a name that is no run's
+///   head ([`Head::run_of`]) stays;
+/// - a discarded run's own commits go first, from its head and the
 ///   working copies of its workspaces that go.
 ///
-/// A workspace or bookmark with no owner at all belongs to a run that
-/// is gone, and goes.
+/// A workspace or head with no owner at all belongs to a run that is
+/// gone, and goes.
 pub fn plan(
     owners: &[Owner],
     workspaces: &[String],
-    bookmarks: &[String],
+    heads: &[String],
 ) -> Sweep {
     let kept_workspaces: BTreeSet<&str> = owners
         .iter()
         .filter(|owner| owner.standing == Standing::Kept)
         .flat_map(|owner| owner.workspaces.iter().map(String::as_str))
         .collect();
-    let kept_bookmarks: BTreeSet<String> = owners
+    let kept_runs: BTreeSet<&str> = owners
         .iter()
         .filter(|owner| owner.standing == Standing::Kept)
-        .map(|owner| bookmark_of(&owner.run))
+        .map(|owner| owner.run.as_str())
         .collect();
     let forget: Vec<String> = workspaces
         .iter()
@@ -113,10 +113,11 @@ pub fn plan(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let remove: Vec<String> = bookmarks
+    let remove: Vec<String> = heads
         .iter()
-        .filter(|name| name.starts_with(RUN_BOOKMARK_PREFIX))
-        .filter(|name| !kept_bookmarks.contains(*name))
+        .filter(|name| {
+            Head::run_of(name).is_some_and(|run| !kept_runs.contains(run))
+        })
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -125,8 +126,8 @@ pub fn plan(
         .iter()
         .filter(|owner| owner.standing == Standing::Discarded)
         .filter_map(|owner| {
-            let bookmark = bookmark_of(&owner.run);
-            let bookmark = remove.contains(&bookmark).then_some(bookmark);
+            let head = head_of(&owner.run).to_string();
+            let head = remove.contains(&head).then_some(head);
             let workspaces: Vec<String> = owner
                 .workspaces
                 .iter()
@@ -135,9 +136,9 @@ pub fn plan(
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
-            (bookmark.is_some() || !workspaces.is_empty()).then(|| Abandon {
+            (head.is_some() || !workspaces.is_empty()).then(|| Abandon {
                 run: owner.run.clone(),
-                bookmark,
+                bookmark: head,
                 workspaces,
                 keep: owner.keep.clone(),
             })
@@ -150,8 +151,8 @@ pub fn plan(
     }
 }
 
-fn bookmark_of(run: &str) -> String {
-    run_workspace::bookmark(&tau_agent::tool::RunId(run.into()))
+fn head_of(run: &str) -> Head {
+    Head::Run(RunId(run.into()))
 }
 
 impl ProjectRepo {
@@ -159,19 +160,19 @@ impl ProjectRepo {
     /// project holds now.
     pub fn plan_sweep(&self, owners: &[Owner]) -> Result<Sweep, VcsError> {
         let workspaces = self.workspaces()?;
-        let bookmarks = self.bookmarks(RUN_BOOKMARK_PREFIX)?;
-        Ok(plan(owners, &workspaces, &bookmarks))
+        let heads = self.run_heads()?;
+        Ok(plan(owners, &workspaces, &heads))
     }
 
     /// Carries `sweep` out: abandons each discarded run's own commits,
     /// then forgets the workspaces (their directories go) and removes
-    /// the bookmarks. Each step finds nothing to do when done before, so
+    /// the heads. Each step finds nothing to do when done before, so
     /// a sweep cut off is finished by the next. The operation log keeps
     /// what was abandoned.
     pub fn sweep(&self, sweep: &Sweep) -> Result<(), VcsError> {
         for abandon in &sweep.abandon {
             let keep = match &abandon.keep {
-                Keep::Bookmark(name) => self.bookmark(name)?,
+                Keep::Head(head) => self.head(head)?,
                 Keep::Workspace(name) => self.workspace_head(name)?,
             };
             // Trunk always stays: a main chat that never ran stands on
@@ -186,8 +187,8 @@ impl ProjectRepo {
             for name in &abandon.workspaces {
                 heads.extend(self.workspace_head(name)?);
             }
-            if let Some(name) = &abandon.bookmark {
-                heads.extend(self.bookmark(name)?);
+            if abandon.bookmark.is_some() {
+                heads.extend(self.head(&head_of(&abandon.run))?);
             }
             for head in heads {
                 self.abandon_beyond(&keeps, &head)?;
@@ -197,7 +198,9 @@ impl ProjectRepo {
             self.forget_workspace(name)?;
         }
         for name in &sweep.remove {
-            self.remove_bookmark(name)?;
+            if let Some(run) = Head::run_of(name) {
+                self.remove_head(&head_of(run))?;
+            }
         }
         Ok(())
     }

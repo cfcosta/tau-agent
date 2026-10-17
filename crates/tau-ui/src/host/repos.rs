@@ -387,17 +387,18 @@ impl Host {
             .any(|listed| listed.main.as_deref() == Some(&*run.0))
     }
 
-    /// The bookmark `run`'s commits move: trunk's for a main chat, which
-    /// commits on it, else `tau/<run>`.
-    pub(super) async fn bookmark_of(
+    /// The head `run`'s commits move: trunk's branch for a main chat,
+    /// which commits on it, else the run's own.
+    pub(super) async fn head_of(
         &self,
         run: &RunId,
         project: &Project,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<Head> {
         if self.is_main(run) {
-            return Ok(project.run(|project| project.trunk_name()).await?);
+            let trunk = project.run(|project| project.trunk_name()).await?;
+            return Ok(Head::Branch(trunk));
         }
-        Ok(bookmark(run))
+        Ok(Head::Run(run.clone()))
     }
 
     /// Brings a main chat's workspace, `name`, up to trunk, which moves

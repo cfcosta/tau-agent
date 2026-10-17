@@ -32,7 +32,7 @@ pub(super) fn stack(
     run: &RunId,
     project: &ProjectRepo,
 ) -> anyhow::Result<Vec<tau_vcs_host::StackChange>> {
-    let Some(head) = project.bookmark(&bookmark(run))? else {
+    let Some(head) = project.head(&Head::Run(run.clone()))? else {
         return Ok(Vec::new());
     };
     Ok(project.stack(&head)?)

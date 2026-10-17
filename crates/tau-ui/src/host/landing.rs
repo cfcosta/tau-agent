@@ -22,7 +22,7 @@ pub(super) struct Intent {
     #[serde(default)]
     pub(super) cancelled: bool,
     /// The child goes on after it lands (ADR 0034): its workspace and
-    /// bookmark stay.
+    /// head stay.
     #[serde(default)]
     pub(super) keep: bool,
 }
@@ -68,7 +68,7 @@ pub(super) struct LandingPlan {
     pub(super) project: Project,
     pub(super) parent_workspace: String,
     pub(super) child_workspace: String,
-    /// The child's newest commit, from its bookmark.
+    /// The child's newest commit, from its head.
     pub(super) child_head: String,
     /// The parent's workspace, where the landing runs.
     pub(super) parent_vcs: tau_vcs_host::Vcs,
@@ -199,14 +199,14 @@ impl Host {
         reading: Reading,
     ) -> anyhow::Result<Landing> {
         let plan = self.landing(child, reading).await?;
-        let into = self.bookmark_of(&plan.parent, &plan.project).await?;
+        let into = self.head_of(&plan.parent, &plan.project).await?;
         Ok(plan.parent_vcs.land(&plan.child_head, into, false).await?)
     }
 
     /// Lands `child` on its parent (ADR 0009): restacks its changes onto
     /// the parent's newest commit, records them as links in the parent,
     /// and closes the child: its workspace goes, and so does its
-    /// bookmark. Both runs must be idle.
+    /// head. Both runs must be idle.
     ///
     /// Each step can be cut off by tau closing, and the next start
     /// finishes it ([`Host::finish_landings`]): an intent is stored
@@ -217,7 +217,7 @@ impl Host {
     }
 
     /// Lands `child` on its parent as [`Host::land`] does, but the child
-    /// goes on (ADR 0034): its workspace and bookmark stay, its working
+    /// goes on (ADR 0034): its workspace and head stay, its working
     /// copy moves onto the parent's new head with its changes, and it
     /// takes messages as before. A later landing brings what it did
     /// since. Both runs must be idle.
@@ -283,7 +283,7 @@ impl Host {
         let state = self.repo_state_of(child).await?;
         let _starting = state.starting.lock().await;
         let plan = self.landing(child, Reading::Land).await?;
-        let into = self.bookmark_of(&plan.parent, &plan.project).await?;
+        let into = self.head_of(&plan.parent, &plan.project).await?;
         let intent = Intent {
             from: child.0.to_string(),
             child_head: plan.child_head.clone(),
@@ -322,7 +322,7 @@ impl Host {
     /// What a landing does after its restack, each step finding nothing
     /// to do when it was done before: records the landed changes as the
     /// parent's links with a record of the landing, then forgets the
-    /// child's workspace and removes its bookmark. A child that goes on
+    /// child's workspace and removes its head. A child that goes on
     /// keeps both, and its links do not name it: it did not end.
     async fn finish_landing(
         &self,
@@ -407,9 +407,9 @@ impl Host {
             .run(move |project| project.forget_workspace(&workspace))
             .await?;
         self.cut(LandingStep::Workspace)?;
-        let name = bookmark(&child);
+        let head = Head::Run(child.clone());
         project
-            .run(move |project| project.remove_bookmark(&name))
+            .run(move |project| project.remove_head(&head))
             .await?;
         self.session(&child, |run| run.workspace.take());
         Ok(record)
@@ -477,7 +477,7 @@ impl Host {
     /// closed; one not done yet lands now. Returns the records of the
     /// landings it finished, each marked recovered, for their cards. A
     /// landing whose record was stored is done but for its workspace
-    /// and bookmark, which the sweep after takes.
+    /// and head, which the sweep after takes.
     pub async fn finish_landings(&self) -> anyhow::Result<Vec<LandingRecord>> {
         let intents =
             self.store.plugin_entries_everywhere(LANDING_INTENT).await?;
@@ -615,7 +615,7 @@ impl Host {
         if main {
             self.catch_up(&project, project.main_workspace()).await?;
         }
-        let into = self.bookmark_of(&parent, &project).await?;
+        let into = self.head_of(&parent, &project).await?;
         let workspace = match self.session(child, |run| run.workspace.take()) {
             Some(name) => Some(name),
             None => self
@@ -623,13 +623,13 @@ impl Host {
                 .await?
                 .map(|(_, link)| link.workspace),
         };
-        let child_bookmark = bookmark(child);
+        let child_head = Head::Run(child.clone());
         if let Some(name) = &workspace {
             self.stop_processes(&project.workspace_dir(name));
         }
         project
             .run(move |project| {
-                if let Some(head) = project.bookmark(&child_bookmark)? {
+                if let Some(head) = project.head(&child_head)? {
                     let stands_on = match project
                         .workspace_head(project.main_workspace())?
                     {
@@ -638,7 +638,7 @@ impl Host {
                     };
                     let keep = match stands_on {
                         Some(keep) => keep,
-                        None => match project.bookmark(&into)? {
+                        None => match project.head(&into)? {
                             Some(keep) => keep,
                             None => project.trunk()?,
                         },
@@ -648,7 +648,7 @@ impl Host {
                 if let Some(name) = workspace {
                     project.forget_workspace(&name)?;
                 }
-                project.remove_bookmark(&child_bookmark)?;
+                project.remove_head(&child_head)?;
                 anyhow::Ok(())
             })
             .await
@@ -765,11 +765,11 @@ impl Host {
             );
         }
         // A child that never committed and ended no turn with a snapshot
-        // has no bookmark: its working copy's parent is its newest
-        // commit, and it lands with nothing in it, as `wait` lands it.
-        let child_bookmark = bookmark(child);
+        // has no head: its working copy's parent is its newest commit,
+        // and it lands with nothing in it, as `wait` lands it.
+        let head = Head::Run(child.clone());
         let child_head = project
-            .run(move |project| project.bookmark(&child_bookmark))
+            .run(move |project| project.head(&head))
             .await?
             .unwrap_or(copy.head);
         let parent_vcs = if parent_busy || !writes {

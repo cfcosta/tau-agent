@@ -19,9 +19,9 @@ use jj_lib::{
     merge::Merge,
     merged_tree_builder::MergedTreeBuilder,
     object_id::ObjectId as _,
-    op_store::{OperationId, RefTarget},
+    op_store::OperationId,
     operation::Operation,
-    ref_name::{RefName, WorkspaceName},
+    ref_name::WorkspaceName,
     repo::{ReadonlyRepo, Repo},
     repo_path::RepoPathBuf,
     revset::ResolvedRevsetExpression,
@@ -38,10 +38,11 @@ use crate::{
     FileChange,
     diff,
     error::VcsError,
+    heads::{self, Head},
     session::{
         self,
-        BOOKMARK_ATTRIBUTE,
         CAUGHT_UP_ATTRIBUTE,
+        HEAD_ATTRIBUTE,
         Immutable,
         LANDED_ATTRIBUTE,
         Snapshot,
@@ -599,24 +600,24 @@ pub struct Committed {
 
 /// Commits whatever `@` holds (described as `message` unless the model
 /// described it), starts an empty working copy on top, and points
-/// `bookmark` at the run's newest commit. With nothing in `@`, the
-/// commit is `@`'s parent, and only the bookmark may move. For a run's
-/// last commit, and for tests.
+/// `head` at the run's newest commit. With nothing in `@`, the commit
+/// is `@`'s parent, and only the head may move. For a run's last
+/// commit, and for tests.
 pub(crate) fn commit_all(
     worker: &mut Worker,
     message: String,
-    bookmark: &str,
+    head: &Head,
 ) -> Result<Committed, VcsError> {
     let name = workspace_name(worker)?;
     let record = crate::land::MovedOnto::load(worker)?;
     let revsets = worker.revsets()?;
     let mut followed = None;
     let (_, committed) = session::mutate(worker, CHECKPOINT, |tx, wc| {
-        let (wc, onto) = crate::land::follow_bookmark(
+        let (wc, onto) = crate::land::follow_head(
             tx,
             wc,
             &name,
-            bookmark,
+            head,
             record.last(),
             &revsets,
         )?;
@@ -661,32 +662,24 @@ pub(crate) fn commit_all(
                 paths,
             }
         };
-        point_bookmark(tx, bookmark, &committed.commit_id, !committed.changed)?;
+        point_head(tx, head, &committed.commit_id, !committed.changed)?;
         Ok(committed)
     })?;
     record.save(followed.as_ref())?;
     Ok(committed)
 }
 
-/// Points `bookmark` at `commit` (hex) if it points elsewhere. `quiet`
+/// Points `head` at `commit` (hex) if it points elsewhere. `quiet`
 /// marks an operation that does nothing else, for undo to pass over.
-fn point_bookmark(
+fn point_head(
     tx: &mut Transaction,
-    bookmark: &str,
+    head: &Head,
     commit: &str,
     quiet: bool,
 ) -> Result<(), VcsError> {
-    let head = CommitId::try_from_hex(commit).ok_or(VcsError::NotHex)?;
-    let name = RefName::new(bookmark);
-    if tx.repo().view().get_local_bookmark(name).as_normal() != Some(&head) {
-        tx.repo_mut()
-            .set_local_bookmark_target(name, RefTarget::normal(head));
-        if quiet {
-            tx.set_attribute(
-                BOOKMARK_ATTRIBUTE.to_owned(),
-                bookmark.to_owned(),
-            );
-        }
+    let commit = CommitId::try_from_hex(commit).ok_or(VcsError::NotHex)?;
+    if heads::point(tx, head, &commit) && quiet {
+        tx.set_attribute(HEAD_ATTRIBUTE.to_owned(), head.to_string());
     }
     Ok(())
 }
@@ -699,19 +692,19 @@ pub struct TurnSnapshot {
     /// `@` under the same change id, so this commit is found by its id.
     pub commit_id: String,
     pub change_id: String,
-    /// The run's newest commit, under `@`, which its bookmark names.
+    /// The run's newest commit, under `@`, which its head names.
     pub head: String,
     /// The paths the turn added, changed or removed.
     pub paths: Vec<String>,
 }
 
 /// Ends a turn: snapshots `@` without committing it, and points
-/// `bookmark` at the run's newest commit. `since` is the turn before's
+/// `head` at the run's newest commit. `since` is the turn before's
 /// snapshot, to tell what this turn changed; without it, `@`'s own
 /// changes count.
 pub(crate) fn end_turn(
     worker: &mut Worker,
-    bookmark: &str,
+    run_head: &Head,
     since: Option<&str>,
 ) -> Result<TurnSnapshot, VcsError> {
     let name = workspace_name(worker)?;
@@ -719,11 +712,11 @@ pub(crate) fn end_turn(
     let revsets = worker.revsets()?;
     let mut followed = None;
     let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, snapped| {
-        let (wc, onto) = crate::land::follow_bookmark(
+        let (wc, onto) = crate::land::follow_head(
             tx,
             snapped,
             &name,
-            bookmark,
+            run_head,
             record.last(),
             &revsets,
         )?;
@@ -751,7 +744,7 @@ pub(crate) fn end_turn(
                 .into_iter()
                 .map(|change| change.path)
                 .collect();
-        point_bookmark(tx, bookmark, &head.hex(), true)?;
+        point_head(tx, run_head, &head.hex(), true)?;
         Ok(TurnSnapshot {
             commit_id: wc.id().hex(),
             change_id: wc.change_id().reverse_hex(),
@@ -1171,7 +1164,7 @@ fn undoable(
         let metadata = op.metadata();
         if undone.remove(op.id())
             || metadata.is_snapshot
-            || metadata.attributes.contains_key(BOOKMARK_ATTRIBUTE)
+            || metadata.attributes.contains_key(HEAD_ATTRIBUTE)
         {
             op = parent.clone();
             continue;

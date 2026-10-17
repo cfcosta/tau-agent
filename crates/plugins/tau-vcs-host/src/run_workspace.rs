@@ -42,6 +42,7 @@ use tau_ai::{
 use crate::{
     TurnSnapshot,
     error::VcsError,
+    heads::{self, Head},
     project::Project,
     vcs::{Identity, Vcs},
 };
@@ -62,9 +63,10 @@ with the message only.";
 /// The name the plugin stores its links under.
 pub const PLUGIN: &str = crate::ui::NAME;
 
-/// The local bookmark on a run's newest commit: `tau/<run id>`.
+/// The name of a run's head ([`Head::Run`]), as
+/// [`crate::ProjectRepo::run_heads`] lists it.
 pub fn bookmark(run: &RunId) -> String {
-    format!("tau/{}", run.0)
+    heads::run_head_name(run)
 }
 
 /// A turn, and the commit that holds the files it left. Stored as the
@@ -109,9 +111,9 @@ pub struct RunWorkspace {
     base: Option<String>,
     /// The run the workspace serves, once it has started.
     run: Arc<Mutex<Option<RunId>>>,
-    /// The bookmark the run's commits move, instead of `tau/<run>`: a
-    /// main chat's, which commits on trunk.
-    commits_to: Option<String>,
+    /// The head the run's commits move, instead of its own: a main
+    /// chat's, which commits on trunk.
+    commits_to: Option<Head>,
     /// A failed end-of-run commit, shared with the caller that spawned it.
     finalization_error: Arc<Mutex<Option<String>>>,
 }
@@ -147,17 +149,24 @@ impl RunWorkspace {
         })
     }
 
-    /// Moves `bookmark` with the run's commits instead of `tau/<run>`:
-    /// a repository's main chat commits on trunk's bookmark.
-    pub fn commits_to(mut self, bookmark: impl Into<String>) -> Self {
-        self.commits_to = Some(bookmark.into());
+    /// Moves `head` with the run's commits instead of the run's own: a
+    /// repository's main chat commits on trunk's branch.
+    pub fn commits_to(mut self, head: impl Into<Head>) -> Self {
+        self.commits_to = Some(head.into());
         self
     }
 
-    /// The bookmark `run`'s commits move: [`Self::commits_to`]'s, else
-    /// [`bookmark`]'s.
+    /// The head `run`'s commits move: [`Self::commits_to`]'s, else the
+    /// run's own.
+    pub fn head_of(&self, run: &RunId) -> Head {
+        self.commits_to
+            .clone()
+            .unwrap_or_else(|| Head::Run(run.clone()))
+    }
+
+    /// The name of [`Self::head_of`]'s head.
     pub fn bookmark_of(&self, run: &RunId) -> String {
-        self.commits_to.clone().unwrap_or_else(|| bookmark(run))
+        self.head_of(run).to_string()
     }
 
     /// Starts a new run's workspace on `commit` (a full commit id in
@@ -267,7 +276,7 @@ impl Plugin for RunWorkspace {
             task: plan.input.clone(),
             since,
             held: false,
-            bookmark: self.bookmark_of(&ctx.run),
+            head: self.head_of(&ctx.run),
             finalization_error: self.finalization_error.clone(),
         }))
     }
@@ -287,8 +296,8 @@ struct Turns {
     since: Option<String>,
     /// The run was asked once to commit before stopping.
     held: bool,
-    /// The bookmark the run's commits move.
-    bookmark: String,
+    /// The head the run's commits move.
+    head: Head,
     finalization_error: Arc<Mutex<Option<String>>>,
 }
 
@@ -331,7 +340,7 @@ impl Turns {
             return Err(VcsError::EmptyDescription.into());
         }
         self.vcs
-            .commit_all(message.trim(), self.bookmark.clone())
+            .commit_all(message.trim(), self.head.clone())
             .await?;
         Ok(())
     }
@@ -348,7 +357,7 @@ impl PluginRun for Turns {
         }
         let record = match self
             .vcs
-            .end_turn(self.bookmark.clone(), self.since.clone())
+            .end_turn(self.head.clone(), self.since.clone())
             .await
         {
             Ok(snapshot) => {

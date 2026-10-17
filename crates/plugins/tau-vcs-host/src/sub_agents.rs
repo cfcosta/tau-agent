@@ -13,12 +13,12 @@
 //!    meanwhile, and stopping the caller does not stop them.
 //! 3. When one ends, its work is checked. One that finished, or that a
 //!    limit stopped, can land; one that failed or was stopped has its
-//!    changes dropped and closes: its workspace and bookmark go.
+//!    changes dropped and closes: its workspace and head go.
 //! 4. The host takes each one that ended ([`SubAgents::take`]) and
 //!    lands it on the caller when the caller is idle, one landing at a
 //!    time. A landing that conflicts lands its conflicts for the caller
 //!    to resolve. One spawned with `land: false` never lands: its
-//!    commits stay beside the caller's, under its bookmark, for the
+//!    commits stay beside the caller's, under its head, for the
 //!    caller to read and take files from ([`Ending::Kept`]).
 
 use std::{
@@ -42,7 +42,8 @@ use crate::{
     Landing,
     details::SPAWN,
     error::VcsError,
-    run_workspace::{RunWorkspace, bookmark},
+    heads::Head,
+    run_workspace::RunWorkspace,
     vcs::Identity,
 };
 
@@ -80,7 +81,7 @@ pub enum Ending {
         limit: Option<LimitKind>,
     },
     /// It finished, or `limit` cut it short, and was spawned not to
-    /// land: its commits stay as they are, under its bookmark, and its
+    /// land: its commits stay as they are, under its head, and its
     /// workspace closed. `changes` are its own, oldest first, by change
     /// id; none when it committed nothing.
     Kept {
@@ -93,7 +94,7 @@ pub enum Ending {
     /// The person stopped it: its changes were dropped.
     Stopped,
     /// Its work could not be checked: nothing lands, and its workspace
-    /// and bookmark were kept at `workspace` for recovery.
+    /// and head were kept at `workspace` for recovery.
     Retained { error: String, workspace: PathBuf },
 }
 
@@ -453,7 +454,7 @@ async fn unlandable(workspace: &RunWorkspace) -> Option<String> {
 }
 
 /// Turns `done`, an ending whose work is committed, into one that keeps
-/// that work beside the caller's: its changes stay under its bookmark,
+/// that work beside the caller's: its changes stay under its head,
 /// and its workspace closes. Work that cannot be read back is retained
 /// for recovery, like work that cannot be checked.
 async fn keep_work(
@@ -465,12 +466,15 @@ async fn keep_work(
     let Ending::Done { text, limit } = done else {
         return done;
     };
-    let (base, name, bookmark) =
-        (base.to_owned(), workspace.name().to_owned(), bookmark(run));
+    let (base, name, head) = (
+        base.to_owned(),
+        workspace.name().to_owned(),
+        Head::Run(run.clone()),
+    );
     let kept: Result<Vec<crate::StackChange>, VcsError> = workspace
         .project()
         .run(move |p| {
-            let changes = match p.bookmark(&bookmark)? {
+            let changes = match p.head(&head)? {
                 Some(head) => p.changes_between(&base, &head)?,
                 None => Vec::new(),
             };
@@ -492,14 +496,17 @@ async fn keep_work(
 }
 
 /// Abandons a sub-agent's own changes, from `base` up, and closes it:
-/// its workspace and bookmark go.
+/// its workspace and head go.
 async fn drop_work(
     workspace: &RunWorkspace,
     run: &RunId,
     base: &str,
 ) -> Result<(), VcsError> {
-    let (base, name, bookmark) =
-        (base.to_owned(), workspace.name().to_owned(), bookmark(run));
+    let (base, name, head) = (
+        base.to_owned(),
+        workspace.name().to_owned(),
+        Head::Run(run.clone()),
+    );
     workspace
         .project()
         .run(move |p| {
@@ -507,7 +514,7 @@ async fn drop_work(
                 p.abandon_between(&base, &wc)?;
             }
             p.forget_workspace(&name)?;
-            p.remove_bookmark(&bookmark)?;
+            p.remove_head(&head)?;
             Ok(())
         })
         .await

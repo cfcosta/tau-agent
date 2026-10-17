@@ -21,8 +21,6 @@ use jj_lib::{
     backend::CommitId,
     commit::Commit,
     object_id::ObjectId as _,
-    op_store::RefTarget,
-    ref_name::{RefName, RemoteName},
     repo::Repo,
     revset::ResolvedRevsetExpression,
     rewrite::rebase_commit,
@@ -33,19 +31,20 @@ use pollster::block_on;
 use crate::{
     Landing,
     error::VcsError,
+    heads::{self, Head},
     revsets::ConfigRevsets,
     session::{self, Immutable},
     vcs::Worker,
 };
 
 /// Lands the child whose newest commit is `child_head` (a full commit
-/// id in hex) on this workspace's run, and points `bookmark`, the
+/// id in hex) on this workspace's run, and points `head`, the
 /// parent's, at the new head. With `confirm` off, nothing changes: the
 /// result says what landing would do, conflicts included.
 pub(crate) fn land(
     worker: &mut Worker,
     child_head: &str,
-    bookmark: &str,
+    head: &Head,
     confirm: bool,
 ) -> Result<Landing, VcsError> {
     let child_head = CommitId::try_from_hex(child_head)
@@ -61,7 +60,7 @@ pub(crate) fn land(
                 wc,
                 &name,
                 &child_head,
-                bookmark,
+                head,
                 &record,
                 &revsets,
             )?;
@@ -96,7 +95,7 @@ pub(crate) fn land(
         &snapshot.wc,
         &name,
         &child_head,
-        bookmark,
+        head,
         &record,
         &revsets,
     )?;
@@ -104,7 +103,7 @@ pub(crate) fn land(
 }
 
 /// The landing, in the transaction `tx` started for it: the parent
-/// follows its bookmark ([`follow_bookmark`]), then the child restacks
+/// follows its head ([`follow_head`]), then the child restacks
 /// onto it. Returns the landing, and the commit the follow moved onto.
 ///
 /// `child_head` is checked against the repository as the landing found
@@ -118,7 +117,7 @@ fn follow_and_restack(
     wc: &Commit,
     workspace: &jj_lib::ref_name::WorkspaceName,
     child_head: &CommitId,
-    bookmark: &str,
+    head: &Head,
     record: &MovedOnto,
     revsets: &ConfigRevsets,
 ) -> Result<(Landing, Option<CommitId>), VcsError> {
@@ -130,42 +129,41 @@ fn follow_and_restack(
         return Err(VcsError::HiddenHead(child_head.hex()));
     }
     let (wc, onto) =
-        follow_bookmark(tx, wc, workspace, bookmark, record.last(), revsets)?;
+        follow_head(tx, wc, workspace, head, record.last(), revsets)?;
     let child = match onto {
         Some(_) => current(tx.repo(), &child)?,
         None => child,
     };
     let immutable = Immutable::of(tx.repo(), revsets)?;
-    let landing =
-        restack(tx, &wc, workspace, child.id(), bookmark, &immutable)?;
+    let landing = restack(tx, &wc, workspace, child.id(), head, &immutable)?;
     Ok((landing, onto))
 }
 
-/// Keeps `bookmark` moving forward after an update: when an update moved
-/// it to upstream's commit (see [`upstream`]) and the run's newest
+/// Keeps `head` moving forward after an update: when an update moved
+/// it to upstream's commit (see [`heads::upstream`]) and the run's newest
 /// commit (`wc`'s parent) does not have that commit, as trunk's after an
 /// update while the main chat ran, the run's changes, up to `@`, move
 /// onto it first, as a catch-up does (`move_onto`). Returns `@` after,
 /// and the commit it moved onto, for [`MovedOnto::save`].
-pub(crate) fn follow_bookmark(
+pub(crate) fn follow_head(
     tx: &mut Transaction,
     wc: &Commit,
     workspace: &jj_lib::ref_name::WorkspaceName,
-    bookmark: &str,
+    head: &Head,
     last: Option<&CommitId>,
     revsets: &ConfigRevsets,
 ) -> Result<(Commit, Option<CommitId>), VcsError> {
-    let Some(target) = upstream(tx, bookmark) else {
+    let Some(target) = heads::upstream(tx.repo(), head) else {
         return Ok((wc.clone(), None));
     };
-    let [head] = wc.parent_ids() else {
+    let [newest] = wc.parent_ids() else {
         return Ok((wc.clone(), None));
     };
-    if block_on(tx.repo().index().is_ancestor(&target, head))? {
+    if block_on(tx.repo().index().is_ancestor(&target, newest))? {
         return Ok((wc.clone(), None));
     }
     let immutable = Immutable::of(tx.repo(), revsets)?;
-    rebase_run(tx, wc, workspace, &target, last, bookmark, &immutable)?;
+    rebase_run(tx, wc, workspace, &target, last, head, &immutable)?;
     tx.set_attribute(session::CAUGHT_UP_ATTRIBUTE.to_owned(), target.hex());
     let id = tx
         .repo()
@@ -176,29 +174,12 @@ pub(crate) fn follow_bookmark(
     Ok((tx.repo().store().get_commit(&id)?, Some(target)))
 }
 
-/// `bookmark`'s commit when an update put it there: the source's branch
-/// of that name, as `<bookmark>@origin` names it. Only an update moves a
-/// bookmark to upstream's commit; a run's bookmarks (`tau/<run>`) have
-/// no such branch, and a bookmark a run moved names its own commit.
-fn upstream(tx: &Transaction, bookmark: &str) -> Option<CommitId> {
-    let name = RefName::new(bookmark);
-    let view = tx.repo().view();
-    let local = view.get_local_bookmark(name).as_normal()?;
-    let remote = view
-        .get_remote_bookmark(
-            name.to_remote_symbol(RemoteName::new(crate::project::REMOTE)),
-        )
-        .target
-        .as_normal()?;
-    (local == remote).then(|| local.clone())
-}
-
 fn restack(
     tx: &mut Transaction,
     wc: &Commit,
     workspace: &jj_lib::ref_name::WorkspaceName,
     child_head: &CommitId,
-    bookmark: &str,
+    into: &Head,
     immutable: &Immutable,
 ) -> Result<Landing, VcsError> {
     // The parent's uncommitted work stays in its working copy, which
@@ -269,10 +250,7 @@ fn restack(
     } else {
         block_on(tx.repo_mut().check_out(workspace.to_owned(), &new_head))?;
     }
-    tx.repo_mut().set_local_bookmark_target(
-        RefName::new(bookmark),
-        RefTarget::normal(new_head.id().clone()),
-    );
+    heads::point(tx, into, new_head.id());
 
     let wc_id = tx
         .repo()
@@ -332,8 +310,8 @@ fn conflicts(commit: &Commit) -> Vec<String> {
 }
 
 /// Moves this workspace's run, its changes up to `@`, onto `onto` (a
-/// full commit id in hex), and points `bookmark` at its newest commit
-/// there, or removes it when that is the root commit. With `confirm`
+/// full commit id in hex), and points `head` at its newest commit
+/// there, or clears it when that is the root commit. With `confirm`
 /// off, nothing changes.
 ///
 /// The run's changes are what `@` has that neither `onto` nor the
@@ -345,7 +323,7 @@ fn conflicts(commit: &Commit) -> Vec<String> {
 pub(crate) fn move_onto(
     worker: &mut Worker,
     onto: &str,
-    bookmark: &str,
+    head: &Head,
     confirm: bool,
 ) -> Result<Landing, VcsError> {
     let onto = CommitId::try_from_hex(onto)
@@ -356,10 +334,10 @@ pub(crate) fn move_onto(
     let revsets = worker.revsets()?;
     if confirm {
         // Where the run went: past `onto` when an update moved the
-        // bookmark on meanwhile; recorded unless it is the run's own.
+        // head on meanwhile; recorded unless it is the run's own.
         let mut moved_onto = None;
         let (_, moved) = session::mutate(worker, "move_onto", |tx, wc| {
-            let onto = past(tx, wc, &onto, bookmark)?;
+            let onto = past(tx, wc, &onto, head)?;
             if !is_own(tx.repo(), wc, last.as_ref(), &onto)? {
                 moved_onto = Some(onto.clone());
             }
@@ -368,22 +346,14 @@ pub(crate) fn move_onto(
                 onto.hex(),
             );
             let immutable = Immutable::of(tx.repo(), &revsets)?;
-            rebase_run(
-                tx,
-                wc,
-                &name,
-                &onto,
-                last.as_ref(),
-                bookmark,
-                &immutable,
-            )
+            rebase_run(tx, wc, &name, &onto, last.as_ref(), head, &immutable)
         })?;
         record.save(moved_onto.as_ref())?;
         return Ok(moved);
     }
     let snapshot = session::snapshot(worker)?;
     let mut tx = snapshot.repo.start_transaction();
-    let onto = past(&tx, &snapshot.wc, &onto, bookmark)?;
+    let onto = past(&tx, &snapshot.wc, &onto, head)?;
     let immutable = Immutable::of(tx.repo(), &revsets)?;
     rebase_run(
         &mut tx,
@@ -391,7 +361,7 @@ pub(crate) fn move_onto(
         &name,
         &onto,
         last.as_ref(),
-        bookmark,
+        head,
         &immutable,
     )
 }
@@ -457,23 +427,23 @@ fn known(repo: &dyn Repo, id: &CommitId) -> bool {
         && block_on(repo.index().has_id(id)).unwrap_or(false)
 }
 
-/// Where `move_onto` goes: `onto`, unless an update moved `bookmark`
-/// since the caller read `onto` (see [`upstream`]), to a commit that is
+/// Where `move_onto` goes: `onto`, unless an update moved `head` since
+/// the caller read `onto` (see [`heads::upstream`]), to a commit that is
 /// neither the run's own (an ancestor of `wc`'s parent) nor behind
-/// `onto`. Moving onto `onto` would then point the bookmark back, or
-/// aside, and the run goes onto the bookmark's commit instead.
+/// `onto`. Moving onto `onto` would then point the head back, or aside,
+/// and the run goes onto the head's commit instead.
 fn past(
     tx: &Transaction,
     wc: &Commit,
     onto: &CommitId,
-    bookmark: &str,
+    head: &Head,
 ) -> Result<CommitId, VcsError> {
-    let Some(target) = upstream(tx, bookmark) else {
+    let Some(target) = heads::upstream(tx.repo(), head) else {
         return Ok(onto.clone());
     };
     let index = tx.repo().index();
     let own = match wc.parent_ids() {
-        [head] => block_on(index.is_ancestor(&target, head))?,
+        [newest] => block_on(index.is_ancestor(&target, newest))?,
         _ => false,
     };
     if own || block_on(index.is_ancestor(&target, onto))? {
@@ -488,7 +458,7 @@ fn rebase_run(
     workspace: &jj_lib::ref_name::WorkspaceName,
     onto: &CommitId,
     last: Option<&CommitId>,
-    bookmark: &str,
+    run_head: &Head,
     immutable: &Immutable,
 ) -> Result<Landing, VcsError> {
     let moving: Vec<CommitId> = {
@@ -541,14 +511,12 @@ fn rebase_run(
     };
     // A run with no commit of its own, moved onto the root commit (a
     // repository whose trunk branch upstream deleted), has no newest
-    // commit to name: the bookmark goes rather than name the root.
-    let target = if head.id() == tx.repo().store().root_commit_id() {
-        RefTarget::absent()
+    // commit to name: the head names none rather than the root.
+    if head.id() == tx.repo().store().root_commit_id() {
+        heads::clear(tx, run_head);
     } else {
-        RefTarget::normal(head.id().clone())
-    };
-    tx.repo_mut()
-        .set_local_bookmark_target(RefName::new(bookmark), target);
+        heads::point(tx, run_head, head.id());
+    }
     let mut changes = Vec::new();
     for id in &moving {
         if id == wc.id() {

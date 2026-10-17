@@ -36,6 +36,7 @@ mod config;
 mod diff;
 pub mod error;
 mod half;
+pub mod heads;
 mod land;
 pub mod local;
 mod lock;
@@ -58,6 +59,7 @@ pub use config::{JjEnv, settings as jj_settings};
 pub use diff::MAX_DIFF_BYTES;
 pub use error::VcsError;
 pub use half::VcsHost;
+pub use heads::Head;
 pub use operations::{DESCRIPTION_PREFIX, TAU_OP_ATTRIBUTE, is_taus};
 pub use ops::{
     Committed,

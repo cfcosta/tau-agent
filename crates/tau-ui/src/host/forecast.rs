@@ -40,9 +40,9 @@ impl Host {
         child: &RunId,
     ) -> anyhow::Result<Option<Forecast>> {
         let project = self.slot_of_run(child).await?.project().await?;
-        let name = bookmark(child);
+        let head = Head::Run(child.clone());
         if project
-            .run(move |project| project.bookmark(&name))
+            .run(move |project| project.head(&head))
             .await?
             .is_none()
         {

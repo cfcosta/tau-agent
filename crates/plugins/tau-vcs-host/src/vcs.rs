@@ -170,32 +170,30 @@ impl Vcs {
     }
 
     /// Commits whatever `@` holds, starts an empty working copy on top,
-    /// and points the local bookmark `bookmark` at the run's newest
-    /// commit, in one operation. See [`crate::Committed`].
+    /// and points `head` at the run's newest commit, in one operation.
+    /// See [`crate::Committed`].
     pub async fn commit_all(
         &self,
         message: impl Into<String>,
-        bookmark: impl Into<String>,
+        head: impl Into<crate::Head>,
     ) -> Result<crate::Committed, VcsError> {
         let message = message.into();
-        let bookmark = bookmark.into();
-        self.call(move |worker| {
-            crate::ops::commit_all(worker, message, &bookmark)
-        })
-        .await
+        let head = head.into();
+        self.call(move |worker| crate::ops::commit_all(worker, message, &head))
+            .await
     }
 
     /// Ends a turn: snapshots `@`, which stays uncommitted, and points
-    /// `bookmark` at the run's newest commit. See
+    /// `head` at the run's newest commit. See
     /// [`crate::TurnSnapshot`].
     pub async fn end_turn(
         &self,
-        bookmark: impl Into<String>,
+        head: impl Into<crate::Head>,
         since: Option<String>,
     ) -> Result<crate::TurnSnapshot, VcsError> {
-        let bookmark = bookmark.into();
+        let head = head.into();
         self.call(move |worker| {
-            crate::ops::end_turn(worker, &bookmark, since.as_deref())
+            crate::ops::end_turn(worker, &head, since.as_deref())
         })
         .await
     }
@@ -224,19 +222,19 @@ impl Vcs {
     }
 
     /// Moves this run's own changes, up to `@`, onto `onto` (a full
-    /// commit id in hex), and points `bookmark` at the run's newest
-    /// commit there: how the main chat catches up with trunk. With
+    /// commit id in hex), and points `head` at the run's newest commit
+    /// there: how the main chat catches up with trunk. With
     /// `confirm` off it changes nothing and says what moving would do.
     pub async fn move_onto(
         &self,
         onto: impl Into<String>,
-        bookmark: impl Into<String>,
+        head: impl Into<crate::Head>,
         confirm: bool,
     ) -> Result<crate::Landing, VcsError> {
         let onto = onto.into();
-        let bookmark = bookmark.into();
+        let head = head.into();
         self.call(move |worker| {
-            crate::land::move_onto(worker, &onto, &bookmark, confirm)
+            crate::land::move_onto(worker, &onto, &head, confirm)
         })
         .await
     }
@@ -244,19 +242,19 @@ impl Vcs {
     /// Lands a child run on this workspace's run (ADR 0009): rebases
     /// the child's changes, up to `child_head` (a full commit id in
     /// hex), onto this run's newest commit, starts this run's working
-    /// copy on top, and points `bookmark`, this run's, at the new head.
+    /// copy on top, and points `head`, this run's, at the new head.
     /// With `confirm` off it changes nothing and says what landing would
     /// do. Call it between this run's turns.
     pub async fn land(
         &self,
         child_head: impl Into<String>,
-        bookmark: impl Into<String>,
+        head: impl Into<crate::Head>,
         confirm: bool,
     ) -> Result<crate::Landing, VcsError> {
         let child_head = child_head.into();
-        let bookmark = bookmark.into();
+        let head = head.into();
         self.call(move |worker| {
-            crate::land::land(worker, &child_head, &bookmark, confirm)
+            crate::land::land(worker, &child_head, &head, confirm)
         })
         .await
     }

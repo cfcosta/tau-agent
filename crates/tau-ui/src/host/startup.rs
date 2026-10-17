@@ -1,5 +1,5 @@
 //! What the host finishes as it starts, for what the last tau left
-//! when it closed: workspaces and bookmarks no open run owns.
+//! when it closed: workspaces and heads no open run owns.
 
 use std::collections::BTreeSet;
 
@@ -43,7 +43,7 @@ async fn runs(store: &Store) -> anyhow::Result<Runs> {
 ///
 /// - a run going on in this process, or under one that is, keeps what
 ///   it has;
-/// - a chat that landed lets its workspaces and bookmark go, and one
+/// - a chat that landed lets its workspaces and head go, and one
 ///   that was dropped its commits too;
 /// - any other chat is open, whatever its status, and keeps them: a
 ///   chat that finished but has not landed, failed, or was cut off can
@@ -121,7 +121,7 @@ impl Host {
     }
 
     /// Sweeps every listed repository's project of the workspaces and
-    /// bookmarks no open run owns (`tau_vcs_host::sweep`): those of runs
+    /// heads no open run owns (`tau_vcs_host::sweep`): those of runs
     /// gone, landed, dropped, or of sub-agents that failed or were cut
     /// off, whose commits go too. A main chat's checkout, the default
     /// workspace, and the workspaces of open chats stay.
@@ -143,22 +143,15 @@ impl Host {
         for slot in slots {
             match slot.project().await {
                 Ok(project) => {
-                    let (workspaces, bookmarks) = project
+                    let (workspaces, heads) = project
                         .run(|project| {
                             anyhow::Ok((
                                 project.workspaces()?,
-                                project.bookmarks(
-                                    tau_vcs_host::sweep::RUN_BOOKMARK_PREFIX,
-                                )?,
+                                project.run_heads()?,
                             ))
                         })
                         .await?;
-                    held.push((
-                        slot.name.clone(),
-                        project,
-                        workspaces,
-                        bookmarks,
-                    ));
+                    held.push((slot.name.clone(), project, workspaces, heads));
                 }
                 Err(error) => eprintln!("tau-ui: cannot sweep: {error:#}"),
             }
@@ -181,7 +174,7 @@ impl Host {
                     .collect(),
             )
         };
-        for (repo, project, workspaces, bookmarks) in held {
+        for (repo, project, workspaces, heads) in held {
             let main = project.main_workspace();
             let mut owners = self.owners(&repo, main, &runs, &live);
             owners.push(Owner {
@@ -201,8 +194,7 @@ impl Host {
                         .any(|live| name.starts_with(&format!("{live}-sub-")))
                 })
                 .collect();
-            let sweep =
-                tau_vcs_host::sweep::plan(&owners, &workspaces, &bookmarks);
+            let sweep = tau_vcs_host::sweep::plan(&owners, &workspaces, &heads);
             if !sweep.is_empty() {
                 project.run(move |project| project.sweep(&sweep)).await?;
             }
@@ -211,7 +203,7 @@ impl Host {
     }
 
     /// The runs of `repo`, whose main chat works in `main`, that may own
-    /// its workspaces and bookmarks, and where each stands.
+    /// its workspaces and heads, and where each stands.
     fn owners(
         &self,
         repo: &str,
@@ -255,7 +247,7 @@ impl Host {
                 Some(parent)
                     if !self.is_main(&RunId(parent.as_str().into())) =>
                 {
-                    Keep::Bookmark(bookmark(&RunId(parent.as_str().into())))
+                    Keep::Head(Head::Run(RunId(parent.as_str().into())))
                 }
                 _ => Keep::Workspace(main.to_owned()),
             };

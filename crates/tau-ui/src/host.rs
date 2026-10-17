@@ -59,6 +59,7 @@ use tau_ui_plugin::{
 use tau_vcs_host::{
     ChangeKind,
     FileDiff,
+    Head,
     Identity,
     Landing,
     Link,
@@ -68,7 +69,7 @@ use tau_vcs_host::{
     RunWorkspace,
     Spawn,
     VcsPlugin,
-    run_workspace::{PLUGIN as WORKSPACE_PLUGIN, bookmark},
+    run_workspace::PLUGIN as WORKSPACE_PLUGIN,
     sub_agents::ChildModel,
 };
 use tokio::{runtime::Runtime, sync::mpsc};
