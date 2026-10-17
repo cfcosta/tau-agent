@@ -2,7 +2,8 @@
 //! the repositories, the step bar counts it, it ends when the plugin says
 //! so or the person skips it, and a step the plugin leaves out is not
 //! there. The host hears once that setup ended, with the repositories
-//! picked.
+//! picked. What the plugin says it reads outside repositories shows
+//! under its step, and on its page in the Plugins screen.
 
 use std::{
     cell::RefCell,
@@ -76,7 +77,9 @@ impl UiPlugin for Stepper {
     }
 
     fn manifest(&self) -> Manifest<Self> {
-        Manifest::new().contribute(points::SETUP, step)
+        Manifest::new()
+            .contribute(points::SETUP, step)
+            .reads(&["~/.stepper"])
     }
 }
 
@@ -225,6 +228,9 @@ fn a_plugin_s_step_follows_the_repositories_and_ends_when_it_says(
         }]
     );
     assert!(finished(&events).is_empty(), "not yet");
+    // What it says it reads outside repositories shows under it.
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("setup-reach").is_some());
 
     click("stepper-done", &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Ready));
@@ -301,4 +307,42 @@ fn skipping_github_still_reaches_the_plugin_s_step(cx: &mut TestAppContext) {
     click("stepper-done", &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::NewRun);
     assert_eq!(finished(&events), [Vec::<SetupRepo>::new()]);
+}
+
+/// The plugin's page in the Plugins screen says what it reads outside
+/// repositories; one that reads nothing there says nothing of it.
+#[gpui::test]
+fn a_plugin_s_page_says_what_it_reads(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _events) = open(true, cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.plugins.push(tau_ui_remote::catalog::PluginInfo {
+            name: NAME.into(),
+            description: "Steps.".into(),
+            seams: Vec::new(),
+            spend: 0.,
+            page: None,
+            group: tau_ui_plugin::Group::Context,
+            note: None,
+            entries: Vec::new(),
+            settings: false,
+        });
+        ws.set_catalog(catalog, cx);
+        ws.navigate(Route::Plugins, cx);
+        ws.pick_plugin(NAME, None, cx);
+        ws.set_plugin_tab(tau_ui_remote::ui::screens::plugins::Tab::About, cx);
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("plugin-reach").is_some());
+    assert_eq!(
+        plugins::registry().get(NAME).unwrap().reads(),
+        ["~/.stepper"]
+    );
+    assert!(
+        plugins::registry()
+            .get("tau-goal")
+            .unwrap()
+            .reads()
+            .is_empty()
+    );
 }

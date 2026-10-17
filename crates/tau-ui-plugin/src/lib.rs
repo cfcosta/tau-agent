@@ -46,6 +46,7 @@ pub use host::{
     ConfigDir,
     Conversations,
     HOST_RECORD,
+    HomeDir,
     HostCx,
     HostRecord,
     ModelPick,

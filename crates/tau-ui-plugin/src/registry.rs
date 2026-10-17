@@ -209,6 +209,8 @@ pub trait ErasedPlugin: Send + Sync {
     ) -> Option<AnyElement>;
     /// The keys it binds, in its manifest's order ([`Manifest::key`]).
     fn keys(&self) -> Vec<&'static str>;
+    /// What it reads outside repositories ([`Manifest::reads`]).
+    fn reads(&self) -> &'static [&'static str];
     /// Runs what its `key` does, pressed `at`; false when it binds none.
     fn press_key(&self, key: &str, at: &crate::KeyAt, env: Env<'_>) -> bool;
     /// What a run on `prompt` is about, when the plugin reads it as its
@@ -618,6 +620,10 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
 
     fn keys(&self) -> Vec<&'static str> {
         self.manifest.keys.iter().map(|key| key.key).collect()
+    }
+
+    fn reads(&self) -> &'static [&'static str] {
+        self.manifest.reads
     }
 
     fn press_key(&self, key: &str, at: &crate::KeyAt, env: Env<'_>) -> bool {

@@ -186,6 +186,10 @@ pub fn notes_link(repo: &str) -> Link {
 /// The scope parameter of the user's notes page.
 pub const USER: &str = "you";
 
+/// What memory reads outside repositories: what Claude Code and Codex
+/// kept, when the person imports it (ADR 0044).
+pub const READS: &[&str] = &["~/.claude", "~/.codex"];
+
 impl UiPlugin for MemoryUi {
     type State = State;
     /// The user's notes, across repositories.
@@ -200,6 +204,7 @@ impl UiPlugin for MemoryUi {
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
+            .reads(READS)
             .page(Page::new("notes", page::render).title(page::title))
             .contribute_at(points::SIDEBAR, 10, |_: &AtApp, view| {
                 Some(

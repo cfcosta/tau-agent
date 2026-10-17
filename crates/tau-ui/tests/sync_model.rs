@@ -951,6 +951,7 @@ fn host(
         settings: dir.join("models.json"),
         repo_list: dir.join("repos.json"),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
+        home: None,
         identity: Identity::default(),
     };
     let agent = Agent::new(gate.clone()).name("coder");

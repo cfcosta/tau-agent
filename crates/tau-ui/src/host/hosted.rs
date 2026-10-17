@@ -132,6 +132,9 @@ impl Host {
         if let Some(jev) = self.jev() {
             services = services.with(jev);
         }
+        if let Some(home) = &self.config.home {
+            services = services.with(tau_ui_plugin::HomeDir(home.clone()));
+        }
         let conversations: Arc<dyn tau_ui_plugin::Conversations> =
             Arc::new(super::conversations::HostConversations {
                 runs: self.runs.clone(),

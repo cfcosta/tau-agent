@@ -137,6 +137,7 @@ fn host_of(
         settings: fresh_repo_list().with_extension("models"),
         repo_list: fresh_repo_list(),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
+        home: None,
         identity: Identity::default(),
     };
     let (host, events) = Host::with_agent(runtime, agent, store, config);
@@ -173,6 +174,7 @@ fn host_with_skills(
         settings: fresh_repo_list().with_extension("models"),
         repo_list: fresh_repo_list(),
         skills: skills.to_owned(),
+        home: None,
         identity: Identity::default(),
     };
     let agent = Agent::new(llm).name("coder");
@@ -1958,6 +1960,7 @@ fn config_on(data: &Path) -> HostConfig {
         settings: data.join("models.json"),
         repo_list: data.join("repos.json"),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
+        home: None,
         identity: Identity::default(),
     }
 }
@@ -3987,6 +3990,7 @@ fn agents_live_in_a_repository_each_beside_the_plugins_repository() {
         settings: root.path().join("models.json"),
         repo_list: root.path().join("repos.json"),
         skills: root.path().join("skills"),
+        home: None,
         identity: Identity::default(),
     };
     let agents = config.agents_dir();

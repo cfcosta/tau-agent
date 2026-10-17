@@ -144,6 +144,13 @@ impl std::fmt::Debug for TurnHooks {
     }
 }
 
+/// The person's home directory, where the paths a plugin says it reads
+/// start (`~/.claude`, [`crate::Manifest::reads`]). A host service
+/// ([`HostCx::home`]): the app gives the real one; a host without it,
+/// such as a test's, gives a plugin no home to read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeDir(pub PathBuf);
+
 /// tau's configuration directory, `~/.config/tau`: files the user
 /// writes by hand, such as tau-mcp's `mcp.json`. A host service
 /// ([`HostCx::config_dir`]).
@@ -737,6 +744,11 @@ impl HostCx {
             body: body.clone(),
         });
         Ok(())
+    }
+
+    /// The person's home, when the host says where it is.
+    pub fn home(&self) -> Option<&Path> {
+        self.services.get::<HomeDir>().map(|dir| dir.0.as_path())
     }
 
     /// tau's configuration directory, when the host says where it is.

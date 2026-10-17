@@ -2911,6 +2911,9 @@ fn repos(
 
 /// A plugin's step: its headline and what it draws under it, and a way
 /// past it, which tau draws.
+/// The widest a plugin's step gets, in rems: two columns of choices.
+const STEP_WIDTH: f32 = 70.;
+
 fn plugin_step(
     ws: &Workspace,
     plugin: &'static str,
@@ -2940,6 +2943,28 @@ fn plugin_step(
             ws.plugin_setup_step_done(plugin, cx)
         }));
     let screen = div().child(handshake(ws, (None, None), compact, t));
+    let reads = crate::plugins::registry()
+        .get(plugin)
+        .map_or(&[][..], |erased| erased.reads());
+    // What the plugin says it reads outside repositories.
+    let reach = (!reads.is_empty()).then(|| {
+        div()
+            .debug_selector(|| "setup-reach".to_owned())
+            .w_full()
+            .max_w(rems(STEP_WIDTH))
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(sp(1.5))
+            .typeset(Type::CAPTION)
+            .text_color(t.setup.faint)
+            .child("Reads outside your repositories:")
+            .children(
+                reads
+                    .iter()
+                    .map(|path| mono(*path, Type::CAPTION, t.setup.soft)),
+            )
+    });
     let Some(view) = view else {
         // The step has nothing to ask any more: only the way on.
         return screen.child(
@@ -2976,8 +3001,9 @@ fn plugin_step(
                     motion,
                     &format!("{plugin}-{step}"),
                     400,
-                    div().w_full().max_w(rems(40.)).child(view.body),
+                    div().w_full().max_w(rems(STEP_WIDTH)).child(view.body),
                 ))
+                .children(reach.map(|reach| rise(motion, "reach", 600, reach)))
                 .child(rise(motion, "skip", 800, skip)),
         )
 }

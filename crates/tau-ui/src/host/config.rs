@@ -23,6 +23,10 @@ pub struct HostConfig {
     pub repo_list: PathBuf,
     /// The person's skills, usually `~/.agents/skills` (tau-skills).
     pub skills: PathBuf,
+    /// The person's home, where plugins find the other tools' files they
+    /// say they read (`Manifest::reads`): `$HOME` in the app. `None`
+    /// gives plugins no home, as in tests.
+    pub home: Option<PathBuf>,
     /// Who tau's commits are by, and where the jj config they follow
     /// is: the app's is [`Identity::from_environment`], the person's
     /// own; the default reads no config.

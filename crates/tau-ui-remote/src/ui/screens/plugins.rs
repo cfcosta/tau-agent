@@ -690,6 +690,7 @@ fn about(row: &Row<'_>, t: &Theme) -> AnyElement {
                     ui::tag(seam_label(*seam), Type::CAPTION, t.text_soft, t)
                 }))
         })
+        .when_some(reach(row, t), |about, reach| about.child(reach))
         .when(row.entry.is_none(), |about| {
             about.child(
                 div()
@@ -702,6 +703,37 @@ fn about(row: &Row<'_>, t: &Theme) -> AnyElement {
             )
         })
         .into_any_element()
+}
+
+/// What the plugin says it reads outside repositories, when it says
+/// (`Manifest::reads`).
+fn reach(row: &Row<'_>, t: &Theme) -> Option<AnyElement> {
+    let reads = crate::plugins::registry().get(&row.plugin.name)?.reads();
+    if reads.is_empty() {
+        return None;
+    }
+    Some(
+        div()
+            .id("plugin-reach")
+            .debug_selector(|| "plugin-reach".to_owned())
+            .flex()
+            .flex_col()
+            .gap(sp(2.))
+            .child(ui::heading("What it reads outside repositories", t))
+            .child(
+                div().flex().flex_wrap().gap(sp(1.5)).children(
+                    reads.iter().map(|path| {
+                        ui::tag(*path, Type::CAPTION, t.text_soft, t)
+                    }),
+                ),
+            )
+            .child(div().typeset(Type::CAPTION).text_color(t.dim).child(
+                "What the plugin says it reads. tau does not fence a \
+                         plugin built into it: this is a statement, not a \
+                         limit.",
+            ))
+            .into_any_element(),
+    )
 }
 
 fn seam_label(seam: Seam) -> &'static str {

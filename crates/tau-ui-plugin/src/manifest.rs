@@ -238,6 +238,7 @@ pub struct Manifest<P: UiPlugin> {
     pub(crate) listed: Option<Listed<P>>,
     pub(crate) settings: Option<Draw<P>>,
     pub(crate) keys: Vec<Key<P>>,
+    pub(crate) reads: &'static [&'static str],
 }
 
 impl<P: UiPlugin> Default for Manifest<P> {
@@ -256,7 +257,18 @@ impl<P: UiPlugin> Manifest<P> {
             listed: None,
             settings: None,
             keys: Vec::new(),
+            reads: &[],
         }
+    }
+
+    /// Says what the plugin reads outside repositories, as paths the
+    /// person knows them by, `~` their home (ADR 0044): another tool's
+    /// directory, such as `~/.claude`. The Plugins screen shows them on
+    /// the plugin's page, and setup under its step. It is a statement,
+    /// not a fence: a Rust plugin reaches what its process does.
+    pub fn reads(mut self, paths: &'static [&'static str]) -> Self {
+        self.reads = paths;
+        self
     }
 
     /// Binds `key`, as gpui spells it (`ctrl-2`), in the workspace:

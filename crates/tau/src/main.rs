@@ -115,6 +115,7 @@ fn main() {
         settings: HostConfig::default_settings(),
         repo_list: HostConfig::default_repo_list(),
         skills: HostConfig::default_skills(),
+        home: std::env::var_os("HOME").map(std::path::PathBuf::from),
         identity: HostConfig::default_identity(),
     };
     let host = account.and_then(|account| match Host::new(config(account)) {

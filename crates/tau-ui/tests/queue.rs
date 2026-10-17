@@ -103,6 +103,7 @@ fn setup(cx: &mut TestAppContext, llm: ScriptedModel) -> Setup {
         settings: dir.path().join("models.json"),
         repo_list: dir.path().join("repos.json"),
         skills: std::env::temp_dir().join("tau-test-skills-none"),
+        home: None,
         identity: Identity::default(),
     };
     let agent = tau_agent::agent::Agent::new(llm).name("coder");
