@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 etcetera.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
@@ -38,6 +39,8 @@ uuid.workspace = true
 whoami.workspace = true
 
 [dev-dependencies]
+# jj-lib's `test` signing backend, for signing on push.
+jj-lib = { workspace = true, features = ["testing"] }
 tau-store-sqlite.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 hegeltest.workspace = true

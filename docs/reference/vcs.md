@@ -890,7 +890,8 @@ runs).
 A project pushes to the repository it was cloned from with jj-lib's
 `push_updates`, which runs `git push` on the project's Git store. This
 is the one place tau runs `git`; the Nix package puts it on `tau-ui`'s
-`PATH`. `Remote { url, token }` says where:
+`PATH`, and `git.executable-path` in the person's jj config names
+another, as for jj. `Remote { url, token }` says where:
 
 - The token reaches `git` through the child's environment alone:
   `GIT_CONFIG_COUNT` sets `credential.helper` to an empty value, which
@@ -929,7 +930,31 @@ is the one place tau runs `git`; the Nix package puts it on `tau-ui`'s
   hold a conflict refuses with `VcsError::WouldConflict(paths)`.
 - `Project::push_branch(remote, branch, expected, head)` points the
   remote's `branch` at `head` if the remote has it at `expected` (absent
-  for `None`), else `PushRejected`. No bookmark changes.
+  for `None`), else `PushRejected`. No bookmark changes. It returns the
+  head it pushed: `head`, unless signing on push made copies of it.
+- The person's jj config applies as `jj git push` applies it (jj-cli
+  0.45.1's `commands/git/push.rs`), with jj-cli's defaults
+  (`git.private-commits = "none()"`, `git.sign-on-push = false`, and
+  its `revset-aliases`):
+  - `git.private-commits` is a revset, parsed with the person's
+    `revset-aliases` and `fileset-aliases`, their email for `mine()`,
+    and the main workspace for `@`. `push_trunk` refuses, before
+    anything is sent, when a commit it would send (trunk's ancestors
+    that neither `<bookmark>@origin` nor `immutable_heads()` reaches)
+    is in it: `VcsError::PrivateCommit`, naming the newest such commit
+    (change id, commit id, first line) and the revset. A pull request
+    sends copies, so `replay` refuses the same way for the commits it
+    copies, before making any copy.
+  - With `git.sign-on-push`, `push_trunk` first signs each commit it
+    would send that is mutable (not in `immutable_heads()`), unsigned,
+    and the person's own (its author's email is `user.email`), with
+    `signing.*`, as jj's `signing.behavior = "own"` would, and rebases
+    what stands on them, in one operation; trunk then names the signed
+    commits, so their commit ids change and their change ids stay.
+    `push_branch` signs the copies under `head` that `replay` made in
+    the same way, as new hidden copies.
+  - A revset in the config that does not parse or resolve fails the
+    push with an error naming the setting (`VcsError::ConfigRevset`).
 
 The host's `Host::push_main(repo, fetch)` pushes a repository's trunk
 with the GitHub sign-in's token. With `fetch` it first updates from

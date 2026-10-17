@@ -38,7 +38,6 @@ use gix::{
     },
 };
 use jj_lib::{
-    config::{ConfigGetError, ConfigNamePathBuf, StackedConfig},
     fileset::{
         self,
         FilesetAliasesMap,
@@ -103,7 +102,8 @@ impl SnapshotConfig {
 /// workspace root.
 fn auto_track(settings: &UserSettings) -> Result<Box<dyn Matcher>, VcsError> {
     let pattern = settings.get_string("snapshot.auto-track")?;
-    let aliases_map = fileset_aliases(settings.config())?;
+    let aliases_map: FilesetAliasesMap =
+        crate::config::aliases(settings.config(), "fileset-aliases")?;
     let path_converter = RepoPathUiConverter::Fs {
         cwd: PathBuf::new(),
         base: PathBuf::new(),
@@ -121,50 +121,6 @@ fn auto_track(settings: &UserSettings) -> Result<Box<dyn Matcher>, VcsError> {
             source: Box::new(source),
         })?;
     Ok(expression.to_matcher())
-}
-
-/// The `fileset-aliases` of every layer, lowest first, so a later one
-/// redefines an earlier one (jj-cli's `load_aliases_map`). An alias jj
-/// cannot read is left out, as jj does after warning.
-fn fileset_aliases(
-    config: &StackedConfig,
-) -> Result<FilesetAliasesMap, VcsError> {
-    let name = ConfigNamePathBuf::from_iter(["fileset-aliases"]);
-    let mut aliases = FilesetAliasesMap::new();
-    for layer in config.layers() {
-        let table = match layer.look_up_table(&name) {
-            Ok(Some(table)) => table,
-            Ok(None) => continue,
-            Err(item) => {
-                return Err(ConfigGetError::Type {
-                    name: name.to_string(),
-                    error: format!(
-                        "Expected a table, but is {}",
-                        item.type_name()
-                    )
-                    .into(),
-                    source_path: layer.path.clone(),
-                }
-                .into());
-            }
-        };
-        for (decl, item) in table.iter() {
-            let (definition, doc) = match item.as_table_like() {
-                Some(table) => (
-                    table.get("definition").and_then(|item| item.as_str()),
-                    table
-                        .get("doc")
-                        .and_then(|item| item.as_str())
-                        .map(str::to_owned),
-                ),
-                None => (item.as_str(), None),
-            };
-            if let Some(definition) = definition {
-                aliases.insert(decl, definition, doc).ok();
-            }
-        }
-    }
-    Ok(aliases)
 }
 
 /// What a snapshot ignores before the workspace's own `.gitignore`

@@ -9,16 +9,23 @@
 //! with `GIT_CONFIG_*` reads it from a variable of the child process.
 //! It is never written to a file, and never in a command line, which
 //! other users can read.
+//!
+//! A push follows the person's jj config as `jj git push` does
+//! (jj-cli 0.45.1's `commands/git/push.rs`): `git.executable-path` is
+//! the `git` it runs, `git.private-commits` names commits it refuses to
+//! push, and `git.sign-on-push` signs the person's own commits it pushes.
 
 #![allow(
     clippy::disallowed_methods,
     reason = "runs only inside a job in spawn_blocking (ADR 0028)"
 )]
 
-use std::{collections::HashMap, ffi::OsString};
+use std::{collections::HashSet, sync::Arc};
 
+use futures_util::StreamExt as _;
 use jj_lib::{
     backend::CommitId,
+    commit::Commit,
     git::{
         GitProgress,
         GitPushOptions,
@@ -32,13 +39,29 @@ use jj_lib::{
     merge::{Diff, Merge},
     merged_tree::MergedTree,
     object_id::ObjectId as _,
-    ref_name::{RefName, RemoteName},
-    repo::ReadonlyRepo,
+    ref_name::{RefName, RemoteName, WorkspaceName},
+    repo::{ReadonlyRepo, Repo as _},
+    revset::{RevsetExpression, UserRevsetExpression},
+    rewrite::CommitRewriter,
+    settings::UserSettings,
+    signing::SignBehavior,
 };
 use pollster::block_on;
 
-use super::{ProjectRepo, StackChange, commit, import_options, range};
-use crate::error::VcsError;
+use super::{
+    DEFAULT_WORKSPACE,
+    MAIN,
+    ProjectRepo,
+    StackChange,
+    commit,
+    import_options,
+    range,
+};
+use crate::{
+    error::VcsError,
+    revsets::{ConfigRevsets, remote_heads},
+    session::{SHORT_ID, short_commit},
+};
 
 /// The remote a project comes from and pushes to. Its branches are the
 /// Git store's remote-tracking branches, `<branch>@origin` to jj; its
@@ -131,6 +154,22 @@ impl ProjectRepo {
         if !conflicts.is_empty() {
             return Err(VcsError::ConflictedTrunk(conflicts.join(", ")));
         }
+        let revsets = self.revsets()?;
+        let pushing = RevsetExpression::commits(vec![local.clone()])
+            .ancestors()
+            .minus(&known(&repo, &revsets)?.ancestors());
+        self.refuse_private(&repo, &revsets, &pushing)?;
+        let repo = self.sign_before_push(repo, &revsets, &local)?;
+        // Signing rewrote the commits it signed: trunk names the new
+        // ones.
+        let (_, local) = self
+            .trunk_bookmark(&repo)
+            .ok_or_else(|| VcsError::NoChange(self.trunk_name_or_main()))?;
+        let pushed = Pushed {
+            to: local.hex(),
+            changes: range(&repo, &local, before.as_ref())?,
+            ..pushed
+        };
         self.push_ref(&repo, remote, &name, before.as_ref(), &local)?;
         // The remote has trunk now: so does the Git store's
         // remote-tracking branch, as a fetch would leave it, and jj's
@@ -168,6 +207,17 @@ impl ProjectRepo {
         onto: &str,
     ) -> Result<Vec<String>, VcsError> {
         let repo = self.load()?;
+        // The copies are what a push sends: one of a commit
+        // `git.private-commits` names would be refused, so the commit is
+        // refused here, before anything is made or sent.
+        let originals = commits
+            .iter()
+            .map(|hex| Ok(commit(&repo, hex)?.id().clone()))
+            .collect::<Result<Vec<_>, VcsError>>()?;
+        let revsets = self.revsets()?;
+        let sending = RevsetExpression::commits(originals)
+            .minus(&known(&repo, &revsets)?.ancestors());
+        self.refuse_private(&repo, &revsets, &sending)?;
         let mut tx = repo.start_transaction();
         let mut parent = commit(&repo, onto)?;
         let mut copies = Vec::new();
@@ -205,14 +255,17 @@ impl ProjectRepo {
     /// Points the remote's branch `branch` at `head` (a full commit id
     /// in hex) if the remote has it at `expected` (absent when `None`),
     /// a pull request's branch. Nothing of the project changes: the
-    /// branch is not a bookmark here.
+    /// branch is not a bookmark here. With `git.sign-on-push`, the
+    /// copies [`ProjectRepo::replay`] made that the person wrote are
+    /// signed first, as copies again: returns the head pushed, `head`
+    /// when nothing needed signing.
     pub fn push_branch(
         &self,
         remote: Remote<'_>,
         branch: &str,
         expected: Option<&str>,
         head: &str,
-    ) -> Result<(), VcsError> {
+    ) -> Result<String, VcsError> {
         let _repo = self.lock()?;
         let repo = self.load()?;
         let id = |hex: &str| {
@@ -220,7 +273,148 @@ impl ProjectRepo {
                 .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))
         };
         let expected = expected.map(id).transpose()?;
-        self.push_ref(&repo, remote, branch, expected.as_ref(), &id(head)?)
+        let head = self.sign_copies(&repo, expected.as_ref(), &id(head)?)?;
+        self.push_ref(&repo, remote, branch, expected.as_ref(), &head)?;
+        Ok(head.hex())
+    }
+
+    /// The config's revsets, as `jj git push` in the main workspace
+    /// reads them.
+    fn revsets(&self) -> Result<ConfigRevsets, VcsError> {
+        ConfigRevsets::new(
+            &self.inner.settings,
+            &self.inner.root.join(MAIN),
+            WorkspaceName::new(DEFAULT_WORKSPACE),
+        )
+    }
+
+    /// Refuses a push that would send `sending` when one of those
+    /// commits is one `git.private-commits` names (jj-cli's
+    /// `CommitsValidator`). The error names the first, newest first, as
+    /// jj does.
+    fn refuse_private(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        revsets: &ConfigRevsets,
+        sending: &Arc<UserRevsetExpression>,
+    ) -> Result<(), VcsError> {
+        let name = "git.private-commits";
+        let (text, private) = revsets.setting(&self.inner.settings, name)?;
+        let private = revsets
+            .resolve(repo.as_ref(), name, &private)?
+            .evaluate(repo.as_ref())?;
+        let is_private = private.containing_fn();
+        for id in &evaluate(repo.as_ref(), revsets, sending)? {
+            if block_on(is_private(id))? {
+                let commit = repo.store().get_commit(id)?;
+                return Err(VcsError::PrivateCommit {
+                    commit: commit_name(&commit),
+                    revset: text,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// With `git.sign-on-push`, signs the commits a push of `head` sends
+    /// (what the remote's bookmarks do not reach) that are mutable,
+    /// unsigned, and the person's own, rebasing what stands on them, in
+    /// one operation (jj-cli's `sign_commits_before_push`). Returns the
+    /// repository after.
+    fn sign_before_push(
+        &self,
+        repo: Arc<ReadonlyRepo>,
+        revsets: &ConfigRevsets,
+        head: &CommitId,
+    ) -> Result<Arc<ReadonlyRepo>, VcsError> {
+        let settings = &self.inner.settings;
+        if !settings.get_bool("git.sign-on-push")? {
+            return Ok(repo);
+        }
+        let to_push = RevsetExpression::commits(remote_heads(
+            repo.as_ref(),
+            RemoteName::new(REMOTE),
+        ))
+        .range(&RevsetExpression::commits(vec![head.clone()]))
+        .minus(&revsets.immutable_heads()?.ancestors());
+        let mut unsigned = HashSet::new();
+        for id in evaluate(repo.as_ref(), revsets, &to_push)? {
+            if needs_signing(settings, &repo.store().get_commit(&id)?) {
+                unsigned.insert(id);
+            }
+        }
+        if unsigned.is_empty() {
+            return Ok(repo);
+        }
+        let mut tx = repo.start_transaction();
+        block_on(tx.repo_mut().transform_descendants(
+            unsigned.iter().cloned().collect(),
+            async |rewriter: CommitRewriter<'_>| {
+                let sign = unsigned.contains(rewriter.old_commit().id());
+                let builder = rewriter.reparent();
+                let builder = if sign {
+                    builder.set_sign_behavior(SignBehavior::Own)
+                } else {
+                    builder
+                };
+                builder.write().await?;
+                Ok(())
+            },
+        ))?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+        crate::colocate::commit(tx, "tau: sign commits before pushing")
+    }
+
+    /// With `git.sign-on-push`, signs the copies under `head` that
+    /// [`ProjectRepo::replay`] made, down to `expected` or the first
+    /// commit jj records, where the person wrote them and they are
+    /// unsigned: each a copy again, on the one before, in a transaction
+    /// that is dropped, as `replay` writes them. Returns the new head.
+    fn sign_copies(
+        &self,
+        repo: &Arc<ReadonlyRepo>,
+        expected: Option<&CommitId>,
+        head: &CommitId,
+    ) -> Result<CommitId, VcsError> {
+        let settings = &self.inner.settings;
+        if !settings.get_bool("git.sign-on-push")? {
+            return Ok(head.clone());
+        }
+        let mut copies = Vec::new();
+        let mut at = repo.store().get_commit(head)?;
+        while Some(at.id()) != expected
+            && !block_on(repo.index().has_id(at.id()))?
+        {
+            let Some(parent) = at.parent_ids().first().cloned() else {
+                break;
+            };
+            copies.push(at);
+            at = repo.store().get_commit(&parent)?;
+        }
+        let mut tx = repo.start_transaction();
+        let mut parent = at.id().clone();
+        let mut moved = false;
+        for copy in copies.iter().rev() {
+            let sign = needs_signing(settings, copy);
+            if !sign && !moved {
+                parent = copy.id().clone();
+                continue;
+            }
+            let builder = tx
+                .repo_mut()
+                .rewrite_commit(copy)
+                .set_parents(vec![parent.clone()]);
+            let builder = if sign {
+                builder.set_sign_behavior(SignBehavior::Own)
+            } else {
+                builder
+            };
+            parent = block_on(builder.write())?.id().clone();
+            moved = true;
+        }
+        // Dropped, not committed, as `replay`'s: the copies stay hidden.
+        drop(tx);
+        Ok(parent)
     }
 
     /// Pushes `after` to the remote's `refs/heads/<branch>`, if the
@@ -245,7 +439,7 @@ impl ProjectRepo {
         };
         let stats = push_updates(
             repo,
-            git_options(remote.token),
+            git_options(&self.inner.settings, remote.token)?,
             RemoteName::new(REMOTE),
             &[update],
             &mut Quiet,
@@ -288,12 +482,65 @@ fn upstream(repo: &ReadonlyRepo, branch: &str) -> Option<CommitId> {
         .cloned()
 }
 
-/// How jj-lib runs `git push`: never asking on a terminal, and with the
+/// What a push need not send: the remote's bookmarks, as the last fetch
+/// or push left them, and `immutable_heads()`, with their ancestors.
+fn known(
+    repo: &ReadonlyRepo,
+    revsets: &ConfigRevsets,
+) -> Result<Arc<UserRevsetExpression>, VcsError> {
+    Ok(
+        RevsetExpression::commits(remote_heads(repo, RemoteName::new(REMOTE)))
+            .union(&revsets.immutable_heads()?),
+    )
+}
+
+/// The commits `expression` names in `repo`, newest first.
+fn evaluate(
+    repo: &ReadonlyRepo,
+    revsets: &ConfigRevsets,
+    expression: &Arc<UserRevsetExpression>,
+) -> Result<Vec<CommitId>, VcsError> {
+    let revset = revsets
+        .resolve(repo, "revset-aliases.immutable_heads()", expression)?
+        .evaluate(repo)?;
+    Ok(block_on(revset.stream().collect::<Vec<_>>())
+        .into_iter()
+        .collect::<Result<_, _>>()?)
+}
+
+/// Whether `commit` is one jj signs before pushing: unsigned, and the
+/// person's own (`signing.behavior = "own"`).
+fn needs_signing(settings: &UserSettings, commit: &Commit) -> bool {
+    let mut sign = settings.sign_settings();
+    sign.behavior = SignBehavior::Own;
+    !commit.is_signed() && sign.should_sign(commit.store_commit())
+}
+
+/// A commit as an error names it: its change id, its commit id, and the
+/// first line of its description.
+fn commit_name(commit: &Commit) -> String {
+    let mut change = commit.change_id().reverse_hex();
+    change.truncate(SHORT_ID);
+    let line = commit.description().lines().next().unwrap_or_default();
+    let line = if line.is_empty() {
+        "(no description set)"
+    } else {
+        line
+    };
+    format!("{change} {} \"{line}\"", short_commit(commit.id()))
+}
+
+/// How jj-lib runs `git push`: the `git` the config names
+/// (`git.executable-path`), never asking on a terminal, and with the
 /// token, if any, offered by a credential helper that reads it from the
 /// child's environment. The empty helper before it drops the person's
 /// own helpers, so none of them stores the token.
-fn git_options(token: Option<&str>) -> GitSubprocessOptions {
-    let mut environment: HashMap<OsString, OsString> = HashMap::new();
+fn git_options(
+    settings: &UserSettings,
+    token: Option<&str>,
+) -> Result<GitSubprocessOptions, VcsError> {
+    let mut options = GitSubprocessOptions::from_settings(settings)?;
+    let environment = &mut options.environment;
     environment.insert("GIT_TERMINAL_PROMPT".into(), "0".into());
     if let Some(token) = token {
         for (key, value) in [
@@ -307,10 +554,7 @@ fn git_options(token: Option<&str>) -> GitSubprocessOptions {
             environment.insert(key.into(), value.into());
         }
     }
-    GitSubprocessOptions {
-        executable_path: "git".into(),
-        environment,
-    }
+    Ok(options)
 }
 
 /// Takes `git`'s progress and messages and shows none: the push's
@@ -346,6 +590,12 @@ impl GitSubprocessCallback for Quiet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// jj's defaults alone.
+    fn settings() -> UserSettings {
+        UserSettings::from_config(jj_lib::config::StackedConfig::with_defaults())
+            .unwrap()
+    }
 
     /// `git credential` with `options`' environment and a global
     /// config that stores credentials in `home/creds`, as a person's
@@ -388,7 +638,7 @@ mod tests {
     #[test]
     fn the_credential_helper_answers_with_the_token_and_stores_nothing() {
         let home = tempfile::tempdir().unwrap();
-        let options = git_options(Some("ghs_secret"));
+        let options = git_options(&settings(), Some("ghs_secret")).unwrap();
         let asked = "protocol=https\nhost=github.com\n\n";
         let filled = credential(home.path(), &options, "fill", asked);
         assert!(filled.contains("username=x-access-token\n"), "{filled}");
@@ -397,7 +647,7 @@ mod tests {
         assert!(!home.path().join("creds").exists(), "the token was stored");
         // The same approval without tau's environment is stored: the
         // check above would see it.
-        let plain = git_options(None);
+        let plain = git_options(&settings(), None).unwrap();
         credential(home.path(), &plain, "approve", &format!("{filled}\n"));
         assert!(home.path().join("creds").exists());
         // The token is in the child's environment alone, in no setting.
@@ -410,7 +660,7 @@ mod tests {
     /// Without a token, nothing about credentials is set.
     #[test]
     fn no_token_sets_no_helper() {
-        let options = git_options(None);
+        let options = git_options(&settings(), None).unwrap();
         assert_eq!(options.environment.len(), 1);
         assert_eq!(
             options.environment[std::ffi::OsStr::new("GIT_TERMINAL_PROMPT")],

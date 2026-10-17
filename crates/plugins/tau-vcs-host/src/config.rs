@@ -24,12 +24,15 @@ use std::{
 use etcetera::BaseStrategy as _;
 use jj_lib::{
     config::{
+        ConfigGetError,
         ConfigLayer,
+        ConfigNamePathBuf,
         ConfigResolutionContext,
         ConfigSource,
         StackedConfig,
         resolve,
     },
+    dsl_util::{AliasDeclarationParser, AliasesMap},
     secure_config::SecureConfig,
     settings::UserSettings,
 };
@@ -45,11 +48,39 @@ const REPO_CONFIG_DIR: &str = "repos";
 const WORKSPACE_CONFIG_DIR: &str = "workspaces";
 
 /// jj-cli's defaults for the keys tau reads that jj-lib's defaults lack,
-/// copied from jj-cli 0.45.1's `src/config/misc.toml`.
+/// copied from jj-cli 0.45.1's `src/config/misc.toml` (`git` and
+/// `snapshot`) and `src/config/revsets.toml` (`revset-aliases`, every
+/// one, since an alias the person writes may call any of them).
 const CLI_DEFAULTS: &str = r#"
+[git]
+private-commits = "none()"
+sign-on-push = false
+
 [snapshot]
 max-new-file-size = "1MiB"
 auto-track = "all()"
+
+[revset-aliases]
+'trunk()' = '''
+latest(
+  remote_bookmarks(exact:"main", exact:"origin") |
+  remote_bookmarks(exact:"master", exact:"origin") |
+  remote_bookmarks(exact:"trunk", exact:"origin") |
+  remote_bookmarks(exact:"main", exact:"upstream") |
+  remote_bookmarks(exact:"master", exact:"upstream") |
+  remote_bookmarks(exact:"trunk", exact:"upstream") |
+  root()
+)
+'''
+'builtin_log()' = 'present(@) | ancestors(immutable_heads().., 2) | trunk()'
+'builtin_immutable_heads()' = '''
+trunk() | tags() | untracked_remote_bookmarks() | untracked_remote_tags()
+'''
+'immutable_heads()' = 'builtin_immutable_heads()'
+'immutable()' = '::(immutable_heads() | root())'
+'mutable()' = '~immutable()'
+'visible()' = '::visible_heads()'
+'hidden()' = '~visible()'
 "#;
 
 /// Where jj's config comes from: the person's directories, the
@@ -321,4 +352,53 @@ fn canonical(path: &Path) -> PathBuf {
         (Some(parent), Some(name)) => canonical(parent).join(name),
         _ => path.to_owned(),
     }
+}
+
+/// The aliases of the table `table` (`fileset-aliases`,
+/// `revset-aliases`) in every layer, lowest first, so a later one
+/// redefines an earlier one (jj-cli's `load_aliases_map`). An alias jj
+/// cannot read is left out, as jj does after warning.
+pub(crate) fn aliases<P>(
+    config: &StackedConfig,
+    table: &str,
+) -> Result<AliasesMap<P, String>, VcsError>
+where
+    P: AliasDeclarationParser + Default,
+{
+    let name = ConfigNamePathBuf::from_iter([table]);
+    let mut aliases = AliasesMap::new();
+    for layer in config.layers() {
+        let table = match layer.look_up_table(&name) {
+            Ok(Some(table)) => table,
+            Ok(None) => continue,
+            Err(item) => {
+                return Err(ConfigGetError::Type {
+                    name: name.to_string(),
+                    error: format!(
+                        "Expected a table, but is {}",
+                        item.type_name()
+                    )
+                    .into(),
+                    source_path: layer.path.clone(),
+                }
+                .into());
+            }
+        };
+        for (decl, item) in table.iter() {
+            let (definition, doc) = match item.as_table_like() {
+                Some(table) => (
+                    table.get("definition").and_then(|item| item.as_str()),
+                    table
+                        .get("doc")
+                        .and_then(|item| item.as_str())
+                        .map(str::to_owned),
+                ),
+                None => (item.as_str(), None),
+            };
+            if let Some(definition) = definition {
+                aliases.insert(decl, definition, doc).ok();
+            }
+        }
+    }
+    Ok(aliases)
 }

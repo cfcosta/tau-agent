@@ -37,6 +37,7 @@ mod lock;
 mod ops;
 pub mod plugin;
 pub mod project;
+mod revsets;
 pub mod run_workspace;
 mod session;
 mod snapshot_config;

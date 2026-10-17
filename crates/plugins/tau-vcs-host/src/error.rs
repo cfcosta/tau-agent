@@ -212,6 +212,13 @@ pub enum VcsError {
     },
     #[error("Cannot read Git's config: {0}")]
     GitConfig(String),
+    #[error("Invalid `{name}`: {error}")]
+    ConfigRevset { name: String, error: String },
+    #[error(
+        "Won't push commit {commit} since it is private (git.private-commits: \
+         '{revset}'). Nothing was pushed."
+    )]
+    PrivateCommit { commit: String, revset: String },
     #[error(transparent)]
     Ignores(#[from] jj_lib::gitignore::GitIgnoreError),
     #[error(transparent)]

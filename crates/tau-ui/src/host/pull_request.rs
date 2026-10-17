@@ -241,7 +241,7 @@ impl Host {
         let (head, change) = project
             .run(move |project| {
                 let replayed = replayed(&job_run, project, None)?;
-                let head = replayed.copies.last().cloned().unwrap_or_default();
+                let copy = replayed.copies.last().cloned().unwrap_or_default();
                 let change = replayed
                     .changes
                     .last()
@@ -251,7 +251,9 @@ impl Host {
                     url: &url,
                     token: Some(&push_token),
                 };
-                project.push_branch(remote, &branch, None, &head)?;
+                // Signing on push makes copies of its own: the head is
+                // what went.
+                let head = project.push_branch(remote, &branch, None, &copy)?;
                 anyhow::Ok((head, change))
             })
             .await?;
@@ -320,13 +322,13 @@ impl Host {
                     url: &url,
                     token: Some(&token),
                 };
-                project.push_branch(
+                let head = project.push_branch(
                     remote,
                     &pushed.branch,
                     Some(&pushed.head),
                     head,
                 )?;
-                Ok(Some((head.clone(), last.change_id.clone())))
+                Ok(Some((head, last.change_id.clone())))
             })
             .await?;
         let Some((head, change)) = last else {
