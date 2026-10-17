@@ -27,6 +27,8 @@ use jj_lib::{
         default_backend_factories,
         default_working_copy_factories,
     },
+    ref_name::WorkspaceName,
+    repo::Repo as _,
     workspace::{
         DefaultWorkspaceLoaderFactory,
         Workspace,
@@ -122,14 +124,26 @@ impl Vcs {
                 &worker.root,
                 &worker.root.join(".jj").join("repo"),
             )?;
-            let (workspace, _repo) = block_on(Workspace::init_internal_git(
+            let (begun, repo) = crate::workspace_init::begin_repo(
                 &settings,
                 &worker.root,
-                // jj-lib's gix's kind, SHA-1 by default: named this way,
-                // the call builds even when our gix is not jj-lib's.
-                Default::default(),
-            ))?;
-            worker.workspace = Some(workspace);
+                crate::workspace_init::GitStore::Internal,
+            )?;
+            let lock = crate::lock::lock_repo(&worker.root.join(".jj/repo"))?;
+            // The workspace on an empty commit on the root, as jj-lib's
+            // own operation would add it, but tau's.
+            let name = WorkspaceName::DEFAULT.to_owned();
+            let mut tx = repo.start_transaction();
+            block_on(
+                tx.repo_mut()
+                    .check_out(name.clone(), &repo.store().root_commit()),
+            )?;
+            let repo = crate::colocate::commit(
+                tx,
+                "make the repository",
+                &lock.git()?,
+            )?;
+            worker.workspace = Some(begun.finish(&repo, name)?);
             Ok(())
         })
         .await?;

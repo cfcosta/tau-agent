@@ -124,7 +124,7 @@ impl ProjectRepo {
     /// remote's, and the push can go again. Once pushed, the Git store's
     /// branch names the pushed commit, so nothing is ahead any more.
     pub fn push_trunk(&self, remote: Remote<'_>) -> Result<Pushed, VcsError> {
-        let _repo = self.lock()?;
+        let lock = self.lock()?;
         let repo = self.load()?;
         let (name, local) = self
             .trunk_bookmark(&repo)
@@ -158,7 +158,7 @@ impl ProjectRepo {
             .ancestors()
             .minus(&known(&repo, &revsets)?.ancestors());
         self.refuse_private(&repo, &revsets, &pushing)?;
-        let repo = self.sign_before_push(repo, &revsets, &local)?;
+        let repo = self.sign_before_push(&lock, repo, &revsets, &local)?;
         // Signing rewrote the commits it signed: trunk names the new
         // ones.
         let (_, local) = self
@@ -173,6 +173,7 @@ impl ProjectRepo {
         // The remote has trunk now: so does the Git store's
         // remote-tracking branch, as a fetch would leave it, and jj's
         // record of it.
+        let git = lock.git()?;
         let store = self.git()?;
         store
             .reference(
@@ -185,7 +186,7 @@ impl ProjectRepo {
         let mut tx = repo.start_transaction();
         block_on(import_refs(tx.repo_mut(), &import_options(false)))
             .map_err(VcsError::ImportBranches)?;
-        crate::colocate::commit(tx, format!("tau: push {name}"))?;
+        crate::colocate::commit(tx, format!("push {name}"), &git)?;
         Ok(pushed)
     }
 
@@ -323,6 +324,7 @@ impl ProjectRepo {
     /// repository after.
     fn sign_before_push(
         &self,
+        lock: &crate::lock::RepoLock,
         repo: Arc<ReadonlyRepo>,
         revsets: &ConfigRevsets,
         head: &CommitId,
@@ -374,7 +376,7 @@ impl ProjectRepo {
             },
         ))?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        crate::colocate::commit(tx, "tau: sign commits before pushing")
+        crate::colocate::commit(tx, "sign commits before pushing", &lock.git()?)
     }
 
     /// With `git.sign-on-push`, signs the copies under `head` that

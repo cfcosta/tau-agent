@@ -1,6 +1,7 @@
 //! Fixtures the vcs tests share: a project imported from a fresh git
-//! repository, a coding agent on a run's workspace, and the merge model
-//! (`merge`).
+//! repository, a coding agent on a run's workspace, the merge model
+//! (`merge`), and the operation log as another program reads it
+//! (`ops`).
 
 #![allow(
     clippy::disallowed_methods,
@@ -10,6 +11,7 @@
 #![allow(dead_code)]
 
 pub mod merge;
+pub mod ops;
 
 use std::{path::Path, sync::Arc};
 

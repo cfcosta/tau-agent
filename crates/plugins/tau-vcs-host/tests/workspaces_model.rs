@@ -369,11 +369,16 @@ struct Machine {
     main_since: Option<(String, Tree, usize, Tree)>,
     /// The main chat's commits landed since that snapshot.
     main_landed: Vec<usize>,
+    /// The project's operation log, as another program reads it.
+    log: common::ops::OpLog,
 }
 
 impl Machine {
     fn new() -> Self {
         let (home, project, main) = project();
+        let log = common::ops::OpLog::open(
+            &project.workspace_dir(DEFAULT_WORKSPACE).join(".jj/repo"),
+        );
         let mut upstream = Tree::new();
         set(&mut upstream, "a.txt", Term::resolved(Some("one\n")));
         // A chat on upstream's commit, which no catch-up rewrites.
@@ -426,6 +431,7 @@ impl Machine {
             chats: 0,
             main_since: Some((turn.commit_id, first.clone(), 0, first.clone())),
             main_landed: Vec::new(),
+            log,
         }
     }
 
@@ -1158,6 +1164,14 @@ impl Machine {
     #[rule]
     fn idle_describe(&mut self, tc: TestCase) {
         self.do_idle_describe(&tc);
+    }
+
+    /// Every operation in the project's log is tau's, the import that
+    /// made it included: each carries `tau.op` and is described
+    /// `tau: …` (`docs/reference/vcs.md`, "Tagged operations").
+    #[invariant(always_run)]
+    fn every_operation_is_taus(&mut self, _tc: TestCase) {
+        common::ops::assert_all_taus(&mut self.log, "the workspaces");
     }
 
     /// After every step the chat's files are the model's, and, unless a

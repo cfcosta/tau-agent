@@ -137,6 +137,8 @@ struct Machine {
     trunk: usize,
     /// The source checkout's `HEAD`, as the project last imported it.
     upstream: usize,
+    /// The project's operation log, as another program reads it.
+    log: common::ops::OpLog,
 }
 
 /// The main chat.
@@ -162,6 +164,9 @@ impl Machine {
         let mut tree = Tree::new();
         set(&mut tree, "a.txt", Term::resolved(Some("one\n")));
         set(&mut tree, "dir/b.txt", Term::resolved(Some("two\n")));
+        let log = common::ops::OpLog::open(
+            &project.workspace_dir(DEFAULT_WORKSPACE).join(".jj/repo"),
+        );
         let mut machine = Self {
             home,
             project,
@@ -175,6 +180,7 @@ impl Machine {
             runs: Vec::new(),
             trunk: 0,
             upstream: 0,
+            log,
         };
         // The repository's main chat, in jj's own workspace, committing
         // on trunk (ADR 0015). The workspace starts empty, on jj's root
@@ -1288,6 +1294,14 @@ impl Machine {
         self.project.forget_workspace(&name).unwrap();
         assert!(!self.project.workspace_dir(&name).exists());
         self.runs[run].state = State::Forgotten;
+    }
+
+    /// Every operation in the project's log is tau's, the import that
+    /// made it included: each carries `tau.op` and is described
+    /// `tau: …` (`docs/reference/vcs.md`, "Tagged operations").
+    #[invariant(always_run)]
+    fn every_operation_is_taus(&mut self, _tc: TestCase) {
+        common::ops::assert_all_taus(&mut self.log, "the runs");
     }
 
     #[invariant(always_run)]

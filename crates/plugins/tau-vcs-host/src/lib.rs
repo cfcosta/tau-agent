@@ -19,6 +19,10 @@
 //! a turn's code. The model makes the commits, with `vcs_commit`
 //! ([ADR 0014](../../../docs/decisions/0014-the-model-commits-and-runs-land-as-stacked-diffs.md)).
 //!
+//! Every operation tau writes says it is tau's: the attribute
+//! [`TAU_OP_ATTRIBUTE`] and a description starting `tau: `, which
+//! [`is_taus`] reads.
+//!
 //! The tools take change ids and commit ids, never revsets. Every tool
 //! snapshots the working copy first, so edits made with other tools are
 //! never lost, and the writing tools refuse immutable commits. Fetch and
@@ -34,6 +38,7 @@ pub mod error;
 mod half;
 mod land;
 mod lock;
+mod operations;
 mod ops;
 pub mod plugin;
 pub mod project;
@@ -45,12 +50,14 @@ pub mod sub_agents;
 pub mod sweep;
 pub mod tools;
 mod vcs;
+mod workspace_init;
 
 pub use clone::{CloneError, TransferError};
 pub use config::{JjEnv, settings as jj_settings};
 pub use diff::MAX_DIFF_BYTES;
 pub use error::VcsError;
 pub use half::VcsHost;
+pub use operations::{DESCRIPTION_PREFIX, TAU_OP_ATTRIBUTE, is_taus};
 pub use ops::{
     Committed,
     DEFAULT_LOG_LIMIT,

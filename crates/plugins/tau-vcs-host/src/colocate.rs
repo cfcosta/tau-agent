@@ -5,6 +5,7 @@
 //! through [`commit`], which does the same: bookmarks and tags go out
 //! as Git's branches and tags, and Git's `HEAD` and index follow the
 //! main workspace's working copy, so `git` in `main/` sees what jj does.
+//! It also tags the operation as tau's ([`crate::operations`]).
 
 #![allow(
     clippy::disallowed_methods,
@@ -21,7 +22,7 @@ use jj_lib::{
 };
 use pollster::block_on;
 
-use crate::error::VcsError;
+use crate::{error::VcsError, lock::GitLock};
 
 /// Keeps `.jj/` out of Git's view in the colocated `workspace_root`, as
 /// the jj CLI does: a `.jj/.gitignore` that ignores all it holds.
@@ -33,12 +34,16 @@ pub(crate) fn ignore_jj_dir(workspace_root: &Path) -> Result<(), VcsError> {
         .map_err(|source| VcsError::Create { path, source })
 }
 
-/// Commits `tx` as `description`, with the Git store brought in step
-/// first.
+/// Commits `tx` as tau's operation described `tau: <what>`, with the
+/// Git store brought in step first. `_git` is jj-cli's Git
+/// import/export lock, held from before any import the transaction
+/// made until the operation is written, as the CLI holds it.
 pub(crate) fn commit(
     mut tx: Transaction,
-    description: impl Into<String>,
+    what: impl AsRef<str>,
+    _git: &GitLock,
 ) -> Result<Arc<ReadonlyRepo>, VcsError> {
+    let description = crate::operations::tag(&mut tx, what.as_ref());
     sync_git(&mut tx)?;
     Ok(block_on(tx.commit(description))?)
 }

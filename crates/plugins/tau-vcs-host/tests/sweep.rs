@@ -117,4 +117,9 @@ fn a_sweep_takes_what_no_kept_run_has() {
     assert!(!visible(&project, &dropped_change));
     // Done once, there is nothing left to do.
     assert!(project.plan_sweep(&owners).unwrap().is_empty());
+    // Every operation, the sweep's included, is tau's.
+    let mut log = common::ops::OpLog::open(
+        &project.workspace_dir(DEFAULT_WORKSPACE).join(".jj/repo"),
+    );
+    common::ops::assert_all_taus(&mut log, "the sweep");
 }

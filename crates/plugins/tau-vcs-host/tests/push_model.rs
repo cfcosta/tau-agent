@@ -17,6 +17,9 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+#[path = "common/ops.rs"]
+mod ops;
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -204,6 +207,8 @@ struct Machine {
     moved: bool,
     /// Files written, for distinct names.
     files: usize,
+    /// The project's operation log, as another program reads it.
+    log: ops::OpLog,
 }
 
 #[hegel::state_machine]
@@ -307,6 +312,13 @@ impl Machine {
         tc.event("pushed");
     }
 
+    /// Every operation in the project's log is tau's, the clone that
+    /// made it, its pushes and its signing included.
+    #[invariant(always_run)]
+    fn every_operation_is_taus(&mut self, _tc: TestCase) {
+        ops::assert_all_taus(&mut self.log, "the pushes");
+    }
+
     #[invariant(always_run)]
     fn unpushed_is_the_main_chats_own(&self, tc: TestCase) {
         tc.event_value("unpushed", self.unpushed.len() as f64);
@@ -323,11 +335,19 @@ impl Machine {
     suppress_health_check = [hegel::HealthCheck::TooSlow]
 )]
 fn pushes_take_the_main_chats_commits_as_they_are(tc: TestCase) {
+    let origin = Origin::new(&Files::from([("a.txt".into(), "a\n".into())]));
+    let log = ops::OpLog::open(
+        &origin
+            .project
+            .workspace_dir(DEFAULT_WORKSPACE)
+            .join(".jj/repo"),
+    );
     let machine = Machine {
-        origin: Origin::new(&Files::from([("a.txt".into(), "a\n".into())])),
+        origin,
         unpushed: Vec::new(),
         moved: false,
         files: 0,
+        log,
     };
     hegel::stateful::machine(machine).steps(12).run(tc);
 }

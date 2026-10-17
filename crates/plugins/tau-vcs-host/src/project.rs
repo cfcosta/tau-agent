@@ -32,7 +32,6 @@ use jj_lib::{
     default_backend_factories::{
         default_backend_factories,
         default_working_copy_factories,
-        default_working_copy_factory,
     },
     git::{GitImportOptions, import_refs},
     matchers::EverythingMatcher,
@@ -291,14 +290,15 @@ impl ProjectRepo {
             path: main.clone(),
             source,
         })?;
-        let (mut workspace, repo) = block_on(Workspace::init_colocated_git(
+        let (begun, repo) = crate::workspace_init::begin_repo(
             &project.inner.settings,
             &main,
-            // jj-lib's gix's kind, SHA-1 by default.
-            Default::default(),
-        ))
+            crate::workspace_init::GitStore::Colocated,
+        )
         .map_err(VcsError::MakeRepo)?;
         crate::colocate::ignore_jj_dir(&main)?;
+        let lock = project.lock()?;
+        let git = lock.git()?;
         let mut tx = repo.start_transaction();
         let store = tx.repo().store().clone();
         let mut tree = MergedTreeBuilder::new(store.empty_merged_tree());
@@ -336,7 +336,10 @@ impl ProjectRepo {
                 .check_out(WorkspaceNameBuf::from(DEFAULT_WORKSPACE), &first),
         )?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        let repo = crate::colocate::commit(tx, "tau: make the repository")?;
+        let repo = crate::colocate::commit(tx, "make the repository", &git)?;
+        let mut workspace = begun
+            .finish(&repo, WorkspaceNameBuf::from(DEFAULT_WORKSPACE))
+            .map_err(VcsError::MakeRepo)?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         Ok(project)
@@ -511,17 +514,27 @@ impl ProjectRepo {
                     source: std::io::Error::other(error.to_string()),
                 }
             })?;
-            let (_workspace, repo) = block_on(Workspace::init_external_git(
+            let (begun, repo) = crate::workspace_init::begin_repo(
                 &project.inner.settings,
                 &main,
-                &git_dir,
-            ))
+                crate::workspace_init::GitStore::External(&git_dir),
+            )
             .map_err(VcsError::MakeRepo)?;
             crate::colocate::ignore_jj_dir(&main)?;
+            let lock = project.lock()?;
+            let git = lock.git()?;
             let mut tx = repo.start_transaction();
+            // The main workspace, on an empty commit on the root, as
+            // jj-lib's own operation would add it.
+            let name = WorkspaceNameBuf::from(DEFAULT_WORKSPACE);
+            block_on(
+                tx.repo_mut()
+                    .check_out(name.clone(), &repo.store().root_commit()),
+            )?;
             block_on(import_refs(tx.repo_mut(), &import_options(true)))
                 .map_err(VcsError::ImportBranches)?;
-            let repo = crate::colocate::commit(tx, "tau: import")?;
+            let repo = crate::colocate::commit(tx, "import", &git)?;
+            begun.finish(&repo, name).map_err(VcsError::MakeRepo)?;
             project.write_trunk_alias(&repo)
         })();
         if let Err(error) = made {
@@ -579,7 +592,7 @@ impl ProjectRepo {
     /// default branch, but not a checkout's checked-out branch. Runs keep their workspaces and commits; new runs start
     /// from the new trunk. Returns the trunk before and after.
     pub fn update(&self, from: UpdateFrom<'_>) -> Result<Updated, VcsError> {
-        let _repo = self.lock()?;
+        let lock = self.lock()?;
         let before = self.trunk()?;
         let git_dir = self.git_dir();
         match from {
@@ -588,13 +601,14 @@ impl ProjectRepo {
                 crate::clone::fetch_into(&git_dir, url, token)?
             }
         }
+        let git = lock.git()?;
         let repo = self.load()?;
         let mut tx = repo.start_transaction();
         let upstream = upstream_targets(tx.repo().view());
         block_on(import_refs(tx.repo_mut(), &import_options(false)))
             .map_err(VcsError::ImportBranches)?;
         take_upstream(&mut tx, upstream);
-        crate::colocate::commit(tx, "tau: update")?;
+        crate::colocate::commit(tx, "update", &git)?;
         Ok(Updated {
             before,
             after: self.trunk()?,
@@ -784,15 +798,9 @@ impl ProjectRepo {
         let lock = self.lock()?;
         let main = self.main()?;
         let repo = block_on(main.repo_loader().load_at_head())?;
-        let (mut workspace, repo) =
-            block_on(Workspace::init_workspace_with_existing_repo(
-                &dir,
-                main.repo_path(),
-                &repo,
-                &*default_working_copy_factory(),
-                WorkspaceNameBuf::from(name),
-            ))
-            .map_err(VcsError::AddWorkspace)?;
+        let begun =
+            crate::workspace_init::begin_workspace(&dir, main.repo_path())
+                .map_err(VcsError::AddWorkspace)?;
         let turn = commit(&repo, snapshot)?;
         let then = turn.parent_ids().first().ok_or(VcsError::NoParent)?;
         let mut then = repo.store().get_commit(then)?;
@@ -847,8 +855,14 @@ impl ProjectRepo {
         )?;
         block_on(tx.repo_mut().edit(WorkspaceNameBuf::from(name), &wc))?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        let repo =
-            crate::colocate::commit(tx, format!("tau: add workspace {name}"))?;
+        let repo = crate::colocate::commit(
+            tx,
+            format!("add workspace {name}"),
+            &lock.git()?,
+        )?;
+        let mut workspace = begun
+            .finish(&repo, WorkspaceNameBuf::from(name))
+            .map_err(VcsError::AddWorkspace)?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         drop(lock);
@@ -965,7 +979,7 @@ impl ProjectRepo {
         use futures_util::StreamExt as _;
         use jj_lib::revset::ResolvedRevsetExpression;
 
-        let _repo = self.lock()?;
+        let repo_lock = self.lock()?;
         let repo = self.load()?;
         let id = |hex: &str| {
             CommitId::try_from_hex(hex)
@@ -995,7 +1009,8 @@ impl ProjectRepo {
         block_on(tx.repo_mut().rebase_descendants())?;
         crate::colocate::commit(
             tx,
-            format!("tau: abandon {} changes", ids.len()),
+            format!("abandon {} changes", ids.len()),
+            &repo_lock.git()?,
         )?;
         Ok(ids.len())
     }
@@ -1063,7 +1078,7 @@ impl ProjectRepo {
     /// Removes the local bookmark `name`, if there is one. The commits it
     /// named stay.
     pub fn remove_bookmark(&self, name: &str) -> Result<(), VcsError> {
-        let _repo = self.lock()?;
+        let repo_lock = self.lock()?;
         let repo = self.load()?;
         let name = RefName::new(name);
         if repo.view().get_local_bookmark(name).is_absent() {
@@ -1076,7 +1091,8 @@ impl ProjectRepo {
         );
         crate::colocate::commit(
             tx,
-            format!("tau: remove bookmark {}", name.as_str()),
+            format!("remove bookmark {}", name.as_str()),
+            &repo_lock.git()?,
         )?;
         Ok(())
     }
@@ -1102,15 +1118,9 @@ impl ProjectRepo {
         let lock = self.lock()?;
         let main = self.main()?;
         let repo = block_on(main.repo_loader().load_at_head())?;
-        let (mut workspace, repo) =
-            block_on(Workspace::init_workspace_with_existing_repo(
-                &dir,
-                main.repo_path(),
-                &repo,
-                &*default_working_copy_factory(),
-                WorkspaceNameBuf::from(name),
-            ))
-            .map_err(VcsError::AddWorkspace)?;
+        let begun =
+            crate::workspace_init::begin_workspace(&dir, main.repo_path())
+                .map_err(VcsError::AddWorkspace)?;
         // Where `base`'s change is now: a catch-up may have rewritten it
         // since the caller read it, and checking out the old commit would
         // bring it back beside the new one, a divergent change.
@@ -1120,10 +1130,14 @@ impl ProjectRepo {
         let wc = block_on(
             tx.repo_mut().check_out(WorkspaceNameBuf::from(name), &base),
         )?;
-        // Checking out abandons the empty commit the workspace began on.
-        block_on(tx.repo_mut().rebase_descendants())?;
-        let repo =
-            crate::colocate::commit(tx, format!("tau: add workspace {name}"))?;
+        let repo = crate::colocate::commit(
+            tx,
+            format!("add workspace {name}"),
+            &lock.git()?,
+        )?;
+        let mut workspace = begun
+            .finish(&repo, WorkspaceNameBuf::from(name))
+            .map_err(VcsError::AddWorkspace)?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         drop(lock);
@@ -1149,7 +1163,8 @@ impl ProjectRepo {
             block_on(tx.repo_mut().rebase_descendants())?;
             crate::colocate::commit(
                 tx,
-                format!("tau: forget workspace {name}"),
+                format!("forget workspace {name}"),
+                &lock.git()?,
             )?;
         }
         drop(lock);
@@ -1216,7 +1231,7 @@ impl ProjectRepo {
     /// The repository's lock, which every write takes
     /// (`crate::lock`). Reads load the repository at its newest
     /// operation and need none.
-    fn lock(&self) -> Result<jj_lib::lock::FileLock, VcsError> {
+    fn lock(&self) -> Result<crate::lock::RepoLock, VcsError> {
         crate::lock::lock_repo(
             &self.inner.root.join(MAIN).join(".jj").join("repo"),
         )

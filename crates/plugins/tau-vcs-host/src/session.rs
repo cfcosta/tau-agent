@@ -32,7 +32,7 @@ use pollster::block_on;
 use crate::{
     TooLarge,
     error::VcsError,
-    lock::lock_repo,
+    lock::{GitLock, lock_repo},
     revsets::ConfigRevsets,
     snapshot_config::SnapshotConfig,
     vcs::Worker,
@@ -84,7 +84,10 @@ pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
     let env = worker.env().clone();
     let revsets = worker.revsets()?;
     let workspace = worker.workspace()?;
-    let _repo = lock_repo(workspace.repo_path())?;
+    let repo_lock = lock_repo(workspace.repo_path())?;
+    // Before the working copy's lock, as the jj CLI takes it
+    // (`crate::lock`).
+    let git = repo_lock.git()?;
     let name = workspace.workspace_name().to_owned();
     let loader = workspace.repo_loader().clone();
     let config = SnapshotConfig::load(
@@ -95,7 +98,7 @@ pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
     )?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
     let snapshot =
-        snapshot_locked(&mut locked, &loader, &name, &config, &revsets)?;
+        snapshot_locked(&mut locked, &loader, &name, &config, &revsets, &git)?;
     block_on(locked.finish(snapshot.repo.op_id().clone()))?;
     Ok(snapshot)
 }
@@ -111,7 +114,10 @@ pub(crate) fn mutate<T>(
     let env = worker.env().clone();
     let revsets = worker.revsets()?;
     let workspace = worker.workspace()?;
-    let _repo = lock_repo(workspace.repo_path())?;
+    let repo_lock = lock_repo(workspace.repo_path())?;
+    // Before the working copy's lock, as the jj CLI takes it
+    // (`crate::lock`).
+    let git = repo_lock.git()?;
     let name = workspace.workspace_name().to_owned();
     let loader = workspace.repo_loader().clone();
     let config = SnapshotConfig::load(
@@ -122,7 +128,7 @@ pub(crate) fn mutate<T>(
     )?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
     let before =
-        snapshot_locked(&mut locked, &loader, &name, &config, &revsets)?;
+        snapshot_locked(&mut locked, &loader, &name, &config, &revsets, &git)?;
     let written = (|| {
         if before
             .immutable
@@ -138,7 +144,7 @@ pub(crate) fn mutate<T>(
             block_on(tx.repo_mut().rebase_descendants())?;
         }
         let repo = if tx.repo().has_changes() {
-            crate::colocate::commit(tx, format!("tau vcs: {tool}"))?
+            crate::colocate::commit(tx, what(tool), &git)?
         } else {
             before.repo.clone()
         };
@@ -169,6 +175,17 @@ pub(crate) fn mutate<T>(
     ))
 }
 
+/// What an operation [`mutate`] writes for `tool` is described as,
+/// after `tau: `: a model's tool by its name (`vcs_commit`), the host's
+/// step by what it does (`checkpoint`, `move onto`).
+fn what(tool: &str) -> String {
+    match tool {
+        crate::ops::CHECKPOINT => tool.to_owned(),
+        "move_onto" => "move onto".to_owned(),
+        tool => format!("vcs_{tool}"),
+    }
+}
+
 /// Snapshots the working copy with the options the jj CLI would use
 /// there (`config`): the files it starts tracking, the largest new file
 /// it takes, and the person's Git excludes.
@@ -178,6 +195,7 @@ fn snapshot_locked(
     name: &WorkspaceName,
     config: &SnapshotConfig,
     revsets: &ConfigRevsets,
+    git: &GitLock,
 ) -> Result<Snapshot, VcsError> {
     let options = config.options();
     let mut repo = block_on(loader.load_at_head())?;
@@ -223,7 +241,8 @@ fn snapshot_locked(
                 tx.repo_mut()
                     .set_wc_commit(name.to_owned(), edited.id().clone())?;
                 block_on(tx.repo_mut().rebase_descendants())?;
-                repo = crate::colocate::commit(tx, "snapshot working copy")?;
+                repo =
+                    crate::colocate::commit(tx, "snapshot working copy", git)?;
                 wc = edited;
             }
             block_on(locked.locked_wc().check_out(&wc))?;
@@ -263,7 +282,7 @@ fn snapshot_locked(
         tx.repo_mut()
             .set_wc_commit(name.to_owned(), new_wc.id().clone())?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        repo = crate::colocate::commit(tx, "snapshot working copy")?;
+        repo = crate::colocate::commit(tx, "snapshot working copy", git)?;
         wc = new_wc;
     }
     Ok(Snapshot {

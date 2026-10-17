@@ -695,6 +695,13 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
         let mut got = project.bookmarks("tau/").unwrap();
         got.sort();
         assert_eq!(got, bookmarks);
+        // Every operation, each finalization's included, is tau's.
+        let mut log = common::ops::OpLog::open(
+            &project
+                .workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE)
+                .join(".jj/repo"),
+        );
+        common::ops::assert_all_taus(&mut log, "the sub-agents");
     });
 }
 
