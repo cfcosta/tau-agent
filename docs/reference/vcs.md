@@ -131,9 +131,8 @@ loading:
   files, as `jj workspace update-stale` does, since the main chat's
   catch-up restacks its chats); `git.colocate` (a project's layout is
   tau's; jj 0.46 also reads it in `jj workspace add`, which makes the
-  new workspace a Git worktree when the current one is colocated, but
-  tau's run workspaces are not Git worktrees yet: ADR 0043 makes them
-  ones, with gix, since jj-lib's `create_worktree` runs `git`);
+  new workspace a Git worktree when the current one is colocated, and
+  tau's run workspaces always are, see "Projects");
   `git.push` and `revsets.git-push` (a push names its remote, `origin`,
   and the one branch it sends, as `jj git push --remote origin
   --bookmark <branch>` would, so neither the default remotes nor the
@@ -544,7 +543,7 @@ the user's checkout.
 | Path           | What it is                                                                                           |
 | -------------- | ---------------------------------------------------------------------------------------------------- |
 | `main/`        | The jj repository, colocated with its Git store (`.jj` beside `.git`), and the main chat's workspace |
-| `runs/<name>/` | One jj workspace per run, named by the host.                                                         |
+| `runs/<name>/` | One jj workspace per run, named by the host, and a Git worktree of `main/.git`.                      |
 
 A `Layout` says where these are (`ProjectRepo::layout`): the
 repository's directory, the runs' directory, and the main chat's
@@ -583,14 +582,51 @@ one the workspace store gives `main/`.
   upstream's URL (or, for a local source, its path) and no fetch
   refspec.
 - Every operation tau writes exports the bookmarks and tags to Git's
-  `refs/heads/` and `refs/tags/`, and, when the `@` of the workspace
-  in the Git store's working tree moved, points Git's `HEAD` at `@-`
-  and resets the index to it, as the jj CLI does after each command.
-  That workspace is the one the workspace store has in the working
-  tree, `main/`: the main chat's. A workspace renamed in the operation
-  did not move. `git status` in `main/` shows `@`'s changes.
-- Run workspaces are plain jj workspaces, with no `.git`: jj-lib cannot
-  make one a Git worktree.
+  `refs/heads/` and `refs/tags/`, and, when it moved the `@` of the
+  workspace it was written in (a tool's, a snapshot's, the one
+  `add_workspace` makes), points Git's `HEAD` there at `@-` and resets
+  the index to it, with `@`'s new files added as intent to add, as the
+  jj CLI does after each command in the workspace it runs in. Only
+  that workspace's: an operation that rewrites another workspace's `@`
+  (a landing or a catch-up restacking the chats on the main chat's
+  commits) leaves that workspace's `HEAD` where its files are, and the
+  workspace's next tool, moving its stale files to the new commit,
+  moves `HEAD` too, in an operation of its own (`tau: reset git head`,
+  a snapshot's kind, which `vcs_undo` passes over) when no snapshot
+  goes with it, as `jj workspace update-stale` does. A workspace
+  renamed in the operation did not move. `git status` in `main/` and
+  in each run's workspace shows `@`'s changes, and `git ls-files` lists
+  `@`'s new files, which nix flakes need.
+- Each run's workspace is also a Git worktree of `main/.git`, so `git`,
+  nix flakes and build scripts that ask Git work in it (ADR 0043). jj
+  0.46.0's `git::create_worktree` runs `git worktree add`, so tau
+  writes the files itself, laid out as Git's `gitrepository-layout`
+  has them: `main/.git/worktrees/<id>/` with `gitdir` (the absolute
+  path of the workspace's `.git`), `commondir` (`../..`) and `HEAD`,
+  and `runs/<name>/.git`, `gitdir: <absolute path of that folder>`.
+  The paths are absolute, so the repository's config is never changed
+  (jj's relative ones turn on `extensions.relativeWorktrees`). The id is
+  the workspace's name with every character but letters, digits, `-`
+  and `_` made `-`, its last 64 characters for a long sub-agent name,
+  and `-2`, `-3` and so on when taken. `add_workspace` and
+  `add_workspace_from_snapshot` make the worktree first, with `HEAD` on
+  jj's unborn placeholder (`ref: refs/jj/root`), and the operation that
+  adds the workspace points it at `@-`; they write `.jj/.gitignore`
+  there too. The jj CLI finds the workspace colocated (`jj git
+  colocation status`), and its export, which detaches every worktree's
+  `HEAD` on a branch it moves, finds tau's detached already.
+- A run workspace that is not a whole worktree (one made before runs
+  had them, one whose making was cut off, one whose worktree the person
+  removed) is made one again when the project opens and when
+  `add_workspace` opens it again: the files it lacks are written, a
+  worktree folder that names the workspace is used again, `HEAD`
+  becomes the parent of the commit the workspace's files are at, and
+  the index follows, in one `tau: reset git head` operation when the
+  view's record of that `HEAD` changes. `forget_workspace` removes the
+  worktree folders that name that workspace, and its `.git`, never
+  another's: unlike `git worktree prune`, which jj's `unlink_worktree`
+  runs, it leaves alone a worktree whose folder is gone. The person's
+  `git worktree prune` keeps tau's, whose folders exist.
 
 - `Project::clone(url, token, root, identity)` makes the project at
   `root` by fetching every branch and tag of `url` with gix, as
@@ -637,10 +673,11 @@ one the workspace store gives `main/`.
   since the caller read it, as the main chat's catch-up rewrites its
   commits, the workspace starts on the commit `base`'s change names
   now, so the old commit does not come back beside the new one. It is
-  one operation, `tau: add workspace <name>`. `forget_workspace(name)`
-  removes it as `jj workspace remove` does: it drops it from the view,
-  then from the workspace store (`.jj/repo/workspace_store`), then
-  deletes the directory; its commits stay. (`jj workspace forget`
+  one operation, `tau: add workspace <name>`, after the workspace's
+  Git worktree is made. `forget_workspace(name)` removes it as `jj
+  workspace remove` does: it drops it from the view, then from the
+  workspace store (`.jj/repo/workspace_store`), then its Git worktree,
+  then deletes the directory; its commits stay. (`jj workspace forget`
   keeps the store's entry, for `jj undo`; tau deletes the directory,
   so there is nothing to point back at.)
 - A run's workspace is one tau made: the workspace store has it in its
