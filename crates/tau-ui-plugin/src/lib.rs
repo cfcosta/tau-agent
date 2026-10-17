@@ -13,9 +13,11 @@
 //! - **On the host**, a plugin keeps its own state ([`HostHalf::Host`]),
 //!   builds its agent plugin for each run ([`HostHalf::agent_plugins`]),
 //!   describes itself ([`HostHalf::catalog`]), sends the interface its
-//!   data ([`HostHalf::data`], [`HostHalf::repo_data`]), and carries out
-//!   what its UI asks ([`HostHalf::act`]). Outside any run it may ask
-//!   the person's model ([`HostCx::model`]).
+//!   data ([`HostHalf::data`], [`HostHalf::repo_data`]), carries out
+//!   what its UI asks ([`HostHalf::act`]), and starts again the jobs a
+//!   restart cut off ([`HostHalf::resume`]). Outside any run it may ask
+//!   the person's model ([`HostCx::model`]) and run jobs the host keeps
+//!   ([`HostCx::jobs`]).
 //! - **Wherever a run is shown**, live or stored, on a computer or a
 //!   phone, the plugin's state folds each record it published
 //!   ([`Fold::apply`]), and places anchors in the transcript and on tool
@@ -25,6 +27,7 @@
 //!   `tau-ui`'s ([`points`]) or other plugins'.
 
 pub mod host;
+pub mod jobs;
 pub mod manifest;
 pub mod model;
 pub mod points;
@@ -67,6 +70,7 @@ pub use host::{
     WatchError,
     WorkspaceDir,
 };
+pub use jobs::{JobCx, JobInfo, Jobs, LiveRepos};
 pub use manifest::{
     ListedCommand,
     Manifest,
@@ -492,6 +496,19 @@ pub trait HostHalf: Send + Sync + 'static {
         _cx: &HostCx,
     ) -> impl Future<Output = <Self::Plugin as UiPlugin>::RepoData> + Send {
         std::future::ready(Default::default())
+    }
+
+    /// Called once as the host starts, after it made every plugin's host
+    /// state: the plugin starts again the jobs a restart cut off
+    /// ([`HostCx::jobs`]), from the checkpoints it keeps in its own
+    /// directory ([`HostCx::plugin_dir`]). The host only asks; what to
+    /// resume, and from where, is the plugin's.
+    fn resume(
+        &self,
+        _host: &Self::Host,
+        _cx: &HostCx,
+    ) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
     }
 
     /// Carries out what the plugin's UI asked; a reply goes back to its

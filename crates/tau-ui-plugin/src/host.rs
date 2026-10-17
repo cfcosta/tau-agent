@@ -843,6 +843,12 @@ impl HostCx {
             .map(|model| model.of(plugin))
     }
 
+    /// The jobs the host keeps for plugins (ADR 0044), when it keeps
+    /// them.
+    pub fn jobs(&self) -> Option<&crate::Jobs> {
+        self.services.get::<crate::Jobs>()
+    }
+
     /// Asks the interface to draw the catalog again.
     pub fn refresh(&self) {
         (self.push)(Push::Catalog);

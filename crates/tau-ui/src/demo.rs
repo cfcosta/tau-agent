@@ -1355,6 +1355,7 @@ pub fn catalog() -> Catalog {
         plugin_data: Default::default(),
         plugin_settings: Default::default(),
         repo_plugin_settings: Default::default(),
+        jobs: Vec::new(),
         plugins: Vec::new(),
         agent: "coder".into(),
         agent_source: Some("src/agents.rs:14".into()),

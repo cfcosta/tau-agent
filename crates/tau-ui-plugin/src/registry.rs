@@ -152,6 +152,12 @@ pub trait ErasedPlugin: Send + Sync {
         action: Value,
         cx: &'a HostCx,
     ) -> HostFuture<'a, anyhow::Result<Option<Value>>>;
+    /// Starts again the jobs a restart cut off, as the host starts.
+    fn resume<'a>(
+        &'a self,
+        host: &'a HostState,
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, ()>;
 
     /// Folds `body`, a record the plugin published (or the details of a
     /// rewrite, [`crate::REWRITE`]), into its state in a run.
@@ -419,6 +425,14 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         cx: &'a HostCx,
     ) -> HostFuture<'a, anyhow::Result<Option<Value>>> {
         Box::pin(self.half.act(self.host_of(host), action, cx))
+    }
+
+    fn resume<'a>(
+        &'a self,
+        host: &'a HostState,
+        cx: &'a HostCx,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(self.half.resume(self.host_of(host), cx))
     }
 
     fn apply(

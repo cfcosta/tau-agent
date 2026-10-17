@@ -118,6 +118,12 @@ impl HostConfig {
         self.repos.join("github")
     }
 
+    /// tau's directory for data shared by every repository, where each
+    /// plugin keeps its own (`HostCx::plugin_dir`).
+    pub fn shared_dir(&self) -> PathBuf {
+        self.repos.parent().unwrap_or(&self.repos).to_owned()
+    }
+
     /// The project directory for the clone at `path`: its name and a
     /// hash of its full path, so two clones with one name get two
     /// projects. A repository of tau's own, and a clone from GitHub, is

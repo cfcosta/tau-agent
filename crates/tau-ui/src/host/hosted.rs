@@ -22,10 +22,39 @@ use crate::hosted;
 pub(super) use crate::hosted::Hosted;
 
 impl Host {
-    /// Makes each plugin's host state.
+    /// Makes each plugin's host state, then asks each to start again the
+    /// jobs a restart cut off (`HostHalf::resume`): once, as the host
+    /// starts.
     pub(super) fn host_plugins(&mut self) {
         let cx = self.host_cx();
         self.hosted = self.setting_up(hosted::host_all(&cx));
+        self.setting_up(hosted::resume(&self.hosted, &cx));
+    }
+
+    /// The jobs the host keeps for plugins (ADR 0044), reading the
+    /// repositories as they are listed at each call.
+    pub(super) fn plugin_jobs(
+        runtime: &Runtime,
+        config: &HostConfig,
+        repos: &Arc<Mutex<Vec<RepoSlot>>>,
+        pushes: &mpsc::UnboundedSender<Push>,
+    ) -> tau_ui_plugin::Jobs {
+        let (live, config) = (repos.clone(), config.clone());
+        let pushes = pushes.clone();
+        tau_ui_plugin::Jobs::new(
+            runtime.handle().clone(),
+            config.shared_dir(),
+            tau_ui_plugin::LiveRepos::new(move || {
+                live.lock()
+                    .expect("not poisoned")
+                    .iter()
+                    .map(|slot| repo_ctx_of(&config, slot))
+                    .collect()
+            }),
+            Arc::new(move |push| {
+                let _ = pushes.send(push);
+            }),
+        )
     }
 
     /// The person's model as plugins' host halves ask it outside any run
@@ -98,7 +127,8 @@ impl Host {
             .with(ConfigDir(self.config.credentials.dir.clone()))
             .with(self.identity())
             .with(tau_skills::SkillsDir(self.config.skills.clone()))
-            .with(self.plugin_model());
+            .with(self.plugin_model())
+            .with(self.plugin_jobs.clone());
         if let Some(jev) = self.jev() {
             services = services.with(jev);
         }
@@ -121,11 +151,7 @@ impl Host {
             self.store.clone(),
             self.runtime.handle().clone(),
             services,
-            self.config
-                .repos
-                .parent()
-                .unwrap_or(&self.config.repos)
-                .to_owned(),
+            self.config.shared_dir(),
             repos,
             Arc::new(move |push| {
                 let _ = pushes.send(push);
@@ -134,22 +160,7 @@ impl Host {
     }
 
     pub(super) fn repo_ctx(&self, slot: &RepoSlot) -> RepoCtx {
-        RepoCtx {
-            id: slot.id.clone(),
-            name: slot.name.clone(),
-            remote: slot.remote.clone(),
-            // Every repository is a clone tau keeps until local ones
-            // (ADR 0043) are listed.
-            folder: None,
-            checkout: slot.path.clone(),
-            dir: self.config.project_dir_of(&slot.path),
-            // The project's root once imported; until then, where it
-            // will be.
-            workspaces: match slot.project.peek() {
-                ProjectState::Ready(project) => project.root().to_owned(),
-                _ => self.config.project_dir_of(&slot.path),
-            },
-        }
+        repo_ctx_of(&self.config, slot)
     }
 
     /// The run (or sub-agent) `kind` in `repo` on `choice`, as plugins
@@ -526,5 +537,25 @@ pub(super) fn apply_push(
         Push::Alert { title, message } => workspace.update(cx, |ws, cx| {
             ws.apply(HostUpdate::alert(title, message), cx)
         }),
+    }
+}
+
+/// The repository in `slot`, as plugins see it.
+fn repo_ctx_of(config: &HostConfig, slot: &RepoSlot) -> RepoCtx {
+    RepoCtx {
+        id: slot.id.clone(),
+        name: slot.name.clone(),
+        remote: slot.remote.clone(),
+        // Every repository is a clone tau keeps until local ones
+        // (ADR 0043) are listed.
+        folder: None,
+        checkout: slot.path.clone(),
+        dir: config.project_dir_of(&slot.path),
+        // The project's root once imported; until then, where it
+        // will be.
+        workspaces: match slot.project.peek() {
+            ProjectState::Ready(project) => project.root().to_owned(),
+            _ => config.project_dir_of(&slot.path),
+        },
     }
 }

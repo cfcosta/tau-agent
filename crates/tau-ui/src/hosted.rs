@@ -83,6 +83,14 @@ pub async fn host_all(cx: &HostCx) -> Vec<Hosted> {
     hosted
 }
 
+/// Asks each plugin to start again the jobs a restart cut off, in the
+/// registry's order (`HostHalf::resume`).
+pub async fn resume(hosted: &[Hosted], cx: &HostCx) {
+    for hosted in hosted {
+        hosted.plugin.resume(&hosted.state, cx).await;
+    }
+}
+
 /// What the catalog lists of the plugins: each one's entry, by name its
 /// data, and by name its settings.
 pub type Catalogued = (

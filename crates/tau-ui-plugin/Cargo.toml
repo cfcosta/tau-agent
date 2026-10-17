@@ -16,7 +16,7 @@ tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-store.workspace = true
 tau-ui-kit.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "time", "macros"] }
 tokio-util.workspace = true
 
 [features]
@@ -27,3 +27,4 @@ testing = []
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 tau-store-sqlite.workspace = true
 hegeltest.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "macros", "test-util"] }

@@ -261,6 +261,9 @@ pub struct Host {
     /// Jobs the host is doing off the interface's thread, until what
     /// they did is shown.
     jobs: Arc<std::sync::atomic::AtomicUsize>,
+    /// The jobs plugins started, which the host keeps past any window
+    /// (ADR 0044).
+    plugin_jobs: tau_ui_plugin::Jobs,
     /// The user's model choices, as loaded and last saved.
     settings: Arc<Mutex<ModelSettings>>,
     events: mpsc::UnboundedSender<RunEvent>,
@@ -453,7 +456,7 @@ impl Host {
             &config.default_model(),
         )?;
         let (mut host, events) =
-            Self::with_agent(runtime, agent, store, config);
+            Self::without_plugins(runtime, agent, store, config);
         *host.client.lock().expect("not poisoned") = Some(client);
         // The app searches memory with docbert's model; hosts built
         // elsewhere, as in tests, by keywords alone.
@@ -493,11 +496,24 @@ impl Host {
     /// A host over an agent built elsewhere: another model, other
     /// plugins, or a scripted model in tests. It lists no repository
     /// until one is cloned, or given with [`Self::with_repo`].
+    pub fn with_agent(
+        runtime: Runtime,
+        agent: Agent,
+        store: Store,
+        config: HostConfig,
+    ) -> (Self, mpsc::UnboundedReceiver<RunEvent>) {
+        let (mut host, events) =
+            Self::without_plugins(runtime, agent, store, config);
+        host.host_plugins();
+        (host, events)
+    }
+
+    /// [`Self::with_agent`] before any plugin's host state is made.
     #[allow(
         clippy::disallowed_methods,
         reason = "builds the host on its runtime before anything runs on it (ADR 0028)"
     )]
-    pub fn with_agent(
+    fn without_plugins(
         runtime: Runtime,
         agent: Agent,
         store: Store,
@@ -519,7 +535,9 @@ impl Host {
                 config.credentials.jev_key().await,
             )
         });
-        let mut host = Self {
+        let repos = Arc::default();
+        let plugin_jobs = Self::plugin_jobs(&runtime, &config, &repos, &pushes);
+        let host = Self {
             runtime,
             base: Mutex::new(agent),
             account: Arc::new(Mutex::new(Some(config.account.clone()))),
@@ -535,7 +553,7 @@ impl Host {
             store,
             settings: Arc::new(Mutex::new(settings)),
             config,
-            repos: Arc::default(),
+            repos,
             list: Arc::new(Mutex::new(list)),
             sessions: Arc::default(),
             updating: Arc::default(),
@@ -546,6 +564,7 @@ impl Host {
             ending: Arc::default(),
             forecast_wait: forecast::SETTLE,
             jobs: Arc::default(),
+            plugin_jobs,
             runs: Arc::default(),
             sub_agents: Mutex::default(),
             processes: Arc::default(),
@@ -570,7 +589,6 @@ impl Host {
             asks,
             asked: Mutex::new(Some(asked)),
         };
-        host.host_plugins();
         (host, receiver)
     }
 
@@ -820,6 +838,7 @@ impl Host {
             project,
             update: self.last_update.lock().expect("not poisoned").clone(),
             models: self.models(),
+            jobs: self.plugin_jobs.running(),
         }
     }
 

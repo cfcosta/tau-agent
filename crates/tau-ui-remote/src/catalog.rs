@@ -48,6 +48,10 @@ pub struct Catalog {
         String,
         std::collections::BTreeMap<String, PluginValue>,
     >,
+    /// The jobs the host keeps for plugins, going on now (ADR 0044): by
+    /// plugin, then name, each with its progress.
+    #[serde(default)]
+    pub jobs: Vec<tau_ui_plugin::JobInfo>,
 }
 
 impl Catalog {

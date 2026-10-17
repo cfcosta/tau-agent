@@ -1,5 +1,8 @@
 //! What the host offers a plugin's host half outside any run (ADR
-//! 0044): the person's model, whose use is booked to the plugin.
+//! 0044): the person's model, whose use is booked to the plugin, and
+//! jobs the host keeps, which the catalog lists with their progress,
+//! which read the repositories as they are, stop when cancelled, and
+//! start again as the host does.
 
 #![allow(
     clippy::disallowed_methods,
@@ -9,11 +12,13 @@
 use std::{
     path::{Path, PathBuf},
     sync::Once,
+    time::{Duration, Instant},
 };
 
 use tau_agent::{agent::Agent, event::RunEvent};
 use tau_ai::message::{Message, UserContent, UserMessage};
 use tau_store::Store;
+use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
     host::{Host, HostConfig},
@@ -22,18 +27,20 @@ use tau_ui_plugin::{
     AskSettings,
     HostCx,
     HostHalf,
+    JobInfo,
     Manifest,
     PluginInfo,
     RunCtx,
     UiPlugin,
 };
-use tau_vcs_host::Identity;
+use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
 const NAME: &str = "resumer";
 
-/// A plugin with a host half and nothing else.
+/// A plugin that counts the repositories in a job, from a checkpoint it
+/// keeps, started again as the host starts.
 struct Resumer;
 
 impl UiPlugin for Resumer {
@@ -69,6 +76,31 @@ impl HostHalf for ResumerHost {
 
     async fn catalog(&self, _: &(), _: &HostCx, _: &()) -> PluginInfo {
         PluginInfo::default()
+    }
+
+    /// Goes on counting when its checkpoint says it was: until it is
+    /// cancelled, then it says so in the checkpoint.
+    async fn resume(&self, _: &(), cx: &HostCx) {
+        let checkpoint = cx.plugin_dir(NAME).join("checkpoint");
+        let Ok(from) = tokio::fs::read_to_string(&checkpoint).await else {
+            return;
+        };
+        let jobs = cx.jobs().expect("the host keeps jobs");
+        jobs.start(NAME, "count", "Counting", move |job| async move {
+            loop {
+                let names: Vec<String> =
+                    job.repos().into_iter().map(|repo| repo.name).collect();
+                job.progress(0.5, format!("from {from}: {}", names.join(",")));
+                tokio::select! {
+                    () = job.cancelled() => break,
+                    () = tokio::time::sleep(Duration::from_millis(20)) => {}
+                }
+            }
+            tokio::fs::write(job.plugin_dir().join("checkpoint"), "stopped")
+                .await?;
+            Ok(())
+        })
+        .unwrap();
     }
 }
 
@@ -126,6 +158,84 @@ fn host_in(
         identity: Identity::default(),
     };
     Host::with_agent(runtime, agent, store, config)
+}
+
+/// A project imported from a new repository with one commit.
+fn project() -> Project {
+    let checkout = tempfile::tempdir().unwrap().keep();
+    git(&checkout, &["init", "--quiet"]);
+    git(
+        &checkout,
+        &["commit", "--quiet", "--allow-empty", "-m", "first"],
+    );
+    tau_vcs_host::ProjectRepo::import(
+        checkout.to_str().unwrap(),
+        tempfile::tempdir().unwrap().keep().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap()
+}
+
+/// The catalog's jobs once `done` holds of them, failing after a while.
+fn jobs_until(host: &Host, done: impl Fn(&[JobInfo]) -> bool) -> Vec<JobInfo> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let jobs = host.block_on(host.catalog()).jobs;
+        if done(&jobs) {
+            return jobs;
+        }
+        assert!(Instant::now() < deadline, "the jobs stayed {jobs:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A job a plugin's checkpoint says was cut off starts again with the
+/// host, and the catalog lists it with its progress; it reads a
+/// repository listed after it started; cancelled, it stops, writing its
+/// checkpoint, and leaves the catalog.
+#[test]
+fn a_job_resumes_reports_reads_live_repositories_and_stops() {
+    let dir = own_dir();
+    let plugin_dir = dir.join("plugins").join(NAME);
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(plugin_dir.join("checkpoint"), "3").unwrap();
+    let runtime = runtime();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let (host, _events) = host_in(
+        &dir,
+        runtime,
+        store,
+        Agent::new(ScriptedModel::new()).name("coder"),
+    );
+
+    let jobs = jobs_until(&host, |jobs| {
+        jobs.iter().any(|job| job.line.starts_with("from 3"))
+    });
+    assert_eq!(
+        jobs,
+        [JobInfo {
+            plugin: NAME.into(),
+            name: "count".into(),
+            label: "Counting".into(),
+            fraction: 0.5,
+            line: "from 3: ".into(),
+        }]
+    );
+
+    let host = host.with_repo("later", project());
+    jobs_until(&host, |jobs| {
+        jobs.iter().any(|job| job.line == "from 3: later")
+    });
+
+    let cx = host.host_cx();
+    assert!(cx.jobs().unwrap().cancel(NAME, "count"));
+    jobs_until(&host, <[JobInfo]>::is_empty);
+    assert_eq!(
+        std::fs::read_to_string(plugin_dir.join("checkpoint")).unwrap(),
+        "stopped"
+    );
+    assert!(!cx.jobs().unwrap().cancel(NAME, "count"), "none is going");
 }
 
 /// A host half asks the person's model outside any run: the request
