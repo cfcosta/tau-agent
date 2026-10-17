@@ -17,12 +17,18 @@
     # same change. Its own nixpkgs is kept, so its Zig build matches
     # what Ghostty tests.
     ghostty.url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
+    # The jj CLI the tests compare tau-vcs-host with: it must be the
+    # version of the jj-lib in Cargo.lock (0.45.1), so the two move
+    # together. A nixos-unstable revision whose jujutsu is that version;
+    # only the dev shell uses it, and only through `TAU_TEST_JJ`.
+    nixpkgs-jj.url = "github:NixOS/nixpkgs/6774f7bc253789b113a4f39285dc0fa100abeacc";
   };
 
   outputs =
     {
       ghostty,
       nixpkgs,
+      nixpkgs-jj,
       rust-overlay,
       treefmt-nix,
       ...
@@ -338,6 +344,7 @@
           ghosttyVendor,
           guiLibs,
           libghostty-vt,
+          system,
           ...
         }:
         {
@@ -424,6 +431,10 @@
             # What nextest preloads into tests so they skip disk syncs
             # (scripts/no-disk-syncs.sh).
             TAU_TEST_PRELOAD = pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.libeatmydata}/lib/libeatmydata.so";
+            # The jj CLI at jj-lib's version, which tau-vcs-host's tests
+            # compare tau with. Not on `PATH`: the shell's `jj` stays the
+            # person's own.
+            TAU_TEST_JJ = "${nixpkgs-jj.legacyPackages.${system}.jujutsu}/bin/jj";
           };
         }
       );

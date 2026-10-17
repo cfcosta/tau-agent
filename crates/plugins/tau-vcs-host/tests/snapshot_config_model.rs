@@ -25,6 +25,9 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+#[path = "common/jj_cli.rs"]
+mod jj_cli;
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
@@ -683,7 +686,7 @@ fn a_malformed_snapshot_setting_is_an_error_naming_it(tc: TestCase) {
 /// did not run.
 #[hegel::test(test_cases = 40)]
 fn the_jj_cli_tracks_the_same_files(tc: TestCase) {
-    let Some(jj) = matching_jj() else {
+    let Some(jj) = jj_cli::matching_jj() else {
         eprintln!(
             "the jj CLI is not installed at jj-lib's version: not compared"
         );
@@ -744,17 +747,6 @@ fn sizes_read_as_jjs(tc: TestCase) {
         tau_vcs::byte_size(bytes),
         jj_lib::settings::HumanByteSize(bytes).to_string()
     );
-}
-
-/// The installed jj CLI, if its version is jj-lib's, by its full path:
-/// the CLI runs with no `PATH`.
-fn matching_jj() -> Option<PathBuf> {
-    let jj = std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join("jj"))
-        .find(|path| path.is_file())?;
-    let output = Command::new(&jj).arg("--version").output().ok()?;
-    let version = String::from_utf8(output.stdout).ok()?;
-    (version.trim() == "jj 0.45.1").then_some(jj)
 }
 
 /// The CLI in the world: its home, its variables, and no other variable

@@ -21,6 +21,9 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+#[path = "common/jj_cli.rs"]
+mod jj_cli;
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -610,7 +613,7 @@ fn a_broken_file_jj_reads_is_an_error_naming_it(tc: TestCase) {
 /// reads the real `/etc`. Elsewhere this test says it did not run.
 #[hegel::test(test_cases = 40)]
 fn the_jj_cli_reads_the_same_values(tc: TestCase) {
-    let Some(jj) = matching_jj() else {
+    let Some(jj) = jj_cli::matching_jj() else {
         eprintln!(
             "the jj CLI is not installed at jj-lib's version: not compared"
         );
@@ -662,13 +665,6 @@ fn world_fell_back(world: &World, key: &str) -> bool {
         ..world.clone()
     };
     expected(&unset)[index].as_deref() == Some("\u{0}")
-}
-
-/// The installed jj CLI, if its version is jj-lib's.
-fn matching_jj() -> Option<PathBuf> {
-    let output = Command::new("jj").arg("--version").output().ok()?;
-    let version = String::from_utf8(output.stdout).ok()?;
-    (version.trim() == "jj 0.45.1").then(|| PathBuf::from("jj"))
 }
 
 /// The CLI in `disk`'s world: its home and config directory, and no

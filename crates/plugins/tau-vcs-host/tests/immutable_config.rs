@@ -14,6 +14,9 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+#[path = "common/jj_cli.rs"]
+mod jj_cli;
+
 use std::{
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
@@ -390,7 +393,7 @@ fn a_broken_immutable_heads_is_an_error_naming_it() {
 /// this test says it did not run.
 #[hegel::test(test_cases = 40)]
 fn the_jj_cli_finds_the_same_immutable_commits(tc: TestCase) {
-    let Some(jj) = matching_jj() else {
+    let Some(jj) = jj_cli::matching_jj() else {
         eprintln!(
             "the jj CLI is not installed at jj-lib's version: not compared"
         );
@@ -434,15 +437,4 @@ fn the_jj_cli_finds_the_same_immutable_commits(tc: TestCase) {
         .collect();
     assert_eq!(theirs, ours);
     assert_eq!(ours, model);
-}
-
-/// The installed jj CLI, if its version is jj-lib's, by its full path:
-/// the CLI runs with no `PATH`.
-fn matching_jj() -> Option<PathBuf> {
-    let jj = std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join("jj"))
-        .find(|path| path.is_file())?;
-    let output = Command::new(&jj).arg("--version").output().ok()?;
-    let version = String::from_utf8(output.stdout).ok()?;
-    (version.trim() == "jj 0.45.1").then_some(jj)
 }
