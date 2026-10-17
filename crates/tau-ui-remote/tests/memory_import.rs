@@ -9,6 +9,7 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, size};
 use tau_memory::{
     import::{
         Act,
+        Banner,
         Flags,
         FolderFound,
         Imports,
@@ -103,7 +104,8 @@ fn install() {
     ONCE.call_once(|| plugins::install(plugins::plugins()));
 }
 
-/// A desktop window whose catalog holds `imports` as memory's data.
+/// A desktop window whose catalog holds `imports` as memory's data, and
+/// lists `hello`.
 fn open(
     imports: Imports,
     cx: &mut TestAppContext,
@@ -111,7 +113,14 @@ fn open(
     install();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog {
+            repos: vec![tau_ui_remote::catalog::Repo {
+                name: "hello".into(),
+                ..Default::default()
+            }],
+            open_repos: vec!["hello".into()],
+            ..Catalog::default()
+        };
         catalog.plugin_data.insert(MEMORY.into(), data(imports));
         Workspace::new("tau", Vec::new(), catalog, window, cx)
     });
@@ -401,4 +410,110 @@ fn an_empty_review_page_offers_an_import(cx: &mut TestAppContext) {
     review(&workspace, &[], &mut cx);
     click("memory-review-import", &mut cx);
     assert_eq!(acts(&events), [Act::Import(Request::default())]);
+}
+
+/// What the tools know of `hello`: proposals ready, and chats unread.
+fn known() -> Imports {
+    let mut imports = proposed();
+    imports.progress = None;
+    imports.banners.insert(
+        "hello".into(),
+        Banner {
+            folder: "~/work/hello".into(),
+            places: vec![Place {
+                folder: Some("/home/p/work/hello".into()),
+                remote: None,
+            }],
+            saved: vec![(Tool::ClaudeCode, 3), (Tool::Codex, 2)],
+            unread_chats: 6,
+            unread_saved: 0,
+            ready: 2,
+        },
+    );
+    imports
+}
+
+fn notes_of(
+    workspace: &Entity<Workspace>,
+    repo: &str,
+    cx: &mut VisualTestContext,
+) {
+    let link = tau_memory::ui::notes_link(repo);
+    workspace.update(cx, |ws, cx| {
+        ws.navigate(
+            Route::Plugin {
+                plugin: MEMORY.into(),
+                page: link.page,
+                params: link.params,
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+}
+
+/// A repository the tools know has a banner on its notes: it opens the
+/// repository's proposals, reads its chats too, or is put off.
+#[gpui::test]
+fn the_memory_tab_banner_leads_to_the_repository_s_proposals(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, mut cx, events) = open(known(), cx);
+    notes_of(&workspace, "hello", &mut cx);
+    assert!(cx.debug_bounds("memory-banner").is_some());
+    click("memory-banner-chats", &mut cx);
+    click("memory-banner-later", &mut cx);
+    assert_eq!(
+        acts(&events),
+        [
+            Act::Import(Request {
+                only: known().banners["hello"].places.clone(),
+                ..Request::default()
+            }),
+            Act::NotNow {
+                repo: "hello".into()
+            },
+        ]
+    );
+    click("memory-banner-review", &mut cx);
+    assert_eq!(
+        route(&workspace, &mut cx),
+        Route::Plugin {
+            plugin: MEMORY.into(),
+            page: "import".into(),
+            params: [("repo".to_owned(), "hello".to_owned())].into(),
+        }
+    );
+    // The person's notes have no banner; another repository's neither.
+    notes_of(&workspace, "you", &mut cx);
+    assert!(cx.debug_bounds("memory-banner").is_none());
+}
+
+/// The notes page and the repository's menu offer an import, which
+/// starts one and opens the review page.
+#[gpui::test]
+fn the_memory_tab_offers_an_import(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open(known(), cx);
+    notes_of(&workspace, "hello", &mut cx);
+    click("memory-import", &mut cx);
+    assert_eq!(acts(&events), [Act::Import(Request::default())]);
+    assert!(matches!(
+        route(&workspace, &mut cx),
+        Route::Plugin { page, .. } if page == "import"
+    ));
+    workspace.update(&mut cx, |ws, cx| ws.toggle_repo_menu("hello", cx));
+    click("menu-memory-import", &mut cx);
+    assert_eq!(acts(&events).len(), 2);
+}
+
+/// Without the tools, the Memory tab offers no import.
+#[gpui::test]
+fn without_the_tools_the_memory_tab_offers_none(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open(Imports::default(), cx);
+    notes_of(&workspace, "hello", &mut cx);
+    assert!(cx.debug_bounds("memory-import").is_none());
+    workspace.update(&mut cx, |ws, cx| ws.toggle_repo_menu("hello", cx));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("menu-memory").is_some());
+    assert!(cx.debug_bounds("menu-memory-import").is_none());
 }

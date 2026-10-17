@@ -56,6 +56,7 @@ use tau_ui_plugin::{
 
 use super::{Mark, MemoryUi, NoteView, Notebook, USER, notes_link};
 use crate::{
+    import::Imports,
     note::NoteType,
     record::{NAME, USER as USER_ID},
 };
@@ -185,12 +186,13 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
     let query = search.read(view.cx).text().to_lowercase();
     let handle = view.handle.clone();
     let Some(note) = open else {
+        let imports = &view.data.imports;
         return ui::screen(
             "memory-list",
             compact,
             div().flex().justify_center().child(
                 div().w_full().max_w(rems((COLUMN) / 16.)).child(list(
-                    &handle, &repo, &book, &search, &query, kind, &t,
+                    &handle, &repo, &book, imports, &search, &query, kind, &t,
                 )),
             ),
         )
@@ -279,12 +281,15 @@ fn back(handle: &Handle, repo: &str, t: &Theme) -> impl IntoElement {
         .on_click(move |_, _, cx| handle.navigate(to.clone(), cx))
 }
 
-/// The list: the search and the kinds, then a row for each note that
-/// matches both.
+/// The list: what Claude Code and Codex know of the repository, when
+/// they know it; the search, the kinds and the way to import; then a
+/// row for each note that matches both.
+#[allow(clippy::too_many_arguments)]
 fn list(
     handle: &Handle,
     repo: &str,
     book: &Notebook,
+    imports: &Imports,
     search: &Entity<TextInput>,
     query: &str,
     kind: Option<NoteType>,
@@ -323,10 +328,14 @@ fn list(
                 .then(|| (Some(each), plural(each), count, kind_color(each, t)))
         }),
     );
+    let banner = (repo != USER)
+        .then(|| super::banner::banner(handle, repo, imports, t))
+        .flatten();
     div()
         .flex()
         .flex_col()
         .gap(sp(4.5))
+        .children(banner)
         .when(repo == USER, |list| {
             list.child(
                 div()
@@ -384,7 +393,8 @@ fn list(
                         .on_click(move |_, _, cx| {
                             handle.navigate(to.clone(), cx)
                         })
-                })),
+                }))
+                .children(super::banner::import_button(handle, imports, t)),
         )
         .child(if rows.is_empty() {
             ui::empty(

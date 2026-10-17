@@ -590,6 +590,11 @@ impl Importer {
                 if banner.folder.is_empty() {
                     banner.folder = mine[0].label.clone();
                 }
+                for folder in &mine {
+                    if !banner.places.contains(&folder.place) {
+                        banner.places.push(folder.place.clone());
+                    }
+                }
                 let saved: usize = mine.iter().map(|f| f.saved).sum();
                 if saved > 0 {
                     banner.saved.push((tool.tool, saved));

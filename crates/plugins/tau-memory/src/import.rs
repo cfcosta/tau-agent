@@ -409,8 +409,11 @@ pub struct Pending {
 /// What the Memory tab of a repository says the tools know of it.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Banner {
-    /// The folder the tools worked in.
+    /// The folder the tools worked in, as the person writes it.
     pub folder: String,
+    /// Every place of the tools' that the repository claims: what an
+    /// import of it reads.
+    pub places: Vec<Place>,
     /// What each tool saved for it.
     pub saved: Vec<(Tool, usize)>,
     /// Its chats an import has not read.

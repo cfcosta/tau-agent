@@ -9,6 +9,7 @@
 //! Embeddings are cached beside each. Every scope is opened once and
 //! shared by every run.
 
+pub mod banner;
 pub mod page;
 pub mod review;
 pub mod settings;
@@ -258,6 +259,7 @@ impl UiPlugin for MemoryUi {
             })
             // The first of the plugins' entries, right after tau's own.
             .contribute_at(points::REPO_MENU, -10, page::menu_entry)
+            .contribute_at(points::REPO_MENU, -9, banner::menu_entry)
             // The repository's notes, from anywhere in it.
             .key("ctrl-2", |at, view| {
                 if let Some(repo) = &at.repo {
