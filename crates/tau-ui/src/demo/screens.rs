@@ -33,6 +33,41 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("memory", |ws, _, cx| {
         plugin_page(ws, tau_memory_host::NAME, "notes", "repo", cx)
     }),
+    // Importing what Claude Code and Codex learned (ADR 0044): setup's
+    // Memories step, the review page while chats are read, and the
+    // banner on a repository they know.
+    ("memory-import-setup", |ws, host, cx| {
+        memory_imports(ws, host, cx);
+        let step = SetupStep::Plugin {
+            plugin: tau_memory_host::NAME,
+            step: tau_memory::ui::setup::STEP,
+        };
+        setup_at(ws, step, cx);
+    }),
+    ("memory-import-review", |ws, host, cx| {
+        memory_imports(ws, host, cx);
+        let link = tau_memory::ui::review_link(None);
+        ws.navigate(
+            Route::Plugin {
+                plugin: tau_memory_host::NAME.into(),
+                page: link.page,
+                params: link.params,
+            },
+            cx,
+        );
+    }),
+    ("memory-import-banner", |ws, host, cx| {
+        memory_imports(ws, host, cx);
+        let link = tau_memory::ui::notes_link("docbert");
+        ws.navigate(
+            Route::Plugin {
+                plugin: tau_memory_host::NAME.into(),
+                page: link.page,
+                params: link.params,
+            },
+            cx,
+        );
+    }),
     ("constitution", |ws, _, cx| {
         plugin_page(ws, tau_constitution_host::NAME, "rules", "repo", cx)
     }),
@@ -1326,6 +1361,35 @@ fn agents(
             ws.toggle_sheet(cx);
         }
     }
+}
+
+/// Memory's data with what the demo's imports show
+/// (`tau_memory_host::demo::imports`), its notes kept.
+fn memory_imports(
+    ws: &mut Workspace,
+    host: &DemoHost,
+    cx: &mut Context<Workspace>,
+) {
+    let mut catalog = ws.catalog().clone();
+    let mut data: tau_memory::ui::MemoryData = catalog
+        .plugin_data
+        .get(tau_memory_host::NAME)
+        .and_then(|data| serde_json::from_value(data.json().clone()).ok())
+        .unwrap_or_default();
+    data.imports = tau_memory_host::demo::imports();
+    let data = PluginValue::typed(data);
+    catalog
+        .plugin_data
+        .insert(tau_memory_host::NAME.into(), data.clone());
+    if let Some(info) = catalog
+        .plugins
+        .iter()
+        .find(|plugin| plugin.name == tau_memory_host::NAME)
+        .cloned()
+    {
+        host.pin(info, data);
+    }
+    ws.set_catalog(catalog, cx);
 }
 
 fn plugin_page(

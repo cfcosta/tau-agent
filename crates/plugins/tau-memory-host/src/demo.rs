@@ -208,3 +208,202 @@ fn homelab() -> Vec<Note> {
         1,
     )]
 }
+
+/// What the demo's imports show: Claude Code and Codex on the demo's
+/// computer, proposals for tau-agent, docbert and the person, the import
+/// reading chats, and a banner on docbert. Synthetic: no one's real
+/// notes.
+pub fn imports() -> tau_memory::import::Imports {
+    use tau_memory::import::{
+        Banner,
+        Flags,
+        FolderFound,
+        Imports,
+        Material,
+        Pending,
+        Place,
+        Progress,
+        Tally,
+        Tool,
+        ToolFound,
+    };
+    let place = |name: &str| Place {
+        folder: Some(format!("/home/demo/Code/cfcosta/{name}")),
+        remote: Some(format!("git@github.com:cfcosta/{name}.git")),
+    };
+    let folder = |name: &str, saved: usize, chats: usize| FolderFound {
+        place: place(name),
+        label: format!("~/Code/cfcosta/{name}"),
+        saved,
+        chats,
+        unread_saved: saved,
+        unread_chats: chats,
+    };
+    let others = |n: usize, saved: usize| {
+        (0..n).map(move |i| FolderFound {
+            place: Place {
+                folder: Some(format!("/home/demo/scratch/project-{i}")),
+                remote: None,
+            },
+            label: format!("~/scratch/project-{i}"),
+            saved,
+            chats: 2,
+            unread_saved: saved,
+            unread_chats: 2,
+        })
+    };
+    let pending = |id: &str,
+                   kind: NoteType,
+                   title: &str,
+                   description: &str,
+                   repo: Option<&str>,
+                   origins: &[&str],
+                   flags: Flags| Pending {
+        id: id.into(),
+        kind,
+        title: title.into(),
+        description: description.into(),
+        repo: repo.map(str::to_owned),
+        origins: origins.iter().map(|o| (*o).to_owned()).collect(),
+        in_both: origins.iter().any(|o| o.starts_with("Claude Code"))
+            && origins.iter().any(|o| o.starts_with("Codex")),
+        keep: !flags.need_a_look(),
+        flags,
+    };
+    let mut tally = Tally {
+        left_out: 380,
+        merged: 15,
+        ..Tally::default()
+    };
+    tally
+        .read
+        .insert(Tally::key(Tool::ClaudeCode, Material::Saved), 501);
+    tally
+        .read
+        .insert(Tally::key(Tool::Codex, Material::Saved), 17);
+    Imports {
+        found: vec![
+            ToolFound {
+                tool: Tool::ClaudeCode,
+                saved: 501,
+                chats: 180,
+                about_you: 18,
+                folders: [
+                    folder("tau-agent", 41, 64),
+                    folder("docbert", 9, 23),
+                ]
+                .into_iter()
+                .chain(others(52, 8))
+                .collect(),
+            },
+            ToolFound {
+                tool: Tool::Codex,
+                saved: 93,
+                chats: 748,
+                about_you: 0,
+                folders: [
+                    folder("tau-agent", 14, 120),
+                    folder("docbert", 4, 30),
+                ]
+                .into_iter()
+                .chain(others(31, 2))
+                .collect(),
+            },
+        ],
+        pending: vec![
+            pending(
+                "p-1",
+                NoteType::Preference,
+                "Answers lead with the result",
+                "The outcome first, then the detail that backs it.",
+                None,
+                &["Claude Code · memory/result-first.md"],
+                Flags::default(),
+            ),
+            pending(
+                "p-2",
+                NoteType::Preference,
+                "Commits are small, and each one builds",
+                "One change per commit; every commit passes the tests.",
+                None,
+                &[
+                    "Claude Code · memory/small-commits.md",
+                    "Codex · task summary, 2026-10-09",
+                ],
+                Flags::default(),
+            ),
+            pending(
+                "p-3",
+                NoteType::Procedure,
+                "Run the integration suite with --features live",
+                "Says the suite needs the staging database; tau has n-0441 saying it runs offline.",
+                Some("tau-agent"),
+                &["Codex · task summary, 2026-10-09"],
+                Flags {
+                    disagrees: Some("n-0441".into()),
+                    ..Flags::default()
+                },
+            ),
+            pending(
+                "p-4",
+                NoteType::Gotcha,
+                "The fixture server needs a free port",
+                "Bind port 0 and read it back; a fixed port collides in CI.",
+                Some("tau-agent"),
+                &["Claude Code · chat on 2026-10-04"],
+                Flags::default(),
+            ),
+            pending(
+                "p-5",
+                NoteType::Fact,
+                "[redacted] token for the staging API",
+                "The chat pasted a secret; tau kept it out of the note.",
+                Some("tau-agent"),
+                &["Codex · chat on 2026-09-22"],
+                Flags {
+                    secret: true,
+                    ..Flags::default()
+                },
+            ),
+            pending(
+                "p-6",
+                NoteType::Fact,
+                "Searches go through the BM25 index first",
+                "Candidates come from BM25 before ColBERT reranks them.",
+                Some("docbert"),
+                &["Claude Code · memory/bm25-first.md"],
+                Flags::default(),
+            ),
+            pending(
+                "p-7",
+                NoteType::Decision,
+                "Embeddings are rebuilt when the model changes",
+                "The cache is keyed by model, so a new model re-encodes.",
+                Some("docbert"),
+                &["Codex · task summary, 2026-10-02"],
+                Flags::default(),
+            ),
+        ],
+        held: 0,
+        progress: Some(Progress {
+            fraction: 0.36,
+            line: "Reading Claude Code chats · 64 of 180".into(),
+        }),
+        tally,
+        failed: vec![
+            "~/.codex/sessions/2026/09/30/rollout-cut-short.jsonl".into(),
+        ],
+        banners: [(
+            "docbert".to_owned(),
+            Banner {
+                folder: "~/Code/cfcosta/docbert".into(),
+                places: vec![place("docbert")],
+                saved: vec![(Tool::ClaudeCode, 9), (Tool::Codex, 4)],
+                unread_chats: 23,
+                unread_saved: 0,
+                ready: 2,
+            },
+        )]
+        .into(),
+    }
+}
