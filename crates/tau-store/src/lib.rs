@@ -219,8 +219,16 @@ pub trait Backend: Debug + Send + Sync {
     /// What each plugin charged to the run itself, by plugin name.
     async fn plugin_costs(&self, run: &str) -> Result<Vec<PluginCost>>;
 
-    /// Each plugin's cost over the runs started at `since` or later (a
-    /// time as [`RunRecord::created_at`] writes it), by plugin name.
+    /// Books `usage` to `plugin` alone, outside any run: what its host
+    /// half asked the person's model (ADR 0044). No run's totals count
+    /// it; [`Backend::plugin_spend`] does.
+    async fn charge_plugin(&self, plugin: &str, usage: TurnUsage)
+    -> Result<()>;
+
+    /// Each plugin's cost from `since` on (a time as
+    /// [`RunRecord::created_at`] writes it), by plugin name: what it
+    /// charged the runs started since, and what it spent outside any run
+    /// since.
     async fn plugin_spend(&self, since: &str) -> Result<Vec<(String, f64)>>;
 
     /// The run's transcript: the inherited messages of its fork chain,

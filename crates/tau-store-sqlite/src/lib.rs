@@ -486,13 +486,38 @@ impl Backend for SqliteStore {
         .map_err(database)?)
     }
 
+    async fn charge_plugin(
+        &self,
+        plugin: &str,
+        usage: TurnUsage,
+    ) -> Result<()> {
+        let input_tokens = i64::from(usage.input_tokens);
+        let output_tokens = i64::from(usage.output_tokens);
+        sqlx::query!(
+            "INSERT INTO plugin_usage (plugin, at, input_tokens, output_tokens, cost_usd)
+             VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?2, ?3, ?4)",
+            plugin,
+            input_tokens,
+            output_tokens,
+            usage.cost_usd,
+        )
+        .execute(&mut *self.writer().await?)
+        .await
+        .map_err(database)?;
+        Ok(())
+    }
+
     async fn plugin_spend(&self, since: &str) -> Result<Vec<(String, f64)>> {
         let rows = sqlx::query!(
-            r#"SELECT plugin_costs.plugin AS "plugin!: String",
-                      sum(plugin_costs.cost_usd) AS "usd!: f64"
-               FROM plugin_costs JOIN runs ON runs.id = plugin_costs.run_id
-               WHERE runs.created_at >= ?1
-               GROUP BY plugin_costs.plugin ORDER BY plugin_costs.plugin"#,
+            r#"SELECT plugin AS "plugin!: String", sum(usd) AS "usd!: f64"
+               FROM (
+                 SELECT plugin_costs.plugin AS plugin, plugin_costs.cost_usd AS usd
+                 FROM plugin_costs JOIN runs ON runs.id = plugin_costs.run_id
+                 WHERE runs.created_at >= ?1
+                 UNION ALL
+                 SELECT plugin, cost_usd FROM plugin_usage WHERE at >= ?1
+               )
+               GROUP BY plugin ORDER BY plugin"#,
             since
         )
         .fetch_all(&self.reader)

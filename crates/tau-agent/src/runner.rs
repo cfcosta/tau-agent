@@ -668,7 +668,8 @@ fn plugin_usage(by: &[(Arc<str>, Usage)]) -> Vec<(Arc<str>, TurnUsage)> {
         .collect()
 }
 
-fn turn_usage(usage: &Usage, turns: u32) -> TurnUsage {
+/// `usage` as the store takes it, ending `turns` model turns.
+pub fn turn_usage(usage: &Usage, turns: u32) -> TurnUsage {
     let input = usage.input + usage.cache_read + usage.cache_write;
     TurnUsage {
         input_tokens: u32::try_from(input).unwrap_or(u32::MAX),

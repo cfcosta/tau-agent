@@ -740,3 +740,80 @@ fn the_pass_after_a_run_reads_only_what_the_run_added() {
     assert!(!second.contains("why do lanes stall"), "{second}");
     model.assert_exhausted();
 }
+
+/// Outside any run, a host half writes notes the same way, on the
+/// person's model: it searches, then writes, and the notes say who they
+/// are from; the plugin pays for both requests.
+#[test]
+fn notes_are_written_outside_a_run_on_the_persons_model() {
+    use tau_memory_host::{
+        Writer,
+        plugin::{CONSOLIDATE_PROMPT, Outside, write_notes},
+    };
+    use tau_ui_plugin::Model;
+
+    let dir = tempfile::tempdir().unwrap();
+    let scopes = scopes(dir.path(), false);
+    let model = ScriptedModel::new()
+        .turn(|t| t.tool_call("memory_search", json!({"query": "lanes"})))
+        .turn(|t| {
+            t.tool_call(
+                "memory_write",
+                json!({
+                    "type": "gotcha",
+                    "title": "Lanes drop the chain on drain",
+                    "description": "resend in full after a drain",
+                    "body": "Another agent saw it: resend in full."
+                }),
+            )
+        });
+    let plugin = MemoryPlugin::new(scopes.clone());
+    let saved = block_on_io(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let llm: Arc<dyn tau_ai::llm::Llm> = Arc::new(model.clone());
+        let person = Model::new(move || Some(llm.clone()), store.clone())
+            .of("tau-memory");
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let saved = write_notes(
+            &Outside {
+                model: &person,
+                cancel: &cancel,
+            },
+            &plugin.tools(),
+            &Writer {
+                model: "gpt-6-luna".into(),
+                reasoning: None,
+            },
+            &[Message::User(tau_ai::message::UserMessage {
+                content: UserContent::Text("why do lanes stall".into()),
+                timestamp: 0,
+            })],
+            CONSOLIDATE_PROMPT,
+            By::Inferred,
+        )
+        .await
+        .unwrap();
+        let booked = store
+            .query("SELECT plugin FROM plugin_usage", 10)
+            .await
+            .unwrap();
+        assert_eq!(booked.rows, [["tau-memory"], ["tau-memory"]]);
+        saved
+    });
+    let tools: Vec<&str> =
+        saved.iter().map(|saved| saved.tool.as_str()).collect();
+    assert_eq!(tools, ["memory_write"]);
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[0]
+            .settings
+            .instructions
+            .as_deref()
+            .unwrap()
+            .contains("The run below has ended")
+    );
+    let repo = scopes.repo.lock().unwrap();
+    let note = repo.notes().get("lanes-drop-the-chain-on-drain").unwrap();
+    assert_eq!(note.source.by, By::Inferred);
+}

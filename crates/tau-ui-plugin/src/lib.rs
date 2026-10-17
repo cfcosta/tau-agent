@@ -14,7 +14,8 @@
 //!   builds its agent plugin for each run ([`HostHalf::agent_plugins`]),
 //!   describes itself ([`HostHalf::catalog`]), sends the interface its
 //!   data ([`HostHalf::data`], [`HostHalf::repo_data`]), and carries out
-//!   what its UI asks ([`HostHalf::act`]).
+//!   what its UI asks ([`HostHalf::act`]). Outside any run it may ask
+//!   the person's model ([`HostCx::model`]).
 //! - **Wherever a run is shown**, live or stored, on a computer or a
 //!   phone, the plugin's state folds each record it published
 //!   ([`Fold::apply`]), and places anchors in the transcript and on tool
@@ -25,6 +26,7 @@
 
 pub mod host;
 pub mod manifest;
+pub mod model;
 pub mod points;
 pub mod registry;
 pub mod run;
@@ -73,6 +75,7 @@ pub use manifest::{
     PointCx,
     SlashCommand,
 };
+pub use model::{AskSettings, Model, PluginModel};
 pub use registry::{CommandsAt, Env, ErasedPlugin, NoHost, Registry};
 pub use run::{
     CallData,

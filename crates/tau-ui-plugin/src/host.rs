@@ -834,6 +834,15 @@ impl HostCx {
         self.services.get::<Unattended>()
     }
 
+    /// The person's model as `plugin` asks it outside any run (ADR
+    /// 0044): while they are signed in, and the host offers it.
+    pub fn model(&self, plugin: &str) -> Option<crate::PluginModel> {
+        self.services
+            .get::<crate::Model>()
+            .filter(|model| model.signed_in())
+            .map(|model| model.of(plugin))
+    }
+
     /// Asks the interface to draw the catalog again.
     pub fn refresh(&self) {
         (self.push)(Push::Catalog);

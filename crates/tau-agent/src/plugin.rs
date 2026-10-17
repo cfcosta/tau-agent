@@ -757,117 +757,17 @@ impl PluginCtx {
         input: &[Message],
         observer: Option<&dyn AskObserver>,
     ) -> Result<AssistantMessage, AskError> {
-        if settings.max_output_tokens.is_some()
-            && !self.supports_output_token_limit()
-        {
-            return Err(AskError::OutputLimitUnsupported);
+        let now = || self.now();
+        let charge = |usage: &Usage| self.charge(usage);
+        Asking {
+            llm: self.llm.as_ref(),
+            retry: self.retry,
+            cancel: &self.cancel,
+            now: &now,
+            charge: &charge,
         }
-        let mut session = None;
-        let mut attempts = 1;
-        loop {
-            let mut permit = if let Some(observer) = observer {
-                let admitted = tokio::select! {
-                    biased;
-                    _ = self.cancel.cancelled() => return Err(AskError::Cancelled),
-                    result = observer.admit(attempts, &self.cancel) => result,
-                };
-                // An observer can cancel while returning a rejection in this
-                // same poll. Cancellation still wins and any permit is dropped.
-                if self.cancel.is_cancelled() {
-                    return Err(AskError::Cancelled);
-                }
-                Some(admitted.map_err(AskError::Admission)?)
-            } else {
-                None
-            };
-            if session.is_none() {
-                let opened = tokio::select! {
-                    biased;
-                    _ = self.cancel.cancelled() => {
-                        if let Some(permit) = &mut permit {
-                            permit.report(&Usage::default(), AskAttemptEnd::Cancelled);
-                        }
-                        return Err(AskError::Cancelled);
-                    }
-                    opened = self.llm.open(settings.clone()) => opened,
-                };
-                match opened {
-                    Ok(opened) => session = Some(opened),
-                    Err(error) => {
-                        if let Some(permit) = &mut permit {
-                            permit.report(
-                                &Usage::default(),
-                                AskAttemptEnd::OpenFailed,
-                            );
-                        }
-                        return Err(AskError::Open(error));
-                    }
-                }
-            }
-            let stream = session
-                .as_mut()
-                .expect("session opened")
-                .respond(input, self.now());
-            let (message, class) = self.read(stream, permit.as_mut()).await?;
-            if class != Class::Retryable || !self.retry.allows(attempts) {
-                return Ok(message);
-            }
-            let delay = self.retry.delay(attempts, jitter());
-            attempts += 1;
-            drop(permit);
-            if !respond::wait(&self.cancel, delay).await {
-                return Err(AskError::Cancelled);
-            }
-        }
-    }
-
-    /// Reads one attempt's response to its end, charging its usage to
-    /// the run and reporting it to `permit`. An error when it did not
-    /// finish.
-    async fn read(
-        &self,
-        stream: tau_ai::llm::EventStream,
-        permit: Option<&mut Box<dyn AskPermit>>,
-    ) -> Result<(AssistantMessage, Class), AskError> {
-        match Reading::new(stream).read_all(&self.cancel).await {
-            Streamed::Finished(message, class) => {
-                self.charge(&message.usage);
-                if let Some(permit) = permit {
-                    permit.report(&message.usage, AskAttemptEnd::Finished);
-                }
-                Ok((message, class))
-            }
-            streamed => {
-                let (accumulator, end, error) = match streamed {
-                    Streamed::Cancelled(accumulator) => (
-                        accumulator,
-                        AskAttemptEnd::Cancelled,
-                        AskError::Cancelled,
-                    ),
-                    Streamed::BrokeGrammar(accumulator) => (
-                        accumulator,
-                        AskAttemptEnd::BrokeGrammar,
-                        AskError::BrokeGrammar,
-                    ),
-                    Streamed::NoTerminal(accumulator) => (
-                        accumulator,
-                        AskAttemptEnd::NoTerminal,
-                        AskError::NoTerminal,
-                    ),
-                    Streamed::Finished(_, _) => unreachable!(),
-                };
-                let usage = accumulator.partial().map(|message| &message.usage);
-                if accumulator.is_finished()
-                    && let Some(usage) = usage
-                {
-                    self.charge(usage);
-                }
-                if let Some(permit) = permit {
-                    permit.report(usage.unwrap_or(&Usage::default()), end);
-                }
-                Err(error)
-            }
-        }
+        .ask(settings, input, observer)
+        .await
     }
 
     /// Asks the model once in the run's own conversation (see
@@ -880,10 +780,19 @@ impl PluginCtx {
         session: &mut dyn LlmSession,
         input: &[Message],
     ) -> Result<AssistantMessage, AskError> {
+        let now = || self.now();
+        let charge = |usage: &Usage| self.charge(usage);
+        let asking = Asking {
+            llm: self.llm.as_ref(),
+            retry: self.retry,
+            cancel: &self.cancel,
+            now: &now,
+            charge: &charge,
+        };
         let mut attempts = 1;
         loop {
             let stream = session.respond(input, self.now());
-            let (message, class) = self.read(stream, None).await?;
+            let (message, class) = asking.read(stream, None).await?;
             if class != Class::Retryable || !self.retry.allows(attempts) {
                 return Ok(message);
             }
@@ -970,6 +879,161 @@ impl PluginCtx {
     }
 }
 
+/// Asks the model once outside any run: what a plugin's host half asks
+/// with (ADR 0044), as [`PluginCtx::ask`] does inside one. A session of
+/// its own, `retry`'s policy, and `cancel` observed; every attempt's
+/// usage goes to `charge`, which books it where the caller keeps it. As
+/// [`PluginCtx::ask`], the final response can still be a failed one.
+pub async fn ask_outside(
+    llm: &dyn Llm,
+    settings: Settings,
+    input: &[Message],
+    retry: RetryPolicy,
+    cancel: &CancellationToken,
+    charge: &(dyn Fn(&Usage) + Sync),
+) -> Result<AssistantMessage, AskError> {
+    let clock = crate::runner::system_clock();
+    Asking {
+        llm,
+        retry,
+        cancel,
+        now: &*clock,
+        charge,
+    }
+    .ask(settings, input, None)
+    .await
+}
+
+/// One side request's attempts: in a run, its context's; outside, the
+/// caller's.
+struct Asking<'a> {
+    llm: &'a dyn Llm,
+    retry: RetryPolicy,
+    cancel: &'a CancellationToken,
+    now: &'a (dyn Fn() -> Timestamp + Sync),
+    charge: &'a (dyn Fn(&Usage) + Sync),
+}
+
+impl Asking<'_> {
+    async fn ask(
+        &self,
+        settings: Settings,
+        input: &[Message],
+        observer: Option<&dyn AskObserver>,
+    ) -> Result<AssistantMessage, AskError> {
+        if settings.max_output_tokens.is_some()
+            && !self.llm.supports_output_token_limit()
+        {
+            return Err(AskError::OutputLimitUnsupported);
+        }
+        let mut session = None;
+        let mut attempts = 1;
+        loop {
+            let mut permit = if let Some(observer) = observer {
+                let admitted = tokio::select! {
+                    biased;
+                    _ = self.cancel.cancelled() => return Err(AskError::Cancelled),
+                    result = observer.admit(attempts, self.cancel) => result,
+                };
+                // An observer can cancel while returning a rejection in this
+                // same poll. Cancellation still wins and any permit is dropped.
+                if self.cancel.is_cancelled() {
+                    return Err(AskError::Cancelled);
+                }
+                Some(admitted.map_err(AskError::Admission)?)
+            } else {
+                None
+            };
+            if session.is_none() {
+                let opened = tokio::select! {
+                    biased;
+                    _ = self.cancel.cancelled() => {
+                        if let Some(permit) = &mut permit {
+                            permit.report(&Usage::default(), AskAttemptEnd::Cancelled);
+                        }
+                        return Err(AskError::Cancelled);
+                    }
+                    opened = self.llm.open(settings.clone()) => opened,
+                };
+                match opened {
+                    Ok(opened) => session = Some(opened),
+                    Err(error) => {
+                        if let Some(permit) = &mut permit {
+                            permit.report(
+                                &Usage::default(),
+                                AskAttemptEnd::OpenFailed,
+                            );
+                        }
+                        return Err(AskError::Open(error));
+                    }
+                }
+            }
+            let stream = session
+                .as_mut()
+                .expect("session opened")
+                .respond(input, (self.now)());
+            let (message, class) = self.read(stream, permit.as_mut()).await?;
+            if class != Class::Retryable || !self.retry.allows(attempts) {
+                return Ok(message);
+            }
+            let delay = self.retry.delay(attempts, jitter());
+            attempts += 1;
+            drop(permit);
+            if !respond::wait(self.cancel, delay).await {
+                return Err(AskError::Cancelled);
+            }
+        }
+    }
+
+    /// Reads one attempt's response to its end, charging its usage and
+    /// reporting it to `permit`. An error when it did not finish.
+    async fn read(
+        &self,
+        stream: tau_ai::llm::EventStream,
+        permit: Option<&mut Box<dyn AskPermit>>,
+    ) -> Result<(AssistantMessage, Class), AskError> {
+        match Reading::new(stream).read_all(self.cancel).await {
+            Streamed::Finished(message, class) => {
+                (self.charge)(&message.usage);
+                if let Some(permit) = permit {
+                    permit.report(&message.usage, AskAttemptEnd::Finished);
+                }
+                Ok((message, class))
+            }
+            streamed => {
+                let (accumulator, end, error) = match streamed {
+                    Streamed::Cancelled(accumulator) => (
+                        accumulator,
+                        AskAttemptEnd::Cancelled,
+                        AskError::Cancelled,
+                    ),
+                    Streamed::BrokeGrammar(accumulator) => (
+                        accumulator,
+                        AskAttemptEnd::BrokeGrammar,
+                        AskError::BrokeGrammar,
+                    ),
+                    Streamed::NoTerminal(accumulator) => (
+                        accumulator,
+                        AskAttemptEnd::NoTerminal,
+                        AskError::NoTerminal,
+                    ),
+                    Streamed::Finished(_, _) => unreachable!(),
+                };
+                let usage = accumulator.partial().map(|message| &message.usage);
+                if accumulator.is_finished()
+                    && let Some(usage) = usage
+                {
+                    (self.charge)(usage);
+                }
+                if let Some(permit) = permit {
+                    permit.report(usage.unwrap_or(&Usage::default()), end);
+                }
+                Err(error)
+            }
+        }
+    }
+}
+
 /// How one admitted side request ended. `Finished` also covers provider
 /// error responses that have a terminal event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1013,4 +1077,8 @@ pub enum AskError {
     BrokeGrammar,
     #[error("the response ended without a terminal event")]
     NoTerminal,
+    /// There is no model to ask: outside a run, the person is not signed
+    /// in.
+    #[error("no model to ask: {0}")]
+    Unavailable(String),
 }

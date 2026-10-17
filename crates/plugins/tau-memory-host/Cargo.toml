@@ -34,6 +34,7 @@ schemars.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 toml.workspace = true
 tau-ui-plugin.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
 tau-store-sqlite.workspace = true

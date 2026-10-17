@@ -196,11 +196,11 @@ pub struct Host {
     base: Mutex<Agent>,
     /// The ChatGPT account runs reach models with; `None` after
     /// signing out, or on an account without plan use.
-    account: Mutex<Option<AccountId>>,
+    account: Arc<Mutex<Option<AccountId>>>,
     /// The client `base` reaches models with, for what it learns on the
     /// way: why the ChatGPT plan refused a run, and when a chat's prompt
     /// cache lapses. `None` for an agent built elsewhere, as in tests.
-    client: Mutex<Option<OpenAi>>,
+    client: Arc<Mutex<Option<OpenAi>>>,
     /// Why OpenAI refused the eligibility check at the last sign-in
     /// because plan use is not available to the account
     /// (`Recovery::Restricted`): the status, code and request id. `None`
@@ -454,7 +454,7 @@ impl Host {
         )?;
         let (mut host, events) =
             Self::with_agent(runtime, agent, store, config);
-        host.client = Mutex::new(Some(client));
+        *host.client.lock().expect("not poisoned") = Some(client);
         // The app searches memory with docbert's model; hosts built
         // elsewhere, as in tests, by keywords alone.
         host.memory_search = tau_memory_host::Search::Semantic;
@@ -522,8 +522,8 @@ impl Host {
         let mut host = Self {
             runtime,
             base: Mutex::new(agent),
-            account: Mutex::new(Some(config.account.clone())),
-            client: Mutex::new(None),
+            account: Arc::new(Mutex::new(Some(config.account.clone()))),
+            client: Arc::default(),
             not_eligible: Arc::default(),
             github: github::Api::default(),
             jev: None,
@@ -587,8 +587,8 @@ impl Host {
 
     /// Learns what the plan refused and when caches lapse from `client`,
     /// the one the agent was built with: for tests.
-    pub fn with_client(mut self, client: OpenAi) -> Self {
-        self.client = Mutex::new(Some(client));
+    pub fn with_client(self, client: OpenAi) -> Self {
+        *self.client.lock().expect("not poisoned") = Some(client);
         self
     }
 

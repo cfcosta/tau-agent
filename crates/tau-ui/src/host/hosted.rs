@@ -28,8 +28,22 @@ impl Host {
         self.hosted = self.setting_up(hosted::host_all(&cx));
     }
 
+    /// The person's model as plugins' host halves ask it outside any run
+    /// (ADR 0044): the plan's client while an account is signed in.
+    fn plugin_model(&self) -> tau_ui_plugin::Model {
+        let (account, client) = (self.account.clone(), self.client.clone());
+        tau_ui_plugin::Model::new(
+            move || {
+                account.lock().expect("not poisoned").as_ref()?;
+                let client = client.lock().expect("not poisoned").clone()?;
+                Some(Arc::new(client) as Arc<dyn tau_ai::llm::Llm>)
+            },
+            self.store.clone(),
+        )
+    }
+
     /// What every plugin reaches of this host now.
-    pub(super) fn host_cx(&self) -> HostCx {
+    pub fn host_cx(&self) -> HostCx {
         let (settings, path, saving) = (
             self.settings.clone(),
             self.config.settings.clone(),
@@ -83,7 +97,8 @@ impl Host {
             .with(saved)
             .with(ConfigDir(self.config.credentials.dir.clone()))
             .with(self.identity())
-            .with(tau_skills::SkillsDir(self.config.skills.clone()));
+            .with(tau_skills::SkillsDir(self.config.skills.clone()))
+            .with(self.plugin_model());
         if let Some(jev) = self.jev() {
             services = services.with(jev);
         }

@@ -45,6 +45,17 @@ CREATE TABLE plugin_costs (
   PRIMARY KEY (run_id, plugin)
 ) STRICT;
 
+-- What a plugin's host half spent on the person's model outside any run
+-- (ADR 0044), one row per request, and when: its own, in no run's totals.
+CREATE TABLE plugin_usage (
+  plugin        TEXT    NOT NULL,
+  at            TEXT    NOT NULL,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd      REAL    NOT NULL DEFAULT 0
+) STRICT;
+CREATE INDEX plugin_usage_by_plugin ON plugin_usage (plugin, at);
+
 -- What each write added to a run's cost, and when: the run's turns, its
 -- compactions and what its plugins charged. A day's spend is a sum over
 -- it (an agent's daily cap, ADR 0037).

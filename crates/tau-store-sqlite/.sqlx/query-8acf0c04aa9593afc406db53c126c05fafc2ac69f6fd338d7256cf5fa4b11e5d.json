@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT plugin AS \"plugin!: String\", sum(usd) AS \"usd!: f64\"\n               FROM (\n                 SELECT plugin_costs.plugin AS plugin, plugin_costs.cost_usd AS usd\n                 FROM plugin_costs JOIN runs ON runs.id = plugin_costs.run_id\n                 WHERE runs.created_at >= ?1\n                 UNION ALL\n                 SELECT plugin, cost_usd FROM plugin_usage WHERE at >= ?1\n               )\n               GROUP BY plugin ORDER BY plugin",
+  "describe": {
+    "columns": [
+      {
+        "name": "plugin!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "plugin_usage",
+            "name": "plugin"
+          }
+        }
+      },
+      {
+        "name": "usd!: f64",
+        "ordinal": 1,
+        "type_info": "Float",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8acf0c04aa9593afc406db53c126c05fafc2ac69f6fd338d7256cf5fa4b11e5d"
+}

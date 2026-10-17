@@ -29,19 +29,23 @@ use tau_agent::{
         RunPlan,
         ToolResultView,
     },
-    tool::{AgentTool, ToolCtx, ToolOutput, TypedTool, typed},
+    tool::{AgentTool, RunId, ToolCtx, ToolOutput, TypedTool, typed},
 };
 use tau_ai::{
     message::{
         AssistantBlock,
+        AssistantMessage,
         Message,
+        Timestamp,
         ToolResultMessage,
         UserContent,
         UserMessage,
     },
-    responses::request::{ReasoningEffort, Settings, ToolDefinition},
+    responses::request::{ReasoningEffort, ToolDefinition},
 };
 pub use tau_memory::record::{NAME, Recalled, Record, Saved, USER};
+use tau_ui_plugin::{AskSettings, PluginModel};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     index::IndexError,
@@ -597,7 +601,8 @@ new: then call no tool.
 const MAX_ROUNDS: usize = 4;
 
 /// Asks the model, outside the run, with only the memory tools and
-/// the conversation as text, then carries out the writes it asks for.
+/// the conversation as text, then carries out the writes it asks for,
+/// and publishes what it saved.
 async fn distill(
     plugin: &MemoryPlugin,
     writer: &Writer,
@@ -606,34 +611,114 @@ async fn distill(
     by: By,
     ctx: &PluginCtx,
 ) -> Result<(), MemoryError> {
-    let tools = plugin.tool_list();
-    let settings = Settings {
-        model: writer.model.clone(),
-        reasoning: writer.reasoning,
-        instructions: Some(prompt.to_owned()),
-        tools: tools
-            .iter()
-            .map(|tool| ToolDefinition {
-                name: tool.name().to_owned(),
-                description: tool.description().to_owned(),
-                parameters: tool.parameters().clone(),
-                strict: false,
-            })
-            .collect(),
-        ..Settings::default()
-    };
+    let saved =
+        write_notes(ctx, &plugin.tool_list(), writer, transcript, prompt, by)
+            .await?;
+    if !saved.is_empty() {
+        ctx.publish(&Record::Saved { calls: saved }).await;
+    }
+    Ok(())
+}
+
+/// Who memory's notes requests go to: a run's plugin context, or the
+/// person's model outside any run ([`Outside`], ADR 0044).
+pub trait Asker: Sync {
+    /// Asks the model once, offering `tools`.
+    fn ask(
+        &self,
+        settings: &AskSettings,
+        input: &[Message],
+        tools: &[ToolDefinition],
+    ) -> impl Future<Output = Result<AssistantMessage, AskError>> + Send;
+
+    /// The clock its messages are stamped with.
+    fn now(&self) -> Timestamp;
+
+    /// The run the tools write for, when there is one.
+    fn run(&self) -> Option<RunId>;
+}
+
+impl Asker for PluginCtx {
+    async fn ask(
+        &self,
+        settings: &AskSettings,
+        input: &[Message],
+        tools: &[ToolDefinition],
+    ) -> Result<AssistantMessage, AskError> {
+        PluginCtx::ask(self, settings.request(tools), input).await
+    }
+
+    fn now(&self) -> Timestamp {
+        PluginCtx::now(self)
+    }
+
+    fn run(&self) -> Option<RunId> {
+        Some(self.run.clone())
+    }
+}
+
+/// The person's model, asked outside any run until `cancel` is: what a
+/// host half's job writes notes with.
+pub struct Outside<'a> {
+    pub model: &'a PluginModel,
+    pub cancel: &'a CancellationToken,
+}
+
+impl Asker for Outside<'_> {
+    async fn ask(
+        &self,
+        settings: &AskSettings,
+        input: &[Message],
+        tools: &[ToolDefinition],
+    ) -> Result<AssistantMessage, AskError> {
+        self.model.ask(settings, input, tools, self.cancel).await
+    }
+
+    fn now(&self) -> Timestamp {
+        (tau_agent::runner::system_clock())()
+    }
+
+    fn run(&self) -> Option<RunId> {
+        None
+    }
+}
+
+/// Asks `asker` with `tools`, `writer`'s model and `prompt`, showing it
+/// `transcript` as text, then carries out the writes it asks for: what
+/// [`MemoryPlugin`] does as compaction drops a conversation and as a run
+/// ends, and what a host half does outside any run. Returns what it
+/// wrote, searches left out.
+pub async fn write_notes(
+    asker: &impl Asker,
+    tools: &[Arc<dyn AgentTool>],
+    writer: &Writer,
+    transcript: &[Message],
+    prompt: &str,
+    by: By,
+) -> Result<Vec<Saved>, MemoryError> {
+    let settings = AskSettings::new(writer.model.clone(), writer.reasoning)
+        .instructions(prompt);
+    let definitions: Vec<ToolDefinition> = tools
+        .iter()
+        .map(|tool| ToolDefinition {
+            name: tool.name().to_owned(),
+            description: tool.description().to_owned(),
+            parameters: tool.parameters().clone(),
+            strict: false,
+        })
+        .collect();
     let mut input = vec![Message::User(UserMessage {
         content: UserContent::Text(format!(
             "<conversation>\n{}\n</conversation>",
             serialize(transcript)
         )),
-        timestamp: ctx.now(),
+        timestamp: asker.now(),
     })];
     let mut saved = Vec::new();
     // A search comes back to the model before it writes: it goes on
     // until it makes no more calls or only writes, up to a few rounds.
     for _ in 0..MAX_ROUNDS {
-        let answer = ctx.ask(settings.clone(), &input).await?;
+        let answer = asker.ask(&settings, &input, &definitions).await?;
         let calls: Vec<_> = answer.tool_calls().cloned().collect();
         if calls.is_empty() {
             break;
@@ -653,7 +738,7 @@ async fn distill(
                     .content,
                     details: None,
                     is_error: true,
-                    timestamp: ctx.now(),
+                    timestamp: asker.now(),
                 }));
                 continue;
             };
@@ -665,7 +750,9 @@ async fn distill(
                 fields.insert("by".into(), json!(by_name(by)));
             }
             let mut tool_ctx = ToolCtx::detached();
-            tool_ctx.run = ctx.run.clone();
+            if let Some(run) = asker.run() {
+                tool_ctx.run = run;
+            }
             let (content, details, error) = match tool
                 .call(args, tool_ctx)
                 .await
@@ -689,7 +776,7 @@ async fn distill(
                 content,
                 details,
                 is_error: error.is_some(),
-                timestamp: ctx.now(),
+                timestamp: asker.now(),
             }));
         }
         // Only a search has an answer the model waits for.
@@ -697,10 +784,7 @@ async fn distill(
             break;
         }
     }
-    if !saved.is_empty() {
-        ctx.publish(&Record::Saved { calls: saved }).await;
-    }
-    Ok(())
+    Ok(saved)
 }
 
 fn by_name(by: By) -> &'static str {
