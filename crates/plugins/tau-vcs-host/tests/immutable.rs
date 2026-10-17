@@ -32,7 +32,8 @@ fn tag_working_copy(dir: &Path) {
     user.set_value("user.name", "host").unwrap();
     user.set_value("user.email", "host@localhost").unwrap();
     config.add_layer(user);
-    let settings = UserSettings::from_config(config).unwrap();
+    let settings =
+        UserSettings::from_config_and_home_dir(config, None).unwrap();
     let workspace = Workspace::load(
         &settings,
         dir,

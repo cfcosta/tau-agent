@@ -11,7 +11,7 @@
 //! other users can read.
 //!
 //! A push follows the person's jj config as `jj git push` does
-//! (jj-cli 0.45.1's `commands/git/push.rs`): `git.executable-path` is
+//! (jj-cli 0.46.0's `commands/git/push.rs`): `git.executable-path` is
 //! the `git` it runs, `git.private-commits` names commits it refuses to
 //! push, and `git.sign-on-push` signs the person's own commits it pushes.
 
@@ -43,8 +43,7 @@ use jj_lib::{
     repo::{ReadonlyRepo, Repo as _},
     revset::{RevsetExpression, UserRevsetExpression},
     rewrite::CommitRewriter,
-    settings::UserSettings,
-    signing::SignBehavior,
+    settings::{SignBehavior, UserSettings},
 };
 use pollster::block_on;
 
@@ -594,8 +593,11 @@ mod tests {
 
     /// jj's defaults alone.
     fn settings() -> UserSettings {
-        UserSettings::from_config(jj_lib::config::StackedConfig::with_defaults())
-            .unwrap()
+        UserSettings::from_config_and_home_dir(
+            jj_lib::config::StackedConfig::with_defaults(),
+            None,
+        )
+        .unwrap()
     }
 
     /// `git credential` with `options`' environment and a global

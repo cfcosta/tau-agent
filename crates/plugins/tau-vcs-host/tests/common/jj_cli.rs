@@ -6,7 +6,7 @@
 use std::{path::PathBuf, process::Command};
 
 /// What `jj --version` prints for jj-lib's version, from `Cargo.lock`.
-const VERSION: &str = "jj 0.45.1";
+const VERSION: &str = "jj 0.46.0";
 
 /// The jj CLI at jj-lib's version, by its full path, since some tests
 /// run it with no `PATH`: `TAU_TEST_JJ` when it is set, else the `jj`

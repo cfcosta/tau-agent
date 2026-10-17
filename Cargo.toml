@@ -28,7 +28,7 @@ base64 = "0.23.1"
 # tau-vcs's own git work: cloning a source and reading its blobs. Kept
 # at the gix jj-lib builds on, so the two share one copy; move it only
 # when jj-lib does.
-gix = { version = "0.87.1", default-features = false }
+gix = { version = "0.88.0", default-features = false }
 globset = "0.4.20"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
@@ -72,9 +72,9 @@ image = { version = "0.25.10", default-features = false, features = [
   "png",
   "webp",
 ] }
-jj-lib = "=0.45.1"
+jj-lib = "=0.46.0"
 # Where jj's config is, and the computer's and the person's names, found
-# as jj-cli 0.45 finds them (tau-vcs-host's `config`). The rng is
+# as jj-cli 0.46 finds them (tau-vcs-host's `config`). The rng is
 # jj-lib's, for the repository config ids it reads.
 etcetera = "0.11.0"
 rand = "0.10.1"

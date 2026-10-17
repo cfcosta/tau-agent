@@ -148,15 +148,9 @@ pub enum VcsError {
     #[error("`{0}` is not a path inside the repository")]
     NotInRepo(String),
     #[error("{commit} is not a commit id: {source}")]
-    BadCommitHex {
-        commit: String,
-        source: gix::hash::decode::Error,
-    },
+    BadCommitHex { commit: String, source: gix::Error },
     #[error("No Git store in {}: {source}", root.display())]
-    NoGitStore {
-        root: PathBuf,
-        source: Box<gix::open::Error>,
-    },
+    NoGitStore { root: PathBuf, source: gix::Error },
     #[error("No commit {hex}: {source}")]
     MissingCommit { hex: String, source: BackendError },
     #[error("No jj workspace at {}: {source}", root.display())]
@@ -252,11 +246,18 @@ pub enum VcsError {
     #[error(transparent)]
     Join(#[from] tokio::task::JoinError),
     #[error(transparent)]
-    GitFind(#[from] gix::object::find::existing::Error),
-    #[error(transparent)]
-    GitCommit(#[from] gix::object::commit::Error),
-    #[error(transparent)]
-    GitTryInto(#[from] gix::object::try_into::Error),
+    Git(#[from] gix::Error),
+}
+
+/// gix's typed errors, which its object and tree calls return, as its
+/// one error type.
+impl<E> From<gix::Exn<E>> for VcsError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn from(error: gix::Exn<E>) -> Self {
+        Self::Git(error.into())
+    }
 }
 
 /// A config file that cannot be read or parsed, with its path and why.

@@ -1,4 +1,4 @@
-//! Revsets from the jj config, parsed and resolved as jj-cli 0.45.1 does
+//! Revsets from the jj config, parsed and resolved as jj-cli 0.46.0 does
 //! (`cli_util.rs`'s `WorkspaceCommandEnvironment`, `revset_util.rs`):
 //! with the person's `revset-aliases` and `fileset-aliases`, their email
 //! for `mine()`, the commit time jj would use for dates, and the
@@ -194,6 +194,10 @@ impl ConfigRevsets {
             SymbolResolver::new(repo, self.extensions.symbol_resolvers());
         expression
             .resolve_user_expression(repo, &resolver)
+            // The expression alone, as jj-cli's `RevsetExpressionEvaluator::
+            // resolve` keeps it: the repositories an `at_operation()` brings
+            // in are left out.
+            .map(|resolved| resolved.into_inner().0)
             .map_err(|error| VcsError::ConfigRevset {
                 name: name.to_owned(),
                 error: error.to_string(),
@@ -209,7 +213,7 @@ pub(crate) fn remote_heads(
 ) -> Vec<jj_lib::backend::CommitId> {
     repo.view()
         .remote_bookmarks(remote)
-        .flat_map(|(_, remote_ref)| remote_ref.target.added_ids())
+        .flat_map(|(_, remote_ref)| remote_ref.target.present_adds())
         .cloned()
         .collect()
 }

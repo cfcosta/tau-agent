@@ -18,10 +18,10 @@
     # what Ghostty tests.
     ghostty.url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
     # The jj CLI the tests compare tau-vcs-host with: it must be the
-    # version of the jj-lib in Cargo.lock (0.45.1), so the two move
+    # version of the jj-lib in Cargo.lock (0.46.0), so the two move
     # together. A nixos-unstable revision whose jujutsu is that version;
     # only the dev shell uses it, and only through `TAU_TEST_JJ`.
-    nixpkgs-jj.url = "github:NixOS/nixpkgs/6774f7bc253789b113a4f39285dc0fa100abeacc";
+    nixpkgs-jj.url = "github:NixOS/nixpkgs/55bfb4d7437bd4e09ab7cba58a43bd68eb310044";
   };
 
   outputs =

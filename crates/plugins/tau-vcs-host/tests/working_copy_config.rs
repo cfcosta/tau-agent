@@ -113,7 +113,7 @@ fn markers(text: &str, prefix: &str) -> Vec<String> {
 }
 
 /// What jj writes for a two-sided conflict of one line in each style
-/// (jj-lib 0.45.1's `conflicts.rs`, as `docs/conflicts.md` shows them):
+/// (jj-lib 0.46.0's `conflicts.rs`, as `docs/conflicts.md` shows them):
 /// the markers alone, without labels.
 fn expected_markers(style: Style) -> Vec<String> {
     let mut markers: Vec<String> = match style {

@@ -1,5 +1,5 @@
 //! The jj config a workspace loads, found as the jj CLI finds it
-//! (jj-cli 0.45.1's `config.rs` and `cli_util.rs`): jj-lib's defaults
+//! (jj-cli 0.46.0's `config.rs` and `cli_util.rs`): jj-lib's defaults
 //! and jj-cli's for the keys tau reads, then tau's [`Identity`], then the system's config, the variables jj
 //! reads before the person's config, the person's config, the
 //! repository's, the workspace's, and the variables that override them
@@ -49,7 +49,7 @@ const REPO_CONFIG_DIR: &str = "repos";
 const WORKSPACE_CONFIG_DIR: &str = "workspaces";
 
 /// jj-cli's defaults for the keys tau reads that jj-lib's defaults lack,
-/// copied from jj-cli 0.45.1's `src/config/misc.toml` (`diff.git`,
+/// copied from jj-cli 0.46.0's `src/config/misc.toml` (`diff.git`,
 /// `git` and `snapshot`) and `src/config/revsets.toml` (`revset-aliases`, every
 /// one, since an alias the person writes may call any of them).
 const CLI_DEFAULTS: &str = r#"
@@ -98,7 +98,8 @@ pub struct JjEnv {
     /// `conf.d/`, and the repositories' and workspaces' configs.
     pub config_dir: Option<PathBuf>,
     /// The home directory: where `~/.jjconfig.toml` is, and what `~`
-    /// means in a `--when` path.
+    /// means in a `--when` path and in a path setting such as
+    /// `signing.key`.
     pub home_dir: Option<PathBuf>,
     /// The system's config directory, `/etc` on Unix: jj's is its `jj/`.
     pub system_dir: Option<PathBuf>,
@@ -326,7 +327,14 @@ pub fn settings(
         hostname: env.hostname.as_deref().unwrap_or(""),
         environment: &env.vars,
     };
-    Ok(UserSettings::from_config(resolve(&config, &context)?)?)
+    // `~/` in the paths jj-lib reads from the config (`signing.key`,
+    // `signing.backends.ssh.allowed-signers` and `revocation-list`) is
+    // the environment's home, as jj-cli builds its settings with its
+    // `ConfigEnv`'s.
+    Ok(UserSettings::from_config_and_home_dir(
+        resolve(&config, &context)?,
+        env.home_dir.clone(),
+    )?)
 }
 
 /// Where `revset-aliases."trunk()"` is in a repository's config.
@@ -334,7 +342,7 @@ const TRUNK_ALIAS: [&str; 2] = ["revset-aliases", "trunk()"];
 
 /// Sets `revset-aliases."trunk()"` to `symbol` (`<branch>@<remote>`)
 /// in the config of the repository at `repo_path` (its `.jj/repo`), as
-/// `jj git clone` does for the remote's default branch (jj-cli 0.45.1's
+/// `jj git clone` does for the remote's default branch (jj-cli 0.46.0's
 /// `write_repo_presets`): in the file `jj config edit --repo` edits,
 /// made when there is none, keeping what it already holds. Nothing is
 /// written when there is no config directory, as jj writes nothing

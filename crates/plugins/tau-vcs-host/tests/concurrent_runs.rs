@@ -1401,7 +1401,8 @@ fn a_divergent_working_copy_is_stale() {
     user.set_value("user.name", "other").unwrap();
     user.set_value("user.email", "other@localhost").unwrap();
     config.add_layer(user);
-    let settings = UserSettings::from_config(config).unwrap();
+    let settings =
+        UserSettings::from_config_and_home_dir(config, None).unwrap();
     let workspace = Workspace::load(
         &settings,
         &repo.main_dir(),

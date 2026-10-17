@@ -1,4 +1,4 @@
-//! What a snapshot takes from the jj config, as jj-cli 0.45.1 builds it
+//! What a snapshot takes from the jj config, as jj-cli 0.46.0 builds it
 //! (`cli_util.rs`'s `snapshot_options_with_start_tracking_matcher`,
 //! `auto_tracking_matcher` and `base_ignores`): which new files it starts
 //! tracking (`snapshot.auto-track`, a fileset, with the person's
@@ -164,7 +164,7 @@ fn excludes_file(
 }
 
 /// `~/` at the start of `path` as the person's home (jj's
-/// `expand_home_path`).
+/// `expand_home_path`, given its config environment's home).
 fn expand_home(env: &JjEnv, path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/")
         && let Some(home) = &env.home_dir

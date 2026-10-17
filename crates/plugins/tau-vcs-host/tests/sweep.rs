@@ -48,8 +48,9 @@ fn run_with_commit(
 
 /// Whether a visible commit holds the change `change` (reverse hex).
 fn visible(project: &ProjectRepo, change: &str) -> bool {
-    let settings = jj_lib::settings::UserSettings::from_config(
+    let settings = jj_lib::settings::UserSettings::from_config_and_home_dir(
         jj_lib::config::StackedConfig::with_defaults(),
+        None,
     )
     .unwrap();
     let workspace = Workspace::load(

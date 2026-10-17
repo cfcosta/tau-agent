@@ -33,7 +33,7 @@ pub enum CloneError {
     #[error("Cannot open {}: {source}", path.display())]
     Open {
         path: std::path::PathBuf,
-        source: Box<gix::open::Error>,
+        source: gix::Error,
     },
     #[error("Cannot fetch from {url}: {source}")]
     Fetch {
@@ -47,16 +47,9 @@ pub enum CloneError {
 pub enum TransferError {
     #[error(transparent)]
     Io(#[from] io::Error),
+    /// Making the remote, connecting to it, and the transfer itself.
     #[error(transparent)]
-    Remote(#[from] gix::remote::init::Error),
-    #[error(transparent)]
-    Refspec(#[from] gix::refspec::parse::Error),
-    #[error(transparent)]
-    Connect(#[from] gix::remote::connect::Error),
-    #[error(transparent)]
-    PrepareFetch(#[from] gix::remote::fetch::prepare::Error),
-    #[error(transparent)]
-    Receive(#[from] gix::remote::fetch::Error),
+    Git(#[from] gix::Error),
     /// Making the remote-tracking branches, tags and `origin/HEAD` the
     /// remote's.
     #[error("Cannot mirror the remote's refs: {0}")]
@@ -83,7 +76,6 @@ const REFSPECS: [&str; 2] = [
 /// request for credentials (GitHub reads it as the password of any
 /// user); nothing else is asked, and the token is not written into the
 /// repository.
-#[allow(clippy::result_large_err)]
 pub(crate) fn fetch_into(
     git_dir: &Path,
     url: &str,
@@ -91,7 +83,7 @@ pub(crate) fn fetch_into(
 ) -> Result<(), CloneError> {
     let repo = open(git_dir).map_err(|source| CloneError::Open {
         path: git_dir.to_owned(),
-        source: Box::new(source),
+        source,
     })?;
     fetch(&repo, url, token).map_err(|source| CloneError::Fetch {
         url: url.to_owned(),
@@ -102,11 +94,7 @@ pub(crate) fn fetch_into(
 /// Opens the Git store at `git_dir` with a committer for its reflogs
 /// when none is configured: a store with a working tree logs every ref
 /// update, and gix refuses to without one.
-// gix's error type, which is large, as the other calls here return it.
-#[allow(clippy::result_large_err)]
-pub(crate) fn open(
-    git_dir: &Path,
-) -> Result<gix::Repository, gix::open::Error> {
+pub(crate) fn open(git_dir: &Path) -> Result<gix::Repository, gix::Error> {
     let mut repo = gix::open(git_dir)?;
     // Fails only on a committer setting that does not parse, which the
     // ref edits then report.
@@ -115,8 +103,6 @@ pub(crate) fn open(
 }
 
 /// [`fetch_into`]'s transfer, once the repository is open.
-// The credentials closure returns gix's error type, which is large.
-#[allow(clippy::result_large_err)]
 pub(crate) fn fetch(
     repo: &gix::Repository,
     url: &str,

@@ -4,7 +4,7 @@
 //! and untracked remote bookmarks, or the person's own definition, with
 //! their aliases. Checked against a model of that rule on made-up
 //! histories: the flags `vcs_log` shows, and whether a write tool
-//! refuses `@`; where the jj CLI 0.45.1 is installed, `immutable()`
+//! refuses `@`; where the jj CLI 0.46.0 is installed, `immutable()`
 //! names the same commits there.
 //!
 //! Each world lives in a temporary directory and reads no real config.
@@ -221,16 +221,19 @@ impl Disk {
 /// Loads the workspace at `dir` with jj's defaults alone, as another
 /// program would.
 fn load(dir: &Path) -> Workspace {
-    let settings = UserSettings::from_config({
-        let mut config = StackedConfig::with_defaults();
-        let mut user = jj_lib::config::ConfigLayer::empty(
-            jj_lib::config::ConfigSource::User,
-        );
-        user.set_value("user.name", "host").unwrap();
-        user.set_value("user.email", "host@localhost").unwrap();
-        config.add_layer(user);
-        config
-    })
+    let settings = UserSettings::from_config_and_home_dir(
+        {
+            let mut config = StackedConfig::with_defaults();
+            let mut user = jj_lib::config::ConfigLayer::empty(
+                jj_lib::config::ConfigSource::User,
+            );
+            user.set_value("user.name", "host").unwrap();
+            user.set_value("user.email", "host@localhost").unwrap();
+            config.add_layer(user);
+            config
+        },
+        None,
+    )
     .unwrap();
     Workspace::load(
         &settings,

@@ -355,7 +355,7 @@ impl ProjectRepo {
             gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
                 VcsError::BadCommitHex {
                     commit: commit.to_owned(),
-                    source,
+                    source: source.into(),
                 }
             })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
@@ -453,7 +453,7 @@ impl ProjectRepo {
             let repo = crate::clone::open(git_dir).map_err(|source| {
                 CloneError::Open {
                     path: git_dir.to_owned(),
-                    source: Box::new(source),
+                    source,
                 }
             })?;
             crate::clone::fetch(&repo, url, token).map_err(|source| {
@@ -534,7 +534,7 @@ impl ProjectRepo {
     }
 
     /// Sets the repository's `trunk()` to the default branch on
-    /// `origin`, as `jj git clone` does (jj-cli 0.45.1's
+    /// `origin`, as `jj git clone` does (jj-cli 0.46.0's
     /// `write_repo_presets`): when `origin/HEAD` names a branch the clone
     /// has, so that jj's `trunk()` and `immutable_heads()` know a default
     /// branch other than `main`, `master` or `trunk`.
@@ -613,7 +613,7 @@ impl ProjectRepo {
             gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
                 VcsError::BadCommitHex {
                     commit: commit.to_owned(),
-                    source,
+                    source: source.into(),
                 }
             })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
@@ -636,7 +636,7 @@ impl ProjectRepo {
             gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
                 VcsError::BadCommitHex {
                     commit: commit.to_owned(),
-                    source,
+                    source: source.into(),
                 }
             })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
@@ -650,7 +650,7 @@ impl ProjectRepo {
             gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
                 VcsError::BadCommitHex {
                     commit: commit.to_owned(),
-                    source,
+                    source: source.into(),
                 }
             })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
@@ -674,7 +674,7 @@ impl ProjectRepo {
         crate::clone::open(&self.git_dir()).map_err(|source| {
             VcsError::NoGitStore {
                 root: self.inner.root.clone(),
-                source: Box::new(source),
+                source,
             }
         })
     }
@@ -1357,7 +1357,7 @@ fn take_upstream(
         let now = after.get(name).unwrap_or(&absent);
         let ref_name = RefName::new(name);
         let local = tx.repo().view().get_local_bookmark(ref_name);
-        if then != now || local.has_conflict() {
+        if then != now || !local.is_resolved() {
             tx.repo_mut()
                 .set_local_bookmark_target(ref_name, now.clone());
         }
@@ -1502,7 +1502,7 @@ fn copy_upstream_refs(
         for reference in
             references.prefixed(prefix).map_err(|error| other(&error))?
         {
-            let reference = reference.map_err(|error| other(&*error))?;
+            let reference = reference.map_err(|error| other(&error))?;
             let Some(id) = reference.target().try_id().map(ToOwned::to_owned)
             else {
                 continue;

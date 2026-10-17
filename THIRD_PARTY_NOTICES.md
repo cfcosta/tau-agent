@@ -104,7 +104,7 @@ SOFTWARE.
 ## jj
 
 <https://github.com/jj-vcs/jj>. `tau-vcs-host`'s `config` module ports
-jj-cli 0.45.1's config loading (`cli/src/config.rs`): where the
+jj-cli 0.46.0's config loading (`cli/src/config.rs`): where the
 person's and the system's config files are, the layers the environment
 sets, and the order the layers stack in, so tau follows the person's jj
 config as jj does. It copies jj-cli's default values for the settings

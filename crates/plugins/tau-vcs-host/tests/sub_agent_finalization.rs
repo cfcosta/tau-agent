@@ -71,7 +71,8 @@ impl PluginRun for TagOnFinish {
             user.set_value("user.email", "fixture@example.invalid")
                 .unwrap();
             config.add_layer(user);
-            let settings = UserSettings::from_config(config).unwrap();
+            let settings =
+                UserSettings::from_config_and_home_dir(config, None).unwrap();
             let workspace = Workspace::load(
                 &settings,
                 &dir,
