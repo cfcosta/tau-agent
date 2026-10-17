@@ -199,6 +199,10 @@ pub const COMPOSER_BAND: Point<AtRun> = Point::new("tau.run.composer.band");
 /// Entries in a repository's menu in the sidebar, after tau's own: a
 /// setting the plugin keeps per repository.
 pub const REPO_MENU: Point<AtRepo> = Point::new("tau.sidebar.repo.menu");
+/// Buttons in a repository page's header, before its New run: what the
+/// plugin does for the whole repository. Every contribution is drawn, in
+/// order.
+pub const REPO_ACTIONS: Point<AtRepo> = Point::new("tau.repo.actions");
 
 /// A wide pane beside a run's transcript, for what the run made for the
 /// person to look at: a canvas. The first contribution draws it, in the
@@ -208,7 +212,7 @@ pub const REPO_MENU: Point<AtRepo> = Point::new("tau.sidebar.repo.menu");
 pub const PANE: Point<AtRun, PaneView> = Point::new("tau.run.pane");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 24] = [
+pub const ALL: [&str; 25] = [
     CARD.name,
     TRANSCRIPT.name,
     REWRITE.name,
@@ -232,5 +236,6 @@ pub const ALL: [&str; 24] = [
     COMPOSER.name,
     COMPOSER_BAND.name,
     REPO_MENU.name,
+    REPO_ACTIONS.name,
     PANE.name,
 ];

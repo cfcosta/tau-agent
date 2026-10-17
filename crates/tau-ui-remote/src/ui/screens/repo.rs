@@ -102,6 +102,13 @@ pub fn framed(
         .and_then(|known| known.trunk.clone())
         .unwrap_or_else(|| "main".to_owned());
     let new_in = repo.to_owned();
+    let actions = ws.contributions(
+        tau_ui_plugin::points::REPO_ACTIONS,
+        &tau_ui_plugin::points::AtRepo {
+            repo: repo.to_owned(),
+        },
+        cx,
+    );
     let header = div()
         .flex()
         .flex_shrink_0()
@@ -143,6 +150,7 @@ pub fn framed(
                         .child(format!("· {total} runs")),
                 ),
         )
+        .children(actions)
         .child(
             div()
                 .id("repo-new-run")
