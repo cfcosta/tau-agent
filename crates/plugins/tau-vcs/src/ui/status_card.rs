@@ -117,19 +117,21 @@ pub fn body(
             t,
         )
     });
-    let too_large = (!status.too_large.is_empty()).then(|| {
+    let too_large = status.too_large.first().map(|first| {
         notice(
             t.accent,
             t.accent.opacity(0.06),
             t.accent_border,
             "Left out of @",
-            "new files over 1 MiB are not snapshotted",
+            &format!(
+                "new files over {} are not snapshotted",
+                crate::byte_size(first.max_size)
+            ),
             status
                 .too_large
                 .iter()
                 .map(|file| {
-                    let size =
-                        format!("{:.1} MiB", file.size as f64 / 1_048_576.);
+                    let size = crate::byte_size(file.size);
                     path_row(&file.path, "?", t.accent, Some(size), t)
                 })
                 .collect(),

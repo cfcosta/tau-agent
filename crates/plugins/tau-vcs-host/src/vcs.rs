@@ -317,6 +317,11 @@ impl Worker {
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
+
+    /// Where the workspace's jj config comes from.
+    pub(crate) fn env(&self) -> &JjEnv {
+        &self.identity.env
+    }
 }
 
 /// Loads the jj workspace at `root` as the jj CLI does: finds its

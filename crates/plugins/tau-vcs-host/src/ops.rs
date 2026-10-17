@@ -26,6 +26,7 @@ use jj_lib::{
     repo_path::RepoPathBuf,
     revset::ResolvedRevsetExpression,
     rewrite::restore_tree,
+    settings::HumanByteSize,
     transaction::Transaction,
 };
 use pollster::block_on;
@@ -203,15 +204,16 @@ pub(crate) fn status(worker: &mut Worker) -> Result<Report, VcsError> {
             text.push_str(&format!("\n{path}"));
         }
     }
-    if !snapshot.too_large.is_empty() {
-        text.push_str(
-            "\nLeft out of @ (new files over 1 MiB are not snapshotted):",
-        );
+    if let Some(first) = snapshot.too_large.first() {
+        text.push_str(&format!(
+            "\nLeft out of @ (new files over {} are not snapshotted):",
+            HumanByteSize(first.max_size)
+        ));
         for file in &snapshot.too_large {
             text.push_str(&format!(
-                "\n{} ({:.1} MiB)",
+                "\n{} ({})",
                 file.path,
-                file.size as f64 / (1024. * 1024.)
+                HumanByteSize(file.size)
             ));
         }
     }

@@ -39,6 +39,7 @@ pub mod plugin;
 pub mod project;
 pub mod run_workspace;
 mod session;
+mod snapshot_config;
 pub mod sub_agents;
 pub mod sweep;
 pub mod tools;

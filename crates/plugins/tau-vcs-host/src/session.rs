@@ -16,8 +16,7 @@ use jj_lib::{
     backend::CommitId,
     commit::Commit,
     git::REMOTE_NAME_FOR_LOCAL_GIT_REPO,
-    gitignore::GitIgnoreFile,
-    matchers::{EverythingMatcher, Matcher, NothingMatcher, PrefixMatcher},
+    matchers::{EverythingMatcher, Matcher, PrefixMatcher},
     merge::Merge,
     merged_tree::MergedTree,
     object_id::{HexPrefix, ObjectId as _, PrefixResolution},
@@ -25,12 +24,18 @@ use jj_lib::{
     repo::{ReadonlyRepo, Repo, RepoLoader},
     repo_path::RepoPathBuf,
     transaction::Transaction,
-    working_copy::{SnapshotOptions, UntrackedReason, WorkingCopyFreshness},
+    working_copy::{UntrackedReason, WorkingCopyFreshness},
     workspace::{LockedWorkspace, Workspace},
 };
 use pollster::block_on;
 
-use crate::{TooLarge, error::VcsError, lock::lock_repo, vcs::Worker};
+use crate::{
+    TooLarge,
+    error::VcsError,
+    lock::lock_repo,
+    snapshot_config::SnapshotConfig,
+    vcs::Worker,
+};
 
 /// The operation attribute naming the tool that wrote an operation.
 pub(crate) const TOOL_ATTRIBUTE: &str = "tau.vcs.tool";
@@ -53,8 +58,9 @@ pub(crate) const LANDING_ATTRIBUTE: &str = "tau.vcs.landing";
 /// leave out what it brought, to that run and to the runs standing on it.
 pub(crate) const CAUGHT_UP_ATTRIBUTE: &str = "tau.vcs.caught_up";
 
-/// New files larger than this stay out of the snapshot, as jj's
-/// default. Every other new file is tracked: nothing is staged.
+/// jj's default `snapshot.max-new-file-size`: new files larger than
+/// this stay out of a snapshot unless the person's config sets another
+/// size.
 pub const MAX_NEW_FILE_SIZE: u64 = 1024 * 1024;
 
 /// How many hex digits of an id the tools show.
@@ -64,20 +70,27 @@ pub(crate) const SHORT_ID: usize = 12;
 pub(crate) struct Snapshot {
     pub repo: Arc<ReadonlyRepo>,
     pub wc: Commit,
-    /// New files over [`MAX_NEW_FILE_SIZE`], which the snapshot left
-    /// out of `@`.
+    /// New files over the config's `snapshot.max-new-file-size`, which
+    /// the snapshot left out of `@`.
     pub too_large: Vec<TooLarge>,
 }
 
 /// Snapshots the working copy, one operation if files changed, and
 /// returns the repo at head.
 pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
+    let env = worker.env().clone();
     let workspace = worker.workspace()?;
     let _repo = lock_repo(workspace.repo_path())?;
     let name = workspace.workspace_name().to_owned();
     let loader = workspace.repo_loader().clone();
+    let config = SnapshotConfig::load(
+        &env,
+        workspace.settings(),
+        workspace.workspace_root(),
+        loader.store(),
+    )?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
-    let snapshot = snapshot_locked(&mut locked, &loader, &name)?;
+    let snapshot = snapshot_locked(&mut locked, &loader, &name, &config)?;
     block_on(locked.finish(snapshot.repo.op_id().clone()))?;
     Ok(snapshot)
 }
@@ -90,12 +103,19 @@ pub(crate) fn mutate<T>(
     tool: &str,
     edit: impl FnOnce(&mut Transaction, &Commit) -> Result<T, VcsError>,
 ) -> Result<(Snapshot, T), VcsError> {
+    let env = worker.env().clone();
     let workspace = worker.workspace()?;
     let _repo = lock_repo(workspace.repo_path())?;
     let name = workspace.workspace_name().to_owned();
     let loader = workspace.repo_loader().clone();
+    let config = SnapshotConfig::load(
+        &env,
+        workspace.settings(),
+        workspace.workspace_root(),
+        loader.store(),
+    )?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
-    let before = snapshot_locked(&mut locked, &loader, &name)?;
+    let before = snapshot_locked(&mut locked, &loader, &name, &config)?;
     let written = (|| {
         if is_immutable(before.repo.as_ref(), before.wc.id())? {
             return Err(VcsError::Immutable(short_commit(before.wc.id())));
@@ -138,18 +158,16 @@ pub(crate) fn mutate<T>(
     ))
 }
 
+/// Snapshots the working copy with the options the jj CLI would use
+/// there (`config`): the files it starts tracking, the largest new file
+/// it takes, and the person's Git excludes.
 fn snapshot_locked(
     locked: &mut LockedWorkspace<'_>,
     loader: &RepoLoader,
     name: &WorkspaceName,
+    config: &SnapshotConfig,
 ) -> Result<Snapshot, VcsError> {
-    let options = SnapshotOptions {
-        base_ignores: GitIgnoreFile::empty(),
-        progress: None,
-        start_tracking_matcher: &EverythingMatcher,
-        force_tracking_matcher: &NothingMatcher,
-        max_new_file_size: MAX_NEW_FILE_SIZE,
-    };
+    let options = config.options();
     let mut repo = block_on(loader.load_at_head())?;
     let mut wc = wc_commit(&repo, name)?;
     // Two operations that rewrote `@` from the same one, merged when the
@@ -204,16 +222,19 @@ fn snapshot_locked(
     }
 
     let (tree, stats) = block_on(locked.locked_wc().snapshot(&options))?;
-    // Every new file matches `start_tracking_matcher`, so size is the
-    // only reason a file stays out.
+    // A new file `snapshot.auto-track` does not match stays out as the
+    // person asked, as an ignored one does; only size is reported.
     let too_large = stats
         .untracked_paths
         .iter()
         .filter_map(|(path, reason)| match reason {
-            UntrackedReason::FileTooLarge { size, .. } => Some(TooLarge {
-                path: path.as_internal_file_string().to_owned(),
-                size: *size,
-            }),
+            UntrackedReason::FileTooLarge { size, max_size } => {
+                Some(TooLarge {
+                    path: path.as_internal_file_string().to_owned(),
+                    size: *size,
+                    max_size: *max_size,
+                })
+            }
             UntrackedReason::FileNotAutoTracked => None,
         })
         .collect();

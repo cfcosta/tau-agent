@@ -24,7 +24,7 @@ pub struct ChangeStatus {
     pub files: Vec<FileDiff>,
     /// Paths that still hold conflict markers.
     pub conflicts: Vec<String>,
-    /// New files over 1 MiB, left out of `@`.
+    /// New files over the snapshot's size limit, left out of `@`.
     pub too_large: Vec<TooLarge>,
     /// The diff was cut at 50 KB.
     pub truncated: bool,
@@ -128,7 +128,11 @@ new file mode 100644
                 { "path": "run.sh", "kind": "modified" },
             ],
             "conflicts": ["src/a.rs"],
-            "too_large": [{ "path": "big.har", "size": 3_565_158 }],
+            "too_large": [{
+                "path": "big.har",
+                "size": 3_565_158,
+                "max_size": 1_048_576,
+            }],
             "diff": DIFF,
             "truncated": false,
         }))

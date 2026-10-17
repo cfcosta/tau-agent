@@ -203,8 +203,17 @@ pub enum VcsError {
     ConfigLoad(#[from] jj_lib::config::ConfigLoadError),
     #[error("Cannot find the repository's jj config: {0}")]
     SecureConfig(#[from] jj_lib::secure_config::SecureConfigError),
-    #[error(transparent)]
+    #[error("{}", get_text(.0))]
     ConfigGet(#[from] jj_lib::config::ConfigGetError),
+    #[error("Cannot read `snapshot.auto-track` ({pattern}): {source}")]
+    AutoTrack {
+        pattern: String,
+        source: Box<jj_lib::fileset::FilesetParseError>,
+    },
+    #[error("Cannot read Git's config: {0}")]
+    GitConfig(String),
+    #[error(transparent)]
+    Ignores(#[from] jj_lib::gitignore::GitIgnoreError),
     #[error(transparent)]
     ConfigUpdate(#[from] jj_lib::config::ConfigUpdateError),
     #[error(transparent)]
@@ -247,6 +256,26 @@ fn load_text(error: &jj_lib::config::ConfigLoadError) -> String {
         ConfigLoadError::Parse { error, source_path } => match source_path {
             Some(path) => format!("{}: {error}", path.display()),
             None => error.to_string(),
+        },
+    }
+}
+
+/// A config value tau cannot use: its name, the file that set it, and
+/// why.
+fn get_text(error: &jj_lib::config::ConfigGetError) -> String {
+    use jj_lib::config::ConfigGetError;
+    match error {
+        ConfigGetError::NotFound { .. } => error.to_string(),
+        ConfigGetError::Type {
+            name,
+            error,
+            source_path,
+        } => match source_path {
+            Some(path) => format!(
+                "Invalid type or value for {name} in {}: {error}",
+                path.display()
+            ),
+            None => format!("Invalid type or value for {name}: {error}"),
         },
     }
 }

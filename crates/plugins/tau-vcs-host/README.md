@@ -39,8 +39,11 @@ also marks what `@` changes in each `ls` listing.
 
 The tools take change ids and commit ids, never revsets. Every tool
 snapshots the working copy first, so edits made with other tools are
-never lost. The writing tools refuse immutable commits. New files over
-`MAX_NEW_FILE_SIZE` (1 MiB) stay out of the snapshot.
+never lost. The writing tools refuse immutable commits. Snapshots
+follow the person's jj config as the jj CLI does: new files over
+`snapshot.max-new-file-size` (jj's default, `MAX_NEW_FILE_SIZE`, is
+1 MiB), files `snapshot.auto-track` does not match, and files Git's
+excludes ignore stay out.
 
 ## How it fits
 

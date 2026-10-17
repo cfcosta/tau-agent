@@ -6,5 +6,12 @@
 pub mod details;
 pub mod ui;
 
-pub use details::{ChangeInfo, ChangeKind, FileChange, Landing, TooLarge};
+pub use details::{
+    ChangeInfo,
+    ChangeKind,
+    FileChange,
+    Landing,
+    TooLarge,
+    byte_size,
+};
 pub use ui::VcsUi;

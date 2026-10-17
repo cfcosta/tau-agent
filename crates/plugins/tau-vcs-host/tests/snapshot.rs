@@ -1,6 +1,7 @@
-//! The snapshot's one exception (`docs/reference/vcs.md`, "Scoping
-//! rules"): a new file over 1 MiB stays out of `@`, and `vcs_status`
-//! names it with its size. Every other file is tracked.
+//! The snapshot's size limit at jj's default (`docs/reference/vcs.md`,
+//! "Scoping rules"): with no config, a new file over 1 MiB stays out of
+//! `@`, and `vcs_status` names it with its size. Every other file is
+//! tracked. `snapshot_config_model.rs` checks the configured rules.
 
 use std::sync::Arc;
 
@@ -63,14 +64,18 @@ fn check_left_out(offset: i64, tracked_first: bool) {
     if left_out {
         assert_eq!(
             too_large,
-            &vec![json!({ "path": "big.bin", "size": size })],
+            &vec![json!({
+                "path": "big.bin",
+                "size": size,
+                "max_size": MAX_NEW_FILE_SIZE,
+            })],
             "{case}"
         );
         assert!(changes.is_empty(), "{case}: {changes:?}");
         assert!(
             text.contains(
-                "Left out of @ (new files over 1 MiB are not snapshotted):\n\
-                 big.bin (1.0 MiB)"
+                "Left out of @ (new files over 1.0MiB are not snapshotted):\n\
+                 big.bin (1.0MiB)"
             ),
             "{case}: {text}"
         );

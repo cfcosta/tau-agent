@@ -67,6 +67,23 @@ pub struct TooLarge {
     pub path: String,
     /// Its size in bytes.
     pub size: u64,
+    /// The largest new file the snapshot takes, in bytes: the jj
+    /// config's `snapshot.max-new-file-size`.
+    pub max_size: u64,
+}
+
+/// `bytes` as jj writes a size: one decimal and a binary prefix, as in
+/// `1.0MiB` (jj-lib's `HumanByteSize`).
+pub fn byte_size(bytes: u64) -> String {
+    const PREFIXES: [&str; 9] =
+        ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"];
+    let mut at = 0;
+    let mut scaled = bytes as f32;
+    while scaled.abs() >= 1000.0 && at < PREFIXES.len() - 1 {
+        at += 1;
+        scaled /= 1024.0;
+    }
+    format!("{scaled:.1}{}B", PREFIXES[at])
 }
 
 /// What landing a child did, or would do.

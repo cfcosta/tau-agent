@@ -1,6 +1,6 @@
 //! The jj config a workspace loads, found as the jj CLI finds it
-//! (jj-cli 0.45.1's `config.rs` and `cli_util.rs`): jj-lib's defaults,
-//! then tau's [`Identity`], then the system's config, the variables jj
+//! (jj-cli 0.45.1's `config.rs` and `cli_util.rs`): jj-lib's defaults
+//! and jj-cli's for the keys tau reads, then tau's [`Identity`], then the system's config, the variables jj
 //! reads before the person's config, the person's config, the
 //! repository's, the workspace's, and the variables that override them
 //! all. `--when` scopes are resolved for the workspace last, as jj does
@@ -43,6 +43,14 @@ use crate::{error::VcsError, vcs::Identity};
 const REPO_CONFIG_DIR: &str = "repos";
 /// Where the person's workspace configs are, the same way.
 const WORKSPACE_CONFIG_DIR: &str = "workspaces";
+
+/// jj-cli's defaults for the keys tau reads that jj-lib's defaults lack,
+/// copied from jj-cli 0.45.1's `src/config/misc.toml`.
+const CLI_DEFAULTS: &str = r#"
+[snapshot]
+max-new-file-size = "1MiB"
+auto-track = "all()"
+"#;
 
 /// Where jj's config comes from: the person's directories, the
 /// computer's and the person's names, and the environment's variables.
@@ -239,6 +247,7 @@ pub fn settings(
     let workspace_root = canonical(workspace_root);
     let repo_path = canonical(repo_path);
     let mut config = StackedConfig::with_defaults();
+    config.add_layer(ConfigLayer::parse(ConfigSource::Default, CLI_DEFAULTS)?);
     // Below everything the person sets: only a fallback.
     let mut tau = ConfigLayer::empty(ConfigSource::Default);
     tau.set_value("user.name", identity.name.as_str())?;

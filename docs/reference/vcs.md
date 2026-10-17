@@ -83,6 +83,27 @@ loading:
   opened after them.
 - jj-lib builds the commit signer from the same settings, so with the
   person's `signing.*` tau's commits are signed as jj would sign them.
+- tau adds jj-cli's defaults (from its `src/config/misc.toml`) for the
+  jj-cli settings it reads, just above jj-lib's: the person's config
+  overrides them as it would the CLI's.
+- Snapshots follow jj-cli's snapshot options: `snapshot.auto-track`, a
+  fileset read from the workspace root with the person's
+  `fileset-aliases` (a later layer's alias replacing an earlier one's);
+  `snapshot.max-new-file-size`, in bytes or as `<n><unit>` (`1MiB`),
+  where 0 means no limit; and the ignore patterns jj applies before the
+  workspace's `.gitignore` files: Git's `core.excludesFile` (a relative
+  path from the workspace root, `~/` for the home), or when it is unset
+  `git/ignore` under `$XDG_CONFIG_HOME` or `~/.config`, then the Git
+  store's `info/exclude`. Git's config is read as jj's gix reads it,
+  from the `JjEnv`, never the process: the system's `gitconfig`
+  (`GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`), `git/config` under the
+  config directory and `~/.gitconfig` (or `GIT_CONFIG_GLOBAL`), the Git
+  store's `config`, includes, then `GIT_CONFIG_COUNT`'s variables. A
+  malformed `snapshot.auto-track` or `snapshot.max-new-file-size` fails
+  the snapshot with an error naming the setting (and the file that set
+  it), so every tool fails until it is fixed, as every jj command
+  would. A project's Git store is tau's own, so its `info/exclude` is
+  not the source checkout's.
 - The environment is a value, `JjEnv`: config directory, home
   directory, system directory, host name, user name and variables.
   Only the app reads the process's (`Identity::from_environment`, which
@@ -148,11 +169,16 @@ loading:
 - **Tagged operations.** Each write is one operation, described as
   `tau vcs: <tool>`. It carries the workspace name and the operation
   attribute `tau.vcs.tool = <tool>`. `vcs_undo` uses these tags.
-- **Everything is tracked but large new files.** The snapshot tracks
-  every new file, so there is no staging and no list of untracked
-  files. The one exception is a new file larger than 1 MiB
-  (`MAX_NEW_FILE_SIZE`, jj's default): it stays out of `@`, and
-  `vcs_status` names it under `Left out of @` with its size.
+- **New files are tracked as jj would track them.** The snapshot
+  takes jj's snapshot options from the config, as the jj CLI does (see
+  "Identity and jj config"). With jj's defaults it tracks every new file
+  that no ignore file names, so there is no staging, except a new file
+  larger than `snapshot.max-new-file-size` (1 MiB by default,
+  `MAX_NEW_FILE_SIZE`): it stays out of `@`, and `vcs_status` names it
+  under `Left out of @ (new files over <size> are not snapshotted)`
+  with its size, in jj's format (`1.0MiB`). A new file that
+  `snapshot.auto-track` does not match stays out too, as the person
+  asked, and is not listed, as an ignored file is not.
 - **Stale working copies.** When an operation in another workspace
   rewrote this workspace's commit, as the main chat's catch-up with
   trunk does to the commits its chats stand on, the next tool or turn
