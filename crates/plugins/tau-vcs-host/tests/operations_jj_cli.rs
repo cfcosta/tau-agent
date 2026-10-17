@@ -36,7 +36,6 @@ use tau_agent::{
 };
 use tau_testing::block_on_io as block_on;
 use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
     DESCRIPTION_PREFIX,
     Identity,
     JjEnv,
@@ -152,11 +151,8 @@ impl World {
             &[("a.txt".into(), "one\n".into())],
         )
         .unwrap();
-        let vcs = block_on(Vcs::open(
-            project.workspace_dir(DEFAULT_WORKSPACE),
-            identity,
-        ))
-        .unwrap();
+        let vcs = block_on(Vcs::open(project.main_dir().to_owned(), identity))
+            .unwrap();
         let tools = VcsPlugin::new(vcs).tools();
         Self {
             _dir: dir,
@@ -169,7 +165,7 @@ impl World {
     }
 
     fn main(&self) -> PathBuf {
-        self.project.workspace_dir(DEFAULT_WORKSPACE)
+        self.project.main_dir().to_owned()
     }
 
     fn call(&self, name: &str, args: Value) {

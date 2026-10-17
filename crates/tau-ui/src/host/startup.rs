@@ -182,12 +182,13 @@ impl Host {
             )
         };
         for (repo, project, workspaces, bookmarks) in held {
-            let mut owners = self.owners(&repo, &runs, &live);
+            let main = project.main_workspace();
+            let mut owners = self.owners(&repo, main, &runs, &live);
             owners.push(Owner {
                 run: String::new(),
                 standing: Standing::Kept,
                 workspaces: live_workspaces.clone(),
-                keep: Keep::Workspace(DEFAULT_WORKSPACE.to_owned()),
+                keep: Keep::Workspace(main.to_owned()),
             });
             // A run of this session may be making a sub-agent's
             // workspace, named after its own, before the store has the
@@ -209,11 +210,12 @@ impl Host {
         Ok(())
     }
 
-    /// The runs of `repo` that may own its workspaces and bookmarks,
-    /// and where each stands.
+    /// The runs of `repo`, whose main chat works in `main`, that may own
+    /// its workspaces and bookmarks, and where each stands.
     fn owners(
         &self,
         repo: &str,
+        main: &str,
         runs: &Runs,
         live: &HashSet<String>,
     ) -> Vec<Owner> {
@@ -227,7 +229,7 @@ impl Host {
             tagged
                 .into_iter()
                 .chain(runs.linked.get(run).into_iter().flatten().cloned())
-                .filter(|name| name != DEFAULT_WORKSPACE)
+                .filter(|name| name != main)
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect()
@@ -255,7 +257,7 @@ impl Host {
                 {
                     Keep::Bookmark(bookmark(&RunId(parent.as_str().into())))
                 }
-                _ => Keep::Workspace(DEFAULT_WORKSPACE.to_owned()),
+                _ => Keep::Workspace(main.to_owned()),
             };
             owners.push(Owner {
                 run: record.id.clone(),

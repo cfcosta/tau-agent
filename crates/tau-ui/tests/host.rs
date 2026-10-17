@@ -873,8 +873,8 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         "{refused}"
     );
 
-    // Keeping the fork keeps the main chat's checkout: it is the
-    // repository's own, the default workspace, which never goes.
+    // Keeping the fork keeps the main chat's checkout: it is the main
+    // workspace, which never goes.
     host.block_on(host.keep_branch(&fork.id)).unwrap();
     assert!(main_dir.exists());
     assert!(fork_dir.exists());
@@ -1290,9 +1290,8 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     assert_eq!(report.landed[0].0, child);
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
     assert!(report.queue.is_empty(), "{:?}", report.queue);
-    // The main chat works in the repository's own checkout, the default
-    // workspace.
-    assert_eq!(dir, project.workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE));
+    // The main chat works in the main workspace, in `main/`.
+    assert_eq!(dir, project.main_dir().to_owned());
     // From history, the sub-agent's chat comes back under main.
     let history = host.block_on(host.history()).unwrap();
     let main_view = history.iter().find(|view| view.id == main).unwrap();

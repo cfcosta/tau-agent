@@ -50,9 +50,9 @@ use std::{
 use hegel::{TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
 use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
     Identity,
     Link,
+    MAIN_WORKSPACE,
     ProjectRepo,
     UpdateFrom,
     Vcs,
@@ -127,7 +127,7 @@ impl Repo {
         let trunk_name = project.trunk_name().unwrap();
         catch_up(&project).unwrap();
         let main = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
-            project.workspace_dir(DEFAULT_WORKSPACE),
+            project.main_dir().to_owned(),
             Identity::default(),
         ))
         .unwrap();
@@ -144,7 +144,7 @@ impl Repo {
     }
 
     fn main_dir(&self) -> PathBuf {
-        self.project.workspace_dir(DEFAULT_WORKSPACE)
+        self.project.main_dir().to_owned()
     }
 
     /// Commits `value` as `up.txt` in the source checkout. Returns the
@@ -162,10 +162,10 @@ impl Repo {
 }
 
 /// The main chat's catch-up as `Host::catch_up` runs it: a `Vcs` of its
-/// own on the default workspace, moving it onto trunk.
+/// own on the main chat's workspace, moving it onto trunk.
 fn catch_up(project: &ProjectRepo) -> Result<(), String> {
     let vcs = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
-        project.workspace_dir(DEFAULT_WORKSPACE),
+        project.main_dir().to_owned(),
         Identity::default(),
     ))
     .map_err(|e| format!("open: {e}"))?;
@@ -378,7 +378,7 @@ impl Model {
                         .ok_or("the chat has no bookmark")?;
                     let trunk = project.trunk().map_err(|e| e.to_string())?;
                     let parent = project
-                        .add_workspace(DEFAULT_WORKSPACE, &trunk)
+                        .add_workspace(MAIN_WORKSPACE, &trunk)
                         .map_err(|e| format!("open: {e}"))?;
                     let landing = block_on(parent.land(head, trunk_name, true))
                         .map_err(|e| format!("land: {e}"))?;
@@ -403,7 +403,7 @@ impl Model {
                         .map_err(|e| e.to_string())?;
                     if let Some(head) = head {
                         let wc = project
-                            .workspace_head(DEFAULT_WORKSPACE)
+                            .workspace_head(MAIN_WORKSPACE)
                             .map_err(|e| e.to_string())?
                             .ok_or("the main chat has no working copy")?;
                         let keep = project
@@ -1129,7 +1129,7 @@ fn dropping_a_chat_after_an_update_keeps_the_main_chats_commits() {
     let head = repo.project.bookmark("tau/c0").unwrap().unwrap();
     let wc = repo
         .project
-        .workspace_head(DEFAULT_WORKSPACE)
+        .workspace_head(MAIN_WORKSPACE)
         .unwrap()
         .unwrap();
     let keep = repo.project.parent_of(&wc).unwrap().unwrap();
@@ -1166,10 +1166,7 @@ fn a_landing_refuses_a_head_that_was_rewritten() {
     let stale = repo.project.bookmark("tau/c0").unwrap().unwrap();
     catch_up(&repo.project).unwrap();
     let trunk = repo.project.trunk().unwrap();
-    let parent = repo
-        .project
-        .add_workspace(DEFAULT_WORKSPACE, &trunk)
-        .unwrap();
+    let parent = repo.project.add_workspace(MAIN_WORKSPACE, &trunk).unwrap();
     let err =
         block_on(parent.land(stale.clone(), repo.trunk_name.clone(), true))
             .unwrap_err();
@@ -1216,10 +1213,7 @@ fn a_landing_follows_an_update_made_after_the_head_was_read() {
         .update(UpdateFrom::Checkout(&repo.src()))
         .unwrap();
     let trunk = repo.project.trunk().unwrap();
-    let parent = repo
-        .project
-        .add_workspace(DEFAULT_WORKSPACE, &trunk)
-        .unwrap();
+    let parent = repo.project.add_workspace(MAIN_WORKSPACE, &trunk).unwrap();
     let landing =
         block_on(parent.land(head.clone(), repo.trunk_name.clone(), true))
             .unwrap();

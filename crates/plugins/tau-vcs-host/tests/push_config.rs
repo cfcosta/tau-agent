@@ -25,15 +25,7 @@ use std::path::{Path, PathBuf};
 
 use hegel::{TestCase, generators as gs};
 use tau_testing::{block_on_io as block_on, git::git};
-use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
-    Identity,
-    JjEnv,
-    ProjectRepo,
-    Remote,
-    Vcs,
-    VcsError,
-};
+use tau_vcs_host::{Identity, JjEnv, ProjectRepo, Remote, Vcs, VcsError};
 
 const PERSON: &str = "person@example.com";
 const OTHER: &str = "other@example.com";
@@ -216,7 +208,7 @@ fn a_trunk_push_refuses_private_commits_and_signs_the_persons(tc: TestCase) {
     authors(&mut commits);
     let sign = tc.draw(gs::booleans());
     let origin = Origin::new(&format!("{PRIVATE}git.sign-on-push = {sign}\n"));
-    let main = origin.project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = origin.project.main_dir().to_owned();
     let trunk = origin.project.trunk_name().unwrap();
     let before = origin.origin_ref("main");
     let ids = commit_all(&origin, &main, &trunk, "m", &commits);
@@ -371,7 +363,7 @@ fn a_push_runs_the_configured_git() {
     };
     let origin =
         Origin::new(&format!("git.executable-path = {}\n", quoted(&wrapper)));
-    let main = origin.project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = origin.project.main_dir().to_owned();
     let trunk = origin.project.trunk_name().unwrap();
     commit_all(
         &origin,
@@ -391,7 +383,7 @@ fn a_push_runs_the_configured_git() {
     let missing = probe.path().join("no-git");
     let origin =
         Origin::new(&format!("git.executable-path = {}\n", quoted(&missing)));
-    let main = origin.project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = origin.project.main_dir().to_owned();
     let trunk = origin.project.trunk_name().unwrap();
     commit_all(
         &origin,
@@ -467,7 +459,7 @@ fn a_private_commits_operation_off_the_line_counts(tc: TestCase) {
     let on: Option<usize> =
         tc.draw(gs::optional(gs::integers().max_value(count - 1)));
     let origin = Origin::new("");
-    let main = origin.project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = origin.project.main_dir().to_owned();
     let trunk = origin.project.trunk_name().unwrap();
     let before = origin.origin_ref("main").unwrap();
     let commits = vec![

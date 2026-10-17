@@ -46,7 +46,7 @@ impl Host {
                 )));
             }
             self.update_repo(repo).await.map_err(failed)?;
-            self.catch_up(&project, DEFAULT_WORKSPACE)
+            self.catch_up(&project, project.main_workspace())
                 .await
                 .map_err(failed)?;
         }

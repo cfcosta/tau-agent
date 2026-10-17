@@ -613,7 +613,7 @@ impl Host {
         // update moved trunk past are its own, not the child's.
         let main = self.is_main(&parent);
         if main {
-            self.catch_up(&project, DEFAULT_WORKSPACE).await?;
+            self.catch_up(&project, project.main_workspace()).await?;
         }
         let into = self.bookmark_of(&parent, &project).await?;
         let workspace = match self.session(child, |run| run.workspace.take()) {
@@ -630,11 +630,12 @@ impl Host {
         project
             .run(move |project| {
                 if let Some(head) = project.bookmark(&child_bookmark)? {
-                    let stands_on =
-                        match project.workspace_head(DEFAULT_WORKSPACE)? {
-                            Some(wc) if main => project.parent_of(&wc)?,
-                            _ => None,
-                        };
+                    let stands_on = match project
+                        .workspace_head(project.main_workspace())?
+                    {
+                        Some(wc) if main => project.parent_of(&wc)?,
+                        _ => None,
+                    };
                     let keep = match stands_on {
                         Some(keep) => keep,
                         None => match project.bookmark(&into)? {
@@ -720,12 +721,11 @@ impl Host {
         let project = self.slot_of_run(child).await?.project().await?;
         let child_workspace = self.workspace_of(child).await?;
         let parent_workspace = match self.workspace_of(&parent).await {
-            // A main chat works in the repository's own checkout.
+            // A main chat works in its repository's main workspace.
             _ if self.is_main(&parent) => {
-                self.session(&parent, |run| {
-                    run.workspace = Some(DEFAULT_WORKSPACE.to_owned())
-                });
-                DEFAULT_WORKSPACE.to_owned()
+                let name = project.main_workspace().to_owned();
+                self.session(&parent, |run| run.workspace = Some(name.clone()));
+                name
             }
             Ok(name) => {
                 // Opening a workspace that is gone would make a new one

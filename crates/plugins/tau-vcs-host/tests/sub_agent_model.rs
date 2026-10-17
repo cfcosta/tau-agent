@@ -47,9 +47,9 @@ use tau_ai::message::{InputBlock, Message, UserContent};
 use tau_store::Entry;
 use tau_testing::scripted::ScriptedModel;
 use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
     Identity,
     Link,
+    MAIN_WORKSPACE,
     RunWorkspace,
     Spawn,
     SubAgents,
@@ -423,7 +423,7 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
             tc.event("the caller is the main chat");
             RunWorkspace::new(
                 project.clone().into(),
-                DEFAULT_WORKSPACE,
+                MAIN_WORKSPACE,
                 Identity::default(),
             )
             .unwrap()
@@ -698,7 +698,7 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
         // Every operation, each finalization's included, is tau's.
         let mut log = common::ops::OpLog::open(
             &project
-                .workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE)
+                .main_dir().to_owned()
                 .join(".jj/repo"),
         );
         common::ops::assert_all_taus(&mut log, "the sub-agents");

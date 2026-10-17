@@ -31,7 +31,7 @@ use jj_lib::lock::FileLock;
 use serde_json::json;
 use tau_agent::{plugin::Plugin as _, tool::ToolCtx};
 use tau_testing::block_on_io as block_on;
-use tau_vcs_host::{DEFAULT_WORKSPACE, Identity, ProjectRepo, Vcs, VcsPlugin};
+use tau_vcs_host::{Identity, ProjectRepo, Vcs, VcsPlugin};
 
 /// jj-cli's path, from its `lock_git_import_export`.
 fn git_lock(workspace: &Path) -> PathBuf {
@@ -75,12 +75,7 @@ fn project(home: &Path) -> ProjectRepo {
         &[("a.txt".into(), "one\n".into())],
     )
     .unwrap();
-    assert!(
-        project
-            .workspace_dir(DEFAULT_WORKSPACE)
-            .join(".git")
-            .is_dir()
-    );
+    assert!(project.main_dir().to_owned().join(".git").is_dir());
     project
 }
 
@@ -90,7 +85,7 @@ fn project(home: &Path) -> ProjectRepo {
 fn tau_waits_while_the_jj_cli_holds_its_git_lock() {
     let home = tempfile::tempdir().unwrap();
     let project = project(home.path());
-    let main = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = project.main_dir().to_owned();
     let mut log = ops::OpLog::open(&main.join(".jj/repo"));
     log.new_ops();
     let before = log.head();
@@ -125,7 +120,7 @@ fn the_jj_cli_waits_while_tau_holds_its_git_lock() {
     let home = tempfile::tempdir().unwrap();
     let home = std::fs::canonicalize(home.path()).unwrap();
     let project = project(&home);
-    let main = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = project.main_dir().to_owned();
     let trunk = project.trunk().unwrap();
     let run = project.workspace_dir("r");
     project.add_workspace("r", &trunk).unwrap();

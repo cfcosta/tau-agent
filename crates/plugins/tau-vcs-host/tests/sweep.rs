@@ -22,7 +22,7 @@ use jj_lib::{
 };
 use tau_testing::block_on_io as block_on;
 use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
+    MAIN_WORKSPACE,
     ProjectRepo,
     Vcs,
     sweep::{Keep, Owner, RUN_BOOKMARK_PREFIX, Standing},
@@ -55,7 +55,7 @@ fn visible(project: &ProjectRepo, change: &str) -> bool {
     .unwrap();
     let workspace = Workspace::load(
         &settings,
-        &project.workspace_dir(DEFAULT_WORKSPACE),
+        project.main_dir(),
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
@@ -83,7 +83,7 @@ fn a_sweep_takes_what_no_kept_run_has() {
     let (_stray, stray_change) =
         run_with_commit(&project, "gone", "stray", "s.txt");
 
-    let main = Keep::Workspace(DEFAULT_WORKSPACE.to_owned());
+    let main = Keep::Workspace(MAIN_WORKSPACE.to_owned());
     let owner = |run: &str, standing, workspace: &str| Owner {
         run: run.to_owned(),
         standing,
@@ -106,7 +106,7 @@ fn a_sweep_takes_what_no_kept_run_has() {
     for gone in ["wd", "wl", "stray"] {
         assert!(!project.workspace_dir(gone).exists(), "{gone}");
     }
-    assert!(project.workspace_dir(DEFAULT_WORKSPACE).exists());
+    assert!(project.main_dir().to_owned().exists());
     // Only the discarded run's commits went.
     assert!(visible(&project, &kept_change));
     assert!(visible(&project, &landed_change));
@@ -119,7 +119,7 @@ fn a_sweep_takes_what_no_kept_run_has() {
     assert!(project.plan_sweep(&owners).unwrap().is_empty());
     // Every operation, the sweep's included, is tau's.
     let mut log = common::ops::OpLog::open(
-        &project.workspace_dir(DEFAULT_WORKSPACE).join(".jj/repo"),
+        &project.main_dir().to_owned().join(".jj/repo"),
     );
     common::ops::assert_all_taus(&mut log, "the sweep");
 }

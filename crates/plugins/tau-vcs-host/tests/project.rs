@@ -13,13 +13,7 @@ use std::path::Path;
 
 use hegel::{Generator as _, TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
-use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
-    Identity,
-    Link,
-    ProjectRepo,
-    UpdateFrom,
-};
+use tau_vcs_host::{Identity, Link, ProjectRepo, UpdateFrom};
 
 /// A Git repository with one commit on `main`, and that commit's id.
 fn source(dir: &Path) -> String {
@@ -77,7 +71,7 @@ fn a_clone_is_colocated_with_its_main_workspace() {
         Identity::default(),
     )
     .unwrap();
-    let main = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = project.main_dir().to_owned();
     assert!(main.join(".git").is_dir());
     assert!(main.join(".jj").is_dir());
     let branches = |prefix: &str| {
@@ -496,11 +490,11 @@ fn links_follow_their_change() {
     assert!(err.contains("divergent"), "{err}");
 }
 
-/// The default workspace is the repository's own checkout: a main chat
-/// works in it, it is not listed among the runs' workspaces, and it is
-/// never forgotten.
+/// The main chat's workspace is `tau-main`, in `main/`: it is not listed
+/// among the runs' workspaces, and it is never forgotten. A new project
+/// has no `default` workspace.
 #[test]
-fn the_default_workspace_is_the_repositorys_own() {
+fn the_main_chats_workspace_is_tau_main() {
     let src = tempfile::tempdir().unwrap();
     let head = source(src.path());
     let home = tempfile::tempdir().unwrap();
@@ -511,16 +505,22 @@ fn the_default_workspace_is_the_repositorys_own() {
         Identity::default(),
     )
     .unwrap();
-    let dir = project.workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE);
+    let dir = project.main_dir().to_owned();
     assert_eq!(dir, root.join("main"));
+    assert_eq!(project.main_workspace(), tau_vcs_host::MAIN_WORKSPACE);
+    assert_eq!(
+        project.workspace_head("default").unwrap(),
+        None,
+        "default is never tau's"
+    );
     let vcs = project
-        .add_workspace(tau_vcs_host::DEFAULT_WORKSPACE, &head)
+        .add_workspace(tau_vcs_host::MAIN_WORKSPACE, &head)
         .unwrap();
     assert_eq!(vcs.root(), dir);
     assert!(project.workspaces().unwrap().is_empty());
 
     project
-        .forget_workspace(tau_vcs_host::DEFAULT_WORKSPACE)
+        .forget_workspace(tau_vcs_host::MAIN_WORKSPACE)
         .unwrap();
     assert!(dir.join(".jj").is_dir(), "it stays");
     // The project still opens.

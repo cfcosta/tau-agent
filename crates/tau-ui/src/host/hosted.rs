@@ -340,7 +340,7 @@ impl Host {
             let project = repo.project.ready()?;
             Some(tau_ui_plugin::RepoLauncher {
                 launcher,
-                dir: project.workspace_dir(DEFAULT_WORKSPACE),
+                dir: project.main_dir().to_owned(),
             })
         });
         let hosted = Arc::new(hosted);

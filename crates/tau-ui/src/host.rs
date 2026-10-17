@@ -58,7 +58,6 @@ use tau_ui_plugin::{
 };
 use tau_vcs_host::{
     ChangeKind,
-    DEFAULT_WORKSPACE,
     FileDiff,
     Identity,
     Landing,
@@ -1345,13 +1344,15 @@ impl Host {
         // The workspace its last turn worked in, which still has its
         // files.
         let known = self.session_of(run).workspace;
-        // A main chat works in the repository's own checkout, the
-        // default workspace, not one of its own.
+        // A main chat works in its repository's main workspace, not one
+        // of its own.
         let main = self.is_main(run);
         // A run cut off in its first turn has no link yet: the workspace
         // it recorded as it started.
         let workspace = match known {
-            _ if main => Some(DEFAULT_WORKSPACE.to_owned()),
+            _ if main => {
+                Some(repo.project().await?.main_workspace().to_owned())
+            }
             Some(name) => Some(name),
             None => match self.link(run, None).await? {
                 Some((_, link)) => Some(link.workspace),

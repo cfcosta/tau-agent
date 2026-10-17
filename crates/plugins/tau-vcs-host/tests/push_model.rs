@@ -28,7 +28,6 @@ use std::{
 use hegel::{Generator as _, TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
 use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
     Identity,
     Link,
     ProjectRepo,
@@ -80,7 +79,7 @@ impl Origin {
         )
         .unwrap();
         let main = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
-            project.workspace_dir(DEFAULT_WORKSPACE),
+            project.main_dir().to_owned(),
             Identity::default(),
         ))
         .unwrap();
@@ -132,7 +131,7 @@ impl Origin {
     /// The main chat makes `edits` in its workspace and commits them on
     /// trunk. Returns the commit's change id, if it made one.
     fn main_commit(&self, edits: &Files, removed: &[String]) -> Option<String> {
-        let dir = self.project.workspace_dir(DEFAULT_WORKSPACE);
+        let dir = self.project.main_dir().to_owned();
         edit(&dir, edits, removed);
         let committed =
             block_on(self.main.commit_all("main's change", "main")).unwrap();
@@ -337,10 +336,7 @@ impl Machine {
 fn pushes_take_the_main_chats_commits_as_they_are(tc: TestCase) {
     let origin = Origin::new(&Files::from([("a.txt".into(), "a\n".into())]));
     let log = ops::OpLog::open(
-        &origin
-            .project
-            .workspace_dir(DEFAULT_WORKSPACE)
-            .join(".jj/repo"),
+        &origin.project.main_dir().to_owned().join(".jj/repo"),
     );
     let machine = Machine {
         origin,
@@ -468,7 +464,7 @@ fn a_replay_is_the_three_way_merge_of_each_commit(tc: TestCase) {
     let mains = tc.draw(gs::vecs(edits(paths.clone())).max_size(2));
     let mut main_files = base.clone();
     for edits in &mains {
-        write_edits(&origin.project.workspace_dir(DEFAULT_WORKSPACE), edits);
+        write_edits(origin.project.main_dir(), edits);
         block_on(origin.main.commit_all("main's change", "main")).unwrap();
         main_files = apply(&main_files, edits);
     }
@@ -522,8 +518,7 @@ fn a_replay_is_the_three_way_merge_of_each_commit(tc: TestCase) {
         (Ok(copies), None) => {
             tc.event_value("copies", copies.len() as f64);
             assert_eq!(copies.len(), want.len());
-            let store =
-                origin.project.workspace_dir(DEFAULT_WORKSPACE).join(".git");
+            let store = origin.project.main_dir().to_owned().join(".git");
             let mut previous = onto.clone();
             for ((copy, files), change) in copies.iter().zip(&want).zip(&stack)
             {
@@ -561,7 +556,7 @@ fn a_chat_apart_from_mains_unpushed_files_never_conflicts(tc: TestCase) {
     let origin = Origin::new(&base);
     let mut main_files = base.clone();
     for edits in tc.draw(gs::vecs(edits(ours.clone())).max_size(2)) {
-        write_edits(&origin.project.workspace_dir(DEFAULT_WORKSPACE), &edits);
+        write_edits(origin.project.main_dir(), &edits);
         block_on(origin.main.commit_all("main's change", "main")).unwrap();
         main_files = apply(&main_files, &edits);
     }

@@ -411,7 +411,7 @@ impl Host {
         let known = name.to_owned();
         let (exists, trunk, trunk_name) = project
             .run(move |project| {
-                let exists = known == DEFAULT_WORKSPACE
+                let exists = known == project.main_workspace()
                     || project.workspaces()?.contains(&known);
                 anyhow::Ok((exists, project.trunk()?, project.trunk_name()?))
             })

@@ -8,7 +8,7 @@
 )]
 
 use tau_testing::block_on;
-use tau_vcs_host::{DEFAULT_WORKSPACE, Identity, ProjectRepo, Vcs};
+use tau_vcs_host::{Identity, ProjectRepo, Vcs};
 
 fn files() -> Vec<(String, String)> {
     vec![
@@ -28,7 +28,7 @@ fn a_new_project_holds_its_first_files_on_main() {
     assert_eq!(project.trunk_name().unwrap(), "main");
     let trunk = project.trunk().unwrap();
     // The checkout has them, and nothing is left to commit.
-    let checkout = project.workspace_dir(DEFAULT_WORKSPACE);
+    let checkout = project.main_dir().to_owned();
     assert_eq!(
         std::fs::read_to_string(checkout.join("hello/lib/greet.luau")).unwrap(),
         "return 1\n"

@@ -235,6 +235,10 @@ pub enum VcsError {
     TransactionCommit(#[from] jj_lib::transaction::TransactionCommitError),
     #[error(transparent)]
     WorkspaceInit(#[from] jj_lib::workspace::WorkspaceInitError),
+    #[error("Cannot read or write the workspace store: {0}")]
+    WorkspaceStore(#[from] jj_lib::workspace_store::WorkspaceStoreError),
+    #[error(transparent)]
+    RenameWorkspace(#[from] jj_lib::view::RenameWorkspaceError),
     #[error(transparent)]
     Index(#[from] jj_lib::index::IndexError),
     #[error(transparent)]

@@ -47,15 +47,7 @@ use jj_lib::{
 };
 use pollster::block_on;
 
-use super::{
-    DEFAULT_WORKSPACE,
-    MAIN,
-    ProjectRepo,
-    StackChange,
-    commit,
-    import_options,
-    range,
-};
+use super::{ProjectRepo, StackChange, commit, import_options, range};
 use crate::{
     error::VcsError,
     revsets::{ConfigRevsets, remote_heads},
@@ -283,8 +275,8 @@ impl ProjectRepo {
     fn revsets(&self) -> Result<ConfigRevsets, VcsError> {
         ConfigRevsets::new(
             &self.inner.settings,
-            &self.inner.root.join(MAIN),
-            WorkspaceName::new(DEFAULT_WORKSPACE),
+            self.main_dir(),
+            WorkspaceName::new(self.main_workspace()),
         )
     }
 

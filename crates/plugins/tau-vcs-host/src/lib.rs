@@ -68,8 +68,9 @@ pub use ops::{
 };
 pub use plugin::VcsPlugin;
 pub use project::{
-    DEFAULT_WORKSPACE,
     FileDiff,
+    Layout,
+    MAIN_WORKSPACE,
     Project,
     ProjectRepo,
     Pushed,
@@ -78,6 +79,7 @@ pub use project::{
     StackChange,
     UpdateFrom,
     Updated,
+    main_workspace_name,
 };
 pub use run_workspace::{Link, RunWorkspace};
 pub use session::MAX_NEW_FILE_SIZE;

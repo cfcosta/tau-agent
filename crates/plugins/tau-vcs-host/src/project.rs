@@ -8,10 +8,13 @@
 //!   `jj git init --colocate` makes one (`main/.git` beside `main/.jj`),
 //!   so `jj` and `git` both work in it. Upstream's branches are
 //!   remote-tracking branches there (`<branch>@origin` to jj), and the
-//!   bookmarks go out as Git's branches (`crate::colocate`);
+//!   bookmarks go out as Git's branches (`crate::colocate`). It is the
+//!   main chat's workspace, named [`MAIN_WORKSPACE`]: jj's `default`
+//!   workspace is never tau's;
 //! - `runs/<name>/`: one jj workspace per run, each on its own commit.
 //!
-//! Runs never touch the user's own checkout. [`ProjectRepo`]'s functions
+//! [`Layout`] says where each is. Runs never touch the user's own
+//! checkout. [`ProjectRepo`]'s functions
 //! block; async code reaches them through [`Project`], which runs each
 //! job in `spawn_blocking`, one at a time per repository (ADR 0028).
 
@@ -36,7 +39,7 @@ use jj_lib::{
     git::{GitImportOptions, import_refs},
     matchers::EverythingMatcher,
     object_id::ObjectId as _,
-    ref_name::{RefName, RemoteName, WorkspaceNameBuf},
+    ref_name::{RefName, RemoteName, WorkspaceName, WorkspaceNameBuf},
     repo::{ReadonlyRepo, Repo as _},
     settings::UserSettings,
     workspace::Workspace,
@@ -56,15 +59,77 @@ mod push;
 
 pub use push::{Pushed, REMOTE, Remote};
 
-const MAIN: &str = "main";
-
 /// How many operations back [`ProjectRepo::landed`] looks for a landing.
 pub const LANDING_LOOKBACK: usize = 1000;
 
-/// jj's own workspace: the repository's checkout, under `main/`. A
-/// repository's main chat works in it; runs get workspaces of their own.
-pub const DEFAULT_WORKSPACE: &str = "default";
-const RUNS: &str = "runs";
+/// The name of the workspace a repository's main chat works in, unless
+/// the repository has a workspace of that name already
+/// ([`main_workspace_name`]). Runs get workspaces of their own.
+pub const MAIN_WORKSPACE: &str = "tau-main";
+
+/// The name for the main chat's workspace in a repository where `taken`
+/// says which names its workspaces have: [`MAIN_WORKSPACE`], else
+/// `tau-main-<n>` with the smallest `n` from 2 that is free.
+pub fn main_workspace_name(taken: impl Fn(&str) -> bool) -> String {
+    if !taken(MAIN_WORKSPACE) {
+        return MAIN_WORKSPACE.to_owned();
+    }
+    (2_u64..)
+        .map(|n| format!("{MAIN_WORKSPACE}-{n}"))
+        .find(|name| !taken(name))
+        .expect("some number is free")
+}
+
+/// Where a project keeps its repository and its workspaces
+/// (`docs/reference/vcs.md`, "Projects").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    /// The repository's directory: `.jj`, with the repository itself in
+    /// `.jj/repo`, beside its Git store, `.git`.
+    pub repo_root: PathBuf,
+    /// Where run workspaces are, each in the directory named after it.
+    pub runs_dir: PathBuf,
+    /// The main chat's workspace's name.
+    pub main_workspace: String,
+    /// The main chat's workspace's directory.
+    pub main_dir: PathBuf,
+}
+
+impl Layout {
+    /// A repository tau owns at `root`, as a clone, an import or
+    /// [`ProjectRepo::init`] makes it: `main/` is the repository and the
+    /// main chat's workspace, `main_workspace`, and `runs/` holds the
+    /// runs' workspaces.
+    pub fn of_clone(root: &Path, main_workspace: impl Into<String>) -> Self {
+        let main = root.join("main");
+        Self {
+            repo_root: main.clone(),
+            runs_dir: root.join("runs"),
+            main_workspace: main_workspace.into(),
+            main_dir: main,
+        }
+    }
+
+    /// The repository's `.jj/repo`.
+    pub fn repo_path(&self) -> PathBuf {
+        self.repo_root.join(".jj").join("repo")
+    }
+
+    /// The Git store, colocated with the repository.
+    pub fn git_dir(&self) -> PathBuf {
+        self.repo_root.join(".git")
+    }
+
+    /// Where workspace `name` is: the main chat's directory for its
+    /// workspace, else a run's under the runs directory, whether or not
+    /// it exists.
+    pub fn workspace_dir(&self, name: &str) -> PathBuf {
+        if name == self.main_workspace {
+            return self.main_dir.clone();
+        }
+        self.runs_dir.join(name)
+    }
+}
 
 /// A repository tau owns. Cheap to clone.
 #[derive(Clone)]
@@ -198,6 +263,16 @@ impl Project {
     pub fn workspace_dir(&self, name: &str) -> PathBuf {
         self.repo.workspace_dir(name)
     }
+
+    /// The name of the main chat's workspace.
+    pub fn main_workspace(&self) -> &str {
+        self.repo.main_workspace()
+    }
+
+    /// The main chat's workspace's directory.
+    pub fn main_dir(&self) -> &Path {
+        self.repo.main_dir()
+    }
 }
 
 /// The turn every handle on the repository at `root` shares.
@@ -221,6 +296,7 @@ fn turn_of(root: &Path) -> Arc<tokio::sync::Mutex<()>> {
 
 struct Inner {
     root: PathBuf,
+    layout: Layout,
     identity: Identity,
     settings: UserSettings,
 }
@@ -236,7 +312,10 @@ impl std::fmt::Debug for ProjectRepo {
 impl ProjectRepo {
     /// Whether `root` holds a project.
     pub fn exists(root: &Path) -> bool {
-        root.join(MAIN).join(".jj").is_dir()
+        Layout::of_clone(root, MAIN_WORKSPACE)
+            .repo_root
+            .join(".jj")
+            .is_dir()
     }
 
     /// Opens the project at `root`, or makes it there from the local
@@ -285,11 +364,12 @@ impl ProjectRepo {
             repo_path::RepoPathBuf,
         };
         let project = Self::new(root.into(), identity)?;
-        let main = project.inner.root.join(MAIN);
+        let main = project.inner.layout.main_dir.clone();
         std::fs::create_dir_all(&main).map_err(|source| VcsError::Create {
             path: main.clone(),
             source,
         })?;
+        let name = WorkspaceNameBuf::from(project.main_workspace());
         let (begun, repo) = crate::workspace_init::begin_repo(
             &project.inner.settings,
             &main,
@@ -297,6 +377,7 @@ impl ProjectRepo {
         )
         .map_err(VcsError::MakeRepo)?;
         crate::colocate::ignore_jj_dir(&main)?;
+        begun.list(&repo, &name).map_err(VcsError::MakeRepo)?;
         let lock = project.lock()?;
         let git = lock.git()?;
         let mut tx = repo.start_transaction();
@@ -331,15 +412,11 @@ impl ProjectRepo {
             RefName::new("main"),
             RefTarget::normal(first.id().clone()),
         );
-        let wc = block_on(
-            tx.repo_mut()
-                .check_out(WorkspaceNameBuf::from(DEFAULT_WORKSPACE), &first),
-        )?;
+        let wc = block_on(tx.repo_mut().check_out(name.clone(), &first))?;
         block_on(tx.repo_mut().rebase_descendants())?;
         let repo = crate::colocate::commit(tx, "make the repository", &git)?;
-        let mut workspace = begun
-            .finish(&repo, WorkspaceNameBuf::from(DEFAULT_WORKSPACE))
-            .map_err(VcsError::MakeRepo)?;
+        let mut workspace =
+            begun.finish(&repo, name).map_err(VcsError::MakeRepo)?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         Ok(project)
@@ -409,7 +486,15 @@ impl ProjectRepo {
         if !Self::exists(&root) {
             return Err(VcsError::NoProject(root));
         }
-        Self::new(root, identity)
+        let project = Self::new(root, identity)?;
+        if project.name_main_workspace()? {
+            // Opened again, to load the workspace by its new name.
+            return Self::new(
+                project.inner.root.clone(),
+                project.inner.identity.clone(),
+            );
+        }
+        Ok(project)
     }
 
     /// Makes a project at `root` (which must not hold one) from a copy of
@@ -484,7 +569,7 @@ impl ProjectRepo {
         fill: impl FnOnce(&Path) -> Result<String, VcsError>,
     ) -> Result<Self, VcsError> {
         let project = Self::new(root, identity)?;
-        let main = project.inner.root.join(MAIN);
+        let main = project.inner.layout.main_dir.clone();
         let made = (|| {
             // A `main/` with no jj repository is what a make that died
             // part way left.
@@ -521,12 +606,13 @@ impl ProjectRepo {
             )
             .map_err(VcsError::MakeRepo)?;
             crate::colocate::ignore_jj_dir(&main)?;
+            let name = WorkspaceNameBuf::from(project.main_workspace());
+            begun.list(&repo, &name).map_err(VcsError::MakeRepo)?;
             let lock = project.lock()?;
             let git = lock.git()?;
             let mut tx = repo.start_transaction();
             // The main workspace, on an empty commit on the root, as
             // jj-lib's own operation would add it.
-            let name = WorkspaceNameBuf::from(DEFAULT_WORKSPACE);
             block_on(
                 tx.repo_mut()
                     .check_out(name.clone(), &repo.store().root_commit()),
@@ -562,24 +648,31 @@ impl ProjectRepo {
         }
         crate::config::write_repo_trunk(
             &self.inner.identity.env,
-            &self.inner.root.join(MAIN).join(".jj").join("repo"),
+            &self.inner.layout.repo_path(),
             &symbol.to_string(),
         )
     }
 
     /// The project at `root`, with the jj config its main workspace
-    /// loads, which need not exist yet. Blocks.
+    /// loads, which need not exist yet. Its main workspace's name is the
+    /// one its working copy has, or [`MAIN_WORKSPACE`] for one to make.
+    /// Blocks.
     fn new(root: PathBuf, identity: Identity) -> Result<Self, VcsError> {
-        // The main workspace's repository is its own `.jj/repo`.
-        let main = root.join(MAIN);
+        let mut layout = Layout::of_clone(&root, MAIN_WORKSPACE);
         let settings = crate::config::settings(
             &identity,
-            &main,
-            &main.join(".jj").join("repo"),
+            &layout.main_dir,
+            &layout.repo_path(),
         )?;
+        if layout.main_dir.join(".jj").is_dir()
+            && let Ok(main) = load_workspace(&settings, &layout.main_dir)
+        {
+            layout.main_workspace = main.workspace_name().as_str().to_owned();
+        }
         Ok(Self {
             inner: Arc::new(Inner {
                 root,
+                layout,
                 identity,
                 settings,
             }),
@@ -679,9 +772,9 @@ impl ProjectRepo {
         target.strip_prefix(TRACKING).map(str::to_owned)
     }
 
-    /// The Git store, colocated with the main workspace.
+    /// The Git store, colocated with the repository.
     pub(crate) fn git_dir(&self) -> PathBuf {
-        self.inner.root.join(MAIN).join(".git")
+        self.inner.layout.git_dir()
     }
 
     fn git(&self) -> Result<gix::Repository, VcsError> {
@@ -698,12 +791,25 @@ impl ProjectRepo {
         &self.inner.root
     }
 
-    /// Where run `name`'s workspace is.
+    /// Where run `name`'s workspace is: the main chat's directory for
+    /// [`Self::main_workspace`].
     pub fn workspace_dir(&self, name: &str) -> PathBuf {
-        if name == DEFAULT_WORKSPACE {
-            return self.inner.root.join(MAIN);
-        }
-        self.inner.root.join(RUNS).join(name)
+        self.inner.layout.workspace_dir(name)
+    }
+
+    /// Where the project keeps its repository and workspaces.
+    pub fn layout(&self) -> &Layout {
+        &self.inner.layout
+    }
+
+    /// The name of the main chat's workspace.
+    pub fn main_workspace(&self) -> &str {
+        &self.inner.layout.main_workspace
+    }
+
+    /// The main chat's workspace's directory.
+    pub fn main_dir(&self) -> &Path {
+        &self.inner.layout.main_dir
     }
 
     /// The commit new runs start from: the source's default branch, as
@@ -1147,16 +1253,31 @@ impl ProjectRepo {
         Vcs::open_in_job(dir, self.inner.identity.clone())
     }
 
-    /// Removes run `name`'s workspace: jj forgets it, and its directory
-    /// is deleted. Its commits stay in the repository. The default
-    /// workspace is the repository itself, and stays.
+    /// Removes run `name`'s workspace, as `jj workspace remove` does: jj
+    /// forgets it, the workspace store drops it, and its directory is
+    /// deleted. Its commits stay in the repository. Only a run's
+    /// workspace goes: the main chat's stays, and so does one tau did
+    /// not make ([`Self::workspaces`]), and the directory of a workspace
+    /// the person put where a run's would be. A removal cut off part way
+    /// is finished by the next.
     pub fn forget_workspace(&self, name: &str) -> Result<(), VcsError> {
-        if name == DEFAULT_WORKSPACE {
+        if name == self.main_workspace() {
             return Ok(());
         }
         let lock = self.lock()?;
         let repo = self.load()?;
+        let store = repo.loader().workspace_store().clone();
+        let dir = self.workspace_dir(name);
         let name_buf = WorkspaceNameBuf::from(name);
+        let mut someone_elses = false;
+        for other in repo.view().wc_commit_ids().keys() {
+            let here = is_at(store.get_workspace_path(other)?, &dir);
+            if *other == name_buf && !here {
+                // The person's, wherever it is.
+                return Ok(());
+            }
+            someone_elses |= here && *other != name_buf;
+        }
         if repo.view().get_wc_commit_id(&name_buf).is_some() {
             let mut tx = repo.start_transaction();
             block_on(tx.repo_mut().remove_workspace(&name_buf))?;
@@ -1167,9 +1288,11 @@ impl ProjectRepo {
                 &lock.git()?,
             )?;
         }
+        if is_at(store.get_workspace_path(&name_buf)?, &dir) {
+            store.forget(&[&name_buf])?;
+        }
         drop(lock);
-        let dir = self.workspace_dir(name);
-        if dir.exists() {
+        if dir.exists() && !someone_elses {
             std::fs::remove_dir_all(&dir).map_err(|source| {
                 VcsError::Delete {
                     path: dir.clone(),
@@ -1201,46 +1324,133 @@ impl ProjectRepo {
         Ok(split_files(&text, changes))
     }
 
-    /// The names of the workspaces runs have, sorted.
+    /// The names of the workspaces runs have, sorted: those tau made,
+    /// each in its directory under the runs directory, as the workspace
+    /// store has it. The main chat's is not one, nor is any the person
+    /// made, wherever it is.
     pub fn workspaces(&self) -> Result<Vec<String>, VcsError> {
         let repo = self.load()?;
-        let mut names: Vec<String> = repo
-            .view()
-            .wc_commit_ids()
-            .keys()
-            .map(|name| name.as_str().to_owned())
-            .filter(|name| name != "default")
-            .collect();
+        let store = repo.loader().workspace_store();
+        let mut names = Vec::new();
+        for name in repo.view().wc_commit_ids().keys() {
+            let name = name.as_str();
+            if name != self.main_workspace()
+                && is_at(
+                    store.get_workspace_path(WorkspaceName::new(name))?,
+                    &self.workspace_dir(name),
+                )
+            {
+                names.push(name.to_owned());
+            }
+        }
         names.sort();
         Ok(names)
     }
 
+    /// Makes the main chat's workspace tau's own in a project made
+    /// before it had one, where it was jj's `default` workspace: renames
+    /// it to [`main_workspace_name`]'s, as jj-cli 0.46.0's `jj workspace
+    /// rename` does, in the workspace store, the view (one operation,
+    /// `tau: name the main chat's workspace`) and its working copy,
+    /// under the working copy's lock. Its working-copy commit, its files
+    /// and Git's `HEAD` and index in `main/` stay as they are, and so
+    /// does `.jj/tau-moved-onto`. Each step is skipped once done, so a
+    /// rename cut off part way is finished by the next open; it applies
+    /// while the main directory's working copy is `default`'s. Returns
+    /// whether the name changed since `self` read it, by this rename or
+    /// another process's.
+    fn name_main_workspace(&self) -> Result<bool, VcsError> {
+        let old = WorkspaceName::DEFAULT;
+        if self.main_workspace() != old.as_str() {
+            return Ok(false);
+        }
+        let lock = self.lock()?;
+        let git = lock.git()?;
+        // Read again under the lock: another process may have done it.
+        let mut main = self.main()?;
+        if main.workspace_name() != old {
+            return Ok(true);
+        }
+        let repo = block_on(main.repo_loader().load_at_head())?;
+        let store = repo.loader().workspace_store().clone();
+        let dir = self.main_dir().to_owned();
+        let view = repo.view();
+        let name = if view.get_wc_commit_id(old).is_some() {
+            WorkspaceNameBuf::from(main_workspace_name(|name| {
+                view.get_wc_commit_id(WorkspaceName::new(name)).is_some()
+            }))
+        } else {
+            // The view has the new name already: the store gave it to
+            // this directory first.
+            let mut named = None;
+            for name in view.wc_commit_ids().keys() {
+                if is_at(store.get_workspace_path(name)?, &dir) {
+                    named = Some(name.clone());
+                }
+            }
+            named.ok_or(VcsError::NoWorkingCopy)?
+        };
+        let mut locked = block_on(main.start_working_copy_mutation())?;
+        if !is_at(store.get_workspace_path(&name)?, &dir) {
+            if store.get_workspace_path(old)?.is_some() {
+                store.rename(old, &name)?;
+            } else {
+                store.add(&name, &dir)?;
+            }
+        }
+        let op = if view.get_wc_commit_id(old).is_some() {
+            let mut tx = repo.start_transaction();
+            tx.repo_mut().rename_workspace(old, name.clone())?;
+            crate::colocate::commit(tx, "name the main chat's workspace", &git)?
+                .op_id()
+                .clone()
+        } else {
+            locked.locked_wc().old_operation_id().clone()
+        };
+        locked.locked_wc().rename_workspace(name);
+        block_on(locked.finish(op))?;
+        Ok(true)
+    }
+
     fn main(&self) -> Result<Workspace, VcsError> {
-        Workspace::load(
-            &self.inner.settings,
-            &self.inner.root.join(MAIN),
-            &default_backend_factories(),
-            &default_working_copy_factories(),
+        load_workspace(&self.inner.settings, self.main_dir()).map_err(
+            |source| VcsError::ProjectLoad {
+                root: self.inner.root.clone(),
+                source,
+            },
         )
-        .map_err(|source| VcsError::ProjectLoad {
-            root: self.inner.root.clone(),
-            source,
-        })
     }
 
     /// The repository's lock, which every write takes
     /// (`crate::lock`). Reads load the repository at its newest
     /// operation and need none.
     fn lock(&self) -> Result<crate::lock::RepoLock, VcsError> {
-        crate::lock::lock_repo(
-            &self.inner.root.join(MAIN).join(".jj").join("repo"),
-        )
+        crate::lock::lock_repo(&self.inner.layout.repo_path())
     }
 
     fn load(&self) -> Result<Arc<ReadonlyRepo>, VcsError> {
         let main = self.main()?;
         Ok(block_on(main.repo_loader().load_at_head())?)
     }
+}
+
+/// The workspace at `dir`, loaded with `settings`.
+fn load_workspace(
+    settings: &UserSettings,
+    dir: &Path,
+) -> Result<Workspace, jj_lib::workspace::WorkspaceLoadError> {
+    Workspace::load(
+        settings,
+        dir,
+        &default_backend_factories(),
+        &default_working_copy_factories(),
+    )
+}
+
+/// Whether `recorded`, a workspace's path as the workspace store has it,
+/// is `dir`.
+fn is_at(recorded: Option<PathBuf>, dir: &Path) -> bool {
+    recorded.is_some_and(|path| crate::colocate::same_dir(&path, dir))
 }
 
 /// Where [`ProjectRepo::update`] brings changes from.

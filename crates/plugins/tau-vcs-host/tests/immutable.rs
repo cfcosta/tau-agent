@@ -16,7 +16,7 @@ use jj_lib::{
         default_working_copy_factories,
     },
     op_store::RefTarget,
-    ref_name::{RefName, WorkspaceName},
+    ref_name::RefName,
     settings::UserSettings,
     workspace::Workspace,
 };
@@ -44,7 +44,7 @@ fn tag_working_copy(dir: &Path) {
     let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
     let wc = repo
         .view()
-        .get_wc_commit_id(WorkspaceName::DEFAULT)
+        .get_wc_commit_id(workspace.workspace_name())
         .unwrap()
         .clone();
     let mut tx = repo.start_transaction();

@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::{DEFAULT_WORKSPACE, ProjectRepo, error::VcsError, run_workspace};
+use crate::{ProjectRepo, error::VcsError, run_workspace};
 
 /// Where a run stands, as far as its workspaces and bookmark go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,11 +78,12 @@ impl Sweep {
 /// The prefix of a run's bookmark, `tau/<run>`.
 pub const RUN_BOOKMARK_PREFIX: &str = "tau/";
 
-/// What to sweep from a project that holds `workspaces` and
-/// `bookmarks`, given the runs that may own them:
+/// What to sweep from a project that holds the run workspaces
+/// `workspaces` ([`ProjectRepo::workspaces`]: never the main chat's, nor
+/// one the person made) and `bookmarks`, given the runs that may own
+/// them:
 ///
-/// - a workspace goes unless a kept run worked in it; the default
-///   workspace, the repository's own checkout, never goes;
+/// - a workspace goes unless a kept run worked in it;
 /// - a run's bookmark (`tau/<run>`) goes unless that run is kept; other
 ///   bookmarks are not runs' and stay;
 /// - a discarded run's own commits go first, from its bookmark and the
@@ -107,7 +108,6 @@ pub fn plan(
         .collect();
     let forget: Vec<String> = workspaces
         .iter()
-        .filter(|name| *name != DEFAULT_WORKSPACE)
         .filter(|name| !kept_workspaces.contains(name.as_str()))
         .cloned()
         .collect::<BTreeSet<_>>()
@@ -234,13 +234,12 @@ mod tests {
                     .print_as_debug(),
                 ),
                 workspaces: names(tc, &WORKSPACES, 2),
-                keep: Keep::Workspace(DEFAULT_WORKSPACE.to_owned()),
+                keep: Keep::Workspace(crate::MAIN_WORKSPACE.to_owned()),
             })
             .collect()
     }
 
-    const WORKSPACES: [&str; 6] =
-        ["default", "w1", "w2", "w3", "w1-sub-0", "w4"];
+    const WORKSPACES: [&str; 5] = ["w1", "w2", "w3", "w1-sub-0", "w4"];
     const BOOKMARKS: [&str; 6] =
         ["tau/a", "tau/b", "tau/c", "tau/d", "tau/gone", "main"];
 
@@ -265,7 +264,7 @@ mod tests {
     }
 
     /// A sweep keeps everything a kept run has, takes everything else a
-    /// run's (the default workspace and other bookmarks stay), abandons
+    /// run's (other bookmarks stay), abandons
     /// only discarded runs' commits, and only from what goes; and once
     /// done, sweeping again finds nothing.
     #[hegel::test(test_cases = 500)]
@@ -294,8 +293,7 @@ mod tests {
         // What stays has a kept owner, or is not a run's.
         for name in &left_workspaces {
             assert!(
-                name == DEFAULT_WORKSPACE
-                    || kept.iter().any(|owner| owner.workspaces.contains(name)),
+                kept.iter().any(|owner| owner.workspaces.contains(name)),
                 "{name} stayed"
             );
         }
@@ -308,11 +306,10 @@ mod tests {
                 "{name} stayed"
             );
         }
-        // Only what the project has goes, never the default workspace
-        // nor a bookmark that is not a run's.
+        // Only what the project has goes, never a bookmark that is not a
+        // run's.
         assert!(sweep.forget.iter().all(|name| workspaces.contains(name)));
         assert!(sweep.remove.iter().all(|name| bookmarks.contains(name)));
-        assert!(!sweep.forget.iter().any(|name| name == DEFAULT_WORKSPACE));
         assert!(
             sweep
                 .remove

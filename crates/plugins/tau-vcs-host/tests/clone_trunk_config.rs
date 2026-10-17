@@ -39,14 +39,7 @@ use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng as _};
 use serde_json::json;
 use tau_agent::{plugin::Plugin as _, tool::ToolCtx};
 use tau_testing::{block_on_io as block_on, git::git};
-use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
-    Identity,
-    JjEnv,
-    ProjectRepo,
-    Vcs,
-    VcsPlugin,
-};
+use tau_vcs_host::{Identity, JjEnv, ProjectRepo, Vcs, VcsPlugin};
 
 /// What both jj and tau seed their config ids with here, so a config
 /// written before the clone is at the path the clone's would be.
@@ -344,7 +337,7 @@ fn check(world: &World) {
     let project =
         ProjectRepo::clone(&url, None, root.join("p"), person.identity())
             .unwrap();
-    let main = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main = project.main_dir().to_owned();
     let repo = main.join(".jj").join("repo");
     let tools = VcsPlugin::new(
         block_on(Vcs::open(main.clone(), person.identity())).unwrap(),

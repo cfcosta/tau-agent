@@ -58,8 +58,8 @@ use tau_agent::{
 use tau_ai::message::InputBlock;
 use tau_testing::{block_on, git::git};
 use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
     Identity,
+    MAIN_WORKSPACE,
     ProjectRepo,
     UpdateFrom,
     Vcs,
@@ -108,7 +108,7 @@ impl Workspace {
 fn project() -> (tempfile::TempDir, ProjectRepo, Workspace) {
     let home = tempfile::tempdir().unwrap();
     let project = common::project(home.path());
-    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let dir = project.main_dir().to_owned();
     let vcs = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
         &dir,
         Identity::default(),
@@ -377,7 +377,7 @@ impl Machine {
     fn new() -> Self {
         let (home, project, main) = project();
         let log = common::ops::OpLog::open(
-            &project.workspace_dir(DEFAULT_WORKSPACE).join(".jj/repo"),
+            &project.main_dir().to_owned().join(".jj/repo"),
         );
         let mut upstream = Tree::new();
         set(&mut upstream, "a.txt", Term::resolved(Some("one\n")));
@@ -386,7 +386,7 @@ impl Machine {
         let idle =
             Workspace::new(project.add_workspace("idle", &trunk).unwrap());
         // The main chat's first commit, which the chat starts on.
-        let main_dir = project.workspace_dir(DEFAULT_WORKSPACE);
+        let main_dir = project.main_dir().to_owned();
         let first =
             write_edits(&main_dir, &upstream, &[("b.txt", Some("one\n"))]);
         let (_, committed) =
@@ -968,7 +968,7 @@ impl Machine {
             conflicts(head),
             "the catch-up's conflicts"
         );
-        check_files(&self.dir(DEFAULT_WORKSPACE), head, "the main chat");
+        check_files(&self.dir(MAIN_WORKSPACE), head, "the main chat");
         // The chat's files stay until its next tool.
         check_files(&dir, &self.wc.tree, "the stale chat");
     }
@@ -976,7 +976,7 @@ impl Machine {
     /// The main chat commits work of its own on trunk.
     fn do_main_commit(&mut self, tc: &TestCase) {
         let edits = tc.draw(edits(1));
-        let dir = self.dir(DEFAULT_WORKSPACE);
+        let dir = self.dir(MAIN_WORKSPACE);
         let head = self.main_chain.last().unwrap().0.clone();
         let tree = write_edits(&dir, &head, &edits);
         let (_, details) = self.main.ok(
@@ -1372,11 +1372,7 @@ fn a_chat_on_main() -> (
 ) {
     let (home, project, main) = project();
     let name = project.trunk_name().unwrap();
-    std::fs::write(
-        project.workspace_dir(DEFAULT_WORKSPACE).join("b.txt"),
-        "b\n",
-    )
-    .unwrap();
+    std::fs::write(project.main_dir().to_owned().join("b.txt"), "b\n").unwrap();
     let (_, committed) = main.ok("vcs_commit", json!({ "message": "Add b" }));
     block_on(main.vcs.end_turn(name, None)).unwrap();
     let head = committed["committed"]["commit_id"].as_str().unwrap();
@@ -1455,7 +1451,7 @@ fn a_turns_paths_leave_out_what_landed() {
     let (_, committed) = chat.ok("vcs_commit", json!({ "message": "Add d" }));
     let head = committed["committed"]["commit_id"].as_str().unwrap();
     block_on(main.vcs.land(head, name.clone(), true)).unwrap();
-    let main_dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let main_dir = project.main_dir().to_owned();
     std::fs::write(main_dir.join("c.txt"), "c\n").unwrap();
     let second =
         block_on(main.vcs.end_turn(name, Some(first.commit_id))).unwrap();
@@ -1587,7 +1583,7 @@ fn a_catch_up_from_another_process_leaves_the_chat_stale() {
     // Meanwhile the main chat's catch-up, from the same operation, as
     // `Vcs::move_onto` makes it.
     let id = |hex: &str| CommitId::try_from_hex(hex).unwrap();
-    let head = project.workspace_head(DEFAULT_WORKSPACE).unwrap().unwrap();
+    let head = project.workspace_head(MAIN_WORKSPACE).unwrap().unwrap();
     let head = project.parent_of(&head).unwrap().unwrap();
     let trunk = project.trunk().unwrap();
     let mut tx = repo.start_transaction();

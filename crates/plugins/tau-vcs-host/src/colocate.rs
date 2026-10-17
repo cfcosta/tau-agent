@@ -4,7 +4,8 @@
 //! leaves that to its caller, so every operation tau writes goes
 //! through [`commit`], which does the same: bookmarks and tags go out
 //! as Git's branches and tags, and Git's `HEAD` and index follow the
-//! main workspace's working copy, so `git` in `main/` sees what jj does.
+//! working copy of the workspace in the Git store's working tree, the
+//! main chat's, so `git` in `main/` sees what jj does.
 //! It also tags the operation as tau's ([`crate::operations`]).
 
 #![allow(
@@ -12,11 +13,15 @@
     reason = "runs only inside a job in spawn_blocking (ADR 0028)"
 )]
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use jj_lib::{
+    backend::CommitId,
     git::{export_refs, get_git_backend, reset_head},
-    ref_name::WorkspaceName,
+    ref_name::{WorkspaceName, WorkspaceNameBuf},
     repo::{ReadonlyRepo, Repo as _},
     transaction::Transaction,
 };
@@ -49,10 +54,10 @@ pub(crate) fn commit(
 }
 
 /// Exports the bookmarks and tags to the Git store, and, when the store
-/// has a working tree and the main workspace's working copy changed,
-/// points Git's `HEAD` at its parent and resets the index to it. A ref
-/// Git refuses (a conflicted bookmark, a name Git cannot take) stays
-/// out, as the jj CLI leaves it.
+/// has a working tree and the working copy of the workspace there
+/// moved, points Git's `HEAD` at its parent and resets the index to it.
+/// A ref Git refuses (a conflicted bookmark, a name Git cannot take)
+/// stays out, as the jj CLI leaves it.
 fn sync_git(tx: &mut Transaction) -> Result<(), VcsError> {
     let Ok(backend) = get_git_backend(tx.repo().store()) else {
         return Ok(());
@@ -62,14 +67,59 @@ fn sync_git(tx: &mut Transaction) -> Result<(), VcsError> {
     let Some(workdir) = workdir else {
         return Ok(());
     };
-    let main = WorkspaceName::DEFAULT;
-    let Some(wc) = tx.repo().view().get_wc_commit_id(main).cloned() else {
+    let Some(name) = workspace_at(tx, &workdir)? else {
         return Ok(());
     };
-    if tx.base_repo().view().get_wc_commit_id(main) == Some(&wc) {
+    let Some(wc) = tx.repo().view().get_wc_commit_id(&name).cloned() else {
+        return Ok(());
+    };
+    if !moved(tx, &name, &wc) {
         return Ok(());
     }
     let wc = tx.repo().store().get_commit(&wc)?;
-    block_on(reset_head(tx.repo_mut(), main, &workdir, &wc))
+    block_on(reset_head(tx.repo_mut(), &name, &workdir, &wc))
         .map_err(VcsError::ResetHead)
+}
+
+/// The workspace of `tx`'s view whose directory is `dir`, as the
+/// repository's workspace store has it: in a project, the main chat's
+/// is the Git store's working tree.
+fn workspace_at(
+    tx: &Transaction,
+    dir: &Path,
+) -> Result<Option<WorkspaceNameBuf>, VcsError> {
+    let store = tx.base_repo().loader().workspace_store();
+    for name in tx.repo().view().wc_commit_ids().keys() {
+        if let Some(path) = store.get_workspace_path(name)?
+            && same_dir(&path, dir)
+        {
+            return Ok(Some(name.clone()));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether workspace `name`'s working copy, `wc` now, is not the one it
+/// had before `tx`. A workspace renamed in `tx` keeps its commit under
+/// its new name, and did not move: the main chat's, when tau names it
+/// (`crate::project`).
+fn moved(tx: &Transaction, name: &WorkspaceName, wc: &CommitId) -> bool {
+    let before = tx.base_repo().view();
+    if let Some(was) = before.get_wc_commit_id(name) {
+        return was != wc;
+    }
+    let now = tx.repo().view();
+    !before
+        .wc_commit_ids()
+        .iter()
+        .any(|(old, was)| was == wc && now.get_wc_commit_id(old).is_none())
+}
+
+/// Whether `a` and `b` are the same directory, by their canonical paths
+/// when both exist.
+pub(crate) fn same_dir(a: &Path, b: &Path) -> bool {
+    let canonical = |path: &Path| -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+    };
+    a == b || canonical(a) == canonical(b)
 }

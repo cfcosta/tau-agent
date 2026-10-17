@@ -27,14 +27,7 @@ use std::{
 
 use hegel::{Generator as _, TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
-use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
-    Identity,
-    Link,
-    ProjectRepo,
-    UpdateFrom,
-    Vcs,
-};
+use tau_vcs_host::{Identity, Link, ProjectRepo, UpdateFrom, Vcs};
 
 const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
 const TAGS: [&str; 2] = ["v1", "v2"];
@@ -268,7 +261,7 @@ impl Machine {
             ),
         }
         .unwrap();
-        let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+        let dir = project.main_dir().to_owned();
         let main = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
             &dir,
             Identity::default(),
@@ -434,7 +427,7 @@ impl Machine {
 
     /// The project's Git store, colocated with its main workspace.
     fn store(&self) -> PathBuf {
-        self.project.workspace_dir(DEFAULT_WORKSPACE).join(".git")
+        self.project.main_dir().to_owned().join(".git")
     }
 
     /// Whether upstream dropped what the main chat stands on: the trunk
@@ -792,7 +785,7 @@ impl Machine {
         self.do_catch_up(&tc);
         let name = self.project.trunk_name().unwrap();
         let file = format!("m{}.txt", self.own.len());
-        let dir = self.project.workspace_dir(DEFAULT_WORKSPACE);
+        let dir = self.project.main_dir().to_owned();
         std::fs::write(dir.join(&file), "ours\n").unwrap();
         let before = self.trunk.clone();
         let committed =
@@ -885,7 +878,7 @@ fn caught_up() -> (tempfile::TempDir, PathBuf, ProjectRepo, Vcs) {
         Identity::default(),
     )
     .unwrap();
-    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let dir = project.main_dir().to_owned();
     let main = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
         &dir,
         Identity::default(),
@@ -925,7 +918,7 @@ fn a_catch_up_leaves_what_upstream_dropped() {
 #[test]
 fn a_catch_up_onto_an_amend_moves_only_the_main_chats_commits() {
     let (_home, work, project, main) = caught_up();
-    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let dir = project.main_dir().to_owned();
     std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
     let name = project.trunk_name().unwrap();
     let ours = block_on(main.commit_all("ours", name.clone())).unwrap();
@@ -956,7 +949,7 @@ fn a_catch_up_onto_an_amend_moves_only_the_main_chats_commits() {
 #[test]
 fn a_bookmark_the_main_chat_moved_takes_upstreams_side() {
     let (_home, work, project, main) = caught_up();
-    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let dir = project.main_dir().to_owned();
     std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
     let ours = block_on(main.commit_all("ours", "main")).unwrap();
 
@@ -1070,7 +1063,7 @@ fn a_bookmark_upstream_moved_under_the_main_chats_commit_takes_upstreams_side()
 {
     let (_home, work, project, main) = caught_up();
     let name = project.trunk_name().unwrap();
-    let dir = project.workspace_dir(DEFAULT_WORKSPACE);
+    let dir = project.main_dir().to_owned();
     std::fs::write(dir.join("ours.txt"), "ours\n").unwrap();
     block_on(main.commit_all("ours", name.clone())).unwrap();
 

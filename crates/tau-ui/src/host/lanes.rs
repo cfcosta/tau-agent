@@ -200,9 +200,9 @@ impl Host {
         main: &RunId,
     ) -> anyhow::Result<Vec<String>> {
         let project = self.slot_of_run(main).await?.project().await?;
-        self.catch_up(&project, DEFAULT_WORKSPACE).await?;
+        self.catch_up(&project, project.main_workspace()).await?;
         let vcs = tau_vcs_host::Vcs::open(
-            project.workspace_dir(DEFAULT_WORKSPACE),
+            project.main_dir().to_owned(),
             self.identity(),
         )
         .await?;

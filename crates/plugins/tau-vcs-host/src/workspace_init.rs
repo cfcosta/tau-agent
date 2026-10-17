@@ -25,7 +25,7 @@ use jj_lib::{
     default_backend_factories::default_working_copy_factory,
     file_util::{self, IoResultExt as _, PathError},
     git_backend::GitBackend,
-    ref_name::WorkspaceNameBuf,
+    ref_name::{WorkspaceName, WorkspaceNameBuf},
     repo::{ReadonlyRepo, Repo as _, RepoInitError},
     settings::UserSettings,
     signing_factory::signer_from_settings,
@@ -168,6 +168,21 @@ pub(crate) fn begin_workspace(
 }
 
 impl Begun {
+    /// Lists the workspace `name` in `repo`'s workspace store before the
+    /// operation that adds it is written, so that the operation's Git
+    /// sync finds the workspace in the Git store's working tree
+    /// (`crate::colocate`). [`Self::finish`] lists it again.
+    pub(crate) fn list(
+        &self,
+        repo: &ReadonlyRepo,
+        name: &WorkspaceName,
+    ) -> Result<(), WorkspaceInitError> {
+        let root = std::fs::canonicalize(&self.workspace_root)
+            .context(&self.workspace_root)?;
+        repo.loader().workspace_store().add(name, &root)?;
+        Ok(())
+    }
+
     /// The workspace `name`, whose working-copy commit `repo`'s
     /// operation added: its working copy starts at that operation with
     /// no files, and the workspace store lists it. The caller checks the

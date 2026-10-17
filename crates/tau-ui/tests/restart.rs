@@ -199,11 +199,7 @@ fn a_restart_sweeps_what_no_open_chat_owns() {
     assert!(kept_dir.join("kept.txt").exists());
     assert!(!cut_dir.exists());
     assert!(!project.workspace_dir("stray-1").exists());
-    assert!(
-        project
-            .workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE)
-            .exists()
-    );
+    assert!(project.main_dir().to_owned().exists());
     assert_eq!(
         project.blocking().bookmarks("tau/").unwrap(),
         [format!("tau/{}", kept.0)]
@@ -351,10 +347,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
             .file_at(&trunk, "a.txt")
             .unwrap()
             .map(|(bytes, _)| bytes),
-        in_checkout: project
-            .workspace_dir(tau_vcs_host::DEFAULT_WORKSPACE)
-            .join("a.txt")
-            .exists(),
+        in_checkout: project.main_dir().to_owned().join("a.txt").exists(),
         workspaces: project.blocking().workspaces().unwrap().len(),
         run_bookmarks: project.blocking().bookmarks("tau/").unwrap().len(),
         cards: main_view

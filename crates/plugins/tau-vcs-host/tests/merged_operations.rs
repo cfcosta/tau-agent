@@ -21,13 +21,7 @@ use jj_lib::{
     repo::{ReadonlyRepo, Repo as _},
 };
 use pollster::block_on;
-use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
-    Identity,
-    ProjectRepo,
-    TAU_OP_ATTRIBUTE,
-    is_taus,
-};
+use tau_vcs_host::{Identity, ProjectRepo, TAU_OP_ATTRIBUTE, is_taus};
 
 /// The repository at its head, loaded as another program loads it,
 /// which merges a forked log.
@@ -50,7 +44,7 @@ fn load(project: &ProjectRepo) -> Arc<ReadonlyRepo> {
         UserSettings::from_config_and_home_dir(config, None).unwrap();
     let workspace = Workspace::load(
         &settings,
-        &project.workspace_dir(DEFAULT_WORKSPACE),
+        project.main_dir(),
         &default_backend_factories(),
         &default_working_copy_factories(),
     )

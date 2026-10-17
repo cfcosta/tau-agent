@@ -56,9 +56,9 @@ use common::merge::*;
 use hegel::{TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
 use tau_vcs_host::{
-    DEFAULT_WORKSPACE,
     Identity,
     Link,
+    MAIN_WORKSPACE,
     ProjectRepo,
     UpdateFrom,
     Vcs,
@@ -96,7 +96,7 @@ struct Linked {
 }
 
 struct Run {
-    /// Its workspace: `default` for the main chat.
+    /// Its workspace: `tau-main` for the main chat.
     name: String,
     /// The bookmark its commits move: trunk's for the main chat.
     bookmark: String,
@@ -165,7 +165,7 @@ impl Machine {
         set(&mut tree, "a.txt", Term::resolved(Some("one\n")));
         set(&mut tree, "dir/b.txt", Term::resolved(Some("two\n")));
         let log = common::ops::OpLog::open(
-            &project.workspace_dir(DEFAULT_WORKSPACE).join(".jj/repo"),
+            &project.main_dir().to_owned().join(".jj/repo"),
         );
         let mut machine = Self {
             home,
@@ -186,7 +186,7 @@ impl Machine {
         // on trunk (ADR 0015). The workspace starts empty, on jj's root
         // commit: the host's catch-up before its first turn moves it onto
         // trunk.
-        let dir = machine.project.workspace_dir(DEFAULT_WORKSPACE);
+        let dir = machine.project.main_dir().to_owned();
         let vcs = tau_testing::block_on_io(tau_vcs_host::Vcs::open(
             &dir,
             Identity::default(),
@@ -198,7 +198,7 @@ impl Machine {
         assert_eq!(moved.head, trunk);
         let tree = machine.commits[0].tree.clone();
         machine.runs.push(Run {
-            name: DEFAULT_WORKSPACE.to_owned(),
+            name: MAIN_WORKSPACE.to_owned(),
             bookmark: machine.project.trunk_name().unwrap(),
             parent: None,
             head: 0,
