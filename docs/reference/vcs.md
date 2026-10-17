@@ -611,6 +611,64 @@ the user's checkout.
   drops it from the view and deletes the directory; its commits stay.
 - These calls block. Call them off the async executor.
 
+## Inspecting a folder
+
+Before a folder on this computer becomes a local repository
+(ADR 0043), `local::inspect(path, identity)` says what tau found there,
+or why it refuses the folder (`local::Refusal`) and what to add
+instead. It only reads, with gix, and with jj-lib for a jj repository:
+nothing in the folder changes, not even Git's index, which `git
+status` refreshes. Git's config is the repository's own, plus the
+person's excludes file found as a snapshot finds it; the rest of the
+person's Git config is not read. `inspect_blocking` is the same call
+for a job that already runs off the executor.
+
+The checks run in this order, and the first that holds is the answer:
+
+| Refusal                         | When                                                                                                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `Missing`, `NotAFolder`         | The path is not there, or is a file.                                                                                               |
+| `Unreadable { path, reason }`   | The folder, its repository or its jj config could not be read.                                                                     |
+| `NotARepository`                | No Git or jj repository holds the folder. tau does not offer to make one.                                                          |
+| `Bare`                          | The folder is a bare repository, or inside one.                                                                                    |
+| `Worktree { main }`             | A linked Git worktree, or a jj workspace other than the repository's own; `main` is the main checkout (none when it is bare).      |
+| `Inside { root }`               | A folder inside a repository, `.git` included; `root` is the repository's folder.                                                  |
+| `JjNotColocated { root, hint }` | A jj repository whose Git store is not checked out at its root; `hint` is `jj git colocation enable`.                              |
+| `Lfs { found_in }`              | `filter=lfs` in a `.gitattributes` of `HEAD` or the index, in the root's `.gitattributes` or `info/attributes`, or a `.lfsconfig`. |
+| `Submodules { paths }`          | Gitlinks in `HEAD` or the index, or a `.gitmodules` in the working tree or `HEAD`.                                                 |
+
+The nearer of the folder's `.jj` and its Git repository decides which
+repository it is in, as each tool finds its own: the nearest ancestor
+with a `.jj`, and Git's discovery. Whether one is listed already is the
+host's check.
+
+Otherwise it returns `Found`:
+
+- `kind`: `Git`, or `Jj` for a jj repository colocated with Git (its
+  Git store checked out at its root, as `jj git colocation status`
+  says).
+- `root`: the repository's folder, symbolic links resolved, as `git
+  rev-parse --show-toplevel` prints it.
+- `branch`: the checked-out branch, one with no commits yet included;
+  none when `HEAD` is detached, as it is in a colocated jj repository.
+- `origin`: `remote.origin.url`, and the GitHub repository it names
+  (`owner/name`) when it is an HTTPS, HTTP, `git://` or SSH URL, or
+  `user@host:owner/name`, on `github.com` (`www.` and `ssh.` too), with
+  or without `.git`.
+- `commits`: how many commits `HEAD` reaches.
+- `uncommitted`: the paths `git status --porcelain` lists, renames off:
+  changed and staged files, and untracked ones, an untracked folder
+  (one holding nothing tracked) as one path ending in `/`. Ignored
+  files are left out. gix's own collapsing takes a folder whose
+  tracked files are all deleted for untracked, which git does not, so
+  tau collapses the untracked files itself.
+- `trunk`: the branch `origin/HEAD` names, when it exists; else, in a
+  jj repository, the first bookmark by name (local, or on a remote
+  other than Git) at the commit `trunk()` names, when that is not the
+  root; else the checked-out branch. jj's view is read at its one
+  operation head; with several, jj's `trunk()` is skipped, since
+  merging them would write.
+
 ## Runs and turns
 
 `RunWorkspace` is a plugin for one run: build one per run, point the
