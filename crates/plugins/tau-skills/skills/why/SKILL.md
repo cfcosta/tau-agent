@@ -43,7 +43,7 @@ Default to the full investigation. The goal is a complete map of what was search
 - each MCP server: `references/mcp-source.md`
 - also `references/incident-postmortem.md` when the target code looks defensive (null checks, retries, timeouts, rate limits, feature flags, guards, out-of-memory handling).
 
-**On the main chat**, spawn all investigators with `spawn` in one turn, then end the turn. Every brief keeps the template's "Do not edit files. Commit nothing." line. `spawn` refuses while `@` holds changes: commit a finished unit first, or investigate yourself as below. Reports arrive in later turns. Synthesize only when every investigator has reported or dropped out.
+**On the main chat**, spawn all investigators in one turn with `spawn {task, fresh: true, land: false}`, then end the turn. Fresh, so an investigator gathers evidence without the person's guessed answer or your leaning; the filled template holds everything it needs. `land: false`, so nothing it touches lands. Every brief keeps the template's "Do not edit files. Commit nothing." line. `spawn` refuses while `@` holds changes: commit a finished unit first, or investigate yourself as below. Reports arrive in later turns. Synthesize only when every investigator has reported or dropped out.
 
 **On a chat or a sub-agent**, investigate each source yourself, one after another. Write each source's report in the template's output sections before you start the next. Use `codemode` for bulk queries.
 

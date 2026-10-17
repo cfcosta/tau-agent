@@ -1,6 +1,6 @@
 # Synthesizer prompt
 
-Follow this when you write the answer from the investigators' reports. You write it yourself: a spawned synthesizer would fork your conversation and bring no fresh eyes.
+Follow this when you write the answer from the investigators' reports. You write it yourself: you already hold every report and the anchor, and a spawned synthesizer would only get them second-hand in its task.
 
 ---
 

@@ -21,7 +21,7 @@ Reversible choices (which open item to take first, whether a prior conclusion st
    - The canvas: `canvas_read` for a resume note, a decision trail, or a hillclimb table.
    - Memory: `memory_search` for facts recorded about this work or this repository, then `memory_read` on the hits.
    - Wake-ups: `scheduled` for pending notes, and the note of the wake-up that started this turn, if one did.
-   - A sub-agent already holds its caller's conversation. Read it, do not search for it.
+   - A forked sub-agent already holds its caller's conversation. Read it, do not search for it. A fresh one has only its task: the trail is whatever the task names.
    Read the most recent items first, then scan back for the decision points. If the trail is long, load the `principle-guard-the-context-window` skill and reduce it to a short timeline in your notes.
 2. **Rebuild the state.** Write down the goal, the decisions made and why, what landed, what is uncommitted, what was verified and how, the open items, and any `/goal` condition still set. The prior trail is authoritative input. Resist the urge to re-derive it.
 3. **Diff done against pending.** Compare what landed with what was planned. Name the resume point as one concrete next action. Do not re-run the prior repro or redo finished work. A "let me verify from scratch" pass treats an authoritative trail as untrustworthy.

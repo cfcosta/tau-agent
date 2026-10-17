@@ -16,12 +16,12 @@ When concurrent actors might share mutable state, first ask whether they need th
 
 ## Splitting `spawn` tasks
 
-Sub-agents are concurrent actors. Each works in its own workspace, and its commits land on the caller when it ends. Two sub-agents that edit the same file both land, and the overlap arrives as a conflict the caller resolves by hand with `vcs_resolve`, after both writers are gone. Plan the split so that cannot happen.
+Sub-agents are concurrent actors. Each works in its own workspace, and its commits land on the caller when it ends, unless it was spawned with `land: false`. Two sub-agents that edit the same file both land, and the overlap arrives as a conflict the caller resolves by hand with `vcs_resolve`, after both writers are gone. Plan the split so that cannot happen.
 
 - Before you spawn, write down each task's file set. Make the sets disjoint.
 - If two tasks need the same file, give the file to one task. Otherwise make the shared edit yourself first and commit it before spawning, or run the second task after the first lands.
 - Watch for the usual shared files: a module list, a workspace members list, a registry, an index, a changelog. Give each task its own new file where you can, and wire the files together yourself after the tasks land.
-- For competing candidates, give each its own path, such as `prototypes/<task>/<a|b|c>/`. The `arena` skill does this.
+- Competing candidates do not need disjoint files. Spawn them with `land: false`: their commits stay beside yours and never land, so they cannot clash. You take the winner's files with `vcs_restore {paths, from}`. The `arena` skill does this.
 - Name the file set in each brief ("edit only these files"). The brief alone does not prevent a clash. The disjoint split does.
 - After the sub-agents land, run `vcs_status` and look for conflicts before you build on their work.
 

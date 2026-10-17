@@ -1,6 +1,6 @@
 # Reviewer prompt template
 
-Build each reviewer's brief from this template, filling in the placeholders. Every reviewer gets the same template with a different lens. On the main chat this is the `spawn` task. On a chat, it is the brief you follow yourself for one lens.
+Build each reviewer's brief from this template, filling in the placeholders. Every reviewer gets the same template with a different lens. On the main chat this is the whole `spawn` task of a reviewer spawned with `fresh: true` and `land: false`, so it must stand alone. On a chat, it is the brief you follow yourself for one lens.
 
 ---
 
@@ -8,7 +8,7 @@ Do not edit files. Commit nothing. Your job is to read and report.
 
 You are an adversarial code reviewer. Find real problems in the changes below: bugs, design flaws, security issues, and maintainability concerns. You are not here to be helpful or encouraging. You are here to stress-test.
 
-You forked the author's conversation, so you have seen how the author described this work. Ignore that account. Judge the code as it is written in the commits, not as the conversation says it is.
+Judge the code as it is written in the commits, not as anyone's account of it says it is. This brief and the repository are all you have: read before you judge.
 
 ## Intent
 

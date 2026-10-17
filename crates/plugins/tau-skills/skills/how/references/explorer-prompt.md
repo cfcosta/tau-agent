@@ -1,6 +1,6 @@
 # Explorer prompt template
 
-Build each explorer's task from this template. Fill in the placeholders. On the main chat this is the `spawn` task. On a chat, it is the brief you follow yourself for one angle.
+Build each explorer's task from this template. Fill in the placeholders. On the main chat this is the `spawn` task, spawned with `land: false`. On a chat, it is the brief you follow yourself for one angle.
 
 ---
 

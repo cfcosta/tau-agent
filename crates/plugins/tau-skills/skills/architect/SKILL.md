@@ -23,7 +23,7 @@ A candidate is a design package: the caller's usage written first, then the type
 
 All candidates come from the same family of models, so the difference has to come from the briefs. Give each candidate a different starting point, for example: one owns the state in a single type and exposes operations on it; one models the domain as data and keeps the operations as pure functions; one starts from the smallest change to the existing modules. Tell each to commit to its shape and not hedge toward the others.
 
-**On the main chat**, load the `arena` skill and run it with the design-sketch task. Pass `references/runner-prompt.md` from this skill's folder as each candidate's brief, with its distinct starting point, the Phase A explanation, and its own path (`prototypes/<task>/<a|b|c>/`). Arena returns one synthesized design. Its synthesis decision fills the rationale's "Synthesis decision" section.
+**On the main chat**, load the `arena` skill and run it with the design-sketch task. Pass `references/runner-prompt.md` from this skill's folder as each candidate's brief, with its distinct starting point, the Phase A explanation, and its output path. Arena spawns the candidates with `land: false`, so each may sketch in the real place the code will live; you take the base's files with `vcs_restore` and nothing of the others lands. Arena returns one synthesized design. Its synthesis decision fills the rationale's "Synthesis decision" section.
 
 **On a chat or a sub-agent**, `spawn` is refused. Write two sketches yourself, one after another, each under its own path and from its own brief. Write both briefs before either sketch. Then compare them as below and graft.
 

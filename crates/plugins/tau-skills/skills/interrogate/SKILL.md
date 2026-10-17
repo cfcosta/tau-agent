@@ -23,7 +23,7 @@ State the intent in one clear paragraph, from the person's message, the commit d
 
 ## Step 3: Review through the lenses
 
-Read `references/reviewer-prompt.md`, `references/rubric.md` and `references/code-quality-review.md` from this skill's folder. Fill the reviewer template once per lens, with the intent, the change ids and files, the full rubric and the full code quality lens. Use two or three of these lenses:
+Read `references/reviewer-prompt.md`, `references/rubric.md` and `references/code-quality-review.md` from this skill's folder. Fill the reviewer template once per lens, with the intent, the change ids and files, the full rubric and the full code quality lens. The filled template is all a spawned reviewer sees. If the conversation settled something the code alone does not show (a design decision, a known limitation, a constraint from the person), add it to the intent paragraph. Use two or three of these lenses:
 
 - **A. Correctness and root cause.** The rubric's Correctness and Root Causes vs. Symptoms sections. Trace execution paths. Ask whether the change fixes the real problem or a symptom.
 - **B. Structure, the "code judo" lens.** The code quality lens and the rubric's Structural Integrity and Complexity Budget sections. Look for the restructuring that makes branches, helpers or layers disappear.
@@ -31,11 +31,9 @@ Read `references/reviewer-prompt.md`, `references/rubric.md` and `references/cod
 
 Use all three for anything beyond a small change. For a small, local fix, A and C are enough.
 
-**On the main chat**, spawn one reviewer per lens with `spawn`, all in one turn, then end the turn. The template opens with "Do not edit files. Commit nothing." Keep it: there is no read-only flag. You may give lens A a higher `effort`. Each review arrives in a later turn. When one arrives and others are still running, note it and end the turn again.
+**On the main chat**, spawn one reviewer per lens with `spawn {task, fresh: true, land: false}`, all in one turn, then end the turn. Fresh, so each reviewer judges the commits without your conversation's account of them, and the lenses stay independent of you and of each other. `land: false`, so nothing a reviewer touches lands. The template opens with "Do not edit files. Commit nothing." Keep it: there is no read-only flag. You may give lens A a higher `effort`. Each review arrives in a later turn. When one arrives and others are still running, note it and end the turn again.
 
-Be honest about what the reviewers are. Each one forks your conversation, so none is blind to the author's view. Diversity comes from the lenses, not from independence. The template tells each reviewer to judge the commits and not the conversation's account of them.
-
-**On a chat or a sub-agent**, `spawn` is refused. Run the lenses yourself, one after another. Finish each lens's findings in the template's output format before you start the next, and do not soften an earlier lens's findings when a later one disagrees. Say in the output that one run reviewed through all lenses.
+**On a chat or a sub-agent**, `spawn` is refused. Run the lenses yourself, one after another. Finish each lens's findings in the template's output format before you start the next, and do not soften an earlier lens's findings when a later one disagrees. Say in the output that one run reviewed through all lenses, so agreement between them is weaker evidence.
 
 ## Step 4: Synthesize
 

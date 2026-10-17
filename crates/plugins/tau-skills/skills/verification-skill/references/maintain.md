@@ -22,11 +22,11 @@ Write these steps as a numbered checklist in your notes. For a long pass, keep a
 
 1. **Index hygiene.** Read `features/README.md` and list the folder with `ls`. Fix missing, extra, duplicate, or dead entries. Keep it light. No generated inventory.
 
-2. **Source wave.** On the main chat, commit any pending work, then `spawn` one sub-agent per feature file, all in one turn (up to 8 at once; with more features, spawn the rest as earlier ones finish). Give each this brief, with its feature file's path:
+2. **Source wave.** On the main chat, commit any pending work, then `spawn` one sub-agent per feature file with `fresh: true` and `land: false`, all in one turn (up to 8 at once; with more features, spawn the rest as earlier ones finish). Give each this brief, with its feature file's path:
 
    > Read `<feature file>`. From source, explain how this user-facing feature works today. Do not edit files, do not commit, and do not launch or drive the app. Return: a feature summary, the source entry points (paths and symbols), likely doc drift with file and line citations or "none", and one concise live-verification recipe.
 
-   Then end the turn. Each finished sub-agent starts a turn of yours with its report. The sub-agents fork your conversation, so they share your view of the map. Ask them to cite source for every drift claim, and check the citations.
+   Then end the turn. Each finished sub-agent starts a turn of yours with its report. Fresh, so each reads its feature from source without your view of the map; the brief names everything it needs. `land: false`, so nothing it touches lands. Ask them to cite source for every drift claim, and check the citations.
 
    On a chat, where `spawn` is refused, do the same reading yourself, one feature file after another, and write each feature's four-part result in your notes before the next.
 

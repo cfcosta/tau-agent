@@ -11,7 +11,7 @@ Apply each criterion to every finding.
 - **Durability.** Still true in six months, once paths, change ids, tool versions, and code shapes have changed.
 - **Specificity.** Broad enough to apply across tasks, precise enough that a future agent recognizes when to use it. Reject platitudes ("write good code") and hyper-specific facts ("the linter has 175 tokens at limit 80").
 - **Existing home first.** Propose `new skill` only when no existing skill or instructions section is a real home, the pattern recurs, and the topic deserves its own skill.
-- **Convergence.** A finding two or more reviewers made carries more weight. A singleton must clear a higher bar on the other criteria. The reviewers forked one conversation, so convergence is weaker evidence than it would be from independent reviewers.
+- **Convergence.** A finding two or more reviewers made carries more weight. A singleton must clear a higher bar on the other criteria. The reviewers fork the session they review, so they share its view of what happened, and convergence is weaker evidence than it would be from independent reviewers.
 - **Decision-changing.** A future agent does something different because of the edit, not just reads more text.
 - **Structural.** Route to Backlog when a lint, a script, a type, a config flag, or a runtime check already enforces the rule or could enforce it cheaply. Prose is for what a mechanism cannot enforce.
 - **Skill was used.** Accept a skill routing only if the session loaded that skill. If it was not loaded but should have been, the row is `tune description: <skill>`. If neither, reject it as `skill-not-used`.

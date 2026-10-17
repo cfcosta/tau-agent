@@ -1,6 +1,6 @@
 # Investigator prompt template
 
-Fill in the placeholders. Append the one playbook for this investigator's source: `code-archaeology.md` for source control, `mcp-source.md` for an MCP server. If the target code looks defensive (null checks, retries, timeouts, rate limits, feature flags, guards, out-of-memory handling), also append `incident-postmortem.md`. On the main chat this is the `spawn` task. On a chat, it is the brief you follow yourself for one source.
+Fill in the placeholders. Append the one playbook for this investigator's source: `code-archaeology.md` for source control, `mcp-source.md` for an MCP server. If the target code looks defensive (null checks, retries, timeouts, rate limits, feature flags, guards, out-of-memory handling), also append `incident-postmortem.md`. On the main chat this is the whole `spawn` task of an investigator spawned with `fresh: true` and `land: false`, so fill every placeholder: it sees nothing else. On a chat, it is the brief you follow yourself for one source.
 
 ---
 

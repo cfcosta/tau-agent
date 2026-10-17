@@ -31,7 +31,7 @@ These are honest mistakes from reviewers working with limited information. Dismi
 
 Don't dismiss findings just because they're uncomfortable. The whole point of adversarial review is to catch things you'd miss. Signs a finding deserves attention:
 
-- Several lenses flag the same issue (consensus signal). The reviewers all fork one conversation, so agreement is weaker evidence than it would be from strangers. It still counts most when the lenses had no reason to look at the same code.
+- Several lenses flag the same issue (consensus signal). Spawned reviewers start fresh, each from its own brief, so their agreement is real evidence. It counts most when the lenses had no reason to look at the same code. When one run reviewed through every lens in sequence, agreement is weaker: the same reader saw them all.
 - The finding identifies a concrete execution path, not a hypothetical
 - The finding reveals a gap in your mental model of the code
 - You read the finding and think "...yeah, actually"

@@ -38,7 +38,7 @@ Then execute the design. Add its units to the checklist between Phase C and Phas
 Each unit is an experiment. State the hypothesis. Make the smallest change. Measure it against the done condition on the real artifact. Keep it if it advanced, revert it if it did not (`vcs_restore` for uncommitted work). Verify each unit before you start the next (load `principle-sequence-verifiable-units`), and commit each one when it is green with a Conventional Commits message.
 
 - Verify by inspecting the artifact, never by a self-report. When something passes too easily, suspect the way you observed it before you trust the system.
-- Treat work a sub-agent landed as claims to verify. Read its commits with `vcs_show` and rerun its checks yourself. A spawned sub-agent forks your conversation, so it shares your blind spots; it is not an independent judge. If it gamed the check, reset its work and tighten the brief. If the check itself is wrong, fix the check in its own commit instead of routing around it.
+- Treat work a sub-agent landed as claims to verify. Read its commits with `vcs_show` and rerun its checks yourself. If it gamed the check, reset its work and tighten the brief. If the check itself is wrong, fix the check in its own commit instead of routing around it. A sub-agent that forked your conversation shares your blind spots. When you need an independent check, spawn a reviewer with `fresh: true` and `land: false`, and write into its task everything it needs: the done condition, the commit ids, the check to run, and "Do not edit files. Commit nothing."
 - A verdict is VERIFIED, NOT VERIFIED, or INCONCLUSIVE. Inconclusive is not a pass. Do not hide a negative result.
 - If you report or act on a number, load `principle-explain-the-number` first.
 

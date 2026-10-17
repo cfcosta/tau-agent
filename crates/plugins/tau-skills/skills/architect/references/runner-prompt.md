@@ -1,6 +1,6 @@
 # Architect candidate brief
 
-Each Phase B candidate gets this brief. Fill in the variable parts around it: the task, the Phase A explanation, the candidate's starting point, and its output path. On the main chat it is the `spawn` task. On a chat, it is the brief you follow yourself for one sketch.
+Each Phase B candidate gets this brief. Fill in the variable parts around it: the task, the Phase A explanation, the candidate's starting point, and its output path. On the main chat it is the `spawn` task of a candidate spawned with `land: false`, and the output path can be where the code will really live, since only the chosen sketch is taken. On a chat, it is the brief you follow yourself for one sketch, with its own scratch path, since you write the sketches in sequence.
 
 ---
 

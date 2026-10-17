@@ -28,7 +28,7 @@ Copy the steps below into your working notes as a numbered checklist and tick ea
 ## Rules that hold throughout
 
 - Decide reversible things yourself and say in the reply what you assumed. On a sub-agent, you cannot `ask`; pick the direction yourself and report the assumption.
-- On the main chat you may `spawn` one sub-agent per variant when the variants are large and independent. Commit first, give each its own path (`prototypes/<task>/a/`, `.../b/`) so they do not clash, then end the turn. Review what lands yourself. Small variants are faster to write yourself.
+- On the main chat you may `spawn` one sub-agent per variant when the variants are large and independent. Commit first, spawn each with `land: false`, then end the turn. Their commits stay beside yours and never land, so they cannot clash and need no separate paths, and there is nothing to clean up. Read each with `vcs_show` and observe it yourself. To keep a variant, take its files with `vcs_restore {paths, from: <change>}` and commit them, in this session: tau drops kept work at its next start. Small variants are faster to write yourself.
 
 ## Reply
 

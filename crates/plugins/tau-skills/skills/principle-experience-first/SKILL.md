@@ -12,7 +12,7 @@ When implementation convenience conflicts with the experience of the person usin
 **Pattern:**
 - Justify every feature, control and option. Each one is something the user must learn.
 - Ship less, ship better. A polished experience with three features beats a rough one with ten.
-- Prototype before committing. Design decisions are cheaper in a throwaway than in production code. A prototype can be a canvas item (a Markdown mockup, a Mermaid flow, a table of example outputs, a screenshot of a throwaway page) or, on the main chat, a throwaway sub-agent run that builds the variant under a scratch path for you to delete afterwards. The `playbook-prototype` skill has the procedure.
+- Prototype before committing. Design decisions are cheaper in a throwaway than in production code. A prototype can be a canvas item (a Markdown mockup, a Mermaid flow, a table of example outputs, a screenshot of a throwaway page) or, on the main chat, a sub-agent spawned with `land: false` that builds the variant beside your work, so nothing of it lands unless you take it. The `playbook-prototype` skill has the procedure.
 - Get the details right: transitions, alignment, spacing, feedback, empty states, error states, wording.
 - Check UI work by looking at it. Take screenshots from a headless compositor, as the repository's `verify-*` skill or its instructions set up, never from the person's real display. Put them on the canvas with `canvas_show` so the person sees what you saw.
 - Tighten the core loop. Every feature should serve the central workflow or get out of the way.
