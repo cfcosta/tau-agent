@@ -11,7 +11,8 @@
 //!   bookmarks go out as Git's branches (`crate::colocate`). It is the
 //!   main chat's workspace, named [`MAIN_WORKSPACE`]: jj's `default`
 //!   workspace is never tau's;
-//! - `runs/<name>/`: one jj workspace per run, each on its own commit.
+//! - `runs/<name>/`: one jj workspace per run, each on its own commit,
+//!   and a Git worktree of `main/.git` (`crate::worktree`).
 //!
 //! [`Layout`] says where each is. Runs never touch the user's own
 //! checkout. [`ProjectRepo`]'s functions
@@ -414,7 +415,13 @@ impl ProjectRepo {
         );
         let wc = block_on(tx.repo_mut().check_out(name.clone(), &first))?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        let repo = crate::colocate::commit(tx, "make the repository", &git)?;
+        let repo = crate::colocate::commit_in(
+            tx,
+            "make the repository",
+            &git,
+            &name,
+            &main,
+        )?;
         let mut workspace =
             begun.finish(&repo, name).map_err(VcsError::MakeRepo)?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
@@ -477,7 +484,8 @@ impl ProjectRepo {
         Ok(found)
     }
 
-    /// Opens the project at `root`.
+    /// Opens the project at `root`, with each run's workspace made a
+    /// whole Git worktree where it is not one (`Self::link_worktree`).
     pub fn open(
         root: impl Into<PathBuf>,
         identity: Identity,
@@ -486,13 +494,19 @@ impl ProjectRepo {
         if !Self::exists(&root) {
             return Err(VcsError::NoProject(root));
         }
-        let project = Self::new(root, identity)?;
+        let mut project = Self::new(root, identity)?;
         if project.name_main_workspace()? {
             // Opened again, to load the workspace by its new name.
-            return Self::new(
+            project = Self::new(
                 project.inner.root.clone(),
                 project.inner.identity.clone(),
-            );
+            )?;
+        }
+        // At best: a workspace that cannot be mended now (one whose
+        // making died before its working copy) does not keep the
+        // project shut; its next use tries again, and says why.
+        for name in project.workspaces()? {
+            let _ = project.link_worktree(&name);
         }
         Ok(project)
     }
@@ -619,7 +633,8 @@ impl ProjectRepo {
             )?;
             block_on(import_refs(tx.repo_mut(), &import_options(true)))
                 .map_err(VcsError::ImportBranches)?;
-            let repo = crate::colocate::commit(tx, "import", &git)?;
+            let repo =
+                crate::colocate::commit_in(tx, "import", &git, &name, &main)?;
             begun.finish(&repo, name).map_err(VcsError::MakeRepo)?;
             project.write_trunk_alias(&repo)
         })();
@@ -887,7 +902,8 @@ impl ProjectRepo {
     /// the turn's work are then merged. When the parent's change is a
     /// workspace's working copy now (a run undid the commit), the fork
     /// starts on that parent's parent instead, with the turn's files.
-    /// Opens the workspace as it is if it exists already.
+    /// Opens the workspace as it is if it exists already, its Git
+    /// worktree made whole first (`Self::link_worktree`).
     pub fn add_workspace_from_snapshot(
         &self,
         name: &str,
@@ -895,6 +911,7 @@ impl ProjectRepo {
     ) -> Result<Vcs, VcsError> {
         let dir = self.workspace_dir(name);
         if dir.join(".jj").is_dir() {
+            self.link_worktree(name)?;
             return Vcs::open_in_job(dir, self.inner.identity.clone());
         }
         std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
@@ -902,8 +919,10 @@ impl ProjectRepo {
             source,
         })?;
         let lock = self.lock()?;
+        let git = lock.git()?;
         let main = self.main()?;
         let repo = block_on(main.repo_loader().load_at_head())?;
+        crate::worktree::link(&self.git_dir(), &dir, name, None)?;
         let begun =
             crate::workspace_init::begin_workspace(&dir, main.repo_path())
                 .map_err(VcsError::AddWorkspace)?;
@@ -961,16 +980,20 @@ impl ProjectRepo {
         )?;
         block_on(tx.repo_mut().edit(WorkspaceNameBuf::from(name), &wc))?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        let repo = crate::colocate::commit(
+        let repo = crate::colocate::commit_in(
             tx,
             format!("add workspace {name}"),
-            &lock.git()?,
+            &git,
+            WorkspaceName::new(name),
+            &dir,
         )?;
         let mut workspace = begun
             .finish(&repo, WorkspaceNameBuf::from(name))
             .map_err(VcsError::AddWorkspace)?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
+        crate::colocate::ignore_jj_dir(&dir)?;
+        drop(git);
         drop(lock);
         // Made with the main workspace's config, as `jj workspace add`
         // does; opened again with its own.
@@ -1207,7 +1230,8 @@ impl ProjectRepo {
     /// `base` (a full commit id in hex), with `base`'s files checked out,
     /// and opens it. When `base` was rewritten, the workspace starts on
     /// the commit its change names now. Opens it as it is if it exists
-    /// already.
+    /// already, its Git worktree made whole first
+    /// (`Self::link_worktree`).
     pub fn add_workspace(
         &self,
         name: &str,
@@ -1215,6 +1239,7 @@ impl ProjectRepo {
     ) -> Result<Vcs, VcsError> {
         let dir = self.workspace_dir(name);
         if dir.join(".jj").is_dir() {
+            self.link_worktree(name)?;
             return Vcs::open_in_job(dir, self.inner.identity.clone());
         }
         std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
@@ -1222,8 +1247,12 @@ impl ProjectRepo {
             source,
         })?;
         let lock = self.lock()?;
+        let git = lock.git()?;
         let main = self.main()?;
         let repo = block_on(main.repo_loader().load_at_head())?;
+        // Before the workspace, as `jj workspace add` makes it, so the
+        // operation that adds it points the worktree's `HEAD` at `base`.
+        crate::worktree::link(&self.git_dir(), &dir, name, None)?;
         let begun =
             crate::workspace_init::begin_workspace(&dir, main.repo_path())
                 .map_err(VcsError::AddWorkspace)?;
@@ -1236,16 +1265,20 @@ impl ProjectRepo {
         let wc = block_on(
             tx.repo_mut().check_out(WorkspaceNameBuf::from(name), &base),
         )?;
-        let repo = crate::colocate::commit(
+        let repo = crate::colocate::commit_in(
             tx,
             format!("add workspace {name}"),
-            &lock.git()?,
+            &git,
+            WorkspaceName::new(name),
+            &dir,
         )?;
         let mut workspace = begun
             .finish(&repo, WorkspaceNameBuf::from(name))
             .map_err(VcsError::AddWorkspace)?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
+        crate::colocate::ignore_jj_dir(&dir)?;
+        drop(git);
         drop(lock);
         // Made with the main workspace's config, as `jj workspace add`
         // does; opened again with its own.
@@ -1254,8 +1287,9 @@ impl ProjectRepo {
     }
 
     /// Removes run `name`'s workspace, as `jj workspace remove` does: jj
-    /// forgets it, the workspace store drops it, and its directory is
-    /// deleted. Its commits stay in the repository. Only a run's
+    /// forgets it, the workspace store drops it, its Git worktree goes
+    /// (`crate::worktree::unlink`, never another's), and its directory
+    /// is deleted. Its commits stay in the repository. Only a run's
     /// workspace goes: the main chat's stays, and so does one tau did
     /// not make ([`Self::workspaces`]), and the directory of a workspace
     /// the person put where a run's would be. A removal cut off part way
@@ -1265,6 +1299,7 @@ impl ProjectRepo {
             return Ok(());
         }
         let lock = self.lock()?;
+        let git = lock.git()?;
         let repo = self.load()?;
         let store = repo.loader().workspace_store().clone();
         let dir = self.workspace_dir(name);
@@ -1285,12 +1320,16 @@ impl ProjectRepo {
             crate::colocate::commit(
                 tx,
                 format!("forget workspace {name}"),
-                &lock.git()?,
+                &git,
             )?;
         }
         if is_at(store.get_workspace_path(&name_buf)?, &dir) {
             store.forget(&[&name_buf])?;
         }
+        if !someone_elses {
+            crate::worktree::unlink(&self.git_dir(), &dir)?;
+        }
+        drop(git);
         drop(lock);
         if dir.exists() && !someone_elses {
             std::fs::remove_dir_all(&dir).map_err(|source| {
@@ -1410,6 +1449,56 @@ impl ProjectRepo {
         locked.locked_wc().rename_workspace(name);
         block_on(locked.finish(op))?;
         Ok(true)
+    }
+
+    /// Makes run `name`'s workspace a whole Git worktree of the
+    /// project's Git store again, when it is not one: a workspace made
+    /// before runs had worktrees, or one whose making was cut off, or
+    /// whose worktree the person pruned (`crate::worktree`). Git's
+    /// `HEAD` and index there then follow the files the workspace has
+    /// checked out, its working copy's commit, which a stale workspace
+    /// has from before the operation that made it stale: in one
+    /// operation, `tau: reset git head`, when the view's record of that
+    /// `HEAD` changes. Does nothing for a whole worktree, a workspace
+    /// whose folder is gone, or the main chat's, in the Git store's own
+    /// working tree.
+    fn link_worktree(&self, name: &str) -> Result<(), VcsError> {
+        let dir = self.workspace_dir(name);
+        let common = self.git_dir();
+        if name == self.main_workspace()
+            || !dir.join(".jj").is_dir()
+            || crate::worktree::is_linked(&common, &dir)
+        {
+            return Ok(());
+        }
+        let lock = self.lock()?;
+        let git = lock.git()?;
+        let workspace =
+            load_workspace(&self.inner.settings, &dir).map_err(|source| {
+                VcsError::NoWorkspace {
+                    root: dir.clone(),
+                    source,
+                }
+            })?;
+        let name = workspace.workspace_name().to_owned();
+        let loader = workspace.repo_loader();
+        let repo = block_on(loader.load_at_head())?;
+        let checked_out = block_on(
+            loader.load_operation(workspace.working_copy().operation_id()),
+        )?;
+        let checked_out = block_on(loader.load_at(&checked_out))?;
+        let wc = checked_out
+            .view()
+            .get_wc_commit_id(&name)
+            .or_else(|| repo.view().get_wc_commit_id(&name))
+            .ok_or(VcsError::NoWorkingCopy)?;
+        let wc = repo.store().get_commit(wc)?;
+        let parent = wc.parent_ids().first().ok_or(VcsError::NoParent)?;
+        let head =
+            (parent != repo.store().root_commit_id()).then(|| parent.hex());
+        crate::worktree::link(&common, &dir, name.as_str(), head.as_deref())?;
+        crate::colocate::reset(&repo, &name, &dir, &wc, &git)?;
+        crate::colocate::ignore_jj_dir(&dir)
     }
 
     fn main(&self) -> Result<Workspace, VcsError> {

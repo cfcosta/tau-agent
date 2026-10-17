@@ -53,6 +53,7 @@ pub mod sweep;
 pub mod tools;
 mod vcs;
 mod workspace_init;
+mod worktree;
 
 pub use clone::{CloneError, TransferError};
 pub use config::{JjEnv, settings as jj_settings};

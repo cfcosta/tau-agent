@@ -89,6 +89,7 @@ pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
     // (`crate::lock`).
     let git = repo_lock.git()?;
     let name = workspace.workspace_name().to_owned();
+    let root = workspace.workspace_root().to_owned();
     let loader = workspace.repo_loader().clone();
     let config = SnapshotConfig::load(
         &env,
@@ -97,8 +98,14 @@ pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
         loader.store(),
     )?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
-    let snapshot =
-        snapshot_locked(&mut locked, &loader, &name, &config, &revsets, &git)?;
+    let snapshot = snapshot_locked(
+        &mut locked,
+        &loader,
+        (&name, &root),
+        &config,
+        &revsets,
+        &git,
+    )?;
     block_on(locked.finish(snapshot.repo.op_id().clone()))?;
     Ok(snapshot)
 }
@@ -119,6 +126,7 @@ pub(crate) fn mutate<T>(
     // (`crate::lock`).
     let git = repo_lock.git()?;
     let name = workspace.workspace_name().to_owned();
+    let root = workspace.workspace_root().to_owned();
     let loader = workspace.repo_loader().clone();
     let config = SnapshotConfig::load(
         &env,
@@ -127,8 +135,14 @@ pub(crate) fn mutate<T>(
         loader.store(),
     )?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
-    let before =
-        snapshot_locked(&mut locked, &loader, &name, &config, &revsets, &git)?;
+    let before = snapshot_locked(
+        &mut locked,
+        &loader,
+        (&name, &root),
+        &config,
+        &revsets,
+        &git,
+    )?;
     let written = (|| {
         if before
             .immutable
@@ -144,7 +158,7 @@ pub(crate) fn mutate<T>(
             block_on(tx.repo_mut().rebase_descendants())?;
         }
         let repo = if tx.repo().has_changes() {
-            crate::colocate::commit(tx, what(tool), &git)?
+            crate::colocate::commit_in(tx, what(tool), &git, &name, &root)?
         } else {
             before.repo.clone()
         };
@@ -186,13 +200,14 @@ fn what(tool: &str) -> String {
     }
 }
 
-/// Snapshots the working copy with the options the jj CLI would use
-/// there (`config`): the files it starts tracking, the largest new file
-/// it takes, and the person's Git excludes.
+/// Snapshots the working copy of workspace `name`, at `root`, with the
+/// options the jj CLI would use there (`config`): the files it starts
+/// tracking, the largest new file it takes, and the person's Git
+/// excludes. Git's `HEAD` and index there follow (`crate::colocate`).
 fn snapshot_locked(
     locked: &mut LockedWorkspace<'_>,
     loader: &RepoLoader,
-    name: &WorkspaceName,
+    (name, root): (&WorkspaceName, &Path),
     config: &SnapshotConfig,
     revsets: &ConfigRevsets,
     git: &GitLock,
@@ -241,9 +256,19 @@ fn snapshot_locked(
                 tx.repo_mut()
                     .set_wc_commit(name.to_owned(), edited.id().clone())?;
                 block_on(tx.repo_mut().rebase_descendants())?;
-                repo =
-                    crate::colocate::commit(tx, "snapshot working copy", git)?;
+                repo = crate::colocate::commit_in(
+                    tx,
+                    "snapshot working copy",
+                    git,
+                    name,
+                    root,
+                )?;
                 wc = edited;
+            } else {
+                // The files move with no snapshot of their own, and Git's
+                // `HEAD` with them, as `jj workspace update-stale` resets
+                // it.
+                repo = crate::colocate::reset(&repo, name, root, &wc, git)?;
             }
             block_on(locked.locked_wc().check_out(&wc))?;
         }
@@ -282,7 +307,13 @@ fn snapshot_locked(
         tx.repo_mut()
             .set_wc_commit(name.to_owned(), new_wc.id().clone())?;
         block_on(tx.repo_mut().rebase_descendants())?;
-        repo = crate::colocate::commit(tx, "snapshot working copy", git)?;
+        repo = crate::colocate::commit_in(
+            tx,
+            "snapshot working copy",
+            git,
+            name,
+            root,
+        )?;
         wc = new_wc;
     }
     Ok(Snapshot {

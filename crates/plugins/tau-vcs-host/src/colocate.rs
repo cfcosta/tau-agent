@@ -1,12 +1,13 @@
 //! A project's Git store is colocated with its main workspace, as
-//! `jj git init --colocate` makes one: `main/.git` beside `main/.jj`.
+//! `jj git init --colocate` makes one: `main/.git` beside `main/.jj`,
+//! and each run's workspace is a worktree of it ([`crate::worktree`]).
 //! The jj CLI keeps such a store in step after each command; jj-lib
 //! leaves that to its caller, so every operation tau writes goes
-//! through [`commit`], which does the same: bookmarks and tags go out
-//! as Git's branches and tags, and Git's `HEAD` and index follow the
-//! working copy of the workspace in the Git store's working tree, the
-//! main chat's, so `git` in `main/` sees what jj does.
-//! It also tags the operation as tau's ([`crate::operations`]).
+//! through [`commit`] or [`commit_in`], which do the same: bookmarks
+//! and tags go out as Git's branches and tags, and Git's `HEAD` and
+//! index follow the working copy of the workspace the operation was
+//! written in, so `git` there sees what jj does. They also tag the
+//! operation as tau's ([`crate::operations`]).
 
 #![allow(
     clippy::disallowed_methods,
@@ -19,9 +20,9 @@ use std::{
 };
 
 use jj_lib::{
-    backend::CommitId,
+    commit::Commit,
     git::{export_refs, get_git_backend, reset_head},
-    ref_name::{WorkspaceName, WorkspaceNameBuf},
+    ref_name::WorkspaceName,
     repo::{ReadonlyRepo, Repo as _},
     transaction::Transaction,
 };
@@ -40,79 +41,101 @@ pub(crate) fn ignore_jj_dir(workspace_root: &Path) -> Result<(), VcsError> {
 }
 
 /// Commits `tx` as tau's operation described `tau: <what>`, with the
-/// Git store brought in step first. `_git` is jj-cli's Git
-/// import/export lock, held from before any import the transaction
-/// made until the operation is written, as the CLI holds it.
+/// bookmarks and tags exported to the Git store first. No workspace's
+/// `HEAD` moves: an operation that changes what a workspace has checked
+/// out goes through [`commit_in`]. `_git` is jj-cli's Git import/export
+/// lock, held from before any import the transaction made until the
+/// operation is written, as the CLI holds it.
 pub(crate) fn commit(
     mut tx: Transaction,
     what: impl AsRef<str>,
     _git: &GitLock,
 ) -> Result<Arc<ReadonlyRepo>, VcsError> {
     let description = crate::operations::tag(&mut tx, what.as_ref());
-    sync_git(&mut tx)?;
+    export(&mut tx)?;
     Ok(block_on(tx.commit(description))?)
 }
 
-/// Exports the bookmarks and tags to the Git store, and, when the store
-/// has a working tree and the working copy of the workspace there
-/// moved, points Git's `HEAD` at its parent and resets the index to it.
-/// A ref Git refuses (a conflicted bookmark, a name Git cannot take)
-/// stays out, as the jj CLI leaves it.
-fn sync_git(tx: &mut Transaction) -> Result<(), VcsError> {
+/// [`commit`], for an operation written in workspace `name`, whose
+/// root is `root`: when its working copy moved, Git's `HEAD` there
+/// points at the new `@-` and the index is reset to it, as the jj CLI
+/// keeps the workspace it runs in. Only that workspace's: one whose
+/// `@` the operation rewrote from elsewhere keeps its `HEAD` until its
+/// own files move to the new commit ([`reset`]).
+pub(crate) fn commit_in(
+    mut tx: Transaction,
+    what: impl AsRef<str>,
+    git: &GitLock,
+    name: &WorkspaceName,
+    root: &Path,
+) -> Result<Arc<ReadonlyRepo>, VcsError> {
+    if let Some(wc) = tx.repo().view().get_wc_commit_id(name).cloned()
+        && tx.base_repo().view().get_wc_commit_id(name) != Some(&wc)
+    {
+        let wc = tx.repo().store().get_commit(&wc)?;
+        keep_in_step(&mut tx, name, root, &wc)?;
+    }
+    commit(tx, what, git)
+}
+
+/// Points Git's `HEAD` in workspace `name`, at `root`, at `wc`'s parent
+/// and resets the index to it, after the workspace's files moved to
+/// `wc` with no operation of their own: a stale working copy brought up
+/// to date, or a worktree made again ([`crate::worktree`]). Writes an
+/// operation, `tau: reset git head` as jj-cli's is `reset git head`,
+/// only when the view's record of that `HEAD` changed; it is a
+/// snapshot's kind, which `vcs_undo` passes over. Returns the repo at
+/// the newest operation.
+pub(crate) fn reset(
+    repo: &Arc<ReadonlyRepo>,
+    name: &WorkspaceName,
+    root: &Path,
+    wc: &Commit,
+    git: &GitLock,
+) -> Result<Arc<ReadonlyRepo>, VcsError> {
+    let mut tx = repo.start_transaction();
+    tx.set_is_snapshot(true);
+    tx.set_workspace_name(name);
+    keep_in_step(&mut tx, name, root, wc)?;
+    if !tx.repo().has_changes() {
+        return Ok(repo.clone());
+    }
+    commit(tx, "reset git head", git)
+}
+
+/// Exports the bookmarks and tags to the Git store. A ref Git refuses
+/// (a conflicted bookmark, a name Git cannot take) stays out, as the jj
+/// CLI leaves it.
+fn export(tx: &mut Transaction) -> Result<(), VcsError> {
+    if get_git_backend(tx.repo().store()).is_err() {
+        return Ok(());
+    }
+    export_refs(tx.repo_mut()).map_err(VcsError::ExportRefs)?;
+    Ok(())
+}
+
+/// Points Git's `HEAD` in workspace `name` at `wc`'s parent and resets
+/// the index to it, with new files in `wc` added as intent to add, so
+/// `git status` there shows what `jj diff` does and `git ls-files`
+/// lists them (jj-lib's `reset_head`). Only in a workspace colocated
+/// with the Git store, as jj-cli asks
+/// (`is_colocated_git_workspace`): the store's working tree, or one of
+/// its worktrees. Elsewhere, and in a worktree too broken to open,
+/// which the next open makes again, nothing happens.
+fn keep_in_step(
+    tx: &mut Transaction,
+    name: &WorkspaceName,
+    root: &Path,
+    wc: &Commit,
+) -> Result<(), VcsError> {
     let Ok(backend) = get_git_backend(tx.repo().store()) else {
         return Ok(());
     };
-    let workdir = backend.git_repo().workdir().map(Path::to_owned);
-    export_refs(tx.repo_mut()).map_err(VcsError::ExportRefs)?;
-    let Some(workdir) = workdir else {
-        return Ok(());
-    };
-    let Some(name) = workspace_at(tx, &workdir)? else {
-        return Ok(());
-    };
-    let Some(wc) = tx.repo().view().get_wc_commit_id(&name).cloned() else {
-        return Ok(());
-    };
-    if !moved(tx, &name, &wc) {
+    if backend.open_git_repo_at_workdir(root).is_err() {
         return Ok(());
     }
-    let wc = tx.repo().store().get_commit(&wc)?;
-    block_on(reset_head(tx.repo_mut(), &name, &workdir, &wc))
+    block_on(reset_head(tx.repo_mut(), name, root, wc))
         .map_err(VcsError::ResetHead)
-}
-
-/// The workspace of `tx`'s view whose directory is `dir`, as the
-/// repository's workspace store has it: in a project, the main chat's
-/// is the Git store's working tree.
-fn workspace_at(
-    tx: &Transaction,
-    dir: &Path,
-) -> Result<Option<WorkspaceNameBuf>, VcsError> {
-    let store = tx.base_repo().loader().workspace_store();
-    for name in tx.repo().view().wc_commit_ids().keys() {
-        if let Some(path) = store.get_workspace_path(name)?
-            && same_dir(&path, dir)
-        {
-            return Ok(Some(name.clone()));
-        }
-    }
-    Ok(None)
-}
-
-/// Whether workspace `name`'s working copy, `wc` now, is not the one it
-/// had before `tx`. A workspace renamed in `tx` keeps its commit under
-/// its new name, and did not move: the main chat's, when tau names it
-/// (`crate::project`).
-fn moved(tx: &Transaction, name: &WorkspaceName, wc: &CommitId) -> bool {
-    let before = tx.base_repo().view();
-    if let Some(was) = before.get_wc_commit_id(name) {
-        return was != wc;
-    }
-    let now = tx.repo().view();
-    !before
-        .wc_commit_ids()
-        .iter()
-        .any(|(old, was)| was == wc && now.get_wc_commit_id(old).is_none())
 }
 
 /// Whether `a` and `b` are the same directory, by their canonical paths
