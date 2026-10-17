@@ -25,6 +25,12 @@ instructions cost nothing until it is loaded.
 | `host::SkillsPlugin`                      | The agent plugin: the list in the run's instructions, and the tool (feature `host`)           |
 | `SkillsHost`                              | The `HostHalf` for tau's plugin registry (feature `host`)                                     |
 | `demo::seed`                              | Writes the demo's skills folder (feature `demo`)                                              |
+| `shipped`                                 | The skills this crate ships, from `skills/`, and `install` (feature `host`)                   |
+
+Skills named `principle-*` and `playbook-*` are listed apart, under
+their own headings after the rest: the principles as an index the model
+reads before it applies one, the playbooks as procedures it follows
+step by step (`scan::KINDS`).
 
 A message that starts with `/name` asks for that skill. Frontmatter
 keys tau does not act on, such as `allowed-tools`, are kept in
@@ -45,6 +51,23 @@ phone build it with `default-features = false` (decisions 0017, 0030).
   `SkillsDir`), `tau-ui-remote` (which lists `SkillsUi`), and
   `tau-luau-plugins-host`, which installs its built-in skill under
   `BUILTIN_DIR`.
+
+## The skills it ships
+
+`skills/` holds the skills tau ships: 24 engineering principles
+(`principle-*`), playbooks for kinds of task (`playbook-*`), and
+procedures such as `how`, `why`, `architect`, `arena`, `interrogate`
+and `humanizer`. They are adapted from pstack and humanizer (see
+THIRD_PARTY_NOTICES.md) to tau's tools: sub-agents, commits and
+landing, `ask`, the canvas, `schedule` and `/goal`.
+
+`build.rs` embeds every file under `skills/`, so a skill is added by
+adding its folder. `SkillsHost` installs them into tau's data directory
+(`BUILTIN_DIR`) as the host starts: each folder is rewritten, and one
+an earlier build shipped but this one does not is removed (the
+`.tau-skills` manifest). Other plugins' built-in skills there are left
+alone. `tests/shipped.rs` checks that each is offered, and that every
+skill and reference file it names is there.
 
 `SkillsHost` reads the folders as each run starts. With no skills, the
 run gets neither the list nor the tool. A skill added during a run is

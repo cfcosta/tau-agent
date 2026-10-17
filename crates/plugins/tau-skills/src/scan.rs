@@ -257,12 +257,39 @@ fn count_files(folder: &Path) -> usize {
     count
 }
 
+/// The kinds of skill a run's instructions list apart, by the prefix of
+/// their names: each kind's heading, and what it tells the model to do.
+/// The rest are listed first, under none.
+pub const KINDS: [(&str, &str, &str); 2] = [
+    (
+        crate::PRINCIPLE,
+        "## Principles",
+        "Engineering principles. Each line says when the principle applies \
+         and what it asks. Before you apply one, load its skill and read it \
+         in full. When a principle changed a decision, say which in your \
+         answer.",
+    ),
+    (
+        "playbook-",
+        "## Playbooks",
+        "Procedures for kinds of task. When a task is one of these, load its \
+         playbook before you start, copy its steps into your notes, and work \
+         through them in order; mark a step you skip with why.",
+    ),
+];
+
 /// What a run's instructions say of `skills`: how to load one, then each
-/// by name and description. None when there are none.
+/// by name and description, the [`KINDS`] under their headings. None
+/// when there are none.
 pub fn section(skills: &Skills) -> Option<String> {
     if skills.found.is_empty() {
         return None;
     }
+    let kind = |skill: &Skill| {
+        KINDS
+            .iter()
+            .position(|(prefix, ..)| skill.name.starts_with(prefix))
+    };
     let mut text = format!(
         "{HEADING}\n\n\
          Skills are instructions for particular tasks, kept in folders \
@@ -273,8 +300,22 @@ pub fn section(skills: &Skills) -> Option<String> {
          asks for that skill: load it first, then do what the message \
          says after the name.\n"
     );
-    for skill in &skills.found {
-        text.push_str(&format!("\n- {}: {}", skill.name, skill.description));
+    let line =
+        |skill: &Skill| format!("\n- {}: {}", skill.name, skill.description);
+    for skill in skills.found.iter().filter(|skill| kind(skill).is_none()) {
+        text.push_str(&line(skill));
+    }
+    for (n, (_, heading, intro)) in KINDS.iter().enumerate() {
+        let mut listed = skills
+            .found
+            .iter()
+            .filter(|skill| kind(skill) == Some(n))
+            .peekable();
+        if listed.peek().is_some() {
+            text.truncate(text.trim_end().len());
+            text.push_str(&format!("\n\n{heading}\n\n{intro}\n"));
+            listed.for_each(|skill| text.push_str(&line(skill)));
+        }
     }
     Some(text)
 }

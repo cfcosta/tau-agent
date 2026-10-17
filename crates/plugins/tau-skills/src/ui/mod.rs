@@ -68,12 +68,14 @@ fn sidebar(_: &AtApp, view: &mut ViewCx<'_, SkillsUi>) -> Option<NavEntry> {
     )
 }
 
-/// Each skill as `/name` in the composer's menu, with what to do after
-/// it.
+/// Each skill but the principles as `/name` in the composer's menu,
+/// with what to do after it. A principle still loads when a message
+/// names it.
 pub fn commands(skills: &Skills, _: Option<&()>) -> Vec<ListedCommand> {
     skills
         .found
         .iter()
+        .filter(|skill| !skill.name.starts_with(crate::PRINCIPLE))
         .map(|skill| ListedCommand {
             name: skill.name.clone(),
             hint: skill.description.clone(),

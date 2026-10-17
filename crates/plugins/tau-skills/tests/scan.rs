@@ -368,3 +368,35 @@ fn a_persons_skill_replaces_a_built_in_one() {
     assert_eq!(skills.found.len(), 2);
     assert!(skills.found.iter().all(|skill| skill.builtin));
 }
+
+/// Principles and playbooks are listed apart, under their headings,
+/// after the other skills; each still on a line of its own.
+#[test]
+fn principles_and_playbooks_are_listed_under_their_headings() {
+    let home = tempfile::tempdir().unwrap();
+    for name in ["principle-b", "how", "playbook-a", "principle-a", "why"] {
+        fs::create_dir_all(home.path().join(name)).unwrap();
+        fs::write(
+            home.path().join(name).join(SKILL_FILE),
+            format!("---\nname: {name}\ndescription: about {name}\n---\n"),
+        )
+        .unwrap();
+    }
+    let section = scan::section(&scan::scan(home.path())).unwrap();
+    let order: Vec<&str> = section
+        .lines()
+        .filter(|line| line.starts_with("- ") || line.starts_with("## "))
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "- how: about how",
+            "- why: about why",
+            "## Principles",
+            "- principle-a: about principle-a",
+            "- principle-b: about principle-b",
+            "## Playbooks",
+            "- playbook-a: about playbook-a",
+        ]
+    );
+}

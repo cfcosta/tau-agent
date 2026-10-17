@@ -16,12 +16,16 @@ pub struct Host {
 
 impl tau_ui_plugin::PluginHost for Host {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
+        let builtin = cx.dir.join(crate::BUILTIN_DIR);
+        let shipped = builtin.clone();
+        tokio::task::spawn_blocking(move || crate::shipped::install(&shipped))
+            .await??;
         Ok(Self {
             dir: cx
                 .services
                 .get::<crate::SkillsDir>()
                 .map(|dir| dir.0.clone()),
-            builtin: cx.dir.join(crate::BUILTIN_DIR),
+            builtin,
         })
     }
 }

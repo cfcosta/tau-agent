@@ -1356,21 +1356,23 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     let done = tau_agent::tool::RunId("plugin-docs".into());
     workspace.update(&mut cx, |ws, cx| ws.navigate(Route::NewRun, cx));
     // A new run has no conversation to fork, close or open a PR from.
-    // The demo's skills and the one tau ships come with the plugins'
-    // commands, but not the folder that is not a skill.
-    assert_eq!(
-        names(composer_slash(&workspace, &mut cx, "/")),
-        [
-            "/goal",
-            "/plugin",
-            "/agent",
-            "/code-review",
-            "/release-notes",
-            "/tau-plugins",
-            "/model",
-            "/attach"
-        ]
-    );
+    // The demo's skills and those tau ships come with the plugins'
+    // commands, by name, but not the folder that is not a skill, nor
+    // the principles.
+    let mut skills: Vec<String> =
+        ["code-review", "release-notes", "tau-plugins"]
+            .into_iter()
+            .chain(tau_skills::shipped::SKILLS.iter().map(|(name, _)| *name))
+            .filter(|name| !name.starts_with(tau_skills::PRINCIPLE))
+            .map(|name| format!("/{name}"))
+            .collect();
+    skills.sort();
+    let listed = skills.len();
+    let mut expected: Vec<String> =
+        ["/goal", "/plugin", "/agent"].map(String::from).to_vec();
+    expected.extend(skills);
+    expected.extend(["/model", "/attach"].map(String::from));
+    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")), expected);
     // Only the main chat forks (ADR 0016).
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(demo::run_id()), cx)
@@ -1378,7 +1380,10 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     assert_eq!(names(composer_slash(&workspace, &mut cx, "/fo")), ["/fork"]);
     workspace
         .update(&mut cx, |ws, cx| ws.navigate(Route::Run(done.clone()), cx));
-    assert_eq!(names(composer_slash(&workspace, &mut cx, "/")).len(), 10);
+    assert_eq!(
+        names(composer_slash(&workspace, &mut cx, "/")).len(),
+        7 + listed
+    );
     assert!(names(composer_slash(&workspace, &mut cx, "/fo")).is_empty());
     // Not a command: a message.
     assert_eq!(

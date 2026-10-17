@@ -13,6 +13,8 @@
 //! - `scan` (feature `host`): reading the folder.
 //! - `host` (feature `host`): the list in a run's instructions, and the
 //!   tool.
+//! - `shipped` (feature `host`): the skills this crate ships, and their
+//!   install.
 //! - [`ui`]: the plugin, with its UI.
 
 #[cfg(feature = "demo")]
@@ -23,6 +25,8 @@ mod half;
 pub mod host;
 #[cfg(feature = "host")]
 pub mod scan;
+#[cfg(feature = "host")]
+pub mod shipped;
 pub mod ui;
 
 use std::path::PathBuf;
@@ -41,6 +45,11 @@ pub const TOOL: &str = "skill";
 /// The file in a skill's folder that holds its frontmatter and
 /// instructions.
 pub const SKILL_FILE: &str = "SKILL.md";
+
+/// The prefix of a principle's name. Principles are listed apart in a
+/// run's instructions, and left out of the composer's menu: the model
+/// applies them, and the person rarely asks for one by name.
+pub const PRINCIPLE: &str = "principle-";
 
 /// Where the person's skills are, relative to their home: the folder
 /// other agents read them from too.
