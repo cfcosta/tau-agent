@@ -1,7 +1,8 @@
 //! tau-memory's UI (ADR 0017): each repository's notes and the user's
-//! on their pages, an entry for each in the sidebar, what a run recalled
-//! and saved in its transcript, its line in the run's plugin list, and
-//! its settings: the model it writes notes with.
+//! on their pages, an entry for each in the sidebar and in the
+//! repository's menu, what a run recalled and saved in its transcript,
+//! its line in the run's plugin list, and its settings: the model it
+//! writes notes with.
 //!
 //! A repository's notes live in tau's directory for it, beside its
 //! rules; the user's, across repositories, in tau's data directory.
@@ -214,6 +215,8 @@ impl UiPlugin for MemoryUi {
                         .detail(format!("{notes} notes")),
                 )
             })
+            // The first of the plugins' entries, right after tau's own.
+            .contribute_at(points::REPO_MENU, -10, page::menu_entry)
             .status(State::status)
             .contribute(points::TRANSCRIPT, page::mark)
             .settings(settings::pane)

@@ -158,11 +158,6 @@ impl Render for Workspace {
             .on_action(cx.listener(|ws, _: &ShowRuns, _, cx| {
                 ws.switch_tab(route::Tab::Runs, cx)
             }))
-            .on_action(cx.listener(|ws, _: &ShowMemory, _, cx| {
-                if let Some(repo) = ws.selected_repo().map(str::to_owned) {
-                    ws.open_memory(&repo, cx);
-                }
-            }))
             .on_action(cx.listener(|ws, _: &ShowHistory, _, cx| {
                 ws.switch_tab(route::Tab::History, cx)
             }))

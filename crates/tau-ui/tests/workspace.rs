@@ -654,7 +654,14 @@ fn a_new_run_starts_in_the_chosen_repository(cx: &mut TestAppContext) {
 fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update_in(&mut cx, |ws, _, cx| {
-        ws.open_memory("docbert", cx);
+        ws.navigate(
+            Route::Plugin {
+                plugin: tau_memory::NAME.into(),
+                page: "notes".into(),
+                params: [("repo".to_owned(), "docbert".to_owned())].into(),
+            },
+            cx,
+        );
     });
     workspace.update(&mut cx, |ws, cx| {
         ws.add_repo(

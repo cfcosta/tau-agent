@@ -1183,13 +1183,8 @@ fn repo_menu(
             .child(label)
     };
     let owned = |name: &str| name.to_owned();
-    let (new, memory, update, files, remove) = (
-        owned(name),
-        owned(name),
-        owned(name),
-        owned(name),
-        owned(name),
-    );
+    let (new, update, files, remove) =
+        (owned(name), owned(name), owned(name), owned(name));
     let menu = div()
         .id("repo-menu")
         .min_w(rems(14.5))
@@ -1205,14 +1200,6 @@ fn repo_menu(
                 .on_click(cx.listener(move |ws, _, window, cx| {
                     ws.new_run_in(&new, window, cx)
                 })),
-        )
-        .child(
-            entry("menu-memory", Icon::Memory, "Memory".into(), t.text)
-                .on_click(
-                    cx.listener(move |ws, _, _, cx| {
-                        ws.open_memory(&memory, cx)
-                    }),
-                ),
         )
         .child(
             entry(

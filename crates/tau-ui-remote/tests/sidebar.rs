@@ -646,8 +646,9 @@ fn a_row_says_where_its_run_stands_and_how_much() {
 }
 
 /// A repository menu's entry does what it says, not what the row drawn
-/// under the menu does: Memory opens the repository's notes, and Fetch
-/// new commits asks the host to fetch, and the menu closes after each.
+/// under the menu does: Memory, memory's own entry, opens the
+/// repository's notes, and Fetch new commits asks the host to fetch,
+/// and the menu closes after each.
 #[gpui::test]
 fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
     use std::{cell::RefCell, rc::Rc};

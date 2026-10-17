@@ -47,7 +47,12 @@ use tau_ui_kit::{
         weight,
     },
 };
-use tau_ui_plugin::{Handle, Link, ViewCx, points::AtAnchor};
+use tau_ui_plugin::{
+    Handle,
+    Link,
+    ViewCx,
+    points::{AtAnchor, AtRepo},
+};
 
 use super::{Mark, MemoryUi, NoteView, Notebook, USER, notes_link};
 use crate::{
@@ -704,6 +709,34 @@ fn recalled_link(repo: &str, id: &str) -> Link {
         Some(id) => note_link(USER, id),
         None => note_link(repo, id),
     }
+}
+
+/// The repository menu's entry: the repository's notes.
+pub fn menu_entry(
+    at: &AtRepo,
+    view: &mut ViewCx<'_, MemoryUi>,
+) -> Option<AnyElement> {
+    let t = view.theme().clone();
+    let (handle, repo) = (view.handle.clone(), at.repo.clone());
+    let hover = t.selected;
+    Some(
+        div()
+            .id("menu-memory")
+            .debug_selector(|| "menu-memory".to_owned())
+            .flex()
+            .items_center()
+            .gap(sp(2.5))
+            .h(rems(2.125))
+            .px(sp(2.5))
+            .rounded(radius::CONTROL)
+            .cursor_pointer()
+            .text_color(t.text)
+            .hover(move |style| style.bg(hover))
+            .child(icon(Icon::Memory, IconSize::BASE, t.muted))
+            .child("Memory")
+            .on_click(move |_, _, cx| handle.navigate(notes_link(&repo), cx))
+            .into_any_element(),
+    )
 }
 
 /// One of memory's notes in a transcript: the notes a run started with,
