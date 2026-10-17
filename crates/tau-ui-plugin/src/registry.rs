@@ -200,6 +200,10 @@ pub trait ErasedPlugin: Send + Sync {
         args: &str,
         env: Env<'_>,
     ) -> Option<AnyElement>;
+    /// The keys it binds, in its manifest's order ([`Manifest::key`]).
+    fn keys(&self) -> Vec<&'static str>;
+    /// Runs what its `key` does, pressed `at`; false when it binds none.
+    fn press_key(&self, key: &str, at: &crate::KeyAt, env: Env<'_>) -> bool;
     /// What a run on `prompt` is about, when the plugin reads it as its
     /// own: `/goal the tests pass` is about the tests passing.
     fn read_prompt(&self, prompt: &str) -> Option<String>;
@@ -594,6 +598,17 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         let command = self.manifest.commands.iter().find(|c| c.name == name)?;
         self.with_view(env, |view| command.draw_popover(args, view))
             .flatten()
+    }
+
+    fn keys(&self) -> Vec<&'static str> {
+        self.manifest.keys.iter().map(|key| key.key).collect()
+    }
+
+    fn press_key(&self, key: &str, at: &crate::KeyAt, env: Env<'_>) -> bool {
+        let Some(key) = self.manifest.keys.iter().find(|k| k.key == key) else {
+            return false;
+        };
+        self.with_view(env, |view| (key.press)(at, view)).is_some()
     }
 
     fn read_prompt(&self, prompt: &str) -> Option<String> {

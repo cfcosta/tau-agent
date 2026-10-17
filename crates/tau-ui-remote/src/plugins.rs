@@ -625,6 +625,30 @@ impl Workspace {
         ran
     }
 
+    /// Runs what `plugin`'s `key` does, in the repository the person is
+    /// in: the one the sidebar has selected.
+    pub(crate) fn press_plugin_key(
+        &mut self,
+        plugin: &str,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(erased) = registry().get(plugin) else {
+            return;
+        };
+        let at = tau_ui_plugin::KeyAt {
+            repo: self.selected_repo().map(str::to_owned),
+        };
+        self.with_plugin(
+            erased.as_ref(),
+            None,
+            &BTreeMap::new(),
+            cx,
+            |plugin, env| plugin.press_key(key, &at, env),
+        );
+        cx.notify();
+    }
+
     /// The popover of `plugin`'s command `command` while it is written,
     /// with what follows its name.
     pub(crate) fn plugin_popover(

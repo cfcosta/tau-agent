@@ -158,6 +158,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|ws, _: &ShowRuns, _, cx| {
                 ws.switch_tab(route::Tab::Runs, cx)
             }))
+            .on_action(cx.listener(|ws, key: &PluginKey, _, cx| {
+                ws.press_plugin_key(key.plugin, key.key, cx)
+            }))
             .on_action(cx.listener(|ws, _: &ShowHistory, _, cx| {
                 ws.switch_tab(route::Tab::History, cx)
             }))

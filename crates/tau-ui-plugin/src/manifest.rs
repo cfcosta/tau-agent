@@ -214,6 +214,21 @@ pub(crate) struct Listed<P: UiPlugin> {
     pub(crate) run: RunListed<P>,
 }
 
+/// Where a plugin's key was pressed: the repository the person is in,
+/// when there is one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyAt {
+    pub repo: Option<String>,
+}
+
+type Press<P> = Box<dyn for<'a> Fn(&KeyAt, &mut ViewCx<'a, P>) + Send + Sync>;
+
+/// A key the plugin binds in the workspace ([`Manifest::key`]).
+pub(crate) struct Key<P: UiPlugin> {
+    pub(crate) key: &'static str,
+    pub(crate) press: Press<P>,
+}
+
 /// Everything a plugin adds to the interface.
 pub struct Manifest<P: UiPlugin> {
     pub(crate) pages: Vec<Page<P>>,
@@ -222,6 +237,7 @@ pub struct Manifest<P: UiPlugin> {
     pub(crate) commands: Vec<SlashCommand<P>>,
     pub(crate) listed: Option<Listed<P>>,
     pub(crate) settings: Option<Draw<P>>,
+    pub(crate) keys: Vec<Key<P>>,
 }
 
 impl<P: UiPlugin> Default for Manifest<P> {
@@ -239,7 +255,26 @@ impl<P: UiPlugin> Manifest<P> {
             commands: Vec::new(),
             listed: None,
             settings: None,
+            keys: Vec::new(),
         }
+    }
+
+    /// Binds `key`, as gpui spells it (`ctrl-2`), in the workspace:
+    /// pressing it runs `press` with the repository the person is in,
+    /// which navigates to a page ([`crate::Handle::navigate`]) or asks the host
+    /// half ([`crate::Handle::act`]). A key tau binds itself stays tau's,
+    /// and a key an earlier plugin declared stays that plugin's: the
+    /// later declaration is dropped, and said once.
+    pub fn key(
+        mut self,
+        key: &'static str,
+        press: impl for<'a> Fn(&KeyAt, &mut ViewCx<'a, P>) + Send + Sync + 'static,
+    ) -> Self {
+        self.keys.push(Key {
+            key,
+            press: Box::new(press),
+        });
+        self
     }
 
     /// Draws the plugin's settings pane (ADR 0029): the host places it on

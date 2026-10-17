@@ -115,6 +115,15 @@ actions!(
     ]
 );
 
+/// A key a plugin declared ([`tau_ui_plugin::Manifest::key`]), pressed:
+/// the plugin runs what it does in the repository the person is in.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct PluginKey {
+    pub plugin: &'static str,
+    pub key: &'static str,
+}
+
 const CONTEXT: &str = "Workspace";
 
 mod composer;
@@ -129,9 +138,65 @@ mod synced;
 
 pub use synced::Synced;
 
-/// Binds the workspace's keys. [`crate::init`] calls it.
+/// Binds the workspace's keys, then the keys plugins declare that none
+/// of them takes. [`crate::init`] calls it.
 pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([
+    let own = own_keys();
+    let plugins = plugin_keys(&own);
+    cx.bind_keys(own);
+    cx.bind_keys(plugins);
+}
+
+/// The keys plugins declare, in the registry's order, each bound to its
+/// [`PluginKey`] unless a key of `own` or an earlier plugin's takes it:
+/// a key gpui cannot read, or one taken, is dropped, and said.
+fn plugin_keys(own: &[KeyBinding]) -> Vec<KeyBinding> {
+    let mut bound: Vec<(&'static str, KeyBinding)> = Vec::new();
+    for plugin in crate::plugins::registry().plugins() {
+        let name = plugin.name();
+        for key in plugin.keys() {
+            if key
+                .split_whitespace()
+                .any(|stroke| gpui::Keystroke::parse(stroke).is_err())
+            {
+                eprintln!(
+                    "tau-ui-remote: {name} declares the key {key:?}, which \
+                     is not a key; it is dropped"
+                );
+                continue;
+            }
+            let binding = KeyBinding::new(
+                key,
+                PluginKey { plugin: name, key },
+                Some(CONTEXT),
+            );
+            let same =
+                |other: &KeyBinding| other.keystrokes() == binding.keystrokes();
+            if own.iter().any(same) {
+                eprintln!(
+                    "tau-ui-remote: {name} declares {key}, which tau binds; \
+                     it is dropped"
+                );
+                continue;
+            }
+            if let Some((first, _)) =
+                bound.iter().find(|(_, other)| same(other))
+            {
+                eprintln!(
+                    "tau-ui-remote: {name} declares {key}, which {first} \
+                     declared first; it is dropped"
+                );
+                continue;
+            }
+            bound.push((name, binding));
+        }
+    }
+    bound.into_iter().map(|(_, binding)| binding).collect()
+}
+
+/// The workspace's own keys.
+fn own_keys() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("escape", GoBack, Some(CONTEXT)),
         KeyBinding::new("alt-left", GoBack, Some(CONTEXT)),
         KeyBinding::new("ctrl-n", NewRun, Some(CONTEXT)),
@@ -149,7 +214,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("up", SlashUp, Some(CONTEXT)),
         KeyBinding::new("down", SlashDown, Some(CONTEXT)),
         KeyBinding::new("tab", SlashComplete, Some(CONTEXT)),
-    ]);
+    ]
 }
 
 /// What the user asked for. The host subscribes and acts on these.

@@ -72,6 +72,7 @@ pub use host::{
 };
 pub use jobs::{JobCx, JobInfo, Jobs, LiveRepos};
 pub use manifest::{
+    KeyAt,
     ListedCommand,
     Manifest,
     Page,
