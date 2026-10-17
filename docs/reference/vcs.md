@@ -1,6 +1,6 @@
 # Version-control tools (`tau-vcs`, optional)
 
-- Status: implemented in `crates/plugins/tau-vcs-host`, on `jj-lib` 0.45.1,
+- Status: implemented in `crates/plugins/tau-vcs-host`, on `jj-lib` 0.46.0,
   with its cards in `crates/plugins/tau-vcs`.
 - Design study: [jj-lib.md](../research/jj-lib.md). Decisions:
   [0009](../decisions/0009-child-runs-land-on-their-parent.md) (child
@@ -45,7 +45,7 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 
 ## Identity and jj config
 
-tau follows the person's jj config exactly as the jj CLI (0.45.1) would
+tau follows the person's jj config exactly as the jj CLI (0.46.0) would
 in the same workspace. tau-vcs-host's `config` module ports jj-cli's
 loading:
 
@@ -63,7 +63,7 @@ loading:
   `config.toml` and the `.toml` files of `conf.d/` (in name order) in
   `$XDG_CONFIG_HOME/jj` or `~/.config/jj`. `JJ_CONFIG`, a list of
   files and directories, replaces all of them, and the system's too.
-- The repository's and the workspace's configs are where jj 0.45 keeps
+- The repository's and the workspace's configs are where jj 0.46 keeps
   them, outside the repository: `repos/<id>/config.toml` and
   `workspaces/<id>/config.toml` in jj's config directory, named by
   `.jj/repo/config-id` and `.jj/workspace-config-id`. tau reads them
@@ -86,6 +86,9 @@ loading:
   opened after them.
 - jj-lib builds the commit signer from the same settings, so with the
   person's `signing.*` tau's commits are signed as jj would sign them.
+  `~/` at the start of the paths it reads (`signing.key`,
+  `signing.backends.ssh.allowed-signers` and `revocation-list`) is the
+  `JjEnv`'s home directory, as jj expands it with its own.
 - tau adds jj-cli's defaults (from its `src/config/misc.toml`) for the
   jj-cli settings it reads, just above jj-lib's: the person's config
   overrides them as it would the CLI's.
@@ -127,7 +130,15 @@ loading:
   `snapshot.auto-update-stale` (tau always moves a stale workspace's
   files, as `jj workspace update-stale` does, since the main chat's
   catch-up restacks its chats); `git.colocate` (a project's layout is
-  tau's); `experimental-advance-branches` (tau moves its trunk and run
+  tau's; jj 0.46 also reads it in `jj workspace add`, which makes the
+  new workspace a Git worktree when the current one is colocated, but
+  tau's run workspaces are not Git worktrees yet: ADR 0043 makes them
+  ones, with gix, since jj-lib's `create_worktree` runs `git`);
+  `git.push` and `revsets.git-push` (a push names its remote, `origin`,
+  and the one branch it sends, as `jj git push --remote origin
+  --bookmark <branch>` would, so neither the default remotes nor the
+  default revset applies); `aliases.*` (tau runs no jj command);
+  `experimental-advance-branches` (tau moves its trunk and run
   bookmarks itself); `diff.git.show-path-prefix` (tau's diff readers
   need the `a/` and `b/` prefixes); `revsets.short-prefixes` and
   `revsets.log` (tau shows 12-character ids and resolves prefixes in
@@ -506,7 +517,7 @@ the user's checkout.
   without a jj config directory. An import writes it the same way, the
   source's default branch standing for the remote's. An update leaves
   it as it is, as `jj git fetch` does, though trunk follows a new
-  default branch. jj 0.45.1 refuses to clone when the person's own
+  default branch. jj 0.46.0 refuses to clone when the person's own
   `trunk()` names a remote bookmark: it resolves `immutable_heads()`
   in the still-empty repository, without the fallback to `root()` its
   other commands have. tau clones, and falls back as those commands
@@ -979,7 +990,7 @@ another, as for jj. `Remote { url, token }` says where:
   for `None`), else `PushRejected`. No bookmark changes. It returns the
   head it pushed: `head`, unless signing on push made copies of it.
 - The person's jj config applies as `jj git push` applies it (jj-cli
-  0.45.1's `commands/git/push.rs`), with jj-cli's defaults
+  0.46.0's `commands/git/push.rs`), with jj-cli's defaults
   (`git.private-commits = "none()"`, `git.sign-on-push = false`, and
   its `revset-aliases`):
   - `git.private-commits` is a revset, parsed with the person's
@@ -990,7 +1001,10 @@ another, as for jj. `Remote { url, token }` says where:
     is in it: `VcsError::PrivateCommit`, naming the newest such commit
     (change id, commit id, first line) and the revset. A pull request
     sends copies, so `replay` refuses the same way for the commits it
-    copies, before making any copy.
+    copies, before making any copy. The revset is evaluated whole, as
+    jj 0.46 evaluates it, so an `at_operation()` in it that names an
+    operation off the repository's line (a concurrent or unpublished
+    one) sees that operation's commits.
   - With `git.sign-on-push`, `push_trunk` first signs each commit it
     would send that is mutable (not in `immutable_heads()`), unsigned,
     and the person's own (its author's email is `user.email`), with

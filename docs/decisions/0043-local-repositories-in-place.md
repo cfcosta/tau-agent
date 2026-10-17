@@ -134,10 +134,12 @@ small dialog).
   own and run workspaces that are Git worktrees change clones as well,
   and remove the code paths that assume the main chat is `default`
   (`DEFAULT_WORKSPACE`, 22 places).
-- jj-lib 0.45.1 has no API for a jj workspace that is also a Git
-  worktree. tau creates the worktree itself with gix (there is no git
-  binary) and keeps its `HEAD` and index in step, as `colocate.rs`
-  does for `main/` today.
+- jj-lib 0.46.0's API for a jj workspace that is also a Git worktree
+  (`git::create_worktree` and `unlink_worktree`, what `jj workspace
+  add` and `forget` use) runs `git worktree add --orphan` and `git
+  worktree prune`. tau creates the worktree itself with gix (there is
+  no git binary), as jj-lib lays it out, and keeps its `HEAD` and
+  index in step, as `colocate.rs` does for `main/` today.
 - tau's commits carry the person's name and are signed when their
   config signs. A signing setup that prompts would block tau's
   commits; it surfaces as a failed commit.
