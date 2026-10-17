@@ -137,6 +137,37 @@ impl Api {
         format!("{}/{full_name}.git", self.web)
     }
 
+    /// The GitHub repository a local repository's `origin` URL names, as
+    /// `owner/name`, and its HTTPS URL, which tau pushes to with the
+    /// sign-in's token: an SSH URL (`git@github.com:owner/name.git`,
+    /// `ssh://…`) maps to it too. None when `origin` is not on GitHub
+    /// (`tau_vcs_host::local::github`).
+    pub fn https_of(&self, origin: &str) -> Option<(String, String)> {
+        let found = tau_vcs_host::local::github(origin)?;
+        let full_name = format!("{}/{}", found.owner, found.name);
+        let url = self.clone_url(&full_name);
+        Some((full_name, url))
+    }
+
+    /// Whether tau's GitHub App can push to `full_name` (`owner/name`)
+    /// with `token`: GitHub's `permissions.push` for the repository. A
+    /// repository the token does not reach (404, 403) is one it cannot
+    /// push to.
+    pub async fn can_push(
+        &self,
+        token: &str,
+        full_name: &str,
+    ) -> Result<bool, String> {
+        let (status, value) =
+            self.get(token, &format!("/repos/{full_name}")).await?;
+        match status {
+            200..300 => Ok(value["permissions"]["push"].as_bool() == Some(true)),
+            403 | 404 => Ok(false),
+            401 => Err("GitHub did not accept the token.".into()),
+            _ => Err(format!("GitHub answered {status} for {full_name}")),
+        }
+    }
+
     async fn post_form(
         &self,
         path: &str,

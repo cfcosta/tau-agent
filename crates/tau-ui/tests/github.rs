@@ -14,6 +14,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use support::fake;
 use tau_ui::github::{Api, Poll};
@@ -222,4 +223,144 @@ fn a_failed_page_is_an_error() {
         .block_on(Api::at(&base, &base).user("bad"))
         .unwrap_err();
     assert!(error.contains("did not accept"), "{error}");
+}
+
+/// Whether tau's app can push to a repository is GitHub's
+/// `permissions.push` for it; one the token does not reach is one it
+/// cannot push to, and a refused token is an error.
+#[test]
+fn can_push_is_what_github_says_of_the_repository() {
+    let (base, seen) = fake(|line| match line {
+        "GET /repos/octocat/pushes" => (
+            200,
+            json!({ "full_name": "octocat/pushes",
+                    "permissions": { "pull": true, "push": true } }),
+        ),
+        "GET /repos/octocat/reads" => (
+            200,
+            json!({ "full_name": "octocat/reads",
+                    "permissions": { "pull": true, "push": false } }),
+        ),
+        "GET /repos/octocat/bare" => (200, json!({ "full_name": "x" })),
+        "GET /repos/octocat/hidden" => (404, json!({ "message": "Not Found" })),
+        "GET /repos/octocat/refused" => (401, json!({})),
+        _ => (502, json!({})),
+    });
+    let api = Api::at(&base, &base);
+    let can = |name: &str| runtime().block_on(api.can_push("ghu_t", name));
+    assert_eq!(can("octocat/pushes"), Ok(true));
+    assert_eq!(can("octocat/reads"), Ok(false));
+    assert_eq!(can("octocat/bare"), Ok(false));
+    assert_eq!(can("octocat/hidden"), Ok(false));
+    assert!(can("octocat/refused").unwrap_err().contains("did not accept"));
+    assert!(can("octocat/down").unwrap_err().contains("502"));
+    let requests = seen.lock().unwrap();
+    assert!(requests.iter().all(|r| r.contains("Bearer ghu_t")));
+}
+
+/// How an `origin` URL is written.
+#[derive(Debug, Clone, hegel::PrettyPrintable)]
+enum Form {
+    Https,
+    Http,
+    Git,
+    /// `git@github.com:owner/name`.
+    Scp,
+    /// `ssh://git@github.com/owner/name`, with a port now and then.
+    Ssh { port: bool },
+}
+
+#[derive(Debug, Clone, hegel::PrettyPrintable)]
+struct Written {
+    owner: String,
+    name: String,
+    form: Form,
+    host: &'static str,
+    dot_git: bool,
+    slash: bool,
+}
+
+#[hegel::composite]
+fn written(tc: &TestCase) -> Written {
+    let owner = tc.draw(
+        gs::from_regex("[A-Za-z0-9][A-Za-z0-9-]{0,38}").fullmatch(true),
+    );
+    let name =
+        tc.draw(gs::from_regex("[A-Za-z0-9_.-]{1,20}").fullmatch(true));
+    // GitHub's names: not `.` or `..`, and `.git` is not part of one.
+    let name = match name.as_str() {
+        "." | ".." => format!("{name}x"),
+        _ if name.ends_with(".git") => format!("{name}x"),
+        _ => name,
+    };
+    let form = match tc.draw(gs::integers::<u8>().max_value(4)) {
+        0 => Form::Https,
+        1 => Form::Http,
+        2 => Form::Git,
+        3 => Form::Scp,
+        _ => Form::Ssh {
+            port: tc.draw(gs::booleans()),
+        },
+    };
+    Written {
+        owner,
+        name,
+        form,
+        host: tc.draw(gs::sampled_from(vec![
+            "github.com",
+            "www.github.com",
+            "ssh.github.com",
+            "GitHub.com",
+            "gitlab.com",
+        ])),
+        dot_git: tc.draw(gs::booleans()),
+        slash: tc.draw(gs::booleans()),
+    }
+}
+
+impl Written {
+    fn url(&self) -> String {
+        let Self {
+            owner, name, host, ..
+        } = self;
+        let path = format!(
+            "{owner}/{name}{}{}",
+            if self.dot_git { ".git" } else { "" },
+            if self.slash { "/" } else { "" }
+        );
+        match self.form {
+            Form::Https => format!("https://{host}/{path}"),
+            Form::Http => format!("http://{host}/{path}"),
+            Form::Git => format!("git://{host}/{path}"),
+            Form::Scp => format!("git@{host}:{path}"),
+            Form::Ssh { port: false } => format!("ssh://git@{host}/{path}"),
+            Form::Ssh { port: true } => format!("ssh://git@{host}:443/{path}"),
+        }
+    }
+}
+
+/// An `origin` written any way Git takes for a GitHub repository maps to
+/// that repository's HTTPS URL, which names it again; the GitHub
+/// repository is the one inspecting a folder finds
+/// (`tau_vcs_host::local::github`); one on another host maps to none.
+#[hegel::test(test_cases = 300)]
+fn an_origin_on_github_maps_to_its_https_url(tc: TestCase) {
+    let written = tc.draw(written());
+    let url = written.url();
+    tc.note(&url);
+    let api = Api::default();
+    let mapped = api.https_of(&url);
+    let found = tau_vcs_host::local::github(&url)
+        .map(|found| format!("{}/{}", found.owner, found.name));
+    assert_eq!(mapped.as_ref().map(|(name, _)| name), found.as_ref());
+    if written.host == "gitlab.com" {
+        assert_eq!(mapped, None);
+        return;
+    }
+    let full_name = format!("{}/{}", written.owner, written.name);
+    let (name, https) = mapped.expect("a GitHub origin maps");
+    assert_eq!(name, full_name);
+    assert_eq!(https, format!("https://github.com/{full_name}.git"));
+    // The HTTPS URL names the same repository.
+    assert_eq!(api.https_of(&https).map(|(name, _)| name), Some(full_name));
 }
