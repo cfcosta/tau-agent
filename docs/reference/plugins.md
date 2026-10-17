@@ -562,8 +562,11 @@ settings)` gives what commands in a repository start through: a
   lists them at each call (`repos()`), those added since the job started
   among them. `Jobs::cancel(plugin, name)` asks a job to stop; it has
   `GRACE` (3 s) to write its checkpoint and return before it is dropped.
-  A job that fails is said as an alert. The catalog lists the jobs going
-  on (`Catalog::jobs`: plugin, name, label, fraction, line). Starting
+  A job that fails is said as an alert. `JobCx::page(link)` names the page
+  that shows the job's work, the plugin's own unless the link names
+  another's, as the job starts (in the closure, before its future) or
+  once it has something to show. The catalog lists the jobs going on
+  (`Catalog::jobs`: plugin, name, label, fraction, line, page). Starting
   and ending push a catalog refresh at once; progress at most every
   `REFRESH` (500 ms), with a last refresh for what came meanwhile.
   `HostHalf::resume(host, cx)` is called once as the host starts, after
@@ -571,6 +574,48 @@ settings)` gives what commands in a repository start through: a
   restart cut off, from its own checkpoint. The host only asks.
   tau-agents' schedule ticker and registry watcher stay plain tasks: they
   run for as long as tau does and have no progress to show.
+
+- **The status bar**
+  ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
+  The bar under the desktop shows, left to right: tau's own news as
+  before (a repository importing, updating or failing to, then an
+  update's result), the jobs going on, and what plugins add at
+  `points::ACTIVITY` (`Point<AtApp>`, every contribution drawn, in
+  order). Each job is a line: its plugin's name, its label, a small meter
+  for its fraction and its line. Up to `JOBS_SHOWN` (2) show side by
+  side; more collapse to "N jobs ·" and the first. Clicking a job opens
+  its page (`JobInfo::page`), else its plugin's own (`PluginInfo::page`);
+  with neither it is not a link. The bar shows while any of these has
+  something, and not otherwise. An ACTIVITY contribution draws from its
+  plugin's catalog data, for news that is not a job. The phone has no
+  status bar and shows neither, as it shows no import news today.
+- **First-run setup**
+  ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
+  `points::SETUP` (`Point<AtSetup, SetupView>`) adds a step between
+  Repositories and Ready. `AtSetup::repos` are the repositories picked so
+  far (`SetupRepo`: the name picked, `owner/name`; tau's `id` once its
+  clone is listed; the `remote` GitHub gave; the `folder`, `None` for a
+  clone; and the clone's state, `SetupClone`). A contribution gives a
+  `SetupView`: its `step` (the plugin's name for it, `&'static str`), the
+  step bar's `title`, the screen's `heading` and `detail`, and its
+  `body`. A contribution that gives none, from its catalog data, is no
+  step: it is not drawn or counted. The step is
+  `SetupStep::Plugin { plugin, step }`, a route like tau's own, so back
+  and forward work. The step bar's stages are computed (`Stage::all`):
+  GitHub, Model, Repositories, the steps in the order contributions come
+  (their `order`, then the registry's), then Ready; the counter reads
+  "n / total", "/ 4" with none. Picking repositories (`clone_selected`)
+  and leaving the model step with none to pick (skipping GitHub) both go
+  through the steps. A step ends with `Handle::setup_done`
+  (`Request::SetupDone`), or when the person clicks the "Skip for now"
+  tau draws under it; either goes to the next step, or past the last to
+  Ready (with clones) or a new run (without). As setup passes its last
+  step, the workspace says `WorkspaceEvent::SetupFinished { repos }`
+  once per window, and the host calls `HostHalf::setup_finished(host,
+  repos, cx)` on every plugin in the registry's order: the plugin starts
+  what its step chose, such as a job, which reads the repositories as
+  their clones land (`JobCx::repos`). Setup stays on the desktop: a phone
+  drops `HostUpdate::Setup`, and draws no step.
 
 See
 [ADR 0017](../decisions/0017-plugins-bring-their-ui.md), and its "As
