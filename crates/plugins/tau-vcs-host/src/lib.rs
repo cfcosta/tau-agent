@@ -45,7 +45,7 @@ pub mod tools;
 mod vcs;
 
 pub use clone::{CloneError, TransferError};
-pub use config::JjEnv;
+pub use config::{JjEnv, settings as jj_settings};
 pub use diff::MAX_DIFF_BYTES;
 pub use error::VcsError;
 pub use half::VcsHost;

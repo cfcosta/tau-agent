@@ -225,8 +225,10 @@ impl JjEnv {
 /// The settings jj loads for the workspace at `workspace_root`, whose
 /// repository is at `repo_path` (its `.jj/repo`, or where that file
 /// points): what the jj CLI would run with there. Neither needs to
-/// exist yet, as for a workspace about to be made. Blocks.
-pub(crate) fn settings(
+/// exist yet, as for a workspace about to be made. What tau commits
+/// with, and what adding a repository shows (who commits, whether it
+/// signs). Blocks.
+pub fn settings(
     identity: &Identity,
     workspace_root: &Path,
     repo_path: &Path,
