@@ -9,14 +9,18 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, size};
 use tau_memory::{
     import::{
         Act,
+        Flags,
         FolderFound,
         Imports,
         Parts,
+        Pending,
         Place,
+        Progress,
         Request,
         Tool,
         ToolFound,
     },
+    note::NoteType,
     ui::MemoryData,
 };
 use tau_ui_plugin::PluginValue;
@@ -248,4 +252,153 @@ fn the_setup_step_starts_an_import_of_what_was_ticked(cx: &mut TestAppContext) {
         })]
     );
     assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Ready));
+}
+
+fn pending(id: &str, repo: Option<&str>, keep: bool, flags: Flags) -> Pending {
+    Pending {
+        id: id.into(),
+        kind: NoteType::Fact,
+        title: format!("Note {id}"),
+        description: "What it says.".into(),
+        repo: repo.map(str::to_owned),
+        origins: vec!["Claude Code · memory/a.md".into()],
+        in_both: false,
+        flags,
+        keep,
+    }
+}
+
+/// What an import going on proposes: one about the person, two for
+/// `hello`, one of which held a secret.
+fn proposed() -> Imports {
+    Imports {
+        found: found(),
+        pending: vec![
+            pending("p-1", None, true, Flags::default()),
+            pending("p-2", Some("hello"), true, Flags::default()),
+            pending(
+                "p-3",
+                Some("hello"),
+                false,
+                Flags {
+                    secret: true,
+                    ..Flags::default()
+                },
+            ),
+        ],
+        progress: Some(Progress {
+            fraction: 0.36,
+            line: "Reading Claude Code chats · 1 of 3".into(),
+        }),
+        ..Imports::default()
+    }
+}
+
+fn review(
+    workspace: &Entity<Workspace>,
+    params: &[(&str, &str)],
+    cx: &mut VisualTestContext,
+) {
+    workspace.update(cx, |ws, cx| {
+        ws.navigate(
+            Route::Plugin {
+                plugin: MEMORY.into(),
+                page: "import".into(),
+                params: params
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+}
+
+/// The review page lists every proposal with its box; ticking one, and
+/// keeping, ask memory's host half; Keep keeps the ticked ones in view,
+/// Keep none drops those in view; the import going on shows, and stops
+/// when asked.
+#[gpui::test]
+fn the_review_page_keeps_what_is_ticked(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open(proposed(), cx);
+    review(&workspace, &[], &mut cx);
+    for tick in [
+        "memory-review-tick-p-1",
+        "memory-review-tick-p-2",
+        "memory-review-tick-p-3",
+    ] {
+        assert!(cx.debug_bounds(tick).is_some(), "{tick}");
+    }
+    assert!(cx.debug_bounds("memory-review-progress").is_some());
+    click("memory-review-tick-p-3", &mut cx);
+    click("memory-review-keep", &mut cx);
+    click("memory-review-stop", &mut cx);
+    assert_eq!(
+        acts(&events),
+        [
+            Act::Tick {
+                id: "p-3".into(),
+                keep: true
+            },
+            Act::Keep {
+                ids: vec!["p-1".into(), "p-2".into()]
+            },
+            Act::Stop,
+        ]
+    );
+
+    // A repository's tab holds its own; Keep none drops them.
+    click("memory-review-tab-repo-hello", &mut cx);
+    assert!(cx.debug_bounds("memory-review-tick-p-1").is_none());
+    assert!(cx.debug_bounds("memory-review-tick-p-2").is_some());
+    click("memory-review-none", &mut cx);
+    assert_eq!(
+        acts(&events).last(),
+        Some(&Act::Drop {
+            ids: vec!["p-2".into(), "p-3".into()]
+        })
+    );
+}
+
+/// Need a look holds the flagged ones alone, and About you the person's.
+#[gpui::test]
+fn the_review_page_tabs_filter(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _) = open(proposed(), cx);
+    review(&workspace, &[("look", "1")], &mut cx);
+    assert!(cx.debug_bounds("memory-review-tick-p-3").is_some());
+    assert!(cx.debug_bounds("memory-review-tick-p-2").is_none());
+    review(&workspace, &[("repo", "you")], &mut cx);
+    assert!(cx.debug_bounds("memory-review-tick-p-1").is_some());
+    assert!(cx.debug_bounds("memory-review-tick-p-3").is_none());
+}
+
+/// On a phone the page draws from the same data, and acts the same.
+#[gpui::test]
+fn the_review_page_works_on_a_phone(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open(proposed(), cx);
+    cx.simulate_resize(size(gpui::px(390.), gpui::px(1400.)));
+    review(&workspace, &[], &mut cx);
+    click("memory-review-keep", &mut cx);
+    assert_eq!(
+        acts(&events),
+        [Act::Keep {
+            ids: vec!["p-1".into(), "p-2".into()]
+        }]
+    );
+}
+
+/// With nothing waiting and no import going, the page offers one.
+#[gpui::test]
+fn an_empty_review_page_offers_an_import(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open(
+        Imports {
+            found: found(),
+            ..Imports::default()
+        },
+        cx,
+    );
+    review(&workspace, &[], &mut cx);
+    click("memory-review-import", &mut cx);
+    assert_eq!(acts(&events), [Act::Import(Request::default())]);
 }

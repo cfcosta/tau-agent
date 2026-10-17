@@ -77,6 +77,10 @@ pub struct Ui {
     pub(super) search: Entity<TextInput>,
     /// What the setup step has chosen.
     pub(super) choice: super::setup::Choice,
+    /// What the review page is searched for.
+    pub(super) review_search: Entity<TextInput>,
+    /// What keeping proposals last did, as the host half answered.
+    pub(super) kept: Option<crate::import::Kept>,
 }
 
 /// How an open note's page is split, from the width it has.
@@ -141,7 +145,7 @@ fn plural(kind: NoteType) -> &'static str {
 }
 
 /// The color a kind's name is written in.
-fn kind_color(kind: NoteType, t: &Theme) -> Hsla {
+pub(super) fn kind_color(kind: NoteType, t: &Theme) -> Hsla {
     match kind {
         NoteType::Fact => t.blue,
         NoteType::Convention => t.syntax.ty,

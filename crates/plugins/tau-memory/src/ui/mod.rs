@@ -10,6 +10,7 @@
 //! shared by every run.
 
 pub mod page;
+pub mod review;
 pub mod settings;
 pub mod setup;
 
@@ -223,10 +224,24 @@ impl UiPlugin for MemoryUi {
         NAME
     }
 
+    /// What keeping proposals did, for the review page to say.
+    fn reply(
+        &self,
+        ui: &mut page::Ui,
+        reply: serde_json::Value,
+        cx: &mut Context<page::Ui>,
+    ) {
+        if let Ok(kept) = serde_json::from_value(reply) {
+            ui.kept = Some(kept);
+            cx.notify();
+        }
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .reads(READS)
             .page(Page::new("notes", page::render).title(page::title))
+            .page(Page::new("import", review::render).title(review::title))
             .contribute_at(points::SIDEBAR, 10, |_: &AtApp, view| {
                 Some(
                     NavEntry::new("Your notes", Icon::Memory, notes_link(USER))
@@ -260,9 +275,13 @@ impl PluginUi for page::Ui {
     fn new(_handle: Handle, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| TextInput::new("Search notes", cx));
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
+        let review_search = cx.new(|cx| TextInput::new("Search", cx));
+        cx.observe(&review_search, |_, _, cx| cx.notify()).detach();
         page::Ui {
             search,
             choice: setup::Choice::default(),
+            review_search,
+            kept: None,
         }
     }
 }
