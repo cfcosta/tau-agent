@@ -252,7 +252,11 @@ fn can_push_is_what_github_says_of_the_repository() {
     assert_eq!(can("octocat/reads"), Ok(false));
     assert_eq!(can("octocat/bare"), Ok(false));
     assert_eq!(can("octocat/hidden"), Ok(false));
-    assert!(can("octocat/refused").unwrap_err().contains("did not accept"));
+    assert!(
+        can("octocat/refused")
+            .unwrap_err()
+            .contains("did not accept")
+    );
     assert!(can("octocat/down").unwrap_err().contains("502"));
     let requests = seen.lock().unwrap();
     assert!(requests.iter().all(|r| r.contains("Bearer ghu_t")));
@@ -267,7 +271,9 @@ enum Form {
     /// `git@github.com:owner/name`.
     Scp,
     /// `ssh://git@github.com/owner/name`, with a port now and then.
-    Ssh { port: bool },
+    Ssh {
+        port: bool,
+    },
 }
 
 #[derive(Debug, Clone, hegel::PrettyPrintable)]
@@ -282,11 +288,9 @@ struct Written {
 
 #[hegel::composite]
 fn written(tc: &TestCase) -> Written {
-    let owner = tc.draw(
-        gs::from_regex("[A-Za-z0-9][A-Za-z0-9-]{0,38}").fullmatch(true),
-    );
-    let name =
-        tc.draw(gs::from_regex("[A-Za-z0-9_.-]{1,20}").fullmatch(true));
+    let owner = tc
+        .draw(gs::from_regex("[A-Za-z0-9][A-Za-z0-9-]{0,38}").fullmatch(true));
+    let name = tc.draw(gs::from_regex("[A-Za-z0-9_.-]{1,20}").fullmatch(true));
     // GitHub's names: not `.` or `..`, and `.git` is not part of one.
     let name = match name.as_str() {
         "." | ".." => format!("{name}x"),

@@ -724,7 +724,8 @@ fn recover_in_background(
             // What waited to land when tau closed lands now, and the
             // conflicts on each main chat are read again (ADR 0024).
             drain_all_in_background(&host, &workspace, cx);
-            for slot in &slots {
+            // A local repository fetches only when asked (ADR 0043).
+            for slot in slots.iter().filter(|slot| slot.local.is_none()) {
                 update_in_background(&host, &slot.name, &workspace, false, cx);
             }
         });

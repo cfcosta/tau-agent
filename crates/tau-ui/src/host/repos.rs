@@ -148,9 +148,12 @@ pub(super) struct RepoState {
 pub(super) struct RepoSlot {
     pub(super) id: RepoId,
     pub(super) name: String,
-    /// Where it is fetched from: GitHub's URL for a clone from there.
+    /// Where it is fetched from: GitHub's URL for a clone from there,
+    /// and for a local repository whose pushes go there.
     pub(super) remote: Option<String>,
     pub(super) path: PathBuf,
+    /// A local repository, worked in the person's folder (ADR 0043).
+    pub(super) local: Option<Local>,
     pub(super) project: Arc<ProjectSlot>,
 }
 
@@ -189,6 +192,32 @@ pub(super) fn no_vcs() -> anyhow::Error {
         tau_ui_plugin::vcs::VCS.name()
     )
 }
+
+/// Why a folder was not added as a local repository
+/// ([`Host::add_local`]).
+#[derive(Debug)]
+pub enum NotAdded {
+    /// Inspecting the folder refused it, saying what to add instead.
+    Refused(tau_vcs_host::local::Refusal),
+    /// The folder is listed already, as `name`.
+    Listed { folder: PathBuf, name: String },
+    /// Setting it up or listing it failed: nothing is listed.
+    Failed(anyhow::Error),
+}
+
+impl std::fmt::Display for NotAdded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Refused(refusal) => refusal.fmt(f),
+            Self::Listed { folder, name } => {
+                write!(f, "{} is listed already, as {name}", folder.display())
+            }
+            Self::Failed(error) => write!(f, "{error:#}"),
+        }
+    }
+}
+
+impl std::error::Error for NotAdded {}
 
 /// A name for a new workspace: `slug` (a message's first words), then
 /// the time in hex, so it says what it is for and stays unique.
@@ -263,7 +292,8 @@ pub(super) fn clone_into_tau(
 
 impl Host {
     /// Opens or copies a repository's project on the host's runtime;
-    /// the catalog follows once it is done.
+    /// the catalog follows once it is done. A local repository opens
+    /// where it was set up, laid out as it was listed.
     pub(super) fn spawn_import(&self, slot: &RepoSlot) {
         let project = slot.project.clone();
         let source = slot.path.to_string_lossy().into_owned();
@@ -277,7 +307,13 @@ impl Host {
         } else {
             None
         };
-        let how = if let Some(first_files) = first_files {
+        let how = if let Some(local) = &slot.local {
+            Open::Local {
+                folder: local.folder.clone(),
+                main_dir: local.main_dir.clone(),
+                runs_dir: local.runs_dir.clone(),
+            }
+        } else if let Some(first_files) = first_files {
             Open::OrInit(first_files)
         } else if dir == slot.path {
             Open::Existing
@@ -323,6 +359,7 @@ impl Host {
                 github: None,
                 main,
                 own: None,
+                local: None,
             });
             id
         };
@@ -333,6 +370,7 @@ impl Host {
             name: name.to_owned(),
             remote: None,
             path,
+            local: None,
             project: ProjectSlot::new(ProjectState::Ready(repository)),
         });
         drop(repos);
@@ -516,6 +554,7 @@ impl Host {
                 name: name.clone(),
                 remote: Some(self.github.clone_url(full_name)),
                 path: dir.clone(),
+                local: None,
                 project: ProjectSlot::new(ProjectState::Importing),
             };
             self.spawn_import(&slot);
@@ -562,6 +601,206 @@ impl Host {
         self.list_clone(&dir, full_name).await
     }
 
+    /// Adds the folder `folder` on this computer as a local repository,
+    /// worked in where it is (ADR 0043): inspects it, sets jj up in it
+    /// (`Project::setup_local`, all or nothing), lists it with where its
+    /// pushes go, makes its main chat and moves the main chat's
+    /// workspace onto trunk. Returns it as the sidebar shows it.
+    ///
+    /// `progress` hears of each step of the setup before it starts, and
+    /// stops the setup by breaking. It runs while tau holds jj's Git
+    /// import lock on the folder, on a blocking thread: it must be quick,
+    /// as sending on a channel is.
+    ///
+    /// A folder inspecting refuses comes back as [`NotAdded::Refused`],
+    /// with what to add instead; one listed already as
+    /// [`NotAdded::Listed`]. One the person removed from the list is
+    /// listed again as it was. When adding fails, nothing is listed, and
+    /// the setup's failure leaves the folder as it was.
+    pub async fn add_local(
+        &self,
+        folder: &Path,
+        progress: impl FnMut(tau_vcs_host::local::Step) -> std::ops::ControlFlow<()>
+        + Send
+        + 'static,
+    ) -> Result<Repo, NotAdded> {
+        let found = tau_vcs_host::local::inspect(folder, self.identity())
+            .await
+            .map_err(NotAdded::Refused)?;
+        let listed = {
+            let list = self.list.lock().expect("not poisoned");
+            list.repos
+                .iter()
+                .find(|listed| {
+                    listed
+                        .local
+                        .as_ref()
+                        .is_some_and(|local| local.folder == found.root)
+                })
+                .map(|listed| (listed.name.clone(), listed.hidden))
+        };
+        match listed {
+            Some((name, false)) => {
+                return Err(NotAdded::Listed {
+                    folder: found.root,
+                    name,
+                });
+            }
+            Some((name, true)) => {
+                return self.list_again(&name).await.map_err(NotAdded::Failed);
+            }
+            None => {}
+        }
+        let id = new_id();
+        let dir = self.config.local_dir(&id);
+        let runs = dir.join("runs");
+        let runs_dir =
+            runs.join(tau_vcs_host::local::runs_dir_name(&runs, &found.root));
+        let main_dir = dir.join("main");
+        let layout = Layout::local(&found.root, &main_dir, &runs_dir);
+        let push = self.push_to(&found).await;
+        let folder = found.root.clone();
+        let project =
+            Project::setup_local(found, layout, self.identity(), progress)
+                .await
+                .map_err(|error| NotAdded::Failed(error.into()))?;
+        let repository: Arc<dyn Repository> =
+            Arc::new(JjRepository::new(project, self.identity()));
+        let local = Local {
+            folder: folder.clone(),
+            main_dir,
+            runs_dir,
+            main_workspace: repository.main_workspace().to_owned(),
+            push,
+            links: Vec::new(),
+        };
+        let name = self
+            .list
+            .lock()
+            .expect("not poisoned")
+            .list_local(id.clone(), local.clone());
+        let slot = RepoSlot {
+            id: id.clone(),
+            name: name.clone(),
+            remote: self.listed(&name).and_then(|l| self.remote_of(&l)),
+            path: folder.clone(),
+            local: Some(local),
+            project: ProjectSlot::new(ProjectState::Ready(repository.clone())),
+        };
+        self.repos.lock().expect("not poisoned").push(slot);
+        let main = match self.main_of(&name).await {
+            Ok(main) => main,
+            Err(error) => {
+                self.unlist(&name).await;
+                return Err(NotAdded::Failed(error));
+            }
+        };
+        // The setup leaves the main chat's workspace on the root commit:
+        // its first turn would catch up too, but its files are trunk's
+        // from the start.
+        let workspace = repository.main_workspace().to_owned();
+        if let Err(error) = repository.catch_up(&workspace).await {
+            eprintln!(
+                "tau-ui: cannot move {name}'s main chat onto trunk: {error:#}"
+            );
+        }
+        self.catalog_changed();
+        let mut repo = Repo::new(&name, folder.display().to_string());
+        repo.id = id;
+        repo.main = Some(main);
+        Ok(repo)
+    }
+
+    /// Lists the repository `name` again, which the person removed from
+    /// the list, as it was. Returns it as the sidebar shows it.
+    async fn list_again(&self, name: &str) -> anyhow::Result<Repo> {
+        let (id, path) = {
+            let mut list = self.list.lock().expect("not poisoned");
+            let listed = list
+                .repos
+                .iter_mut()
+                .find(|listed| listed.name == name)
+                .ok_or_else(|| anyhow::anyhow!("No repository {name}"))?;
+            listed.hidden = false;
+            (listed.id.clone(), listed.path.clone())
+        };
+        self.save_list().await?;
+        if self.slot(name).is_none()
+            && let Some(listed) = self.listed(name)
+        {
+            let slot = RepoSlot {
+                id: id.clone(),
+                name: name.to_owned(),
+                remote: self.remote_of(&listed),
+                path: path.clone(),
+                local: listed.local.clone(),
+                project: ProjectSlot::new(ProjectState::Importing),
+            };
+            self.spawn_import(&slot);
+            self.repos.lock().expect("not poisoned").push(slot);
+        }
+        self.catalog_changed();
+        let mut repo = Repo::new(name, path.display().to_string());
+        repo.id = id;
+        repo.main = Some(self.main_of(name).await?);
+        Ok(repo)
+    }
+
+    /// The repository listed as `name`, as the list keeps it.
+    pub(super) fn listed(&self, name: &str) -> Option<Listed> {
+        self.list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .iter()
+            .find(|listed| listed.name == name)
+            .cloned()
+    }
+
+    /// Takes the repository `name` off the list and the host, for an add
+    /// that failed after listing it.
+    async fn unlist(&self, name: &str) {
+        self.list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .retain(|listed| listed.name != name);
+        self.repos
+            .lock()
+            .expect("not poisoned")
+            .retain(|slot| slot.name != name);
+        if let Err(error) = self.save_list().await {
+            eprintln!("tau-ui: cannot unlist {name}: {error:#}");
+        }
+    }
+
+    /// Where a local repository's pushes go, chosen as it is added (ADR
+    /// 0043): its `origin`'s GitHub repository, SSH or HTTPS, when tau's
+    /// GitHub App can push there with the saved sign-in, else nowhere.
+    async fn push_to(&self, found: &tau_vcs_host::local::Found) -> PushTo {
+        let Some((full_name, _)) = found
+            .origin
+            .as_ref()
+            .and_then(|origin| self.github.https_of(&origin.url))
+        else {
+            return PushTo::Nowhere;
+        };
+        let Some(token) = github::Token::load(&self.config.credentials).await
+        else {
+            return PushTo::Nowhere;
+        };
+        match self.github.can_push(&token.token, &full_name).await {
+            Ok(true) => PushTo::GitHub(full_name),
+            Ok(false) => PushTo::Nowhere,
+            Err(error) => {
+                eprintln!(
+                    "tau-ui: cannot ask GitHub about {full_name}: {error}"
+                );
+                PushTo::Nowhere
+            }
+        }
+    }
+
     /// Brings new commits from GitHub into a repository's project. New
     /// runs start from the new trunk; runs going on keep their code.
     pub async fn update_repo(
@@ -572,6 +811,9 @@ impl Host {
             .slot(name)
             .ok_or_else(|| anyhow::anyhow!("No repository {name}"))?;
         let project = slot.project().await?;
+        if let Some(error) = self.local_has_no_remote(name) {
+            return Err(error);
+        }
         let full_name = self.github_of(name).ok_or_else(|| {
             anyhow::anyhow!("{name} was not cloned from GitHub")
         })?;
@@ -606,6 +848,7 @@ impl Host {
                 github: None,
                 main: None,
                 own: Some(Own::Plugins),
+                local: None,
             });
         }
         if let Err(error) = self.save_list().await {
@@ -673,6 +916,7 @@ impl Host {
             name: name.clone(),
             remote: None,
             path: dir.clone(),
+            local: None,
             project: ProjectSlot::new(ProjectState::Importing),
         };
         self.spawn_import(&slot);
@@ -685,12 +929,53 @@ impl Host {
     }
 
     /// Where the listed repository `listed` is fetched from: GitHub's URL
-    /// for a clone from there.
+    /// for a clone from there, and for a local repository whose pushes go
+    /// there.
     pub(super) fn remote_of(&self, listed: &Listed) -> Option<String> {
+        let pushed =
+            listed.local.as_ref().and_then(|local| match &local.push {
+                PushTo::GitHub(full_name) => Some(full_name),
+                PushTo::Nowhere => None,
+            });
         listed
             .github
-            .as_deref()
+            .as_ref()
+            .or(pushed)
             .map(|full_name| self.github.clone_url(full_name))
+    }
+
+    /// Whether the listed repository `name` is a local one, worked in
+    /// the person's folder (ADR 0043), and where its pushes go.
+    pub(super) fn local_push_of(&self, name: &str) -> Option<PushTo> {
+        self.list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .iter()
+            .find(|listed| listed.name == name)
+            .and_then(|listed| listed.local.as_ref())
+            .map(|local| local.push.clone())
+    }
+
+    /// Why `repo` cannot be pushed, fetched or opened pull requests on
+    /// from GitHub, when it is a local repository: one whose pushes go
+    /// nowhere has no remote; one whose pushes go to GitHub waits for
+    /// pushing and fetching without touching the person's `origin`
+    /// (ADR 0043), which clones' paths would rewrite.
+    pub(super) fn local_has_no_remote(
+        &self,
+        repo: &str,
+    ) -> Option<anyhow::Error> {
+        Some(match self.local_push_of(repo)? {
+            PushTo::Nowhere => anyhow::anyhow!(
+                "{repo} has no remote: its pushes go nowhere, so there is \
+                 nothing to push to, fetch from or open a pull request on"
+            ),
+            PushTo::GitHub(full_name) => anyhow::anyhow!(
+                "{repo} is a local repository: tau does not push it to \
+                 {full_name}, fetch it or open pull requests from it yet"
+            ),
+        })
     }
 
     /// The `owner/name` a repository was cloned from, if it came from

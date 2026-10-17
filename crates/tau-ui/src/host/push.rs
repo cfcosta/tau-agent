@@ -11,6 +11,9 @@ impl Host {
         &self,
         repo: &str,
     ) -> anyhow::Result<(String, String)> {
+        if let Some(error) = self.local_has_no_remote(repo) {
+            return Err(error);
+        }
         let full_name = self.github_of(repo).ok_or_else(|| {
             anyhow::anyhow!("{repo} was not cloned from GitHub")
         })?;

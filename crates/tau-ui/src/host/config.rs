@@ -122,6 +122,13 @@ impl HostConfig {
         self.repos.join("github")
     }
 
+    /// tau's own directory for the local repository `id` (ADR 0043), out
+    /// of the person's folder: the main chat's workspace, the runs', and
+    /// what plugins keep for it (`RepoCtx::dir`).
+    pub fn local_dir(&self, id: &RepoId) -> PathBuf {
+        self.repos.join("local").join(&id.0)
+    }
+
     /// tau's directory for data shared by every repository, where each
     /// plugin keeps its own (`HostCx::plugin_dir`).
     pub fn shared_dir(&self) -> PathBuf {
@@ -160,7 +167,7 @@ pub(super) fn dir_name(path: &Path) -> String {
 }
 
 /// The repositories tau lists, as `repos.json` keeps them.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct RepoList {
     pub(super) repos: Vec<Listed>,
     /// The ones the sidebar shows open.
@@ -171,7 +178,7 @@ pub(super) struct RepoList {
     pub(super) closed: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Listed {
     /// Its own id, given as it is first listed: a list saved without one
     /// gets one as it loads, kept from the next save on.
@@ -193,26 +200,68 @@ pub(super) struct Listed {
     /// not from GitHub.
     #[serde(default)]
     pub(super) own: Option<Own>,
+    /// A local repository, worked in the person's folder (ADR 0043), at
+    /// `path`: what opens it again.
+    #[serde(default)]
+    pub(super) local: Option<Local>,
+}
+
+/// What the host keeps of a local repository (ADR 0043) to open it
+/// again: its folder, and tau's directories for it, under
+/// [`HostConfig::local_dir`], each named once, as it was added, and
+/// never made again from the folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Local {
+    /// The person's folder, as inspecting it found it.
+    pub(super) folder: PathBuf,
+    /// The main chat's workspace's directory.
+    pub(super) main_dir: PathBuf,
+    /// Where the runs' workspaces are (`local::runs_dir_name`).
+    pub(super) runs_dir: PathBuf,
+    /// The main chat's workspace's name, as the setup picked it.
+    pub(super) main_workspace: String,
+    /// Where pushes go, chosen as it was added.
+    pub(super) push: PushTo,
+    /// The untracked paths in the folder linked into each run's
+    /// workspace: none until the person names some.
+    pub(super) links: Vec<PathBuf>,
+}
+
+/// Where a local repository's pushes go (ADR 0043): to GitHub when its
+/// `origin` is there and tau's GitHub App could push to it as it was
+/// added, else nowhere, which hides Push and pull requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum PushTo {
+    Nowhere,
+    /// `owner/name`, reached over HTTPS with the sign-in's token.
+    #[serde(rename = "github")]
+    GitHub(String),
 }
 
 impl RepoList {
     /// The list `path` keeps, without the local checkouts listed before
     /// repositories came from GitHub alone: they stay out, open or not.
-    /// tau's own repositories stay.
+    /// tau's own repositories and local repositories worked in place
+    /// stay.
     pub(super) async fn load(path: &Path) -> Self {
         let list: Self = tokio::fs::read_to_string(path)
             .await
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        list.github_only()
+        list.without_old_checkouts()
     }
 
-    /// The list without repositories that did not come from GitHub,
-    /// tau's own excepted, and with only the listed ones open.
-    pub(super) fn github_only(mut self) -> Self {
-        self.repos
-            .retain(|listed| listed.github.is_some() || listed.own.is_some());
+    /// The list without the checkouts tau copied before repositories came
+    /// from GitHub alone: those from GitHub, tau's own and local
+    /// repositories stay, and only the listed ones are open.
+    pub(super) fn without_old_checkouts(mut self) -> Self {
+        self.repos.retain(|listed| {
+            listed.github.is_some()
+                || listed.own.is_some()
+                || listed.local.is_some()
+        });
         let listed: Vec<String> = self
             .repos
             .iter()
@@ -260,18 +309,7 @@ impl RepoList {
             listed.hidden = false;
             return listed.name.clone();
         }
-        let base = dir_name(&path);
-        let taken = |name: &str| self.repos.iter().any(|l| l.name == name);
-        let name = (1..)
-            .map(|n| {
-                if n == 1 {
-                    base.clone()
-                } else {
-                    format!("{base}-{n}")
-                }
-            })
-            .find(|name| !taken(name))
-            .expect("some suffix is free");
+        let name = self.free_name(&path);
         self.repos.push(Listed {
             id: new_id(),
             name: name.clone(),
@@ -280,6 +318,41 @@ impl RepoList {
             github: None,
             main: None,
             own,
+            local: None,
+        });
+        name
+    }
+
+    /// A name for the repository at `path` that none listed has: its
+    /// directory's, made unique.
+    fn free_name(&self, path: &Path) -> String {
+        let base = dir_name(path);
+        let taken = |name: &str| self.repos.iter().any(|l| l.name == name);
+        (1..)
+            .map(|n| {
+                if n == 1 {
+                    base.clone()
+                } else {
+                    format!("{base}-{n}")
+                }
+            })
+            .find(|name| !taken(name))
+            .expect("some suffix is free")
+    }
+
+    /// Lists the local repository `local` as `id`, under its folder's
+    /// name made unique, and returns the name.
+    pub(super) fn list_local(&mut self, id: RepoId, local: Local) -> String {
+        let name = self.free_name(&local.folder);
+        self.repos.push(Listed {
+            id,
+            name: name.clone(),
+            path: local.folder.clone(),
+            hidden: false,
+            github: None,
+            main: None,
+            own: None,
+            local: Some(local),
         });
         name
     }

@@ -508,7 +508,11 @@ fn jj_trunk_names(workspace: &Workspace) -> Result<Vec<String>, Failed> {
                 && remote_ref.target.present_adds().any(|id| *id == commit)
         })
         .map(|(symbol, _)| symbol.name.as_str().to_owned());
-    Ok(local.chain(remote).collect::<BTreeSet<_>>().into_iter().collect())
+    Ok(local
+        .chain(remote)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
 }
 
 /// The branch `refs/remotes/origin/HEAD` names, when it names one that

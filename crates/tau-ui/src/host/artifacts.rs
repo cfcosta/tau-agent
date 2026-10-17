@@ -1,7 +1,10 @@
 //! Explicit artifact maintenance over every persisted run and its original
 //! messages. A missing owner, malformed record, or unreadable root aborts.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use anyhow::{Context as _, bail};
 use serde_json::Value;
@@ -9,7 +12,6 @@ use tau_artifacts::{Artifact, Bytes, PruneReport, Quotas};
 use tau_store::{RunKind, RunRecord, Store};
 use tau_tools_host::artifact_grant::{ArtifactRecord, fold_grants};
 use tau_ui_plugin::{HOST_RECORD, HostRecord};
-use tau_vcs_host::Project;
 
 use super::Host;
 
@@ -180,16 +182,16 @@ impl Host {
         &self,
         repo: &str,
     ) -> anyhow::Result<PruneReport> {
-        let project = self
-            .project_of(repo)
-            .await
-            .context("repository is unavailable")?;
+        let slot = self.slot(repo).context("repository is unavailable")?;
+        // The project must be there, but its artifacts are in tau's
+        // directory for the repository: a local one's root is the
+        // person's folder.
+        slot.project().await.context("repository is unavailable")?;
+        let dir = self.repo_ctx(&slot).dir.join("artifacts");
         let (store, repo) = (self.store.clone(), repo.to_owned());
         let runtime = tokio::runtime::Handle::current();
-        tokio::task::spawn_blocking(move || {
-            prune(&project, &store, &repo, &runtime)
-        })
-        .await?
+        tokio::task::spawn_blocking(move || prune(dir, &store, &repo, &runtime))
+            .await?
     }
 }
 
@@ -201,13 +203,12 @@ impl Host {
     reason = "runs in spawn_blocking, holding a file lock across its store read (ADR 0028)"
 )]
 fn prune(
-    project: &Project,
+    dir: PathBuf,
     store: &Store,
     repo: &str,
     runtime: &tokio::runtime::Handle,
 ) -> anyhow::Result<PruneReport> {
-    let bytes =
-        Bytes::new(project.root().join("artifacts"), Quotas::default())?;
+    let bytes = Bytes::new(dir, Quotas::default())?;
     let lease = bytes.lock_publication()?;
     let roots = runtime.block_on(retained_roots(store, repo))?;
     Ok(bytes.prune_with_roots(roots, &lease)?)

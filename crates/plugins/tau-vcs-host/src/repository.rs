@@ -51,6 +51,17 @@ impl vcs::Vcs for JjVcs {
                     let source = source.to_string_lossy().into_owned();
                     Project::open_or_import(source, root, identity).await
                 }
+                // Never `Project::open`: it would take the person's
+                // `tau/*` branches for run heads of tau's.
+                Open::Local {
+                    folder,
+                    main_dir,
+                    runs_dir,
+                } => {
+                    let layout =
+                        crate::Layout::local(folder, main_dir, runs_dir);
+                    Project::open_local(layout, identity).await
+                }
             }?;
             let repository = JjRepository::new(project, self.identity.clone());
             Ok(Arc::new(repository) as Arc<dyn vcs::Repository>)

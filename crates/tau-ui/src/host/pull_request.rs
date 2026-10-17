@@ -105,6 +105,9 @@ impl Host {
             );
         }
         let slot = self.slot_of_run(run).await?;
+        if let Some(error) = self.local_has_no_remote(&slot.name) {
+            return Err(error);
+        }
         let repo = self.github_of(&slot.name).ok_or_else(|| {
             anyhow::anyhow!(
                 "Pull requests need a repository cloned from GitHub; {} was \

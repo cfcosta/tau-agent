@@ -161,7 +161,9 @@ impl Api {
         let (status, value) =
             self.get(token, &format!("/repos/{full_name}")).await?;
         match status {
-            200..300 => Ok(value["permissions"]["push"].as_bool() == Some(true)),
+            200..300 => {
+                Ok(value["permissions"]["push"].as_bool() == Some(true))
+            }
             403 | 404 => Ok(false),
             401 => Err("GitHub did not accept the token.".into()),
             _ => Err(format!("GitHub answered {status} for {full_name}")),

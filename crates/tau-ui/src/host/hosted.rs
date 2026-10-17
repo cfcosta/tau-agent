@@ -552,14 +552,26 @@ pub(super) fn apply_push(
     }
 }
 
-/// The repository in `slot`, as plugins see it.
+/// The repository in `slot`, as plugins see it. A local repository
+/// (ADR 0043) is the person's folder, and tau's directory for it, which
+/// holds its workspaces too, is under [`HostConfig::local_dir`].
 fn repo_ctx_of(config: &HostConfig, slot: &RepoSlot) -> RepoCtx {
+    if let Some(local) = &slot.local {
+        let dir = config.local_dir(&slot.id);
+        return RepoCtx {
+            id: slot.id.clone(),
+            name: slot.name.clone(),
+            remote: slot.remote.clone(),
+            folder: Some(local.folder.clone()),
+            checkout: slot.path.clone(),
+            dir: dir.clone(),
+            workspaces: dir,
+        };
+    }
     RepoCtx {
         id: slot.id.clone(),
         name: slot.name.clone(),
         remote: slot.remote.clone(),
-        // Every repository is a clone tau keeps until local ones
-        // (ADR 0043) are listed.
         folder: None,
         checkout: slot.path.clone(),
         dir: config.project_dir_of(&slot.path),

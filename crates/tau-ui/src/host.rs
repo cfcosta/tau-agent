@@ -71,6 +71,7 @@ use tau_vcs_host::{
     Head,
     Identity,
     JjRepository,
+    Layout,
     Project,
     ProjectRepo,
     RefusingSpawn,
@@ -364,6 +365,7 @@ pub use self::{
     landing::{LANDING_INTENT, LandingStep},
     lanes::{ConflictsHook, DrainReport, QUEUE_PLUGIN},
     onboarding::onboard,
+    repos::NotAdded,
     startup::CUT_OFF,
 };
 use self::{
@@ -479,8 +481,17 @@ impl Host {
         host.host_plugins();
         host.runtime.block_on(host.list_plugins_repo());
         host.runtime.block_on(host.list_agents());
+        let host = host.with_listed_repos()?;
+        Ok((host, events))
+    }
+
+    /// Opens the repositories `repos.json` lists, as tau starts, each on
+    /// the host's runtime, and makes their main chats where they have
+    /// none: what [`Self::new`] does, for a host built elsewhere, as in
+    /// tests.
+    pub fn with_listed_repos(self) -> anyhow::Result<Self> {
         // Importing clones can take a while; the window opens first.
-        let listed: Vec<Listed> = host
+        let listed: Vec<Listed> = self
             .list
             .lock()
             .expect("not poisoned")
@@ -494,18 +505,19 @@ impl Host {
             let slot = RepoSlot {
                 id: listed.id.clone(),
                 name: listed.name.clone(),
-                remote: host.remote_of(listed),
+                remote: self.remote_of(listed),
                 path: listed.path.clone(),
+                local: listed.local.clone(),
                 project: ProjectSlot::new(ProjectState::Importing),
             };
-            host.spawn_import(&slot);
+            self.spawn_import(&slot);
             slots.push(slot);
         }
-        *host.repos.lock().expect("not poisoned") = slots;
+        *self.repos.lock().expect("not poisoned") = slots;
         for listed in &listed {
-            host.setting_up(host.main_of(&listed.name))?;
+            self.setting_up(self.main_of(&listed.name))?;
         }
-        Ok((host, events))
+        Ok(self)
     }
 
     /// A host over an agent built elsewhere: another model, other
@@ -911,8 +923,12 @@ impl Host {
         let launcher = self.launcher_of(repo).await;
         let no_commands =
             launcher.is_none() && self.config.is_agent_path(&repo.path);
-        let artifacts =
-            Bytes::new(project.root().join("artifacts"), Quotas::default())?;
+        // tau's directory for the repository, not the project's root: a
+        // local repository's is the person's folder.
+        let artifacts = Bytes::new(
+            self.repo_ctx(repo).dir.join("artifacts"),
+            Quotas::default(),
+        )?;
         // An agent's runs reach the network with `http`, its keys named
         // from its own secret store (ADR 0037); no other run does.
         let http = self.config.is_agent_path(&repo.path).then(|| {
@@ -1850,6 +1866,7 @@ mod tests {
                 github: github.map(str::to_owned),
                 main: None,
                 own,
+                local: None,
             };
         let saved = RepoList {
             repos: vec![
@@ -1915,6 +1932,157 @@ mod tests {
             .map(|listed| listed.id.clone())
             .collect();
         assert_eq!(reloaded, ids);
+    }
+
+    /// A listed repository, any kind: from GitHub, tau's own, local
+    /// (ADR 0043), or a checkout copied before repositories came from
+    /// GitHub alone.
+    #[hegel::composite]
+    fn listed(tc: &hegel::TestCase) -> Listed {
+        use hegel::generators as gs;
+        let n = tc.draw(gs::integers::<u16>());
+        let name = format!("repo-{n}");
+        let path = PathBuf::from(format!("/home/p/{name}"));
+        let kind = tc.draw(gs::integers::<u8>().max_value(3));
+        let text = || gs::from_regex("[a-z0-9-]{1,8}").fullmatch(true);
+        let local = (kind == 2).then(|| Local {
+            folder: path.clone(),
+            main_dir: PathBuf::from(format!("/data/local/{n}/main")),
+            runs_dir: PathBuf::from(format!(
+                "/data/local/{n}/runs/{}",
+                tc.draw(text())
+            )),
+            main_workspace: tc.draw(gs::sampled_from(vec![
+                "tau-main".to_owned(),
+                "tau-main-2".to_owned(),
+            ])),
+            push: if tc.draw(gs::booleans()) {
+                PushTo::GitHub(format!(
+                    "{}/{}",
+                    tc.draw(text()),
+                    tc.draw(text())
+                ))
+            } else {
+                PushTo::Nowhere
+            },
+            links: tc
+                .draw(gs::vecs(text()).max_size(3))
+                .into_iter()
+                .map(PathBuf::from)
+                .collect(),
+        });
+        Listed {
+            id: RepoId(tc.draw(text())),
+            name,
+            path,
+            hidden: tc.draw(gs::booleans()),
+            github: (kind == 0).then(|| format!("o/{n}")),
+            main: tc.draw(gs::optional(text())),
+            own: (kind == 1).then_some(Own::Agent),
+            local,
+        }
+    }
+
+    #[hegel::composite]
+    fn repo_list(tc: &hegel::TestCase) -> RepoList {
+        use hegel::generators::{self as gs, Generator as _};
+        let mut repos =
+            tc.draw(gs::vecs(listed().print_as_debug()).max_size(6));
+        let mut seen = HashSet::new();
+        repos.retain(|listed| seen.insert(listed.name.clone()));
+        let names: Vec<String> =
+            repos.iter().map(|listed| listed.name.clone()).collect();
+        let picked = |tc: &hegel::TestCase| -> Vec<String> {
+            names
+                .iter()
+                .filter(|_| tc.draw(gs::booleans()))
+                .cloned()
+                .chain(tc.draw(gs::booleans()).then(|| "gone".to_owned()))
+                .collect()
+        };
+        RepoList {
+            open: picked(tc),
+            closed: tc.draw(gs::vecs(gs::text().max_size(6)).max_size(3)),
+            repos,
+        }
+    }
+
+    /// `repos.json` keeps what it is given: a list saved and loaded is
+    /// the list, but for the checkouts copied before repositories came
+    /// from GitHub alone, which loading leaves out, open or not; local
+    /// repositories stay, with what opens them again.
+    #[hegel::test(test_cases = 200)]
+    fn a_saved_list_loads_as_it_was(tc: hegel::TestCase) {
+        use hegel::generators::Generator as _;
+        let list = tc.draw(repo_list().print_as_debug());
+        let text = serde_json::to_string_pretty(&list).unwrap();
+        let read: RepoList = serde_json::from_str(&text).unwrap();
+        assert_eq!(read, list);
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("repos.json");
+        tau_testing::block_on_io(list.save(&file)).unwrap();
+        let loaded = tau_testing::block_on_io(RepoList::load(&file));
+        let kept: Vec<Listed> = list
+            .repos
+            .iter()
+            .filter(|listed| {
+                listed.github.is_some()
+                    || listed.own.is_some()
+                    || listed.local.is_some()
+            })
+            .cloned()
+            .collect();
+        assert_eq!(loaded.repos, kept);
+        let open: Vec<String> = list
+            .open
+            .iter()
+            .filter(|name| kept.iter().any(|listed| listed.name == **name))
+            .cloned()
+            .collect();
+        assert_eq!(loaded.open, open);
+        assert_eq!(loaded.closed, list.closed);
+    }
+
+    /// A `repos.json` written before repositories had ids, and before
+    /// local ones were listed, loads to the same entries, each with an
+    /// id of its own.
+    #[hegel::test(test_cases = 100)]
+    fn an_old_list_loads_unchanged(tc: hegel::TestCase) {
+        use hegel::generators::Generator as _;
+        let mut list = tc.draw(repo_list().print_as_debug());
+        for listed in &mut list.repos {
+            listed.local = None;
+        }
+        let mut old = serde_json::to_value(&list).unwrap();
+        for listed in old["repos"].as_array_mut().unwrap() {
+            let listed = listed.as_object_mut().unwrap();
+            listed.remove("id");
+            listed.remove("local");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("repos.json");
+        std::fs::write(&file, old.to_string()).unwrap();
+        let loaded = tau_testing::block_on_io(RepoList::load(&file));
+        let ids: std::collections::BTreeSet<&RepoId> =
+            loaded.repos.iter().map(|listed| &listed.id).collect();
+        assert_eq!(ids.len(), loaded.repos.len());
+        // The checkouts copied before are left out, as they always were.
+        let mut kept: Vec<Listed> = list
+            .repos
+            .into_iter()
+            .filter(|listed| listed.github.is_some() || listed.own.is_some())
+            .collect();
+        assert_eq!(loaded.repos.len(), kept.len());
+        for (listed, given) in kept.iter_mut().zip(&loaded.repos) {
+            listed.id = given.id.clone();
+        }
+        assert_eq!(loaded.repos, kept);
+        let open: Vec<String> = list
+            .open
+            .into_iter()
+            .filter(|name| kept.iter().any(|listed| listed.name == *name))
+            .collect();
+        assert_eq!(loaded.open, open);
     }
 
     /// A list saved before repositories had ids gets one for each as it

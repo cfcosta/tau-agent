@@ -129,6 +129,14 @@ pub enum Open {
     OrInit(Vec<(String, String)>),
     /// Made the first time from the repository at this path.
     OrImport(PathBuf),
+    /// A repository the person works on in place, set up before (ADR
+    /// 0043): its folder, the main chat's workspace and where runs'
+    /// workspaces go.
+    Local {
+        folder: PathBuf,
+        main_dir: PathBuf,
+        runs_dir: PathBuf,
+    },
 }
 
 /// What keeps the repositories' code: what fills [`VCS`].

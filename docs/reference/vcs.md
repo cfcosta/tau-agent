@@ -870,6 +870,29 @@ starts again. In a jj repository of the person's a crash after the
 `Workspace` step leaves tau's workspace: the next setup names its own
 `tau-main-2`. The checks are in `tests/local_setup.rs`.
 
+## Local repositories in the host
+
+tau-ui's `Host::add_local(folder, progress)` adds a folder on this
+computer as a local repository (ADR 0043). It inspects the folder (a
+refusal comes back as `NotAdded::Refused`, with what to add instead; a
+folder listed already as `NotAdded::Listed`; one the person removed
+from the list is listed again as it was), sets jj up in it with
+`Project::setup_local` under tau's own directory for it
+(`HostConfig::local_dir`: `main/`, the main chat's workspace, and
+`runs/`, the runs'), lists it in `repos.json` with its `Local` entry
+(the folder, those two directories, the main chat's workspace's name,
+where pushes go, and the untracked paths linked into each run's
+workspace), makes its main chat, and moves the main chat's workspace
+onto trunk. Pushes go to GitHub only when `origin` is GitHub's and
+tau's app can push to it; otherwise nowhere. When adding fails,
+nothing is listed and the setup leaves the folder as it was.
+
+Started again, the host opens each listed local repository where it
+was set up (`Open::Local` through the `tau.vcs` slot, never
+`Project::open`, which would take the person's `tau/*` branches for
+run heads of tau's), with its main chat and its trunk, and fetches
+nothing for it. The checks are in tau-ui's `tests/local.rs`.
+
 ## Runs and turns
 
 `RunWorkspace` is a plugin for one run: build one per run, point the
