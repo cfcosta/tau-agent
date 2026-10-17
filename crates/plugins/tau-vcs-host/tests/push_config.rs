@@ -8,7 +8,9 @@
 //! - with `git.sign-on-push`, every commit sent that the person wrote
 //!   arrives signed, and no other, by jj-lib's `test` signing backend;
 //!   without it, commits arrive as they are;
-//! - `git.executable-path` is the `git` a push runs.
+//! - `git.executable-path` is the `git` a push runs;
+//! - an `at_operation()` in `git.private-commits` sees the commits of an
+//!   operation off the repository's line, as jj 0.46 evaluates it.
 //!
 //! The expectations are read from the remote with `git`: what arrived,
 //! by whom, signed or not. Each person's config lives in a temporary
@@ -19,7 +21,7 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use hegel::{TestCase, generators as gs};
 use tau_testing::{block_on_io as block_on, git::git};
@@ -403,4 +405,105 @@ fn a_push_runs_the_configured_git() {
     );
     let error = origin.project.push_trunk(origin.remote()).unwrap_err();
     assert!(error.to_string().contains("no-git"), "{error}");
+}
+
+/// An operation that is never published, so loading the repository at
+/// head never sees it: one commit, `aside`, on `parent`, in the
+/// workspace at `main`. Returns the operation's id and the commit's, in
+/// hex.
+fn unpublished(main: &Path, parent: &str) -> (String, String) {
+    use jj_lib::{
+        backend::CommitId,
+        config::{ConfigLayer, ConfigSource, StackedConfig},
+        default_backend_factories::{
+            default_backend_factories,
+            default_working_copy_factories,
+        },
+        object_id::ObjectId as _,
+        repo::Repo as _,
+        settings::UserSettings,
+        workspace::Workspace,
+    };
+    let mut config = StackedConfig::with_defaults();
+    let mut user = ConfigLayer::empty(ConfigSource::User);
+    user.set_value("user.name", "Other").unwrap();
+    user.set_value("user.email", OTHER).unwrap();
+    config.add_layer(user);
+    let settings =
+        UserSettings::from_config_and_home_dir(config, None).unwrap();
+    let workspace = Workspace::load(
+        &settings,
+        main,
+        &default_backend_factories(),
+        &default_working_copy_factories(),
+    )
+    .unwrap();
+    let repo =
+        pollster::block_on(workspace.repo_loader().load_at_head()).unwrap();
+    let parent = CommitId::try_from_hex(parent).unwrap();
+    let tree = repo.store().get_commit(&parent).unwrap().tree();
+    let mut tx = repo.start_transaction();
+    let aside = pollster::block_on(
+        tx.repo_mut()
+            .new_commit(vec![parent], tree)
+            .set_description("aside")
+            .write(),
+    )
+    .unwrap();
+    let operation = pollster::block_on(tx.write("aside")).unwrap();
+    (operation.operation().id().hex(), aside.id().hex())
+}
+
+/// `git.private-commits` naming, through `at_operation()`, the
+/// ancestors of a commit only an unpublished operation has: a trunk push
+/// refuses exactly when that commit stands on one it would send, naming
+/// it, as `jj git push` 0.46 does now that `at_operation()` loads the
+/// operation's commits (jj 0.45 failed to evaluate it).
+#[hegel::test(test_cases = 20)]
+fn a_private_commits_operation_off_the_line_counts(tc: TestCase) {
+    let count: usize = tc.draw(gs::integers().min_value(1).max_value(3));
+    // On which of the commits the push would send the aside commit
+    // stands, or on what the remote already has.
+    let on: Option<usize> =
+        tc.draw(gs::optional(gs::integers().max_value(count - 1)));
+    let origin = Origin::new("");
+    let main = origin.project.workspace_dir(DEFAULT_WORKSPACE);
+    let trunk = origin.project.trunk_name().unwrap();
+    let before = origin.origin_ref("main").unwrap();
+    let commits = vec![
+        Made {
+            theirs: false,
+            private: false,
+        };
+        count
+    ];
+    let ids = commit_all(&origin, &main, &trunk, "m", &commits);
+    let parent = on.map_or(before.clone(), |k| ids[k].clone());
+    let (operation, aside) = unpublished(&main, &parent);
+    let config = origin.root.join("config").join("jj").join("config.toml");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str(&format!(
+        "git.private-commits = 'at_operation({operation}, ::{aside})'\n"
+    ));
+    std::fs::write(&config, text).unwrap();
+    // The config is read when a project opens.
+    let project = ProjectRepo::open(
+        origin.project.root(),
+        Origin::identity_in(&origin.root, PERSON),
+    )
+    .unwrap();
+    let result = project.push_trunk(origin.remote());
+    match on {
+        Some(k) => {
+            let error = result.unwrap_err();
+            assert!(matches!(error, VcsError::PrivateCommit { .. }), "{error}");
+            let text = error.to_string();
+            assert!(text.contains(&ids[k][..12]), "{text}");
+            assert_eq!(origin.origin_ref("main"), Some(before), "nothing sent");
+        }
+        None => {
+            let pushed = result.unwrap();
+            assert_eq!(origin.origin_ref("main"), Some(pushed.to));
+        }
+    }
 }

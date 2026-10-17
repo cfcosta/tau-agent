@@ -19,6 +19,7 @@ use jj_lib::{
     revset::{
         self,
         ResolvedRevsetExpression,
+        Revset,
         RevsetAliasesMap,
         RevsetDiagnostics,
         RevsetExpression,
@@ -202,6 +203,29 @@ impl ConfigRevsets {
                 name: name.to_owned(),
                 error: error.to_string(),
             })
+    }
+
+    /// `expression`'s commits in `repo`, as jj-cli 0.46's
+    /// `RevsetExpressionEvaluator::evaluate` finds them: with the
+    /// repositories an `at_operation()` brings in, so one naming an
+    /// operation off `repo`'s line (a concurrent one, or one never
+    /// published) sees that operation's commits. [`Self::resolve`] leaves
+    /// them out, as jj's `resolve` does, where jj does.
+    pub(crate) fn evaluate(
+        &self,
+        repo: &dyn Repo,
+        name: &str,
+        expression: &Arc<UserRevsetExpression>,
+    ) -> Result<Box<dyn Revset>, VcsError> {
+        let resolver =
+            SymbolResolver::new(repo, self.extensions.symbol_resolvers());
+        let resolved = expression
+            .resolve_user_expression(repo, &resolver)
+            .map_err(|error| VcsError::ConfigRevset {
+                name: name.to_owned(),
+                error: error.to_string(),
+            })?;
+        Ok(resolved.evaluate()?)
     }
 }
 

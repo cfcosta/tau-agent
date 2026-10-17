@@ -300,9 +300,9 @@ impl ProjectRepo {
         let name = "git.private-commits";
         let (text, private) =
             revsets.setting(repo.as_ref(), &self.inner.settings, name)?;
-        let private = revsets
-            .resolve(repo.as_ref(), name, &private)?
-            .evaluate(repo.as_ref())?;
+        // Evaluated whole, as `jj git push` evaluates it: an
+        // `at_operation()` in it sees that operation's commits.
+        let private = revsets.evaluate(repo.as_ref(), name, &private)?;
         let is_private = private.containing_fn();
         for id in &evaluate(repo.as_ref(), revsets, sending)? {
             if block_on(is_private(id))? {
@@ -337,8 +337,20 @@ impl ProjectRepo {
         ))
         .range(&RevsetExpression::commits(vec![head.clone()]))
         .minus(&revsets.immutable_heads(repo.as_ref())?.ancestors());
+        // Evaluated whole, as jj-cli's `sign_commits_before_push` does:
+        // an `at_operation()` in `immutable_heads()` sees that
+        // operation's commits.
+        let to_push = revsets.evaluate(
+            repo.as_ref(),
+            "revset-aliases.immutable_heads()",
+            &to_push,
+        )?;
+        let to_push: Vec<CommitId> =
+            block_on(to_push.stream().collect::<Vec<_>>())
+                .into_iter()
+                .collect::<Result<_, _>>()?;
         let mut unsigned = HashSet::new();
-        for id in evaluate(repo.as_ref(), revsets, &to_push)? {
+        for id in to_push {
             if needs_signing(settings, &repo.store().get_commit(&id)?) {
                 unsigned.insert(id);
             }
@@ -494,7 +506,9 @@ fn known(
     )
 }
 
-/// The commits `expression` names in `repo`, newest first.
+/// The commits `expression` names in `repo`, newest first, its
+/// `immutable_heads()` resolved as jj-cli's `CommitsValidator` resolves
+/// it: without the repositories an `at_operation()` brings in.
 fn evaluate(
     repo: &ReadonlyRepo,
     revsets: &ConfigRevsets,
