@@ -23,7 +23,7 @@ use tau_tools_host::{
     image::{MAX_BASE64_BYTES, MAX_DIMENSION},
     path::Root,
     read::Read,
-    truncate::{Limit, MAX_BYTES, MAX_LINES, format_size, truncate_head},
+    truncate::{Limit, MAX_BYTES, MAX_LINES, truncate_head},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -44,6 +44,26 @@ fn text_of(output: &ToolOutput) -> String {
     match &output.content[0] {
         InputBlock::Text(text) => text.text.clone(),
         other => panic!("expected text, got {other:?}"),
+    }
+}
+
+/// pi's `formatSize` (`truncate.ts`): `toFixed(1)` takes the nearest
+/// tenth, and the larger one at a tie.
+fn pi_format_size(bytes: usize) -> String {
+    let fixed = |unit: f64| {
+        // Exact: the sizes here are far below 2^53, and the unit is a
+        // power of two.
+        let scaled = bytes as f64 * 10.0 / unit;
+        let tenths =
+            scaled.floor() + f64::from(u8::from(scaled.fract() >= 0.5));
+        format!("{:.1}", tenths / 10.0)
+    };
+    if bytes < 1024 {
+        format!("{bytes}B")
+    } else if bytes < 1024 * 1024 {
+        format!("{}KB", fixed(1024.0))
+    } else {
+        format!("{}MB", fixed(1024.0 * 1024.0))
     }
 }
 
@@ -71,8 +91,8 @@ fn pi_read(
     Ok(if t.first_line_exceeds_limit {
         format!(
             "[Line {first} is {}, exceeds {} limit. Use exec_command: sed -n '{first}p' {path} | head -c {MAX_BYTES}]",
-            format_size(all[start].len()),
-            format_size(MAX_BYTES)
+            pi_format_size(all[start].len()),
+            pi_format_size(MAX_BYTES)
         )
     } else if t.truncated() {
         let last = first + t.output_lines - 1;
@@ -87,7 +107,7 @@ fn pi_read(
                 "{}\n\n[Showing lines {first}-{last} of {} ({} limit). Use offset={} to continue.]",
                 t.content,
                 all.len(),
-                format_size(MAX_BYTES),
+                pi_format_size(MAX_BYTES),
                 last + 1
             ),
         }
@@ -165,7 +185,7 @@ fn file(tc: &TestCase) -> Vec<u8> {
 #[hegel::test(test_cases = 50)]
 fn read_equals_pis_whole_file_read(tc: TestCase) {
     let bytes = tc.draw(file());
-    let content = String::from_utf8_lossy(&bytes).into_owned();
+    let content = String::from_utf8_lossy(&bytes);
     if std::str::from_utf8(&bytes).is_err() {
         tc.event("not valid UTF-8");
     }
@@ -183,9 +203,15 @@ fn read_equals_pis_whole_file_read(tc: TestCase) {
         gs::sampled_from(vec![2_000u64, 2_001, 2_500]),
         gs::integers::<u64>().max_value(2_500),
     )));
+    assert_reads_as_pi(&bytes, offset, limit);
+}
 
+/// `read` of `bytes` with `offset` and `limit` is pi's read of them
+/// decoded whole.
+fn assert_reads_as_pi(bytes: &[u8], offset: Option<u64>, limit: Option<u64>) {
+    let content = String::from_utf8_lossy(bytes);
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("f.txt"), &bytes).unwrap();
+    std::fs::write(dir.path().join("f.txt"), bytes).unwrap();
     let root = Root::new(dir.path());
     let mut args = json!({"path": "f.txt"});
     if let Some(offset) = offset {
@@ -200,6 +226,147 @@ fn read_equals_pis_whole_file_read(tc: TestCase) {
     }
     let got = got.map(|o| text_of(&o));
     assert_eq!(got, pi_read(&content, "f.txt", offset, limit));
+}
+
+/// Short pieces of text: multi-byte characters, and bytes that decode
+/// to U+FFFD (a stray byte, sequences cut short).
+const PIECES: [&[u8]; 9] = [
+    b"a",
+    "\u{e9}".as_bytes(),
+    "\u{20ac}".as_bytes(),
+    "\u{1f600}".as_bytes(),
+    b"\xff",
+    b"\xc3",
+    b"\xe2\x82",
+    b"\xf0\x9f\x98",
+    b"\xed\xa0\x80",
+];
+
+/// A line of a few drawn pieces, `""` included.
+#[hegel::composite]
+fn short_line(tc: &TestCase, valid: bool) -> Vec<u8> {
+    let pieces = if valid { &PIECES[..4] } else { &PIECES[..] };
+    let count = tc.draw(gs::integers::<usize>().max_value(3));
+    (0..count)
+        .flat_map(|_| tc.draw(gs::sampled_from(pieces)).to_vec())
+        .collect()
+}
+
+/// A line that is often empty.
+#[hegel::composite]
+fn empty_or_short_line(tc: &TestCase) -> Vec<u8> {
+    tc.draw(hegel::one_of!(gs::just(Vec::new()), short_line(true)))
+}
+
+/// A line of `width` bytes of `piece`, filled out with `a` where the
+/// piece does not divide the width.
+fn line_of(piece: &[u8], width: usize) -> Vec<u8> {
+    let mut line = b"a".repeat(width % piece.len());
+    line.extend(piece.repeat(width / piece.len()));
+    line
+}
+
+/// Text cut right at an edge of `read`'s truncation, after a few lines
+/// before `offset`:
+/// - lines: 2000 lines, then the 2001st, often empty;
+/// - bytes: lines of multi-byte text that end exactly 0 to 4 bytes
+///   past 50 KiB, then a line that may be empty;
+/// - first line: a first line at 50 KiB decoded, just over, or at a
+///   size whose tenth of a KiB is a tie, with bytes that decode to
+///   U+FFFD and maybe a multi-byte character across the 50 KiB + 1
+///   bytes kept of it.
+///
+/// Then up to two more short lines, and maybe a trailing `\n`.
+#[hegel::composite]
+fn edge_file(tc: &TestCase) -> (Vec<u8>, u64) {
+    let before = tc.draw(gs::sampled_from(vec![0usize, 1, 249]));
+    let mut lines: Vec<Vec<u8>> = (0..before).map(|_| b"x".to_vec()).collect();
+    let piece = || gs::sampled_from(&PIECES[1..4]);
+    match tc.draw(gs::integers::<u8>().max_value(2)) {
+        0 => {
+            tc.event("cut by lines");
+            for _ in 0..MAX_LINES {
+                lines.push(tc.draw(short_line(true)));
+            }
+            lines.push(tc.draw(empty_or_short_line()));
+        }
+        1 => {
+            tc.event("cut by bytes");
+            // `count` lines of one width, joined, are MAX_BYTES - 1.
+            let count = tc.draw(gs::sampled_from(vec![1usize, 2, 50]));
+            let width = (MAX_BYTES - 1 - (count - 1)) / count;
+            let filler = tc.draw(piece());
+            for _ in 0..count {
+                lines.push(line_of(filler, width));
+            }
+            let past = tc.draw(gs::integers::<usize>().max_value(4));
+            lines.push(line_of(tc.draw(piece()), past));
+            lines.push(tc.draw(empty_or_short_line()));
+        }
+        _ => {
+            tc.event("first line at or over the limit");
+            // Decoded sizes: at the limit, just over, and ties (50.25
+            // KiB, 60.25 KiB, 1.25 MiB).
+            let size = tc.draw(gs::sampled_from(vec![
+                MAX_BYTES,
+                MAX_BYTES + 1,
+                MAX_BYTES + 2,
+                MAX_BYTES + 256,
+                60 * 1024 + 256,
+                (1 << 20) + (1 << 18),
+            ]));
+            let decoded = |bytes: &[u8]| String::from_utf8_lossy(bytes).len();
+            let mut line = tc.draw(short_line(false));
+            let tail = tc.draw(short_line(false));
+            if tc.draw(gs::booleans()) {
+                // A character across the MAX_BYTES + 1 bytes kept.
+                let shift =
+                    tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
+                let width = (MAX_BYTES + 1 - shift).saturating_sub(line.len());
+                line.extend(b"a".repeat(width));
+                line.extend(tc.draw(piece()));
+            }
+            let short = size.saturating_sub(decoded(&line) + decoded(&tail));
+            line.extend(b"a".repeat(short));
+            line.extend(tail);
+            lines.push(line);
+        }
+    }
+    for _ in 0..tc.draw(gs::integers::<usize>().max_value(2)) {
+        lines.push(tc.draw(empty_or_short_line()));
+    }
+    let mut text = lines.join(&b'\n');
+    if tc.draw(gs::booleans()) {
+        text.push(b'\n');
+    }
+    (text, before as u64)
+}
+
+/// `read` equals pi's read where its cut is closest: the line or byte
+/// limit reached right at the end of a line, the line that goes over
+/// empty (pi does not count an empty last line), and a first line over
+/// the limit whose size, decoded, is reported. From the first line
+/// after those before `offset`, with no limit or one right around the
+/// lines there are.
+#[hegel::test(test_cases = 100)]
+fn read_equals_pis_read_at_the_truncation_edges(tc: TestCase) {
+    let (bytes, before) = tc.draw(edge_file());
+    let total = bytes.split(|&b| b == b'\n').count() as u64;
+    let offset = if before == 0 {
+        tc.draw(gs::sampled_from(vec![None, Some(0), Some(1)]))
+    } else {
+        Some(before + 1)
+    };
+    let from = offset.map_or(1, |o| o.max(1));
+    let left = total - (from - 1);
+    let limit = tc.draw(gs::optional(gs::sampled_from(vec![
+        left.saturating_sub(1),
+        left,
+        left + 1,
+        2_000,
+        2_001,
+    ])));
+    assert_reads_as_pi(&bytes, offset, limit);
 }
 
 /// `output` carries a structured result `read`'s output schema accepts

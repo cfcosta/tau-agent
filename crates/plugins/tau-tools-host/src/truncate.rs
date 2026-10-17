@@ -215,13 +215,17 @@ pub fn truncate_line(line: &str, max_chars: usize) -> (String, bool) {
     }
 }
 
-/// A byte count for people: `512B`, `1.5KB`, `2.0MB`.
+/// A byte count for people: `512B`, `1.5KB`, `2.0MB`. The tenth is the
+/// nearest one, and the larger at a tie (`1.25KB` is `1.3KB`), as pi's
+/// `toFixed(1)` rounds; Rust's `{:.1}` would round a tie to even.
 pub fn format_size(bytes: usize) -> String {
-    if bytes < 1024 {
-        format!("{bytes}B")
+    let (unit, name) = if bytes < 1024 {
+        return format!("{bytes}B");
     } else if bytes < 1024 * 1024 {
-        format!("{:.1}KB", bytes as f64 / 1024.0)
+        (1024, "KB")
     } else {
-        format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
-    }
+        (1024 * 1024, "MB")
+    };
+    let tenths = (bytes as u128 * 10 + unit / 2) / unit;
+    format!("{}.{}{name}", tenths / 10, tenths % 10)
 }

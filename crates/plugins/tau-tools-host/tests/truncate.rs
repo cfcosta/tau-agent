@@ -1,7 +1,10 @@
 //! Truncation (`tau_tools_host::truncate`), against the rules in
 //! `docs/reference/tools.md` and pi's `truncate.ts`.
 
-use hegel::{TestCase, generators as gs};
+use hegel::{
+    TestCase,
+    generators::{self as gs, Generator as _},
+};
 use tau_tools_host::truncate::{
     CUT,
     Limit,
@@ -190,10 +193,16 @@ fn truncate_line_keeps_the_first_characters(tc: TestCase) {
 }
 
 /// `format_size` prints bytes below 1 KiB as an integer count, then
-/// KiB below 1 MiB, then MiB, each to one decimal and within half a
-/// tenth of the exact value.
+/// KiB below 1 MiB, then MiB, each to the nearest tenth, and at a tie
+/// the larger one, as pi's `toFixed(1)` picks (`1.25KB` is `1.3KB`).
 #[hegel::test(test_cases = 500)]
 fn format_size_is_the_size_to_one_decimal(tc: TestCase) {
+    // Ties are a quarter or three quarters of a unit.
+    let tie = |unit: usize, most: usize| {
+        gs::integers::<usize>()
+            .max_value(most)
+            .map(move |k| unit * k + unit / 4 * (1 + 2 * (k % 2)))
+    };
     let bytes = tc.draw(hegel::one_of!(
         gs::sampled_from(vec![
             0usize,
@@ -204,12 +213,14 @@ fn format_size_is_the_size_to_one_decimal(tc: TestCase) {
         ]),
         gs::integers::<usize>().max_value(2048),
         gs::integers::<usize>().max_value(8 * 1024 * 1024),
+        tie(1024, 1023),
+        tie(1024 * 1024, 8),
     ));
     let text = format_size(bytes);
     let (number, unit) = if let Some(n) = text.strip_suffix("MB") {
-        (n, 1024.0 * 1024.0)
+        (n, 1024 * 1024)
     } else if let Some(n) = text.strip_suffix("KB") {
-        (n, 1024.0)
+        (n, 1024)
     } else {
         let n = text.strip_suffix('B').expect("a unit");
         assert_eq!(n, bytes.to_string());
@@ -217,17 +228,18 @@ fn format_size_is_the_size_to_one_decimal(tc: TestCase) {
         return;
     };
     let expected_unit = if bytes < 1024 * 1024 {
-        1024.0
+        1024
     } else {
-        1024.0 * 1024.0
+        1024 * 1024
     };
     assert!(bytes >= 1024);
     assert_eq!(unit, expected_unit, "{text}");
-    let (_, decimals) = number.split_once('.').expect("one decimal");
+    let (whole, decimals) = number.split_once('.').expect("one decimal");
     assert_eq!(decimals.len(), 1, "{text}");
-    let value: f64 = number.parse().unwrap();
-    assert!(
-        (value - bytes as f64 / unit).abs() <= 0.05 + 1e-9,
-        "{bytes} printed as {text}"
-    );
+    let tenths: i128 = format!("{whole}{decimals}").parse().unwrap();
+    // How far the printed tenths are from the size, in tenths of a
+    // byte: within half a tenth of a unit, and above it at a tie.
+    let off = tenths * unit as i128 - bytes as i128 * 10;
+    let half = unit as i128 / 2;
+    assert!(-half < off && off <= half, "{bytes} printed as {text}");
 }

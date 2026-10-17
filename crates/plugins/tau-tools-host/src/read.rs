@@ -379,50 +379,130 @@ fn text(text: String) -> InputBlock {
     })
 }
 
-/// One line as far as it matters: its length, and its bytes up to just
-/// over [`MAX_BYTES`] (any more cannot be shown).
+/// One line as far as it matters: its bytes up to just over
+/// [`MAX_BYTES`] (any more cannot be shown) and, when measured, its
+/// length decoded.
 struct Line {
     bytes: Vec<u8>,
+    decoded_len: usize,
+}
+
+/// The length of bytes decoded as UTF-8, each maximal invalid sequence
+/// replaced by U+FFFD (3 bytes), as pi's `buffer.toString("utf-8")` and
+/// `String::from_utf8_lossy` decode them, counted chunk by chunk.
+#[derive(Default)]
+struct DecodedLen {
     len: usize,
+    /// Bytes of the sequence under way, and how many more it needs.
+    started: usize,
+    needed: usize,
+    /// The range its next byte must be in.
+    next: (u8, u8),
+}
+
+impl DecodedLen {
+    fn push(&mut self, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            if self.needed == 0 {
+                match std::str::from_utf8(bytes) {
+                    Ok(_) => {
+                        self.len += bytes.len();
+                        return;
+                    }
+                    Err(error) => {
+                        self.len += error.valid_up_to();
+                        bytes = &bytes[error.valid_up_to()..];
+                    }
+                }
+            }
+            let byte = bytes[0];
+            bytes = &bytes[1..];
+            self.step(byte);
+        }
+    }
+
+    fn step(&mut self, byte: u8) {
+        if self.needed > 0 {
+            if (self.next.0..=self.next.1).contains(&byte) {
+                self.started += 1;
+                self.needed -= 1;
+                self.next = (0x80, 0xBF);
+                if self.needed == 0 {
+                    self.len += self.started;
+                }
+                return;
+            }
+            // A sequence cut short is one replacement, and the byte
+            // that cut it starts afresh.
+            self.len += 3;
+            self.needed = 0;
+        }
+        let (needed, next) = match byte {
+            0x00..=0x7F => {
+                self.len += 1;
+                return;
+            }
+            0xC2..=0xDF => (1, (0x80, 0xBF)),
+            0xE0 => (2, (0xA0, 0xBF)),
+            0xED => (2, (0x80, 0x9F)),
+            0xE1..=0xEF => (2, (0x80, 0xBF)),
+            0xF0 => (3, (0x90, 0xBF)),
+            0xF4 => (3, (0x80, 0x8F)),
+            0xF1..=0xF3 => (3, (0x80, 0xBF)),
+            _ => {
+                self.len += 3;
+                return;
+            }
+        };
+        self.started = 1;
+        self.needed = needed;
+        self.next = next;
+    }
+
+    fn finish(self) -> usize {
+        self.len + if self.needed > 0 { 3 } else { 0 }
+    }
 }
 
 /// Reads the next `\n`-separated piece, storing at most `keep` bytes of
-/// it. `None` at the end of the input; a final piece after the last
-/// `\n` is returned even when empty, as `split("\n")` returns it.
+/// it and measuring its decoded length if `measure`. `None` at the end
+/// of the input; a final piece after the last `\n` is returned even
+/// when empty, as `split("\n")` returns it.
 fn next_line(
     reader: &mut impl BufRead,
     keep: usize,
+    measure: bool,
     done: &mut bool,
     cancel: &CancellationToken,
 ) -> std::io::Result<Option<Line>> {
     if *done {
         return Ok(None);
     }
-    let mut line = Line {
-        bytes: Vec::new(),
-        len: 0,
-    };
+    let mut bytes = Vec::new();
+    let mut decoded = DecodedLen::default();
     loop {
         if cancel.is_cancelled() {
             return Err(std::io::Error::other(ABORTED));
         }
         let buffer = reader.fill_buf()?;
-        if buffer.is_empty() {
-            *done = true;
-            return Ok(Some(line));
-        }
         let (chunk, found) = match buffer.iter().position(|&b| b == b'\n') {
             Some(at) => (&buffer[..at], true),
             None => (buffer, false),
         };
-        let room = keep.saturating_sub(line.bytes.len());
-        line.bytes
-            .extend_from_slice(&chunk[..chunk.len().min(room)]);
-        line.len += chunk.len();
+        let end = buffer.is_empty();
+        let room = keep.saturating_sub(bytes.len());
+        bytes.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        if measure {
+            decoded.push(chunk);
+        }
         let consumed = chunk.len() + usize::from(found);
         reader.consume(consumed);
-        if found {
-            return Ok(Some(line));
+        if found || end {
+            *done = end;
+            return Ok(Some(Line {
+                bytes,
+                decoded_len: decoded.finish(),
+            }));
         }
     }
 }
@@ -444,17 +524,25 @@ fn read_text(
     };
     let start = offset.map_or(0, |o| o.saturating_sub(1)) as usize;
     let end = limit.map(|l| start.saturating_add(l as usize));
-    // Enough to decide what truncation shows: one line or byte past.
-    let (keep_lines, keep_bytes) = (MAX_LINES + 1, MAX_BYTES + 1);
+    // Enough to decide what truncation shows: lines until they are over
+    // a limit (one line or byte past), then one more, since
+    // `truncate_head` does not count an empty last line, and the line
+    // that went over may be empty.
+    let keep_bytes = MAX_BYTES + 1;
+    let over =
+        |lines: usize, bytes: usize| lines > MAX_LINES || bytes > keep_bytes;
     let mut kept: Vec<Line> = Vec::new();
     let mut kept_bytes = 0usize;
+    let mut extra_kept = false;
     let mut total = 0usize;
     let mut done = false;
     while let Some(line) =
-        next_line(&mut reader, keep_bytes, &mut done, cancel).map_err(io)?
+        next_line(&mut reader, keep_bytes, total == start, &mut done, cancel)
+            .map_err(io)?
     {
         let in_range = total >= start && end.is_none_or(|end| total < end);
-        if in_range && kept.len() < keep_lines && kept_bytes <= keep_bytes {
+        if in_range && !extra_kept {
+            extra_kept = over(kept.len(), kept_bytes);
             kept_bytes += line.bytes.len() + 1;
             kept.push(line);
         }
@@ -506,7 +594,7 @@ fn read_text(
     let text = if truncation.first_line_exceeds_limit {
         format!(
             "[Line {first} is {}, exceeds {} limit. Use exec_command: sed -n '{first}p' {shown_path} | head -c {MAX_BYTES}]",
-            format_size(kept[0].len),
+            format_size(kept[0].decoded_len),
             format_size(MAX_BYTES)
         )
     } else if truncation.truncated() {
