@@ -94,6 +94,28 @@ pub enum VcsError {
     WouldConflict(Vec<String>),
     #[error("No tau project at {}", .0.display())]
     NoProject(PathBuf),
+    #[error("{} is not set up as a local repository", .0.display())]
+    NotSetUp(PathBuf),
+    #[error(
+        "{} changed since it was inspected ({reason}): inspect it again",
+        folder.display()
+    )]
+    FolderChanged { folder: PathBuf, reason: String },
+    #[error("{} is in the way: it is not an empty folder", .0.display())]
+    InTheWay(PathBuf),
+    #[error("Setting the repository up stopped before {0}")]
+    SetupStopped(crate::local::Step),
+    #[error("Cannot snapshot the working copy: {0}")]
+    SetupSnapshot(String),
+    #[error(
+        "{error}; what the setup added could not all be taken away: {undo}"
+    )]
+    SetupNotUndone {
+        error: Box<VcsError>,
+        undo: Box<VcsError>,
+    },
+    #[error("Cannot read tau's state in {}: {reason}", path.display())]
+    LocalState { path: PathBuf, reason: String },
     #[error("No tau project at {}: {source}", root.display())]
     ProjectLoad {
         root: PathBuf,

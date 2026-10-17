@@ -15,9 +15,12 @@
 //!   and a Git worktree of `main/.git` (`crate::worktree`).
 //!
 //! [`Layout`] says where each is. Runs never touch the user's own
-//! checkout. [`ProjectRepo`]'s functions
-//! block; async code reaches them through [`Project`], which runs each
-//! job in `spawn_blocking`, one at a time per repository (ADR 0028).
+//! checkout. A local repository ([`Layout::local`]) is the person's
+//! folder instead, set up in place (`ProjectRepo::setup_local`), with
+//! the main chat's workspace and the runs' in tau's data directory.
+//! [`ProjectRepo`]'s functions block; async code reaches them through
+//! [`Project`], which runs each job in `spawn_blocking`, one at a time
+//! per repository (ADR 0028).
 
 #![allow(
     clippy::disallowed_methods,
@@ -94,6 +97,10 @@ pub struct Layout {
     pub main_workspace: String,
     /// The main chat's workspace's directory.
     pub main_dir: PathBuf,
+    /// Whether the repository is the person's own folder, worked in
+    /// where it is (ADR 0043): its `default` workspace is theirs, and
+    /// tau never moves Git's `HEAD` or index there.
+    pub local: bool,
 }
 
 impl Layout {
@@ -108,6 +115,27 @@ impl Layout {
             runs_dir: root.join("runs"),
             main_workspace: main_workspace.into(),
             main_dir: main,
+            local: false,
+        }
+    }
+
+    /// The person's repository at `folder`, worked in where it is (ADR
+    /// 0043): the main chat's workspace at `main_dir` and the runs' under
+    /// `runs_dir`, both outside the folder, in tau's data directory. The
+    /// main chat's workspace's name is [`MAIN_WORKSPACE`] until setting
+    /// the repository up picks one ([`ProjectRepo::setup_local`]) or
+    /// opening it reads the one it picked ([`ProjectRepo::open_local`]).
+    pub fn local(
+        folder: impl Into<PathBuf>,
+        main_dir: impl Into<PathBuf>,
+        runs_dir: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            repo_root: folder.into(),
+            runs_dir: runs_dir.into(),
+            main_workspace: MAIN_WORKSPACE.to_owned(),
+            main_dir: main_dir.into(),
+            local: true,
         }
     }
 
@@ -218,6 +246,31 @@ impl Project {
         let root = root.into();
         Self::make(move || ProjectRepo::open_or_init(root, identity, &files))
             .await
+    }
+
+    /// Sets jj up in the person's folder, in place. See
+    /// [`ProjectRepo::setup_local`].
+    pub async fn setup_local(
+        found: crate::local::Found,
+        layout: Layout,
+        identity: Identity,
+        mut progress: impl FnMut(crate::local::Step) -> std::ops::ControlFlow<()>
+        + Send
+        + 'static,
+    ) -> Result<Self, VcsError> {
+        Self::make(move || {
+            ProjectRepo::setup_local(&found, layout, identity, &mut progress)
+        })
+        .await
+    }
+
+    /// Opens a local repository set up before. See
+    /// [`ProjectRepo::open_local`].
+    pub async fn open_local(
+        layout: Layout,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        Self::make(move || ProjectRepo::open_local(layout, identity)).await
     }
 
     async fn make(
@@ -511,6 +564,50 @@ impl ProjectRepo {
         Ok(project)
     }
 
+    /// Sets jj up in the person's Git repository that `found` describes
+    /// (`local::inspect`), where it is, colocated, as `jj git init
+    /// --colocate` does there, but leaving Git's `HEAD` and index as they
+    /// are (ADR 0043, `docs/reference/vcs.md`, "Setting up a local
+    /// repository"); a colocated jj repository of the person's is kept as
+    /// it is. `layout` ([`Layout::local`]) says where the main chat's
+    /// workspace, made here as a Git worktree, and the runs' go.
+    /// `progress` hears of each step before it starts, and stops the
+    /// setup by breaking. All or nothing: a setup that fails or is
+    /// stopped takes away what it added.
+    pub fn setup_local(
+        found: &crate::local::Found,
+        mut layout: Layout,
+        identity: Identity,
+        progress: &mut dyn FnMut(
+            crate::local::Step,
+        ) -> std::ops::ControlFlow<()>,
+    ) -> Result<Self, VcsError> {
+        layout.main_workspace =
+            crate::local::setup(found, &layout, &identity, progress)?;
+        Self::with_layout(layout.repo_root.clone(), layout, identity)
+    }
+
+    /// Opens the local repository `layout` ([`Layout::local`]) names, set
+    /// up before ([`Self::setup_local`]), with the main chat's workspace
+    /// tau's state names, and each of tau's workspaces made a whole Git
+    /// worktree where it is not one (`Self::link_worktree`).
+    pub fn open_local(
+        mut layout: Layout,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let state = crate::local::State::read(&layout.repo_root)?
+            .ok_or_else(|| VcsError::NotSetUp(layout.repo_root.clone()))?;
+        layout.main_workspace = state.main_workspace;
+        let project =
+            Self::with_layout(layout.repo_root.clone(), layout, identity)?;
+        let main = project.main_workspace().to_owned();
+        // At best, as `Self::open` mends them.
+        for name in std::iter::once(main).chain(project.workspaces()?) {
+            let _ = project.link_worktree(&name);
+        }
+        Ok(project)
+    }
+
     /// Makes a project at `root` (which must not hold one) from a copy of
     /// the local repository at `source`, as if cloned from it: its
     /// branches become remote-tracking branches, imported as bookmarks
@@ -673,7 +770,18 @@ impl ProjectRepo {
     /// one its working copy has, or [`MAIN_WORKSPACE`] for one to make.
     /// Blocks.
     fn new(root: PathBuf, identity: Identity) -> Result<Self, VcsError> {
-        let mut layout = Layout::of_clone(&root, MAIN_WORKSPACE);
+        let layout = Layout::of_clone(&root, MAIN_WORKSPACE);
+        Self::with_layout(root, layout, identity)
+    }
+
+    /// The project at `root` laid out as `layout` says, with the jj
+    /// config its main workspace loads, and that workspace's name when
+    /// it exists. Blocks.
+    fn with_layout(
+        root: PathBuf,
+        mut layout: Layout,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
         let settings = crate::config::settings(
             &identity,
             &layout.main_dir,
@@ -921,7 +1029,7 @@ impl ProjectRepo {
         let lock = self.lock()?;
         let git = lock.git()?;
         let main = self.main()?;
-        let repo = block_on(main.repo_loader().load_at_head())?;
+        let repo = self.load_to_write(&git)?;
         crate::worktree::link(&self.git_dir(), &dir, name, None)?;
         let begun =
             crate::workspace_init::begin_workspace(&dir, main.repo_path())
@@ -1109,7 +1217,8 @@ impl ProjectRepo {
         use jj_lib::revset::ResolvedRevsetExpression;
 
         let repo_lock = self.lock()?;
-        let repo = self.load()?;
+        let git = repo_lock.git()?;
+        let repo = self.load_to_write(&git)?;
         let id = |hex: &str| {
             CommitId::try_from_hex(hex)
                 .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))
@@ -1139,7 +1248,7 @@ impl ProjectRepo {
         crate::colocate::commit(
             tx,
             format!("abandon {} changes", ids.len()),
-            &repo_lock.git()?,
+            &git,
         )?;
         Ok(ids.len())
     }
@@ -1249,7 +1358,7 @@ impl ProjectRepo {
         let lock = self.lock()?;
         let git = lock.git()?;
         let main = self.main()?;
-        let repo = block_on(main.repo_loader().load_at_head())?;
+        let repo = self.load_to_write(&git)?;
         // Before the workspace, as `jj workspace add` makes it, so the
         // operation that adds it points the worktree's `HEAD` at `base`.
         crate::worktree::link(&self.git_dir(), &dir, name, None)?;
@@ -1300,7 +1409,7 @@ impl ProjectRepo {
         }
         let lock = self.lock()?;
         let git = lock.git()?;
-        let repo = self.load()?;
+        let repo = self.load_to_write(&git)?;
         let store = repo.loader().workspace_store().clone();
         let dir = self.workspace_dir(name);
         let name_buf = WorkspaceNameBuf::from(name);
@@ -1460,12 +1569,13 @@ impl ProjectRepo {
     /// has from before the operation that made it stale: in one
     /// operation, `tau: reset git head`, when the view's record of that
     /// `HEAD` changes. Does nothing for a whole worktree, a workspace
-    /// whose folder is gone, or the main chat's, in the Git store's own
-    /// working tree.
+    /// whose folder is gone, or one in the Git store's own working tree:
+    /// the main chat's in a clone, the person's `default` in a local
+    /// repository, whose main chat's workspace is a worktree too.
     fn link_worktree(&self, name: &str) -> Result<(), VcsError> {
         let dir = self.workspace_dir(name);
         let common = self.git_dir();
-        if name == self.main_workspace()
+        if crate::colocate::same_dir(&dir, &self.inner.layout.repo_root)
             || !dir.join(".jj").is_dir()
             || crate::worktree::is_linked(&common, &dir)
         {
@@ -1520,6 +1630,36 @@ impl ProjectRepo {
     fn load(&self) -> Result<Arc<ReadonlyRepo>, VcsError> {
         let main = self.main()?;
         Ok(block_on(main.repo_loader().load_at_head())?)
+    }
+
+    /// The repository at its newest operation, for a write under `git`,
+    /// jj-cli's Git import/export lock. In a local repository Git's refs
+    /// are imported first, in an operation of their own when they
+    /// changed anything (`tau: import git refs`), so the write starts
+    /// from what the person did with `git` alone (ADR 0043).
+    fn load_to_write(
+        &self,
+        git: &crate::lock::GitLock,
+    ) -> Result<Arc<ReadonlyRepo>, VcsError> {
+        let repo = self.load()?;
+        if !self.inner.layout.local {
+            return Ok(repo);
+        }
+        let settings = &self.inner.settings;
+        let options = crate::colocate::import_options(settings)?;
+        let revsets = crate::revsets::ConfigRevsets::new(
+            settings,
+            self.main_dir(),
+            WorkspaceName::new(self.main_workspace()),
+        )?;
+        let immutable = crate::session::Immutable::of(repo.as_ref(), &revsets)?
+            .expression();
+        let mut tx = repo.start_transaction();
+        crate::colocate::import_git(&mut tx, &options, &immutable, git)?;
+        if !tx.repo().has_changes() {
+            return Ok(repo);
+        }
+        crate::colocate::commit(tx, "import git refs", git)
     }
 }
 

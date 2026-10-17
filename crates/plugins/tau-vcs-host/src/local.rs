@@ -1,7 +1,8 @@
 //! Looking at a folder on this computer before tau adds it as a local
 //! repository (ADR 0043, `docs/reference/vcs.md`, "Inspecting a
 //! folder"): what tau found there, or why it refuses the folder and
-//! what to add instead.
+//! what to add instead. Setting jj up in it, once found, is
+//! `ProjectRepo::setup_local`'s (`setup`).
 //!
 //! Inspecting only reads, with gix, and with jj-lib for a jj
 //! repository: nothing in the folder changes, not even Git's index,
@@ -44,6 +45,11 @@ use jj_lib::{
 use pollster::block_on;
 
 use crate::{Identity, config::JjEnv, revsets::ConfigRevsets};
+
+mod setup;
+
+pub use setup::{State, Step, runs_dir_name, unfinished};
+pub(crate) use setup::{is_local, setup};
 
 /// Why a read failed, for [`Refusal::Unreadable`].
 type Failed = Box<dyn std::error::Error + Send + Sync>;
@@ -230,9 +236,11 @@ pub fn inspect_blocking(
     let folder =
         std::fs::canonicalize(path).map_err(|error| unreadable(&error))?;
     // jj finds its workspace as the nearest folder with a `.jj` in it.
+    // A `.jj` a setup made and did not finish is tau's, which the next
+    // setup takes away: the folder is still the Git repository it was.
     let jj_root = folder
         .ancestors()
-        .find(|dir| dir.join(".jj").is_dir())
+        .find(|dir| dir.join(".jj").is_dir() && !unfinished(dir))
         .map(Path::to_owned);
     let repo = discover(&folder)?;
     // The nearer of the two is the repository the folder is in.

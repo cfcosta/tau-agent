@@ -7,7 +7,10 @@
 //! and tags go out as Git's branches and tags, and Git's `HEAD` and
 //! index follow the working copy of the workspace the operation was
 //! written in, so `git` there sees what jj does. They also tag the
-//! operation as tau's ([`crate::operations`]).
+//! operation as tau's ([`crate::operations`]). In a local repository
+//! (ADR 0043), tau's writes import Git's refs first ([`import_git`]),
+//! and the person's checkout, the Git store's own working tree, never
+//! has its `HEAD` or index moved.
 
 #![allow(
     clippy::disallowed_methods,
@@ -15,15 +18,26 @@
 )]
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use jj_lib::{
     commit::Commit,
-    git::{export_refs, get_git_backend, reset_head},
+    git::{
+        GitImportOptions,
+        GitSettings,
+        export_refs,
+        get_git_backend,
+        import_refs,
+        reset_head,
+    },
     ref_name::WorkspaceName,
     repo::{ReadonlyRepo, Repo as _},
+    revset::{ResolvedRevsetExpression, RevsetDiagnostics},
+    rewrite::RebaseOptions,
+    settings::UserSettings,
     transaction::Transaction,
 };
 use pollster::block_on;
@@ -131,11 +145,86 @@ fn keep_in_step(
     let Ok(backend) = get_git_backend(tx.repo().store()) else {
         return Ok(());
     };
-    if backend.open_git_repo_at_workdir(root).is_err() {
+    if backend.open_git_repo_at_workdir(root).is_err()
+        || is_persons_checkout(backend.git_repo().workdir(), root)
+    {
         return Ok(());
     }
     block_on(reset_head(tx.repo_mut(), name, root, wc))
         .map_err(VcsError::ResetHead)
+}
+
+/// Whether `root` is the person's own checkout in a local repository
+/// (ADR 0043): the Git store's working tree (`workdir`), with tau's
+/// state beside its jj repository (`crate::local`). tau never moves
+/// Git's `HEAD` or index there; its own workspaces are worktrees.
+fn is_persons_checkout(workdir: Option<&Path>, root: &Path) -> bool {
+    workdir.is_some_and(|workdir| {
+        same_dir(workdir, root)
+            && crate::local::is_local(&workdir.join(".jj").join("repo"))
+    })
+}
+
+/// The options the jj CLI imports Git's refs with under `settings`
+/// (jj-cli 0.46.0's `load_git_import_options`): the person's
+/// `git.abandon-unreachable-commits` and
+/// `git.record-synthetic-predecessors`, and each remote's
+/// `remotes.<name>.auto-track-bookmarks`, the bookmarks a new
+/// remote-tracking branch makes a local bookmark for.
+pub(crate) fn import_options(
+    settings: &UserSettings,
+) -> Result<GitImportOptions, VcsError> {
+    let git = GitSettings::from_settings(settings)?;
+    let mut auto_track = HashMap::new();
+    for (remote, remote_settings) in settings.remote_settings()? {
+        let Some(text) = &remote_settings.auto_track_bookmarks else {
+            continue;
+        };
+        let expression = jj_lib::revset::parse_string_expression(
+            &mut RevsetDiagnostics::new(),
+            text,
+        )
+        .map_err(|error| VcsError::ConfigRevset {
+            name: format!(
+                "remotes.{}.auto-track-bookmarks",
+                remote.as_symbol()
+            ),
+            error: error.kind().to_string(),
+        })?;
+        auto_track.insert(remote, expression.to_matcher());
+    }
+    Ok(GitImportOptions {
+        abandon_unreachable_commits: git.abandon_unreachable_commits,
+        record_synthetic_predecessors: git.record_synthetic_predecessors,
+        remote_auto_track_bookmarks: auto_track,
+    })
+}
+
+/// Imports Git's branches and tags into `tx`, as the jj CLI does in a
+/// colocated workspace before each command (jj-cli 0.46.0's
+/// `import_git_refs`), so what the person did with `git` alone is in
+/// the operation tau writes (ADR 0043): with `options`
+/// ([`import_options`]), then what stood on commits Git rewrote or
+/// abandoned rebased, except what is `immutable` (the immutable
+/// commits of the repository `tx` started from, as jj-cli's
+/// `rebase_mutable_descendants` takes them). `_git` is jj-cli's Git
+/// import/export lock, held until the operation is written.
+pub(crate) fn import_git(
+    tx: &mut Transaction,
+    options: &GitImportOptions,
+    immutable: &Arc<ResolvedRevsetExpression>,
+    _git: &GitLock,
+) -> Result<(), VcsError> {
+    block_on(import_refs(tx.repo_mut(), options))
+        .map_err(VcsError::ImportBranches)?;
+    if tx.repo().has_rewrites() {
+        block_on(tx.repo_mut().rebase_descendants_with_options(
+            immutable,
+            &RebaseOptions::default(),
+            |_, _| {},
+        ))?;
+    }
+    Ok(())
 }
 
 /// Whether `a` and `b` are the same directory, by their canonical paths

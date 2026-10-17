@@ -44,7 +44,7 @@ use crate::{error::VcsError, vcs::Identity};
 
 /// Where the person's repository configs are, under jj's config
 /// directory: a directory per config id.
-const REPO_CONFIG_DIR: &str = "repos";
+pub(crate) const REPO_CONFIG_DIR: &str = "repos";
 /// Where the person's workspace configs are, the same way.
 const WORKSPACE_CONFIG_DIR: &str = "workspaces";
 
@@ -165,7 +165,7 @@ impl JjEnv {
     }
 
     /// jj's own config directory.
-    fn root_config_dir(&self) -> Option<PathBuf> {
+    pub(crate) fn root_config_dir(&self) -> Option<PathBuf> {
         self.config_dir.as_ref().map(|dir| dir.join("jj"))
     }
 

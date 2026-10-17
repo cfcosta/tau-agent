@@ -16,6 +16,7 @@ use futures_util::StreamExt as _;
 use jj_lib::{
     backend::CommitId,
     commit::Commit,
+    git::GitImportOptions,
     matchers::{EverythingMatcher, Matcher, PrefixMatcher},
     merge::Merge,
     merged_tree::MergedTree,
@@ -23,6 +24,7 @@ use jj_lib::{
     ref_name::WorkspaceName,
     repo::{ReadonlyRepo, Repo, RepoLoader},
     repo_path::RepoPathBuf,
+    revset::ResolvedRevsetExpression,
     transaction::Transaction,
     working_copy::{UntrackedReason, WorkingCopyFreshness},
     workspace::{LockedWorkspace, Workspace},
@@ -97,17 +99,31 @@ pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
         workspace.workspace_root(),
         loader.store(),
     )?;
+    let import = import_options(workspace)?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
     let snapshot = snapshot_locked(
         &mut locked,
         &loader,
         (&name, &root),
-        &config,
+        (&config, import.as_ref()),
         &revsets,
         &git,
     )?;
     block_on(locked.finish(snapshot.repo.op_id().clone()))?;
     Ok(snapshot)
+}
+
+/// How a workspace's snapshots import Git's refs: in a local repository
+/// with the person's options, as the jj CLI does after its snapshot
+/// (ADR 0043); in a repository tau owns, not at all, since only its
+/// updates bring upstream's refs in.
+fn import_options(
+    workspace: &Workspace,
+) -> Result<Option<GitImportOptions>, VcsError> {
+    if !crate::local::is_local(workspace.repo_path()) {
+        return Ok(None);
+    }
+    Ok(Some(crate::colocate::import_options(workspace.settings())?))
 }
 
 /// Snapshots the working copy, then runs `edit` in one transaction
@@ -134,12 +150,13 @@ pub(crate) fn mutate<T>(
         workspace.workspace_root(),
         loader.store(),
     )?;
+    let import = import_options(workspace)?;
     let mut locked = block_on(workspace.start_working_copy_mutation())?;
     let before = snapshot_locked(
         &mut locked,
         &loader,
         (&name, &root),
-        &config,
+        (&config, import.as_ref()),
         &revsets,
         &git,
     )?;
@@ -204,11 +221,13 @@ fn what(tool: &str) -> String {
 /// options the jj CLI would use there (`config`): the files it starts
 /// tracking, the largest new file it takes, and the person's Git
 /// excludes. Git's `HEAD` and index there follow (`crate::colocate`).
+/// With `import`, Git's refs are imported after, as the jj CLI imports
+/// them after its snapshot ([`import_git_refs`]).
 fn snapshot_locked(
     locked: &mut LockedWorkspace<'_>,
     loader: &RepoLoader,
     (name, root): (&WorkspaceName, &Path),
-    config: &SnapshotConfig,
+    (config, import): (&SnapshotConfig, Option<&GitImportOptions>),
     revsets: &ConfigRevsets,
     git: &GitLock,
 ) -> Result<Snapshot, VcsError> {
@@ -316,11 +335,62 @@ fn snapshot_locked(
         )?;
         wc = new_wc;
     }
-    Ok(Snapshot {
+    let snapshot = Snapshot {
         immutable: Immutable::of(repo.as_ref(), revsets)?,
         repo,
         wc,
         too_large,
+    };
+    match import {
+        Some(options) => import_git_refs(
+            locked,
+            snapshot,
+            (name, root),
+            options,
+            revsets,
+            git,
+        ),
+        None => Ok(snapshot),
+    }
+}
+
+/// Imports Git's refs after a snapshot, in one operation, `tau: import
+/// git refs`, when they changed anything (jj-cli 0.46.0's
+/// `import_git_refs`): what the person did with `git` alone, such as a
+/// commit or an amend on a branch, so tau's next write starts from it.
+/// When the import rebased this workspace's `@`, its files move to the
+/// new commit, and Git's `HEAD` here follows, as the jj CLI's
+/// transaction moves them.
+fn import_git_refs(
+    locked: &mut LockedWorkspace<'_>,
+    before: Snapshot,
+    (name, root): (&WorkspaceName, &Path),
+    options: &GitImportOptions,
+    revsets: &ConfigRevsets,
+    git: &GitLock,
+) -> Result<Snapshot, VcsError> {
+    let mut tx = before.repo.start_transaction();
+    tx.set_workspace_name(name);
+    crate::colocate::import_git(
+        &mut tx,
+        options,
+        &before.immutable.expression(),
+        git,
+    )?;
+    if !tx.repo().has_changes() {
+        return Ok(before);
+    }
+    let repo =
+        crate::colocate::commit_in(tx, "import git refs", git, name, root)?;
+    let wc = wc_commit(&repo, name)?;
+    if wc.id() != before.wc.id() {
+        block_on(locked.locked_wc().check_out(&wc))?;
+    }
+    Ok(Snapshot {
+        immutable: Immutable::of(repo.as_ref(), revsets)?,
+        repo,
+        wc,
+        too_large: before.too_large,
     })
 }
 
@@ -400,6 +470,11 @@ impl Immutable {
             .into_iter()
             .collect::<Result<_, _>>()?;
         Ok(Self { heads })
+    }
+
+    /// The immutable commits, as a revset: the heads' ancestors.
+    pub(crate) fn expression(&self) -> Arc<ResolvedRevsetExpression> {
+        ResolvedRevsetExpression::commits(self.heads.clone()).ancestors()
     }
 
     /// Whether `id` is immutable.
