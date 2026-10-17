@@ -2,7 +2,7 @@
 //! 0044): the person's model, whose use is booked to the plugin, and
 //! jobs the host keeps, which the catalog lists with their progress,
 //! which read the repositories as they are, stop when cancelled, and
-//! start again as the host does.
+//! start again as the host does; and the end of first-run setup.
 
 #![allow(
     clippy::disallowed_methods,
@@ -11,7 +11,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::Once,
+    sync::{Mutex, Once},
     time::{Duration, Instant},
 };
 
@@ -32,12 +32,16 @@ use tau_ui_plugin::{
     PluginInfo,
     RunCtx,
     UiPlugin,
+    points::{SetupClone, SetupRepo},
 };
 use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
 const NAME: &str = "resumer";
+
+/// What the resumer heard as each first-run setup ended.
+static FINISHED: Mutex<Vec<Vec<SetupRepo>>> = Mutex::new(Vec::new());
 
 /// A plugin that counts the repositories in a job, from a checkpoint it
 /// keeps, started again as the host starts.
@@ -76,6 +80,10 @@ impl HostHalf for ResumerHost {
 
     async fn catalog(&self, _: &(), _: &HostCx, _: &()) -> PluginInfo {
         PluginInfo::default()
+    }
+
+    async fn setup_finished(&self, _: &(), repos: &[SetupRepo], _: &HostCx) {
+        FINISHED.lock().unwrap().push(repos.to_vec());
     }
 
     /// Goes on counting when its checkpoint says it was: until it is
@@ -220,6 +228,7 @@ fn a_job_resumes_reports_reads_live_repositories_and_stops() {
             label: "Counting".into(),
             fraction: 0.5,
             line: "from 3: ".into(),
+            page: None,
         }]
     );
 
@@ -290,4 +299,27 @@ fn a_host_half_asks_the_model_and_the_plugin_pays() {
 
     host.set_account(None).unwrap();
     assert!(host.host_cx().model(NAME).is_none());
+}
+
+/// The end of first-run setup reaches every plugin's host half, with the
+/// repositories the person picked.
+#[test]
+fn a_host_half_hears_setup_end_with_the_picked_repositories() {
+    let runtime = runtime();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let (host, _events) = host_in(
+        &own_dir(),
+        runtime,
+        store,
+        Agent::new(ScriptedModel::new()).name("coder"),
+    );
+    let picked = vec![SetupRepo {
+        name: "octocat/hello".into(),
+        id: None,
+        remote: Some("https://github.com/octocat/hello.git".into()),
+        folder: None,
+        clone: SetupClone::Cloning(0.5),
+    }];
+    host.block_on(host.setup_finished(&picked));
+    assert_eq!(*FINISHED.lock().unwrap(), [picked]);
 }

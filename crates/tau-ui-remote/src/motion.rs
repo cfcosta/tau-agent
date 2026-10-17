@@ -265,6 +265,8 @@ pub enum Service {
     Token,
     ChatGpt,
     Repos,
+    /// A plugin's step.
+    Plugin,
     FirstRun,
 }
 
@@ -299,7 +301,8 @@ pub struct SetupMotion {
     pub link: Tracked<Link>,
     pub service: Tracked<Service>,
     pub scale: Tracked<Scale>,
-    pub segments: Tracked<[Segment; 4]>,
+    /// One per stage of the step bar, which plugins' steps lengthen.
+    pub segments: Tracked<Vec<Segment>>,
     /// Whether the first run's field has the keyboard.
     pub composing: Tracked<bool>,
     /// Each clone's progress in thousandths, and whether it is ready.
@@ -324,7 +327,7 @@ impl Default for SetupMotion {
             link: Tracked::new(Link::Idle),
             service: Tracked::new(Service::None),
             scale: Tracked::new(Scale::Big),
-            segments: Tracked::new([Segment::Ahead; 4]),
+            segments: Tracked::new(vec![Segment::Ahead; 4]),
             composing: Tracked::new(false),
             clones: HashMap::new(),
             copies: 0,
@@ -335,14 +338,14 @@ impl Default for SetupMotion {
 }
 
 /// What a frame of onboarding shows, for [`SetupMotion::observe`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub scene: Scene,
     pub mood: Mood,
     pub link: Link,
     pub service: Service,
     pub scale: Scale,
-    pub segments: [Segment; 4],
+    pub segments: Vec<Segment>,
 }
 
 impl SetupMotion {
@@ -633,7 +636,7 @@ mod tests {
             link: Link::Waiting,
             service: Service::ChatGpt,
             scale: Scale::Big,
-            segments: [
+            segments: vec![
                 Segment::Done,
                 Segment::Current,
                 Segment::Ahead,
@@ -641,13 +644,13 @@ mod tests {
             ],
         };
         let mut motion = SetupMotion::default();
-        motion.observe(waiting);
+        motion.observe(waiting.clone());
         let epochs = |m: &SetupMotion| {
             (m.scene.epoch, m.mood.epoch, m.link.epoch, m.scale.epoch)
         };
         let first = epochs(&motion);
-        motion.observe(waiting);
-        motion.observe(waiting);
+        motion.observe(waiting.clone());
+        motion.observe(waiting.clone());
         assert_eq!(epochs(&motion), first, "redraws start nothing");
         motion.observe(Frame {
             scene: Scene {

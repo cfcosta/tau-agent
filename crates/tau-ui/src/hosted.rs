@@ -91,6 +91,18 @@ pub async fn resume(hosted: &[Hosted], cx: &HostCx) {
     }
 }
 
+/// Tells each plugin that first-run setup ended with `repos` picked, in
+/// the registry's order (`HostHalf::setup_finished`).
+pub async fn setup_finished(
+    hosted: &[Hosted],
+    repos: &[tau_ui_plugin::points::SetupRepo],
+    cx: &HostCx,
+) {
+    for hosted in hosted {
+        hosted.plugin.setup_finished(&hosted.state, repos, cx).await;
+    }
+}
+
 /// What the catalog lists of the plugins: each one's entry, by name its
 /// data, and by name its settings.
 pub type Catalogued = (

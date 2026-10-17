@@ -1,6 +1,7 @@
 //! Onboarding, in the handshake style: tau's tile and the service it
 //! connects to, joined by a line whose look says how the connection
-//! stands, under a bar with the four stages. Faint rings and a glow sit
+//! stands, under a bar with the stages: tau's four, and plugins' steps
+//! before Ready. Faint rings and a glow sit
 //! behind the handshake, amber while acting, green once connected and
 //! red when blocked. On a phone the same screens stack, with smaller
 //! tiles and full-width buttons.
@@ -61,7 +62,7 @@ use crate::{
         stagger,
     },
     route::Route,
-    setup::{CloneState, DeviceCode, GitHub, ModelAccess, SetupStep},
+    setup::{CloneState, DeviceCode, GitHub, ModelAccess, SetupStep, Stage},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
     ui::{Material as _, bar, icon, icon_button, link, mono, text_link},
     workspace::{Workspace, WorkspaceEvent},
@@ -135,8 +136,8 @@ const WELCOME_CENTER: f32 = TOP_BAR + 196.;
 // What the frame shows.
 
 /// The handshake's other side, the line and the rings for `step`, as
-/// onboarding stands.
-fn frame(ws: &Workspace, step: SetupStep) -> Frame {
+/// onboarding stands, with the step bar's `stages`.
+fn frame(ws: &Workspace, step: SetupStep, stages: &[Stage]) -> Frame {
     let signed_in = ws.setup.user().is_some();
     let (state, mood, link, service, scale) = match step {
         SetupStep::Welcome => {
@@ -186,6 +187,13 @@ fn frame(ws: &Workspace, step: SetupStep) -> Frame {
             Service::Repos,
             Scale::Small,
         ),
+        SetupStep::Plugin { .. } => (
+            0,
+            Mood::Acting,
+            Link::Connected,
+            Service::Plugin,
+            Scale::Small,
+        ),
         SetupStep::Ready => (
             0,
             Mood::Acting,
@@ -194,13 +202,15 @@ fn frame(ws: &Workspace, step: SetupStep) -> Frame {
             Scale::Small,
         ),
     };
-    let stage = (step != SetupStep::Welcome).then(|| step.stage());
-    let segments = std::array::from_fn(|n| match stage {
-        // GitHub can be skipped: then it is not done.
-        Some(stage) if n < stage && (n > 0 || signed_in) => Segment::Done,
-        Some(stage) if n == stage => Segment::Current,
-        _ => Segment::Ahead,
-    });
+    let stage = step.stage(stages);
+    let segments = (0..stages.len())
+        .map(|n| match stage {
+            // GitHub can be skipped: then it is not done.
+            Some(stage) if n < stage && (n > 0 || signed_in) => Segment::Done,
+            Some(stage) if n == stage => Segment::Current,
+            _ => Segment::Ahead,
+        })
+        .collect();
     Frame {
         scene: Scene { step, state },
         mood,
@@ -213,8 +223,14 @@ fn frame(ws: &Workspace, step: SetupStep) -> Frame {
 
 /// Records what this frame of onboarding shows, before it is drawn, so
 /// that what changed animates.
-pub fn observe(ws: &mut Workspace, step: SetupStep, window: &Window, cx: &App) {
-    let frame = frame(ws, step);
+pub fn observe(
+    ws: &mut Workspace,
+    step: SetupStep,
+    window: &Window,
+    cx: &mut App,
+) {
+    let stages = ws.setup_stages(cx);
+    let frame = frame(ws, step, &stages);
     let composing = ws.first_task.read(cx).focus_handle(cx).is_focused(window);
     let clones: Vec<(String, u32, bool)> = ws
         .setup
@@ -284,12 +300,16 @@ pub fn render(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let motion = &ws.setup_motion;
+    let stages = ws.setup_stages(cx);
     let body = match step {
         SetupStep::Welcome => welcome(ws, compact, t, cx),
         SetupStep::GitHub => github(ws, compact, t, cx),
         SetupStep::Token => token(ws, compact, t, cx),
         SetupStep::Model => model(ws, compact, t, cx),
         SetupStep::Repos => repos(ws, compact, t, cx),
+        SetupStep::Plugin { plugin, step } => {
+            plugin_step(ws, plugin, step, compact, t, cx)
+        }
         SetupStep::Ready => ready(ws, compact, t, cx),
     };
     div()
@@ -302,7 +322,7 @@ pub fn render(
         .text_color(t.text)
         .typeset(Type::BODY)
         .child(backdrop(motion, step, compact, t))
-        .child(top_bar(ws, step, compact, t, cx))
+        .child(top_bar(ws, step, &stages, compact, t, cx))
         .child(
             div()
                 .id("setup-body")
@@ -494,12 +514,13 @@ fn backdrop(
     }
 }
 
-/// tau, the four stages as segments (done green, current amber), and
-/// where you are. A segment whose state changed fills left to right in
-/// its new color. A phone shows the segments without their names.
+/// tau, the stages as segments (done green, current amber), and where
+/// you are. A segment whose state changed fills left to right in its new
+/// color. A phone shows the segments without their names.
 fn top_bar(
     ws: &Workspace,
     step: SetupStep,
+    stages: &[Stage],
     compact: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
@@ -521,8 +542,15 @@ fn top_bar(
     };
     let width = if compact { 28. } else { 64. };
     let reduce = motion.reduce;
-    let items = SetupStep::STAGES.iter().enumerate().map(|(n, name)| {
-        let (was, now) = (segments.previous[n], segments.current[n]);
+    let segment = |segments: &[Segment], n: usize| {
+        segments.get(n).copied().unwrap_or(Segment::Ahead)
+    };
+    let items = stages.iter().enumerate().map(|(n, stage)| {
+        let name = stage.name.clone();
+        let (was, now) = (
+            segment(&segments.previous, n),
+            segment(&segments.current, n),
+        );
         let (base, fill) = (color(was), color(now));
         let (from_label, to_label) = (label(was), label(now));
         let item = move |share: f32, fade: f32, label: Hsla| {
@@ -550,7 +578,7 @@ fn top_bar(
                         ),
                 )
                 .when(!compact, |item| {
-                    item.child(mono(*name, Type::MICRO, label))
+                    item.child(mono(name.clone(), Type::MICRO, label))
                 })
         };
         if was == now {
@@ -568,12 +596,12 @@ fn top_bar(
             )
             .into_any_element()
     });
-    let place = match (step != SetupStep::Welcome).then(|| step.stage()) {
+    let place = match step.stage(stages) {
         None => "welcome".to_owned(),
         Some(stage) if compact => {
-            format!("{} · {}/4", SetupStep::STAGES[stage], stage + 1)
+            format!("{} · {}/{}", stages[stage].name, stage + 1, stages.len())
         }
-        Some(stage) => format!("{} / 4", stage + 1),
+        Some(stage) => format!("{} / {}", stage + 1, stages.len()),
     };
     let side = if compact { 96. } else { 140. };
     div()
@@ -702,6 +730,7 @@ fn service_icon(
         }
         Service::Token => glyph(Icon::Key, 0.41),
         Service::Repos => glyph(Icon::Repo, 0.42),
+        Service::Plugin => glyph(Icon::Plug, 0.42),
         Service::FirstRun => glyph(Icon::Runs, 0.42),
     }
 }
@@ -2877,6 +2906,79 @@ fn repos(
                     ),
                     t,
                 )),
+        )
+}
+
+/// A plugin's step: its headline and what it draws under it, and a way
+/// past it, which tau draws.
+fn plugin_step(
+    ws: &Workspace,
+    plugin: &'static str,
+    step: &'static str,
+    compact: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let motion = &ws.setup_motion;
+    let this = SetupStep::Plugin { plugin, step };
+    let view = ws
+        .plugin_setup_steps(cx)
+        .into_iter()
+        .find_map(|(found, view)| (found == this).then_some(view));
+    let skip = div()
+        .id("setup-skip")
+        .debug_selector(|| "setup-skip".to_owned())
+        .child(text_button(
+            if view.is_some() {
+                "Skip for now"
+            } else {
+                "Continue"
+            },
+            t,
+        ))
+        .on_click(cx.listener(move |ws, _, _, cx| {
+            ws.plugin_setup_step_done(plugin, cx)
+        }));
+    let screen = div().child(handshake(ws, (None, None), compact, t));
+    let Some(view) = view else {
+        // The step has nothing to ask any more: only the way on.
+        return screen.child(
+            div()
+                .mt(sp(if compact { 6. } else { 10. }))
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(skip),
+        );
+    };
+    screen
+        .child(
+            headline(
+                motion,
+                300,
+                (&view.heading, &view.detail),
+                Type::HERO_SMALL,
+                620.,
+                compact,
+                t,
+            )
+            .mt(sp(if compact { 6. } else { 10. })),
+        )
+        .child(
+            div()
+                .mt(sp(if compact { 6. } else { 8. }))
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(sp(5.))
+                .child(rise(
+                    motion,
+                    &format!("{plugin}-{step}"),
+                    400,
+                    div().w_full().max_w(rems(40.)).child(view.body),
+                ))
+                .child(rise(motion, "skip", 800, skip)),
         )
 }
 

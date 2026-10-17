@@ -666,6 +666,7 @@ fn repos() -> Vec<RepoChoice> {
         selected,
         // Listed as GitHub orders them: the most recently pushed first.
         pushed_at: format!("2026-10-{:02}T12:00:00Z", 22 - n.min(21)),
+        remote: Some(format!("https://github.com/{name}.git")),
     })
     .collect()
 }
@@ -769,7 +770,13 @@ pub fn setup(step: SetupStep) -> Setup {
         repos: repos(),
         ..Setup::default()
     };
-    let stage = step.stage();
+    // tau's own stages; a plugin's step comes after the clones start.
+    let stage = match step {
+        SetupStep::Plugin { .. } => 3,
+        step => step
+            .stage(&crate::setup::Stage::all([]))
+            .unwrap_or_default(),
+    };
     setup.github = if step == SetupStep::Welcome {
         GitHub::SignedOut
     } else if stage == 0 {
@@ -789,6 +796,7 @@ pub fn setup(step: SetupStep) -> Setup {
             RepoClone {
                 name: "cfcosta/tau-agent".into(),
                 state: CloneState::Ready,
+                id: Some(tau_ui_plugin::RepoId("demo-tau-agent".into())),
             },
             RepoClone {
                 name: "cfcosta/docbert".into(),
@@ -796,6 +804,7 @@ pub fn setup(step: SetupStep) -> Setup {
                     share: 0.64,
                     detail: "41 MB of 64 MB".into(),
                 },
+                id: None,
             },
         ];
     }
@@ -1061,6 +1070,7 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                             let clone = RepoClone {
                                 name: name.clone(),
                                 state,
+                                id: None,
                             };
                             (250, setup(SetupUpdate::Clone(clone)))
                         })

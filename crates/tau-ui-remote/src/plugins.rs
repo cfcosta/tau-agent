@@ -269,6 +269,7 @@ impl Workspace {
             }
             Request::Cancel(run) => cx.emit(WorkspaceEvent::Cancel { run }),
             Request::Note(text) => self.show_composer_note(text, cx),
+            Request::SetupDone => self.plugin_setup_step_done(plugin, cx),
         }
         cx.notify();
     }
@@ -401,8 +402,31 @@ impl Workspace {
         at: impl Fn(&str) -> Option<&'c Cx>,
         cx: &mut App,
     ) -> Vec<Out> {
+        self.contributions_named(point, at, cx)
+            .into_iter()
+            .map(|(_, out)| out)
+            .collect()
+    }
+
+    /// What plugins contribute at `point`, in order, each with the plugin
+    /// that gave it.
+    pub fn contributions_by<Cx: PointCx, Out: 'static>(
+        &self,
+        point: Point<Cx, Out>,
+        at: &Cx,
+        cx: &mut App,
+    ) -> Vec<(&'static str, Out)> {
+        self.contributions_named(point, |_| Some(at), cx)
+    }
+
+    fn contributions_named<'c, Cx: PointCx, Out: 'static>(
+        &self,
+        point: Point<Cx, Out>,
+        at: impl Fn(&str) -> Option<&'c Cx>,
+        cx: &mut App,
+    ) -> Vec<(&'static str, Out)> {
         let empty = BTreeMap::new();
-        let mut found: Vec<(i32, usize, Out)> = Vec::new();
+        let mut found: Vec<(i32, usize, &'static str, Out)> = Vec::new();
         for (n, plugin) in registry().plugins().enumerate() {
             let Some(at) = at(plugin.name()) else {
                 continue;
@@ -425,12 +449,15 @@ impl Workspace {
                     entry.to.plugin = Some(plugin.name().to_owned());
                 }
                 if let Ok(out) = out.downcast::<Out>() {
-                    found.push((order, n, *out));
+                    found.push((order, n, plugin.name(), *out));
                 }
             }
         }
-        found.sort_by_key(|(order, n, _)| (*order, *n));
-        found.into_iter().map(|(_, _, out)| out).collect()
+        found.sort_by_key(|(order, n, _, _)| (*order, *n));
+        found
+            .into_iter()
+            .map(|(_, _, plugin, out)| (plugin, out))
+            .collect()
     }
 
     /// `plugin`'s page `page`, drawn with `params`.

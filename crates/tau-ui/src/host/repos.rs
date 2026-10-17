@@ -181,6 +181,7 @@ pub(super) fn clone_into_tau(
         SetupUpdate::Clone(RepoClone {
             name: name.to_owned(),
             state,
+            id: None,
         })
     };
     workspace.update(cx, |ws, cx| {
@@ -211,17 +212,18 @@ pub(super) fn clone_into_tau(
             return;
         };
         cx.update(|cx| {
-            let state = match cloned {
+            let (state, id) = match cloned {
                 Ok((repo, main)) => {
                     let main = main.map(Box::new);
+                    let id = repo.id.clone();
                     workspace.update(cx, |ws, cx| {
                         ws.apply(HostUpdate::Repo { repo, main }, cx)
                     });
-                    CloneState::Ready
+                    (CloneState::Ready, Some(id))
                 }
-                Err(error) => CloneState::Failed(error),
+                Err(error) => (CloneState::Failed(error), None),
             };
-            let update = SetupUpdate::Clone(RepoClone { name, state });
+            let update = SetupUpdate::Clone(RepoClone { name, state, id });
             workspace
                 .update(cx, |ws, cx| ws.apply(HostUpdate::Setup(update), cx));
         });

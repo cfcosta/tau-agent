@@ -555,6 +555,10 @@ fn repo_choice(repo: &Value) -> Option<RepoChoice> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
+        remote: repo
+            .get("clone_url")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 

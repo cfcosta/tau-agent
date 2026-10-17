@@ -64,15 +64,99 @@ impl Workspace {
         &self.setup_motion
     }
 
-    /// Leaves the model step once signed in: on to the repositories, or
-    /// to a new run when there are none to pick.
+    /// Leaves the model step once signed in: on to the repositories, or,
+    /// when there are none to pick, through plugins' steps to a new run.
     pub fn continue_from_model(&mut self, cx: &mut Context<Self>) {
         if self.setup_goal == Some(SetupGoal::Model) {
             self.leave_setup(cx);
         } else if self.setup.repos.is_empty() {
-            self.finish_setup(cx);
+            self.setup_next(SetupStep::Repos, cx);
         } else {
             self.navigate(Route::Setup(SetupStep::Repos), cx);
+        }
+    }
+
+    /// Plugins' steps of first-run setup for the setup at hand
+    /// (`points::SETUP`), in order, each with what it draws.
+    pub fn plugin_setup_steps(
+        &self,
+        cx: &mut App,
+    ) -> Vec<(SetupStep, tau_ui_plugin::points::SetupView)> {
+        let at = tau_ui_plugin::points::AtSetup {
+            repos: self.setup.picked(),
+        };
+        self.contributions_by(tau_ui_plugin::points::SETUP, &at, cx)
+            .into_iter()
+            .map(|(plugin, view)| {
+                let step = SetupStep::Plugin {
+                    plugin,
+                    step: view.step,
+                };
+                (step, view)
+            })
+            .collect()
+    }
+
+    /// The step bar's stages: tau's, with plugins' steps between the
+    /// repositories and Ready.
+    pub fn setup_stages(&self, cx: &mut App) -> Vec<Stage> {
+        Stage::all(
+            self.plugin_setup_steps(cx)
+                .into_iter()
+                .map(|(step, view)| (step, view.title)),
+        )
+    }
+
+    /// Goes on from `from`, the repositories or a plugin's step: to the
+    /// next plugin's step, else to the end of setup.
+    fn setup_next(&mut self, from: SetupStep, cx: &mut Context<Self>) {
+        let steps: Vec<SetupStep> = self
+            .plugin_setup_steps(cx)
+            .into_iter()
+            .map(|(step, _)| step)
+            .collect();
+        let next = match from {
+            SetupStep::Plugin { .. } => steps
+                .iter()
+                .position(|step| *step == from)
+                .map_or(steps.len(), |n| n + 1),
+            _ => 0,
+        };
+        match steps.get(next) {
+            Some(step) => self.navigate(Route::Setup(*step), cx),
+            None => self.end_setup_steps(cx),
+        }
+    }
+
+    /// Past the last step: the host hears setup is done, once, and the
+    /// clones and the first run's prompt show, or with nothing cloned, a
+    /// new run.
+    fn end_setup_steps(&mut self, cx: &mut Context<Self>) {
+        if !self.setup_finished {
+            self.setup_finished = true;
+            cx.emit(WorkspaceEvent::SetupFinished {
+                repos: self.setup.picked(),
+            });
+        }
+        if self.setup.clones.is_empty() {
+            self.finish_setup(cx);
+        } else {
+            self.navigate(Route::Setup(SetupStep::Ready), cx);
+        }
+    }
+
+    /// Ends the plugin's step on screen, from the plugin
+    /// (`Request::SetupDone`) or the person skipping it: on to the next.
+    pub fn plugin_setup_step_done(
+        &mut self,
+        plugin: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Route::Setup(step @ SetupStep::Plugin { plugin: on, .. }) =
+            self.route
+            && on == plugin
+        {
+            self.setup_next(step, cx);
         }
     }
 
@@ -422,6 +506,7 @@ impl Workspace {
                         share: 0.0,
                         detail: "starting".into(),
                     },
+                    id: None,
                 });
             }
         }
@@ -429,11 +514,11 @@ impl Workspace {
             cx.emit(WorkspaceEvent::CloneRepos { repos });
         }
         // From the app, the clones show up in the sidebar; from
-        // onboarding, the first run comes next.
+        // onboarding, plugins' steps and the first run come next.
         if self.setup_goal == Some(SetupGoal::Repos) {
             self.leave_setup(cx);
         } else {
-            self.navigate(Route::Setup(SetupStep::Ready), cx);
+            self.setup_next(SetupStep::Repos, cx);
         }
     }
 

@@ -751,6 +751,7 @@ fn github_from_the_app_comes_back_when_done(cx: &mut TestAppContext) {
                 branch: "main".into(),
                 selected: false,
                 pushed_at: String::new(),
+                remote: None,
             }]),
             cx,
         );

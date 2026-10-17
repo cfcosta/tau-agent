@@ -58,6 +58,7 @@ use crate::{
         Setup,
         SetupStep,
         SetupUpdate,
+        Stage,
     },
     theme::{
         Design as _,
@@ -397,6 +398,12 @@ pub enum WorkspaceEvent {
     CloneRepos {
         repos: Vec<String>,
     },
+    /// The person reached the end of first-run setup, with these
+    /// repositories picked: plugins' host halves hear it
+    /// (`HostHalf::setup_finished`). Said once.
+    SetupFinished {
+        repos: Vec<tau_ui_plugin::points::SetupRepo>,
+    },
     /// Write a pull request draft from the run, for
     /// [`Workspace::set_pull_request`].
     PreparePullRequest {
@@ -617,6 +624,9 @@ pub struct Workspace {
     /// Why an onboarding step was opened from the app, if it was: once
     /// that is done, go back rather than on through onboarding.
     pub(crate) setup_goal: Option<SetupGoal>,
+    /// Whether the person reached the end of first-run setup in this
+    /// window: the host heard it once (`WorkspaceEvent::SetupFinished`).
+    pub(crate) setup_finished: bool,
     /// What onboarding showed last frame, for its transitions.
     pub(crate) setup_motion: crate::motion::SetupMotion,
     /// The user asked for less motion: no loops, and plain fades.
@@ -898,6 +908,7 @@ impl Workspace {
             repo_menu: None,
             sidebar_filter,
             setup_goal: None,
+            setup_finished: false,
             setup_motion: Default::default(),
             reduce_motion: false,
             weak: cx.weak_entity(),
@@ -1424,6 +1435,14 @@ impl Workspace {
             } => self
                 .plugin_page_title(plugin, page, params, cx)
                 .unwrap_or_else(|| page.clone()),
+            Route::Setup(step @ SetupStep::Plugin { .. }) => self
+                .plugin_setup_steps(cx)
+                .into_iter()
+                .find(|(found, _)| found == step)
+                .map_or_else(
+                    || step.title().to_owned(),
+                    |(_, view)| view.title,
+                ),
             route => route.title().to_owned(),
         }
     }
@@ -1563,6 +1582,24 @@ impl Workspace {
             page: link.page.clone(),
             params,
         })
+    }
+
+    /// What clicking a job in the status bar opens: the page the job
+    /// names, else its plugin's own page, if it has one.
+    pub fn job_route(&self, job: &tau_ui_plugin::JobInfo) -> Option<Route> {
+        match &job.page {
+            Some(link) => {
+                self.link_route(&link.clone().from(&job.plugin), None)
+            }
+            None => {
+                let plugin = self
+                    .catalog
+                    .plugins
+                    .iter()
+                    .find(|plugin| plugin.name == job.plugin)?;
+                self.plugin_route(plugin)
+            }
+        }
     }
 
     /// The screen for a plugin by name, about one run.

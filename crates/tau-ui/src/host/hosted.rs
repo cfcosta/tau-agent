@@ -431,6 +431,14 @@ impl Host {
             })
     }
 
+    /// Tells every plugin that first-run setup ended with `repos` picked.
+    pub async fn setup_finished(
+        &self,
+        repos: &[tau_ui_plugin::points::SetupRepo],
+    ) {
+        hosted::setup_finished(&self.hosted, repos, &self.host_cx()).await
+    }
+
     /// Carries out what `plugin`'s UI asked; its answer, if any, goes
     /// back to the UI.
     pub async fn plugin_act(

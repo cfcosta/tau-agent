@@ -148,6 +148,7 @@ impl Workspace {
             repo_menu: _,
             sidebar_filter: _,
             setup_goal: _,
+            setup_finished: _,
             setup_motion: _,
             reduce_motion: _,
             adding_jev_key: _,

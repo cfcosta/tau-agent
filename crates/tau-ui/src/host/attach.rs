@@ -860,6 +860,20 @@ impl Host {
                         clone_into_tau(&handler, name, &workspace, cx);
                     }
                 }
+                WorkspaceEvent::SetupFinished { repos } => {
+                    let repos = repos.clone();
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| {
+                            host.setup_finished(&repos).await;
+                            anyhow::Ok(())
+                        },
+                        |_, (), _| {},
+                        alert("Could not finish setting up"),
+                        cx,
+                    );
+                }
                 WorkspaceEvent::NewRun {
                     prompt,
                     model,
