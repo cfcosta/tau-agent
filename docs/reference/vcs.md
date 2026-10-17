@@ -180,7 +180,7 @@ loading:
   files are checked out: each tool's snapshot and transaction, and
   each `ProjectRepo` write (`update`, `add_workspace`,
   `add_workspace_from_snapshot`, `forget_workspace`, `abandon_between`,
-  `remove_bookmark`, `push_trunk`, `push_branch`). Runs work in
+  `remove_head`, `push_trunk`, `push_branch`). Runs work in
   workspaces of one repository at the same time, and two operations
   that started from the same one would fork jj's operation log: a
   commit two of them rewrote
@@ -722,9 +722,9 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   ([ADR 0014](../decisions/0014-the-model-commits-and-runs-land-as-stacked-diffs.md)).
   A turn commits nothing.
 - **After each turn** (`TurnEnd`) it snapshots `@` and points the run's
-  local bookmark, `tau/<run id>`, at the run's newest commit (`@`'s
-  parent), so the run's work stays findable by name after its
-  workspace is gone. Then it stores a `Link` record under the plugin
+  head (see "Run heads"), `Head::Run`, at the run's newest commit (`@`'s
+  parent), so the run's work stays findable after its workspace is
+  gone. Then it stores a `Link` record under the plugin
   name `tau-vcs`:
 
   ```json
@@ -791,11 +791,33 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `head` has that trunk lacks. A pull request replays those onto
   GitHub's trunk (see "Pull requests").
 
+## Run heads
+
+A run's newest commit is its head, a `tau_vcs_host::Head`:
+`Head::Run(run id)` for a run's own, `Head::Branch(name)` for a branch
+a run moves instead, as the main chat moves trunk's. Everything that
+moves or reads a head goes through `tau_vcs_host::heads`:
+
+- In a job: `commit_all`, `end_turn`, `move_onto` and `land` take the
+  head to point (`impl Into<Head>`; a name is a branch), and a step
+  that follows an update reads its upstream (`heads::upstream`).
+- On `ProjectRepo`: `head(&Head)` (the commit it names), `remove_head`,
+  and `run_heads()`, the names of the runs' heads the project has,
+  which `Head::run_of` reads back as run ids, for the sweep.
+- `RunWorkspace::head_of(run)` is the head a run's commits move:
+  `commits_to`'s, else the run's own.
+
+Each head is a local bookmark for now: a run's is `tau/<run id>`, a
+branch's its name, so `vcs_log` and `vcs_show` rows list a run's
+`[tau/<run id>]` on its newest commit. ADR 0043 moves runs' heads to
+`refs/tau/runs/<run id>`, Git refs that jj never exports, and only
+`heads` changes (its module comment says how, `vcs_undo` included).
+
 ## Landing a child run
 
 A child run (a fork, or a sub-agent) lands on its parent by restacking
 ([ADR 0009](../decisions/0009-child-runs-land-on-their-parent.md)).
-`Vcs::land(child_head, bookmark, confirm)` runs on the parent's `Vcs`:
+`Vcs::land(child_head, head, confirm)` runs on the parent's `Vcs`:
 
 - The child's changes are what its head has that the parent's newest
   commit lacks. Their root is rebased onto that commit, the rest
@@ -921,29 +943,29 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
 
 ## Sweeping at start
 
-Nothing cleans a run's workspace and bookmark once the process that ran
+Nothing cleans a run's workspace and head once the process that ran
 it is gone: a sub-agent cut off mid-call, a chat whose landing or drop
 tau closed in the middle of, a workspace whose run never reached the
 store. Left there, they take disk space, and the main chat's catch-ups
 restack their commits every time.
 
-`tau_vcs_host::sweep::plan(owners, workspaces, bookmarks)` is the rule, a
+`tau_vcs_host::sweep::plan(owners, workspaces, heads)` is the rule, a
 pure function. Each `Owner` is a run with the workspaces it worked in
 and its `Standing`:
 
-- `Kept`: its workspaces and bookmark stay.
+- `Kept`: its workspaces and head stay.
 - `Landed`: they go; its commits, on its parent now, stay.
-- `Discarded`: they go, and first its own commits, what its bookmark
+- `Discarded`: they go, and first its own commits, what its head
   and its workspaces' working copies have that its `Keep` (its parent's
-  bookmark, or the main chat's working copy) lacks, as a drop does.
+  head, or the main chat's working copy) lacks, as a drop does.
 
 The workspaces it looks at are the runs' (`ProjectRepo::workspaces`):
 the main chat's and the person's never go. A workspace goes unless a
-kept run worked in it. A `tau/<run>` bookmark goes unless
-that run is kept; other bookmarks are not runs' and stay. What no
+kept run worked in it. A run's head (`ProjectRepo::run_heads`) goes
+unless that run is kept; a name that is no run's head stays. What no
 owner names belongs to a run that is gone, and goes. `Project::sweep`
 carries a plan out: abandons, then forgets workspaces (their directories
-go), then removes bookmarks. Each step is idempotent, so a sweep cut
+go), then removes heads. Each step is idempotent, so a sweep cut
 off is finished by the next, and a done sweep plans nothing.
 
 The host sweeps each listed repository as it starts (`Host::recover`,
@@ -960,11 +982,11 @@ finalized.
 
 ## Moving onto trunk
 
-`Vcs::move_onto(trunk, bookmark, confirm)`, on a run's `Vcs`, rebases
+`Vcs::move_onto(trunk, head, confirm)`, on a run's `Vcs`, rebases
 the run's changes, up to `@`, onto trunk's newest commit, and points
-`bookmark` at the run's newest commit there. A run with no commit of
+`head` at the run's newest commit there. A run with no commit of
 its own, moved onto the root commit (upstream deleted every trunk
-branch), has none, and the bookmark goes: no bookmark names the root
+branch), has none, and the head names nothing: no head names the root
 commit. The run's changes are
 what `@` has that neither trunk nor the commit the workspace last moved
 onto has. The workspace records that commit (in `.jj/tau-moved-onto`)
@@ -986,7 +1008,7 @@ forks from. It works in the main workspace, `tau-main` in `main/`
 `RunWorkspace` is built with `commits_to(project.trunk_name())`, so its
 commits, its turns'
 snapshots, the chats that land on it and its sub-agents all move
-trunk's bookmark, not `tau/<run>`. It has nothing to land: its
+trunk's branch (`Head::Branch`), not a head of its own. It has nothing to land: its
 `vcs_land` refuses ("The main chat commits straight to trunk, so it has
 nothing to land: …"), and its bar offers no landing. It is the only
 top-level run (ADR 0016), so nothing merges into trunk: a chat lands on
@@ -1003,8 +1025,9 @@ work in `@`; commits upstream dropped do not come back. Its next commit moves tr
 than aside.
 
 An update can also land while the main chat's turn runs. So when an
-update has moved a run's bookmark (it names upstream's commit, as
-`<bookmark>@origin` does, which a run's own commits never do) to a commit
+update has moved the head a run moves (a branch's: it names upstream's
+commit, as `<branch>@origin` does, which a run's own commits never do,
+`heads::upstream`) to a commit
 the run's newest commit does not have, `commit_all`, `end_turn` and
 `Vcs::land` first move the run's changes, up to `@`, onto it, as a
 catch-up does, in the same operation: trunk moves forward, never aside.
