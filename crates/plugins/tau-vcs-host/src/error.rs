@@ -223,6 +223,12 @@ pub enum VcsError {
     Ignores(#[from] jj_lib::gitignore::GitIgnoreError),
     #[error(transparent)]
     ConfigUpdate(#[from] jj_lib::config::ConfigUpdateError),
+    #[error(
+        "Cannot write the repository's jj config {}: {}",
+        .0.0.path.display(),
+        .0.0.source
+    )]
+    ConfigSave(#[from] jj_lib::config::ConfigFileSaveError),
     #[error(transparent)]
     EditCommit(#[from] jj_lib::repo::EditCommitError),
     #[error(transparent)]

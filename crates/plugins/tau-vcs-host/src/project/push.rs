@@ -299,7 +299,8 @@ impl ProjectRepo {
         sending: &Arc<UserRevsetExpression>,
     ) -> Result<(), VcsError> {
         let name = "git.private-commits";
-        let (text, private) = revsets.setting(&self.inner.settings, name)?;
+        let (text, private) =
+            revsets.setting(repo.as_ref(), &self.inner.settings, name)?;
         let private = revsets
             .resolve(repo.as_ref(), name, &private)?
             .evaluate(repo.as_ref())?;
@@ -336,7 +337,7 @@ impl ProjectRepo {
             RemoteName::new(REMOTE),
         ))
         .range(&RevsetExpression::commits(vec![head.clone()]))
-        .minus(&revsets.immutable_heads()?.ancestors());
+        .minus(&revsets.immutable_heads(repo.as_ref())?.ancestors());
         let mut unsigned = HashSet::new();
         for id in evaluate(repo.as_ref(), revsets, &to_push)? {
             if needs_signing(settings, &repo.store().get_commit(&id)?) {
@@ -490,7 +491,7 @@ fn known(
 ) -> Result<Arc<UserRevsetExpression>, VcsError> {
     Ok(
         RevsetExpression::commits(remote_heads(repo, RemoteName::new(REMOTE)))
-            .union(&revsets.immutable_heads()?),
+            .union(&revsets.immutable_heads(repo)?),
     )
 }
 

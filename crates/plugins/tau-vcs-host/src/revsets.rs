@@ -8,7 +8,7 @@
 //! Ported from jj-cli, under the Apache License 2.0
 //! (`THIRD_PARTY_NOTICES.md`).
 
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, path::Path, sync::Arc};
 
 use chrono::TimeZone as _;
 use jj_lib::{
@@ -83,9 +83,12 @@ impl ConfigRevsets {
         })
     }
 
-    fn context(&self) -> RevsetParseContext<'_> {
+    fn context<'a>(
+        &'a self,
+        aliases: &'a RevsetAliasesMap,
+    ) -> RevsetParseContext<'a> {
         RevsetParseContext {
-            aliases_map: &self.aliases,
+            aliases_map: aliases,
             local_variables: HashMap::new(),
             user_email: &self.user_email,
             date_pattern_context: self.now,
@@ -100,21 +103,23 @@ impl ConfigRevsets {
         }
     }
 
-    /// The revset the config's `name` holds, parsed.
+    /// The revset the config's `name` holds, parsed for `repo`.
     pub(crate) fn setting(
         &self,
+        repo: &dyn Repo,
         settings: &UserSettings,
         name: &'static str,
     ) -> Result<(String, Arc<UserRevsetExpression>), VcsError> {
         let text = settings.get_string(name)?;
-        let expression = self.parse(name, &text)?;
+        let expression = self.parse(repo, name, &text)?;
         Ok((text, expression))
     }
 
-    /// The heads of the immutable commits: `immutable_heads()` and the
-    /// root (jj-cli's `parse_immutable_heads_expression`).
+    /// The heads of the immutable commits in `repo`: `immutable_heads()`
+    /// and the root (jj-cli's `parse_immutable_heads_expression`).
     pub(crate) fn immutable_heads(
         &self,
+        repo: &dyn Repo,
     ) -> Result<Arc<UserRevsetExpression>, VcsError> {
         let name = "revset-aliases.immutable_heads()";
         let (_, _, text, _) = self
@@ -125,23 +130,57 @@ impl ConfigRevsets {
             error: "it is not defined".to_owned(),
         })?;
         let text = text.clone();
-        Ok(self.parse(name, &text)?.union(&RevsetExpression::root()))
+        Ok(self
+            .parse(repo, name, &text)?
+            .union(&RevsetExpression::root()))
     }
 
     fn parse(
         &self,
+        repo: &dyn Repo,
         name: &str,
         text: &str,
     ) -> Result<Arc<UserRevsetExpression>, VcsError> {
+        let aliases = self.aliases_in(repo);
         // jj prints the diagnostics as warnings; tau has no one to show
         // them to.
         let mut diagnostics = RevsetDiagnostics::new();
-        revset::parse(&mut diagnostics, text, &self.context()).map_err(
+        revset::parse(&mut diagnostics, text, &self.context(&aliases)).map_err(
             |error| VcsError::ConfigRevset {
                 name: name.to_owned(),
                 error: error.to_string(),
             },
         )
+    }
+
+    /// The aliases a revset is parsed with in `repo`: the config's, but
+    /// with `trunk()` as `root()` when the config's `trunk()` names
+    /// something `repo` lacks, as a bookmark it does not have (jj-cli's
+    /// `load_from_workspace`, with `try_resolve_trunk_alias`). jj warns
+    /// that it fell back, and hints at `jj config edit --repo`; tau has
+    /// no one to warn. A `trunk()` that does not parse is left as it
+    /// is, for the revset that calls it to fail on, as jj leaves it.
+    fn aliases_in(&self, repo: &dyn Repo) -> Cow<'_, RevsetAliasesMap> {
+        let Some((_, _, text, _)) = self.aliases.get_function("trunk", 0)
+        else {
+            return Cow::Borrowed(&self.aliases);
+        };
+        let context = self.context(&self.aliases);
+        let Ok(trunk) =
+            revset::parse(&mut RevsetDiagnostics::new(), text, &context)
+        else {
+            return Cow::Borrowed(&self.aliases);
+        };
+        let resolver =
+            SymbolResolver::new(repo, self.extensions.symbol_resolvers());
+        if trunk.resolve_user_expression(repo, &resolver).is_ok() {
+            return Cow::Borrowed(&self.aliases);
+        }
+        let mut aliases = self.aliases.clone();
+        aliases
+            .insert("trunk()", "root()", None)
+            .expect("`trunk()` is a valid declaration");
+        Cow::Owned(aliases)
     }
 
     /// `expression`'s symbols resolved in `repo`.

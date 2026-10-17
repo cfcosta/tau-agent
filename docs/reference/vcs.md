@@ -68,7 +68,9 @@ loading:
   `workspaces/<id>/config.toml` in jj's config directory, named by
   `.jj/repo/config-id` and `.jj/workspace-config-id`. tau reads them
   with jj-lib's `SecureConfig::maybe_load_config`, as any jj command
-  does, and never makes a config id: `jj config edit --repo` does.
+  does, and makes a config id only where `jj git clone` would: when a
+  clone or an import writes the repository's `trunk()` (see
+  "Projects").
 - `--when` scopes resolve once the repository is known, against the
   canonical workspace and repository paths, the home directory (for
   `~`), the host name and the variables. tau runs no jj command, so a
@@ -77,7 +79,8 @@ loading:
   its workspace's repository first (`WorkspaceLoader::repo_path`), as
   jj does, then loads it with the settings for that repository and
   workspace. A `ProjectRepo` builds its main workspace's settings when
-  it opens. A run workspace that `add_workspace` makes is written with
+  it opens, and a clone or an import again once it has written the
+  repository's config. A run workspace that `add_workspace` makes is written with
   the main workspace's settings, as `jj workspace add` does, then opened
   again with its own. Config changes reach a `Vcs` or `ProjectRepo`
   opened after them.
@@ -193,9 +196,13 @@ loading:
 - **Immutable commits are refused.** A commit is immutable as jj says:
   the root commit, or an ancestor of what the config's
   `immutable_heads()` names. jj's default is `trunk()` (`main`,
-  `master` or `trunk` on `origin` or `upstream`), tags, and untracked
-  remote bookmarks and tags (the internal `git` remote left out); the
-  person's `revset-aliases` can say otherwise. A write tool fails with
+  `master` or `trunk` on `origin` or `upstream`, or the default
+  branch a clone wrote into the repository's config), tags, and
+  untracked remote bookmarks and tags (the internal `git` remote left
+  out); the person's `revset-aliases` can say otherwise. A `trunk()`
+  that names something the repository lacks, as a bookmark it does not
+  have, is `root()` instead, as jj makes it after warning; tau has no
+  one to warn. One that does not parse fails the tools that read it. A write tool fails with
   `The working-copy commit <id> is immutable` when `@` is one of them,
   and one that cannot read `immutable_heads()` fails naming it.
 - **Tagged operations.** Each write is one operation, described as
@@ -490,7 +497,20 @@ the user's checkout.
   `root` by fetching every branch and tag of `url` with gix, as
   `jj git clone --colocate` would. The token answers the server's
   request for credentials and is not written anywhere. A failed clone
-  removes `root`.
+  removes `root`. As `jj git clone` does, when `origin/HEAD` names a
+  branch the clone has, the repository's config (`repos/<id>/config.toml`
+  in the person's jj config directory, made when there is none, with
+  what it held kept) gets `revset-aliases."trunk()" =
+  "<branch>@origin"`, so `trunk()` and `immutable_heads()` name
+  upstream's default branch whatever it is called. Nothing is written
+  without a jj config directory. An import writes it the same way, the
+  source's default branch standing for the remote's. An update leaves
+  it as it is, as `jj git fetch` does, though trunk follows a new
+  default branch. jj 0.45.1 refuses to clone when the person's own
+  `trunk()` names a remote bookmark: it resolves `immutable_heads()`
+  in the still-empty repository, without the fallback to `root()` its
+  other commands have. tau clones, and falls back as those commands
+  do.
 - `Project::open_or_import(source, root, identity)` opens the project at
   `root`, or makes it from the local repository at `source` (a checkout,
   a linked worktree or a bare repository) as if cloned from it. No
@@ -943,8 +963,8 @@ another, as for jj. `Remote { url, token }` says where:
   `<trunk>@origin` there, as a fetch would, so nothing is ahead. The
   pushed commits are then immutable as upstream's are, when the
   config's `immutable_heads()` names `<trunk>@origin`, as jj's default
-  `trunk()` does for `main`, `master` and `trunk` (see "Scoping
-  rules").
+  does for `main`, `master` and `trunk`, and for the default branch
+  through the `trunk()` a clone writes (see "Scoping rules").
 - `Project::replay(commits, onto)` copies commits (oldest first, each on
   the one before) onto `onto`: each copy's tree is jj's three-way merge
   of the copy before (`onto` for the first), the commit's parent tree,

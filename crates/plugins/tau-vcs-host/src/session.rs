@@ -342,7 +342,7 @@ impl Immutable {
         repo: &dyn Repo,
         revsets: &ConfigRevsets,
     ) -> Result<Self, VcsError> {
-        let heads = revsets.immutable_heads()?.heads();
+        let heads = revsets.immutable_heads(repo)?.heads();
         let heads = revsets
             .resolve(repo, "revset-aliases.immutable_heads()", &heads)?
             .evaluate(repo)?;

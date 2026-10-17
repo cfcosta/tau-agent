@@ -438,7 +438,8 @@ impl ProjectRepo {
     /// Makes a project at `root` (which must not hold one) by fetching
     /// every branch and tag of `url`, as `jj git clone --colocate` does:
     /// the branches become remote-tracking branches, imported as
-    /// bookmarks that track them. A `token` answers the server's request
+    /// bookmarks that track them, and the repository's `trunk()` names
+    /// the default branch. A `token` answers the server's request
     /// for credentials, and is not written into the repository. Blocks
     /// until the fetch is over. On failure `root` is removed.
     pub fn clone(
@@ -472,7 +473,8 @@ impl ProjectRepo {
     /// Makes a project at `root`, which holds none: a Git repository in
     /// `main/`, which `fill` fills with upstream's objects and refs and
     /// whose `origin` it names, then the jj repository on it, with
-    /// upstream's branches imported. On failure `main/` is removed.
+    /// upstream's branches imported and its `trunk()` in the
+    /// repository's config. On failure `main/` is removed.
     fn make_with(
         root: PathBuf,
         identity: Identity,
@@ -519,14 +521,37 @@ impl ProjectRepo {
             let mut tx = repo.start_transaction();
             block_on(import_refs(tx.repo_mut(), &import_options(true)))
                 .map_err(VcsError::ImportBranches)?;
-            crate::colocate::commit(tx, "tau: import")?;
-            Ok(())
+            let repo = crate::colocate::commit(tx, "tau: import")?;
+            project.write_trunk_alias(&repo)
         })();
         if let Err(error) = made {
             let _ = std::fs::remove_dir_all(&main);
             return Err(error);
         }
-        Ok(project)
+        // The settings it was made with were read before the repository
+        // had a config of its own.
+        Self::new(project.inner.root.clone(), project.inner.identity.clone())
+    }
+
+    /// Sets the repository's `trunk()` to the default branch on
+    /// `origin`, as `jj git clone` does (jj-cli 0.45.1's
+    /// `write_repo_presets`): when `origin/HEAD` names a branch the clone
+    /// has, so that jj's `trunk()` and `immutable_heads()` know a default
+    /// branch other than `main`, `master` or `trunk`.
+    fn write_trunk_alias(&self, repo: &ReadonlyRepo) -> Result<(), VcsError> {
+        let Some(name) = self.default_branch() else {
+            return Ok(());
+        };
+        let symbol =
+            RefName::new(&name).to_remote_symbol(RemoteName::new(REMOTE));
+        if repo.view().get_remote_bookmark(symbol).is_absent() {
+            return Ok(());
+        }
+        crate::config::write_repo_trunk(
+            &self.inner.identity.env,
+            &self.inner.root.join(MAIN).join(".jj").join("repo"),
+            &symbol.to_string(),
+        )
     }
 
     /// The project at `root`, with the jj config its main workspace
@@ -1643,7 +1668,51 @@ fn skipped(entry: &std::fs::DirEntry) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use tau_testing::git::git;
+
     use super::*;
+    use crate::config::JjEnv;
+
+    /// The settings a clone hands back are the ones it wrote: its
+    /// `trunk()` names the default branch, so a push or a landing from
+    /// the main workspace reads it too, not only a later open.
+    #[test]
+    fn a_clones_settings_hold_the_trunk_it_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let bare = root.join("origin.git");
+        std::fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "--quiet", "--bare"]);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        git(&work, &["init", "--quiet"]);
+        git(
+            &work,
+            &["commit", "--quiet", "--allow-empty", "-m", "first"],
+        );
+        git(
+            &work,
+            &["push", "--quiet", bare.to_str().unwrap(), "HEAD:develop"],
+        );
+        git(&bare, &["symbolic-ref", "HEAD", "refs/heads/develop"]);
+        std::fs::create_dir_all(root.join("config/jj")).unwrap();
+        let identity = Identity {
+            env: JjEnv {
+                config_dir: Some(root.join("config")),
+                ..JjEnv::default()
+            },
+            ..Identity::default()
+        };
+        let url = format!("file://{}", bare.display());
+        let project =
+            ProjectRepo::clone(&url, None, root.join("p"), identity).unwrap();
+        let trunk = project
+            .inner
+            .settings
+            .get_string(["revset-aliases", "trunk()"])
+            .unwrap();
+        assert_eq!(trunk, "develop@origin");
+    }
 
     /// Git's lock files are left out of a copy of its store: they belong
     /// to a git process that may be working in the source.

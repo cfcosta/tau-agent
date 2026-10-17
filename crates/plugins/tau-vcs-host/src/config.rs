@@ -24,6 +24,7 @@ use std::{
 use etcetera::BaseStrategy as _;
 use jj_lib::{
     config::{
+        ConfigFile,
         ConfigGetError,
         ConfigLayer,
         ConfigNamePathBuf,
@@ -326,6 +327,36 @@ pub fn settings(
         environment: &env.vars,
     };
     Ok(UserSettings::from_config(resolve(&config, &context)?)?)
+}
+
+/// Where `revset-aliases."trunk()"` is in a repository's config.
+const TRUNK_ALIAS: [&str; 2] = ["revset-aliases", "trunk()"];
+
+/// Sets `revset-aliases."trunk()"` to `symbol` (`<branch>@<remote>`)
+/// in the config of the repository at `repo_path` (its `.jj/repo`), as
+/// `jj git clone` does for the remote's default branch (jj-cli 0.45.1's
+/// `write_repo_presets`): in the file `jj config edit --repo` edits,
+/// made when there is none, keeping what it already holds. Nothing is
+/// written when there is no config directory, as jj writes nothing
+/// without a home. Blocks.
+pub(crate) fn write_repo_trunk(
+    env: &JjEnv,
+    repo_path: &Path,
+    symbol: &str,
+) -> Result<(), VcsError> {
+    let Some(root) = env.root_config_dir() else {
+        return Ok(());
+    };
+    let secure = SecureConfig::new_repo(canonical(repo_path));
+    let loaded =
+        secure.load_config(&mut env.rng(), &root.join(REPO_CONFIG_DIR))?;
+    let Some(path) = loaded.config_file else {
+        return Ok(());
+    };
+    let mut file = ConfigFile::load_or_empty(ConfigSource::Repo, path)?;
+    file.set_value(TRUNK_ALIAS, symbol)?;
+    file.save()?;
+    Ok(())
 }
 
 /// Loads each of `paths` that exists, a file or a directory of `.toml`
