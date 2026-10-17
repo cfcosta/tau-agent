@@ -8,8 +8,8 @@
 //!    caller's newest commit.
 //! 2. The sub-agent is a run of its own under the caller, in a chat of
 //!    its own. It forks the caller: it sees the conversation, the batch
-//!    its call is in, and then its task. It commits its work on its own
-//!    stack. Up to [`MAX_RUNNING`] run at once; the caller goes on
+//!    its call is in, and then its task; a `fresh` one sees its task
+//!    alone. It commits its work on its own stack. Up to [`MAX_RUNNING`] run at once; the caller goes on
 //!    meanwhile, and stopping the caller does not stop them.
 //! 3. When one ends, its work is checked. One that finished, or that a
 //!    limit stopped, can land; one that failed or was stopped has its
@@ -17,7 +17,9 @@
 //! 4. The host takes each one that ended ([`SubAgents::take`]) and
 //!    lands it on the caller when the caller is idle, one landing at a
 //!    time. A landing that conflicts lands its conflicts for the caller
-//!    to resolve.
+//!    to resolve. One spawned with `land: false` never lands: its
+//!    commits stay beside the caller's, under its bookmark, for the
+//!    caller to read and take files from ([`Ending::Kept`]).
 
 use std::{
     path::PathBuf,
@@ -76,6 +78,15 @@ pub enum Ending {
     Done {
         text: String,
         limit: Option<LimitKind>,
+    },
+    /// It finished, or `limit` cut it short, and was spawned not to
+    /// land: its commits stay as they are, under its bookmark, and its
+    /// workspace closed. `changes` are its own, oldest first, by change
+    /// id; none when it committed nothing.
+    Kept {
+        text: String,
+        limit: Option<LimitKind>,
+        changes: Vec<String>,
     },
     /// It failed: its changes were dropped.
     Failed { error: String },
@@ -296,13 +307,15 @@ impl SubAgents {
     }
 
     /// Follows `run`, a sub-agent working in `workspace` from `base` on
-    /// `task`: passes its events on, then checks its work as it ends.
+    /// `task`: passes its events on, then checks its work as it ends,
+    /// for landing or, when `land` is false, to keep beside the caller's.
     fn follow(
         &self,
         mut run: Run,
         task: String,
         workspace: RunWorkspace,
         base: String,
+        land: bool,
         slot: OwnedSemaphorePermit,
     ) {
         let id = run.id();
@@ -343,7 +356,8 @@ impl SubAgents {
             let stopped = agents.with(|children| {
                 children.iter().any(|c| c.run == id && c.stopped)
             });
-            let ending = settle(outcome, stopped, &id, &workspace, &base).await;
+            let ending =
+                settle(outcome, stopped, land, &id, &workspace, &base).await;
             agents.with(|children| {
                 if let Some(child) = children.iter_mut().find(|c| c.run == id) {
                     child.state = State::Ended(ending.clone());
@@ -358,11 +372,12 @@ impl SubAgents {
 }
 
 /// How a sub-agent's run came out, once its work is checked: work that
-/// can land is committed; a failed or stopped one's changes are dropped
-/// and it closes.
+/// can land is committed; work not to land is kept and its workspace
+/// closes; a failed or stopped one's changes are dropped and it closes.
 async fn settle(
     outcome: Result<Outcome, AgentError>,
     stopped: bool,
+    land: bool,
     run: &RunId,
     workspace: &RunWorkspace,
     base: &str,
@@ -397,7 +412,8 @@ async fn settle(
                 error,
                 workspace: workspace.dir(),
             },
-            None => ending,
+            None if land => ending,
+            None => keep_work(ending, workspace, run, base).await,
         },
         ending => {
             if let Err(error) = drop_work(workspace, run, base).await {
@@ -436,6 +452,45 @@ async fn unlandable(workspace: &RunWorkspace) -> Option<String> {
     }
 }
 
+/// Turns `done`, an ending whose work is committed, into one that keeps
+/// that work beside the caller's: its changes stay under its bookmark,
+/// and its workspace closes. Work that cannot be read back is retained
+/// for recovery, like work that cannot be checked.
+async fn keep_work(
+    done: Ending,
+    workspace: &RunWorkspace,
+    run: &RunId,
+    base: &str,
+) -> Ending {
+    let Ending::Done { text, limit } = done else {
+        return done;
+    };
+    let (base, name, bookmark) =
+        (base.to_owned(), workspace.name().to_owned(), bookmark(run));
+    let kept: Result<Vec<crate::StackChange>, VcsError> = workspace
+        .project()
+        .run(move |p| {
+            let changes = match p.bookmark(&bookmark)? {
+                Some(head) => p.changes_between(&base, &head)?,
+                None => Vec::new(),
+            };
+            p.forget_workspace(&name)?;
+            Ok(changes)
+        })
+        .await;
+    match kept {
+        Ok(changes) => Ending::Kept {
+            text,
+            limit,
+            changes: changes.into_iter().map(|c| c.change_id).collect(),
+        },
+        Err(error) => Ending::Retained {
+            error: error.to_string(),
+            workspace: workspace.dir(),
+        },
+    }
+}
+
 /// Abandons a sub-agent's own changes, from `base` up, and closes it:
 /// its workspace and bookmark go.
 async fn drop_work(
@@ -461,7 +516,7 @@ async fn drop_work(
 /// What an ending that dropped the work says.
 fn failure(ending: &Ending) -> String {
     match ending {
-        Ending::Done { .. } => "It finished".into(),
+        Ending::Done { .. } | Ending::Kept { .. } => "It finished".into(),
         Ending::Failed { error } => format!("It failed: {error}"),
         Ending::Stopped => "The person stopped it".into(),
         Ending::Retained { error, workspace } => format!(
@@ -486,7 +541,24 @@ fn spawn_parameters(models: &[String]) -> Value {
                 "type": "string",
                 "description": "What the sub-agent does. It sees \
                     this conversation, so name the task and what \
-                    sets it apart from the others you spawn.",
+                    sets it apart from the others you spawn; a fresh \
+                    one sees only this, so write it in full.",
+            },
+            "fresh": {
+                "type": "boolean",
+                "description": "Start it without this conversation: \
+                    it sees only `task`, so it judges without your \
+                    leanings, as a reviewer or a judge should. False \
+                    if left out.",
+            },
+            "land": {
+                "type": "boolean",
+                "description": "Whether its commits land on yours. \
+                    False keeps them beside yours instead: the report \
+                    names its changes, for you to read with `vcs_show` \
+                    and take files from with `vcs_restore` `from`; \
+                    tau drops them when it next starts. True if left \
+                    out.",
             },
             "model": {
                 "type": "string",
@@ -509,7 +581,9 @@ fn spawn_parameters(models: &[String]) -> Value {
 /// What `spawn` says it does.
 const SPAWN_DESCRIPTION: &str = "Start a sub-agent on a task, and go on \
     at once: nothing waits for it. It forks this conversation, so it \
-    knows what you know and `task` can be short. It works in a chat of \
+    knows what you know and `task` can be short; with `fresh` it starts \
+    from `task` alone. With `land` false its commits stay beside yours, \
+    for candidates you compare before taking one. It works in a chat of \
     its own on a copy of your committed code: commit your work with \
     `vcs_commit` first. Up to 8 run at once; give each its own part, so \
     their changes clash little. Spawn every task that can start now, \
@@ -591,6 +665,8 @@ impl AgentTool for Spawn {
         ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
         let task = args["task"].as_str().unwrap_or_default().to_owned();
+        let fresh = args["fresh"].as_bool().unwrap_or(false);
+        let land = args["land"].as_bool().unwrap_or(true);
         let asked = ChildModel {
             model: args["model"].as_str().map(str::to_owned),
             effort: args["effort"].as_str().and_then(ReasoningEffort::parse),
@@ -630,20 +706,25 @@ impl AgentTool for Spawn {
         )?
         .with_base(head.clone());
         let agent = (self.child)(workspace.clone(), &asked).await?;
-        let run = agent
-            .as_tool(SPAWN, "")
-            .forking()
+        let child = agent.as_tool(SPAWN, "");
+        let child = if fresh { child } else { child.forking() };
+        let run = child
             .spawn(task.clone(), &ctx)
             .map_err(|error| ToolError::from(error.to_string()))?;
         let id = run.id();
-        self.agents.follow(run, task, workspace, head, slot);
+        self.agents.follow(run, task, workspace, head, land, slot);
+        let lands = if land {
+            "its commits land on yours"
+        } else {
+            "tau reports its commits, kept beside yours"
+        };
         Ok(ToolOutput {
             details: Some(json!({ "run": id.0.as_ref() })),
             ..ToolOutput::text(format!(
                 "Sub-agent {id} started. It works on its own: when it \
-                 finishes, its commits land on yours and tau starts a turn \
-                 of yours with what it did. Spawn the other tasks that can \
-                 start now, then end your turn."
+                 finishes, {lands} and tau starts a turn of yours with what \
+                 it did. Spawn the other tasks that can start now, then end \
+                 your turn."
             ))
         })
     }
@@ -713,14 +794,43 @@ pub fn landing_note(
     brought: &[String],
     limit: Option<LimitKind>,
 ) -> String {
-    let short = match limit {
+    let short = cut_short(limit);
+    format!("[{short}{}]", landed_note(landing, brought))
+}
+
+/// What a note says first when `limit` cut the sub-agent short.
+fn cut_short(limit: Option<LimitKind>) -> &'static str {
+    match limit {
         Some(LimitKind::Turns) => "It stopped at its turn limit. ",
         Some(LimitKind::Tokens) => "It stopped at its token limit. ",
         Some(LimitKind::Usd) => "It stopped at its cost limit. ",
         Some(LimitKind::Time) => "It stopped at its time limit. ",
         None => "",
+    }
+}
+
+/// What the caller reads about a sub-agent kept off its work, after its
+/// answer: whether a limit cut it short, and its changes, to read and
+/// take files from.
+pub fn kept_note(changes: &[String], limit: Option<LimitKind>) -> String {
+    let short = cut_short(limit);
+    let kept = match changes {
+        [] => "It changed no files.".to_owned(),
+        [one] => format!(
+            "Its change {one} was kept beside yours, not landed: read it \
+             with `vcs_show`, and take files from it with `vcs_restore` \
+             `from`. tau drops it when it next starts."
+        ),
+        many => format!(
+            "Its {} changes were kept beside yours, not landed, oldest \
+             first: {}. The last holds all its files: read them with \
+             `vcs_show`, and take files with `vcs_restore` `from` it. tau \
+             drops them when it next starts.",
+            many.len(),
+            many.join(", ")
+        ),
     };
-    format!("[{short}{}]", landed_note(landing, brought))
+    format!("[{short}{kept}]")
 }
 
 fn landed_note(landing: &Landing, brought: &[String]) -> String {

@@ -153,15 +153,26 @@ impl Host {
             None | Some(Ending::Stopped) => None,
             Some(Ending::Done { limit, .. }) => Some(SubAgentEnd {
                 limit: limit.map(|limit| limit_name(limit).to_owned()),
-                failed: None,
                 unread,
+                ..SubAgentEnd::default()
             }),
+            // Its work stays beside main's for this session: recorded
+            // as dropped, so the next start sweeps it (`Host::sweep`).
+            Some(Ending::Kept { limit, changes, .. }) => {
+                self.record_dropped(child, &main).await?;
+                Some(SubAgentEnd {
+                    limit: limit.map(|limit| limit_name(limit).to_owned()),
+                    kept: Some(changes),
+                    unread,
+                    ..SubAgentEnd::default()
+                })
+            }
             Some(
                 ending @ (Ending::Failed { .. } | Ending::Retained { .. }),
             ) => Some(SubAgentEnd {
-                limit: None,
                 failed: Some(ending_text(&ending)),
                 unread,
+                ..SubAgentEnd::default()
             }),
         };
         if let Some(end) = end {
@@ -170,9 +181,10 @@ impl Host {
             // its turn to land previews it again. Read without writing:
             // main may be in a turn. One with nothing to land, or that
             // cannot be read, shows none.
-            let (changes, conflicts) = match end.failed {
-                Some(_) => (0, Vec::new()),
-                None => self
+            let reports_only = end.failed.is_some() || end.kept.is_some();
+            let (changes, conflicts) = match reports_only {
+                true => (0, Vec::new()),
+                false => self
                     .land_dry(child, Reading::Forecast)
                     .await
                     .map(|landing| (landing.changes.len(), landing.conflicts))
@@ -243,6 +255,17 @@ impl Host {
                 .flatten()
                 .and_then(|record| record.result)
                 .unwrap_or_default();
+            if let Some(kept) = &end.kept {
+                let note = tau_vcs_host::sub_agents::kept_note(
+                    kept,
+                    end.limit.as_deref().and_then(limit_of),
+                );
+                sections.push(format!(
+                    "Sub-agent `{}` ({}) finished.\n\n{answer}\n\n{note}{unread}",
+                    waiting.title, waiting.run
+                ));
+                continue;
+            }
             let note = landings
                 .iter()
                 .find(|(landed, _)| *landed == run)
@@ -333,7 +356,7 @@ fn ending_text(ending: &Ending) -> String {
              bookmark were kept at {} for recovery",
             workspace.display()
         ),
-        Ending::Done { .. } => "it finished".to_owned(),
+        Ending::Done { .. } | Ending::Kept { .. } => "it finished".to_owned(),
         Ending::Stopped => "the person stopped it".to_owned(),
     }
 }

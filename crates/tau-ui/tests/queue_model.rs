@@ -468,7 +468,7 @@ impl Main for Plain {
             waiting
                 .sub_agent
                 .as_ref()
-                .is_none_or(|end| end.failed.is_none()),
+                .is_none_or(|end| end.failed.is_none() && end.kept.is_none()),
             "{run} had nothing to land"
         );
         assert!(self.stack.is_empty(), "{run} landed on conflicts");
@@ -487,9 +487,10 @@ impl Main for Plain {
 }
 
 /// Sub-agents in the queue (ADR 0026) land whatever they conflict in,
-/// one with nothing to land is only reported, and the drain reports
-/// every sub-agent it took, in order: the turn that reports them holds
-/// the queue, as a resolving turn does. Chats keep their rule: they
+/// one with nothing to land (it failed, or was kept off main) is only
+/// reported, and the drain reports every sub-agent it took, in order:
+/// the turn that reports them holds the queue, as a resolving turn
+/// does. Chats keep their rule: they
 /// wait for the person to confirm a conflict.
 #[hegel::test(test_cases = 300)]
 fn sub_agents_land_whatever_they_bring(tc: TestCase) {
@@ -502,12 +503,12 @@ fn sub_agents_land_whatever_they_bring(tc: TestCase) {
                 .into_iter()
                 .map(str::to_owned)
                 .collect();
+            // It lands, failed, or was spawned to keep its work off main.
+            let ended: u8 = tc.draw(gs::integers().max_value(4));
             let sub_agent = tc.draw(gs::booleans()).then(|| SubAgentEnd {
-                limit: None,
-                failed: tc
-                    .draw(gs::weighted_booleans(0.3))
-                    .then(|| "it failed".to_owned()),
-                unread: Vec::new(),
+                failed: (ended == 3).then(|| "it failed".to_owned()),
+                kept: (ended == 4).then(|| vec![format!("k{n}")]),
+                ..SubAgentEnd::default()
             });
             let confirmed = if tc.draw(gs::booleans()) {
                 conflicts.clone()
@@ -540,7 +541,7 @@ fn sub_agents_land_whatever_they_bring(tc: TestCase) {
     let mut resolves = false;
     for waiting in &queued {
         match &waiting.sub_agent {
-            Some(end) if end.failed.is_some() => {
+            Some(end) if end.failed.is_some() || end.kept.is_some() => {
                 reported.push(waiting.run.clone());
                 continue;
             }

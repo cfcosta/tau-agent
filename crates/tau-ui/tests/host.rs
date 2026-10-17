@@ -1414,6 +1414,43 @@ fn hand_off() -> (ScriptedModel, ScriptedModel) {
     (main_llm, child_llm)
 }
 
+/// A sub-agent spawned not to land is reported and never lands: main
+/// has none of its work, the report names its change for main to read
+/// and take files from, and it is recorded as dropped, so tau's next
+/// start sweeps what it kept.
+#[test]
+fn a_sub_agent_not_to_land_is_reported_and_kept_off_main() {
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "spawn",
+                serde_json::json!({ "task": "write c.txt", "land": false }),
+            )
+        })
+        .turn(|t| t.text("it works on c.txt"));
+    let (_, child_llm) = hand_off();
+    let (host, _events, main, child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert!(report.landed.is_empty(), "{report:?}");
+    assert!(report.queue.is_empty(), "{:?}", report.queue);
+    let dir = host.block_on(host.workspace(&main)).unwrap();
+    assert!(!dir.join("c.txt").exists());
+    let prompt = report.resolve.expect("tau's turn reports it");
+    assert!(prompt.contains("wrote c.txt"), "{prompt}");
+    assert!(
+        prompt.contains("was kept beside yours, not landed"),
+        "{prompt}"
+    );
+    assert!(matches!(
+        host.block_on(host.ending_of(&child)).unwrap(),
+        Some(tau_ui_remote::view::Ending::Dropped)
+    ));
+}
+
 /// What the person wrote to a sub-agent that it ended before reading is
 /// not lost: main's report turn quotes it, as main's to act on now.
 #[test]

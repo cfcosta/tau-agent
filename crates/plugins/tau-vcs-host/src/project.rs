@@ -713,6 +713,20 @@ impl ProjectRepo {
         range(&repo, head.id(), Some(&trunk))
     }
 
+    /// The changes `head` has that `base` lacks (both full commit ids in
+    /// hex), oldest first: a sub-agent's own work, from the commit it
+    /// started on.
+    pub fn changes_between(
+        &self,
+        base: &str,
+        head: &str,
+    ) -> Result<Vec<StackChange>, VcsError> {
+        let repo = self.load()?;
+        let head = commit(&repo, head)?;
+        let base = CommitId::try_from_hex(base).ok_or(VcsError::NotHex)?;
+        range(&repo, head.id(), Some(&base))
+    }
+
     /// Makes a fork's workspace from `snapshot`, a turn's snapshot of
     /// another run's `@` (ADR 0014): a new change with the snapshot's
     /// files, uncommitted, on the snapshot's parent as it is now. A

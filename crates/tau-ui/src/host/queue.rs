@@ -434,11 +434,7 @@ pub async fn drain(
     while let Some(head) = lane.next() {
         let run = head.run.clone();
         // A sub-agent with nothing to land is only reported.
-        if head
-            .sub_agent
-            .as_ref()
-            .is_some_and(|end| end.failed.is_some())
-        {
+        if head.reports_only() {
             drained.reported.push(head.clone());
             let actions = lane.unqueue(&run);
             drained.perform(main, actions).await?;

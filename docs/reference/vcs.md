@@ -726,11 +726,12 @@ starts sub-agents; do this work here or ask the person to start a
 chat."
 
 A sub-agent is a child run in a chat of its own that forks the
-caller's conversation and runs beside it
+caller's conversation, unless it is `fresh`, and runs beside it
 ([ADR 0009](../decisions/0009-child-runs-land-on-their-parent.md),
 [ADR 0015](../decisions/0015-delegates-fork-their-caller.md),
 [ADR 0026](../decisions/0026-sub-agents-run-detached.md),
-[ADR 0031](../decisions/0031-the-main-chat-orchestrates.md)). Main
+[ADR 0031](../decisions/0031-the-main-chat-orchestrates.md),
+[ADR 0042](../decisions/0042-sub-agents-can-start-fresh-and-keep-their-work-aside.md)). Main
 orchestrates: each of its runs starts with context that says to split
 the request into tasks, spawn a sub-agent for each, and end its turn
 while they work. Nothing waits for a sub-agent. A caller's
@@ -744,7 +745,7 @@ that builds the sub-agent's `Agent` around the sub-agent's own
 on the model and effort asked for, or the caller's, and refuses an
 effort the model does not take.
 
-1. `spawn` (`{ task, model?, effort? }`) needs the caller's work
+1. `spawn` (`{ task, model?, effort?, fresh?, land? }`) needs the caller's work
    committed (ADR 0014): with changes in its `@`, it refuses and says to
    commit with `vcs_commit` first. With `MAX_RUNNING` (8) running
    already, it refuses and says to end the turn and spawn again when
@@ -757,7 +758,9 @@ effort the model does not take.
    a `Subagent` run of the caller with a `fork_seq`, with its own events
    and its own cancel token. It is asked on the caller's transcript, the
    turn that made the call with an output for each call in it, and then
-   its task. It commits its work on its own stack, under its own
+   its task. With `fresh: true` it starts without `forking()`: its first
+   message is its task alone, so a reviewer or a judge does not carry
+   the caller's leanings. It commits its work on its own stack, under its own
    bookmark. `spawn` answers at once with its run id (`details.run`);
    the caller goes on, and cancelling the caller does not stop it.
    `spawn` is `ExecutionMode::Grouped`, so a `vcs_commit` in its batch
@@ -768,12 +771,19 @@ effort the model does not take.
    it is `Ending::Retained`: nothing lands, and its workspace and
    bookmark stay for recovery. One that failed (`Ending::Failed`) or
    that the person stopped (`Ending::Stopped`) has its changes abandoned,
-   and its workspace and bookmark go.
+   and its workspace and bookmark go. One spawned with `land: false`
+   that finished is `Ending::Kept` instead of `Done`: its workspace
+   closes, its commits stay under its bookmark, and the ending lists its
+   own changes (`ProjectRepo::changes_between` its base and its head).
 4. tau-ui takes each ended sub-agent (`SubAgents::take`) and queues it
    on the main chat's landing queue (ADR 0024) with how it ended
    (`Waiting::sub_agent`). It lands whatever it conflicts in. A drain
    lands queued sub-agents one after another, and reports one with
-   nothing to land; after the drain, tau starts main's turn with each
+   nothing to land (`Waiting::reports_only`: it failed, or was kept).
+   A kept one is recorded as dropped as it is queued, so the next
+   start's sweep abandons its commits; until then its report names its
+   changes (`kept_note`), for main to read with `vcs_show` and take
+   files from with `vcs_restore` `from`; after the drain, tau starts main's turn with each
    sub-agent's title, answer and landing note, which starts by saying
    which limit stopped it, if one did (`It stopped at its turn limit.`),
    and the conflicts to resolve, if any. The turn tells main to check

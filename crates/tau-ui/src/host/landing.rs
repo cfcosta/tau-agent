@@ -562,6 +562,28 @@ impl Host {
         .await
     }
 
+    /// Records `child`, under `parent`, as dropped: it takes no more
+    /// messages, and tau's next start sweeps what it left (`Host::sweep`).
+    pub(super) async fn record_dropped(
+        &self,
+        child: &RunId,
+        parent: &RunId,
+    ) -> anyhow::Result<()> {
+        self.store
+            .append_turn(
+                &child.0,
+                &[Entry::Plugin {
+                    plugin: DROPPED_RECORD.to_owned(),
+                    body: serde_json::to_string(&serde_json::json!({
+                        "parent": parent.0.to_string(),
+                    }))?,
+                }],
+                TurnUsage::default(),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Drops `child`: abandons its own changes, the ones its parent does
     /// not have, and closes it like a landing does (ADR 0009). Both runs
     /// must be idle. The operation log keeps what was abandoned.
@@ -584,18 +606,7 @@ impl Host {
             anyhow::bail!("{} landed already; it cannot be dropped", child.0);
         }
         if ending.is_none() {
-            self.store
-                .append_turn(
-                    &child.0,
-                    &[Entry::Plugin {
-                        plugin: DROPPED_RECORD.to_owned(),
-                        body: serde_json::to_string(&serde_json::json!({
-                            "parent": parent.0.to_string(),
-                        }))?,
-                    }],
-                    TurnUsage::default(),
-                )
-                .await?;
+            self.record_dropped(child, &parent).await?;
         }
         // A main chat catches up with trunk first, as for a landing, and
         // keeps what its working copy stands on: its commits that an

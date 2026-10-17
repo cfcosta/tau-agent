@@ -542,3 +542,138 @@ fn ready_child(
         Box::pin(std::future::ready(child(workspace, model)))
     }
 }
+
+/// A fresh sub-agent starts from its task alone: none of the caller's
+/// conversation, nor the note that it runs one of the caller's calls.
+/// Spawned not to land, one that commits nothing, as a reviewer, ends
+/// kept with no changes.
+#[test]
+fn a_fresh_sub_agent_sees_only_its_task() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
+    runtime().block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let task = "Review README.md against its spec; do not edit files.";
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                spawn_all(
+                    t,
+                    &[json!({ "task": task, "fresh": true, "land": false })],
+                )
+            })
+            .turn(|t| t.text("done"));
+        let child_llm = ScriptedModel::new().turn(|t| t.text("PASS"));
+        let parent = caller(&project);
+        let (agents, mut ends) = heard_sub_agents();
+        let script = child_llm.clone();
+        spawning(llm.clone(), &parent, &agents, move |workspace| {
+            Ok(coder(script.clone(), &workspace, true))
+        })
+        .run(
+            "the caller's own plan, which a reviewer must not see",
+            &store,
+        )
+        .await
+        .unwrap();
+
+        let (_, ending) = ends.recv().await.unwrap();
+        assert_eq!(
+            ending,
+            Ending::Kept {
+                text: "PASS".into(),
+                limit: None,
+                changes: Vec::new(),
+            }
+        );
+        let asked = format!("{:?}", child_llm.requests()[0].transcript);
+        assert!(asked.contains(task), "{asked}");
+        assert!(!asked.contains("the caller's own plan"), "{asked}");
+        assert!(!asked.contains("You are the sub-agent"), "{asked}");
+        let started = format!("{:?}", llm.requests()[1].transcript);
+        assert!(started.contains("kept beside yours"), "{started}");
+    });
+}
+
+/// Spawned not to land, a sub-agent's commits stay beside the caller's:
+/// its workspace closes, its bookmark keeps its work, the caller has
+/// none of it, and the caller can take its files from the change it
+/// names.
+#[test]
+fn a_sub_agent_not_to_land_keeps_its_work_beside_the_callers() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
+    runtime().block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let llm = ScriptedModel::new()
+            .turn(|t| {
+                spawn_all(
+                    t,
+                    &[json!({ "task": "write child.txt", "land": false })],
+                )
+            })
+            .turn(|t| t.text("done"));
+        let child_llm = ScriptedModel::new()
+            .turn(|t| t.tool_call("write", write("child.txt")))
+            .turn(|t| t.tool_call("vcs_commit", commit("feat: child")))
+            .turn(|t| t.text("child.txt is written"));
+        let parent = caller(&project);
+        let (agents, mut ends) = heard_sub_agents();
+        let script = child_llm.clone();
+        let outcome =
+            spawning(llm.clone(), &parent, &agents, move |workspace| {
+                Ok(coder(script.clone(), &workspace, true))
+            })
+            .run("try child.txt", &store)
+            .await
+            .unwrap();
+
+        let (run, ending) = ends.recv().await.unwrap();
+        let Ending::Kept {
+            text,
+            limit: None,
+            changes,
+        } = ending
+        else {
+            panic!("{ending:?} is not kept");
+        };
+        assert_eq!(text, "child.txt is written");
+        // Its one change is on its bookmark, past the caller's head, and
+        // its workspace is gone.
+        let head = project.bookmark(&bookmark(&run)).unwrap().unwrap();
+        let stack = project.stack(&head).unwrap();
+        let ids: Vec<&str> = stack
+            .iter()
+            .map(|change| change.change_id.as_str())
+            .collect();
+        assert_eq!(ids, changes.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(stack[0].description.trim(), "feat: child");
+        assert!(
+            project
+                .workspaces()
+                .unwrap()
+                .iter()
+                .all(|name| { !name.starts_with("parent-sub-") })
+        );
+        assert!(!parent.dir().join("child.txt").exists());
+        assert_eq!(outcome.text, "done");
+
+        // The caller takes the file from the change the report names.
+        let from = changes[0].clone();
+        let taker = ScriptedModel::new()
+            .turn(move |t| {
+                t.tool_call(
+                    "vcs_restore",
+                    json!({ "paths": ["child.txt"], "from": from }),
+                )
+            })
+            .turn(|t| t.text("took it"));
+        coder(taker, &parent, true)
+            .run("take child.txt", &store)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(parent.dir().join("child.txt")).unwrap(),
+            "child.txt\n"
+        );
+    });
+}

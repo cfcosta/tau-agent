@@ -39,6 +39,10 @@ pub struct SubAgentEnd {
     /// could not be checked. It only gets reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
+    /// Its changes, by change id, when it was spawned not to land: they
+    /// stay beside main's, and it only gets reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept: Option<Vec<String>>,
     /// What the person wrote to it that it ended before reading: main
     /// gets it with the report, as its work is main's now.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -46,6 +50,14 @@ pub struct SubAgentEnd {
 }
 
 impl Waiting {
+    /// It has nothing to land, only a report: it failed, or its work
+    /// was kept off main.
+    pub fn reports_only(&self) -> bool {
+        self.sub_agent
+            .as_ref()
+            .is_some_and(|end| end.failed.is_some() || end.kept.is_some())
+    }
+
     /// It would conflict in a file the person did not confirm: it waits
     /// for them before it lands. A sub-agent never waits: main asked for
     /// its work.
