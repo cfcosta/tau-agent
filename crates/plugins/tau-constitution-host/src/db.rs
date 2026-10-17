@@ -45,24 +45,31 @@ impl Db {
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(Duration::from_secs(5))
             .foreign_keys(true);
-        Self::connect(options, 4).await
+        Self::connect(options, 0, 4).await
     }
 
-    /// An in-memory database, for tests: one connection, since each
-    /// connection to `sqlite::memory:` is its own database, and no wait
-    /// for it times out, since tests may pause time.
+    /// An in-memory database, for tests: one connection, kept open, since
+    /// each connection to `sqlite::memory:` is its own database and the
+    /// database goes with it, and no wait for it times out, since tests
+    /// may pause time.
     pub async fn memory() -> Result<Self, DbError> {
         let options = SqliteConnectOptions::from_str("sqlite::memory:")?
             .foreign_keys(true);
-        Self::connect(options, 1).await
+        Self::connect(options, 1, 1).await
     }
 
+    /// A pool of up to `connections`, keeping `kept` open. A file's pool
+    /// keeps none: with a minimum, sqlx opens one connection from its
+    /// maintenance task while `connect_with` opens another, and on a new
+    /// file both switch it to WAL at once, which fails one of them with
+    /// "database is locked" whatever the busy timeout.
     async fn connect(
         options: SqliteConnectOptions,
+        kept: u32,
         connections: u32,
     ) -> Result<Self, DbError> {
         let pool = SqlitePoolOptions::new()
-            .min_connections(1)
+            .min_connections(kept)
             .max_connections(connections)
             .idle_timeout(None)
             .max_lifetime(None)
