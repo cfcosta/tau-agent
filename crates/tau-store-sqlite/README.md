@@ -21,7 +21,8 @@ database uses one connection for both roles and sets no timeouts, so it
 also works under tokio's paused clock.
 
 The schema is in `migrations/0001_runs.sql`: `runs`, `messages` (message,
-context and plugin entries, keyed by run and `seq`) and `plugin_costs`.
+context and plugin entries, keyed by run and `seq`), `plugin_costs` and
+`plugin_usage` (what plugins spent outside any run).
 Transcripts of forks are read with a recursive CTE up the fork chain.
 
 ## How it fits

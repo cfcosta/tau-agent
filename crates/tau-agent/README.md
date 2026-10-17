@@ -41,7 +41,8 @@ for each run, edits the `RunPlan` before the session opens and returns a
 `after_tool_result`, `on_event`, `before_request`, `rewrite_context`,
 `rewritten`, `before_stop` and `finish`. Through `PluginCtx` a plugin asks
 the model side questions, charges their cost to the run, and stores and
-publishes records.
+publishes records. `plugin::ask_outside` asks the same way outside any
+run, handing each attempt's usage to the caller (ADR 0044).
 
 ## How it fits
 

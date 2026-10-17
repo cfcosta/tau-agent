@@ -10,24 +10,27 @@ only through the registry.
 
 ## What it provides
 
-| Item                                  | What it is                                                                                     |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `UiPlugin`                            | The UI half: its `State`, `Data`, `RepoData`, `Settings` and `Ui` types, and its `manifest`    |
-| `HostHalf`                            | The host half: `agent_plugins` per run, `catalog`, `data`, `repo_data`, `act`, `launcher`      |
-| `Fold`                                | A plugin's state in a run, folded from its records with `apply`, live and from history         |
-| `PluginHost`, `PluginUi`              | What a plugin keeps on the host, and per window; any `Default` type is both                    |
-| `Manifest`, `Page`, `Point`           | Where the UI goes: pages, points a plugin declares, and contributions to points                |
-| `SlashCommand`                        | A composer command a plugin adds                                                               |
-| `points`                              | The points `tau-ui` declares (`STATUS`, `CARD`, `TRANSCRIPT`, `SIDEBAR`, …) and their contexts |
-| `Registry`                            | The plugins, in order: `with` adds a UI half, `host` gives it its host half                    |
-| `RunCtx`, `RepoCtx`, `HostCx`         | What a host half gets: the run, its repository, and the host's context                         |
-| `RepoId`                              | A repository's own id, kept when its folder moves: what plugins key its data on                |
-| `RunCx`                               | What a fold reaches in a run: transcript anchors and tool cards                                |
-| `ViewCx`, `Handle`                    | What a view gets as it draws, and a window's way back to its plugin                            |
-| `PluginValue`                         | A plugin's value with its type erased: typed in use, JSON on the wire                          |
-| `Services`                            | Values the host hands plugins by type                                                          |
-| `PluginInfo`, `Group`, `Seam`, `Note` | A plugin's entry on the Plugins screen                                                         |
-| `placed`, `PLACE`, `REWRITE`          | Keys that say where history shows a published record                                           |
+| Item                                    | What it is                                                                                          |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `UiPlugin`                              | The UI half: its `State`, `Data`, `RepoData`, `Settings` and `Ui` types, and its `manifest`         |
+| `HostHalf`                              | The host half: `agent_plugins` per run, `catalog`, `data`, `repo_data`, `act`, `launcher`, `resume` |
+| `Fold`                                  | A plugin's state in a run, folded from its records with `apply`, live and from history              |
+| `PluginHost`, `PluginUi`                | What a plugin keeps on the host, and per window; any `Default` type is both                         |
+| `Manifest`, `Page`, `Point`             | Where the UI goes: pages, points a plugin declares, and contributions to points                     |
+| `SlashCommand`                          | A composer command a plugin adds                                                                    |
+| `Manifest::key`, `KeyAt`                | A key a plugin binds in the workspace, run in the repository the person is in                       |
+| `points`                                | The points `tau-ui` declares (`STATUS`, `CARD`, `TRANSCRIPT`, `SIDEBAR`, …) and their contexts      |
+| `Registry`                              | The plugins, in order: `with` adds a UI half, `host` gives it its host half                         |
+| `RunCtx`, `RepoCtx`, `HostCx`           | What a host half gets: the run, its repository, and the host's context                              |
+| `RepoId`                                | A repository's own id, kept when its folder moves: what plugins key its data on                     |
+| `RunCx`                                 | What a fold reaches in a run: transcript anchors and tool cards                                     |
+| `ViewCx`, `Handle`                      | What a view gets as it draws, and a window's way back to its plugin                                 |
+| `PluginValue`                           | A plugin's value with its type erased: typed in use, JSON on the wire                               |
+| `Services`                              | Values the host hands plugins by type                                                               |
+| `Model`, `PluginModel`, `AskSettings`   | The person's model outside any run (`HostCx::model`), its use booked to the plugin                  |
+| `Jobs`, `JobCx`, `JobInfo`, `LiveRepos` | Jobs the host keeps for plugins (`HostCx::jobs`), with progress the catalog lists                   |
+| `PluginInfo`, `Group`, `Seam`, `Note`   | A plugin's entry on the Plugins screen                                                              |
+| `placed`, `PLACE`, `REWRITE`            | Keys that say where history shows a published record                                                |
 
 ## How it fits
 
@@ -130,7 +133,9 @@ cargo nextest run --release -p tau-ui-plugin
 ```
 
 The tests are unit tests in `src/` (`registry.rs`, `value.rs`, `host.rs`,
-`services.rs`).
+`services.rs`, `jobs.rs`). tau-ui's `tests/plugin_services.rs` drives the
+model and jobs on a host, and tau-ui-remote's `tests/plugin_keys.rs` a
+plugin's keys.
 
 ## Further reading
 
@@ -140,5 +145,7 @@ The tests are unit tests in `src/` (`registry.rs`, `value.rs`, `host.rs`,
 - [docs/decisions/0029-every-plugins-settings-in-a-pane.md](../../docs/decisions/0029-every-plugins-settings-in-a-pane.md)
 - [docs/decisions/0030-host-halves-are-crates.md](../../docs/decisions/0030-host-halves-are-crates.md)
 - [docs/decisions/0006-plugin-crates.md](../../docs/decisions/0006-plugin-crates.md)
+- [docs/decisions/0044-memory-imports-what-other-agents-learned.md](../../docs/decisions/0044-memory-imports-what-other-agents-learned.md):
+  the model and jobs services, and keys
 - [docs/reference/testing.md](../../docs/reference/testing.md): the `testing`
   feature among the test tools

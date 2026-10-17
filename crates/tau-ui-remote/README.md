@@ -15,7 +15,7 @@ take one path.
 | `WorkspaceEvent`                 | What the person asked for (`NewRun`, `Say`, `Cancel`, `Fork`, `Land`, …), for the host to do |
 | `update::HostUpdate`             | What a host tells the interface; `Workspace::apply` takes each one                           |
 | `view::RunView`                  | A run as the interface shows it, built from `RunEvent`s with no window                       |
-| `catalog::Catalog`               | What the workspace shows beyond runs: plugins, repositories, the store                       |
+| `catalog::Catalog`               | What the workspace shows beyond runs: plugins, repositories, the store, plugins' jobs        |
 | `plugins`                        | The plugins in order (`plugins::plugins`), UI halves only, and `install` for a host's        |
 | `remote`                         | The phone's side: `remote::connect` pairs with a computer and applies what it sends          |
 | `attention`                      | Whether a chat needs the person: `Attention::of` over a run's `Facts`                        |
@@ -25,7 +25,7 @@ take one path.
 | `route`, `search`, `slash`       | The screens, the search palette (Ctrl K), and slash commands in the composer                 |
 | `titles`                         | A run's title, written by a model from its first prompt                                      |
 | `ui`                             | The pieces screens are built from, and the screens themselves (`ui::screens`)                |
-| `init`                           | Sets up fonts, the theme and the keys, once per app                                          |
+| `init`                           | Sets up fonts, the theme and the keys, plugins' among them, once per app                     |
 
 It re-exports `tau-ui-kit`'s `assets`, `input`, `markdown` and `theme`.
 

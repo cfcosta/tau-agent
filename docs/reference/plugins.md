@@ -499,6 +499,78 @@ settings)` gives what commands in a repository start through: a
   the plugin does for the whole repository. Every contribution is
   drawn, in order. Core names no plugin in either place
   ([0006](../decisions/0006-plugin-crates.md)).
+- **Keys.** `Manifest::key("ctrl-2", |at: &KeyAt, view| ..)` binds a
+  key in the workspace (gpui's spelling). Pressing it runs the closure
+  with `at.repo`, the repository the sidebar has selected, if any; it
+  navigates to a page (`view.handle.navigate`) or asks the host half
+  (`view.handle.act`). tau-ui-remote binds them in `bind_keys`, after its
+  own, as one `PluginKey { plugin, key }` action each. A key tau binds
+  stays tau's, and a key an earlier plugin in the registry declared
+  stays that plugin's; the later declaration is dropped, and a key gpui
+  cannot read too, each said on stderr. Memory's ctrl-2 opens the
+  selected repository's notes.
+- **The person's model outside a run**
+  ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
+  `HostCx::model(plugin)` gives a `PluginModel` while the person is
+  signed in, `None` otherwise. The host keeps a `Model` service, which
+  reads the plan's client and the account as they are at each ask:
+
+  ```rust
+  pub struct AskSettings {
+      pub model: String,                     // from plan_models()
+      pub reasoning: Option<ReasoningEffort>, // None: the model's own
+      pub instructions: Option<String>,
+  }
+
+  impl PluginModel {
+      pub async fn ask(
+          &self,
+          settings: &AskSettings,
+          input: &[Message],
+          tools: &[ToolDefinition],
+          cancel: &CancellationToken,
+      ) -> Result<AssistantMessage, AskError>;
+  }
+  ```
+
+  It asks as `PluginCtx::ask` does (`tau_agent::plugin::ask_outside`):
+  a session of its own, the default retry policy, `cancel` observed.
+  Signed out since, it fails with `AskError::Unavailable`. Every
+  attempt's usage is booked to the plugin alone with
+  `Backend::charge_plugin` (the `plugin_usage` table): no run's totals
+  count it, and `plugin_spend`, the Plugins screen's spend, does.
+  Memory's notes requests run on either: `write_notes` takes an `Asker`,
+  a run's `PluginCtx` or `Outside { model, cancel }`.
+- **Jobs**
+  ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
+  `HostCx::jobs()` gives the host's `Jobs`. A plugin starts a named job:
+
+  ```rust
+  jobs.start(plugin, "import", "Importing notes", |job: JobCx| async move {
+      job.progress(0.4, "Reading ~/.codex/sessions");
+      if job.is_cancelled() { /* write the checkpoint */ }
+      for repo in job.repos() { /* as listed now */ }
+      Ok(())
+  })?;
+  ```
+
+  The host runs it on its runtime, past the call that started it and
+  any window. One job of a name runs at a time per plugin; `start`
+  fails while one does. `JobCx` reports progress (a fraction, clamped to
+  0..1, and a line), says and awaits cancellation, gives the plugin's
+  `plugin_dir` for checkpoints, and reads the repositories as the host
+  lists them at each call (`repos()`), those added since the job started
+  among them. `Jobs::cancel(plugin, name)` asks a job to stop; it has
+  `GRACE` (3 s) to write its checkpoint and return before it is dropped.
+  A job that fails is said as an alert. The catalog lists the jobs going
+  on (`Catalog::jobs`: plugin, name, label, fraction, line). Starting
+  and ending push a catalog refresh at once; progress at most every
+  `REFRESH` (500 ms), with a last refresh for what came meanwhile.
+  `HostHalf::resume(host, cx)` is called once as the host starts, after
+  every plugin's host state is made: the plugin starts again what a
+  restart cut off, from its own checkpoint. The host only asks.
+  tau-agents' schedule ticker and registry watcher stay plain tasks: they
+  run for as long as tau does and have no progress to show.
 
 See
 [ADR 0017](../decisions/0017-plugins-bring-their-ui.md), and its "As

@@ -39,7 +39,10 @@ The main `Backend` methods:
 - `interrupt_running`: mark runs a closed process left `running` as
   `Interrupted`. Call it before any run starts.
 - `run`, `recent_runs`, `subagents`, `retained_runs`: look runs up.
-- `plugin_costs`, `plugin_spend`, `workflow_cost`: cost reports.
+- `charge_plugin`: book what a plugin's host half spent outside any run
+  (ADR 0044) to the plugin alone.
+- `plugin_costs`, `plugin_spend`, `workflow_cost`: cost reports;
+  `plugin_spend` counts what plugins spent outside runs too.
 - `query`: a read-only query a person typed, returned as text.
 
 ## How it fits
