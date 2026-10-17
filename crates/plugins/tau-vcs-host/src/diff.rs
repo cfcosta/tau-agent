@@ -9,18 +9,13 @@
 use futures_util::StreamExt as _;
 use jj_lib::{
     backend::MergedTreeValue,
-    conflicts::{
-        ConflictMarkerStyle,
-        ConflictMaterializeOptions,
-        materialize_tree_value,
-    },
+    conflicts::{ConflictMaterializeOptions, materialize_tree_value},
     diff_presentation::unified::{GitDiffPart, git_diff_part},
     matchers::Matcher,
     merge::Merge,
     merged_tree::MergedTree,
     repo::Repo,
     settings::UserSettings,
-    tree_merge::MergeOptions,
 };
 use pollster::block_on;
 
@@ -70,7 +65,9 @@ pub(crate) fn changed_paths(
 }
 
 /// The diff from `from` to `to` under `matcher`, as unified diff text
-/// with three lines of context, and the paths it touches.
+/// with three lines of context, and the paths it touches. A conflicted
+/// file shows its markers in the config's `ui.conflict-marker-style`,
+/// merged with the store's merge options, as `jj diff --git` writes it.
 pub(crate) fn unified(
     repo: &dyn Repo,
     settings: &UserSettings,
@@ -79,9 +76,9 @@ pub(crate) fn unified(
     matcher: &dyn Matcher,
 ) -> Result<(String, Vec<FileChange>), VcsError> {
     let options = ConflictMaterializeOptions {
-        marker_style: ConflictMarkerStyle::Diff,
+        marker_style: settings.get("ui.conflict-marker-style")?,
         marker_len: None,
-        merge: MergeOptions::from_settings(settings)?,
+        merge: repo.store().merge_options().clone(),
     };
     let store = repo.store();
     block_on(async {

@@ -104,6 +104,14 @@ loading:
   it), so every tool fails until it is fixed, as every jj command
   would. A project's Git store is tau's own, so its `info/exclude` is
   not the source checkout's.
+- Files are written and shown as jj writes them. jj-lib's working copy
+  reads `ui.conflict-marker-style`, `working-copy.eol-conversion` and
+  `working-copy.exec-bit-change` from the workspace's settings, so
+  checkouts, restores and landings write conflicts, line ends and
+  executable bits as the config says. `vcs_diff`, `vcs_status`'s diff
+  and a project's diff show a conflicted file's markers in
+  `ui.conflict-marker-style` too, merged with the store's `merge.*`
+  options, as `jj diff --git` does.
 - The environment is a value, `JjEnv`: config directory, home
   directory, system directory, host name, user name and variables.
   Only the app reads the process's (`Identity::from_environment`, which
