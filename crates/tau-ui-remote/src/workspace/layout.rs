@@ -930,7 +930,7 @@ impl Workspace {
                         )
                     }),
             )
-            .children(chrome::status_bar(self, t))
+            .children(chrome::status_bar(self, t, cx))
             .into_any_element()
     }
 

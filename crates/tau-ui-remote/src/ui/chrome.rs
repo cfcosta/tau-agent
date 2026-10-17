@@ -1246,13 +1246,43 @@ fn repo_menu(
     .with_priority(1)
 }
 
-/// The bar under the desktop, when there is news: a repository being
-/// imported or failing to, or an update. Without any, there is no bar.
-pub fn status_bar(ws: &Workspace, t: &Theme) -> Option<Div> {
+/// How many jobs the status bar lists one by one; more collapse to a
+/// count, the first of them shown.
+pub const JOBS_SHOWN: usize = 2;
+
+/// The bar under the desktop, when there is news: tau's own first (a
+/// repository being imported or failing to, or an update), then the jobs
+/// plugins run, then what plugins add (`points::ACTIVITY`). Without any,
+/// there is no bar.
+pub fn status_bar(
+    ws: &Workspace,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Option<Div> {
     let busy = !matches!(ws.catalog.project, ProjectStatus::Unknown);
-    if !busy && ws.catalog.update.is_none() {
+    let activity = ws.contributions(
+        tau_ui_plugin::points::ACTIVITY,
+        &tau_ui_plugin::points::AtApp,
+        cx,
+    );
+    let jobs = &ws.catalog.jobs;
+    if !busy
+        && ws.catalog.update.is_none()
+        && jobs.is_empty()
+        && activity.is_empty()
+    {
         return None;
     }
+    let shown = if jobs.len() > JOBS_SHOWN {
+        1
+    } else {
+        jobs.len()
+    };
+    let more = (jobs.len() > JOBS_SHOWN).then(|| {
+        div()
+            .flex_shrink_0()
+            .child(format!("{} jobs ·", jobs.len()))
+    });
     Some(
         div()
             .h(rems(1.625))
@@ -1265,6 +1295,7 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Option<Div> {
             .font_family(MONO)
             .typeset(Type::MICRO)
             .text_color(t.muted)
+            .overflow_hidden()
             .children(match &ws.catalog.project {
                 ProjectStatus::Unknown => None,
                 ProjectStatus::Importing(name) => Some(
@@ -1283,8 +1314,68 @@ pub fn status_bar(ws: &Workspace, t: &Theme) -> Option<Div> {
                         .child(format!("{name} could not be imported")),
                 ),
             })
-            .children(ws.catalog.update.clone().map(|text| div().child(text))),
+            .children(ws.catalog.update.clone().map(|text| div().child(text)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(2.))
+                    .min_w(rems(0.))
+                    .children(more)
+                    .children(
+                        jobs.iter()
+                            .take(shown)
+                            .map(|job| job_item(ws, job, t, cx)),
+                    ),
+            )
+            .children(activity),
     )
+}
+
+/// A job going on, in the status bar: its plugin, what it does, how far
+/// it is, and what it does now. Clicking it opens the page it names, or
+/// its plugin's.
+fn job_item(
+    ws: &Workspace,
+    job: &tau_ui_plugin::JobInfo,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> AnyElement {
+    let id = format!("status-job-{}-{}", job.plugin, job.name);
+    let route = ws.job_route(job);
+    let item = div()
+        .id(SharedString::from(id.clone()))
+        .debug_selector(move || id.clone())
+        .flex()
+        .items_center()
+        .gap(sp(2.))
+        .min_w(rems(0.))
+        .child(div().flex_shrink_0().child(job.plugin.clone()))
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(t.accent)
+                .child(job.label.clone()),
+        )
+        .child(div().w(rems(3.)).flex_shrink_0().child(super::bar(
+            job.fraction,
+            4.,
+            t.accent,
+            t.border,
+        )))
+        .when(!job.line.is_empty(), |item| {
+            item.child(div().min_w(rems(0.)).truncate().child(job.line.clone()))
+        });
+    match route {
+        Some(route) => item
+            .cursor_pointer()
+            .hover(|style| style.text_color(t.text))
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
+            )
+            .into_any_element(),
+        None => item.into_any_element(),
+    }
 }
 
 /// The phone's header above a run: back, title and status, close,
