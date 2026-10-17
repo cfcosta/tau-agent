@@ -735,3 +735,75 @@ fn the_persons_files_layer_in_jjs_order(tc: TestCase) {
     let identity = disk.lay_out(&world);
     assert_eq!(disk.resolve(&identity).unwrap()[0], expected(&world)[0]);
 }
+
+/// What a path setting holds, for [`a_path_settings_home_is_the_environments`].
+#[derive(Debug, Clone, hegel::PrettyPrintable)]
+enum PathValue {
+    /// `~/<rest>`: the home directory's `<rest>`.
+    Home(String),
+    /// `~<rest>`, no slash: another user's home, which jj leaves as is.
+    OtherUser(String),
+    Absolute(String),
+    Relative(String),
+}
+
+impl PathValue {
+    fn text(&self) -> String {
+        match self {
+            Self::Home(rest) => format!("~/{rest}"),
+            Self::OtherUser(rest) => format!("~{rest}"),
+            Self::Absolute(rest) => format!("/{rest}"),
+            Self::Relative(rest) => rest.clone(),
+        }
+    }
+}
+
+/// `~/` at the start of a path setting jj-lib reads (`signing.key`, the
+/// SSH backend's `allowed-signers` and `revocation-list`) is the
+/// environment's home, never this process's, as jj 0.46 expands it
+/// with its config environment's home (`UserSettings::get_path`); any
+/// other value is the path as written. Without a home, `~/` stays.
+#[hegel::test(test_cases = 100)]
+fn a_path_settings_home_is_the_environments(tc: TestCase) {
+    let rest = || {
+        gs::from_regex("[a-z0-9._-]{1,6}(/[a-z0-9._-]{1,6}){0,2}")
+            .fullmatch(true)
+    };
+    let value = match tc.draw(gs::integers::<u8>().max_value(3)) {
+        0 => PathValue::Home(tc.draw(rest())),
+        1 => PathValue::OtherUser(tc.draw(rest())),
+        2 => PathValue::Absolute(tc.draw(rest())),
+        _ => PathValue::Relative(tc.draw(rest())),
+    };
+    let key = tc.draw(gs::sampled_from(vec![
+        "signing.key",
+        "signing.backends.ssh.allowed-signers",
+        "signing.backends.ssh.revocation-list",
+    ]));
+    let has_home = tc.draw(gs::booleans());
+    let disk = Disk::new();
+    let world = World {
+        jj_config: None,
+        config_dir: true,
+        ..tc.draw(world())
+    };
+    let mut identity = disk.lay_out(&world);
+    let file = disk.root.join("person.toml");
+    std::fs::write(&file, format!("{key} = {}\n", quoted(&value.text())))
+        .unwrap();
+    identity
+        .env
+        .vars
+        .insert("JJ_CONFIG".into(), file.display().to_string());
+    if !has_home {
+        identity.env.home_dir = None;
+    }
+    let settings =
+        jj_settings(&identity, &disk.workspace(), &disk.repo()).unwrap();
+    // The model: jj's `expand_home_path`.
+    let expected = match (&value, &identity.env.home_dir) {
+        (PathValue::Home(rest), Some(home)) => home.join(rest),
+        _ => PathBuf::from(value.text()),
+    };
+    assert_eq!(settings.get_path(key).unwrap(), expected);
+}
