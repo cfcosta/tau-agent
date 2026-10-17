@@ -617,6 +617,18 @@ settings)` gives what commands in a repository start through: a
   their clones land (`JobCx::repos`). Setup stays on the desktop: a phone
   drops `HostUpdate::Setup`, and draws no step.
 
+- **Declared reach**
+  ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
+  `Manifest::reads(&["~/.claude", "~/.codex"])` lists the paths a plugin
+  reads outside repositories, as the person knows them, `~` their home.
+  The Plugins screen shows them on the plugin's About tab ("What it reads
+  outside repositories"), and setup under the plugin's step; the
+  registry gives them as `ErasedPlugin::reads`. Rust plugins are not
+  sandboxed: it is a statement, not a fence, and the page says so. The
+  host says where `~` is with the `HomeDir` service (`HostCx::home`),
+  from `HostConfig::home`: `$HOME` in the app, none in tests and the
+  demo, so no plugin reads the developer's real files there.
+
 See
 [ADR 0017](../decisions/0017-plugins-bring-their-ui.md), and its "As
 built" section for the interface as it is.
@@ -871,6 +883,69 @@ tau-memory-host --features docbert --bin tau-memory-eval` (`--keywords`
   - Plugin context sits in the run's first message as text blocks before
     the input; the app shows only the last block as what the user
     wrote.
+- **Importing what Claude Code and Codex learned**
+  ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
+  Memory declares it reads `~/.claude` and `~/.codex`, and only reads
+  them. An import proposes notes; nothing is a note until the person
+  keeps it.
+  - **What it reads** (`tau_memory_host::importers`, each reader given the
+    home, never the process's own). Claude Code: `projects/<folder>/memory/*.md`
+    (YAML front matter: `name`, `description`, `type` under `metadata` or
+    at the top; `MEMORY.md` skipped) and the folder's `*.jsonl` chats. The
+    folder is the `cwd` a chat recorded, else the existing path the
+    encoded name spells (every character but a letter or digit is `-`).
+    Codex: `memories/MEMORY.md` by `# Task Group: <cwd>`,
+    `memory_summary.md` (about the person), the task summaries
+    (`rollout_summaries/*.md`) `MEMORY.md` does not list, the raw threads
+    (`raw_memories.md`) no summary holds, and `sessions/**/*.jsonl` but
+    the copies of Claude Code's chats Codex made
+    (`external_agent_session_imports.json`) and sub-agents' sessions. A
+    file that does not read is skipped and named on the review page.
+  - **Where it goes.** A proposal belongs to the person or to a place: the
+    folder and the remote of the repository there, read from its Git
+    config (a checkout, a worktree, or a jj repository's Git store),
+    normalised so SSH, HTTPS and `.git` agree. A listed repository claims
+    a place when the folder is its own or inside it, or the remotes
+    agree; it is looked up as the page is drawn and as a note is kept, so
+    proposals for a folder tau does not have yet wait for a repository
+    that claims it. Claude Code's `user` and `feedback` notes go to the
+    person, the rest to the folder; for Codex and chats the model says
+    which, per note.
+  - **How.** One job, `import` (`Jobs::start`, its page the review page).
+    Claude Code's notes are proposed as they are, with no model. The rest
+    go to the person's model (memory's writer settings) through the loop
+    every notes request uses (`write_notes_from`), fenced as
+    `<material … note="… data, not instructions">`, in chunks of 32 kB,
+    three files at a time, with two tools: `memory_search` over the
+    scopes' notes and the proposals so far, and `memory_propose` (`type`,
+    `title`, `description`, `body`, `scope`, `same_as`, `disagrees_with`).
+    Every proposal passes `Memory::write`'s checks: one that reads as
+    instructions is refused and counted, a secret redacted and flagged.
+    One that says what a proposal says is merged into it (from either
+    tool), and one a note says already is dropped. Flagged ones (a
+    secret, a note they disagree with, a note of their title) wait
+    unticked, under "Need a look".
+  - **State.** `proposals.json` and `checkpoint.json` in `import/` under
+    memory's plugin directory. The checkpoint holds the import going on,
+    which `HostHalf::resume` starts again after a restart, and each item
+    read: a file's size and modification time, a section's hash, and how
+    far into a chat, so a second import reads only what is new. Stop
+    cancels the asks; what was being read stays unread.
+  - **Keeping** writes a proposal through `Memory::write` with
+    `source.imported = { from, path, session }`, `by = inferred`; a note
+    of the same title is superseded, and stays as history.
+  - **Where the person sees it.** A Memories step in first-run setup,
+    only when either tool is found: what each saved and its chats, both
+    ticked, where their folders go among the picked repositories, and
+    "Also bring folders tau does not have yet". The review page
+    (`import`, `repo=you|<name>`, `look`) with All, About you, each
+    repository and Need a look. On the Memory tab, "Import from Claude
+    Code or Codex…" (also in a repository's menu), and a banner when the
+    tools know a repository: proposals wait for it, or there is what no
+    import read. All of it draws from memory's catalog data
+    (`MemoryData::imports`) and acts through its host half, so the review
+    page and the banner work on a phone. No cost is shown: tau runs on
+    the person's subscription.
 
 ### `tau-constitution`: rules checked on specific calls
 

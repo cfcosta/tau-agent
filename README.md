@@ -124,7 +124,9 @@ What the built-in plugins add:
 
 - **Long-term memory.** A Zettelkasten of typed, linked Markdown notes
   that runs search and write. A run starts with the notes that fit its
-  task.
+  task. What Claude Code and Codex learned on this computer can come
+  along: memory reads what they saved and their chats, and proposes
+  notes you keep or drop.
 
   ![A repository's memory notes](docs/screenshots/memory.png)
 

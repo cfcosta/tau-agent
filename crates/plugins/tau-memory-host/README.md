@@ -5,7 +5,9 @@ notes that runs search and write. This is tau-memory's host half. It keeps
 the notes on disk, indexes and searches them, and builds the plugin each
 run gets: four tools, the index note and a few search hits at the start of
 a run (only those the conversation was not given yet), a memory-only request when compaction drops the transcript, and
-stale marks when a file a note is about changes.
+stale marks when a file a note is about changes. It also imports what
+Claude Code and Codex learned on this computer, as proposals the person
+keeps or drops (decision 0044).
 
 ## What it provides
 
@@ -28,12 +30,32 @@ stale marks when a file a note is about changes.
 | `Memories`, `Search`   | The open scopes, and whether they search by meaning or by keywords                |
 | `stale_on_turn`        | A turn hook that marks notes about a commit's paths as possibly stale             |
 | `notebook`, `now`      | A scope's notes as the page lists them; the clock in milliseconds                 |
+| `importers`            | Readers for Claude Code's and Codex's files under a given home (`Roots`)          |
+| `importers::remote`    | A folder's Git remote, from its config, without running Git                       |
+| `import::Importer`     | Proposals, the checkpoint and the last scan, kept in memory's plugin directory    |
+| `import::Reach`        | The `import` job, and the acts: import, stop, tick, keep, drop, not now           |
+| `import::Proposals`    | The proposals and the tally; `admit` checks a draft as `Memory::write` would      |
+| `plugin::write_notes_from` | `write_notes` on input fenced its own way, as an import's material is         |
 
 The model gets four tools: `memory_write`, `memory_search`, `memory_read`
 and `memory_link`. Ids from the user's scope read `user:<id>`.
 `MemoryPlugin::consolidate(true)` adds a pass at the end of each run that
 asks the model what the run taught; it is off by default. The default
 model for `Docbert` is `lightonai/GTE-ModernColBERT-v1` (`docbert::MODEL`).
+
+### Imports
+
+An import reads `~/.claude` and `~/.codex` (the host's `HomeDir`; none
+in tests) and proposes notes, never writing one. Claude Code's saved
+notes are proposed as they are; Codex's memories and both tools' chats
+go to the person's model, through `write_notes_from` with the tools
+`memory_search` and `memory_propose`, 32 kB at a time and three files at
+a time. Each proposal passes the checks every note does, and is merged
+into one that says the same. `proposals.json` and `checkpoint.json` in
+`import/` under memory's plugin directory keep them and what was read,
+so an import cut off by a restart starts again and a second one reads
+only what is new. Keeping a proposal writes it with
+`Source::imported`.
 
 ## How it fits
 
@@ -83,7 +105,7 @@ when it is not cached.
 | Feature   | What it adds                                                         |
 | --------- | -------------------------------------------------------------------- |
 | `docbert` | The `docbert` module and the `tau-memory-eval` binary (needs candle) |
-| `demo`    | `demo::seed`, the notes tau-ui's demo shows                          |
+| `demo`    | `demo::seed` and `demo::imports`, what tau-ui's demo shows           |
 
 Neither is on by default.
 
@@ -94,7 +116,9 @@ cargo nextest run --release -p tau-memory-host
 ```
 
 Most tests are property tests (`hegeltest`) over notes, the store, recall,
-redaction and the evaluation corpus. They search with BM25 or a fake
+redaction and the evaluation corpus. The import's tests read synthetic
+copies of Claude Code's and Codex's files in a temporary home, never the
+developer's, with the person's model scripted (`tau-testing`). They search with BM25 or a fake
 encoder, so no model is loaded. One test loads docbert's real model and
 may download it, so it only runs when asked:
 

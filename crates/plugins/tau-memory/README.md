@@ -24,6 +24,14 @@ search, no tools and no plugin; those are in `tau-memory-host`.
 | `ui::Notebook`          | A scope's notes as their page shows them (`NoteView`, `LinkView`)          |
 | `ui::State`, `ui::Mark` | A run's folded records: how many notes, and what was recalled or saved     |
 | `ui::notes_link`        | The link to a repository's notes page                                      |
+| `ui::MemoryData`        | Its data across repositories: the person's notes, and `Imports`            |
+| `ui::review_link`       | The review page of what imports propose                                    |
+| `ui::READS`             | What it reads outside repositories: `~/.claude`, `~/.codex`                |
+| `import::Proposal`      | A note an import proposes, with its scope, origins and flags               |
+| `import::Place`         | A folder and its remote; `matches` tells the repository that claims it     |
+| `import::Act`, `Request` | What its pages ask the host half: import, stop, tick, keep, drop, not now |
+| `import::Imports`       | What the interface shows of imports: found, pending, banners, progress     |
+| `note::Imported`        | Where an imported note came from: tool, path, session                      |
 
 A note file looks like this:
 
@@ -46,6 +54,13 @@ type = "refines"
 +++
 The body, in full prose: exact versions, flags, paths and errors.
 ```
+
+Besides the notes pages, its UI holds imports from Claude Code and Codex
+(decision 0044): a Memories step in first-run setup (`ui::setup`), the
+review page (`ui::review`), and on the Memory tab an import button and a
+banner when the tools know a repository (`ui::banner`). All of them draw
+from `MemoryData` and act through the host half, so the review page and
+the banner work on a phone.
 
 ## How it fits
 
@@ -82,11 +97,13 @@ matter.
 
 ## Testing
 
-The crate has no tests of its own. Its note format, records and UI are
-tested through the host half:
+The crate tests its settings. Its note format, records and imports are
+tested through the host half, and its import pages through
+`tau-ui-remote`:
 
 ```sh
-cargo nextest run --release -p tau-memory-host
+cargo nextest run --release -p tau-memory -p tau-memory-host
+cargo nextest run --release -p tau-ui-remote --test memory_import
 ```
 
 ## Further reading
@@ -96,4 +113,5 @@ cargo nextest run --release -p tau-memory-host
 - [docs/research/memory.md](../../../docs/research/memory.md), the research
   behind the design
 - [ADR 0017: plugins bring their UI](../../../docs/decisions/0017-plugins-bring-their-ui.md)
+- [ADR 0044: memory imports what other agents learned](../../../docs/decisions/0044-memory-imports-what-other-agents-learned.md)
 - [ADR 0030: host halves are crates](../../../docs/decisions/0030-host-halves-are-crates.md)
