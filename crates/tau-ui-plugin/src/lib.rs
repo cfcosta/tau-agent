@@ -47,6 +47,7 @@ pub use host::{
     OutsideTools,
     Push,
     RepoCtx,
+    RepoId,
     RepoLauncher,
     ResourceSource,
     ResourceWatch,
@@ -58,9 +59,9 @@ pub use host::{
     TurnCommit,
     TurnHooks,
     Unattended,
-    Waking,
     UnattendedRepo,
     UnattendedSource,
+    Waking,
     WatchError,
     WorkspaceDir,
 };

@@ -178,6 +178,9 @@ impl Fixture {
             Services::default(),
             self.path.clone(),
             vec![RepoCtx {
+                id: tau_ui_plugin::RepoId("repo".into()),
+                remote: None,
+                folder: None,
                 name: "repo".into(),
                 checkout: self.path.join("checkout"),
                 dir: self.path.clone(),
@@ -394,6 +397,9 @@ fn wrong_run_repository_duplicate_and_store_payload_cannot_authorize() {
         Services::default(),
         f.path.clone(),
         vec![RepoCtx {
+            id: tau_ui_plugin::RepoId("repo".into()),
+            remote: None,
+            folder: None,
             name: "repo".into(),
             checkout: f.path.join("checkout"),
             dir: f.path.join("different"),

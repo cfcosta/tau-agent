@@ -21,6 +21,7 @@ use tau_ui::{
     github::{Api, Token},
     host::{Delivery, Host, HostConfig},
 };
+use tau_ui_plugin::RepoId;
 use tau_ui_remote::{
     models::{AccountState, Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
@@ -1896,6 +1897,55 @@ fn repositories_are_listed_and_remembered() {
         "proj"
     );
     assert_eq!(names(&host), ["tau-plugins", "proj", "proj-2"]);
+}
+
+/// A repository gets its id once, as it is listed, and keeps it: the
+/// catalog and plugins see the same one, a reload brings it back, and
+/// cloning it again after it was removed lists it under it. Plugins see
+/// where a clone from GitHub is fetched from.
+#[test]
+fn a_listed_repository_keeps_its_id() {
+    let data = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    served(remote.path(), "a/proj");
+    served(remote.path(), "b/proj");
+    let ids = |host: &Host| -> Vec<(String, RepoId)> {
+        host.block_on(host.catalog())
+            .repos
+            .iter()
+            .map(|repo| (repo.name.clone(), repo.id.clone()))
+            .collect()
+    };
+
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    let a = host.block_on(host.clone_github("a/proj")).unwrap();
+    let b = host.block_on(host.clone_github("b/proj")).unwrap();
+    assert_ne!(a.id, b.id, "two repositories, two ids");
+    assert!(!a.id.0.is_empty());
+    let listed = ids(&host);
+    assert_eq!(listed.len(), 3, "with tau's own: {listed:?}");
+    let unique: std::collections::BTreeSet<&RepoId> =
+        listed.iter().map(|(_, id)| id).collect();
+    assert_eq!(unique.len(), 3, "{listed:?}");
+    let ctx = host.repo("proj").unwrap();
+    assert_eq!(ctx.id, a.id);
+    assert_eq!(
+        ctx.remote,
+        Some(format!("file://{}/a/proj.git", remote.path().display()))
+    );
+    assert_eq!(ctx.folder, None, "a clone tau keeps");
+    assert_eq!(host.repo("tau-plugins").unwrap().remote, None);
+    drop(host);
+
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    assert_eq!(ids(&host), listed);
+    assert_eq!(host.repo("proj-2").unwrap().id, b.id);
+    assert!(host.repo("proj-2").unwrap().remote.is_some());
+    host.block_on(host.hide_repo("proj")).unwrap();
+    let again = host.block_on(host.clone_github("a/proj")).unwrap();
+    assert_eq!(again.id, a.id, "listed again under its id");
 }
 
 fn config_on(data: &Path) -> HostConfig {

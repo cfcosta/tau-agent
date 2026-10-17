@@ -51,6 +51,7 @@ use tau_ui_plugin::{
     By,
     HOST_RECORD,
     HostRecord,
+    RepoId,
     Services,
     TurnCommit,
     TurnHooks,
@@ -473,7 +474,9 @@ impl Host {
         let mut slots = Vec::new();
         for listed in &listed {
             let slot = RepoSlot {
+                id: listed.id.clone(),
                 name: listed.name.clone(),
+                remote: host.remote_of(listed),
                 path: listed.path.clone(),
                 project: ProjectSlot::new(ProjectState::Importing),
             };
@@ -745,6 +748,7 @@ impl Host {
             };
             let mut repo =
                 Repo::new(&listed.name, listed.path.display().to_string());
+            repo.id = listed.id.clone();
             repo.main = listed.main.as_deref().map(|main| RunId(main.into()));
             repo.own = listed.own;
             // What the main chat would push, for a repository from
@@ -926,7 +930,8 @@ impl Host {
                     Some(workspace) => {
                         let wakes = wakes.clone();
                         tools.with_notifier(Arc::new(move |ended| {
-                            let _ = wakes.send((workspace.clone(), ended_note(&ended)));
+                            let _ = wakes
+                                .send((workspace.clone(), ended_note(&ended)));
                         }))
                     }
                     None => tools,
@@ -1016,12 +1021,8 @@ impl Host {
         let hold = (main && resolving).then(|| lanes::ResolveHold {
             vcs: workspace.vcs().clone(),
         });
-        let (agent, services) = on_workspace(
-            agent,
-            workspace,
-            refusal,
-            Some(name.clone()),
-        );
+        let (agent, services) =
+            on_workspace(agent, workspace, refusal, Some(name.clone()));
         let agent = match hold {
             Some(hold) => agent.plugin(hold),
             None => agent,
@@ -1665,7 +1666,9 @@ impl Host {
             .lock()
             .expect("not poisoned")
             .iter()
-            .find(|(_, session)| session.workspace.as_deref() == Some(workspace))
+            .find(|(_, session)| {
+                session.workspace.as_deref() == Some(workspace)
+            })
             .map(|(run, _)| run.clone())
     }
 
@@ -1798,6 +1801,7 @@ mod tests {
         let path = dir.path().join("repos.json");
         let listed =
             |name: &str, github: Option<&str>, own: Option<Own>| Listed {
+                id: new_id(),
                 name: name.to_owned(),
                 path: dir.path().join(name),
                 hidden: false,
@@ -1828,6 +1832,72 @@ mod tests {
             .collect();
         assert_eq!(names, ["ascend", "tau-plugins", "triage"]);
         assert_eq!(list.open, ["ascend", "tau-plugins"]);
+    }
+
+    /// Each repository listed gets an id of its own, and listing one
+    /// again gives it back. A saved list keeps the ids, and an entry
+    /// whose path changed keeps its own: the id is not made from it.
+    #[hegel::test(test_cases = 100)]
+    fn a_listed_repository_keeps_its_id(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let names: Vec<String> = tc
+            .draw(
+                gs::vecs(gs::integers::<u8>())
+                    .min_size(1)
+                    .max_size(6)
+                    .unique(true),
+            )
+            .iter()
+            .map(|n| format!("repo-{n}"))
+            .collect();
+        let moved = tc.draw(gs::integers::<usize>().max_value(names.len() - 1));
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("repos.json");
+        let mut list = RepoList::default();
+        for name in &names {
+            list.list_as(&dir.path().join(name), Some(Own::Agent));
+        }
+        let ids: Vec<RepoId> =
+            list.repos.iter().map(|listed| listed.id.clone()).collect();
+        let unique: std::collections::BTreeSet<&RepoId> = ids.iter().collect();
+        assert_eq!(unique.len(), names.len(), "{ids:?}");
+        let again = list.list_as(&dir.path().join(&names[0]), None);
+        assert_eq!(list.id_of(&again), ids[0]);
+
+        list.repos[moved].path = dir.path().join("elsewhere");
+        tau_testing::block_on_io(list.save(&file)).unwrap();
+        let loaded = tau_testing::block_on_io(RepoList::load(&file));
+        let reloaded: Vec<RepoId> = loaded
+            .repos
+            .iter()
+            .map(|listed| listed.id.clone())
+            .collect();
+        assert_eq!(reloaded, ids);
+    }
+
+    /// A list saved before repositories had ids gets one for each as it
+    /// loads, and keeps them from its next save on.
+    #[test]
+    fn a_list_without_ids_gets_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("repos.json");
+        let saved = serde_json::json!({
+            "repos": [
+                { "name": "a", "path": "/a", "github": "o/a" },
+                { "name": "b", "path": "/b", "github": "o/b" },
+            ],
+        });
+        std::fs::write(&file, saved.to_string()).unwrap();
+        let list = tau_testing::block_on_io(RepoList::load(&file));
+        let ids: Vec<RepoId> =
+            list.repos.iter().map(|listed| listed.id.clone()).collect();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+        tau_testing::block_on_io(list.save(&file)).unwrap();
+        let list = tau_testing::block_on_io(RepoList::load(&file));
+        let kept: Vec<RepoId> =
+            list.repos.iter().map(|listed| listed.id.clone()).collect();
+        assert_eq!(kept, ids);
     }
 
     /// A sub-agent runs on the model its call asked for, else its

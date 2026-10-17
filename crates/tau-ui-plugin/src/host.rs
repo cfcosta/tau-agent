@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use tau_agent::tool::RunId;
 use tau_store::{Entry, Store, TurnUsage};
@@ -22,11 +22,43 @@ pub enum RunKind {
     SubAgent,
 }
 
+/// A repository's own id: given once, when tau lists it, and kept when
+/// its folder moves. A plugin keys what it keeps for a repository on
+/// it.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+)]
+#[serde(transparent)]
+pub struct RepoId(pub String);
+
+impl std::fmt::Display for RepoId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// A repository runs work in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoCtx {
+    /// Its own id, which no path is made into.
+    pub id: RepoId,
     /// The name the sidebar lists it under.
     pub name: String,
+    /// Where it is fetched from and pushed to, such as
+    /// `https://github.com/owner/name`, when it has a remote.
+    pub remote: Option<String>,
+    /// The person's own folder, for a repository tau works on in place
+    /// (ADR 0043); `None` for a clone tau keeps.
+    pub folder: Option<PathBuf>,
     /// Its checkout.
     pub checkout: PathBuf,
     /// tau's own directory for it, outside the repository: archives,

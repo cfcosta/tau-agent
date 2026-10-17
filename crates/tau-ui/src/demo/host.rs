@@ -87,6 +87,9 @@ impl DemoHost {
                 let checkout = dir.path().join("checkouts").join(&repo.name);
                 std::fs::create_dir_all(&checkout)?;
                 Ok(RepoCtx {
+                    id: repo.id.clone(),
+                    remote: None,
+                    folder: None,
                     name: repo.name.clone(),
                     checkout,
                     dir: dir.path().join("projects").join(&repo.name),

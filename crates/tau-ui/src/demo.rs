@@ -1374,14 +1374,17 @@ pub fn catalog() -> Catalog {
                 main: Some(run_id()),
                 unpushed: 3,
                 trunk: Some("main".into()),
+                id: tau_ui_plugin::RepoId("demo-tau-agent".into()),
                 ..Repo::new("tau-agent", "~/Code/cfcosta/tau-agent")
             },
             Repo {
                 main: Some(RunId(Arc::from("docbert-main"))),
+                id: tau_ui_plugin::RepoId("demo-docbert".into()),
                 ..Repo::new("docbert", "~/Code/cfcosta/docbert")
             },
             Repo {
                 main: Some(RunId(Arc::from("homelab-main"))),
+                id: tau_ui_plugin::RepoId("demo-homelab.nix".into()),
                 ..Repo::new("homelab.nix", "~/Code/cfcosta/homelab.nix")
             },
         ],

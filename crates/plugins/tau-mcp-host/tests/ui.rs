@@ -525,6 +525,9 @@ impl Fixture {
             .unwrap();
         let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
         let repo = RepoCtx {
+            id: tau_ui_plugin::RepoId("repo".into()),
+            remote: None,
+            folder: None,
             name: "r".into(),
             checkout: repo_dir.path().to_owned(),
             dir: repo_dir.path().join("tau"),

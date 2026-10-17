@@ -47,6 +47,9 @@ impl Fixture {
         let root = dir.path().join("repo");
         std::fs::create_dir_all(root.join("checkout")).unwrap();
         let repo = RepoCtx {
+            id: tau_ui_plugin::RepoId("repo".into()),
+            remote: None,
+            folder: None,
             name: "repo".into(),
             checkout: root.join("checkout"),
             workspaces: root.clone(),

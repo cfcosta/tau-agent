@@ -415,6 +415,9 @@ fn every_run_has_the_tools_but_an_agent_s_and_a_sub_agent_cannot_schedule() {
         let run = RunCtx {
             kind,
             repo: RepoCtx {
+                id: tau_ui_plugin::RepoId("repo".into()),
+                remote: None,
+                folder: None,
                 name: "repo".into(),
                 checkout,
                 dir: f.home.path().join("dir"),

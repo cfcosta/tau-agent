@@ -120,7 +120,12 @@ impl Host {
 
     pub(super) fn repo_ctx(&self, slot: &RepoSlot) -> RepoCtx {
         RepoCtx {
+            id: slot.id.clone(),
             name: slot.name.clone(),
+            remote: slot.remote.clone(),
+            // Every repository is a clone tau keeps until local ones
+            // (ADR 0043) are listed.
+            folder: None,
             checkout: slot.path.clone(),
             dir: self.config.project_dir_of(&slot.path),
             // The project's root once imported; until then, where it
@@ -162,6 +167,11 @@ impl Host {
         self.host_cx()
             .conversations()
             .expect("the host gives its conversations to every plugin")
+    }
+
+    /// The listed repository `name`, as plugins' host halves see it.
+    pub fn repo(&self, name: &str) -> Option<RepoCtx> {
+        self.slot(name).map(|slot| self.repo_ctx(&slot))
     }
 
     /// Where `plugin` keeps its own files on this host.

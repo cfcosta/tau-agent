@@ -83,6 +83,9 @@ fn restarted_inspector_preview_reads_only_its_runs_grant() {
         Services::default(),
         dir.path().into(),
         vec![RepoCtx {
+            id: tau_ui_plugin::RepoId("repo".into()),
+            remote: None,
+            folder: None,
             name: "repo".into(),
             checkout: project.clone(),
             workspaces: project.clone(),

@@ -149,6 +149,10 @@ impl Catalog {
 /// to it alone.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Repo {
+    /// Its own id, which a move or a new name keeps: what a page or the
+    /// phone keys on.
+    #[serde(default)]
+    pub id: tau_ui_plugin::RepoId,
     /// What the sidebar calls it; unique in the catalog.
     pub name: String,
     /// Where its clone is.

@@ -100,6 +100,9 @@ pub fn run_ctx(kind: RunKind) -> RunCtx {
     RunCtx {
         kind,
         repo: RepoCtx {
+            id: crate::RepoId("repo".into()),
+            remote: None,
+            folder: None,
             name: "repo".into(),
             checkout: "/tmp/repo".into(),
             dir: "/tmp/tau/repo".into(),

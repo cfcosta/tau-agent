@@ -321,6 +321,9 @@ fn only_an_agents_runs_have_its_tools() {
     let run_in = |checkout: &Path| RunCtx {
         kind: RunKind::Main,
         repo: RepoCtx {
+            id: tau_ui_plugin::RepoId("repo".into()),
+            remote: None,
+            folder: None,
             name: checkout.file_name().unwrap().to_str().unwrap().into(),
             checkout: checkout.to_owned(),
             dir: f.home.path().join("dir"),

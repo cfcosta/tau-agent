@@ -21,6 +21,7 @@ only through the registry.
 | `points`                              | The points `tau-ui` declares (`STATUS`, `CARD`, `TRANSCRIPT`, `SIDEBAR`, …) and their contexts |
 | `Registry`                            | The plugins, in order: `with` adds a UI half, `host` gives it its host half                    |
 | `RunCtx`, `RepoCtx`, `HostCx`         | What a host half gets: the run, its repository, and the host's context                         |
+| `RepoId`                              | A repository's own id, kept when its folder moves: what plugins key its data on                |
 | `RunCx`                               | What a fold reaches in a run: transcript anchors and tool cards                                |
 | `ViewCx`, `Handle`                    | What a view gets as it draws, and a window's way back to its plugin                            |
 | `PluginValue`                         | A plugin's value with its type erased: typed in use, JSON on the wire                          |

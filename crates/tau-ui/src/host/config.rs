@@ -163,6 +163,10 @@ pub(super) struct RepoList {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Listed {
+    /// Its own id, given as it is first listed: a list saved without one
+    /// gets one as it loads, kept from the next save on.
+    #[serde(default = "new_id")]
+    pub(super) id: RepoId,
     pub(super) name: String,
     pub(super) path: PathBuf,
     /// Removed from tau: not listed, but its runs keep its name.
@@ -216,6 +220,19 @@ impl RepoList {
         Ok(())
     }
 
+    /// The id of the repository listed as `name`.
+    ///
+    /// # Panics
+    ///
+    /// When none is: callers ask for one they just listed.
+    pub(super) fn id_of(&self, name: &str) -> RepoId {
+        self.repos
+            .iter()
+            .find(|listed| listed.name == name)
+            .map(|listed| listed.id.clone())
+            .expect("the repository is listed")
+    }
+
     /// Lists the clone at `path`, a canonical path, or lists it again if
     /// it was removed, and returns its name: the directory's, made
     /// unique.
@@ -246,6 +263,7 @@ impl RepoList {
             .find(|name| !taken(name))
             .expect("some suffix is free");
         self.repos.push(Listed {
+            id: new_id(),
             name: name.clone(),
             path,
             hidden: false,
@@ -255,6 +273,12 @@ impl RepoList {
         });
         name
     }
+}
+
+/// A new repository's id: a UUID, unique on its own, and not made from
+/// its path, which may change.
+pub(super) fn new_id() -> RepoId {
+    RepoId(uuid::Uuid::now_v7().to_string())
 }
 
 /// The saved model choices at `path`, or the defaults with `model` for

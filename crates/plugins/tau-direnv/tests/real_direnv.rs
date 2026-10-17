@@ -57,6 +57,9 @@ fn the_real_direnv_loads_through_taus_whitelist() {
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::write(workspace.join(".envrc"), "export TAU_PROBE=1\n").unwrap();
     let repo = RepoCtx {
+        id: tau_ui_plugin::RepoId("repo".into()),
+        remote: None,
+        folder: None,
         name: "repo".into(),
         checkout: root.join("checkout"),
         dir: root.clone(),

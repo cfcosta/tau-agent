@@ -134,7 +134,10 @@ pub(super) struct RepoState {
 /// A listed repository: its clone, and the project runs in it work in.
 #[derive(Clone)]
 pub(super) struct RepoSlot {
+    pub(super) id: RepoId,
     pub(super) name: String,
+    /// Where it is fetched from: GitHub's URL for a clone from there.
+    pub(super) remote: Option<String>,
     pub(super) path: PathBuf,
     pub(super) project: Arc<ProjectSlot>,
 }
@@ -269,15 +272,14 @@ impl Host {
     /// workspace each there, as in a clone from GitHub.
     pub fn with_repo(self, name: &str, project: Project) -> Self {
         let path = project.root().to_owned();
-        {
+        let id = {
             let mut list = self.list.lock().expect("not poisoned");
-            let main = list
-                .repos
-                .iter()
-                .find(|listed| listed.name == name)
-                .and_then(|listed| listed.main.clone());
+            let before = list.repos.iter().find(|listed| listed.name == name);
+            let main = before.and_then(|listed| listed.main.clone());
+            let id = before.map_or_else(new_id, |listed| listed.id.clone());
             list.repos.retain(|listed| listed.name != name);
             list.repos.push(Listed {
+                id: id.clone(),
                 name: name.to_owned(),
                 path: path.clone(),
                 hidden: false,
@@ -285,11 +287,14 @@ impl Host {
                 main,
                 own: None,
             });
-        }
+            id
+        };
         let mut repos = self.repos.lock().expect("not poisoned");
         repos.retain(|slot| slot.name != name);
         repos.push(RepoSlot {
+            id,
             name: name.to_owned(),
+            remote: None,
             path,
             project: ProjectSlot::new(ProjectState::Ready(project)),
         });
@@ -487,7 +492,7 @@ impl Host {
         let dir = tokio::fs::canonicalize(dir)
             .await
             .unwrap_or_else(|_| dir.to_owned());
-        let name = {
+        let (name, id) = {
             let mut list = self.list.lock().expect("not poisoned");
             let name = list.list(&dir);
             if let Some(listed) =
@@ -495,12 +500,15 @@ impl Host {
             {
                 listed.github = Some(full_name.to_owned());
             }
-            name
+            let id = list.id_of(&name);
+            (name, id)
         };
         self.save_list().await?;
         if self.slot(&name).is_none() {
             let slot = RepoSlot {
+                id: id.clone(),
                 name: name.clone(),
+                remote: Some(self.github.clone_url(full_name)),
                 path: dir.clone(),
                 project: ProjectSlot::new(ProjectState::Importing),
             };
@@ -508,6 +516,7 @@ impl Host {
             self.repos.lock().expect("not poisoned").push(slot);
         }
         let mut repo = Repo::new(&name, dir.display().to_string());
+        repo.id = id;
         repo.main = Some(self.main_of(&name).await?);
         Ok(repo)
     }
@@ -584,6 +593,7 @@ impl Host {
                 return;
             }
             list.repos.push(Listed {
+                id: new_id(),
                 name: tau_luau_plugins::REPO.to_owned(),
                 path,
                 hidden: false,
@@ -645,23 +655,36 @@ impl Host {
             "There is an agent named {name} already"
         );
         tokio::fs::create_dir_all(&dir).await?;
-        let name = self
-            .list
-            .lock()
-            .expect("not poisoned")
-            .list_as(&dir, Some(Own::Agent));
+        let (name, id) = {
+            let mut list = self.list.lock().expect("not poisoned");
+            let name = list.list_as(&dir, Some(Own::Agent));
+            let id = list.id_of(&name);
+            (name, id)
+        };
         self.save_list().await?;
         let slot = RepoSlot {
+            id: id.clone(),
             name: name.clone(),
+            remote: None,
             path: dir.clone(),
             project: ProjectSlot::new(ProjectState::Importing),
         };
         self.spawn_import(&slot);
         self.repos.lock().expect("not poisoned").push(slot);
         let mut repo = Repo::new(&name, dir.display().to_string());
+        repo.id = id;
         repo.main = Some(self.main_of(&name).await?);
         repo.own = Some(Own::Agent);
         Ok(repo)
+    }
+
+    /// Where the listed repository `listed` is fetched from: GitHub's URL
+    /// for a clone from there.
+    pub(super) fn remote_of(&self, listed: &Listed) -> Option<String> {
+        listed
+            .github
+            .as_deref()
+            .map(|full_name| self.github.clone_url(full_name))
     }
 
     /// The `owner/name` a repository was cloned from, if it came from

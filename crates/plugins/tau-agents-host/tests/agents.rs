@@ -941,6 +941,9 @@ fn the_person_s_messages_go_to_the_agent_s_model() {
         },
     );
     let at = |checkout: PathBuf| RepoCtx {
+        id: tau_ui_plugin::RepoId("repo".into()),
+        remote: None,
+        folder: None,
         name: "greet".into(),
         checkout,
         dir: PathBuf::new(),
