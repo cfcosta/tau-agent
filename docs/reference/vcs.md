@@ -234,7 +234,8 @@ person's own `jj` commands from its own in the operation log:
   | `tau: name the main chat's workspace` | opening a project made before it had one                |
   | `tau: forget workspace <name>`        | a sweep, a landing, a dropped child, a sub-agent's end  |
   | `tau: abandon <n> changes`            | a sweep, a dropped child, a sub-agent's end             |
-  | `tau: remove bookmark <name>`         | a sweep, a landing, a dropped child, a sub-agent's end  |
+  | `tau: remove bookmark <name>`         | `remove_head` of a branch                               |
+  | `tau: move run heads to refs/tau`     | opening a project whose runs' heads were bookmarks      |
   | `tau: push <branch>`                  | `push_trunk`                                            |
   | `tau: sign commits before pushing`    | `push_trunk` with `git.sign-on-push`                    |
 
@@ -324,7 +325,8 @@ A change appears in text as one line:
 
 An empty description shows as `(no description set)`. Bookmarks are
 the commit's local bookmarks, such as `[main]`, in brackets and
-separated by commas. In `details`,
+separated by commas. A run's head is not a bookmark (see "Run heads"),
+so no row names one. In `details`,
 a change is a `ChangeInfo`:
 
 | Field          | Meaning                                     |
@@ -609,6 +611,9 @@ one the workspace store gives `main/`.
   renamed in the operation did not move. `git status` in `main/` and
   in each run's workspace shows `@`'s changes, and `git ls-files` lists
   `@`'s new files, which nix flakes need.
+- Runs' heads are Git refs, `refs/tau/runs/<run id>`, never branches or
+  bookmarks: `git branch -a` and `jj bookmark list` do not show them
+  (see "Run heads").
 - Each run's workspace is also a Git worktree of `main/.git`, so `git`,
   nix flakes and build scripts that ask Git work in it (ADR 0043). jj
   0.46.0's `git::create_worktree` runs `git worktree add`, so tau
@@ -867,8 +872,8 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   A turn commits nothing.
 - **After each turn** (`TurnEnd`) it snapshots `@` and points the run's
   head (see "Run heads"), `Head::Run`, at the run's newest commit (`@`'s
-  parent), so the run's work stays findable after its workspace is
-  gone. Then it stores a `Link` record under the plugin
+  parent): the workspace is the run's from then on, and the run's work
+  stays findable after its workspace is gone. Then it stores a `Link` record under the plugin
   name `tau-vcs`:
 
   ```json
@@ -951,11 +956,58 @@ moves or reads a head goes through `tau_vcs_host::heads`:
 - `RunWorkspace::head_of(run)` is the head a run's commits move:
   `commits_to`'s, else the run's own.
 
-Each head is a local bookmark for now: a run's is `tau/<run id>`, a
-branch's its name, so `vcs_log` and `vcs_show` rows list a run's
-`[tau/<run id>]` on its newest commit. ADR 0043 moves runs' heads to
-`refs/tau/runs/<run id>`, Git refs that jj never exports, and only
-`heads` changes (its module comment says how, `vcs_undo` included).
+A branch's head is its local bookmark. A run's is not a bookmark
+([ADR 0043](../decisions/0043-local-repositories-in-place.md)): the jj
+CLI exports every local bookmark to `refs/heads/` in a colocated
+repository, so in a repository of the person's own a run's bookmark
+would be one of their branches. Instead:
+
+- While the run's workspace exists, its head is that workspace's `@-`
+  (none while that is the root commit). The first point of a run's head
+  (a turn's end, a final commit, a landing on it, a catch-up) records
+  that the workspace is the run's: the file `.jj/tau-run` in the
+  workspace names the run, and goes with the workspace's directory.
+  From then on the head moves with `@-`: the model's `vcs_commit`, a
+  rewrite from another workspace, and `vcs_undo`, which moves `@` back
+  with the view, all move it.
+- After each operation tau writes (`colocate::commit`, under the
+  repository's lock and jj's import/export lock), and after a tool
+  call that wrote none, tau writes the Git ref
+  `refs/tau/runs/<run id>` with gix at that commit. `git branch -a`,
+  `git push --all` and `jj bookmark list --all-remotes` never show it,
+  and jj's import (tau's, or the person's `jj git import`) leaves
+  `refs/tau/` alone, so it never becomes a bookmark. The ref also keeps
+  the commit from Git's garbage collection, but jj does not count it:
+  with no bookmark on them, a run's commits are abandoned by an import
+  with `git.abandon-unreachable-commits` (the person's `jj git fetch`)
+  when a remote branch they were under went away. A pull request's
+  branch holds copies, not the run's own commits. An operation stands if its
+  refs fail to write: they are written again after the next one, and
+  while the workspace exists the head is read from it.
+- Once the workspace is gone (a sub-agent whose work is kept, ADR
+  0042), the ref is the head: `forget_workspace` writes it first. A
+  read follows its commit's change id to the visible commit (a main
+  chat's catch-up restacks the chats on its commits), and the next
+  operation moves the ref there. A ref whose commit is hidden with no
+  visible successor, abandoned, or missing names no head: the run's
+  work was dropped, and nothing brings it back. The ref stays, for
+  the sweep, and to report the drop.
+- `ProjectRepo::run_heads` lists the runs with a ref or a workspace
+  that is theirs; `remove_head` deletes the ref and the workspace's
+  record with no jj operation.
+- A project from before kept runs' heads as `tau/<run id>` bookmarks.
+  Opening it (`ProjectRepo::open`) moves each local `tau/<run id>`
+  bookmark with no remote of that name (a pull request's branch fetched
+  back has one, and stays) to its ref, at the same commit, and removes
+  the bookmark, with the `refs/heads/tau/<run id>` jj exported for it,
+  in one operation, `tau: move run heads to refs/tau`. The refs are
+  written before the operation, from the bookmarks it has not removed
+  yet, so an open cut off between the steps is finished by the next. A
+  bookmark with conflicting commits named no head, and goes with no
+  ref. Such a run's workspace is not recorded as its until its next
+  turn's end: until then its head is the ref.
+
+The heads module's comment says the same, in terms of the code.
 
 ## Landing a child run
 
@@ -967,7 +1019,7 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   commit lacks. Their root is rebased onto that commit, the rest
   follow, and each keeps its change id.
 - The parent's working copy starts again on the child's new head, and
-  the parent's bookmark moves there, in the same operation (tagged
+  the parent's head moves there, in the same operation (tagged
   `land`), so the parent's files follow.
 - A child that already sits on the parent's head (the parent has not
   moved since it started) is not rewritten.
@@ -975,10 +1027,10 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   or abandoned it after the caller read it (the main chat's catch-up
   restacks the chats on its commits), is refused with
   `VcsError::HiddenHead`, naming it: landing it would bring the old
-  copies back beside the new ones. Read the child's bookmark again.
+  copies back beside the new ones. Read the child's head again.
   The head is checked as the landing finds the repository: when the
   landing's first step moves the parent onto trunk after an update
-  (`land::follow_bookmark`), the child's head moves with it, and lands
+  (`land::follow_head`), the child's head moves with it, and lands
   where it went.
 - The parent's uncommitted work stays uncommitted: its working copy
   moves onto the landed changes. Landing is between the parent's turns.
@@ -986,7 +1038,7 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   the parent, at the parent's latest turn, with `from` naming the
   child, so forks, the compare view and pull requests read them as the
   parent's own. Then it closes the child: its workspace is forgotten
-  and its bookmark removed. Both runs must be idle.
+  and its head removed. Both runs must be idle.
 - `Host::land` survives tau closing at any step. It first stores a
   `landing-intent` record in the parent (the child, its head, both
   workspaces). The restack is one jj operation, which records what it
@@ -994,19 +1046,19 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   so `Project::landed(child_head)` reads the `Landing` back from the
   operation log (the newest `LANDING_LOOKBACK` operations). The links
   and the `landing` record go in one store write; forgetting the
-  workspace and removing the bookmark find nothing to do when done
+  workspace and removing the head find nothing to do when done
   before. A restack that fails stores the intent again, `cancelled`.
   At start, `Host::recover` finishes each intent with no `landing`
   record: a restack the operations show done is recorded, and the
   child closed; one not done lands now. Their records say `recovered`,
   and the parent's card says tau finished the landing at start. A
   landing whose record was stored is done but for the child's
-  workspace and bookmark, which the sweep takes. A host test cuts a
+  workspace and head, which the sweep takes. A host test cuts a
   landing off after each step (`Host::cut_landing_after`) and checks
   that the next start leaves what a whole landing leaves.
 - `Host::drop_child` closes a child without landing it: its own
   changes (what its head has that its parent's lacks) are abandoned
-  with `Project::abandon_between`, and its workspace and bookmark go.
+  with `Project::abandon_between`, and its workspace and head go.
   A main chat catches up with trunk first, and what it keeps is what
   its working copy stands on, not trunk's bookmark: an update may have
   moved trunk past the main chat's own commits under the child.
@@ -1019,7 +1071,7 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   links whose `from` names it) or was dropped (it holds a `dropped`
   record) ended for good (`Host::ending_of`, `RunView::ending`). The
   host refuses to resume or steer it, saying why, so no workspace or
-  `tau/<run>` bookmark comes back for it; it cannot land or be dropped
+  head comes back for it; it cannot land or be dropped
   again. Its screen is read-only: the composer's place says why and
   offers a new chat from main, on the desktop and on a phone. History
   still loads it.
@@ -1224,19 +1276,20 @@ effort the model does not take.
    its task. With `fresh: true` it starts without `forking()`: its first
    message is its task alone, so a reviewer or a judge does not carry
    the caller's leanings. It commits its work on its own stack, under its own
-   bookmark. `spawn` answers at once with its run id (`details.run`);
+   head. `spawn` answers at once with its run id (`details.run`);
    the caller goes on, and cancelling the caller does not stop it.
    `spawn` is `ExecutionMode::Grouped`, so a `vcs_commit` in its batch
    runs before or after it, never while it reads the working copy.
 3. As it ends, `SubAgents` checks its work. One that finished, or that
    a limit stopped, can land (`Ending::Done`), once a verified committed
    working copy shows its finish hook committed everything; otherwise
-   it is `Ending::Retained`: nothing lands, and its workspace and
-   bookmark stay for recovery. One that failed (`Ending::Failed`) or
+   it is `Ending::Retained`: nothing lands, and its workspace stays,
+   with its commits under its head, for recovery. One that failed (`Ending::Failed`) or
    that the person stopped (`Ending::Stopped`) has its changes abandoned,
-   and its workspace and bookmark go. One spawned with `land: false`
+   and its workspace and head go. One spawned with `land: false`
    that finished is `Ending::Kept` instead of `Done`: its workspace
-   closes, its commits stay under its bookmark, and the ending lists its
+   closes, its commits stay under its head, the ref
+   `refs/tau/runs/<run id>` now, and the ending lists its
    own changes (`ProjectRepo::changes_between` its base and its head).
 4. tau-ui takes each ended sub-agent (`SubAgents::take`) and queues it
    on the main chat's landing queue (ADR 0024) with how it ended

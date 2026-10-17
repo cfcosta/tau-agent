@@ -5,6 +5,9 @@
   caller unless the call says `fresh`. Amends
   [0026](0026-sub-agents-run-detached.md): a sub-agent spawned with
   `land: false` is reported, not landed.
+- Amended by [0043](0043-local-repositories-in-place.md): a run's
+  head is the Git ref `refs/tau/runs/<run>`, not the bookmark
+  `tau/<run>`, so kept work stays under that ref.
 - Date: 2026-10-17
 
 ## Context
@@ -34,12 +37,12 @@ Two things in `spawn` worked against them:
   It costs a fresh prompt: nothing of the caller's cache is reused.
 - `land` (default true): with `false`, a sub-agent that finished ends
   as `Ending::Kept`. Its workspace closes, its commits stay under its
-  bookmark `tau/<run>`, beside the caller's, and the ending lists its
-  own changes. The host queues it as one that only reports, records it
-  as dropped, and tau's report turn names its changes. The caller reads
-  them with `vcs_show` and takes files from one with
-  `vcs_restore {paths, from}`. A sub-agent that commits nothing, as a
-  reviewer, ends kept with no changes.
+  head, the ref `refs/tau/runs/<run>`, beside the caller's, and the
+  ending lists its own changes. The host queues it as one that only
+  reports, records it as dropped, and tau's report turn names its
+  changes. The caller reads them with `vcs_show` and takes files from
+  one with `vcs_restore {paths, from}`. A sub-agent that commits
+  nothing, as a reviewer, ends kept with no changes.
 
 Kept work lasts for the session. Being recorded as dropped, it is
 abandoned by the next start's sweep, like a chat the person dropped.
