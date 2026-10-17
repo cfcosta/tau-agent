@@ -14,8 +14,9 @@
 //!   builds its agent plugin for each run ([`HostHalf::agent_plugins`]),
 //!   describes itself ([`HostHalf::catalog`]), sends the interface its
 //!   data ([`HostHalf::data`], [`HostHalf::repo_data`]), carries out
-//!   what its UI asks ([`HostHalf::act`]), and starts again the jobs a
-//!   restart cut off ([`HostHalf::resume`]). Outside any run it may ask
+//!   what its UI asks ([`HostHalf::act`]), starts again the jobs a
+//!   restart cut off ([`HostHalf::resume`]), and hears when first-run
+//!   setup ends ([`HostHalf::setup_finished`]). Outside any run it may ask
 //!   the person's model ([`HostCx::model`]) and run jobs the host keeps
 //!   ([`HostCx::jobs`]).
 //! - **Wherever a run is shown**, live or stored, on a computer or a
@@ -507,6 +508,20 @@ pub trait HostHalf: Send + Sync + 'static {
     fn resume(
         &self,
         _host: &Self::Host,
+        _cx: &HostCx,
+    ) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+
+    /// Called once, as the person reaches the end of first-run setup,
+    /// with the repositories they picked as setup knows them then (their
+    /// clones may still be going): the plugin starts what its setup step
+    /// chose ([`points::SETUP`]), such as a job that reads the
+    /// repositories as they come ([`crate::JobCx::repos`]).
+    fn setup_finished(
+        &self,
+        _host: &Self::Host,
+        _repos: &[points::SetupRepo],
         _cx: &HostCx,
     ) -> impl Future<Output = ()> + Send {
         std::future::ready(())

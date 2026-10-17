@@ -1,9 +1,11 @@
 //! The extension points `tau-ui` declares, and the context each gives
 //! its contributions. A plugin contributes to them in its manifest.
 
+use serde::{Deserialize, Serialize};
 use tau_ui_kit::theme::Tone;
 
 use crate::{
+    host::RepoId,
     manifest::{Point, PointCx},
     view::{NavEntry, PlanField, PluginStatus, RowNote, RunInfo},
 };
@@ -21,6 +23,56 @@ pub struct AtRepo {
 }
 
 impl PointCx for AtRepo {}
+
+/// First-run setup, as far as the person has come: the repositories
+/// picked so far.
+#[derive(Debug, Clone, Default)]
+pub struct AtSetup {
+    pub repos: Vec<SetupRepo>,
+}
+
+impl PointCx for AtSetup {}
+
+/// A repository picked in first-run setup, as setup knows it so far.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetupRepo {
+    /// Its name where it was picked: `owner/name` on GitHub.
+    pub name: String,
+    /// tau's id for it, once tau lists it: its clone is made.
+    pub id: Option<RepoId>,
+    /// Where it comes from: GitHub's URL for a clone from there.
+    pub remote: Option<String>,
+    /// The person's folder for a repository worked on in place (ADR
+    /// 0043); `None` for a clone tau keeps.
+    pub folder: Option<std::path::PathBuf>,
+    pub clone: SetupClone,
+}
+
+/// How a picked repository's clone stands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SetupClone {
+    /// Picked, not cloning yet.
+    Picked,
+    /// How far it is, from 0 to 1.
+    Cloning(f32),
+    Ready,
+    Failed(String),
+}
+
+/// A plugin's step in first-run setup ([`SETUP`]).
+pub struct SetupView {
+    /// The plugin's name for the step, its own among its steps:
+    /// `memories`.
+    pub step: &'static str,
+    /// What the step bar calls it: `Memories`.
+    pub title: String,
+    /// The screen's headline, and the sentence under it.
+    pub heading: String,
+    pub detail: String,
+    /// Under the headline: what the person chooses. It ends the step
+    /// with [`crate::Handle::setup_done`]; tau draws a way to skip it.
+    pub body: gpui::AnyElement,
+}
 
 /// A run.
 #[derive(Debug, Clone)]
@@ -204,6 +256,17 @@ pub const REPO_MENU: Point<AtRepo> = Point::new("tau.sidebar.repo.menu");
 /// order.
 pub const REPO_ACTIONS: Point<AtRepo> = Point::new("tau.repo.actions");
 
+/// An item in the status bar under the desktop, after tau's own news and
+/// the jobs going on: what the plugin has to say that is not a job,
+/// drawn from its data. Every contribution is drawn, in order; the bar
+/// shows while any is. A phone has no status bar.
+pub const ACTIVITY: Point<AtApp> = Point::new("tau.status.activity");
+/// A step of first-run setup, between Repositories and Ready, in the
+/// registry's order: the step bar counts it. A contribution that gives
+/// none for the setup at hand is not a step, and the bar does not count
+/// it. Setup is on the desktop only.
+pub const SETUP: Point<AtSetup, SetupView> = Point::new("tau.setup.step");
+
 /// A wide pane beside a run's transcript, for what the run made for the
 /// person to look at: a canvas. The first contribution draws it, in the
 /// inspector's place on a desktop and over the run on a phone, while the
@@ -212,7 +275,7 @@ pub const REPO_ACTIONS: Point<AtRepo> = Point::new("tau.repo.actions");
 pub const PANE: Point<AtRun, PaneView> = Point::new("tau.run.pane");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 25] = [
+pub const ALL: [&str; 27] = [
     CARD.name,
     TRANSCRIPT.name,
     REWRITE.name,
@@ -237,5 +300,7 @@ pub const ALL: [&str; 25] = [
     COMPOSER_BAND.name,
     REPO_MENU.name,
     REPO_ACTIONS.name,
+    ACTIVITY.name,
+    SETUP.name,
     PANE.name,
 ];

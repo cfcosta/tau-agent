@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::host::{Push, RepoCtx};
+use crate::{
+    host::{Push, RepoCtx},
+    view::Link,
+};
 
 /// How often progress asks the interface to draw the catalog again, at
 /// most: a job may report on every item it reads.
@@ -38,6 +41,11 @@ pub struct JobInfo {
     pub fraction: f32,
     /// What it is doing now, in one line.
     pub line: String,
+    /// The page that shows its work, when the job names one
+    /// ([`JobCx::page`]): clicking the job in the status bar opens it.
+    /// `None` opens the plugin's own page, if it has one.
+    #[serde(default)]
+    pub page: Option<Link>,
 }
 
 /// The repositories the host lists now. Clones share it.
@@ -100,6 +108,28 @@ impl JobCx {
                         job.info.fraction != fraction || job.info.line != line;
                     job.info.fraction = fraction;
                     job.info.line = line;
+                    changed
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            self.jobs.refresh_soon();
+        }
+    }
+
+    /// Names the page that shows the job's work, a link of the plugin's
+    /// own unless it names another's: clicking the job in the status bar
+    /// opens it. A job may name it as it starts, or once it has
+    /// something to show.
+    pub fn page(&self, link: Link) {
+        let changed = {
+            let mut running = self.jobs.0.running.lock().expect("not poisoned");
+            match running.get_mut(&self.key()) {
+                Some(job) if job.id == self.id => {
+                    let link = Some(link.from(&self.plugin));
+                    let changed = job.info.page != link;
+                    job.info.page = link;
                     changed
                 }
                 _ => false,
@@ -246,6 +276,7 @@ impl Jobs {
                         label: label.clone(),
                         fraction: 0.,
                         line: String::new(),
+                        page: None,
                     },
                     cancel: cancel.clone(),
                 },
@@ -427,20 +458,23 @@ mod tests {
             .count()
     }
 
-    /// A job is listed with what it last said, one of a name at a time,
-    /// in its plugin's directory, and leaves the list when it ends; a
-    /// failure is said to the person.
+    /// A job is listed with what it last said and the page it named, of
+    /// its own plugin, one of a name at a time, in its plugin's directory,
+    /// and leaves the list when it ends; a failure is said to the person.
     #[test]
     fn a_job_is_listed_while_it_runs() {
         let (runtime, jobs, _, pushed) = jobs();
         let (go, gone) = tokio::sync::oneshot::channel::<()>();
-        jobs.start("p", "import", "Importing", |job| async move {
-            assert_eq!(job.plugin_dir(), Path::new("/data/tau/plugins/p"));
-            job.progress(0.25, "read 1 of 4");
-            job.progress(f32::NAN, "nothing yet");
-            job.progress(7., "read 4 of 4");
-            let _ = gone.await;
-            anyhow::bail!("no more")
+        jobs.start("p", "import", "Importing", |job| {
+            job.page(Link::page("review").param("repo", "tau"));
+            async move {
+                assert_eq!(job.plugin_dir(), Path::new("/data/tau/plugins/p"));
+                job.progress(0.25, "read 1 of 4");
+                job.progress(f32::NAN, "nothing yet");
+                job.progress(7., "read 4 of 4");
+                let _ = gone.await;
+                anyhow::bail!("no more")
+            }
         })
         .unwrap();
         runtime.block_on(tokio::task::yield_now());
@@ -452,6 +486,7 @@ mod tests {
                 label: "Importing".into(),
                 fraction: 1.,
                 line: "read 4 of 4".into(),
+                page: Some(Link::to("p", "review").param("repo", "tau")),
             }]
         );
         assert!(jobs.is_running("p", "import"));

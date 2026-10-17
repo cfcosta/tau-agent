@@ -200,6 +200,9 @@ pub enum Request {
     /// Shows `text` over the composer for a moment: what a command did
     /// when it started nothing where it was typed.
     Note(String),
+    /// Ends the plugin's step of first-run setup ([`crate::points::SETUP`]):
+    /// setup goes on to the next step, or to Ready.
+    SetupDone,
 }
 
 /// Where a [`Handle`]'s requests go: the interface, which carries out
@@ -374,6 +377,11 @@ impl Handle {
 
     pub fn cancel(&self, run: &RunId, cx: &mut App) {
         self.request(Request::Cancel(run.clone()), cx);
+    }
+
+    /// Ends the plugin's step of first-run setup, the one on screen.
+    pub fn setup_done(&self, cx: &mut App) {
+        self.request(Request::SetupDone, cx);
     }
 }
 
