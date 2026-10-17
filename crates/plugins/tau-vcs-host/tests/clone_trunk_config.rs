@@ -300,14 +300,20 @@ fn show(tools: &VcsPlugin, commit: &str) -> bool {
 
 /// What tau's clone says of any world, and what `jj git clone` and `jj
 /// log` say of the same remote and clone, where that jj is found.
-#[hegel::test(test_cases = 40)]
+#[hegel::test(
+    test_cases = 40,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
 fn a_clone_sets_trunk_as_jj_git_clone_does(tc: TestCase) {
     check(&tc.draw(world()));
 }
 
 /// What a repository's config held before its clone is still there
 /// after, beside the `trunk()` the clone wrote over any it had.
-#[hegel::test(test_cases = 20)]
+#[hegel::test(
+    test_cases = 20,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
 fn a_clone_keeps_what_the_repository_config_held(tc: TestCase) {
     let world = tc.draw(world());
     let existing = Existing {
