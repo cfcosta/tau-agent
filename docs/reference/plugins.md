@@ -479,9 +479,26 @@ settings)` gives what commands in a repository start through: a
   hooks, `RunCtx::services` holds the run's workspace (`WorkspaceDir`),
   and the repository's joined launcher (`RepoLauncher`) when a plugin
   gives one.
+- **The repository.** `RepoCtx` says which repository a run or a host
+  half works for: its `id` (`RepoId`), its sidebar `name`, its
+  `remote` (GitHub's URL for a clone from there, else `None`), the
+  person's `folder` for a repository worked on in place
+  ([0043](../decisions/0043-local-repositories-in-place.md); `None` for
+  a clone tau keeps), its `checkout`, tau's `dir` for it, and its
+  `workspaces`. The id is a UUID given once, as the repository is
+  listed in `repos.json`, and never made from a path, so it survives a
+  move: a plugin keys what it keeps for a repository on it. The
+  catalog's `Repo` carries it too, for pages and the phone
+  ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
 - **Per-repository settings.** `points::REPO_MENU` (`Point<AtRepo>`)
   takes entries for a repository's menu in the sidebar, after tau's
-  own: a toggle the plugin keeps per repository.
+  own: a toggle the plugin keeps per repository, or a page of its own
+  for it (memory's Memory entry, which opens the repository's notes).
+- **A repository's actions.** `points::REPO_ACTIONS` (`Point<AtRepo>`)
+  takes buttons for a repository page's header, before New run: what
+  the plugin does for the whole repository. Every contribution is
+  drawn, in order. Core names no plugin in either place
+  ([0006](../decisions/0006-plugin-crates.md)).
 
 See
 [ADR 0017](../decisions/0017-plugins-bring-their-ui.md), and its "As
