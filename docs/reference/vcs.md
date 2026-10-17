@@ -68,9 +68,10 @@ loading:
   `workspaces/<id>/config.toml` in jj's config directory, named by
   `.jj/repo/config-id` and `.jj/workspace-config-id`. tau reads them
   with jj-lib's `SecureConfig::maybe_load_config`, as any jj command
-  does, and makes a config id only where `jj git clone` would: when a
-  clone or an import writes the repository's `trunk()` (see
-  "Projects").
+  does, and makes a config id only where `jj git clone` or `jj git
+  init` would: when a clone, an import or a local repository's setup
+  writes the repository's `trunk()` (see "Projects" and "Setting up a
+  local repository").
 - `--when` scopes resolve once the repository is known, against the
   canonical workspace and repository paths, the home directory (for
   `~`), the host name and the variables. tau runs no jj command, so a
@@ -119,14 +120,17 @@ loading:
   `ui.conflict-marker-style` too, merged with the store's `merge.*`
   options, as `jj diff --git` does, with `diff.git.context` lines of
   context (three by default).
-- jj-cli settings tau does not follow, each because tau's own design
-  decides what they would: `remotes.<name>.auto-track-bookmarks` and
+- jj-cli settings tau does not follow in a repository it owns, each
+  because tau's own design decides what they would:
+  `remotes.<name>.auto-track-bookmarks` and
   `git.track-default-bookmark-on-clone` (a project tracks every
   upstream branch, so trunk follows upstream, ADR 0015);
   `git.abandon-unreachable-commits` and
   `git.record-synthetic-predecessors` on an update (an update keeps
   what upstream dropped, and catch-ups leave it behind, so a chat's
-  `@` is never abandoned under it);
+  `@` is never abandoned under it). A local repository is the person's,
+  so there tau imports Git's refs as their jj does, with all three
+  (ADR 0043, decision 4; see "Setting up a local repository");
   `snapshot.auto-update-stale` (tau always moves a stale workspace's
   files, as `jj workspace update-stale` does, since the main chat's
   catch-up restacks its chats); `git.colocate` (a project's layout is
@@ -187,6 +191,9 @@ loading:
   Under the lock they happen one after another. The lock is
   `.jj/repo/tau.lock`, held with `flock`, so it holds between threads
   and between processes. Reads take no lock.
+- In a local repository, each tool's snapshot and each `ProjectRepo`
+  write imports Git's refs first, under both locks, as the jj CLI does
+  in a colocated workspace (see "Setting up a local repository").
 - Under it, tau also takes the lock jj-cli 0.46.0 takes around its Git
   import and export in a colocated workspace,
   `.jj/repo/git_import_export.lock`: around an import of Git's refs and
@@ -215,13 +222,15 @@ person's own `jj` commands from its own in the operation log:
   | Description                           | Written by                                              |
   | ------------------------------------- | ------------------------------------------------------- |
   | `tau: vcs_<tool>`                     | a write tool, `vcs_land` included                       |
-  | `tau: snapshot working copy`          | a tool's or a turn's snapshot                           |
+  | `tau: snapshot working copy`          | a tool's or a turn's snapshot, a local setup's          |
+  | `tau: import git refs`                | in a local repository, a write's import of Git's refs   |
+  | `tau: import git head`                | a local setup, as `jj git init` imports `HEAD`          |
   | `tau: checkpoint`                     | a turn's end (`end_turn`, `commit_all`)                 |
   | `tau: move onto`                      | a catch-up (`Vcs::move_onto`)                           |
   | `tau: make the repository`            | `Project::init`, `Vcs::init`                            |
   | `tau: import`                         | a clone or an import                                    |
   | `tau: update`                         | `update`                                                |
-  | `tau: add workspace <name>`           | `add_workspace`, a fork's `add_workspace_from_snapshot` |
+  | `tau: add workspace <name>`           | `add_workspace`, a fork's, a local setup                |
   | `tau: name the main chat's workspace` | opening a project made before it had one                |
   | `tau: forget workspace <name>`        | a sweep, a landing, a dropped child, a sub-agent's end  |
   | `tau: abandon <n> changes`            | a sweep, a dropped child, a sub-agent's end             |
@@ -549,7 +558,10 @@ A `Layout` says where these are (`ProjectRepo::layout`): the
 repository's directory, the runs' directory, and the main chat's
 workspace, its name and directory. A project tau owns has the layout
 above (`Layout::of_clone`): the repository's directory is the main
-chat's.
+chat's. A local repository (`Layout::local`, `local` set) is the
+person's folder, with the main chat's workspace and the runs' in tau's
+data directory, where the caller says (see "Setting up a local
+repository").
 
 The main chat works in a workspace of its own, `tau-main`
 (`MAIN_WORKSPACE`, `ProjectRepo::main_workspace`, `main_dir`). jj's
@@ -622,7 +634,9 @@ one the workspace store gives `main/`.
   worktree folder that names the workspace is used again, `HEAD`
   becomes the parent of the commit the workspace's files are at, and
   the index follows, in one `tau: reset git head` operation when the
-  view's record of that `HEAD` changes. `forget_workspace` removes the
+  view's record of that `HEAD` changes. The workspace in the Git
+  store's own working tree is never linked: a clone's main chat's, a
+  local repository's `default`. `forget_workspace` removes the
   worktree folders that name that workspace, and its `.git`, never
   another's: unlike `git worktree prune`, which jj's `unlink_worktree`
   runs, it leaves alone a worktree whose folder is gone. The person's
@@ -745,6 +759,99 @@ Otherwise it returns `Found`:
   root; else the checked-out branch. jj's view is read at its one
   operation head; with several, jj's `trunk()` is skipped, since
   merging them would write.
+
+## Setting up a local repository
+
+`Project::setup_local(found, layout, identity, progress)`
+(`ProjectRepo::setup_local`) sets jj up in the folder `local::inspect`
+found, where it is, colocated with its `.git` (ADR 0043). `layout` is
+`Layout::local(folder, main_dir, runs_dir)`: the caller picks both
+directories in tau's data directory; `local::runs_dir_name(parent,
+folder)` names the runs' directory after the folder, made unique, and
+the setup records the name, which is never made again from the folder.
+`progress` hears of each step (`local::Step`) before it starts, and
+breaking stops the setup (`SetupStopped`).
+
+In a Git repository the steps are `jj git init --colocate`'s there
+(jj-cli 0.46.0's `commands/git/init.rs`), each a `tau: …` operation:
+
+| Step         | What it does                                                                                                                                                                                                                                                   |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ImportRefs` | jj's repository on the folder's `.git` (`init_external_git`), `.jj/.gitignore`, `default` on the root commit, and Git's branches and tags imported with nothing abandoned and the person's `auto-track-bookmarks` (`tau: import git refs`).                    |
+| `Snapshot`   | Git's `HEAD` imported and `default`'s `@` made a new commit on it, its working copy reset with no file written (`tau: import git head`); the files snapshotted with the person's snapshot settings; Git's refs imported again; the `trunk()` alias written.    |
+| `Workspace`  | The main chat's workspace, `main_workspace_name` over the names the repository has, made as a run's is: a Git worktree of the folder's `.git` at `main_dir`, then the jj workspace on a new commit on the root (`tau: add workspace <name>`), after an import. |
+| `Record`     | tau's state, `.jj/repo/tau/state.json` (`local::State`): `repo_id` (a new UUID, kept when the file was there), `main_workspace` and `runs_dir`, the runs' directory's name.                                                                                    |
+
+- Unlike `jj git init`, tau never moves Git's `HEAD` or index in the
+  folder (ADR 0043, decision 1): the CLI resets the index after its
+  snapshot, tau leaves it as it was. `HEAD` stays symbolic: the view
+  records it for `default`, so the person's next `jj` command finds it
+  imported, as after `jj git init`. tau's own workspaces are worktrees,
+  where `HEAD` and the index follow tau's working copies as in a clone;
+  `crate::colocate` never resets them in a local repository's main
+  working tree, whatever writes there.
+- With the person's `remotes.origin.auto-track-bookmarks`, the import
+  tracks `origin`'s matching branches as jj's does: a bookmark is made,
+  or moved forward, for each, and goes out as their branch. Those are
+  the only refs a setup changes, the ones `jj git init` changes too.
+- The `trunk()` alias is jj's: the first of `upstream` and `origin`
+  with a `refs/remotes/<remote>/HEAD` decides, and when that names a
+  branch, `revset-aliases."trunk()"` is `<branch>@<remote>` in the
+  repository's config. Neither: no alias, and jj's own `trunk()`
+  applies.
+- A folder that is a colocated jj repository already keeps its
+  repository as it is: Git's refs are imported (with the person's
+  settings, as their next `jj` command would), no snapshot of their
+  `default`, no alias, then the main chat's workspace and tau's state.
+- After setup, each tool's snapshot in a local repository imports Git's
+  refs after it, as the jj CLI does (`tau: import git refs`, written in
+  the tool's workspace, whose files move when the import rebased its
+  `@`), and each `ProjectRepo` write imports them before it, with the
+  person's `git.abandon-unreachable-commits`,
+  `git.record-synthetic-predecessors` and `auto-track-bookmarks`; what
+  stood on commits Git rewrote or abandoned is rebased unless it is
+  immutable (jj-cli's `rebase_mutable_descendants`). A commit the
+  person amends with `git commit --amend` after tau imported it is
+  abandoned when their setting says so, and what tau stood on it moves
+  to its parent; with the setting off it stays. Git's amend keeps the
+  change id jj wrote in a commit's header, so an amended commit of
+  tau's, kept, is one change twice, divergent, and tau refuses to move
+  onto it. Exports detach `HEAD` on its commit before moving the
+  branch it names, as jj's do (`check_and_detach_head`).
+- `ProjectRepo::open_local(layout, identity)` opens it again, with the
+  main chat's workspace `state.json` names (`NotSetUp` without one),
+  making tau's workspaces whole worktrees where they are not.
+- A local `ProjectRepo`'s `root()` is the person's folder: a caller
+  that keeps files of its own per project keeps them elsewhere.
+
+All or nothing (ADR 0043, decision 10): a setup that fails or is
+stopped takes away what it added, and the folder's refs, `HEAD`,
+index, config and files are as before:
+
+- `.jj`, when the setup made it, with the repository config directory
+  jj-lib's `SecureConfig` made for it (`remove_repo_config_dir`) and
+  the folders above it it made; in a jj repository of the person's,
+  its operation heads, its workspace store and `.jj/repo/tau` as they
+  were;
+- the refs it made: jj's under `refs/jj/`, and the branches and tags
+  its exports made for bookmarks an import created (the person's
+  `auto-track-bookmarks`), while they are where the export put them;
+  and the folders in `.git` it made for them;
+- the worktree's folder in `.git/worktrees/` and the main chat's
+  directory, the runs' directory and the folders above them it made.
+
+Objects it wrote may stay in `.git/objects` as unreachable loose
+objects until Git collects them, and in a jj repository of the
+person's, the operations, index files and commit metadata it wrote stay
+in jj's content-addressed stores (`op_store`, `index`, `store/extra`),
+which no operation head reaches. A setup cut off by a crash leaves
+`.jj/repo/tau/making` in the `.jj` it made (`local::unfinished`):
+inspecting the folder sees the Git repository it was, and the next
+setup takes that `.jj` away (with `refs/jj/`, the repository's config,
+and the main chat's directory when it holds a workspace of it) and
+starts again. In a jj repository of the person's a crash after the
+`Workspace` step leaves tau's workspace: the next setup names its own
+`tau-main-2`. The checks are in `tests/local_setup.rs`.
 
 ## Runs and turns
 
