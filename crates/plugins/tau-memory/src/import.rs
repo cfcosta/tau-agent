@@ -377,6 +377,9 @@ pub struct ToolFound {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FolderFound {
     pub place: Place,
+    /// The folder as the person writes it: `~/work/shop`.
+    #[serde(default)]
+    pub label: String,
     pub saved: usize,
     pub chats: usize,
     /// What an import has not read yet of it.

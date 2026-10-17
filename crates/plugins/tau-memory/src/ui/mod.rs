@@ -11,6 +11,7 @@
 
 pub mod page;
 pub mod settings;
+pub mod setup;
 
 use std::collections::BTreeMap;
 
@@ -248,6 +249,7 @@ impl UiPlugin for MemoryUi {
                     view.handle.navigate(notes_link(repo), view.cx);
                 }
             })
+            .contribute(points::SETUP, setup::step)
             .status(State::status)
             .contribute(points::TRANSCRIPT, page::mark)
             .settings(settings::pane)
@@ -258,6 +260,9 @@ impl PluginUi for page::Ui {
     fn new(_handle: Handle, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| TextInput::new("Search notes", cx));
         cx.observe(&search, |_, _, cx| cx.notify()).detach();
-        page::Ui { search }
+        page::Ui {
+            search,
+            choice: setup::Choice::default(),
+        }
     }
 }

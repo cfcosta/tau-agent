@@ -468,6 +468,14 @@ impl Importer {
         job.progress(fraction, line);
     }
 
+    /// A place's folder as the person writes it, under `~`.
+    fn show(&self, place: &Place) -> String {
+        match (&self.roots, &place.folder) {
+            (Some(roots), Some(folder)) => roots.show(Path::new(folder)),
+            _ => place.label(),
+        }
+    }
+
     /// What the interface shows, with the repositories listed now.
     pub fn imports(&self, repos: &[RepoCtx], running: bool) -> Imports {
         let proposals = self.proposals();
@@ -490,6 +498,7 @@ impl Importer {
                     let folder =
                         folders.entry(place.clone()).or_insert_with(|| {
                             FolderFound {
+                                label: self.show(place),
                                 place: place.clone(),
                                 saved: 0,
                                 chats: 0,
@@ -579,7 +588,7 @@ impl Importer {
                     continue;
                 }
                 if banner.folder.is_empty() {
-                    banner.folder = mine[0].place.label();
+                    banner.folder = mine[0].label.clone();
                 }
                 let saved: usize = mine.iter().map(|f| f.saved).sum();
                 if saved > 0 {

@@ -75,6 +75,8 @@ const ASIDE: f32 = 150.;
 /// The page's state in one window: what the list is searched for.
 pub struct Ui {
     pub(super) search: Entity<TextInput>,
+    /// What the setup step has chosen.
+    pub(super) choice: super::setup::Choice,
 }
 
 /// How an open note's page is split, from the width it has.

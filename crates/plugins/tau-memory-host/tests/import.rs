@@ -840,7 +840,7 @@ fn proposals_wait_for_the_repository_that_claims_their_folder() {
     assert_eq!(banner.ready, 1);
     assert_eq!(banner.saved, [(Tool::ClaudeCode, 1)]);
     assert_eq!(banner.unread_chats, 1);
-    assert_eq!(banner.folder, later.display().to_string());
+    assert_eq!(banner.folder, "~/work/later");
 
     world.act(
         &host,
