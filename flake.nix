@@ -90,7 +90,7 @@
 
               # tau (GPUI) links xcb and xkbcommon, and loads Vulkan,
               # Wayland and X11 at runtime.
-              guiLibs = pkgs.lib.optionals pkgs.stdenv.isLinux (
+              guiLibs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
                 with pkgs;
                 [
                   fontconfig
@@ -300,7 +300,7 @@
           tau,
           ...
         }:
-        pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           inherit tau;
           default = tau;
         }
@@ -320,7 +320,7 @@
           tau,
           ...
         }:
-        pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           default = {
             type = "app";
             program = pkgs.lib.getExe tau;
@@ -421,7 +421,7 @@
               ]
               # An agent's commands run in `bwrap` (ADR 0037); its tests
               # run real ones.
-              ++ pkgs.lib.optional pkgs.stdenv.isLinux pkgs.bubblewrap
+              ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.bubblewrap
               ++ guiLibs
               ++ [ libghostty-vt ];
 
@@ -430,7 +430,7 @@
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath guiLibs;
             # What nextest preloads into tests so they skip disk syncs
             # (scripts/no-disk-syncs.sh).
-            TAU_TEST_PRELOAD = pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.libeatmydata}/lib/libeatmydata.so";
+            TAU_TEST_PRELOAD = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.libeatmydata}/lib/libeatmydata.so";
             # The jj CLI at jj-lib's version, which tau-vcs-host's tests
             # compare tau with. Not on `PATH`: the shell's `jj` stays the
             # person's own.
