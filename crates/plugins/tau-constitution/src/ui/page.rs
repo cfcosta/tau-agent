@@ -1115,7 +1115,9 @@ fn rules_list(
             String::new(),
         ],
         rows,
-        widths: Vec::new(),
+        // The rule's text takes the room; its id, verdict and buttons
+        // only what they need.
+        widths: vec![0.4, 5., 1., 1.4],
     }
 }
 
