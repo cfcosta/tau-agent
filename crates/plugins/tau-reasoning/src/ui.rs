@@ -1,33 +1,18 @@
 //! tau-reasoning's UI (ADR 0017): its note in the transcript when an
 //! effort changes, its line in the plugin list, the plan's reasoning
 //! field, its step on the Plan screen, a page with every choice, and its
-//! settings on the Models screen.
+//! settings on the Models screen. Each is a view tree (ADR 0045): a
+//! note's chart opens and closes as a section, its state the
+//! interface's.
 
-use std::{
-    collections::{BTreeMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
-use gpui::{
-    AnyElement,
-    App,
-    Div,
-    Hsla,
-    SharedString,
-    div,
-    prelude::*,
-    relative,
-    rems,
-};
+use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
-use tau_agent::{plugin::Plugin, tool::RunId};
+use serde_json::{Value, json};
+use tau_agent::plugin::Plugin;
 use tau_jev::Jev;
-use tau_ui_kit::{
-    assets::Icon,
-    components::{self as ui, Material as _, NoteHead, link, mono},
-    format::usd,
-    theme::{Design as _, Theme, Tone, Type, radius, sp},
-};
+use tau_ui_kit::{format::usd, theme::Tone};
 use tau_ui_plugin::{
     Fold,
     HostCx,
@@ -46,6 +31,7 @@ use tau_ui_plugin::{
     ViewCx,
     needs_jev,
     points::{self, AtAnchor, AtApp, AtRun},
+    tree::{self, KeyValue, Node},
 };
 
 use crate::{Choice, DEFAULT_THRESHOLD, Lease, NAME, Reasoning, Record};
@@ -111,12 +97,6 @@ pub enum Note {
     },
     /// Jev could not score the task or the step.
     Failed { message: String, detail: String },
-}
-
-/// The notes open in this window, by run and anchor.
-#[derive(Debug, Default)]
-pub struct Ui {
-    open: HashSet<(RunId, String)>,
 }
 
 impl Fold for State {
@@ -265,14 +245,6 @@ impl Choice {
             self.confidence, self.threshold
         )
     }
-
-    /// Each level and its probability, lowest first.
-    fn bars(&self) -> Vec<(String, f32)> {
-        self.levels
-            .iter()
-            .map(|level| (level.effort.clone(), level.p as f32))
-            .collect()
-    }
 }
 
 impl UiPlugin for ReasoningPlugin {
@@ -280,7 +252,7 @@ impl UiPlugin for ReasoningPlugin {
     type Data = ();
     type RepoData = ();
     type Settings = Settings;
-    type Ui = Ui;
+    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME
@@ -309,12 +281,9 @@ impl UiPlugin for ReasoningPlugin {
                 })
             })
             .contribute(points::PLAN_STEPS, |_: &AtRun, view| {
-                let choice = view.state?.starting_choice()?.clone();
-                let t = view.theme().clone();
-                Some(
-                    step(&choice, &t, view.compact)
-                        .into_any_element(),
-                )
+                let choice = view.state?.starting_choice()?;
+                let tree = step(choice, view.compact);
+                Some(view.tree("reasoning-plan-step", &tree, |_, _, _| {}))
             })
             .settings(settings_pane)
             .contribute(points::PICKER_AUTO, |_: &AtApp, view| {
@@ -392,149 +361,112 @@ impl HostHalf for ReasoningHost {
     }
 }
 
-/// The plugin's note at one of its anchors.
+/// The plugin's mark: its plug, read as `tone`.
+fn plug(tone: tree::Tone) -> Node {
+    Node::Icon {
+        name: "plug".into(),
+        tone,
+    }
+}
+
+/// The plugin's note at one of its anchors, as a view tree (ADR 0045).
+/// Whether a choice's chart is open is the interface's, under the
+/// note's section.
 fn transcript_note(
     at: &AtAnchor,
     view: &mut ViewCx<'_, ReasoningPlugin>,
 ) -> Option<AnyElement> {
     let state = view.state?;
-    let note = state.notes.get(&at.key)?.clone();
-    let t = view.theme().clone();
-    let id =
-        SharedString::from(format!("reasoning-{}-{}", at.run.id.0, at.key));
+    let note = state.notes.get(&at.key)?;
+    let id = format!("reasoning-{}-{}", at.run.id.0, at.key);
     let details = Link::page("choices").param("run", at.run.id.0.to_string());
-    let handle = view.handle.clone();
-    let details_link = |label: String, id: SharedString| {
-        let handle = handle.clone();
-        let details = details.clone();
-        div()
-            .id(id)
-            .child(link(label, &t))
-            .on_click(move |_, _, cx| {
-                cx.stop_propagation();
-                handle.navigate(details.clone(), cx)
-            })
-            .into_any_element()
-    };
-    match note {
-        Note::Failed { message, detail } => Some(
-            ui::note(
-                id,
-                NoteHead {
-                    plugin: NAME.into(),
-                    icon: Icon::Plug,
-                    tone: Tone::Danger,
-                    text: message,
-                    detail: Some(detail),
+    let tree = match note {
+        Note::Failed { message, detail } => Node::Card {
+            children: vec![Node::row([
+                plug(tree::Tone::Bad),
+                Node::Mono { text: NAME.into() },
+                Node::text(message.clone()),
+                Node::Spacer,
+                Node::Mono {
+                    text: detail.clone(),
                 },
-                None,
-                None,
-                None,
-                None,
-                view.compact,
-                &t,
-            )
-            .into_any_element(),
-        ),
+            ])],
+        },
         Note::Choice {
             choice,
             text,
             outcome,
         } => {
-            let choice = state.choices.get(choice)?;
-            let key = (at.run.id.clone(), at.key.clone());
-            let open = view.read_ui().open.contains(&key);
-            let ui_state = view.ui.clone();
-            let refresh = view.handle.clone();
-            let toggle = Box::new(
-                move |_: &gpui::ClickEvent,
-                      _: &mut gpui::Window,
-                      cx: &mut App| {
-                    ui_state.update(cx, |ui, _| {
-                        if !ui.open.remove(&key) {
-                            ui.open.insert(key.clone());
-                        }
-                    });
-                    refresh.refresh(cx);
+            let choice = state.choices.get(*choice)?;
+            let head = Node::row([
+                plug(tree::Tone::Info),
+                Node::Mono { text: NAME.into() },
+                Node::Rich { text: text.clone() },
+                Node::Spacer,
+                Node::Mono {
+                    text: format!("Jev · {}", usd(choice.cost)),
                 },
-            );
+                Node::Link {
+                    label: "Details".into(),
+                    to: details.clone(),
+                },
+            ]);
             // The phone shows the answer and links to the chart.
             let body = if view.compact {
                 let level = choice
                     .levels
                     .get(choice.chosen())
                     .map_or(String::new(), |level| level.effort.clone());
-                details_link(
-                    format!("Why {level}"),
-                    SharedString::from(format!(
-                        "why-{}-{}",
-                        at.run.id.0, at.key
-                    )),
-                )
+                Node::Link {
+                    label: format!("Why {level}"),
+                    to: details,
+                }
             } else {
-                distribution(
-                    &choice.bars(),
-                    choice.chosen(),
-                    &choice.verdict(&outcome),
-                    &t,
-                    44.,
-                )
-                .into_any_element()
+                Node::Section {
+                    id: format!("note-{}-{}", at.run.id.0, at.key),
+                    title: "Probability of each effort level".into(),
+                    open: false,
+                    children: vec![
+                        levels(choice, false),
+                        Node::text(choice.verdict(outcome)),
+                    ],
+                }
             };
-            Some(
-                ui::note(
-                    id,
-                    NoteHead {
-                        plugin: NAME.into(),
-                        icon: Icon::Plug,
-                        tone: Tone::Info,
-                        text,
-                        detail: Some(format!("Jev · {}", usd(choice.cost))),
-                    },
-                    Some(open),
-                    Some(toggle),
-                    Some(details_link(
-                        "Details".into(),
-                        SharedString::from(format!(
-                            "details-{}-{}",
-                            at.run.id.0, at.key
-                        )),
-                    )),
-                    Some(body),
-                    view.compact,
-                    &t,
-                )
-                .into_any_element(),
-            )
+            Node::Card {
+                children: vec![head, body],
+            }
         }
-    }
+    };
+    Some(view.tree(&id, &tree, |_, _, _| {}))
 }
 
 /// The page with every choice in a run, newest last.
 fn choices_page(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
-    let t = view.theme().clone();
-    let choices: Vec<Choice> = view
+    let compact = view.compact;
+    let choices = view
         .state
-        .map(|state| state.choices.clone())
+        .map(|state| state.choices.as_slice())
         .unwrap_or_default();
-    let content = div()
-        .flex()
-        .flex_col()
-        .gap(sp(4.5))
-        .child(ui::screen_title(
-            "Reasoning effort",
-            "Each effort tau-reasoning picked for this run, with how sure Jev was.",
-            &t,
-        ))
-        .when(choices.is_empty(), |page| {
-            page.child(ui::empty("tau-reasoning has not chosen an effort in this run.", &t))
-        })
-        .children(choices.iter().map(|choice| step(choice, &t, view.compact)));
-    ui::screen("reasoning-choices", view.compact, content).into_any_element()
+    let mut page = vec![
+        Node::Heading {
+            text: "Reasoning effort".into(),
+        },
+        Node::text(
+            "Each effort tau-reasoning picked for this run, with how sure \
+             Jev was.",
+        ),
+    ];
+    if choices.is_empty() {
+        page.push(Node::Empty {
+            text: "tau-reasoning has not chosen an effort in this run.".into(),
+        });
+    }
+    page.extend(choices.iter().map(|choice| step(choice, compact)));
+    view.tree("reasoning-choices", &Node::stack(page), |_, _, _| {})
 }
 
 /// One choice at full size: what it was for, then its chart.
-fn step(choice: &Choice, t: &Theme, compact: bool) -> Div {
+fn step(choice: &Choice, compact: bool) -> Node {
     let what = match (choice.turn, choice.step.as_str()) {
         (None, _) => "As the message came in".to_owned(),
         (Some(turn), "user_turn") => {
@@ -546,76 +478,22 @@ fn step(choice: &Choice, t: &Theme, compact: bool) -> Div {
         .runs_at
         .clone()
         .unwrap_or_else(|| "the model's default".into());
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.5))
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(2.5))
-                .child(mono(NAME, Type::SMALL, t.text))
-                .child(
-                    div()
-                        .text_color(t.muted)
-                        .child(format!("{what}: runs at {ran}")),
-                )
-                .child(div().flex_1())
-                .child(mono(
-                    format!("Jev · {}", usd(choice.cost)),
-                    Type::CAPTION,
-                    t.muted,
-                )),
-        )
-        .child(chart(choice, t, compact))
+    Node::stack([
+        Node::row([
+            Node::Mono { text: NAME.into() },
+            Node::text(format!("{what}: runs at {ran}")),
+            Node::Spacer,
+            Node::Mono {
+                text: format!("Jev · {}", usd(choice.cost)),
+            },
+        ]),
+        chart(choice, compact),
+    ])
 }
 
-/// The effort chart at full size: the confidence, then a bar per level
-/// with what the level suits.
-fn chart(choice: &Choice, t: &Theme, compact: bool) -> Div {
-    let max_bar = 104.;
-    let chosen = choice.chosen();
-    let bars = choice.levels.iter().enumerate().map(|(index, level)| {
-        let pick = index == chosen;
-        let ink: Hsla = if pick { t.text } else { t.muted };
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_end()
-            .gap(sp(1.))
-            .child(mono(format!("{:.2}", level.p), Type::MICRO, ink))
-            .child(
-                div()
-                    .w(rems(2.25))
-                    .h(rems(((level.p as f32 * max_bar).max(3.)) / 16.))
-                    .rounded_t(radius::SMALL)
-                    .bg(if pick { t.blue } else { t.bar_idle }),
-            )
-    });
-    let labels = choice.levels.iter().enumerate().map(|(index, level)| {
-        let pick = index == chosen;
-        div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(sp(0.5))
-            .child(mono(
-                level.effort.clone(),
-                Type::CAPTION,
-                if pick { t.text } else { t.muted },
-            ))
-            .child(
-                div()
-                    .typeset(Type::MICRO)
-                    .text_color(t.dim)
-                    .child(level.suits.clone()),
-            )
-    });
+/// The effort chart at full size: the confidence against the
+/// threshold, then each level's probability with what the level suits.
+fn chart(choice: &Choice, compact: bool) -> Node {
     let verdict = match choice.kept_for_cache {
         Some(tokens) => format!(
             "is held back: it would resend {} tokens uncached",
@@ -624,239 +502,147 @@ fn chart(choice: &Choice, t: &Theme, compact: bool) -> Div {
         None if choice.confidence >= choice.threshold => "is applied".into(),
         None => "is not applied".into(),
     };
-    div()
-        .flex()
-        .when(compact, |chart| chart.flex_col())
-        .gap(sp(5.))
-        .p(sp(4.))
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::BOX)
-        .well(t)
-        .child(
-            div()
-                .w(rems(11.25))
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .justify_end()
-                .gap(sp(1.5))
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .child("Confidence"),
-                )
-                .child(mono(
-                    format!("{:.2}", choice.confidence),
-                    Type::DISPLAY,
-                    t.text,
-                ))
-                .child(div().typeset(Type::CAPTION).text_color(t.muted).child(
-                    format!(
-                        "threshold {:.2}, so the choice {verdict}",
-                        choice.threshold
-                    ),
-                )),
-        )
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap(sp(2.))
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .child("Probability of each effort level"),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_end()
-                        .h(rems((max_bar + 24.) / 16.))
-                        .border_b_1()
-                        .border_color(t.border_strong)
-                        .children(bars),
-                )
-                .child(div().flex().children(labels)),
-        )
+    let confidence = Node::stack([
+        Node::Rows {
+            rows: vec![
+                KeyValue {
+                    key: "Confidence".into(),
+                    value: format!("{:.2}", choice.confidence),
+                },
+                KeyValue {
+                    key: "Threshold".into(),
+                    value: format!("{:.2}", choice.threshold),
+                },
+            ],
+        },
+        Node::text(format!("So the choice {verdict}.")),
+    ]);
+    let levels = Node::stack([
+        Node::text("Probability of each effort level"),
+        levels(choice, !compact),
+    ]);
+    Node::Card {
+        children: vec![confidence, Node::Rule, levels],
+    }
 }
 
-/// The chart in a note: a bar per level, the chosen one lit, and what
-/// it came to.
-fn distribution(
-    levels: &[(String, f32)],
-    chosen: usize,
-    note: &str,
-    t: &Theme,
-    height: f32,
-) -> Div {
-    let columns = levels.iter().enumerate().map(|(index, (name, p))| {
-        let pick = index == chosen;
-        let ink = if pick { t.text } else { t.muted };
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_end()
-            .gap(sp(0.75))
-            .w(rems(3.625))
-            .child(mono(format!("{p:.2}"), Type::MICRO, ink))
-            .child(
-                div()
-                    .w(rems(1.375))
-                    .h(rems(((p * height).max(3.)) / 16.))
-                    .rounded_t(radius::BAR)
-                    .bg(if pick { t.blue } else { t.bar_idle }),
-            )
-            .child(
-                mono(name.clone(), Type::MICRO, ink)
-                    .w_full()
-                    .pt(sp(0.75))
-                    .border_t_1()
-                    .border_color(t.border_strong)
-                    .flex()
-                    .justify_center(),
-            )
-    });
-    div()
-        .flex()
-        .flex_wrap()
-        .items_end()
-        .gap(sp(5.))
-        .child(
-            div()
-                .flex()
-                .items_end()
-                .gap(sp(1.))
-                .h(rems((height + 36.) / 16.))
-                .children(columns),
-        )
-        .child(
-            div()
-                .max_w(rems(17.5))
-                .typeset(Type::CAPTION)
-                .text_color(t.muted)
-                .line_height(relative(1.5))
-                .child(note.to_owned()),
-        )
+/// A row per level: its name, its probability as a bar and a number,
+/// what it suits when `suits`, and a badge on the one Jev found most
+/// likely.
+fn levels(choice: &Choice, suits: bool) -> Node {
+    let chosen = choice.chosen();
+    let mut head = vec!["Effort".to_owned(), "Probability".to_owned()];
+    if suits {
+        head.push("Suits".into());
+    }
+    head.push(String::new());
+    let rows = choice
+        .levels
+        .iter()
+        .enumerate()
+        .map(|(index, level)| {
+            let mut row = vec![
+                Node::Mono {
+                    text: level.effort.clone(),
+                },
+                Node::Progress {
+                    share: level.p,
+                    label: Some(format!("{:.2}", level.p)),
+                },
+            ];
+            if suits {
+                row.push(Node::text(level.suits.clone()));
+            }
+            row.push(if index == chosen {
+                Node::Badge {
+                    text: "most likely".into(),
+                    tone: tree::Tone::Info,
+                }
+            } else {
+                Node::text("")
+            });
+            row
+        })
+        .collect();
+    Node::Table { head, rows }
 }
 
-/// The settings on the Models screen: deciding again between steps, and
-/// the confidence it takes to change the effort.
+/// The settings pane's actions: switch deciding again, and set the
+/// threshold its arguments name.
+const REDECIDE: &str = "redecide";
+const THRESHOLD: &str = "threshold";
+
 /// Its settings pane (ADR 0029): whether to decide again between steps,
 /// and how sure Jev must be, saved in the scope the pane shows.
 fn settings_pane(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
-    let t = view.theme().clone();
     let settings = *view.settings;
     let scope = view.scope().map(str::to_owned);
-    let row = || {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(4.))
-            .px(sp(4.))
-            .py(sp(3.5))
-            .border_b_1()
-            .border_color(t.border)
-    };
-    let what = |name: &str, caption: &str| {
-        div()
-            .flex_1()
-            .min_w(rems(0.))
-            .flex()
-            .flex_col()
-            .gap(sp(0.75))
-            .child(name.to_owned())
-            .child(ui::text(caption.to_owned(), Type::CAPTION, t.muted))
-    };
-    let thresholds: Vec<_> = THRESHOLDS
-        .into_iter()
-        .map(|threshold| {
+    let mut card = Vec::new();
+    if !view.jev {
+        card.push(Node::Status {
+            text: "tau-reasoning needs a TypeSafe key (Accounts): until \
+                   then, auto is the model's own default."
+                .into(),
+            detail: None,
+            tone: tree::Tone::Warn,
+        });
+    }
+    card.push(Node::Switch {
+        label: "Decide again between steps".into(),
+        detail: Some(
+            "Jev looks again when a step's effort runs out, not only as \
+             each message comes in. Each change resends the whole context \
+             uncached, so it pays only on long tool chains."
+                .into(),
+        ),
+        on: settings.redecide,
+        action: REDECIDE.into(),
+        args: Value::Null,
+    });
+    card.push(Node::stack([
+        Node::text("Confidence to change the effort"),
+        Node::text(
+            "Below it, a message runs at the effort the last one ran at.",
+        ),
+        Node::row(THRESHOLDS.into_iter().map(|threshold| {
             let on = (settings.threshold - threshold).abs() < 1e-9;
-            let handle = view.handle.clone();
-            let scope = scope.clone();
-            div()
-                .id(SharedString::from(format!("threshold-{threshold}")))
-                .h(rems(1.75))
-                .px(sp(2.5))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(radius::CONTROL)
-                .typeset(Type::CAPTION)
-                .cursor_pointer()
-                .text_color(if on { t.text } else { t.muted })
-                .when(on, |segment| segment.key(&t))
-                .child(format!("{threshold:.1}"))
-                .on_click(move |_, _, cx| {
-                    handle.save_settings_in(
-                        scope.as_deref(),
-                        &Settings {
-                            threshold,
-                            ..settings
-                        },
-                        cx,
-                    )
-                })
-        })
-        .collect();
+            Node::Button {
+                label: format!("{threshold:.1}"),
+                action: THRESHOLD.into(),
+                args: json!({ "threshold": threshold }),
+                kind: if on {
+                    tree::Kind::Primary
+                } else {
+                    tree::Kind::Secondary
+                },
+                icon: None,
+            }
+        })),
+    ]));
     let handle = view.handle.clone();
-    div()
-        .flex()
-        .flex_col()
-        .child(
-            ui::card(&t)
-                .when(!view.jev, |card| {
-                    card.child(row().child(ui::text(
-                        "tau-reasoning needs a TypeSafe key (Accounts): until then, auto is the \
-                         model's own default.",
-                        Type::CAPTION,
-                        t.accent,
-                    )))
-                })
-                .child(
-                    row()
-                        .child(what(
-                            "Decide again between steps",
-                            "Jev looks again when a step's effort runs out, not only as each \
-                             message comes in. Each change resends the whole context uncached, \
-                             so it pays only on long tool chains.",
-                        ))
-                        .child(
-                            div()
-                                .id("reasoning-redecide")
-                                .child(ui::switch(settings.redecide, &t))
-                                .on_click(move |_, _, cx| {
-                                    handle.save_settings_in(
-                                        scope.as_deref(),
-                                        &Settings {
-                                            redecide: !settings.redecide,
-                                            ..settings
-                                        },
-                                        cx,
-                                    )
-                                }),
-                        ),
-                )
-                .child(
-                    row()
-                        .child(what(
-                            "Confidence to change the effort",
-                            "Below it, a message runs at the effort the last one ran at.",
-                        ))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(sp(0.5))
-                                .p(sp(0.5))
-                                .rounded(radius::BOX)
-                                .well(&t)
-                                .children(thresholds),
-                        ),
-                ),
-        )
-        .into_any_element()
+    view.tree(
+        "reasoning-settings",
+        &Node::Card { children: card },
+        move |action, args, cx| {
+            let settings = match action {
+                REDECIDE => Settings {
+                    redecide: !settings.redecide,
+                    ..settings
+                },
+                THRESHOLD => {
+                    let Some(threshold) =
+                        args.get("threshold").and_then(Value::as_f64)
+                    else {
+                        return;
+                    };
+                    Settings {
+                        threshold,
+                        ..settings
+                    }
+                }
+                _ => return,
+            };
+            handle.save_settings_in(scope.as_deref(), &settings, cx);
+        },
+    )
 }
