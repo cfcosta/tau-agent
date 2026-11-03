@@ -3,13 +3,11 @@
 //! Plugins screen, and its line in a run's plugin list. Its rewrites
 //! show as the run's, with what they saved.
 
-use gpui::{AnyElement, div, prelude::*, rems};
+use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tau_agent::plugin::Plugin;
-use tau_ui_kit::{
-    components as ui,
-    theme::{Tone, Type, sp},
-};
+use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
     Fold,
     HostCx,
@@ -23,6 +21,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtRun},
+    tree::Node,
 };
 
 use crate::{NAME, Record, TreeCompaction};
@@ -112,47 +111,33 @@ impl UiPlugin for TreeCompactionUi {
 
 /// Its settings pane (ADR 0029): the switch.
 fn settings_pane(view: &mut ViewCx<'_, TreeCompactionUi>) -> AnyElement {
-    let t = view.theme().clone();
     let settings = *view.settings;
     let scope = view.scope().map(str::to_owned);
     let handle = view.handle.clone();
-    ui::card(&t)
-        .child(
-            div()
-                .id("tree-compaction-on")
-                .flex()
-                .items_center()
-                .gap(sp(4.))
-                .px(sp(4.))
-                .py(sp(3.5))
-                .cursor_pointer()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .flex()
-                        .flex_col()
-                        .gap(sp(0.75))
-                        .child("Compact into a tree")
-                        .child(ui::text(
-                            "Near the window, older messages fold into one-line summaries \
-                             the agent can zoom back into, instead of one summary. Each \
-                             long message costs a request when it folds.",
-                            Type::CAPTION,
-                            t.muted,
-                        )),
-                )
-                .child(ui::switch(settings.on, &t))
-                .on_click(move |_, _, cx| {
-                    handle.save_settings_in(
-                        scope.as_deref(),
-                        &Settings { on: !settings.on },
-                        cx,
-                    )
-                }),
-        )
-        .into_any_element()
+    let pane = Node::Card {
+        children: vec![Node::Switch {
+            label: "Compact into a tree".into(),
+            detail: Some(
+                "Near the window, older messages fold into one-line \
+                 summaries the agent can zoom back into, instead of one \
+                 summary. Each long message costs a request when it folds."
+                    .into(),
+            ),
+            on: settings.on,
+            action: ON.into(),
+            args: Value::Null,
+        }],
+    };
+    view.tree("tree-compaction-settings", &pane, move |action, _, cx| {
+        if action == ON {
+            let on = !settings.on;
+            handle.save_settings_in(scope.as_deref(), &Settings { on }, cx);
+        }
+    })
 }
+
+/// The pane's one action: switch the tree on or off.
+const ON: &str = "on";
 
 /// Tree compaction on the host.
 #[derive(Debug, Clone, Copy, Default)]
