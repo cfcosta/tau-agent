@@ -564,7 +564,11 @@ fn levels(choice: &Choice, suits: bool) -> Node {
             row
         })
         .collect();
-    Node::Table { head, rows }
+    Node::Table {
+        head,
+        rows,
+        widths: Vec::new(),
+    }
 }
 
 /// The settings pane's actions: switch deciding again, and set the

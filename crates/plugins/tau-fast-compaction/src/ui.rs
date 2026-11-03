@@ -527,18 +527,18 @@ fn ledger(run: Option<&RunInfo>, state: Option<&State>, compact: bool) -> Node {
     };
     let trigger = state.on.unwrap_or(false).then(trigger);
     Node::stack([
-        Node::Heading {
+        Node::Title {
             text: format!(
                 "Pruned {} tokens of {}'s tool history",
                 tokens(pass.before.saturating_sub(pass.after)),
                 run.title
             ),
+            subtitle: Some(format!(
+                "{}. Decisions only escalate: keep, then drop the result, \
+                 then drop the call. Forks inherit this ledger.",
+                pass.detail
+            )),
         },
-        Node::text(format!(
-            "{}. Decisions only escalate: keep, then drop the result, then \
-             drop the call. Forks inherit this ledger.",
-            pass.detail
-        )),
         Node::Card {
             children: vec![
                 meters(run, pass, trigger),
@@ -657,8 +657,15 @@ fn table(state: &State, compact: bool) -> Node {
             }
         })
         .collect();
+    // The input is what a row is about: it takes the room.
+    let widths = if compact {
+        vec![1., 2.5, 1.]
+    } else {
+        vec![0.5, 1.2, 3.5, 0.6, 0.9, 0.9, 1.1]
+    };
     Node::Table {
         head: head.into_iter().map(str::to_owned).collect(),
         rows,
+        widths,
     }
 }

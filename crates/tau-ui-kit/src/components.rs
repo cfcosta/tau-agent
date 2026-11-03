@@ -910,6 +910,18 @@ pub fn table(
     rows: Vec<Vec<AnyElement>>,
     t: &Theme,
 ) -> Div {
+    weighted_table(align, &[], head, rows, t)
+}
+
+/// [`table`], each column taking its share of the width by `weights`;
+/// a column without one takes a share of 1.
+pub fn weighted_table(
+    align: &[crate::markdown::Align],
+    weights: &[f32],
+    head: Vec<AnyElement>,
+    rows: Vec<Vec<AnyElement>>,
+    t: &Theme,
+) -> Div {
     use crate::markdown::Align;
     let row = |cells: Vec<AnyElement>, header: bool| {
         div()
@@ -920,7 +932,14 @@ pub fn table(
                 row.bg(t.card).text_color(t.muted).typeset(Type::CAPTION)
             })
             .children(cells.into_iter().enumerate().map(|(n, content)| {
-                let cell = div().flex_1().min_w(rems(0.)).px(sp(3.)).py(sp(2.));
+                let weight = weights.get(n).copied().unwrap_or(1.).max(0.1);
+                let cell = div()
+                    .flex_grow(weight)
+                    .flex_shrink(1.)
+                    .flex_basis(rems(0.))
+                    .min_w(rems(0.))
+                    .px(sp(3.))
+                    .py(sp(2.));
                 let cell = match align.get(n) {
                     Some(Align::Right) => cell.text_right(),
                     Some(Align::Center) => cell.text_center(),

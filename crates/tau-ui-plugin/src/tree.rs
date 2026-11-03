@@ -38,7 +38,6 @@ use tau_ui_kit::{
         mono,
         pill,
         rule,
-        table,
         text_link,
     },
     prose::{markdown, rich},
@@ -159,11 +158,21 @@ pub enum Node {
         rows: Vec<KeyValue>,
     },
     /// A header row over rows of pieces.
+    /// `widths` are the columns' shares of the width; 1 each when not
+    /// given.
     Table {
         #[serde(default)]
         head: Vec<String>,
         #[serde(default, deserialize_with = "table_rows")]
         rows: Vec<Vec<Node>>,
+        #[serde(default)]
+        widths: Vec<f32>,
+    },
+    /// A page's title, with what it is about under it.
+    Title {
+        text: String,
+        #[serde(default)]
+        subtitle: Option<String>,
     },
     List {
         #[serde(default, deserialize_with = "nodes")]
@@ -851,21 +860,42 @@ impl<'a> Draw<'a> {
                         )
                 }))
                 .into_any_element(),
-            Node::Table { head, rows } => table(
-                &[],
-                head.iter()
-                    .map(|cell| cell.clone().into_any_element())
-                    .collect(),
-                rows.iter()
-                    .take(MAX_CHILDREN)
-                    .enumerate()
-                    .map(|(n, row)| {
-                        self.children(row, depth, &format!("{path}.{n}"), cx)
-                    })
-                    .collect(),
-                t,
-            )
-            .into_any_element(),
+            Node::Title { text, subtitle } => match subtitle {
+                Some(subtitle) => tau_ui_kit::components::screen_title(
+                    text.clone(),
+                    subtitle.clone(),
+                    t,
+                )
+                .into_any_element(),
+                None => {
+                    tau_ui_kit::components::title(text.clone(), Type::TITLE)
+                        .text_color(t.text)
+                        .into_any_element()
+                }
+            },
+            Node::Table { head, rows, widths } => {
+                tau_ui_kit::components::weighted_table(
+                    &[],
+                    widths,
+                    head.iter()
+                        .map(|cell| cell.clone().into_any_element())
+                        .collect(),
+                    rows.iter()
+                        .take(MAX_CHILDREN)
+                        .enumerate()
+                        .map(|(n, row)| {
+                            self.children(
+                                row,
+                                depth,
+                                &format!("{path}.{n}"),
+                                cx,
+                            )
+                        })
+                        .collect(),
+                    t,
+                )
+                .into_any_element()
+            }
             Node::List { items } => div()
                 .flex()
                 .flex_col()
@@ -1302,14 +1332,15 @@ mod tests {
             { "piece": "button", "label": "Reset", "action": "reset", "args": { "n": 1 }, "kind": "danger", "icon": null },
             { "piece": "row", "children": [{ "piece": "badge", "text": "x", "tone": "warn" }] },
             { "piece": "list", "items": [{ "piece": "mono", "text": "m" }] },
-            { "piece": "table", "head": ["a"], "rows": [[{ "piece": "text", "text": "1" }]] },
+            { "piece": "table", "head": ["a"], "rows": [[{ "piece": "text", "text": "1" }]], "widths": [2.0] },
+            { "piece": "title", "text": "Ledger", "subtitle": "What was pruned" },
             { "piece": "scroll", "height": 10.0, "children": [{ "piece": "rule" }] },
             { "piece": "link", "label": "Notes", "to": { "plugin": null, "page": "notes", "params": {} } },
             { "piece": "icon", "name": "memory", "tone": "info" },
         ]});
         let node = Node::read(&wire);
         assert!(
-            matches!(&node, Node::Stack { children } if children.len() == 11)
+            matches!(&node, Node::Stack { children } if children.len() == 12)
         );
         assert_eq!(Node::read(&node.value()), node);
         assert_eq!(node.value(), wire);
