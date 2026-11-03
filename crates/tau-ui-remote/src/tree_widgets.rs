@@ -67,13 +67,11 @@ fn ticker(
     let kept = widgets.borrow().tickers.get(&id).cloned();
     match kept {
         Some(ticker) => {
-            ticker.update(cx, |ticker, cx| {
-                ticker.set(spec.since, spec.until, cx)
-            });
+            ticker.update(cx, |ticker, cx| ticker.set(spec.count, cx));
             ticker
         }
         None => {
-            let ticker = cx.new(|_| Ticker::new(spec.since, spec.until));
+            let ticker = cx.new(|_| Ticker::new(spec.count));
             widgets.borrow_mut().tickers.insert(id, ticker.clone());
             ticker
         }
@@ -223,8 +221,10 @@ mod tests {
         let widgets = Rc::new(RefCell::new(TreeWidgets::default()));
         let spec = |until| TickerSpec {
             key: "load.ticker".into(),
-            since: 1_000,
-            until,
+            count: tau_ui_kit::ticker::Count::Since {
+                since: 1_000,
+                until,
+            },
         };
         let first = cx.update(|cx| ticker(&widgets, "p", spec(None), cx));
         let again =

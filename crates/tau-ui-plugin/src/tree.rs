@@ -268,6 +268,14 @@ pub enum Node {
         #[serde(default)]
         until: Option<i64>,
     },
+    /// The time left until `at`, in milliseconds since 1970: `in 5m`,
+    /// then `now`. The state says when, the interface counts down.
+    Due {
+        id: String,
+        at: i64,
+    },
+    /// Room that pushes what follows in a row to its end.
+    Spacer,
     /// A small map: nodes at fractions of a box `height` rems tall,
     /// joined by `edges` of node ids.
     Graph {
@@ -290,6 +298,7 @@ pub enum Node {
         text: String,
     },
     /// A button that asks the plugin to carry out `action` with `args`.
+    /// With no label and an icon, a small square around the icon.
     Button {
         label: String,
         action: String,
@@ -297,6 +306,8 @@ pub enum Node {
         args: Value,
         #[serde(default)]
         kind: Kind,
+        #[serde(default)]
+        icon: Option<String>,
     },
     /// Text that opens a page.
     Link {
@@ -387,8 +398,7 @@ pub struct TerminalSpec {
 /// once it stops, to, in milliseconds since 1970.
 pub struct TickerSpec {
     pub key: String,
-    pub since: i64,
-    pub until: Option<i64>,
+    pub count: tau_ui_kit::ticker::Count,
 }
 
 /// A piece the interface draws with a view it keeps from one draw to
@@ -928,6 +938,9 @@ impl<'a> Draw<'a> {
             Node::Card { children } => tau_ui_kit::components::card(t)
                 .flex()
                 .flex_col()
+                .gap(sp(2.))
+                .px(sp(3.5))
+                .py(sp(3.))
                 .children(self.children(children, depth, path, cx))
                 .into_any_element(),
             Node::Switch {
@@ -941,8 +954,6 @@ impl<'a> Draw<'a> {
                 .flex()
                 .items_center()
                 .gap(sp(4.))
-                .px(sp(4.))
-                .py(sp(3.5))
                 .child(
                     div()
                         .flex_1()
@@ -1136,8 +1147,10 @@ impl<'a> Draw<'a> {
                 Some(widgets) => widgets(
                     WidgetSpec::Ticker(TickerSpec {
                         key: self.key(format!("{id}.ticker")),
-                        since: *since,
-                        until: *until,
+                        count: tau_ui_kit::ticker::Count::Since {
+                            since: *since,
+                            until: *until,
+                        },
                     }),
                     cx,
                 ),
@@ -1151,6 +1164,20 @@ impl<'a> Draw<'a> {
                 )
                 .into_any_element(),
             },
+            Node::Due { id, at } => match self.widgets {
+                Some(widgets) => widgets(
+                    WidgetSpec::Ticker(TickerSpec {
+                        key: self.key(format!("{id}.due")),
+                        count: tau_ui_kit::ticker::Count::Due { at: *at },
+                    }),
+                    cx,
+                ),
+                None => invalid(
+                    "a countdown, drawn where the interface keeps one",
+                    t,
+                ),
+            },
+            Node::Spacer => div().flex_1().into_any_element(),
             Node::Graph {
                 height,
                 nodes,
@@ -1159,9 +1186,39 @@ impl<'a> Draw<'a> {
             Node::Empty { text } => empty(text.clone(), t).into_any_element(),
             Node::Button {
                 label,
+                icon: Some(glyph),
+                action,
+                args,
+                ..
+            } if label.is_empty() => {
+                let Some(glyph) = Icon::named(glyph) else {
+                    return invalid(&format!("no icon `{glyph}`"), t);
+                };
+                div()
+                    .id(SharedString::from(format!("{path}:button")))
+                    .size(rems(1.25))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(radius::SMALL)
+                    .hover(|style| style.bg(t.raised))
+                    .child(icon(glyph, IconSize::SMALL, t.dim))
+                    .when_some(
+                        self.click(Act::Plugin {
+                            action: action.clone(),
+                            args: args.clone(),
+                        }),
+                        |square, click| square.cursor_pointer().on_click(click),
+                    )
+                    .into_any_element()
+            }
+            Node::Button {
+                label,
                 action,
                 args,
                 kind,
+                ..
             } => match self.click(Act::Plugin {
                 action: action.clone(),
                 args: args.clone(),
@@ -1242,7 +1299,7 @@ mod tests {
             { "piece": "rows", "rows": [{ "key": "a", "value": "1" }] },
             { "piece": "progress", "share": 0.5, "label": "half" },
             { "piece": "code", "lang": "rust", "text": "fn f() {}" },
-            { "piece": "button", "label": "Reset", "action": "reset", "args": { "n": 1 }, "kind": "danger" },
+            { "piece": "button", "label": "Reset", "action": "reset", "args": { "n": 1 }, "kind": "danger", "icon": null },
             { "piece": "row", "children": [{ "piece": "badge", "text": "x", "tone": "warn" }] },
             { "piece": "list", "items": [{ "piece": "mono", "text": "m" }] },
             { "piece": "table", "head": ["a"], "rows": [[{ "piece": "text", "text": "1" }]] },
@@ -1279,6 +1336,7 @@ mod tests {
                 action: "go".into(),
                 args: json!({}),
                 kind: Kind::Secondary,
+                icon: None,
             }
         );
     }

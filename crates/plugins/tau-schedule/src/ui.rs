@@ -1,30 +1,16 @@
 //! tau-schedule's interface half: what a chat has waiting, in its
 //! inspector, with a way to cancel each, and the message it wakes on,
-//! drawn as a card.
+//! drawn as a card. Both are view trees (ADR 0045): the time left is a
+//! countdown the interface keeps, from when each comes due.
 
-use gpui::{
-    AnyElement,
-    Div,
-    InteractiveElement,
-    IntoElement,
-    ParentElement,
-    SharedString,
-    StatefulInteractiveElement,
-    Styled,
-    div,
-    prelude::FluentBuilder,
-    rems,
-};
-use tau_ui_kit::{
-    assets::Icon,
-    components::{icon, mono},
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-};
+use gpui::AnyElement;
+use serde_json::Value;
 use tau_ui_plugin::{
     Manifest,
     UiPlugin,
     ViewCx,
     points::{self, AtMessage, AtRun},
+    tree::{Node, Tone},
 };
 
 use crate::{Act, NAME, Overview, Wake, Woken};
@@ -51,175 +37,98 @@ impl UiPlugin for ScheduleUi {
     }
 }
 
-/// Now, in seconds since the epoch.
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs() as i64)
-}
+/// The button's action: cancel the wake its arguments name.
+const CANCEL: &str = "cancel";
 
-/// `at` said from `now`: `in 6m`, `in 2h`, `now`; the interface needs no
-/// time zone for it.
-pub fn relative(at: i64, now: i64) -> String {
-    let gap = at - now;
-    match gap {
-        ..60 => "now".to_owned(),
-        60..3600 => format!("in {}m", gap / 60),
-        3600..86_400 => format!("in {}h", gap / 3600),
-        _ => format!("in {}d", gap / 86_400),
+/// An icon of tau's, by name.
+fn icon(name: &str, tone: Tone) -> Node {
+    Node::Icon {
+        name: name.into(),
+        tone,
     }
 }
 
-/// The chat's wake-ups, soonest first: name, when, its note, and a way
-/// for the person to cancel each. Nothing when it has none.
+/// What the chat has waiting, soonest first, each with when and a way to
+/// cancel it; nothing when none.
 fn panel(at: &AtRun, view: &mut ViewCx<'_, ScheduleUi>) -> Option<AnyElement> {
     let run = at.run.id.to_string();
     let waiting: Vec<Wake> = view.data.of_run(&run).cloned().collect();
     if waiting.is_empty() {
         return None;
     }
-    let t = view.theme().clone();
-    let now = now();
-    let rows: Vec<Div> = waiting
-        .iter()
-        .map(|wake| row(wake, now, view, &t))
-        .collect();
-    Some(
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(2.))
-            .p(sp(3.))
-            .border_b_1()
-            .border_color(t.border)
-            .child(
-                div()
-                    .typeset(Type::CAPTION)
-                    .font_weight(weight::STRONG)
-                    .text_color(t.text)
-                    .child("Scheduled"),
-            )
-            .children(rows)
-            .into_any_element(),
-    )
-}
-
-/// One wake-up in the inspector.
-fn row(
-    wake: &Wake,
-    now: i64,
-    view: &mut ViewCx<'_, ScheduleUi>,
-    t: &Theme,
-) -> Div {
+    let tree = Node::stack(
+        std::iter::once(Node::Heading {
+            text: "Scheduled".into(),
+        })
+        .chain(waiting.iter().map(row)),
+    );
     let handle = view.handle.clone();
-    let (run, name) = (wake.run.clone(), wake.name.clone());
-    let cancel = div()
-        .id(SharedString::from(format!(
-            "scheduled-{}-{}-cancel",
-            wake.run, wake.name
-        )))
-        .size(rems(1.25))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(radius::SMALL)
-        .cursor_pointer()
-        .hover(|style| style.bg(t.raised))
-        .child(icon(Icon::Close, IconSize::SMALL, t.dim))
-        .on_click(move |_, _, cx| {
-            handle.act(
-                Act::Cancel {
-                    run: run.clone(),
-                    name: name.clone(),
-                },
-                cx,
-            )
-        });
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(0.5))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .child(icon(Icon::Clock, IconSize::SMALL, t.text_soft))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .truncate()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.text_soft)
-                        .child(wake.name.clone()),
-                )
-                .child(
-                    div()
-                        .typeset(Type::MICRO)
-                        .text_color(t.dim)
-                        .child(relative(wake.at, now)),
-                )
-                .child(cancel),
-        )
-        .child(
-            div()
-                .typeset(Type::MICRO)
-                .text_color(t.dim)
-                .line_clamp(2)
-                .child(wake.note.clone()),
-        )
+    Some(view.tree(
+        &format!("scheduled-{run}"),
+        &tree,
+        move |action, args, cx| {
+            if action != CANCEL {
+                return;
+            }
+            if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
+                handle.act(act, cx);
+            }
+        },
+    ))
 }
 
-/// The message a chat woke on, as the card it is: each wake-up's name
-/// and when, then its note.
+/// One wake: its name, when it comes due, the button that cancels it,
+/// and its note.
+fn row(wake: &Wake) -> Node {
+    let cancel = Act::Cancel {
+        run: wake.run.clone(),
+        name: wake.name.clone(),
+    };
+    Node::stack([
+        Node::row([
+            icon("clock", Tone::Neutral),
+            Node::text(wake.name.clone()),
+            Node::Spacer,
+            Node::Due {
+                id: format!("{}-{}", wake.run, wake.name),
+                at: wake.at.saturating_mul(1000),
+            },
+            Node::Button {
+                label: String::new(),
+                icon: Some("close".into()),
+                action: CANCEL.into(),
+                args: serde_json::to_value(cancel).unwrap_or(Value::Null),
+                kind: Default::default(),
+            },
+        ]),
+        Node::text(wake.note.clone()),
+    ])
+}
+
+/// The message a chat woke on, as a card: each wake-up that came due,
+/// its name, when, and its note.
 fn card(
     at: &AtMessage,
     view: &mut ViewCx<'_, ScheduleUi>,
 ) -> Option<AnyElement> {
     let woken = Woken::parse(&at.text)?;
-    let t = view.theme().clone();
-    let blocks = woken.into_iter().enumerate().map(|(index, woken)| {
-        div()
-            .id(SharedString::from(format!("woken-{}-{index}", at.index)))
-            .flex()
-            .flex_col()
-            .gap(sp(1.))
-            .px(sp(3.))
-            .py(sp(2.))
-            .when(index > 0, |block| block.border_t_1().border_color(t.border))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .child(icon(Icon::Clock, IconSize::SMALL, t.roles.agent))
-                    .child(
-                        div()
-                            .flex_1()
-                            .typeset(Type::CAPTION)
-                            .text_color(t.text)
-                            .child(format!("Scheduled · {}", woken.name)),
-                    )
-                    .child(mono(woken.due, Type::MICRO, t.dim)),
-            )
-            .child(
-                div()
-                    .typeset(Type::SMALL)
-                    .text_color(t.text_soft)
-                    .child(woken.note),
-            )
-    });
-    Some(
-        div()
-            .max_w(rems(40.))
-            .rounded(radius::BOX)
-            .border_1()
-            .border_color(t.border)
-            .bg(t.card)
-            .overflow_hidden()
-            .children(blocks)
-            .into_any_element(),
-    )
+    let mut blocks = Vec::new();
+    for (index, woken) in woken.into_iter().enumerate() {
+        if index > 0 {
+            blocks.push(Node::Rule);
+        }
+        blocks.push(Node::stack([
+            Node::row([
+                icon("clock", Tone::Info),
+                Node::text(format!("Scheduled · {}", woken.name)),
+                Node::Spacer,
+                Node::Mono { text: woken.due },
+            ]),
+            Node::text(woken.note),
+        ]));
+    }
+    let tree = Node::Card {
+        children: vec![Node::stack(blocks)],
+    };
+    Some(view.tree(&format!("woken-{}", at.index), &tree, |_, _, _| {}))
 }
