@@ -262,12 +262,20 @@ struct Journal<'a> {
     made_jj: bool,
     /// Every ref the Git store had, with its target.
     refs_before: HashMap<String, String>,
+    /// The reflog of each branch and tag the Git store had, by full ref
+    /// name, for those that had one: what an export that moves the ref
+    /// appends to.
+    logs_before: HashMap<String, Vec<u8>>,
     /// The folders in the Git store, its objects' aside.
     git_dirs_before: BTreeSet<PathBuf>,
     /// The branches and tags tau's exports made, as full ref names with
     /// their targets: the bookmarks an import made for remote branches
     /// the person's `auto-track-bookmarks` matches.
     exported: Vec<(String, String)>,
+    /// The branches and tags Git had that tau's exports moved, as full
+    /// ref names with their new targets: a branch an import moved on to
+    /// the remote branch the person's `auto-track-bookmarks` tracks.
+    moved: Vec<(String, String)>,
     /// In a jj repository of the person's: its operation heads, its
     /// workspace store's index, and whether it had tau's folder.
     op_heads_before: BTreeSet<String>,
@@ -306,15 +314,18 @@ impl<'a> Journal<'a> {
         if main_dir_was == Was::Kept {
             return Err(VcsError::InTheWay(layout.main_dir.clone()));
         }
+        let refs_before = refs(&git_dir)?;
         let mut journal = Self {
             layout,
             identity,
-            refs_before: refs(&git_dir)?,
+            logs_before: logs(&git_dir, &refs_before),
+            refs_before,
             git_dirs_before: git_dirs(&git_dir),
             git_dir,
             had_jj,
             made_jj: false,
             exported: Vec::new(),
+            moved: Vec::new(),
             op_heads_before: BTreeSet::new(),
             workspace_store_before: None,
             made_tau_dir: false,
@@ -634,7 +645,8 @@ impl<'a> Journal<'a> {
     }
 
     /// Notes the branches and tags `tx`'s export will make in Git: the
-    /// bookmarks and tags it made that Git did not have before the setup.
+    /// bookmarks and tags it made that Git did not have before the setup,
+    /// and those Git had that it moves.
     fn note_exports(&mut self, tx: &Transaction) {
         let base = tx.base_repo().view();
         let view = tx.repo().view();
@@ -655,6 +667,24 @@ impl<'a> Journal<'a> {
             .filter(|(name, _)| !self.refs_before.contains_key(name))
             .collect();
         self.exported.extend(made);
+        let moved: Vec<(String, String)> = view
+            .local_bookmarks()
+            .map(|(name, target)| {
+                (format!("refs/heads/{}", name.as_str()), target)
+            })
+            .chain(view.local_tags().map(|(name, target)| {
+                (format!("refs/tags/{}", name.as_str()), target)
+            }))
+            .filter_map(|(full, target)| {
+                let id = target.as_normal()?.hex();
+                let before = self.refs_before.get(&full)?;
+                (*before != id).then_some((full, id))
+            })
+            .collect();
+        for (name, id) in moved {
+            self.moved.retain(|(noted, _)| *noted != name);
+            self.moved.push((name, id));
+        }
     }
 
     /// Makes `.jj/repo/tau`, with the mark of an unfinished setup in it
@@ -752,7 +782,8 @@ impl<'a> Journal<'a> {
 
     /// Deletes the refs the setup made: jj's own under `refs/jj/`, and
     /// the branches and tags its exports made, while they are where the
-    /// export put them.
+    /// export put them. Puts back those its exports moved, while they
+    /// are where the export put them, with their reflogs as they were.
     fn undo_refs(&self) -> Result<(), VcsError> {
         let now = refs(&self.git_dir)?;
         let made = now.iter().filter(|(name, target)| {
@@ -763,7 +794,29 @@ impl<'a> Journal<'a> {
                     }))
         });
         let names: Vec<&String> = made.map(|(name, _)| name).collect();
-        delete_refs(&self.git_dir, &names)
+        delete_refs(&self.git_dir, &names)?;
+        let back: Vec<(&String, &String)> = self
+            .moved
+            .iter()
+            .filter(|(name, id)| now.get(name) == Some(id))
+            .filter_map(|(name, _)| Some((name, self.refs_before.get(name)?)))
+            .collect();
+        set_refs(&self.git_dir, &back)?;
+        for (name, _) in back {
+            let log = self.git_dir.join("logs").join(name);
+            match self.logs_before.get(name) {
+                Some(bytes) => {
+                    std::fs::write(&log, bytes).map_err(|source| {
+                        VcsError::Create {
+                            path: log.clone(),
+                            source,
+                        }
+                    })?
+                }
+                None => remove_file(&log)?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -889,6 +942,72 @@ fn refs(git_dir: &Path) -> Result<HashMap<String, String>, VcsError> {
         found.insert(reference.name().as_bstr().to_string(), target);
     }
     Ok(found)
+}
+
+/// The reflogs of the branches and tags in `refs`, by full ref name, for
+/// those that have one.
+fn logs(
+    git_dir: &Path,
+    refs: &HashMap<String, String>,
+) -> HashMap<String, Vec<u8>> {
+    refs.keys()
+        .filter(|name| {
+            name.starts_with("refs/heads/") || name.starts_with("refs/tags/")
+        })
+        .filter_map(|name| {
+            let bytes = std::fs::read(git_dir.join("logs").join(name)).ok()?;
+            Some((name.clone(), bytes))
+        })
+        .collect()
+}
+
+/// Points each ref of `refs` at its target, an object id in hex, in the
+/// Git store at `git_dir`.
+fn set_refs(
+    git_dir: &Path,
+    refs: &[(&String, &String)],
+) -> Result<(), VcsError> {
+    if refs.is_empty() {
+        return Ok(());
+    }
+    use gix::refs::{
+        Target,
+        transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
+    };
+    let repo =
+        crate::clone::open(git_dir).map_err(|source| VcsError::NoGitStore {
+            root: git_dir.to_owned(),
+            source,
+        })?;
+    let edits = refs
+        .iter()
+        .map(|(name, target)| -> Result<RefEdit, VcsError> {
+            let id = gix::ObjectId::from_hex(target.as_bytes()).map_err(
+                |error| {
+                    VcsError::GitConfig(format!(
+                        "Bad target {target} of {name}: {error}"
+                    ))
+                },
+            )?;
+            Ok(RefEdit {
+                change: Change::Update {
+                    log: LogChange {
+                        mode: RefLog::AndReference,
+                        force_create_reflog: false,
+                        message: "tau: setup undone".into(),
+                    },
+                    expected: PreviousValue::Any,
+                    new: Target::Object(id),
+                },
+                name: name.as_str().try_into().map_err(|error| {
+                    VcsError::GitConfig(format!("Bad ref name {name}: {error}"))
+                })?,
+                deref: false,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    repo.edit_references(edits)?;
+    Ok(())
 }
 
 /// Deletes the refs `names` from the Git store at `git_dir`.
