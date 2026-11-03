@@ -16,7 +16,7 @@ use tau_constitution::ui::{
     Rules,
     State,
     Stats,
-    page::{self, HandledKind, Mark, Preset, Trying, Ui},
+    page::{self, Do, Draft, HandledKind, Mark, Preset, Snapshot, Trying, Ui},
     stats::{FlaggedAnswer, RulesStats},
 };
 use tau_constitution_host::{NAME, Record};
@@ -31,6 +31,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     testing::{FakeRun, fold},
+    tree,
 };
 
 fn card(call_id: &str, tool: &str, summary: &str) -> CardInfo {
@@ -310,68 +311,144 @@ fn holds_stay_in_bounds(tc: hegel::TestCase) {
     assert_eq!(i64::from(next), wanted.clamp(0, i64::from(page::MAX_HOLDS)));
 }
 
-/// What the UI asked of the interface, in order.
-type Asked = Rc<RefCell<Vec<Request>>>;
-
-/// The page's state in a window, with what it asks kept.
-fn ui(cx: &mut TestAppContext) -> (Entity<Ui>, Asked) {
-    let asked: Asked = Rc::default();
-    let sink = asked.clone();
-    let handle = Handle::new(
-        NAME,
-        Rc::new(move |_, request, _: &mut App| sink.borrow_mut().push(request)),
-    );
-    let ui = cx.update(|cx| cx.new(|cx| <Ui as PluginUi>::new(handle, cx)));
-    (ui, asked)
+/// The page as one window holds it: its UI state, as the interface
+/// keeps it, and what it asked the host half to do, in order.
+#[derive(Default)]
+struct Page {
+    ui: BTreeMap<String, Value>,
+    acts: Vec<Act>,
+    /// Anything else it asked of the interface.
+    other: Vec<Request>,
 }
 
-/// What the UI asked its host half to do, in order.
-fn acts(asked: &Asked) -> Vec<Act> {
-    asked
-        .borrow()
-        .iter()
-        .filter_map(|request| match request {
-            Request::Act(action) => serde_json::from_value(action.clone()).ok(),
-            _ => None,
-        })
-        .collect()
-}
-
-#[gpui::test]
-fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
-    let (ui, asked) = ui(cx);
-    ui.update(cx, |ui, cx| {
-        ui.open_editor("docbert", None, cx);
-        ui.set_rule_text("Never delete an index.", cx);
-        // Nothing picked: nothing is sent, and the editor says why.
-        ui.save(cx);
-        assert_eq!(
-            ui.problem(cx),
-            Some("Pick at least one place, or Jev has nothing to check.")
-        );
-        assert!(ui.draft().unwrap().tried_to_save);
-        // Places are picked, and any tool's field can be added by name.
-        ui.toggle_place("exec_command.cmd", cx);
-        ui.set_rule_on("not a field", cx);
-        assert!(!ui.add_other_place(cx));
-        ui.set_rule_on("grep.pattern", cx);
-        assert!(ui.add_other_place(cx));
-        // Presets, then a step: review never passes block.
-        ui.set_preset(Preset::Strict, cx);
-        assert_eq!(ui.draft().unwrap().preset(), Some(Preset::Strict));
-        ui.nudge(Mark::Block, 0.05, cx);
-        assert_eq!(ui.draft().unwrap().preset(), None);
-        for _ in 0..20 {
-            ui.nudge(Mark::Review, 0.05, cx);
+impl Page {
+    /// Carries out `request` as the interface would.
+    fn take(&mut self, request: Request) {
+        match request {
+            Request::Ui {
+                key,
+                value: Some(value),
+            } => {
+                self.ui.insert(key, value);
+            }
+            Request::Ui { key, value: None } => {
+                self.ui.remove(&key);
+            }
+            Request::Act(action) => {
+                self.acts.push(serde_json::from_value(action).unwrap());
+            }
+            other => self.other.push(other),
         }
-        let draft = ui.draft().unwrap();
-        assert_eq!((draft.review, draft.block), (0.65, 0.65));
-        ui.nudge(Mark::Review, -0.35, cx);
-        ui.save(cx);
-        assert!(ui.draft().is_none());
-    });
+    }
+
+    fn text(&self, id: &str) -> String {
+        self.ui
+            .get(&tree::draft_key(id))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// The page's UI state as a click reads it.
+    fn now(&self) -> Snapshot {
+        Snapshot {
+            draft: self.draft(),
+            text: self.text(page::RULE_TEXT),
+            on: self.text(page::RULE_ON),
+            dismissed: self
+                .ui
+                .get(page::DISMISSED)
+                .map(|value| serde_json::from_value(value.clone()).unwrap())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// A click that asks `doing`.
+    fn click(&mut self, doing: Do) {
+        for request in page::apply(&self.now(), doing) {
+            self.take(request);
+        }
+    }
+
+    /// Types `text` in the input `id`, as its editor keeps it.
+    fn type_in(&mut self, id: &str, text: &str) {
+        self.ui.insert(tree::draft_key(id), json!(text));
+    }
+
+    fn draft(&self) -> Option<Draft> {
+        self.ui
+            .get(page::EDITOR)
+            .map(|value| serde_json::from_value(value.clone()).unwrap())
+    }
+
+    fn trying(&self) -> Option<Trying> {
+        self.ui
+            .get(page::TRYING)
+            .map(|value| serde_json::from_value(value.clone()).unwrap())
+    }
+}
+
+fn open(repo: &str, rule: Option<RuleInfo>) -> Do {
+    Do::Open {
+        repo: repo.into(),
+        rule,
+    }
+}
+
+fn place(place: &str) -> Do {
+    Do::Place {
+        place: place.into(),
+    }
+}
+
+const SAVE: Do = Do::Save { typed: None };
+
+#[test]
+fn rules_are_written_and_edited_in_the_editor() {
+    let mut page = Page::default();
+    page.click(open("docbert", None));
+    page.type_in(page::RULE_TEXT, "Never delete an index.");
+    // Nothing picked: nothing is sent, and the editor says why.
+    page.click(SAVE);
     assert_eq!(
-        acts(&asked),
+        page.now().problem(),
+        Some("Pick at least one place, or Jev has nothing to check.")
+    );
+    assert!(page.draft().unwrap().tried_to_save);
+    assert!(page.acts.is_empty());
+    // Places are picked, and any tool's field can be added by name.
+    page.click(place("exec_command.cmd"));
+    page.type_in(page::RULE_ON, "not a field");
+    page.click(Do::AddPlace { typed: None });
+    let draft = page.draft().unwrap();
+    assert_eq!(draft.bad_place.as_deref(), Some("not a field"));
+    assert_eq!(draft.places, ["exec_command.cmd"]);
+    assert_eq!(page.text(page::RULE_ON), "not a field", "kept to fix");
+    page.type_in(page::RULE_ON, "grep.pattern");
+    page.click(Do::AddPlace { typed: None });
+    let draft = page.draft().unwrap();
+    assert_eq!(draft.bad_place, None);
+    assert_eq!(draft.places, ["exec_command.cmd", "grep.pattern"]);
+    assert_eq!(page.text(page::RULE_ON), "", "the field empties");
+    // Presets, then a step: review never passes block.
+    page.click(Do::Preset {
+        preset: Preset::Strict,
+    });
+    assert_eq!(page.draft().unwrap().preset(), Some(Preset::Strict));
+    let nudge = |mark, delta| Do::Nudge { mark, delta };
+    page.click(nudge(Mark::Block, 0.05));
+    assert_eq!(page.draft().unwrap().preset(), None);
+    for _ in 0..20 {
+        page.click(nudge(Mark::Review, 0.05));
+    }
+    let draft = page.draft().unwrap();
+    assert_eq!((draft.review, draft.block), (0.65, 0.65));
+    page.click(nudge(Mark::Review, -0.35));
+    page.click(SAVE);
+    assert!(page.draft().is_none());
+    assert_eq!(page.text(page::RULE_TEXT), "", "the editor closes empty");
+    assert_eq!(
+        page.acts,
         [Act::Add {
             repo: "docbert".into(),
             text: "Never delete an index.".into(),
@@ -388,17 +465,21 @@ fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
         review: 0.3,
         block: 0.65,
     };
-    ui.update(cx, |ui, cx| {
-        ui.open_editor("docbert", Some(rule), cx);
-        let draft = ui.draft().unwrap();
-        assert_eq!(draft.editing.as_deref(), Some("D4"));
-        assert_eq!(draft.places, ["exec_command.cmd", "grep.pattern"]);
-        ui.toggle_place("grep.pattern", cx);
-        ui.save(cx);
-        ui.remove("docbert", "D4", cx);
+    page.click(open("docbert", Some(rule)));
+    let draft = page.draft().unwrap();
+    assert_eq!(draft.editing.as_deref(), Some("D4"));
+    assert_eq!(draft.places, ["exec_command.cmd", "grep.pattern"]);
+    assert_eq!(page.text(page::RULE_TEXT), "Never delete an index.");
+    page.click(place("grep.pattern"));
+    page.click(SAVE);
+    page.click(Do::Host {
+        act: Act::Remove {
+            repo: "docbert".into(),
+            id: "D4".into(),
+        },
     });
     assert_eq!(
-        acts(&asked)[1..],
+        page.acts[1..],
         [
             Act::Update {
                 repo: "docbert".into(),
@@ -416,59 +497,127 @@ fn rules_are_written_and_edited_in_the_editor(cx: &mut TestAppContext) {
     );
 }
 
+/// Enter in the rule's field saves it, and empties the field: a rule
+/// that cannot be saved yet is kept, and saved once it can.
+#[test]
+fn enter_saves_what_was_typed() {
+    let mut page = Page::default();
+    page.click(open("docbert", None));
+    page.click(Do::Save {
+        typed: Some("Never delete an index.".into()),
+    });
+    assert!(page.acts.is_empty());
+    let draft = page.draft().unwrap();
+    assert_eq!(draft.kept.as_deref(), Some("Never delete an index."));
+    assert_eq!(page.now().rule_text(), "Never delete an index.");
+    page.click(place("exec_command.cmd"));
+    page.click(SAVE);
+    assert_eq!(
+        page.acts,
+        [Act::Add {
+            repo: "docbert".into(),
+            text: "Never delete an index.".into(),
+            on: vec!["exec_command.cmd".into()],
+            review: 0.3,
+            block: 0.8,
+        }]
+    );
+}
+
+/// The page's state in a window, with what it asks kept.
+fn ui(cx: &mut TestAppContext) -> (Entity<Ui>, Rc<RefCell<Vec<Request>>>) {
+    let asked: Rc<RefCell<Vec<Request>>> = Rc::default();
+    let sink = asked.clone();
+    let handle = Handle::new(
+        NAME,
+        Rc::new(move |_, request, _: &mut App| sink.borrow_mut().push(request)),
+    );
+    let ui = cx.update(|cx| cx.new(|cx| <Ui as PluginUi>::new(handle, cx)));
+    (ui, asked)
+}
+
 #[gpui::test]
 fn a_rule_is_tried_and_says_what_it_would_do(cx: &mut TestAppContext) {
-    let (ui, asked) = ui(cx);
+    let mut page = Page::default();
     let calls =
         vec![("exec_command".to_owned(), json!({ "cmd": "psql prod" }))];
-    ui.update(cx, |ui, cx| {
-        ui.open_editor("tau-agent", None, cx);
-        ui.set_rule_text("Never touch the production database.", cx);
-        ui.toggle_place("exec_command.cmd", cx);
-        ui.try_rule(calls.clone(), Vec::new(), cx);
-        assert_eq!(ui.draft().unwrap().trying, Trying::Asking);
+    page.click(open("tau-agent", None));
+    page.type_in(page::RULE_TEXT, "Never touch the production database.");
+    // Nothing to check yet: nothing is tried.
+    page.click(Do::Try {
+        calls: calls.clone(),
+        answers: Vec::new(),
     });
+    assert!(page.acts.is_empty());
+    assert!(page.draft().unwrap().tried_to_save);
+    page.click(place("exec_command.cmd"));
+    page.click(Do::Try {
+        calls: calls.clone(),
+        answers: Vec::new(),
+    });
+    assert_eq!(page.trying(), Some(Trying::Asking));
     let Some(Act::Try {
+        text,
         calls: sent,
         answers,
         on,
         ..
-    }) = acts(&asked).pop()
+    }) = page.acts.pop()
     else {
         panic!("no trial asked");
     };
     assert_eq!(
-        (sent, answers, on),
-        (calls, Vec::new(), vec!["exec_command.cmd".into()])
+        (text.as_str(), sent, answers, on),
+        (
+            "Never touch the production database.",
+            calls,
+            Vec::new(),
+            vec!["exec_command.cmd".into()]
+        )
     );
     // What the host answers goes back to the editor.
+    let (ui, asked) = ui(cx);
     let reply = json!({ "Ok": [[{ "tool": "exec_command", "shown": "psql prod", "score": 0.9 }], 0.001] });
     ui.update(cx, |ui, cx| ConstitutionUi.reply(ui, reply, cx));
-    ui.read_with(cx, |ui, _| {
-        let Trying::Done { trials, .. } = &ui.draft().unwrap().trying else {
-            panic!("not tried");
-        };
-        assert_eq!(trials.len(), 1);
-    });
+    for request in asked.borrow_mut().drain(..) {
+        page.take(request);
+    }
+    let Some(Trying::Done { trials, .. }) = page.trying() else {
+        panic!("not tried");
+    };
+    assert_eq!(trials.len(), 1);
+    // Changing the rule drops what trying it gave.
+    page.click(place("exec_command.cmd"));
+    assert_eq!(page.trying(), None);
 }
 
 /// Unreadable rules are removed only once confirmed; settings are sent
 /// as set.
-#[gpui::test]
-fn rules_are_reset_only_once_confirmed(cx: &mut TestAppContext) {
-    let (ui, asked) = ui(cx);
-    ui.update(cx, |ui, cx| {
-        ui.ask_reset(Some("tau-agent"), cx);
-        ui.ask_reset(None, cx);
-        ui.ask_reset(Some("tau-agent"), cx);
+#[test]
+fn rules_are_reset_only_once_confirmed() {
+    let mut page = Page::default();
+    let ask = |repo: Option<&str>| Do::AskReset {
+        repo: repo.map(str::to_owned),
+    };
+    page.click(ask(Some("tau-agent")));
+    assert_eq!(page.ui.get(page::RESETTING), Some(&json!("tau-agent")));
+    page.click(ask(None));
+    assert_eq!(page.ui.get(page::RESETTING), None);
+    page.click(ask(Some("tau-agent")));
+    assert!(page.acts.is_empty(), "asking is not removing");
+    page.click(Do::Reset {
+        repo: "tau-agent".into(),
     });
-    assert!(acts(&asked).is_empty(), "asking is not removing");
-    ui.update(cx, |ui, cx| {
-        ui.reset("tau-agent", cx);
-        ui.settings("tau-agent", true, 4, cx);
+    assert_eq!(page.ui.get(page::RESETTING), None);
+    page.click(Do::Host {
+        act: Act::Settings {
+            repo: "tau-agent".into(),
+            blocks_unchecked: true,
+            max_holds: 4,
+        },
     });
     assert_eq!(
-        acts(&asked),
+        page.acts,
         [
             Act::Reset {
                 repo: "tau-agent".into()
@@ -482,13 +631,14 @@ fn rules_are_reset_only_once_confirmed(cx: &mut TestAppContext) {
     );
 }
 
-/// The page over a repository's runs, each with what the checks did.
+/// The page over a repository's runs, each with what the checks did,
+/// and the UI state `ui_state`.
 fn with_view<R>(
     cx: &mut TestAppContext,
     ui: &Entity<Ui>,
     runs: &[(RunInfo, State)],
     data: &Data,
-    repos: &BTreeMap<String, Rules>,
+    ui_state: &BTreeMap<String, Value>,
     f: impl FnOnce(&mut ViewCx<'_, ConstitutionUi>) -> R,
 ) -> R {
     let runs: Vec<(RunInfo, PluginValue)> = runs
@@ -499,7 +649,8 @@ fn with_view<R>(
     let cards = |_: &RunId| Vec::new();
     let params = BTreeMap::new();
     let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
-    let repos = tau_ui_plugin::testing::RepoValues::new(repos);
+    let repos: BTreeMap<String, Rules> = BTreeMap::new();
+    let repos = tau_ui_plugin::testing::RepoValues::new(&repos);
     let repos = repos.refs();
     cx.update(|cx| {
         let mut view = ViewCx::new(
@@ -518,7 +669,8 @@ fn with_view<R>(
             &list,
             &cards,
             cx,
-        );
+        )
+        .with_ui_state(ui_state);
         f(&mut view)
     })
 }
@@ -564,8 +716,8 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
         (info("b", "docbert"), state),
     ];
     let data = Data::default();
-    let repos = BTreeMap::new();
-    let (keys, stats) = with_view(cx, &ui, &runs, &data, &repos, |view| {
+    let mut page = Page::default();
+    let (keys, stats) = with_view(cx, &ui, &runs, &data, &page.ui, |view| {
         let keys: Vec<String> = page::review_items(view, "tau-agent")
             .into_iter()
             .map(|item| item.flag.key)
@@ -578,9 +730,20 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
         (1, 1, 2, 2)
     );
     assert_eq!(stats.per_rule.get("R1"), Some(&(1, 0, 0)));
-    // Looks fine: off the queue, and onto what was handled.
-    ui.update(cx, |ui, cx| ui.reviewed("a", "answer-0", cx));
-    let (keys, fine) = with_view(cx, &ui, &runs, &data, &repos, |view| {
+    // Looks fine: off the queue, and onto what was handled; the host
+    // is told.
+    page.click(Do::Reviewed {
+        run: "a".into(),
+        key: "answer-0".into(),
+    });
+    assert_eq!(
+        page.acts,
+        [Act::Reviewed {
+            run: "a".into(),
+            key: "answer-0".into()
+        }]
+    );
+    let (keys, fine) = with_view(cx, &ui, &runs, &data, &page.ui, |view| {
         let keys: Vec<String> = page::review_items(view, "tau-agent")
             .into_iter()
             .map(|item| item.flag.key)
@@ -598,7 +761,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
     let data = Data {
         reviewed: vec![("a".into(), "c2".into())],
     };
-    let waiting = with_view(cx, &ui, &runs, &data, &repos, |view| {
+    let waiting = with_view(cx, &ui, &runs, &data, &page.ui, |view| {
         page::review_items(view, "tau-agent").len()
     });
     assert_eq!(waiting, 0);

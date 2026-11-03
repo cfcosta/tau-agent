@@ -1603,11 +1603,7 @@ fn rules_at(
     cx: &mut Context<Workspace>,
 ) {
     plugin_page(workspace, tau_constitution_host::NAME, "rules", "repo", cx);
-    let Some(ui) = workspace.plugin_ui::<tau_constitution::ui::page::Ui>(
-        tau_constitution_host::NAME,
-    ) else {
-        return;
-    };
+    let handle = workspace.plugin_handle(tau_constitution_host::NAME);
     let calls = workspace
         .run(&run_id())
         .map(|run| run.cards())
@@ -1616,7 +1612,7 @@ fn rules_at(
         .filter(|card| card.tool == "exec_command")
         .map(|card| (card.tool, card.args))
         .collect();
-    tau_constitution_host::demo::open(name, &ui, "tau-agent", calls, cx);
+    tau_constitution_host::demo::open(name, &handle, "tau-agent", calls, cx);
 }
 
 /// The demo run working on [`GOAL`], with the records tau-goal

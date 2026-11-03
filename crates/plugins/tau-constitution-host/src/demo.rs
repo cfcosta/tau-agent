@@ -2,13 +2,14 @@
 //! The rules go in through the plugin's own [`Act`]s, so the real host
 //! half keeps them.
 
-use gpui::{App, Entity};
-use serde_json::Value;
+use gpui::App;
+use serde_json::{Value, json};
 use tau_constitution::ui::{
     Act,
     Rules,
-    page::{self, Tab},
+    page::{self, Do, Snapshot},
 };
+use tau_ui_plugin::{Handle, Request, tree};
 
 /// What a person did on the demo's rules pages: tau-agent's rules, as
 /// the mockups show them, and docbert's.
@@ -108,29 +109,90 @@ pub fn broken() -> Rules {
 
 const RULE: &str = "Never run migrations against the production database.";
 
-/// The rules page of `repo` in the state `name` names: a rule being
-/// written and tried on `calls`, one saved without where it applies,
-/// or the review tab. False for a state it does not know.
+/// What the page's UI state holds once `request` is carried out, as far
+/// as its clicks read it.
+fn fold(now: &mut Snapshot, request: &Request) {
+    let Request::Ui { key, value } = request else {
+        return;
+    };
+    let text = || {
+        value
+            .as_ref()
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    if key == page::EDITOR {
+        now.draft = value
+            .as_ref()
+            .and_then(|value| serde_json::from_value(value.clone()).ok());
+    } else if *key == tree::draft_key(page::RULE_TEXT) {
+        now.text = text();
+    } else if *key == tree::draft_key(page::RULE_ON) {
+        now.on = text();
+    }
+}
+
+/// Asks the interface for `request`, as the page holds it in `now`.
+fn ask(handle: &Handle, now: &mut Snapshot, request: Request, cx: &mut App) {
+    fold(now, &request);
+    handle.request(request, cx);
+}
+
+/// Clicks `doing` on the page as `now` holds it.
+fn click(handle: &Handle, now: &mut Snapshot, doing: Do, cx: &mut App) {
+    for request in page::apply(now, doing) {
+        ask(handle, now, request, cx);
+    }
+}
+
+/// Writes a new rule for `repo` in the editor: [`RULE`], as typed.
+fn write_rule(handle: &Handle, now: &mut Snapshot, repo: &str, cx: &mut App) {
+    let open = Do::Open {
+        repo: repo.to_owned(),
+        rule: None,
+    };
+    click(handle, now, open, cx);
+    let typed = Request::Ui {
+        key: tree::draft_key(page::RULE_TEXT),
+        value: Some(json!(RULE)),
+    };
+    ask(handle, now, typed, cx);
+}
+
+/// The rules page of `repo`, through `handle`, in the state `name`
+/// names: a rule being written and tried on `calls`, one saved without
+/// where it applies, or the review tab. False for a state it does not
+/// know.
 pub fn open(
     name: &str,
-    ui: &Entity<page::Ui>,
+    handle: &Handle,
     repo: &str,
     calls: Vec<(String, Value)>,
     cx: &mut App,
 ) -> bool {
+    let mut now = Snapshot::default();
     match name {
-        "rule-editor" => ui.update(cx, |ui, cx| {
-            ui.open_editor(repo, None, cx);
-            ui.set_rule_text(RULE, cx);
-            ui.toggle_place("exec_command.cmd", cx);
-            ui.try_rule(calls, Vec::new(), cx);
-        }),
-        "rule-missing" => ui.update(cx, |ui, cx| {
-            ui.open_editor(repo, None, cx);
-            ui.set_rule_text(RULE, cx);
-            ui.save(cx);
-        }),
-        "rules-review" => ui.update(cx, |ui, cx| ui.set_tab(Tab::Review, cx)),
+        "rule-editor" => {
+            write_rule(handle, &mut now, repo, cx);
+            let place = Do::Place {
+                place: "exec_command.cmd".into(),
+            };
+            click(handle, &mut now, place, cx);
+            let tried = Do::Try {
+                calls,
+                answers: Vec::new(),
+            };
+            click(handle, &mut now, tried, cx);
+        }
+        "rule-missing" => {
+            write_rule(handle, &mut now, repo, cx);
+            click(handle, &mut now, Do::Save { typed: None }, cx);
+        }
+        // The second tab: what waits for review.
+        "rules-review" => {
+            handle.set_ui(tree::tab_key(page::TABS), Some(json!(1)), cx);
+        }
         _ => return false,
     }
     true
