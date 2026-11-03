@@ -1,21 +1,16 @@
-//! fast-compaction's UI (ADR 0017): what its passes left of each tool
-//! call, on the call's card and on its ledger page; each pass where it
-//! rewrote the transcript; where it steps in on the context meter; and
-//! its line in the run's plugin list.
+//! fast-compaction's UI (ADR 0017), as view trees (ADR 0045): what its
+//! passes left of each tool call, on the call's card and on its ledger
+//! page; each pass where it rewrote the transcript; where it steps in on
+//! the context meter; and its line in the run's plugin list.
 
 use std::{collections::BTreeMap, os::unix::fs::DirBuilderExt as _, sync::Arc};
 
-use gpui::{AnyElement, Div, SharedString, div, prelude::*, relative, rems};
+use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
 use tau_jev::Jev;
-use tau_ui_kit::{
-    assets::Icon,
-    components::{self as ui, bar, heading, icon, key_values, link, mono},
-    format::{fine_usd, tokens},
-    theme::{Design as _, IconSize, Theme, Type, radius, sp},
-};
+use tau_ui_kit::format::{fine_usd, tokens};
 use tau_ui_plugin::{
     Dropped,
     Fold,
@@ -35,6 +30,7 @@ use tau_ui_plugin::{
     ViewCx,
     needs_jev,
     points::{self, AtCard, AtRewrite, AtRun},
+    tree::{KeyValue, Node, Tone},
 };
 
 use crate::{
@@ -332,7 +328,8 @@ impl UiPlugin for FastCompactionUi {
         Manifest::new()
             .page(
                 Page::new("ledger", ledger_page)
-                    .title(|_| "Context ledger".to_owned()),
+                    .title(|_| "Context ledger".to_owned())
+                    .framed(),
             )
             .status(State::status)
             .contribute(points::CONTEXT_TRIGGER, |_: &AtRun, view| {
@@ -410,38 +407,35 @@ impl HostHalf for FastCompactionHost {
     }
 }
 
-/// What the last pass made of a call, on its card: its size as the
-/// pass weighed it, and what it kept.
+/// The plugin's mark: its plug.
+fn plug() -> Node {
+    Node::Icon {
+        name: "plug".into(),
+        tone: Tone::Info,
+    }
+}
+
+/// What the last pass made of a call, on its card: what it changed.
 fn badge(
     at: &AtCard,
     view: &mut ViewCx<'_, FastCompactionUi>,
 ) -> Option<AnyElement> {
-    let entry = view.state?.entry(at.keys.first()?)?;
+    let call_id = at.keys.first()?;
+    let entry = view.state?.entry(call_id)?;
     // A result kept as it was needs no word: only what the pass changed
     // shows on the card.
     if matches!(entry.decision, Decision::Pinned | Decision::Keep) {
         return None;
     }
-    let t = view.theme().clone();
-    Some(
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(2.))
-            .flex_shrink_0()
-            .child(
-                div()
-                    .px(sp(1.5))
-                    .py(sp(0.25))
-                    .border_1()
-                    .border_color(t.border_strong)
-                    .rounded(radius::SMALL)
-                    .typeset(Type::MICRO)
-                    .text_color(t.dim)
-                    .child(entry.decision.card_label()),
-            )
-            .into_any_element(),
-    )
+    let tree = Node::Badge {
+        text: entry.decision.card_label().into(),
+        tone: Tone::Neutral,
+    };
+    Some(view.tree(
+        &format!("fast-compaction-badge-{call_id}"),
+        &tree,
+        |_, _, _| {},
+    ))
 }
 
 /// Under the inspector's context meter: what the last pass kept, and
@@ -453,26 +447,15 @@ fn context(
     let state = view.state?;
     state.last_pass()?;
     let kept = state.count(Decision::Keep) + state.count(Decision::Pinned);
-    let t = view.theme().clone();
-    let handle = view.handle.clone();
-    Some(
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(2.))
-            .typeset(Type::MICRO)
-            .text_color(t.dim)
-            .child(div().flex_1().child(format!("{kept} kept by {NAME}.")))
-            .child(
-                div()
-                    .id("open-ledger-panel")
-                    .child(link("Ledger", &t))
-                    .on_click(move |_, _, cx| {
-                        handle.navigate(ledger_link(), cx)
-                    }),
-            )
-            .into_any_element(),
-    )
+    let tree = Node::row([
+        Node::text(format!("{kept} kept by {NAME}.")),
+        Node::Spacer,
+        Node::Link {
+            label: "Ledger".into(),
+            to: ledger_link(),
+        },
+    ]);
+    Some(view.tree("fast-compaction-context", &tree, |_, _, _| {}))
 }
 
 /// One of its passes in the transcript: what it saved, and its ledger.
@@ -480,323 +463,202 @@ fn rewrite(
     at: &AtRewrite,
     view: &mut ViewCx<'_, FastCompactionUi>,
 ) -> Option<AnyElement> {
-    let pass = view.state?.passes.get(&at.key)?.clone();
+    let pass = view.state?.passes.get(&at.key)?;
     let (before, after) = at.tokens.unwrap_or((pass.before, pass.after));
-    let t = view.theme().clone();
     let compact = view.compact;
-    let handle = view.handle.clone();
     let saved = before.saturating_sub(after);
-    let ink = t.roles.plugin(NAME).unwrap_or(t.blue);
-    Some(
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(1.5))
-            .px(sp(3.5))
-            .py(sp(2.5))
-            .rounded(radius::LARGE)
-            .bg(t.card)
-            .typeset(Type::CAPTION)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .child(icon(Icon::Plug, IconSize::COMPACT, ink))
-                    .when(!compact, |row| {
-                        row.child(div().text_color(ink).child(NAME))
-                    })
-                    .child(div().text_color(t.text_soft).child(format!(
-                        "pruned {} tokens: {} to {}",
-                        tokens(saved),
-                        tokens(before),
-                        tokens(after)
-                    )))
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "open-ledger-{}",
-                                at.index
-                            )))
-                            .child(link("Ledger", &t))
-                            .on_click(move |_, _, cx| {
-                                handle.navigate(ledger_link(), cx)
-                            }),
-                    ),
-            )
-            .when(!compact, |card| {
-                card.child(
-                    mono(pass.detail.clone(), Type::MICRO, t.dim)
-                        .pl(sp(5.))
-                        .truncate(),
-                )
-            })
-            .child(div().pl(sp(5.)).text_color(t.dim).child(
-                "The next request resends the pruned transcript once, \
-                     then turns are deltas again.",
-            ))
-            .into_any_element(),
-    )
+    let mut head = vec![plug()];
+    if !compact {
+        head.push(Node::Mono { text: NAME.into() });
+    }
+    head.extend([
+        Node::text(format!(
+            "pruned {} tokens: {} to {}",
+            tokens(saved),
+            tokens(before),
+            tokens(after)
+        )),
+        Node::Spacer,
+        Node::Link {
+            label: "Ledger".into(),
+            to: ledger_link(),
+        },
+    ]);
+    let mut card = vec![Node::row(head)];
+    if !compact {
+        card.push(Node::Mono {
+            text: pass.detail.clone(),
+        });
+    }
+    card.push(Node::text(
+        "The next request resends the pruned transcript once, then turns \
+         are deltas again.",
+    ));
+    let tree = Node::Card { children: card };
+    Some(view.tree(
+        &format!("fast-compaction-rewrite-{}", at.index),
+        &tree,
+        |_, _, _| {},
+    ))
 }
 
 /// A run's context before and after the last pass, and what the pass
 /// decided for each tool call.
 fn ledger_page(view: &mut ViewCx<'_, FastCompactionUi>) -> AnyElement {
-    let t = view.theme().clone();
-    let compact = view.compact;
-    let Some(run) = view.run.cloned() else {
-        return ui::empty("That run is not in this workspace.", &t)
-            .into_any_element();
+    let tree = ledger(view.run, view.state, view.compact);
+    view.tree("fast-compaction-ledger", &tree, |_, _, _| {})
+}
+
+/// The ledger page's tree.
+fn ledger(run: Option<&RunInfo>, state: Option<&State>, compact: bool) -> Node {
+    let Some(run) = run else {
+        return Node::Empty {
+            text: "That run is not in this workspace.".into(),
+        };
     };
-    let state = view.state.cloned().unwrap_or_default();
-    let Some(pass) = state.last_pass().cloned() else {
-        return ui::screen(
-            "ledger",
-            compact,
-            ui::empty(
-                format!(
-                    "{NAME} has not pruned the context of {} yet.",
-                    run.title
-                ),
-                &t,
+    let state = state.cloned().unwrap_or_default();
+    let Some(pass) = state.last_pass() else {
+        return Node::Empty {
+            text: format!(
+                "{NAME} has not pruned the context of {} yet.",
+                run.title
             ),
-        )
-        .into_any_element();
+        };
     };
     let trigger = state.on.unwrap_or(false).then(trigger);
-    ui::screen(
-        "ledger",
-        compact,
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(5.))
-            .child(ui::screen_title(
-                format!(
-                    "Pruned {} tokens of {}'s tool history",
-                    tokens(pass.before.saturating_sub(pass.after)),
-                    run.title
-                ),
-                format!(
-                    "{}. Decisions only escalate: keep, then drop the result, then drop the call. Forks inherit this ledger.",
-                    pass.detail
-                ),
-                &t,
-            ))
-            .child(
-                div()
-                    .flex()
-                    .when(compact, |layout| layout.flex_col())
-                    .gap(sp(7.))
-                    .child(meters(&run, &pass, trigger, &t))
-                    .child(summary(&state, &t, compact)),
-            )
-            .child(heading("Ledger", &t))
-            .child(table(&state, &t, compact)),
-    )
-    .into_any_element()
+    Node::stack([
+        Node::Heading {
+            text: format!(
+                "Pruned {} tokens of {}'s tool history",
+                tokens(pass.before.saturating_sub(pass.after)),
+                run.title
+            ),
+        },
+        Node::text(format!(
+            "{}. Decisions only escalate: keep, then drop the result, then \
+             drop the call. Forks inherit this ledger.",
+            pass.detail
+        )),
+        Node::Card {
+            children: vec![
+                meters(run, pass, trigger),
+                Node::Rule,
+                summary(&state),
+            ],
+        },
+        Node::Heading {
+            text: "Ledger".into(),
+        },
+        table(&state, compact),
+    ])
 }
 
 /// The context before and after the pass, on the window.
-fn meters(run: &RunInfo, pass: &Pass, trigger: Option<f32>, t: &Theme) -> Div {
+fn meters(run: &RunInfo, pass: &Pass, trigger: Option<f32>) -> Node {
     let window = run.window.unwrap_or(pass.before.max(1));
-    let meter = |label: &'static str, used: u64, fill| {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(3.))
-            .child(
-                div()
-                    .w(rems(3.5))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.muted)
-                    .child(label),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .relative()
-                    .child(bar(
-                        used as f32 / window as f32,
-                        14.,
-                        fill,
-                        t.raised,
-                    ))
-                    .children(trigger.map(|trigger| {
-                        div()
-                            .absolute()
-                            .top(rems(-0.25))
-                            .left(relative(trigger))
-                            .w(rems(0.125))
-                            .h(rems(1.375))
-                            .bg(t.accent)
-                    })),
-            )
-            .child(
-                mono(tokens(used), Type::CAPTION, t.text)
-                    .w(rems(3.))
-                    .flex()
-                    .justify_end(),
-            )
+    let meter = |label: &str, used: u64| Node::Progress {
+        share: used as f64 / window as f64,
+        label: Some(format!("{label} · {}", tokens(used))),
     };
-    div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .gap(sp(3.))
-        .child(meter("Before", pass.before, t.slate))
-        .child(meter("After", pass.after, t.blue))
-        .child(
-            div()
-                .typeset(Type::CAPTION)
-                .text_color(t.muted)
-                .child(format!(
-                    "Window {}.{}",
-                    tokens(window),
-                    trigger.map_or(String::new(), |trigger| format!(
-                        " Pruning starts at {:.0}%.",
-                        trigger * 100.
-                    ))
-                )),
-        )
+    Node::stack([
+        meter("Before", pass.before),
+        meter("After", pass.after),
+        Node::text(format!(
+            "Window {}.{}",
+            tokens(window),
+            trigger.map_or(String::new(), |trigger| format!(
+                " Pruning starts at {:.0}%.",
+                trigger * 100.
+            ))
+        )),
+    ])
 }
 
 /// How many calls the pass made each decision for, and the outputs cut
 /// as they arrived.
-fn summary(state: &State, t: &Theme, compact: bool) -> Div {
-    let value = |text: String| mono(text, Type::CAPTION, t.text);
-    let count = |decision| value(state.count(decision).to_string());
-    key_values(
-        [
-            ("plugin".into(), value(NAME.to_owned())),
-            ("pinned".into(), count(Decision::Pinned)),
-            ("kept".into(), count(Decision::Keep)),
-            ("result dropped".into(), count(Decision::DropResult)),
-            ("call dropped".into(), count(Decision::DropCall)),
-            ("next request".into(), value("1 full resend".into())),
-            (
-                "outputs pruned".into(),
-                value(match state.outputs {
+fn summary(state: &State) -> Node {
+    let row = |key: &str, value: String| KeyValue {
+        key: key.into(),
+        value,
+    };
+    let count = |decision| state.count(decision).to_string();
+    Node::Rows {
+        rows: vec![
+            row("plugin", NAME.to_owned()),
+            row("pinned", count(Decision::Pinned)),
+            row("kept", count(Decision::Keep)),
+            row("result dropped", count(Decision::DropResult)),
+            row("call dropped", count(Decision::DropCall)),
+            row("next request", "1 full resend".into()),
+            row(
+                "outputs pruned",
+                match state.outputs {
                     0 => "none".to_owned(),
                     n => {
                         format!("{n} · −{} tokens", tokens(state.outputs_saved))
                     }
-                }),
+                },
             ),
         ],
-        t,
-    )
-    .p(sp(4.))
-    .border_1()
-    .border_color(t.border)
-    .rounded(radius::BOX)
-    .when(!compact, |card| card.w(rems(18.75)).flex_shrink_0())
+    }
 }
 
-/// The ledger: each call, with what the pass made of it.
-fn table(state: &State, t: &Theme, compact: bool) -> Div {
-    let rows = state.ledger.iter().map(|entry| {
-        let (ink, fill) = match entry.decision {
-            Decision::Pinned => (t.text, t.text),
-            Decision::Keep => (t.text_soft, gpui::transparent_black()),
-            Decision::DropResult => (t.blue, t.blue),
-            Decision::DropCall => (t.dim, t.border_strong),
+/// The ledger: each call, with what the pass made of it. The phone
+/// shows the tool, its input and the decision.
+fn table(state: &State, compact: bool) -> Node {
+    if state.ledger.is_empty() {
+        return Node::Empty {
+            text: "The pass reported no per-call decisions.".into(),
         };
-        let odds =
-            |p: Option<f32>| p.map_or("·".to_owned(), |p| format!("{p:.2}"));
-        let decision = div()
-            .flex()
-            .items_center()
-            .gap(sp(1.5))
-            .typeset(Type::CAPTION)
-            .text_color(ink)
-            .child(
-                div()
-                    .size(rems(0.5))
-                    .rounded(radius::HAIRLINE)
-                    .bg(fill)
-                    .border_1()
-                    .border_color(ink),
-            )
-            .child(entry.decision.label());
-        let input = mono(
-            entry.input.clone(),
-            Type::CAPTION,
-            if entry.decision == Decision::DropCall {
-                t.dim
-            } else {
-                t.text_soft
-            },
-        )
-        .flex_1()
-        .min_w(rems(0.))
-        .truncate();
-        let right = |text: String, width: f32, color| {
-            mono(text, Type::CAPTION, color)
-                .w(rems((width) / 16.))
-                .flex()
-                .justify_end()
-        };
-        div()
-            .id(SharedString::from(format!("ledger-{}", entry.call_id)))
-            .flex()
-            .items_center()
-            .gap(sp(3.))
-            .px(sp(4.))
-            .py(sp(2.))
-            .border_b_1()
-            .border_color(t.border)
-            .when(!compact, |row| {
-                row.child(
-                    mono(format!("t{}", entry.turn), Type::CAPTION, t.dim)
-                        .w(rems(2.5)),
-                )
-            })
-            .child(
-                mono(entry.tool.clone(), Type::CAPTION, t.blue)
-                    .w(rems((if compact { 44. } else { 88. }) / 16.)),
-            )
-            .child(input)
-            .when(!compact, |row| {
-                row.child(right(tokens(entry.tokens), 64., t.muted))
-                    .child(right(odds(entry.matters), 96., t.text))
-                    .child(right(odds(entry.verbatim), 96., t.text))
-            })
-            .child(
-                div()
-                    .w(rems((if compact { 96. } else { 120. }) / 16.))
-                    .child(decision),
-            )
-    });
-    let head = |label: &str, width: f32, right: bool| {
-        div()
-            .w(rems((width) / 16.))
-            .when(right, |cell| cell.flex().justify_end())
-            .child(heading(label, t))
+    }
+    let head = if compact {
+        vec!["Tool", "Input", "Decision"]
+    } else {
+        vec![
+            "Turn",
+            "Tool",
+            "Input",
+            "Size",
+            "Still matters",
+            "Verbatim",
+            "Decision",
+        ]
     };
-    ui::card(t)
-        .when(!compact, |card| {
-            card.child(
-                div()
-                    .flex()
-                    .gap(sp(3.))
-                    .px(sp(4.))
-                    .py(sp(2.25))
-                    .bg(t.panel)
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(head("Turn", 40., false))
-                    .child(head("Tool", 88., false))
-                    .child(div().flex_1().child(heading("Input", t)))
-                    .child(head("Size", 64., true))
-                    .child(head("Still matters", 96., true))
-                    .child(head("Verbatim", 96., true))
-                    .child(head("Decision", 120., false)),
-            )
+    let odds =
+        |p: Option<f32>| p.map_or("·".to_owned(), |p| format!("{p:.2}"));
+    let mono = |text: String| Node::Mono { text };
+    let rows = state
+        .ledger
+        .iter()
+        .map(|entry| {
+            let tone = match entry.decision {
+                Decision::Pinned | Decision::Keep => Tone::Neutral,
+                Decision::DropResult => Tone::Info,
+                Decision::DropCall => Tone::Warn,
+            };
+            let decision = Node::Badge {
+                text: entry.decision.label().into(),
+                tone,
+            };
+            let tool = mono(entry.tool.clone());
+            let input = mono(entry.input.clone());
+            if compact {
+                vec![tool, input, decision]
+            } else {
+                vec![
+                    mono(format!("t{}", entry.turn)),
+                    tool,
+                    input,
+                    mono(tokens(entry.tokens)),
+                    mono(odds(entry.matters)),
+                    mono(odds(entry.verbatim)),
+                    decision,
+                ]
+            }
         })
-        .children(rows)
-        .when(state.ledger.is_empty(), |card| {
-            card.child(ui::empty("The pass reported no per-call decisions.", t))
-        })
+        .collect();
+    Node::Table {
+        head: head.into_iter().map(str::to_owned).collect(),
+        rows,
+    }
 }
