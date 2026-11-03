@@ -1,26 +1,59 @@
 //! What tau-direnv draws: the question that takes the composer's place,
 //! the cards above a run's transcript while its environment loads or
-//! after it failed, and the repository menu's toggle.
+//! after it failed, and the repository menu's toggle. Each is a view
+//! tree (ADR 0045): the loading card's clock is a ticker the interface
+//! keeps, from when the load started.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-use gpui::{AnyElement, Div, SharedString, div, prelude::*, rems};
-use tau_ui_kit::{
-    assets::Icon,
-    components::{self as ui, ButtonKind, mono},
-    format::clock,
-    select::selectable,
-    syntax::{self, Lang},
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-};
+use gpui::AnyElement;
+use serde_json::Value;
 use tau_ui_plugin::{
     Handle,
     ViewCx,
     points::{AtRepo, AtRun},
+    tree::{Kind, Node, Tone},
 };
 
 use super::DirenvUi;
 use crate::{Act, Record};
+
+/// Every button's and switch's action: carry out the [`Act`] its
+/// arguments hold.
+const ACT: &str = "act";
+
+/// An icon of tau's, by name.
+fn icon(name: &str, tone: Tone) -> Node {
+    Node::Icon {
+        name: name.into(),
+        tone,
+    }
+}
+
+/// A button that asks the host half for `act`.
+fn button(label: &str, kind: Kind, act: &Act) -> Node {
+    Node::Button {
+        label: label.into(),
+        action: ACT.into(),
+        args: args(act),
+        kind,
+        icon: None,
+    }
+}
+
+fn args(act: &Act) -> Value {
+    serde_json::to_value(act).unwrap_or(Value::Null)
+}
+
+/// What a tree's buttons and switches ask: the act in their arguments.
+fn on_act(handle: Handle) -> impl Fn(&str, &Value, &mut gpui::App) + 'static {
+    move |action, args, cx| {
+        if action != ACT {
+            return;
+        }
+        if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
+            handle.act(act, cx);
+        }
+    }
+}
 
 /// The question, in the composer's place, while a live run waits for
 /// the person to say whether the repository's `.envrc` loads.
@@ -34,267 +67,105 @@ pub fn question(
     let Some(Record::Asked { repo, envrc }) = view.state?.now.clone() else {
         return None;
     };
-    let t = view.theme().clone();
-    let compact = view.compact;
-    // As direnv runs it: with bash.
-    let envrc = envrc.trim_end().to_owned();
-    let colors = syntax::highlight_cached(Lang::Bash, &envrc);
-    let script = selectable(
-        gpui::StyledText::new(envrc.clone()).with_runs(syntax::runs(
-            &envrc,
-            &colors,
-            t.text_soft,
-            &t.syntax,
-        )),
-    );
-    let decide = |id: &'static str, label: &'static str, kind, load: bool| {
-        let (handle, repo) = (view.handle.clone(), repo.clone());
-        div()
-            .id(id)
-            .child(ui::button(label, kind, &t))
-            .on_click(move |_, _, cx| decide(&handle, &repo, load, cx))
-    };
-    let load = decide("envrc-load", "Load it", ButtonKind::Primary, true);
-    let skip =
-        decide("envrc-skip", "Run without it", ButtonKind::Secondary, false);
-    Some(
-        div()
-            .id("envrc-question")
-            .flex_shrink_0()
-            .mx(sp(if compact { 2. } else { 6. }))
-            .mb(sp(if compact { 2. } else { 5. }))
-            .flex()
-            .flex_col()
-            .rounded(radius::CARD)
-            .border_1()
-            .border_color(t.blue_border)
-            .bg(t.info_panel)
-            .overflow_hidden()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .min_h(rems(2.625))
-                    .px(sp(3.5))
-                    .child(ui::icon(Icon::Terminal, IconSize::COMPACT, t.blue))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(rems(0.))
-                            .font_weight(weight::STRONG)
-                            .text_color(t.text)
-                            .child(format!("Load {repo}'s .envrc for agent commands?")),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(2.5))
-                    .px(sp(3.5))
-                    .py(sp(3.))
-                    .border_t_1()
-                    .border_color(t.border)
-                    .child(
-                        ui::text(
-                            "The repository sets up its tools with direnv. With it, \
-                             commands run in that environment in main and in every \
-                             chat, as they would in your shell. tau asks once; you \
-                             can change it on the repository's menu.",
-                            Type::BODY,
-                            t.text_soft,
-                        )
-                        .line_height(gpui::relative(1.55)),
-                    )
-                    .child(
-                        div()
-                            .px(sp(2.5))
-                            .py(sp(2.))
-                            .rounded(radius::CONTROL)
-                            .bg(t.depth.well)
-                            .border_1()
-                            .border_color(t.border)
-                            .typeset(Type::SMALL.mono())
-                            .text_color(t.text_soft)
-                            .child(script),
-                    )
-                    .child(div().flex().gap(sp(2.)).child(load).child(skip)),
-            )
-            .into_any_element(),
-    )
+    let tree = question_tree(&repo, &envrc);
+    let handle = view.handle.clone();
+    Some(view.tree("envrc-question", &tree, on_act(handle)))
 }
 
-fn decide(handle: &Handle, repo: &str, load: bool, cx: &mut gpui::App) {
-    handle.act(
-        Act::Decide {
-            repo: repo.to_owned(),
-            load,
-        },
-        cx,
-    );
+/// The question's tree: what loads, the `.envrc` as direnv runs it (with
+/// bash), and the two answers.
+pub fn question_tree(repo: &str, envrc: &str) -> Node {
+    let decide = |load| Act::Decide {
+        repo: repo.to_owned(),
+        load,
+    };
+    Node::Card {
+        children: vec![Node::stack([
+            Node::row([
+                icon("terminal", Tone::Info),
+                Node::Heading {
+                    text: format!("Load {repo}'s .envrc for agent commands?"),
+                },
+            ]),
+            Node::text(
+                "The repository sets up its tools with direnv. With it, \
+                 commands run in that environment in main and in every \
+                 chat, as they would in your shell. tau asks once; you \
+                 can change it on the repository's menu.",
+            ),
+            Node::Code {
+                lang: Some("bash".into()),
+                text: envrc.trim_end().to_owned(),
+            },
+            Node::row([
+                button("Load it", Kind::Primary, &decide(true)),
+                button("Run without it", Kind::Secondary, &decide(false)),
+            ]),
+        ])],
+    }
 }
 
 /// Above a run's transcript: its environment loading, while it runs, or
 /// why it did not load.
 pub fn card(at: &AtRun, view: &mut ViewCx<'_, DirenvUi>) -> Option<AnyElement> {
     let now = view.state?.now.clone()?;
-    let t = view.theme().clone();
-    let side = sp(if view.compact { 4. } else { 6. });
+    let run = at.run.id.0.to_string();
+    let tree = card_tree(&now, at.run.live, &run)?;
+    let handle = view.handle.clone();
+    Some(view.tree(&format!("envrc-card-{run}"), &tree, on_act(handle)))
+}
+
+/// The card's tree for where `run`'s environment stands: loading, while
+/// the run is live, with a clock from when it started, or failed, with
+/// what direnv said and a way to try again; nothing otherwise.
+pub fn card_tree(now: &Record, live: bool, run: &str) -> Option<Node> {
     match now {
-        Record::Loading { since } if at.run.live => {
-            tick(view);
-            Some(loading(since, &t).mx(side).mt(sp(3.)).into_any_element())
-        }
-        Record::Failed { status, output } => {
-            let (handle, run) = (view.handle.clone(), at.run.id.0.to_string());
-            let again = div()
-                .id("envrc-again")
-                .child(ui::button("Try again", ButtonKind::Secondary, &t))
-                .on_click(move |_, _, cx| {
-                    handle.act(Act::Reload { run: run.clone() }, cx)
-                });
-            Some(
-                failed(&status, &output, again, &t)
-                    .mx(side)
-                    .mt(sp(3.))
-                    .into_any_element(),
-            )
-        }
+        Record::Loading { since } if live => Some(Node::Card {
+            children: vec![Node::row([
+                icon("clock", Tone::Info),
+                Node::text("Loading the repository's environment · .envrc ·"),
+                Node::Ticker {
+                    id: format!("envrc-loading-{run}"),
+                    since: i64::try_from(*since).unwrap_or(i64::MAX),
+                    until: None,
+                },
+                Node::Spacer,
+                Node::text("commands wait for it"),
+            ])],
+        }),
+        Record::Failed { status, output } => Some(Node::Card {
+            children: vec![Node::stack([
+                Node::row([
+                    icon("warning", Tone::Bad),
+                    Node::Heading {
+                        text: "The repository's environment did not load"
+                            .into(),
+                    },
+                    Node::Spacer,
+                    Node::Badge {
+                        text: status.clone(),
+                        tone: Tone::Bad,
+                    },
+                ]),
+                Node::Code {
+                    lang: None,
+                    text: output.clone(),
+                },
+                Node::row([
+                    Node::text("Commands run without it until it loads."),
+                    Node::Spacer,
+                    button(
+                        "Try again",
+                        Kind::Secondary,
+                        &Act::Reload {
+                            run: run.to_owned(),
+                        },
+                    ),
+                ]),
+            ])],
+        }),
         _ => None,
     }
-}
-
-/// How long ago `since` (Unix milliseconds) was.
-fn elapsed(since: u64) -> Duration {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |now| now.as_millis() as u64);
-    Duration::from_millis(now.saturating_sub(since))
-}
-
-fn loading(since: u64, t: &Theme) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(sp(2.5))
-        .px(sp(3.))
-        .py(sp(2.5))
-        .rounded(radius::BOX)
-        .border_1()
-        .border_color(t.border)
-        .bg(t.card)
-        .child(ui::dot(t.accent, 8.))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems(0.))
-                .flex()
-                .gap(sp(1.))
-                .text_color(t.text)
-                .child("Loading the repository's environment")
-                .child(
-                    div()
-                        .text_color(t.muted)
-                        .child(format!("· .envrc · {}", clock(elapsed(since)))),
-                ),
-        )
-        .child(ui::text("commands wait for it", Type::CAPTION, t.muted))
-}
-
-fn failed(
-    status: &str,
-    output: &str,
-    again: impl IntoElement,
-    t: &Theme,
-) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .rounded(radius::BOX)
-        .border_1()
-        .border_color(t.red_border)
-        .bg(t.danger_surface)
-        .overflow_hidden()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .min_h(rems(2.5))
-                .px(sp(3.))
-                .child(ui::icon(Icon::Warning, IconSize::COMPACT, t.red))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .font_weight(weight::STRONG)
-                        .child("The repository's environment did not load"),
-                )
-                .child(mono(status.to_owned(), Type::MICRO, t.muted)),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(2.5))
-                .px(sp(3.))
-                .py(sp(2.5))
-                .border_t_1()
-                .border_color(t.danger_edge)
-                .children(
-                    output
-                        .lines()
-                        .map(|line| {
-                            mono(line.to_owned(), Type::SMALL, t.removed_text)
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(3.))
-                        .child(
-                            div().flex_1().text_color(t.text_soft).child(
-                                "Commands run without it until it loads.",
-                            ),
-                        )
-                        .child(again),
-                ),
-        )
-}
-
-/// Keeps the loading card's clock going: the window draws again each
-/// second while a loading card showed in the last two.
-fn tick(view: &mut ViewCx<'_, DirenvUi>) {
-    let handle = view.handle.clone();
-    view.ui.update(view.cx, |ui, cx| {
-        ui.loading_shown = Some(Instant::now());
-        if ui.ticking {
-            return;
-        }
-        ui.ticking = true;
-        cx.spawn(async move |ui, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                let going = ui.update(cx, |ui, cx| {
-                    let going = ui.loading_shown.is_some_and(|shown| {
-                        shown.elapsed() < Duration::from_secs(2)
-                    });
-                    ui.ticking = going;
-                    if going {
-                        handle.refresh(cx);
-                    }
-                    going
-                });
-                if !matches!(going, Ok(true)) {
-                    return;
-                }
-            }
-        })
-        .detach();
-    });
 }
 
 /// The repository menu's entry, for a repository with an `.envrc`: the
@@ -307,73 +178,65 @@ pub fn menu_entry(
     if !data.envrc {
         return None;
     }
-    let t = view.theme().clone();
     let on = view.settings.repos.get(&at.repo) == Some(&true);
-    let row = div()
-        .id(SharedString::from(format!("envrc-menu-{}", at.repo)))
-        .flex()
-        .items_center()
-        .gap(sp(2.5))
-        .min_h(rems(2.125))
-        .px(sp(2.5))
-        .rounded(radius::CONTROL);
-    if !data.direnv {
-        return Some(
-            row.py(sp(1.5))
-                .child(ui::icon(Icon::Terminal, IconSize::BASE, t.dim))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            div()
-                                .text_color(t.muted)
-                                .child("Load .envrc for agent commands"),
-                        )
-                        .child(ui::text(
-                            "direnv is not installed",
-                            Type::CAPTION,
-                            t.dim,
-                        )),
-                )
-                .into_any_element(),
-        );
+    let tree = menu_tree(&at.repo, data.direnv, on);
+    let handle = view.handle.clone();
+    Some(view.tree(&format!("envrc-menu-{}", at.repo), &tree, on_act(handle)))
+}
+
+/// The menu entry's tree: the switch, or, without direnv, why there is
+/// none.
+pub fn menu_tree(repo: &str, direnv: bool, on: bool) -> Node {
+    const LABEL: &str = "Load .envrc for agent commands";
+    if !direnv {
+        return Node::row([
+            icon("terminal", Tone::Neutral),
+            Node::stack([
+                Node::text(LABEL),
+                Node::text("direnv is not installed"),
+            ]),
+        ]);
     }
-    let (handle, repo) = (view.handle.clone(), at.repo.clone());
-    let hover = t.selected;
-    Some(
-        row.cursor_pointer()
-            .text_color(t.text)
-            .hover(move |style| style.bg(hover))
-            .child(ui::icon(Icon::Terminal, IconSize::BASE, t.muted))
-            .child(
-                div()
-                    .flex_1()
-                    .whitespace_nowrap()
-                    .child("Load .envrc for agent commands"),
-            )
-            .child(ui::switch(on, &t))
-            .on_click(move |_, _, cx| decide(&handle, &repo, !on, cx))
-            .into_any_element(),
-    )
+    Node::Switch {
+        label: LABEL.into(),
+        detail: None,
+        on,
+        action: ACT.into(),
+        args: args(&Act::Decide {
+            repo: repo.to_owned(),
+            load: !on,
+        }),
+    }
 }
 
 /// Its settings pane (ADR 0029): whether each repository's `.envrc`
 /// loads for agent commands. The choice is a repository's own, so the
 /// pane shows the repository in scope, or every one with an `.envrc`.
 pub fn settings_pane(view: &mut ViewCx<'_, DirenvUi>) -> AnyElement {
-    let t = view.theme().clone();
     let scope = view.scope().map(str::to_owned);
-    let repos: Vec<(String, crate::RepoData)> = view
+    let repos: Vec<(String, crate::RepoData, bool)> = view
         .repos()
         .filter(|(name, _)| scope.as_deref().is_none_or(|scope| scope == *name))
-        .map(|(name, data)| (name.to_owned(), data.clone()))
+        .map(|(name, data)| {
+            let on = view.settings.repos.get(name) == Some(&true);
+            (name.to_owned(), data.clone(), on)
+        })
         .collect();
-    let rows: Vec<AnyElement> = repos
+    let tree = settings_tree(&repos, scope.is_some());
+    let handle = view.handle.clone();
+    view.tree("envrc-settings", &tree, on_act(handle))
+}
+
+/// The pane's tree: a row for each repository with an `.envrc` (or the
+/// one in scope, with or without), its switch when it can load.
+pub fn settings_tree(
+    repos: &[(String, crate::RepoData, bool)],
+    scoped: bool,
+) -> Node {
+    let rows: Vec<Node> = repos
         .iter()
-        .filter(|(_, data)| data.envrc || scope.is_some())
-        .map(|(repo, data)| {
-            let on = view.settings.repos.get(repo) == Some(&true);
+        .filter(|(_, data, _)| data.envrc || scoped)
+        .map(|(repo, data, on)| {
             let why = if !data.envrc {
                 Some("No .envrc in this repository.")
             } else if !data.direnv {
@@ -381,49 +244,107 @@ pub fn settings_pane(view: &mut ViewCx<'_, DirenvUi>) -> AnyElement {
             } else {
                 None
             };
-            let (handle, name) = (view.handle.clone(), repo.clone());
-            div()
-                .id(SharedString::from(format!("envrc-setting-{repo}")))
-                .flex()
-                .items_center()
-                .gap(sp(4.))
-                .px(sp(4.))
-                .py(sp(3.))
-                .border_b_1()
-                .border_color(t.border)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .flex()
-                        .flex_col()
-                        .gap(sp(0.75))
-                        .child(mono(repo.clone(), Type::SMALL, t.text))
-                        .child(ui::text(
-                            why.unwrap_or("Agent commands run in its .envrc's environment."),
-                            Type::CAPTION,
-                            t.muted,
-                        )),
-                )
-                .when(why.is_none(), |row| {
-                    row.child(ui::switch(on, &t)).cursor_pointer().on_click(
-                        move |_, _, cx| {
-                            handle.act(
-                                Act::Decide {
-                                    repo: name.clone(),
-                                    load: !on,
-                                },
-                                cx,
-                            )
-                        },
-                    )
-                })
-                .into_any_element()
+            match why {
+                Some(why) => Node::stack([
+                    Node::Mono { text: repo.clone() },
+                    Node::text(why),
+                ]),
+                None => Node::Switch {
+                    label: repo.clone(),
+                    detail: Some(
+                        "Agent commands run in its .envrc's environment."
+                            .into(),
+                    ),
+                    on: *on,
+                    action: ACT.into(),
+                    args: args(&Act::Decide {
+                        repo: repo.clone(),
+                        load: !on,
+                    }),
+                },
+            }
         })
         .collect();
     if rows.is_empty() {
-        return ui::empty("No repository has an .envrc.", &t)
-            .into_any_element();
+        return Node::Empty {
+            text: "No repository has an .envrc.".into(),
+        };
     }
-    ui::card(&t).children(rows).into_any_element()
+    let mut children = Vec::with_capacity(rows.len() * 2);
+    for (index, row) in rows.into_iter().enumerate() {
+        if index > 0 {
+            children.push(Node::Rule);
+        }
+        children.push(row);
+    }
+    Node::Card { children }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every piece of `node`, itself first.
+    fn pieces(node: &Node) -> Vec<&Node> {
+        let mut all = vec![node];
+        if let Node::Card { children }
+        | Node::Stack { children }
+        | Node::Row { children } = node
+        {
+            all.extend(children.iter().flat_map(pieces));
+        }
+        all
+    }
+
+    #[test]
+    fn the_loading_card_counts_from_when_the_load_started() {
+        let tree = card_tree(
+            &Record::Loading {
+                since: 1_700_000_000_000,
+            },
+            true,
+            "r",
+        )
+        .unwrap();
+        assert!(pieces(&tree).iter().any(|piece| matches!(
+            piece,
+            Node::Ticker {
+                since: 1_700_000_000_000,
+                until: None,
+                ..
+            }
+        )));
+        let ended = Record::Loading { since: 1 };
+        assert_eq!(card_tree(&ended, false, "r"), None);
+    }
+
+    #[test]
+    fn try_again_reloads_the_run() {
+        let failed = Record::Failed {
+            status: "exit 1".into(),
+            output: "boom".into(),
+        };
+        let tree = card_tree(&failed, false, "run-1").unwrap();
+        let reload = args(&Act::Reload {
+            run: "run-1".into(),
+        });
+        assert!(pieces(&tree).iter().any(|piece| matches!(
+            piece,
+            Node::Button { action, args, .. } if action == ACT && *args == reload
+        )));
+    }
+
+    #[test]
+    fn the_switch_asks_for_the_other_answer() {
+        let Node::Switch { on, args: got, .. } = menu_tree("tau", true, true)
+        else {
+            panic!("no switch");
+        };
+        assert!(on);
+        let off = Act::Decide {
+            repo: "tau".into(),
+            load: false,
+        };
+        assert_eq!(got, args(&off));
+    }
 }

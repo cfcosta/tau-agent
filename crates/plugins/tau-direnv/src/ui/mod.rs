@@ -1,11 +1,10 @@
 //! tau-direnv's UI (ADR 0017): the question in the composer's place
 //! ([`points::COMPOSER`]), the loading and failure cards above the
 //! transcript ([`points::RUN_BANNER`]), and the toggle on the
-//! repository's menu ([`points::REPO_MENU`]).
+//! repository's menu ([`points::REPO_MENU`]), each a view tree (ADR
+//! 0045).
 
 pub mod view;
-
-use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tau_ui_plugin::{Fold, Manifest, RunCx, UiPlugin, points};
@@ -31,20 +30,12 @@ impl Fold for State {
     }
 }
 
-/// The window's state: when a loading card last showed, so its clock
-/// ticks while it does.
-#[derive(Default)]
-pub struct Ui {
-    pub loading_shown: Option<Instant>,
-    pub ticking: bool,
-}
-
 impl UiPlugin for DirenvUi {
     type State = State;
     type Data = ();
     type RepoData = RepoData;
     type Settings = Settings;
-    type Ui = Ui;
+    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME
