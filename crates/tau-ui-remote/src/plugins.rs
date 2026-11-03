@@ -365,10 +365,11 @@ impl Workspace {
                            cx: &mut App| {
             crate::tree_inputs::editor(&tree_inputs, &handle, spec, cx)
         };
-        let tree_widgets = self.tree_widgets.clone();
+        let (tree_widgets, widget_handle) =
+            (self.tree_widgets.clone(), self.plugin_handle(name));
         let widgets = move |spec: tau_ui_plugin::tree::WidgetSpec,
                             cx: &mut App| {
-            crate::tree_widgets::widget(&tree_widgets, name, spec, cx)
+            crate::tree_widgets::widget(&tree_widgets, &widget_handle, spec, cx)
         };
         let env = Env {
             ui,

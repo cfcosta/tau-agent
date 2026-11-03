@@ -1,16 +1,10 @@
-//! A clock that counts: the time since a start, drawn again each second
-//! until it stops, or the time left until something is due. What it
-//! counts from is the caller's state; only the drawing reads the clock.
+//! A clock that counts: the time since a start, until it stops, or the
+//! time left until something is due. What it counts from is the caller's
+//! state; only the drawing reads the clock, through [`now`].
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gpui::{Context, IntoElement, Render, Window};
-
-use crate::{
-    components::mono,
-    format::clock,
-    theme::{Type, theme},
-};
+use crate::format::clock;
 
 /// What a ticker counts, in milliseconds since 1970.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,15 +15,8 @@ pub enum Count {
     Due { at: i64 },
 }
 
-/// A clock that counts what [`Count`] says.
-pub struct Ticker {
-    count: Count,
-    /// Whether a redraw a second from now is on its way.
-    ticking: bool,
-}
-
 /// Now, in milliseconds since 1970.
-fn now() -> i64 {
+pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_millis() as i64)
@@ -54,52 +41,13 @@ pub fn due(at: i64, now: i64) -> String {
 
 impl Count {
     /// What it reads at `now`, and whether it still changes.
-    fn read(self, now: i64) -> (String, bool) {
+    pub fn read(self, now: i64) -> (String, bool) {
         match self {
             Self::Since { since, until } => {
                 (reading(since, until.unwrap_or(now)), until.is_none())
             }
             Self::Due { at } => (due(at, now), at > now),
         }
-    }
-}
-
-impl Ticker {
-    pub fn new(count: Count) -> Self {
-        Self {
-            count,
-            ticking: false,
-        }
-    }
-
-    /// Counts what `count` says from now on.
-    pub fn set(&mut self, count: Count, cx: &mut Context<Self>) {
-        if self.count != count {
-            self.count = count;
-            cx.notify();
-        }
-    }
-}
-
-impl Render for Ticker {
-    fn render(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let (text, changes) = self.count.read(now());
-        if changes && !self.ticking {
-            self.ticking = true;
-            cx.spawn(async move |ticker, cx| {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                let _ = ticker.update(cx, |ticker, cx| {
-                    ticker.ticking = false;
-                    cx.notify();
-                });
-            })
-            .detach();
-        }
-        mono(text, Type::CAPTION, theme(cx).text_soft)
     }
 }
 

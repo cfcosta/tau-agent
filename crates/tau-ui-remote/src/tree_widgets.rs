@@ -5,8 +5,9 @@
 //!   [`TerminalView`] per terminal, for its scrollback and selection,
 //!   fed what the tree gained since it last drew, and frozen once the
 //!   program ends.
-//! - A ticker: the tree carries when it started and stopped; the window
-//!   keeps a [`Ticker`] that counts.
+//! - A ticker: the tree carries when it started and stopped, or when it
+//!   is due; the window draws what it reads now, and keeps a timer that
+//!   draws it again each second while it still changes and is shown.
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -21,10 +22,14 @@ use gpui::{
 };
 use tau_terminal::{Size, TerminalView, ViewOptions};
 use tau_ui_kit::{
-    theme::{MONO, Theme, theme},
-    ticker::Ticker,
+    components::mono,
+    theme::{MONO, Theme, Type, theme},
+    ticker::now,
 };
-use tau_ui_plugin::tree::{TerminalSpec, TickerSpec, WidgetSpec};
+use tau_ui_plugin::{
+    Handle,
+    tree::{TerminalSpec, TickerSpec, WidgetSpec},
+};
 
 /// One terminal's screen, and what it was fed.
 struct Screen {
@@ -37,45 +42,77 @@ struct Screen {
 #[derive(Default)]
 pub struct TreeWidgets {
     screens: HashMap<String, Screen>,
-    tickers: HashMap<String, Entity<Ticker>>,
+    tickers: HashMap<String, Ticking>,
 }
 
-/// `spec`'s widget for `plugin`, drawn.
+/// A ticker's timer, and when the ticker was last drawn: the timer stops
+/// once it has not been for a while.
+struct Ticking {
+    drawn: Rc<std::cell::Cell<std::time::Instant>>,
+    _timer: gpui::Task<()>,
+}
+
+/// How long a ticker that is no longer drawn keeps its timer.
+const SHOWN_FOR: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// `spec`'s widget for `plugin`, drawn; `handle` draws the window again.
 pub fn widget(
     widgets: &Rc<RefCell<TreeWidgets>>,
-    plugin: &str,
+    handle: &Handle,
     spec: WidgetSpec,
     cx: &mut App,
 ) -> AnyElement {
     match spec {
-        WidgetSpec::Terminal(spec) => screen(widgets, plugin, spec, cx),
+        WidgetSpec::Terminal(spec) => {
+            screen(widgets, handle.plugin(), spec, cx)
+        }
         WidgetSpec::Ticker(spec) => {
-            ticker(widgets, plugin, spec, cx).into_any_element()
+            let text = tick(widgets, handle, spec, cx);
+            mono(text, Type::CAPTION, theme(cx).text_soft).into_any_element()
         }
     }
 }
 
-/// The ticker of `spec` for `plugin`, made the first time, and set to
-/// what the tree says it counts from and to.
-fn ticker(
+/// What the ticker of `spec` reads now, with a timer drawing the window
+/// again each second while it still changes; none once it stops.
+fn tick(
     widgets: &Rc<RefCell<TreeWidgets>>,
-    plugin: &str,
+    handle: &Handle,
     spec: TickerSpec,
     cx: &mut App,
-) -> Entity<Ticker> {
-    let id = format!("{plugin}\u{0}{}", spec.key);
-    let kept = widgets.borrow().tickers.get(&id).cloned();
-    match kept {
-        Some(ticker) => {
-            ticker.update(cx, |ticker, cx| ticker.set(spec.count, cx));
-            ticker
-        }
-        None => {
-            let ticker = cx.new(|_| Ticker::new(spec.count));
-            widgets.borrow_mut().tickers.insert(id, ticker.clone());
-            ticker
-        }
+) -> String {
+    let id = format!("{}\u{0}{}", handle.plugin(), spec.key);
+    let (text, changes) = spec.count.read(now());
+    let mut all = widgets.borrow_mut();
+    if !changes {
+        all.tickers.remove(&id);
+        return text;
     }
+    if let Some(ticking) = all.tickers.get(&id) {
+        ticking.drawn.set(std::time::Instant::now());
+        return text;
+    }
+    let drawn = Rc::new(std::cell::Cell::new(std::time::Instant::now()));
+    let (shown, handle) = (drawn.clone(), handle.clone());
+    let timer = cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(1))
+                .await;
+            if shown.get().elapsed() > SHOWN_FOR {
+                return;
+            }
+            cx.update(|cx| handle.refresh(cx));
+        }
+    });
+    all.tickers.insert(
+        id,
+        Ticking {
+            drawn,
+            _timer: timer,
+        },
+    );
+    text
 }
 
 fn options(cols: u16, rows: u16, t: &Theme) -> ViewOptions {
@@ -214,26 +251,33 @@ mod tests {
         }
     }
 
-    /// A ticker is made once for its key and set to what each draw says
-    /// it counts from and to.
+    /// A ticker that still changes keeps one timer for its key, and one
+    /// that stopped keeps none; each reads what its count says.
     #[gpui::test]
-    fn a_ticker_is_kept_and_set(cx: &mut gpui::TestAppContext) {
+    fn a_ticker_keeps_a_timer_while_it_changes(cx: &mut gpui::TestAppContext) {
+        use tau_ui_kit::ticker::Count;
+
         let widgets = Rc::new(RefCell::new(TreeWidgets::default()));
-        let spec = |until| TickerSpec {
+        let handle = Handle::new("p", Rc::new(|_, _, _| {}));
+        let spec = |count| TickerSpec {
             key: "load.ticker".into(),
-            count: tau_ui_kit::ticker::Count::Since {
-                since: 1_000,
-                until,
-            },
+            count,
         };
-        let first = cx.update(|cx| ticker(&widgets, "p", spec(None), cx));
-        let again =
-            cx.update(|cx| ticker(&widgets, "p", spec(Some(84_999)), cx));
-        assert_eq!(first, again);
+        let going = Count::Since {
+            since: now() - 83_000,
+            until: None,
+        };
+        let read = cx.update(|cx| tick(&widgets, &handle, spec(going), cx));
+        assert_eq!(read, "1:23");
+        cx.update(|cx| tick(&widgets, &handle, spec(going), cx));
         assert_eq!(widgets.borrow().tickers.len(), 1);
-        drop((first, again));
-        widgets.borrow_mut().tickers.clear();
-        cx.run_until_parked();
+        let stopped = Count::Since {
+            since: 1_000,
+            until: Some(84_999),
+        };
+        let read = cx.update(|cx| tick(&widgets, &handle, spec(stopped), cx));
+        assert_eq!(read, "1:23");
+        assert!(widgets.borrow().tickers.is_empty());
     }
 
     /// A terminal is fed what it gained while it runs, frozen when it
