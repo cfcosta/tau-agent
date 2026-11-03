@@ -19,6 +19,7 @@ use gpui::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tau_agent::tool::RunId;
 use tau_ui_kit::{
     assets::Icon,
     components::{
@@ -59,6 +60,7 @@ use tau_ui_plugin::{
 
 use crate::{
     Act,
+    ActionDone,
     Declaration,
     Entry,
     LuauSettings,
@@ -182,14 +184,41 @@ pub fn draw(
 ) -> AnyElement {
     let handle = view.handle.clone();
     let t = view.theme().clone();
+    // A button acts on the plugin's state in the run drawn.
+    let acting = view.run.map(|run| {
+        let state = view
+            .state
+            .and_then(|state| state.plugins.get(plugin))
+            .map_or_else(|| serde_json::json!({}), |part| part.state.clone());
+        (
+            run.id.0.to_string(),
+            state,
+            view.settings.plugins.get(plugin).cloned(),
+        )
+    });
+    let plugin_name = plugin.to_owned();
     let mut draw = Draw::new(&t, id.to_owned())
         .ui(view.ui_state())
         .prefix(plugin)
         .on_act(Rc::new(move |act, cx| match act {
             tree::Act::Navigate(link) => handle.navigate(link, cx),
             tree::Act::Ui { key, value } => handle.set_ui(key, value, cx),
-            // A plugin's own actions arrive with ADR 0027's phase 2.
-            tree::Act::Plugin { .. } => {}
+            tree::Act::Plugin { action, args } => {
+                // Outside a run there is no state to act on.
+                if let Some((run, state, settings)) = &acting {
+                    handle.act(
+                        Act::Action {
+                            plugin: plugin_name.clone(),
+                            action,
+                            args,
+                            run: run.clone(),
+                            state: state.clone(),
+                            settings: settings.clone(),
+                        },
+                        cx,
+                    );
+                }
+            }
         }));
     if let Some(inputs) = view.inputs() {
         draw = draw.inputs(inputs);
@@ -229,6 +258,14 @@ impl UiPlugin for LuauPluginsUi {
         reply: Value,
         cx: &mut gpui::Context<SettingsUi>,
     ) {
+        if let Ok(done) = serde_json::from_value::<ActionDone>(reply.clone()) {
+            // What an action left, with the run it was carried out on.
+            let run = RunId(done.run.as_str().into());
+            for record in done.records() {
+                ui.handle().record(&run, record, cx);
+            }
+            return;
+        }
         if let Ok(page) = serde_json::from_value::<SettingsPage>(reply) {
             ui.take_page(page, cx);
         }
@@ -1030,6 +1067,30 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// What an action left folds into the run as its records do: the
+    /// state, the log, the error, and the view drawn from the state.
+    #[test]
+    fn what_an_action_left_folds_into_the_run() {
+        let done = ActionDone {
+            plugin: "p".into(),
+            run: "r1".into(),
+            state: json!({ "n": 2 }),
+            view: Some(json!({ "status": { "text": "2" } })),
+            logs: vec!["added".into()],
+            error: Some(("view".into(), "late".into())),
+        };
+        let mut state = State::default();
+        for record in done.records() {
+            state
+                .apply(record, &mut tau_ui_plugin::testing::FakeRun::default());
+        }
+        let part = &state.plugins["p"];
+        assert_eq!(part.state, json!({ "n": 2 }));
+        assert_eq!(part.view, json!({ "status": { "text": "2" } }));
+        assert_eq!(part.logs, ["added"]);
+        assert_eq!(part.errors, [("view".to_owned(), "late".to_owned())]);
+    }
 
     /// Records fold into each plugin's part: its state and view, its log
     /// (the newest lines), its errors, its flags, and that it is off.

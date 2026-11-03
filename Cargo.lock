@@ -9800,6 +9800,7 @@ dependencies = [
  "hegeltest",
  "serde",
  "serde_json",
+ "tau-agent",
  "tau-ui-kit",
  "tau-ui-plugin",
 ]

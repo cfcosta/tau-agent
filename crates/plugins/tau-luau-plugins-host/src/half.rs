@@ -184,6 +184,26 @@ impl HostHalf for LuauPluginsHost {
                 let page = host.settings_page(&plugin, settings).await;
                 return Ok(Some(serde_json::to_value(page)?));
             }
+            Act::Action {
+                plugin,
+                action,
+                args,
+                run,
+                state,
+                settings,
+            } => {
+                let done = host
+                    .action(
+                        &plugin,
+                        &action,
+                        args,
+                        &run,
+                        state,
+                        settings.as_ref(),
+                    )
+                    .await;
+                return Ok(Some(serde_json::to_value(done)?));
+            }
         }
         Ok(None)
     }

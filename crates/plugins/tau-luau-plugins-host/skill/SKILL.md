@@ -86,6 +86,7 @@ Every field but `name` is optional.
 | `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
 | `run_end`     | `{ stop, turns, cost }`                    | nothing                                    | 10 s   |
 | `view`        | the run's state                            | `{ status = ui.status(...) }`, or `{}`     | 200 ms |
+| `actions[x]`  | a button's or an input's arguments         | nothing; what it does to `ctx.state` stays | 2 s    |
 
 - `tau.block(why)` keeps the call from running; the model reads why.
   `tau.flag(why)` lets it run and marks it for the person's review.
@@ -142,8 +143,11 @@ Plain tables, drawn by tau on the computer and on the phone:
   opens and closes what is under it
 - `ui.tabs(id, { { "label", { ... } }, ... })`: one tab shown at a
   time
-- `ui.input(id, { placeholder = "...", multiline = true })`: a text
-  input
+- `ui.button(label, action, args, kind)`: carries out
+  `actions[action](args, ctx)` on the run's state, then draws `view`
+  again; `kind` is `"primary"`, `"secondary"` or `"danger"`
+- `ui.input(id, { placeholder = "...", multiline = true, submit = "action" })`:
+  a text input; Enter carries out `submit` with `{ text = ... }`
 - tau keeps where the person left a section or tabs, and what they
   typed in an input, under its `id`, on every device and across
   restarts

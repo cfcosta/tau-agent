@@ -224,6 +224,61 @@ pub enum Act {
     /// Draws `plugin`'s settings page (`settings.view`) of `settings`;
     /// the answer is a [`SettingsPage`].
     SettingsView { plugin: String, settings: Value },
+    /// Carries out `plugin`'s `actions[action]` with `args`, on the state
+    /// it has in `run`, under the person's `settings` for it; the answer
+    /// is an [`ActionDone`], which the interface records with the run.
+    Action {
+        plugin: String,
+        action: String,
+        args: Value,
+        run: String,
+        state: Value,
+        settings: Option<Value>,
+    },
+}
+
+/// What a plugin's action left, for the interface to record with the
+/// run it was carried out on: the state, the view drawn from it, the
+/// lines it logged, and why it failed, if it did.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionDone {
+    pub plugin: String,
+    pub run: String,
+    pub state: Value,
+    pub view: Option<Value>,
+    pub logs: Vec<String>,
+    pub error: Option<(String, String)>,
+}
+
+impl ActionDone {
+    /// The records to store with the run, in order.
+    pub fn records(&self) -> Vec<Record> {
+        let plugin = || self.plugin.clone();
+        let mut records = vec![Record::State {
+            plugin: plugin(),
+            state: self.state.clone(),
+        }];
+        if !self.logs.is_empty() {
+            records.push(Record::Log {
+                plugin: plugin(),
+                lines: self.logs.clone(),
+            });
+        }
+        if let Some((hook, error)) = &self.error {
+            records.push(Record::Error {
+                plugin: plugin(),
+                hook: hook.clone(),
+                error: error.clone(),
+            });
+        }
+        if let Some(view) = &self.view {
+            records.push(Record::View {
+                plugin: plugin(),
+                view: view.clone(),
+            });
+        }
+        records
+    }
 }
 
 /// A Luau plugin's settings page as the host drew it, for the settings

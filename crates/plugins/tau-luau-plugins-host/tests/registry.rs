@@ -314,3 +314,70 @@ fn a_workspace_is_ready_when_what_it_changes_passes() {
     write_greet(workspace.path(), TOOL_ONLY, Some(FAILING));
     assert!(ready(), "trunk's own version");
 }
+
+/// A button's action runs on the state the run has, under the person's
+/// settings, and its view is drawn from the state it left; one that
+/// fails, or that the plugin lacks, leaves the state as it was and says
+/// why (ADR 0045).
+#[test]
+fn an_action_changes_the_state_and_draws_it() {
+    const COUNTER: &str = r#"
+local tau = require("tau")
+local ui = tau.ui
+return tau.plugin {
+  name = "greet",
+  tools = { hello = { description = "Hello.", call = function() return "hi" end } },
+  settings = {
+    schema = { type = "object", properties = { step = { type = "integer" } } },
+    default = { step = 1 },
+  },
+  view = function(state, ctx)
+    return { status = ui.status(tostring(state.n or 0)) }
+  end,
+  actions = {
+    add = function(args, ctx)
+      ctx.state.n = (ctx.state.n or 0) + ctx.settings.step * (args.times or 1)
+      ctx.log("added")
+    end,
+    broken = function(args, ctx) error("no luck") end,
+  },
+}
+"#;
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    );
+    let (v1, trunk) = project(home.path(), 1, COUNTER, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    assert_eq!(standing(&registry), Standing::Active);
+    let act = |action: &str, state: serde_json::Value| {
+        block_on_io(registry.action(
+            "greet",
+            action,
+            serde_json::json!({ "times": 2 }),
+            "r1",
+            state,
+            Some(&serde_json::json!({ "step": 5 })),
+        ))
+    };
+
+    let done = act("add", serde_json::json!({ "n": 1 }));
+    assert_eq!(done.error, None);
+    assert_eq!(done.state, serde_json::json!({ "n": 11 }));
+    assert_eq!(done.logs, ["added"]);
+    assert_eq!(
+        done.view.unwrap()["status"]["text"],
+        serde_json::json!("11")
+    );
+
+    for action in ["broken", "missing"] {
+        let failed = act(action, serde_json::json!({ "n": 1 }));
+        assert_eq!(failed.state, serde_json::json!({ "n": 1 }), "{action}");
+        assert_eq!(failed.view, None);
+        let (hook, _) = failed.error.unwrap();
+        assert_eq!(hook, format!("actions.{action}"));
+    }
+}

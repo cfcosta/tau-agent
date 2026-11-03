@@ -415,6 +415,96 @@ impl Registry {
         }
     }
 
+    /// Carries out `action` of `plugin`'s active version with `args`, on
+    /// the `state` it has in `run`, under the person's `settings`, then
+    /// draws its view from the state it left (ADR 0045). An action that
+    /// fails leaves the state as it was, and says why.
+    pub async fn action(
+        &self,
+        plugin: &str,
+        action: &str,
+        args: serde_json::Value,
+        run: &str,
+        state: serde_json::Value,
+        settings: Option<&serde_json::Value>,
+    ) -> crate::ActionDone {
+        use crate::runtime::{Context, Hook, NoReach};
+
+        let hook = Hook::Action(action.to_owned());
+        let mut done = crate::ActionDone {
+            plugin: plugin.to_owned(),
+            run: run.to_owned(),
+            state: state.clone(),
+            view: None,
+            logs: Vec::new(),
+            error: None,
+        };
+        let loaded = {
+            let state = self.0.state.read().await;
+            state
+                .active
+                .iter()
+                .find(|active| active.loaded.declaration.name == plugin)
+                .map(|active| active.loaded.clone())
+        };
+        let Some(loaded) = loaded else {
+            done.error = Some((
+                format!("actions.{action}"),
+                format!("{plugin} is not active"),
+            ));
+            return done;
+        };
+        if !hook.declared_in(&loaded.declaration) {
+            done.error = Some((
+                format!("actions.{action}"),
+                format!("{plugin} has no action {action}"),
+            ));
+            return done;
+        }
+        let mut context = Context {
+            run: serde_json::json!({ "id": run }),
+            now: crate::agent::now(),
+            settings: tau_luau_plugins::settings::effective(
+                &loaded.declaration,
+                settings,
+            )
+            .0,
+            state,
+        };
+        let outcome = loaded
+            .call(
+                &hook,
+                args,
+                &context,
+                Arc::new(NoReach),
+                CancellationToken::new(),
+            )
+            .await;
+        done.logs = outcome.logs;
+        if let Some(error) = outcome.error {
+            done.error = Some((format!("actions.{action}"), error));
+            return done;
+        }
+        done.state = outcome.state;
+        if loaded.declaration.hooks.view {
+            context.state = done.state.clone();
+            let drawn = loaded
+                .call(
+                    &Hook::View,
+                    serde_json::Value::Null,
+                    &context,
+                    Arc::new(NoReach),
+                    CancellationToken::new(),
+                )
+                .await;
+            match drawn.error {
+                Some(error) => done.error = Some(("view".into(), error)),
+                None => done.view = Some(drawn.value),
+            }
+        }
+        done
+    }
+
     /// The person allows `plugin`'s waiting version: it activates, and
     /// what it reaches becomes what that plugin may reach.
     pub async fn allow(&self, plugin: &str) -> anyhow::Result<()> {

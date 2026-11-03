@@ -69,6 +69,11 @@ impl PluginUi for SettingsUi {
 }
 
 impl SettingsUi {
+    /// The way back to the interface.
+    pub fn handle(&self) -> &Handle {
+        &self.handle
+    }
+
     /// Keeps a page the host drew, and draws the pane again.
     pub fn take_page(&mut self, page: SettingsPage, cx: &mut App) {
         let key = (page.plugin, page.settings.to_string());

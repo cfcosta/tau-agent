@@ -19,6 +19,7 @@ pub use half::LuauPluginsHost;
 // What a plugin declares, from the interface half, by the paths the
 // host half has always used.
 use tau_luau_plugins::{
+    ActionDone,
     Declaration,
     Entry,
     NAME,
