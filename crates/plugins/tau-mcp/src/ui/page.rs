@@ -1,33 +1,22 @@
-//! The Servers page, a tab of a repository's page: in one quiet column,
-//! a line on its MCP servers (or the user's alone) and what waits on
-//! the user, the repository servers that wait for approval, entries
-//! that were skipped, and each server with where it comes from, how it
-//! is reached and exposed, whether it is connected and its tools; and
-//! the editor for the servers the page adds.
+//! The Servers page, a tab of a repository's page: a line on its MCP
+//! servers (or the user's alone) and what waits on the user, the
+//! repository servers that wait for approval, entries that were
+//! skipped, and each server with where it comes from, how it is reached
+//! and exposed, whether it is connected and its tools; and the editor
+//! for the servers the page adds. A view tree (ADR 0045), in the frame
+//! the interface gives a page. The tree has no modal, so the editor is
+//! a card at the page's top while it is open.
 
 use std::collections::BTreeSet;
 
-use gpui::{
-    AnyElement,
-    App,
-    ClickEvent,
-    Context,
-    Div,
-    Entity,
-    SharedString,
-    Window,
-    div,
-    prelude::*,
-    rems,
+use gpui::{AnyElement, App, Context};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use tau_ui_plugin::{
+    Handle,
+    ViewCx,
+    tree::{Kind, Node, Tone, draft_key},
 };
-use serde_json::Value;
-use tau_ui_kit::{
-    assets::Icon,
-    components::{self as ui, ButtonKind, Material as _, heading, icon, mono},
-    input::TextInput,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-};
-use tau_ui_plugin::{Handle, ViewCx};
 
 use super::{
     Act,
@@ -35,6 +24,7 @@ use super::{
     McpUi,
     Off,
     PendingRow,
+    Reply,
     ServerRow,
     Servers,
     ToolRow,
@@ -42,8 +32,33 @@ use super::{
 };
 use crate::info::Annotations;
 
+/// The UI state key of the editor while it is open: an [`Editor`].
+pub const EDITOR: &str = "editor";
+/// The UI state key of the server whose removal waits for a second
+/// click.
+pub const REMOVING: &str = "removing";
+/// The editor's inputs: a new server's name, and its entry. Their
+/// drafts are kept under [`draft_key`].
+pub const NAME_INPUT: &str = "mcp-name";
+pub const ENTRY_INPUT: &str = "mcp-entry";
+
+/// Carries out the [`Act`] its arguments hold.
+pub const ACT: &str = "act";
+/// Opens the editor on a new server.
+pub const ADD: &str = "add";
+/// Opens the editor on a settings server: `{ name, entry }`.
+pub const EDIT: &str = "edit";
+/// Closes the editor and forgets a removal asked.
+pub const CANCEL: &str = "cancel";
+/// Saves the server written: `{ editing, name, entry }`.
+pub const SAVE: &str = "save";
+/// Asks to remove a server, or removes it once asked: `{ name,
+/// confirmed }`.
+pub const REMOVE: &str = "remove";
+
 /// A server being added or edited.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Editor {
     /// The server being edited, or `None` for a new one.
     pub editing: Option<String>,
@@ -51,295 +66,172 @@ pub struct Editor {
     pub problem: Option<String>,
 }
 
-/// The page's state in one window.
+/// The page's state in one window: the handle the host's answers go
+/// through. What the page shows is in the UI state.
 pub struct Ui {
     handle: Handle,
-    pub(super) name: Entity<TextInput>,
-    pub(super) entry: Entity<TextInput>,
-    editor: Option<Editor>,
-    /// The server whose removal waits for a second click.
-    removing: Option<String>,
-    /// The servers whose tools, resources and prompts show whole.
-    details: BTreeSet<String>,
 }
 
 impl Ui {
-    pub(super) fn new(
-        handle: Handle,
-        name: Entity<TextInput>,
-        entry: Entity<TextInput>,
-    ) -> Self {
-        Self {
-            handle,
-            name,
-            entry,
-            editor: None,
-            removing: None,
-            details: BTreeSet::new(),
-        }
+    pub(super) fn new(handle: Handle) -> Self {
+        Self { handle }
     }
 
     /// What the host answered a prompt: its messages fill the composer;
     /// a failure says why and puts the command back to fix.
-    pub(super) fn answered(&self, reply: super::Reply, cx: &mut Context<Self>) {
+    pub(super) fn answered(&self, reply: Reply, cx: &mut Context<Self>) {
         match reply {
-            super::Reply::Prompt { text } => self.handle.composer(text, cx),
-            super::Reply::PromptFailed { error, command } => {
+            Reply::Prompt { text } => self.handle.composer(text, cx),
+            Reply::PromptFailed { error, command } => {
                 self.handle.alert("The prompt could not be had", error, cx);
                 self.handle.composer(command, cx);
             }
             // The browser signs in; the host waits for it to come back.
-            super::Reply::SignIn { url, .. } => cx.open_url(&url),
+            Reply::SignIn { url, .. } => cx.open_url(&url),
         }
     }
+}
 
-    fn changed(&self, cx: &mut Context<Self>) {
-        cx.notify();
-        self.handle.refresh(cx);
-    }
+/// What the page keeps in the window's UI state: the editor, the
+/// removal asked, and the editor's drafts.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Held {
+    pub editor: Option<Editor>,
+    pub removing: Option<String>,
+    pub name: String,
+    pub entry: String,
+}
 
-    pub fn editor(&self) -> Option<&Editor> {
-        self.editor.as_ref()
-    }
-
-    pub fn removing(&self) -> Option<&str> {
-        self.removing.as_deref()
-    }
-
-    /// Whether `name`'s tools, resources and prompts show whole.
-    pub fn showing_details(&self, name: &str) -> bool {
-        self.details.contains(name)
-    }
-
-    /// Shows `name`'s tools, resources and prompts whole, or as chips
-    /// again.
-    pub fn toggle_details(&mut self, name: &str, cx: &mut Context<Self>) {
-        if !self.details.remove(name) {
-            self.details.insert(name.to_owned());
+impl Held {
+    pub fn of(view: &ViewCx<'_, McpUi>) -> Self {
+        let draft = |input: &str| {
+            view.ui_value(&draft_key(input))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        Self {
+            editor: view
+                .ui_value(EDITOR)
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            removing: view
+                .ui_value(REMOVING)
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            name: draft(NAME_INPUT),
+            entry: draft(ENTRY_INPUT),
         }
-        cx.notify();
-        self.handle.refresh(cx);
     }
+}
 
-    /// Opens the editor on a new server.
-    pub fn open_add(&mut self, cx: &mut Context<Self>) {
-        self.name.update(cx, |input, cx| input.set_text("", cx));
-        self.entry.update(cx, |input, cx| input.set_text("", cx));
-        self.editor = Some(Editor::default());
-        self.changed(cx);
+/// What saving the server written sends, when it reads as a server the
+/// page may add: a new name the user's file does not have
+/// (`user_names`) and an entry that parses. Otherwise why not. The host
+/// checks again.
+pub fn checked(
+    editing: Option<&str>,
+    name: &str,
+    entry: &str,
+    user_names: &BTreeSet<String>,
+) -> Result<Act, String> {
+    let name = editing.unwrap_or(name).trim().to_owned();
+    if editing.is_none() && user_names.contains(&name) {
+        return Err(format!(
+            "Your file mcp.json has a server named `{name}`: edit it there, \
+             or pick another name."
+        ));
     }
+    let entry: Value = serde_json::from_str(entry)
+        .map_err(|error| format!("The entry is not JSON: {error}"))?;
+    server_entry(&name, &entry)?;
+    Ok(match editing {
+        Some(_) => Act::Edit { name, entry },
+        None => Act::Add { name, entry },
+    })
+}
 
-    /// Opens the editor on the settings server `name`, with its entry.
-    pub fn open_edit(
-        &mut self,
-        name: &str,
-        entry: &Value,
-        cx: &mut Context<Self>,
-    ) {
-        let text = serde_json::to_string_pretty(entry).unwrap_or_default();
-        self.name
-            .update(cx, |input, cx| input.set_text(name.to_owned(), cx));
-        self.entry.update(cx, |input, cx| input.set_text(text, cx));
-        self.editor = Some(Editor {
-            editing: Some(name.to_owned()),
-            problem: None,
-        });
-        self.changed(cx);
-    }
-
-    pub fn cancel(&mut self, cx: &mut Context<Self>) {
-        self.editor = None;
-        self.removing = None;
-        self.changed(cx);
-    }
-
-    pub fn set_name(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.name
-            .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
-    }
-
-    pub fn set_entry(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.entry
-            .update(cx, |input, cx| input.set_text(text.to_owned(), cx));
-    }
-
-    /// Sends the server being written to the host, when it reads as a
-    /// server the page may add: a new name the user's file does not
-    /// have (`user_names`) and an entry that parses. Otherwise the
-    /// editor says why, and nothing is sent. The host checks again.
-    pub fn save(
-        &mut self,
-        user_names: &BTreeSet<String>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(editor) = &self.editor else {
-            return false;
+/// What the page's buttons and switches do, through `handle`;
+/// `user_names` are the names a new server may not take.
+pub fn on_action(
+    handle: Handle,
+    user_names: BTreeSet<String>,
+) -> impl Fn(&str, &Value, &mut App) + 'static {
+    move |action, args, cx| {
+        let text = |key: &str| {
+            args.get(key).and_then(Value::as_str).map(str::to_owned)
         };
-        let name = match &editor.editing {
-            Some(name) => name.clone(),
-            None => self.name.read(cx).text().trim().to_owned(),
-        };
-        let checked = (|| {
-            if editor.editing.is_none() && user_names.contains(&name) {
-                return Err(format!(
-                    "Your file mcp.json has a server named `{name}`: edit it \
-                     there, or pick another name."
-                ));
-            }
-            let text = self.entry.read(cx).text().to_owned();
-            let entry: Value = serde_json::from_str(&text)
-                .map_err(|error| format!("The entry is not JSON: {error}"))?;
-            server_entry(&name, &entry).map(|_| entry)
-        })();
-        match checked {
-            Ok(entry) => {
-                let act = match &editor.editing {
-                    Some(_) => Act::Edit { name, entry },
-                    None => Act::Add { name, entry },
-                };
-                self.handle.act(act, cx);
-                self.editor = None;
-                self.changed(cx);
-                true
-            }
-            Err(problem) => {
-                if let Some(editor) = &mut self.editor {
-                    editor.problem = Some(problem);
+        match action {
+            ACT => {
+                if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
+                    handle.act(act, cx);
                 }
-                self.changed(cx);
-                false
             }
+            ADD => open(&handle, Editor::default(), String::new(), cx),
+            EDIT => {
+                let entry = args.get("entry").unwrap_or(&Value::Null);
+                let entry =
+                    serde_json::to_string_pretty(entry).unwrap_or_default();
+                let editor = Editor {
+                    editing: text("name"),
+                    problem: None,
+                };
+                open(&handle, editor, entry, cx);
+            }
+            CANCEL => {
+                handle.set_ui(EDITOR, None, cx);
+                handle.set_ui(REMOVING, None, cx);
+            }
+            SAVE => {
+                let editing = text("editing");
+                match checked(
+                    editing.as_deref(),
+                    &text("name").unwrap_or_default(),
+                    &text("entry").unwrap_or_default(),
+                    &user_names,
+                ) {
+                    Ok(act) => {
+                        handle.act(act, cx);
+                        handle.set_ui(EDITOR, None, cx);
+                    }
+                    Err(problem) => {
+                        let editor = Editor {
+                            editing,
+                            problem: Some(problem),
+                        };
+                        handle.set_ui(
+                            EDITOR,
+                            serde_json::to_value(editor).ok(),
+                            cx,
+                        );
+                    }
+                }
+            }
+            REMOVE => {
+                let Some(name) = text("name") else {
+                    return;
+                };
+                if args.get("confirmed").and_then(Value::as_bool) == Some(true)
+                {
+                    handle.set_ui(REMOVING, None, cx);
+                    handle.act(Act::Remove { name }, cx);
+                } else {
+                    handle.set_ui(REMOVING, Some(Value::String(name)), cx);
+                }
+            }
+            _ => {}
         }
-    }
-
-    /// Approves `pending`, a server of `repo`'s file, as shown.
-    pub fn approve(
-        &mut self,
-        repo: &str,
-        pending: &PendingRow,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle.act(
-            Act::Approve {
-                repo: repo.to_owned(),
-                server: pending.name.clone(),
-                hash: pending.hash.clone(),
-            },
-            cx,
-        );
-        self.changed(cx);
-    }
-
-    /// Asks to remove `name`; a second call removes it.
-    pub fn remove(&mut self, name: &str, cx: &mut Context<Self>) {
-        if self.removing.as_deref() == Some(name) {
-            self.removing = None;
-            self.handle.act(
-                Act::Remove {
-                    name: name.to_owned(),
-                },
-                cx,
-            );
-        } else {
-            self.removing = Some(name.to_owned());
-        }
-        self.changed(cx);
-    }
-
-    /// Turns `name` on or off in `repo`, or in every repository without
-    /// one.
-    pub fn enable(
-        &mut self,
-        repo: Option<&str>,
-        name: &str,
-        enabled: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle.act(
-            Act::Enable {
-                repo: repo.map(str::to_owned),
-                name: name.to_owned(),
-                enabled,
-            },
-            cx,
-        );
-        self.changed(cx);
-    }
-
-    /// Starts signing in to `server`: the host answers with the page to
-    /// open in the browser.
-    pub fn sign_in(
-        &mut self,
-        repo: Option<&str>,
-        server: &str,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle.act(
-            Act::SignIn {
-                repo: repo.map(str::to_owned),
-                server: server.to_owned(),
-            },
-            cx,
-        );
-        self.changed(cx);
-    }
-
-    /// Signs out of `server`.
-    pub fn sign_out(
-        &mut self,
-        repo: Option<&str>,
-        server: &str,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle.act(
-            Act::SignOut {
-                repo: repo.map(str::to_owned),
-                server: server.to_owned(),
-            },
-            cx,
-        );
-        self.changed(cx);
-    }
-
-    /// Starts `repo`'s servers, and connects `server` again, or all.
-    pub fn reconnect(
-        &mut self,
-        repo: Option<&str>,
-        server: Option<&str>,
-        cx: &mut Context<Self>,
-    ) {
-        self.handle.act(
-            Act::Reconnect {
-                repo: repo.map(str::to_owned),
-                server: server.map(str::to_owned),
-            },
-            cx,
-        );
-        self.changed(cx);
     }
 }
 
-fn on_ui(
-    ui: &Entity<Ui>,
-    f: impl Fn(&mut Ui, &mut Context<Ui>) + 'static,
-) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    let ui = ui.clone();
-    move |_, _, cx| ui.update(cx, |ui, cx| f(ui, cx))
-}
-
-/// A button that runs `f` on the page's state.
-fn action(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    kind: ButtonKind,
-    ui: &Entity<Ui>,
-    t: &Theme,
-    f: impl Fn(&mut Ui, &mut Context<Ui>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id.into())
-        .child(ui::button(label, kind, t))
-        .on_click(on_ui(ui, f))
+/// Opens `editor`, its name empty and its entry `entry`.
+fn open(handle: &Handle, editor: Editor, entry: String, cx: &mut App) {
+    handle.set_ui(EDITOR, serde_json::to_value(editor).ok(), cx);
+    handle.set_ui(draft_key(NAME_INPUT), None, cx);
+    handle.set_ui(
+        draft_key(ENTRY_INPUT),
+        (!entry.is_empty()).then_some(Value::String(entry)),
+        cx,
+    );
 }
 
 /// The servers the page shows: the repository's in `repo`, or the
@@ -359,95 +251,95 @@ pub fn servers_of<'a>(
     }
 }
 
-/// The widest the page's column grows.
-const COLUMN: f32 = 860.;
-
-/// The most tools a server shows as chips; the rest are counted on a
-/// chip that opens them all.
+/// The most tools a server shows as chips; the rest are counted, and
+/// its details show them all.
 pub const CHIPS: usize = 12;
 
-/// How far a server's lines sit in from its dot: past the dot and its
-/// gap, under the name.
-const INDENT: f32 = 17.;
-
 /// The page: what the servers are and what waits on the user, the
-/// repository servers waiting for approval, entries that were skipped,
-/// and each server with its tools.
+/// editor while open, the repository servers waiting for approval,
+/// entries that were skipped, and each server with its tools.
 pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
-    draw(view, true)
+    draw(view, "mcp-servers")
 }
 
 /// Its settings pane: the servers, everywhere or in the repository in
 /// scope, as the page has them, inside the host's pane.
 pub fn settings_pane(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
-    draw(view, false)
+    draw(view, "mcp-settings")
 }
 
-/// The page's content, on a screen of its own when `screen`.
-fn draw(view: &mut ViewCx<'_, McpUi>, screen: bool) -> AnyElement {
-    let t = view.theme().clone();
-    let compact = view.compact;
-    let (repo, servers) = servers_of(view);
-    let servers = servers.clone();
-    let ui = view.ui.clone();
-    let (removing, details) = {
-        let state = view.read_ui();
-        (state.removing.clone(), state.details.clone())
+fn draw(view: &mut ViewCx<'_, McpUi>, id: &str) -> AnyElement {
+    let (repo, servers) = {
+        let (repo, servers) = servers_of(view);
+        (repo, servers.clone())
     };
-    let at = repo.as_deref();
-    let content = div()
-        .w_full()
-        .max_w(rems((COLUMN) / 16.))
-        .mx_auto()
-        .flex()
-        .flex_col()
-        .gap(sp(3.5))
-        .child(intro(&ui, at, &servers, compact, &t))
-        .children(servers.pending.iter().map(|row| pending(&ui, at, row, &t)))
-        .children(servers.errors.iter().map(|error| {
-            ui::notice(Icon::Warning, error.clone(), t.red, Type::SMALL, &t)
-        }))
-        .child(if servers.servers.is_empty() {
-            ui::empty(
-                "No servers yet. Add one here, or in ~/.config/tau/mcp.json.",
-                &t,
-            )
-            .into_any_element()
-        } else {
-            div()
-                .flex()
-                .flex_col()
-                .children(servers.servers.iter().map(|server| {
-                    server_section(
-                        &ui,
-                        at,
-                        server,
-                        removing.as_deref() == Some(server.name.as_str()),
-                        details.contains(&server.name),
-                        compact,
-                        &t,
-                    )
-                }))
-                .into_any_element()
+    let held = Held::of(view);
+    let tree = tree(repo.as_deref(), &servers, &held, view.compact);
+    let on = on_action(view.handle.clone(), servers.user_names.clone());
+    view.tree(id, &tree, on)
+}
+
+/// The page's tree, for `repo`'s servers or the user's alone, on a
+/// phone when `compact`.
+pub fn tree(
+    repo: Option<&str>,
+    servers: &Servers,
+    held: &Held,
+    compact: bool,
+) -> Node {
+    let mut page = vec![intro(repo, servers, compact)];
+    if let Some(editor) = &held.editor {
+        page.push(editor_card(editor, held));
+    }
+    page.extend(servers.pending.iter().map(|row| pending(repo, row)));
+    page.extend(servers.errors.iter().map(|error| {
+        Node::row([icon("warning", Tone::Bad), Node::text(error.clone())])
+    }));
+    if servers.servers.is_empty() {
+        page.push(Node::Empty {
+            text: "No servers yet. Add one here, or in ~/.config/tau/mcp.json."
+                .into(),
         });
-    let editor = view
-        .read_ui()
-        .editor
-        .clone()
-        .map(|editor| editor_modal(view, &editor, &servers.user_names, &t));
-    let content = if screen {
-        ui::screen("mcp-servers", compact, content).into_any_element()
-    } else {
-        content.into_any_element()
-    };
-    div()
-        .relative()
-        .when(screen, |page| page.flex_1().min_h(rems(0.)))
-        .flex()
-        .flex_col()
-        .child(content)
-        .when_some(editor, |page, editor| page.child(editor))
-        .into_any_element()
+    }
+    for (at, server) in servers.servers.iter().enumerate() {
+        if at > 0 {
+            page.push(Node::Rule);
+        }
+        let removing = held.removing.as_deref() == Some(server.name.as_str());
+        page.push(server_node(repo, server, removing, compact));
+    }
+    Node::stack(page)
+}
+
+fn icon(name: &str, tone: Tone) -> Node {
+    Node::Icon {
+        name: name.into(),
+        tone,
+    }
+}
+
+fn mono(text: impl Into<String>) -> Node {
+    Node::Mono { text: text.into() }
+}
+
+fn button(label: &str, kind: Kind, action: &str, args: Value) -> Node {
+    Node::Button {
+        label: label.into(),
+        action: action.into(),
+        args,
+        kind,
+        icon: None,
+    }
+}
+
+/// A button that asks the host half for `act`.
+fn act_button(label: &str, kind: Kind, act: &Act) -> Node {
+    button(
+        label,
+        kind,
+        ACT,
+        serde_json::to_value(act).unwrap_or(Value::Null),
+    )
 }
 
 /// `1 server`, `2 servers`: `one` or `many` after a count.
@@ -459,182 +351,182 @@ fn counted(count: usize, one: &str, many: &str) -> String {
 }
 
 /// What these servers are, how many are connected and what waits on
-/// the user, each count in its color; where they are read from; and
-/// what can be done: connect them before a run does, or add one.
-fn intro(
-    ui: &Entity<Ui>,
-    repo: Option<&str>,
-    servers: &Servers,
-    compact: bool,
-    t: &Theme,
-) -> Div {
-    let mut counts = Vec::new();
+/// the user, each count in its tone; where they are read from; and what
+/// can be done: connect them before a run does, or add one.
+fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
+    let mut line = vec![Node::text(match repo {
+        Some(_) => "Servers this repository's runs can call.",
+        None => "Your servers, which every repository's runs can call.",
+    })];
+    let mut count = |text: String, tone| line.push(Node::Pill { text, tone });
     if !servers.servers.is_empty() {
-        counts.push(match servers.started {
-            true => (format!("{} connected", servers.connected()), t.green),
-            false => ("none connected yet".to_owned(), t.muted),
-        });
+        match servers.started {
+            true => {
+                count(format!("{} connected", servers.connected()), Tone::Good)
+            }
+            false => count("none connected yet".to_owned(), Tone::Neutral),
+        }
     }
     if servers.needs_sign_in() > 0 {
-        counts.push((
+        count(
             counted(servers.needs_sign_in(), "needs sign-in", "need sign-in"),
-            t.roles.live,
-        ));
+            Tone::Warn,
+        );
     }
     if servers.failed() > 0 {
-        counts.push((format!("{} failed", servers.failed()), t.red));
+        count(format!("{} failed", servers.failed()), Tone::Bad);
     }
     if !servers.pending.is_empty() {
-        counts.push((
+        count(
             counted(
                 servers.pending.len(),
                 "needs your approval",
                 "need your approval",
             ),
-            t.roles.live,
-        ));
+            Tone::Warn,
+        );
     }
-    let last = counts.len().saturating_sub(1);
-    let line = div()
-        .flex()
-        .flex_wrap()
-        .typeset(Type::SMALL.sized(13.5))
-        .text_color(t.muted)
-        .child(match repo {
-            Some(_) => "Servers this repository's runs can call. ",
-            None => "Your servers, which every repository's runs can call. ",
-        })
-        .children(counts.into_iter().enumerate().map(
-            |(at, (count, color))| {
-                div()
-                    .flex()
-                    .child(div().text_color(color).child(count))
-                    .child(if at == last { "." } else { ", " })
-            },
-        ));
+    let mut intro = vec![Node::row(line)];
     let files = [servers.user_file.as_deref(), servers.repo_file.as_deref()]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
         .join(" and ");
-    let connect = (!servers.started && !servers.servers.is_empty())
-        .then(|| repo.map(str::to_owned));
-    div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .gap(sp(3.))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems((if compact { 0. } else { 300. }) / 16.))
-                .flex()
-                .flex_col()
-                .gap(sp(1.))
-                .child(line)
-                .when(!compact && !files.is_empty(), |intro| {
-                    intro.child(ui::text(
-                        format!(
-                            "Read from {files}, and the servers added here. \
-                             A repository's own servers wait for your \
-                             approval; until a run starts them, Connect does."
-                        ),
-                        Type::CAPTION,
-                        t.dim,
-                    ))
-                }),
-        )
-        .when_some(connect, |row, repo| {
-            row.child(action(
-                "mcp-connect",
-                "Connect now",
-                ButtonKind::Secondary,
-                ui,
-                t,
-                move |ui, cx| ui.reconnect(repo.as_deref(), None, cx),
-            ))
-        })
-        .child(action(
-            "mcp-add",
-            "Add a server",
-            ButtonKind::Secondary,
-            ui,
-            t,
-            |ui, cx| ui.open_add(cx),
-        ))
+    if !compact && !files.is_empty() {
+        intro.push(Node::text(format!(
+            "Read from {files}, and the servers added here. A repository's \
+             own servers wait for your approval; until a run starts them, \
+             Connect does."
+        )));
+    }
+    let mut buttons = Vec::new();
+    if !servers.started && !servers.servers.is_empty() {
+        buttons.push(act_button(
+            "Connect now",
+            Kind::Secondary,
+            &Act::Reconnect {
+                repo: repo.map(str::to_owned),
+                server: None,
+            },
+        ));
+    }
+    buttons.push(button("Add a server", Kind::Secondary, ADD, Value::Null));
+    intro.push(Node::row(buttons));
+    Node::stack(intro)
 }
 
-/// A repository server waiting for approval, in a filled panel with
-/// its whole entry: approving runs what it says.
-fn pending(
-    ui: &Entity<Ui>,
-    repo: Option<&str>,
-    row: &PendingRow,
-    t: &Theme,
-) -> Div {
-    let (repo, row) = (repo.map(str::to_owned), row.clone());
-    let entry = serde_json::to_string_pretty(&row.entry).unwrap_or_default();
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.5))
-        .px(sp(4.5))
-        .py(sp(4.))
-        .rounded(radius::CARD)
-        .bg(t.card)
-        .border_1()
-        .border_color(t.border_strong)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .font_weight(weight::STRONG)
-                        .text_color(t.text)
-                        .child(row.name.clone()),
-                )
-                .child(
-                    mono(row.transport.clone(), Type::CAPTION, t.dim)
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .truncate(),
-                )
-                .child(
-                    ui::text("needs approval", Type::SMALL, t.roles.live)
-                        .flex_shrink_0(),
-                ),
-        )
-        .child(ui::text(
+/// The editor of a server the page adds: its name, and its entry as the
+/// files write it.
+fn editor_card(editor: &Editor, held: &Held) -> Node {
+    let mut body = vec![
+        Node::row([
+            icon("plug", Tone::Info),
+            Node::Heading {
+                text: match &editor.editing {
+                    Some(_) => "Edit server",
+                    None => "Add server",
+                }
+                .into(),
+            },
+        ]),
+        Node::Rich {
+            text: "The entry as mcp.json writes it: `command` and `args` for \
+                   a program, or `url` and `headers` for HTTP; `exposure`, \
+                   `toolExposure`, `description`, `timeout`. `${VAR}` reads \
+                   tau's environment."
+                .into(),
+        },
+        match &editor.editing {
+            Some(editing) => mono(editing.clone()),
+            None => Node::Input {
+                id: NAME_INPUT.into(),
+                placeholder: Some("linear".into()),
+                multiline: false,
+                submit: None,
+            },
+        },
+        Node::Input {
+            id: ENTRY_INPUT.into(),
+            placeholder: Some(
+                "{ \"command\": \"uvx\", \"args\": [\"mcp-server-git\"] }"
+                    .into(),
+            ),
+            multiline: true,
+            submit: None,
+        },
+    ];
+    if let Some(problem) = &editor.problem {
+        body.push(Node::row([
+            icon("warning", Tone::Bad),
+            Node::text(problem.clone()),
+        ]));
+    }
+    body.push(Node::row([
+        button("Cancel", Kind::Secondary, CANCEL, Value::Null),
+        button(
+            "Save",
+            Kind::Primary,
+            SAVE,
+            json!({
+                "editing": editor.editing,
+                "name": held.name,
+                "entry": held.entry,
+            }),
+        ),
+    ]));
+    Node::Card {
+        children: vec![Node::stack(body)],
+    }
+}
+
+/// A repository server waiting for approval, in a card with its whole
+/// entry: approving runs what it says.
+fn pending(repo: Option<&str>, row: &PendingRow) -> Node {
+    let mut card = vec![
+        Node::row([
+            Node::Heading {
+                text: row.name.clone(),
+            },
+            mono(row.transport.clone()),
+            Node::Spacer,
+            Node::Badge {
+                text: "needs approval".into(),
+                tone: Tone::Warn,
+            },
+        ]),
+        Node::text(
             "The repository's .tau/mcp.json starts this server. It connects \
              once approved, and asks again if the entry changes.",
-            Type::SMALL.sized(13.5),
-            t.text_soft,
-        ))
-        .child(ui::code_block(Some("json"), &entry, t))
-        .when_some(repo, |panel, repo| {
-            let id = format!("mcp-approve-{}", row.name);
-            panel.child(div().flex().gap(sp(2.)).child(action(
-                id,
-                "Approve",
-                ButtonKind::Primary,
-                ui,
-                t,
-                move |ui, cx| ui.approve(&repo, &row, cx),
-            )))
-        })
+        ),
+        Node::Code {
+            lang: Some("json".into()),
+            text: serde_json::to_string_pretty(&row.entry).unwrap_or_default(),
+        },
+    ];
+    if let Some(repo) = repo {
+        card.push(Node::row([act_button(
+            "Approve",
+            Kind::Primary,
+            &Act::Approve {
+                repo: repo.to_owned(),
+                server: row.name.clone(),
+                hash: row.hash.clone(),
+            },
+        )]));
+    }
+    Node::Card {
+        children: vec![Node::stack(card)],
+    }
 }
 
-/// A state's color.
-fn state_color(state: Option<&str>, t: &Theme) -> gpui::Hsla {
+/// A state's tone.
+fn state_tone(state: Option<&str>) -> Tone {
     match state {
-        Some("connected") => t.green,
-        Some("connecting") => t.roles.waiting,
-        Some("failed") => t.red,
-        Some(super::NEEDS_AUTH) => t.roles.live,
-        _ => t.dim,
+        Some("connected") => Tone::Good,
+        Some("connecting") => Tone::Info,
+        Some("failed") => Tone::Bad,
+        Some(super::NEEDS_AUTH) => Tone::Warn,
+        _ => Tone::Neutral,
     }
 }
 
@@ -712,287 +604,159 @@ fn origin(server: &ServerRow) -> String {
     parts.join(" · ")
 }
 
-/// Words that act, quieter than a button: a server's own actions.
-fn quiet_action(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    color: gpui::Hsla,
-    ui: &Entity<Ui>,
-    f: impl Fn(&mut Ui, &mut Context<Ui>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id.into())
-        .flex_shrink_0()
-        .typeset(Type::CAPTION)
-        .text_color(color)
-        .cursor_pointer()
-        .hover(|style| style.underline())
-        .child(label.into())
-        .on_click(on_ui(ui, f))
-}
-
-/// What can be done to a server: sign in or out, see its tools whole,
-/// connect it again, edit or remove it, and turn it on or off.
+/// What can be done to a server: sign in or out, connect it again, and
+/// edit or remove it.
 fn server_actions(
-    ui: &Entity<Ui>,
     repo: Option<&str>,
     server: &ServerRow,
     removing: bool,
-    open: bool,
-    compact: bool,
-    t: &Theme,
-) -> Div {
-    let name = server.name.clone();
+) -> Vec<Node> {
+    let (repo, name) = (repo.map(str::to_owned), server.name.clone());
     let waiting = server.state.as_deref() == Some(super::NEEDS_AUTH);
     let signed_in = server.auth.as_ref().is_some_and(|auth| auth.signed_in);
-    let has_details = !server.tools.is_empty() || has_more(server);
-    div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .gap(sp(3.))
-        .when(waiting && server.auth.is_some(), |row| {
-            let (repo, name) = (repo.map(str::to_owned), name.clone());
-            row.child(action(
-                format!("mcp-sign-in-{name}"),
-                if signed_in {
-                    "Sign in again"
-                } else {
-                    "Sign in"
-                },
-                ButtonKind::Primary,
-                ui,
-                t,
-                move |ui, cx| ui.sign_in(repo.as_deref(), &name, cx),
-            ))
-        })
-        .when(has_details, |row| {
-            let name = name.clone();
-            row.child(quiet_action(
-                format!("mcp-details-{name}"),
-                if open { "Hide details" } else { "Details" },
-                t.muted,
-                ui,
-                move |ui, cx| ui.toggle_details(&name, cx),
-            ))
-        })
-        .when(signed_in, |row| {
-            let (repo, name) = (repo.map(str::to_owned), name.clone());
-            row.child(quiet_action(
-                format!("mcp-sign-out-{name}"),
-                "Sign out",
-                t.muted,
-                ui,
-                move |ui, cx| ui.sign_out(repo.as_deref(), &name, cx),
-            ))
-        })
-        .when(server.state.is_some() && server.enabled, |row| {
-            let (repo, name) = (repo.map(str::to_owned), name.clone());
-            row.child(quiet_action(
-                format!("mcp-reconnect-{name}"),
-                "Reconnect",
-                t.muted,
-                ui,
-                move |ui, cx| ui.reconnect(repo.as_deref(), Some(&name), cx),
-            ))
-        })
-        .when(server.defined == Defined::Settings, |row| {
-            let entry = server.entry.clone().unwrap_or(Value::Null);
-            let (edit, remove) = (name.clone(), name.clone());
-            row.child(quiet_action(
-                format!("mcp-edit-{name}"),
-                "Edit",
-                t.muted,
-                ui,
-                move |ui, cx| ui.open_edit(&edit, &entry, cx),
-            ))
-            .child(quiet_action(
-                format!("mcp-remove-{name}"),
-                if removing { "Remove it" } else { "Remove" },
-                if removing { t.red } else { t.muted },
-                ui,
-                move |ui, cx| ui.remove(&remove, cx),
-            ))
-        })
-        .child(toggle(ui, repo, server, compact, t))
+    let mut actions = Vec::new();
+    if waiting && server.auth.is_some() {
+        actions.push(act_button(
+            if signed_in {
+                "Sign in again"
+            } else {
+                "Sign in"
+            },
+            Kind::Primary,
+            &Act::SignIn {
+                repo: repo.clone(),
+                server: name.clone(),
+            },
+        ));
+    }
+    if signed_in {
+        actions.push(act_button(
+            "Sign out",
+            Kind::Secondary,
+            &Act::SignOut {
+                repo: repo.clone(),
+                server: name.clone(),
+            },
+        ));
+    }
+    if server.state.is_some() && server.enabled {
+        actions.push(act_button(
+            "Reconnect",
+            Kind::Secondary,
+            &Act::Reconnect {
+                repo,
+                server: Some(name.clone()),
+            },
+        ));
+    }
+    if server.defined == Defined::Settings {
+        actions.push(button(
+            "Edit",
+            Kind::Secondary,
+            EDIT,
+            json!({
+                "name": name,
+                "entry": server.entry.clone().unwrap_or(Value::Null),
+            }),
+        ));
+        actions.push(button(
+            if removing { "Remove it" } else { "Remove" },
+            if removing {
+                Kind::Danger
+            } else {
+                Kind::Secondary
+            },
+            REMOVE,
+            json!({ "name": name, "confirmed": removing }),
+        ));
+    }
+    actions
 }
 
-/// One server, as a section over a rule: its state's dot, its name and
-/// how it is reached, what it has; where it comes from and what can be
-/// done; its description, sign-in and last error; and its tools as
-/// chips, or whole with its resources and prompts once opened.
-fn server_section(
-    ui: &Entity<Ui>,
+/// One server: its state's dot, its name and how it is reached, what it
+/// has; where it comes from and what can be done; its description,
+/// sign-in and last error; whether it is on; and its tools as chips,
+/// with its details (tools whole, resources and prompts) to open.
+fn server_node(
     repo: Option<&str>,
     server: &ServerRow,
     removing: bool,
-    open: bool,
     compact: bool,
-    t: &Theme,
-) -> Div {
-    let below = || div().pl(rems((INDENT) / 16.));
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .px(sp(1.))
-        .pt(sp(3.5))
-        .pb(sp(4.))
-        .border_b_1()
-        .border_color(t.border)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .child(ui::dot(state_color(server.state.as_deref(), t), 7.))
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .font_weight(weight::STRONG)
-                        .text_color(t.text)
-                        .child(server.name.clone()),
-                )
-                .child(
-                    mono(server.transport.clone(), Type::CAPTION, t.dim)
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .truncate(),
-                )
-                .when(!compact, |line| {
-                    line.child(
-                        ui::text(
-                            server_note(server, repo),
-                            Type::SMALL,
-                            t.muted,
-                        )
-                        .flex_shrink_0(),
-                    )
-                }),
-        )
-        .child(
-            below()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(3.))
-                .child(
-                    mono(
-                        match compact {
-                            true => format!(
-                                "{} · {}",
-                                origin(server),
-                                server_note(server, repo)
-                            ),
-                            false => origin(server),
-                        },
-                        Type::CAPTION,
-                        t.dim,
-                    )
-                    .flex_1(),
-                )
-                .child(server_actions(
-                    ui, repo, server, removing, open, compact, t,
-                )),
-        )
-        .when_some(server.description.clone(), |section, description| {
-            section.child(below().child(ui::text(
-                description,
-                Type::SMALL,
-                t.text_soft,
-            )))
-        })
-        .when_some(sign_in_line(server), |section, line| {
-            section.child(below().child(mono(line, Type::CAPTION, t.muted)))
-        })
-        .when_some(server.error.clone(), |section, error| {
-            let color = match server.state.as_deref() {
-                Some(super::NEEDS_AUTH) => t.roles.live,
-                _ => t.red,
-            };
-            section.child(below().child(mono(error, Type::CAPTION, color)))
-        })
-        .when(!open && !server.tools.is_empty(), |section| {
-            section.child(below().child(tool_chips(ui, server, t)))
-        })
-        .when(open, |section| {
-            section.child(
-                below()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(3.))
-                    .when(!server.tools.is_empty(), |details| {
-                        details.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .child(heading(
-                                    &format!("Tools · {}", server.tools.len()),
-                                    t,
-                                ))
-                                .children(
-                                    server
-                                        .tools
-                                        .iter()
-                                        .map(|tool| tool_row(tool, t)),
-                                ),
-                        )
-                    })
-                    .when(has_more(server), |details| {
-                        details.child(offers(server, t))
-                    }),
-            )
-        })
+) -> Node {
+    let mut head = vec![Node::Status {
+        text: server.name.clone(),
+        detail: Some(server.transport.clone()),
+        tone: state_tone(server.state.as_deref()),
+    }];
+    if !compact {
+        head.push(Node::Spacer);
+        head.push(Node::text(server_note(server, repo)));
+    }
+    let about = match compact {
+        true => format!("{} · {}", origin(server), server_note(server, repo)),
+        false => origin(server),
+    };
+    let mut actions = vec![mono(about), Node::Spacer];
+    actions.extend(server_actions(repo, server, removing));
+    let mut lines = vec![Node::row(head), Node::row(actions)];
+    if let Some(description) = &server.description {
+        lines.push(Node::text(description.clone()));
+    }
+    if let Some(line) = sign_in_line(server) {
+        lines.push(mono(line));
+    }
+    if let Some(error) = &server.error {
+        let tone = match server.state.as_deref() {
+            Some(super::NEEDS_AUTH) => Tone::Warn,
+            _ => Tone::Bad,
+        };
+        lines.push(Node::row([icon("warning", tone), mono(error.clone())]));
+    }
+    lines.push(toggle(repo, server));
+    if !server.tools.is_empty() {
+        lines.push(tool_chips(server));
+    }
+    if !server.tools.is_empty() || has_more(server) {
+        lines.push(Node::Section {
+            id: format!("mcp-details-{}", server.name),
+            title: "Details".into(),
+            open: false,
+            children: details(server),
+        });
+    }
+    Node::stack(lines)
 }
 
-/// A tool's chip color: hidden tools quiet, destructive ones red.
-fn chip_color(tool: &ToolRow, t: &Theme) -> gpui::Hsla {
+/// A tool's chip tone: hidden tools quiet, destructive ones bad.
+fn chip_tone(tool: &ToolRow) -> Tone {
     if tool.name.is_none() {
-        t.dim
+        Tone::Neutral
     } else if tool.annotations.destructive == Some(true) {
-        t.red
+        Tone::Bad
     } else {
-        t.blue
+        Tone::Info
     }
 }
 
-/// A short mono name on a small raised chip.
-fn chip(text: impl Into<SharedString>, color: gpui::Hsla, t: &Theme) -> Div {
-    mono(text, Type::CAPTION, color)
-        .flex_shrink_0()
-        .px(sp(2.))
-        .py(sp(0.5))
-        .rounded(radius::CONTROL)
-        .bg(t.raised)
-}
-
-/// A server's first [`CHIPS`] tools as chips, and the rest counted on
-/// one that opens them all.
-fn tool_chips(ui: &Entity<Ui>, server: &ServerRow, t: &Theme) -> Div {
+/// A server's first [`CHIPS`] tools as chips, and the rest counted.
+fn tool_chips(server: &ServerRow) -> Node {
     let more = server.tools.len().saturating_sub(CHIPS);
-    let name = server.name.clone();
-    div()
-        .flex()
-        .flex_wrap()
-        .gap(sp(1.5))
-        .children(
-            server
-                .tools
-                .iter()
-                .take(CHIPS)
-                .map(|tool| chip(tool.tool.clone(), chip_color(tool, t), t)),
-        )
-        .when(more > 0, |chips| {
-            chips.child(
-                div()
-                    .id(SharedString::from(format!("mcp-more-{name}")))
-                    .cursor_pointer()
-                    .child(chip(format!("+{more}"), t.muted, t))
-                    .on_click(on_ui(ui, move |ui, cx| {
-                        ui.toggle_details(&name, cx)
-                    })),
-            )
+    let mut chips: Vec<Node> = server
+        .tools
+        .iter()
+        .take(CHIPS)
+        .map(|tool| Node::Badge {
+            text: tool.tool.clone(),
+            tone: chip_tone(tool),
         })
+        .collect();
+    if more > 0 {
+        chips.push(Node::Badge {
+            text: format!("+{more}"),
+            tone: Tone::Neutral,
+        });
+    }
+    Node::row(chips)
 }
 
 /// Whether `server` is one of the user's that is on and runs once per
@@ -1023,47 +787,24 @@ pub fn reach(server: &ServerRow, repo: Option<&str>) -> &'static str {
     }
 }
 
-/// The switch that turns `server` on or off at the page's level (words
-/// on a phone), or why it cannot.
-fn toggle(
-    ui: &Entity<Ui>,
-    repo: Option<&str>,
-    server: &ServerRow,
-    compact: bool,
-    t: &Theme,
-) -> AnyElement {
+/// The switch that turns `server` on or off at the page's level, or why
+/// it cannot.
+fn toggle(repo: Option<&str>, server: &ServerRow) -> Node {
     if let Some(why) = locked(server, repo.is_some()) {
-        return mono(why, Type::CAPTION, t.dim).into_any_element();
+        return mono(why);
     }
-    let repo_name = repo;
-    let (repo, name, enabled) =
-        (repo.map(str::to_owned), server.name.clone(), server.enabled);
-    let id = SharedString::from(format!("mcp-enable-{name}"));
-    let flip = move |ui: &mut Ui, cx: &mut Context<Ui>| {
-        ui.enable(repo.as_deref(), &name, !enabled, cx)
+    let act = Act::Enable {
+        repo: repo.map(str::to_owned),
+        name: server.name.clone(),
+        enabled: !server.enabled,
     };
-    if compact {
-        return quiet_action(
-            id,
-            if enabled { "Turn off" } else { "Turn on" },
-            t.muted,
-            ui,
-            flip,
-        )
-        .into_any_element();
+    Node::Switch {
+        label: format!("On in {}", reach(server, repo)),
+        detail: None,
+        on: server.enabled,
+        action: ACT.into(),
+        args: serde_json::to_value(act).unwrap_or(Value::Null),
     }
-    div()
-        .flex()
-        .items_center()
-        .gap(sp(1.5))
-        .child(mono(reach(server, repo_name), Type::MICRO, t.dim))
-        .child(
-            div()
-                .id(id)
-                .child(ui::switch(enabled, t))
-                .on_click(on_ui(ui, flip)),
-        )
-        .into_any_element()
 }
 
 /// What a tool's hints say, as badges: read-only, destructive,
@@ -1085,16 +826,19 @@ pub fn hints(annotations: &Annotations) -> Vec<&'static str> {
     hints
 }
 
-/// A hint's badge: destructive in red.
-pub fn hint_badge(hint: &'static str, t: &Theme) -> Div {
-    match hint {
-        "destructive" => ui::badge(hint, t.red, t.red_border),
-        "read-only" => ui::badge(hint, t.green, t.border),
-        _ => ui::badge(hint, t.muted, t.border),
+/// A hint's badge: destructive bad, read-only good.
+pub fn hint_badge(hint: &'static str) -> Node {
+    Node::Badge {
+        text: hint.into(),
+        tone: match hint {
+            "destructive" => Tone::Bad,
+            "read-only" => Tone::Good,
+            _ => Tone::Neutral,
+        },
     }
 }
 
-/// The most rows of each list a server's card shows; the rest are
+/// The most rows of each list a server's details show; the rest are
 /// counted.
 pub const LIST_ROWS: usize = 20;
 
@@ -1105,247 +849,136 @@ fn has_more(server: &ServerRow) -> bool {
         || !server.prompts.is_empty()
 }
 
-/// A server's resources, resource templates and prompts: how many of
-/// each, and the first [`LIST_ROWS`] of each.
-fn offers(server: &ServerRow, t: &Theme) -> Div {
-    let resources = server.resources.iter().map(|resource| {
-        let mut about = vec![
-            resource
-                .title
-                .clone()
-                .unwrap_or_else(|| resource.name.clone()),
-        ];
-        if let Some(mime) = &resource.mime_type {
-            about.push(mime.clone());
-        }
-        listed_row(
-            resource.uri.clone(),
-            about.join(" · "),
-            resource.description.clone(),
-            t,
-        )
-    });
-    let templates = server.templates.iter().map(|template| {
-        listed_row(
-            template.uri_template.clone(),
-            template
-                .title
-                .clone()
-                .unwrap_or_else(|| template.name.clone()),
-            template.description.clone(),
-            t,
-        )
-    });
-    let prompts = server.prompts.iter().map(|prompt| {
-        listed_row(
-            format!("/{}", prompt.command),
-            crate::prompts::arguments_hint(&prompt.info()),
-            prompt.description.clone().or_else(|| prompt.title.clone()),
-            t,
-        )
-    });
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(sp(1.5))
-                .child(count_badge("resources", server.resources.len(), t))
-                .child(count_badge("templates", server.templates.len(), t))
-                .child(count_badge("prompts", server.prompts.len(), t)),
-        )
-        .when(!server.resources.is_empty(), |list| {
-            list.child(section(
-                "Resources",
-                server.resources.len(),
-                resources,
-                t,
-            ))
-        })
-        .when(!server.templates.is_empty(), |list| {
-            list.child(section(
-                "Resource templates",
-                server.templates.len(),
-                templates,
-                t,
-            ))
-        })
-        .when(!server.prompts.is_empty(), |list| {
-            list.child(section("Prompts", server.prompts.len(), prompts, t))
-        })
+/// A description's first line.
+fn first_line(text: &str) -> String {
+    text.lines().next().unwrap_or_default().to_owned()
 }
 
-/// `4 resources`, quiet when there are none.
-fn count_badge(what: &str, count: usize, t: &Theme) -> Div {
-    let color = if count == 0 { t.dim } else { t.muted };
-    ui::badge(format!("{count} {what}"), color, t.border)
+/// A server's details: its tools whole, then its resources, resource
+/// templates and prompts.
+fn details(server: &ServerRow) -> Vec<Node> {
+    let mut details = Vec::new();
+    if !server.tools.is_empty() {
+        details.push(Node::Heading {
+            text: format!("Tools · {}", server.tools.len()),
+        });
+        details.push(Node::Table {
+            head: vec![
+                "Tool".into(),
+                "Exposure".into(),
+                "Hints".into(),
+                "Called as".into(),
+            ],
+            rows: server.tools.iter().map(tool_row).collect(),
+        });
+    }
+    if has_more(server) {
+        details.extend(offers(server));
+    }
+    details
+}
+
+/// One of a server's tools: its name and description, exposure, hints,
+/// and the name tools call it by.
+fn tool_row(tool: &ToolRow) -> Vec<Node> {
+    let mut named = vec![mono(tool.tool.clone())];
+    if let Some(description) = &tool.description {
+        named.push(Node::text(first_line(description)));
+    }
+    vec![
+        Node::stack(named),
+        Node::Badge {
+            text: tool.exposure.clone(),
+            tone: Tone::Neutral,
+        },
+        Node::row(hints(&tool.annotations).into_iter().map(hint_badge)),
+        mono(tool.name.clone().unwrap_or_default()),
+    ]
+}
+
+/// A server's resources, resource templates and prompts: how many of
+/// each, and the first [`LIST_ROWS`] of each.
+fn offers(server: &ServerRow) -> Vec<Node> {
+    let count = |what: &str, count: usize| Node::Badge {
+        text: format!("{count} {what}"),
+        tone: Tone::Neutral,
+    };
+    let mut offers = vec![Node::row([
+        count("resources", server.resources.len()),
+        count("templates", server.templates.len()),
+        count("prompts", server.prompts.len()),
+    ])];
+    if !server.resources.is_empty() {
+        let rows = server.resources.iter().map(|resource| {
+            let mut about = vec![
+                resource
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| resource.name.clone()),
+            ];
+            if let Some(mime) = &resource.mime_type {
+                about.push(mime.clone());
+            }
+            listed_row(
+                resource.uri.clone(),
+                about.join(" · "),
+                resource.description.as_deref(),
+            )
+        });
+        offers.push(listed("Resources", server.resources.len(), rows));
+    }
+    if !server.templates.is_empty() {
+        let rows = server.templates.iter().map(|template| {
+            listed_row(
+                template.uri_template.clone(),
+                template
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| template.name.clone()),
+                template.description.as_deref(),
+            )
+        });
+        offers.push(listed("Resource templates", server.templates.len(), rows));
+    }
+    if !server.prompts.is_empty() {
+        let rows = server.prompts.iter().map(|prompt| {
+            listed_row(
+                format!("/{}", prompt.command),
+                crate::prompts::arguments_hint(&prompt.info()),
+                prompt.description.as_deref().or(prompt.title.as_deref()),
+            )
+        });
+        offers.push(listed("Prompts", server.prompts.len(), rows));
+    }
+    offers
 }
 
 /// A list under its heading and count, cut at [`LIST_ROWS`].
-fn section(
-    title: &str,
-    count: usize,
-    rows: impl Iterator<Item = Div>,
-    t: &Theme,
-) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .child(heading(&format!("{title} · {count}"), t))
-        .children(rows.take(LIST_ROWS))
-        .when(count > LIST_ROWS, |list| {
-            list.child(mono(
-                format!("… {} more", count - LIST_ROWS),
-                Type::MICRO,
-                t.dim,
-            ))
-        })
+fn listed(title: &str, count: usize, rows: impl Iterator<Item = Node>) -> Node {
+    let mut list = vec![
+        Node::Heading {
+            text: format!("{title} · {count}"),
+        },
+        Node::List {
+            items: rows.take(LIST_ROWS).collect(),
+        },
+    ];
+    if count > LIST_ROWS {
+        list.push(Node::text(format!("… {} more", count - LIST_ROWS)));
+    }
+    Node::stack(list)
 }
 
 /// One resource, template or prompt: what names it, what is said of it
 /// beside, and its description's first line.
-fn listed_row(
-    name: String,
-    beside: String,
-    description: Option<String>,
-    t: &Theme,
-) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .py(sp(1.))
-        .border_b_1()
-        .border_color(t.border)
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(2.))
-                .child(mono(name, Type::CAPTION, t.blue))
-                .when(!beside.is_empty(), |row| {
-                    row.child(mono(beside, Type::MICRO, t.dim))
-                }),
-        )
-        .when_some(description, |row, description| {
-            row.child(
-                mono(
-                    description.lines().next().unwrap_or_default().to_owned(),
-                    Type::MICRO,
-                    t.muted,
-                )
-                .truncate(),
-            )
-        })
-}
-
-/// One of a server's tools: its name, exposure and hints.
-fn tool_row(tool: &ToolRow, t: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .py(sp(1.))
-        .border_b_1()
-        .border_color(t.border)
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(2.))
-                .child(mono(tool.tool.clone(), Type::CAPTION, t.blue))
-                .child(ui::badge(tool.exposure.clone(), t.muted, t.border))
-                .children(
-                    hints(&tool.annotations)
-                        .into_iter()
-                        .map(|hint| hint_badge(hint, t)),
-                )
-                .when_some(tool.name.clone(), |row, name| {
-                    row.child(mono(name, Type::MICRO, t.dim))
-                }),
-        )
-        .when_some(tool.description.clone(), |row, description| {
-            row.child(
-                mono(
-                    description.lines().next().unwrap_or_default().to_owned(),
-                    Type::MICRO,
-                    t.muted,
-                )
-                .truncate(),
-            )
-        })
-}
-
-/// The editor of a server the page adds: its name, and its entry as
-/// the files write it.
-fn editor_modal(
-    view: &mut ViewCx<'_, McpUi>,
-    editor: &Editor,
-    user_names: &BTreeSet<String>,
-    t: &Theme,
-) -> Div {
-    let ui = view.ui.clone();
-    let (name, entry) = {
-        let state = view.read_ui();
-        (state.name.clone(), state.entry.clone())
-    };
-    let user_names = user_names.clone();
-    let body = div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.5))
-        .child(match &editor.editing {
-            Some(editing) => mono(editing.clone(), Type::SMALL, t.text),
-            None => ui::field(&name, true, t),
-        })
-        .child(
-            div()
-                .min_h(rems(10.))
-                .px(sp(3.))
-                .py(sp(2.5))
-                .rounded(radius::BOX)
-                .well(t)
-                .typeset(Type::SMALL.mono())
-                .child(entry),
-        )
-        .when_some(editor.problem.clone(), |body, problem| {
-            body.child(mono(problem, Type::CAPTION, t.red))
-        });
-    ui::modal(
-        icon(Icon::Plug, IconSize::LARGE, t.roles.mcp),
-        match &editor.editing {
-            Some(_) => "Edit server",
-            None => "Add server",
-        },
-        "The entry as mcp.json writes it: `command` and `args` for a \
-         program, or `url` and `headers` for HTTP; `exposure`, \
-         `toolExposure`, `description`, `timeout`. `${VAR}` reads tau's \
-         environment.",
-        Some(body.into_any_element()),
-        div()
-            .flex()
-            .gap(sp(2.))
-            .child(action(
-                "mcp-editor-cancel",
-                "Cancel",
-                ButtonKind::Secondary,
-                &ui,
-                t,
-                |ui, cx| ui.cancel(cx),
-            ))
-            .child(action(
-                "mcp-editor-save",
-                "Save",
-                ButtonKind::Primary,
-                &ui,
-                t,
-                move |ui, cx| {
-                    ui.save(&user_names, cx);
-                },
-            )),
-        t,
-    )
+fn listed_row(name: String, beside: String, description: Option<&str>) -> Node {
+    let mut line = vec![mono(name)];
+    if !beside.is_empty() {
+        line.push(mono(beside));
+    }
+    let mut row = vec![Node::row(line)];
+    if let Some(description) = description {
+        row.push(Node::text(first_line(description)));
+    }
+    Node::stack(row)
 }

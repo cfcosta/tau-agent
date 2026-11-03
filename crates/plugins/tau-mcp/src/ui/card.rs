@@ -1,17 +1,14 @@
 //! An MCP tool's card: the server and the tool, the tool's hints, and
 //! what it returned, as structured JSON when the server gave some, else
-//! as text.
+//! as text. Its head and body are view trees (ADR 0045).
 
-use gpui::{Div, div, prelude::*, rems};
 use serde_json::Value;
-use tau_ui_kit::{
-    components::{code_block, heading, mono},
-    theme::{Theme, Tone, Type, sp},
-};
+use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
     CallData,
     ViewCx,
     points::{AtCard, CardView},
+    tree::Node,
 };
 
 use super::{
@@ -85,98 +82,82 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, McpUi>) -> Option<CardView> {
     if !at.tool.starts_with("mcp__") {
         return None;
     }
-    let t = view.theme().clone();
     let servers = view.repo(&at.run.repo).unwrap_or(view.data);
     let listed = servers.tool(&at.tool).map(|(server, tool)| {
         (server.name.clone(), tool.tool.clone(), tool.annotations)
     });
     let shown = shown(&at.data, listed);
+    let ignore = |_: &str, _: &Value, _: &mut gpui::App| {};
+    let head = view.tree(
+        &format!("mcp-card-head-{}", at.call_id),
+        &head(&shown, &at.summary),
+        ignore,
+    );
+    let body = view.tree(
+        &format!("mcp-card-body-{}", at.call_id),
+        &body(&at.data, &shown),
+        ignore,
+    );
     Some(CardView {
-        head: Some(head(&shown, &at.summary, &t).into_any_element()),
+        head: Some(head),
         label: None,
         failed: shown.failed.clone(),
         edge: shown.failed.as_ref().map(|_| Tone::Danger),
         shape: None,
-        body: Some(body(&at.data, &shown, &t).into_any_element()),
+        body: Some(body),
         folds: at.data.result.is_some(),
         inset: false,
     })
 }
 
 /// The server and the tool, and the tool's hints.
-fn head(shown: &Shown, summary: &str, t: &Theme) -> Div {
+pub fn head(shown: &Shown, summary: &str) -> Node {
     let named = match (&shown.server, &shown.tool) {
         (Some(server), Some(tool)) => format!("{server} · {tool}"),
         _ => summary.to_owned(),
     };
-    div()
-        .flex_1()
-        .min_w(rems(0.))
-        .flex()
-        .items_center()
-        .gap(sp(1.5))
-        .child(
-            mono(named, Type::CAPTION, t.text_soft)
-                .min_w(rems(0.))
-                .truncate(),
-        )
-        .children(
-            hints(&shown.annotations)
-                .into_iter()
-                .map(|hint| hint_badge(hint, t)),
-        )
+    let mut head = vec![Node::Mono { text: named }];
+    head.extend(hints(&shown.annotations).into_iter().map(hint_badge));
+    Node::row(head)
 }
 
 /// What the call sent, and what it returned.
-fn body(data: &CallData, shown: &Shown, t: &Theme) -> Div {
-    let args = (!data.args.is_null()
-        && data.args.as_object().is_none_or(|args| !args.is_empty()))
-    .then(|| serde_json::to_string_pretty(&data.args).unwrap_or_default());
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .px(sp(3.))
-        .py(sp(2.5))
-        .when_some(args, |body, args| {
-            body.child(heading("Arguments", t)).child(code_block(
-                Some("json"),
-                &args,
-                t,
-            ))
-        })
-        .when_some(shown.structured.clone(), |body, structured| {
-            body.child(heading("Structured result", t))
-                .child(code_block(Some("json"), &structured, t))
-        })
-        .when_some(shown.text.clone(), |body, text| {
-            let lines: Vec<&str> = text.lines().collect();
-            let more = lines.len().saturating_sub(TEXT_LINES);
-            let color = if shown.failed.is_some() {
-                t.red
-            } else {
-                t.muted
-            };
-            body.child(heading("Result", t)).child(
-                mono(
-                    lines[..lines.len() - more].join("\n"),
-                    Type::CAPTION,
-                    color,
-                )
-                .when(more > 0, |text| {
-                    text.child(mono(
-                        format!("… {more} more lines"),
-                        Type::MICRO,
-                        t.dim,
-                    ))
-                }),
-            )
-        })
-        .when(data.result.is_none(), |body| {
-            body.children(
-                data.partial
-                    .clone()
-                    .map(|partial| mono(partial, Type::CAPTION, t.dim)),
-            )
-        })
+pub fn body(data: &CallData, shown: &Shown) -> Node {
+    let heading = |text: &str| Node::Heading { text: text.into() };
+    let json = |text: String| Node::Code {
+        lang: Some("json".into()),
+        text,
+    };
+    let mut body = Vec::new();
+    if !data.args.is_null()
+        && data.args.as_object().is_none_or(|args| !args.is_empty())
+    {
+        body.push(heading("Arguments"));
+        body.push(json(
+            serde_json::to_string_pretty(&data.args).unwrap_or_default(),
+        ));
+    }
+    if let Some(structured) = &shown.structured {
+        body.push(heading("Structured result"));
+        body.push(json(structured.clone()));
+    }
+    if let Some(text) = &shown.text {
+        let lines: Vec<&str> = text.lines().collect();
+        let more = lines.len().saturating_sub(TEXT_LINES);
+        body.push(heading("Result"));
+        body.push(Node::Mono {
+            text: lines[..lines.len() - more].join("\n"),
+        });
+        if more > 0 {
+            body.push(Node::text(format!("… {more} more lines")));
+        }
+    }
+    if data.result.is_none()
+        && let Some(partial) = &data.partial
+    {
+        body.push(Node::Mono {
+            text: partial.clone(),
+        });
+    }
+    Node::stack(body)
 }

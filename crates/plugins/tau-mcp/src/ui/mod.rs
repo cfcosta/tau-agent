@@ -4,17 +4,18 @@
 //! repository in the sidebar; its line in a run's plugin list; and the
 //! servers' prompts as composer commands, `/mcp__<server>__<prompt>
 //! key=value ...`, whose messages the host fetches into the composer.
-//! The connections behind them are `tau-mcp-host`'s (ADR 0030).
+//! The connections behind them are `tau-mcp-host`'s (ADR 0030). What
+//! it draws is a view tree (ADR 0045).
 
 pub mod card;
 pub mod page;
 
 use std::collections::BTreeSet;
 
-use gpui::{AppContext as _, Context};
+use gpui::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tau_ui_kit::{assets::Icon, input::TextInput, theme::Tone};
+use tau_ui_kit::{assets::Icon, theme::Tone};
 use tau_ui_plugin::{
     Handle,
     Link,
@@ -440,6 +441,7 @@ impl UiPlugin for McpUi {
             .settings(page::settings_pane)
             .page(
                 Page::new("servers", page::render)
+                    .framed()
                     .title(|_| "MCP servers".to_owned()),
             )
             .contribute(points::SIDEBAR_REPO, sidebar)
@@ -450,19 +452,8 @@ impl UiPlugin for McpUi {
 }
 
 impl PluginUi for page::Ui {
-    fn new(handle: Handle, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| TextInput::new("linear", cx).keep_on_submit());
-        let entry = cx.new(|cx| {
-            TextInput::new(
-                "{ \"command\": \"uvx\", \"args\": [\"mcp-server-git\"] }",
-                cx,
-            )
-            .multiline()
-            .keep_on_submit()
-        });
-        cx.observe(&name, |_, _, cx| cx.notify()).detach();
-        cx.observe(&entry, |_, _, cx| cx.notify()).detach();
-        page::Ui::new(handle, name, entry)
+    fn new(handle: Handle, _: &mut Context<Self>) -> Self {
+        page::Ui::new(handle)
     }
 }
 
