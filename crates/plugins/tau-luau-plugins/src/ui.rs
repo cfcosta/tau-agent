@@ -178,10 +178,11 @@ pub fn draw(
     piece: &Value,
     id: &str,
     plugin: &str,
-    view: &ViewCx<'_, LuauPluginsUi>,
+    view: &mut ViewCx<'_, LuauPluginsUi>,
 ) -> AnyElement {
     let handle = view.handle.clone();
-    Draw::new(view.theme(), id.to_owned())
+    let t = view.theme().clone();
+    let mut draw = Draw::new(&t, id.to_owned())
         .ui(view.ui_state())
         .prefix(plugin)
         .on_act(Rc::new(move |act, cx| match act {
@@ -189,17 +190,25 @@ pub fn draw(
             tree::Act::Ui { key, value } => handle.set_ui(key, value, cx),
             // A plugin's own actions arrive with ADR 0027's phase 2.
             tree::Act::Plugin { .. } => {}
-        }))
-        .draw(&Node::read(piece))
+        }));
+    if let Some(inputs) = view.inputs() {
+        draw = draw.inputs(inputs);
+    }
+    draw.draw(&Node::read(piece), view.cx)
 }
 
 /// Draws a settings page: its bound pieces read and save the settings
 /// through `bind` (ADR 0029).
-pub fn draw_bound(piece: &Value, t: &Theme, bind: &Bind) -> AnyElement {
+pub fn draw_bound(
+    piece: &Value,
+    t: &Theme,
+    bind: &Bind,
+    cx: &mut gpui::App,
+) -> AnyElement {
     let setting = |piece: &Value, t: &Theme| crate::pane::bound(piece, t, bind);
     Draw::new(t, "luau-settings")
         .setting(&setting)
-        .draw(&Node::read(piece))
+        .draw(&Node::read(piece), cx)
 }
 
 impl UiPlugin for LuauPluginsUi {

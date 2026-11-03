@@ -501,6 +501,9 @@ pub struct Workspace {
     pub(crate) query_result: Option<Result<tau_store::Table, String>>,
     /// Every plugin's UI state, alike on every interface (ADR 0045).
     pub(crate) ui_state: tau_ui_plugin::UiState,
+    /// The editors of plugins' tree inputs in this window.
+    pub(crate) tree_inputs:
+        std::rc::Rc<std::cell::RefCell<crate::tree_inputs::TreeInputs>>,
     /// Files attached to the next message.
     pub(crate) attachments: Vec<crate::attach::Attachment>,
     /// The search palette, and what is typed in it.
@@ -854,6 +857,7 @@ impl Workspace {
             query,
             query_result: None,
             ui_state: tau_ui_plugin::UiState::default(),
+            tree_inputs: Default::default(),
             searching: false,
             search,
             attachments: Vec::new(),

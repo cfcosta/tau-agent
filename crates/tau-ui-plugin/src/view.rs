@@ -445,6 +445,8 @@ pub struct ViewCx<'a, P: UiPlugin> {
     others: &'a BTreeMap<String, crate::PluginValue>,
     /// The plugin's UI state: see [`Self::ui_value`].
     ui_state: &'a BTreeMap<String, Value>,
+    /// Where its trees' inputs get their editors: see [`Self::inputs`].
+    inputs: Option<crate::tree::Inputs<'a>>,
     pub cx: &'a mut App,
 }
 
@@ -489,6 +491,7 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             cards,
             others: &NO_OTHERS,
             ui_state: &NO_UI_STATE,
+            inputs: None,
             cx,
         }
     }
@@ -506,6 +509,19 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     /// (ADR 0045); set it with [`Handle::set_ui`].
     pub fn ui_value(&self, key: &str) -> Option<&'a Value> {
         self.ui_state.get(key)
+    }
+
+    /// The same view, giving its trees' inputs editors from `inputs`.
+    pub fn with_inputs(mut self, inputs: crate::tree::Inputs<'a>) -> Self {
+        self.inputs = Some(inputs);
+        self
+    }
+
+    /// Where the interface keeps the editors of the plugin's trees'
+    /// inputs ([`crate::tree::Draw::inputs`]); none where nothing can
+    /// be typed.
+    pub fn inputs(&self) -> Option<crate::tree::Inputs<'a>> {
+        self.inputs
     }
 
     /// The plugin's whole UI state, for a tree drawn with it

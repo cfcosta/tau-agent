@@ -406,7 +406,7 @@ pub fn render(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
         fields,
     };
     let body = match tree {
-        Some(Ok(tree)) => draw_bound(&tree, &t, &bind),
+        Some(Ok(tree)) => draw_bound(&tree, &t, &bind, view.cx),
         Some(Err(error)) => div()
             .typeset(Type::CAPTION)
             .text_color(t.red)

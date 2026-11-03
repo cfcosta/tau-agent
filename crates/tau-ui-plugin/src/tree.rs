@@ -32,6 +32,7 @@ use tau_ui_kit::{
         code_block,
         dot,
         empty,
+        field,
         heading,
         icon,
         mono,
@@ -210,6 +211,18 @@ pub enum Node {
         #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
     },
+    /// A text input whose draft is the interface's state, under the
+    /// plugin's `id`. Enter carries out `submit`, when given, with
+    /// `{ "text": draft }`, and clears the draft.
+    Input {
+        id: String,
+        #[serde(default)]
+        placeholder: Option<String>,
+        #[serde(default)]
+        multiline: bool,
+        #[serde(default)]
+        submit: Option<String>,
+    },
     /// Tabs, one shown at a time. Which is chosen is the interface's
     /// state, under the plugin's `id`; until the person picks, the first.
     Tabs {
@@ -274,6 +287,31 @@ pub fn open_key(id: &str) -> String {
 pub fn tab_key(id: &str) -> String {
     format!("{id}.tab")
 }
+
+/// The UI state key under which an input's `id` keeps its draft.
+pub fn draft_key(id: &str) -> String {
+    format!("{id}.draft")
+}
+
+/// What an input is drawn from: the key of its draft, the draft, how it
+/// looks, and what its Enter does.
+pub struct InputSpec {
+    pub key: String,
+    pub draft: String,
+    pub placeholder: String,
+    pub multiline: bool,
+    pub on_submit: Option<OnSubmit>,
+}
+
+/// Carries out an input's Enter with what it holds.
+pub type OnSubmit = Rc<dyn Fn(String, &mut App)>;
+
+/// Gives the editor of an input, kept by the interface: made from its
+/// draft, and sending each edit back as the draft (ADR 0045).
+pub type Inputs<'a> = &'a dyn Fn(
+    InputSpec,
+    &mut App,
+) -> gpui::Entity<tau_ui_kit::input::TextInput>;
 
 /// Children that read one by one, each failing alone.
 fn nodes<'de, D: Deserializer<'de>>(de: D) -> Result<Vec<Node>, D::Error> {
@@ -380,6 +418,9 @@ pub struct Draw<'a> {
     /// What the tree's UI state keys start with: the plugin's own part,
     /// for a plugin that draws trees for several (tau-luau-plugins).
     pub prefix: Option<String>,
+    /// Where inputs' editors come from; without it inputs show their
+    /// draft and take no keys.
+    pub inputs: Option<Inputs<'a>>,
 }
 
 impl<'a> Draw<'a> {
@@ -391,6 +432,7 @@ impl<'a> Draw<'a> {
             setting: None,
             ui: None,
             prefix: None,
+            inputs: None,
         }
     }
 
@@ -412,6 +454,11 @@ impl<'a> Draw<'a> {
         self
     }
 
+    pub fn inputs(mut self, inputs: Inputs<'a>) -> Self {
+        self.inputs = Some(inputs);
+        self
+    }
+
     pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
         self.prefix = Some(prefix.into());
         self
@@ -426,8 +473,8 @@ impl<'a> Draw<'a> {
     }
 
     /// Draws `node`.
-    pub fn draw(&self, node: &Node) -> AnyElement {
-        self.at(node, 0, &self.id)
+    pub fn draw(&self, node: &Node, cx: &mut App) -> AnyElement {
+        self.at(node, 0, &self.id, cx)
     }
 
     fn children(
@@ -435,13 +482,13 @@ impl<'a> Draw<'a> {
         nodes: &[Node],
         depth: usize,
         path: &str,
+        cx: &mut App,
     ) -> Vec<AnyElement> {
-        nodes
-            .iter()
-            .take(MAX_CHILDREN)
-            .enumerate()
-            .map(|(n, child)| self.at(child, depth + 1, &format!("{path}.{n}")))
-            .collect()
+        let mut drawn = Vec::new();
+        for (n, child) in nodes.iter().take(MAX_CHILDREN).enumerate() {
+            drawn.push(self.at(child, depth + 1, &format!("{path}.{n}"), cx));
+        }
+        drawn
     }
 
     /// A clickable element's handler, when clicks do something.
@@ -458,7 +505,13 @@ impl<'a> Draw<'a> {
         )
     }
 
-    fn at(&self, node: &Node, depth: usize, path: &str) -> AnyElement {
+    fn at(
+        &self,
+        node: &Node,
+        depth: usize,
+        path: &str,
+        cx: &mut App,
+    ) -> AnyElement {
         let t = self.theme;
         if depth > MAX_DEPTH {
             return invalid("the view nests too deep", t);
@@ -553,7 +606,7 @@ impl<'a> Draw<'a> {
                     .take(MAX_CHILDREN)
                     .enumerate()
                     .map(|(n, row)| {
-                        self.children(row, depth, &format!("{path}.{n}"))
+                        self.children(row, depth, &format!("{path}.{n}"), cx)
                     })
                     .collect(),
                 t,
@@ -563,15 +616,19 @@ impl<'a> Draw<'a> {
                 .flex()
                 .flex_col()
                 .gap(sp(1.))
-                .children(self.children(items, depth, path).into_iter().map(
-                    |item| {
-                        div()
-                            .flex()
-                            .gap(sp(2.))
-                            .child(div().text_color(t.dim).child("•"))
-                            .child(div().flex_1().min_w(rems(0.)).child(item))
-                    },
-                ))
+                .children(
+                    self.children(items, depth, path, cx).into_iter().map(
+                        |item| {
+                            div()
+                                .flex()
+                                .gap(sp(2.))
+                                .child(div().text_color(t.dim).child("•"))
+                                .child(
+                                    div().flex_1().min_w(rems(0.)).child(item),
+                                )
+                        },
+                    ),
+                )
                 .into_any_element(),
             Node::Progress { share, label } => {
                 let share = share.clamp(0., 1.) as f32;
@@ -605,14 +662,14 @@ impl<'a> Draw<'a> {
                 .flex()
                 .flex_col()
                 .gap(sp(2.))
-                .children(self.children(children, depth, path))
+                .children(self.children(children, depth, path, cx))
                 .into_any_element(),
             Node::Row { children } => div()
                 .flex()
                 .flex_wrap()
                 .items_center()
                 .gap(sp(2.))
-                .children(self.children(children, depth, path))
+                .children(self.children(children, depth, path, cx))
                 .into_any_element(),
             Node::Scroll { height, children } => div()
                 .id(SharedString::from(format!("{path}:scroll")))
@@ -621,7 +678,7 @@ impl<'a> Draw<'a> {
                 .gap(sp(2.))
                 .max_h(rems(height.unwrap_or(24.).clamp(2., 80.)))
                 .overflow_y_scroll()
-                .children(self.children(children, depth, path))
+                .children(self.children(children, depth, path, cx))
                 .into_any_element(),
             Node::Rule => rule(t).into_any_element(),
             Node::Section {
@@ -661,7 +718,8 @@ impl<'a> Draw<'a> {
                     .gap(sp(2.))
                     .child(head)
                     .when(open, |column| {
-                        column.children(self.children(children, depth, path))
+                        column
+                            .children(self.children(children, depth, path, cx))
                     })
                     .into_any_element()
             }
@@ -710,10 +768,54 @@ impl<'a> Draw<'a> {
                                 &tab.children,
                                 depth,
                                 &format!("{path}:{chosen}"),
+                                cx,
                             ),
                         )
                     }))
                     .into_any_element()
+            }
+            Node::Input {
+                id,
+                placeholder,
+                multiline,
+                submit,
+            } => {
+                let key = self.key(draft_key(id));
+                let draft = self
+                    .ui
+                    .and_then(|ui| ui.get(&key))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let Some(inputs) = self.inputs else {
+                    return field_text(&draft, t);
+                };
+                let on_submit = match (submit, &self.on_act) {
+                    (Some(action), Some(on_act)) => {
+                        let (action, on_act) = (action.clone(), on_act.clone());
+                        Some(Rc::new(move |text: String, cx: &mut App| {
+                            on_act(
+                                Act::Plugin {
+                                    action: action.clone(),
+                                    args: serde_json::json!({ "text": text }),
+                                },
+                                cx,
+                            )
+                        }) as OnSubmit)
+                    }
+                    _ => None,
+                };
+                let input = inputs(
+                    InputSpec {
+                        key,
+                        draft,
+                        placeholder: placeholder.clone().unwrap_or_default(),
+                        multiline: *multiline,
+                        on_submit,
+                    },
+                    cx,
+                );
+                field(&input, false, t).into_any_element()
             }
             Node::Empty { text } => empty(text.clone(), t).into_any_element(),
             Node::Button {
@@ -756,6 +858,20 @@ impl<'a> Draw<'a> {
             Node::Invalid { why } => invalid(why, t),
         }
     }
+}
+
+/// An input drawn without an editor: its draft, as text.
+fn field_text(draft: &str, t: &Theme) -> AnyElement {
+    div()
+        .px(sp(3.))
+        .py(sp(2.))
+        .rounded(radius::CONTROL)
+        .border_1()
+        .border_color(t.border)
+        .typeset(Type::SMALL)
+        .text_color(t.text_soft)
+        .child(draft.to_owned())
+        .into_any_element()
 }
 
 /// What a piece that does not draw shows instead.
@@ -889,6 +1005,10 @@ mod tests {
         assert!(matches!(tabs[1].children[0], Node::Invalid { .. }));
         assert_eq!(Node::read(&node.value()), node);
         assert_eq!(open_key("more"), "more.open");
+        assert_eq!(draft_key("note"), "note.draft");
+        let input = json!({ "piece": "input", "id": "note", "placeholder": null,
+                            "multiline": true, "submit": "save" });
+        assert_eq!(Node::read(&input).value(), input);
         assert_eq!(tab_key("views"), "views.tab");
     }
 

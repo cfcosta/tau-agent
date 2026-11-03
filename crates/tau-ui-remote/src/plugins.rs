@@ -359,6 +359,12 @@ impl Workspace {
                     .map(RunView::cards)
                     .unwrap_or_default()
             };
+        let (tree_inputs, handle) =
+            (self.tree_inputs.clone(), self.plugin_handle(name));
+        let inputs = move |spec: tau_ui_plugin::tree::InputSpec,
+                           cx: &mut App| {
+            crate::tree_inputs::editor(&tree_inputs, &handle, spec, cx)
+        };
         let env = Env {
             ui,
             state: state.or(run.map(|_| &no_state)),
@@ -375,6 +381,7 @@ impl Workspace {
             cards: &cards,
             others: &self.catalog.plugin_data,
             ui_state: self.ui_state.of(name),
+            inputs: &inputs,
             cx,
         };
         Some(f(plugin, env))

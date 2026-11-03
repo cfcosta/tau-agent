@@ -225,6 +225,21 @@ function ui.section(id, title, children, opts)
 	}
 end
 
+-- A text input. `id` names it, and tau keeps what is typed in it, the
+-- draft, on every device and across restarts. `opts.placeholder`,
+-- `opts.multiline`, and `opts.submit`: the action Enter carries out,
+-- with `{ text = draft }`.
+function ui.input(id, opts)
+	opts = opts or {}
+	return {
+		piece = "input",
+		id = tostring(id),
+		placeholder = opts.placeholder and tostring(opts.placeholder) or json.null,
+		multiline = opts.multiline == true,
+		submit = opts.submit and tostring(opts.submit) or json.null,
+	}
+end
+
 -- Tabs, one shown at a time: a list of `{ label, { pieces } }`. `id`
 -- names them, so the tab the person chose is kept.
 function ui.tabs(id, tabs)
