@@ -139,6 +139,9 @@ Plain tables, drawn by tau on the computer and on the phone:
   rows of pieces or strings
 - `ui.scroll({ ... }, height)`: pieces that scroll past `height` rems
 - `ui.rule()`, `ui.empty(text)`
+- `ui.diff(text, path)`: a unified diff, colored as `path`'s language
+- `ui.terminal(id, text, { cols = 80, rows = 24, live = false })`: what
+  a program wrote, escapes and all, on a terminal tau keeps under `id`
 - `ui.section(id, title, { ... }, { open = true })`: a heading that
   opens and closes what is under it
 - `ui.tabs(id, { { "label", { ... } }, ... })`: one tab shown at a

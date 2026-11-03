@@ -57,6 +57,7 @@ pub mod setup;
 pub mod slash;
 pub mod titles;
 pub mod tree_inputs;
+pub mod tree_terminals;
 pub mod ui;
 pub mod update;
 pub mod view;

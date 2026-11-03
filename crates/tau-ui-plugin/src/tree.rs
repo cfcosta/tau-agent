@@ -223,6 +223,27 @@ pub enum Node {
         #[serde(default)]
         submit: Option<String>,
     },
+    /// A unified diff, its lines colored as `path`'s language when known.
+    Diff {
+        text: String,
+        #[serde(default)]
+        path: Option<String>,
+    },
+    /// What a program drew on a terminal of `cols` by `rows`, as the bytes
+    /// it wrote (or a replay of them); `live` while it is still writing.
+    /// The interface keeps its screen under the plugin's `id`, with its
+    /// scrollback and selection.
+    Terminal {
+        id: String,
+        #[serde(default)]
+        text: String,
+        #[serde(default = "default_cols")]
+        cols: u16,
+        #[serde(default = "default_rows")]
+        rows: u16,
+        #[serde(default)]
+        live: bool,
+    },
     /// Tabs, one shown at a time. Which is chosen is the interface's
     /// state, under the plugin's `id`; until the person picks, the first.
     Tabs {
@@ -287,6 +308,27 @@ pub fn open_key(id: &str) -> String {
 pub fn tab_key(id: &str) -> String {
     format!("{id}.tab")
 }
+
+fn default_cols() -> u16 {
+    80
+}
+
+fn default_rows() -> u16 {
+    24
+}
+
+/// What a terminal is drawn from: its key, what was written to it, its
+/// size, and whether more is coming.
+pub struct TerminalSpec {
+    pub key: String,
+    pub bytes: Vec<u8>,
+    pub cols: u16,
+    pub rows: u16,
+    pub live: bool,
+}
+
+/// Draws a terminal, kept by the interface from one draw to the next.
+pub type Terminals<'a> = &'a dyn Fn(TerminalSpec, &mut App) -> AnyElement;
 
 /// The UI state key under which an input's `id` keeps its draft.
 pub fn draft_key(id: &str) -> String {
@@ -421,6 +463,9 @@ pub struct Draw<'a> {
     /// Where inputs' editors come from; without it inputs show their
     /// draft and take no keys.
     pub inputs: Option<Inputs<'a>>,
+    /// Where terminals' screens come from; without it a terminal shows
+    /// that it is drawn where one is kept.
+    pub terminals: Option<Terminals<'a>>,
 }
 
 impl<'a> Draw<'a> {
@@ -433,6 +478,7 @@ impl<'a> Draw<'a> {
             ui: None,
             prefix: None,
             inputs: None,
+            terminals: None,
         }
     }
 
@@ -451,6 +497,11 @@ impl<'a> Draw<'a> {
 
     pub fn setting(mut self, setting: DrawSetting<'a>) -> Self {
         self.setting = Some(setting);
+        self
+    }
+
+    pub fn terminals(mut self, terminals: Terminals<'a>) -> Self {
+        self.terminals = Some(terminals);
         self
     }
 
@@ -837,6 +888,34 @@ impl<'a> Draw<'a> {
                 );
                 field(&input, false, t).into_any_element()
             }
+            Node::Diff { text, path } => tau_ui_kit::diff::view(
+                &tau_ui_kit::diff::parse(text),
+                path.as_deref().and_then(tau_ui_kit::syntax::Lang::of_path),
+                t,
+            )
+            .into_any_element(),
+            Node::Terminal {
+                id,
+                text,
+                cols,
+                rows,
+                live,
+            } => match self.terminals {
+                Some(terminals) => terminals(
+                    TerminalSpec {
+                        key: self.key(format!("{id}.terminal")),
+                        bytes: text.as_bytes().to_vec(),
+                        cols: (*cols).clamp(10, 400),
+                        rows: (*rows).clamp(2, 200),
+                        live: *live,
+                    },
+                    cx,
+                ),
+                None => invalid(
+                    "a terminal, drawn where the interface keeps one",
+                    t,
+                ),
+            },
             Node::Empty { text } => empty(text.clone(), t).into_any_element(),
             Node::Button {
                 label,
@@ -1026,6 +1105,22 @@ mod tests {
         assert_eq!(Node::read(&node.value()), node);
         assert_eq!(open_key("more"), "more.open");
         assert_eq!(draft_key("note"), "note.draft");
+        let widgets = json!({ "piece": "stack", "children": [
+            { "piece": "diff", "text": "@@ -1 +1 @@\n-a\n+b\n", "path": "src/lib.rs" },
+            { "piece": "terminal", "id": "out", "text": "\u{1b}[32mok\u{1b}[0m\r\n",
+              "cols": 40, "rows": 4, "live": false },
+        ]});
+        assert_eq!(Node::read(&widgets).value(), widgets);
+        assert_eq!(
+            Node::read(&json!({ "piece": "terminal", "id": "t" })),
+            Node::Terminal {
+                id: "t".into(),
+                text: String::new(),
+                cols: 80,
+                rows: 24,
+                live: false
+            }
+        );
         let input = json!({ "piece": "input", "id": "note", "placeholder": null,
                             "multiline": true, "submit": "save" });
         assert_eq!(Node::read(&input).value(), input);

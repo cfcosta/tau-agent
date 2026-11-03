@@ -504,6 +504,9 @@ pub struct Workspace {
     /// The editors of plugins' tree inputs in this window.
     pub(crate) tree_inputs:
         std::rc::Rc<std::cell::RefCell<crate::tree_inputs::TreeInputs>>,
+    /// The screens of plugins' tree terminals in this window.
+    pub(crate) tree_terminals:
+        std::rc::Rc<std::cell::RefCell<crate::tree_terminals::TreeTerminals>>,
     /// Files attached to the next message.
     pub(crate) attachments: Vec<crate::attach::Attachment>,
     /// The search palette, and what is typed in it.
@@ -858,6 +861,7 @@ impl Workspace {
             query_result: None,
             ui_state: tau_ui_plugin::UiState::default(),
             tree_inputs: Default::default(),
+            tree_terminals: Default::default(),
             searching: false,
             search,
             attachments: Vec::new(),

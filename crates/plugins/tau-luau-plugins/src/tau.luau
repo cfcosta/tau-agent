@@ -240,6 +240,27 @@ function ui.input(id, opts)
 	}
 end
 
+-- A unified diff, colored as `path`'s language when given.
+function ui.diff(text, path)
+	return { piece = "diff", text = tostring(text), path = path and tostring(path) or json.null }
+end
+
+-- What a program wrote to a terminal, escapes and all. `id` names it, so
+-- tau keeps its screen, scrolled where the person left it.
+-- `opts.cols`, `opts.rows` (80 by 24 when not given), and `opts.live`
+-- while more is coming.
+function ui.terminal(id, text, opts)
+	opts = opts or {}
+	return {
+		piece = "terminal",
+		id = tostring(id),
+		text = tostring(text),
+		cols = tonumber(opts.cols) or 80,
+		rows = tonumber(opts.rows) or 24,
+		live = opts.live == true,
+	}
+end
+
 -- Tabs, one shown at a time: a list of `{ label, { pieces } }`. `id`
 -- names them, so the tab the person chose is kept.
 function ui.tabs(id, tabs)

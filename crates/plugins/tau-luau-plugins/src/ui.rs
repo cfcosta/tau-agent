@@ -253,6 +253,9 @@ fn draw_in(
     if let Some(inputs) = view.inputs() {
         draw = draw.inputs(inputs);
     }
+    if let Some(terminals) = view.terminals() {
+        draw = draw.terminals(terminals);
+    }
     draw.draw(&Node::read(piece), view.cx)
 }
 

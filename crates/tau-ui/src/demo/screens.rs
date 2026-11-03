@@ -769,6 +769,10 @@ fn luau_view(ws: &mut Workspace, cx: &mut Context<Workspace>) {
           "children": [{ "piece": "markdown", "text": "A title is **`type(scope): title`**, in the imperative." }] },
         { "piece": "input", "id": "scope", "placeholder": "Add a scope, then Enter", "submit": "add_scope" },
         { "piece": "code", "lang": "lua", "text": "ctx.state.scopes[args.text] = true" },
+        { "piece": "diff", "path": "src/retry.rs",
+          "text": "@@ -12,3 +12,3 @@\n fn delay(attempt: u32) -> Duration {\n-    Duration::from_secs(2 << attempt)\n+    Duration::from_secs(2 << attempt).min(MAX_DELAY)\n }\n" },
+        { "piece": "terminal", "id": "check", "cols": 60, "rows": 3,
+          "text": "\u{1b}[1mcommit-style\u{1b}[0m checked 3 commits\r\n\u{1b}[32m✓\u{1b}[0m 2 follow the style\r\n\u{1b}[31m✗\u{1b}[0m a41c9e2: Fixed the retry loop\r\n" },
         { "piece": "rule" },
         { "piece": "row", "children": [
             { "piece": "status", "text": "on", "detail": "3 checks", "tone": "good" },
