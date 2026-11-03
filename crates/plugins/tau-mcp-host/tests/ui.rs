@@ -88,6 +88,7 @@ use tau_ui_plugin::{
     UiPlugin as _,
     ViewCx,
     points::{AtCard, AtRepo, AtRun},
+    tree,
 };
 
 // The settings' laws.
@@ -945,87 +946,201 @@ fn summaries_count_what_matters(tc: TestCase) {
 
 type Asked = Rc<RefCell<Vec<Request>>>;
 
-fn window_ui(cx: &mut TestAppContext) -> (Entity<Ui>, Asked) {
-    let asked: Asked = Rc::default();
+/// A handle whose requests are kept in `asked`.
+fn handle_into(asked: &Asked) -> Handle {
     let sink = asked.clone();
-    let handle = Handle::new(
+    Handle::new(
         NAME,
         Rc::new(move |_, request, _: &mut App| sink.borrow_mut().push(request)),
-    );
+    )
+}
+
+fn window_ui(cx: &mut TestAppContext) -> (Entity<Ui>, Asked) {
+    let asked: Asked = Rc::default();
+    let handle = handle_into(&asked);
     let ui = cx.update(|cx| {
         cx.new(|cx| <Ui as tau_ui_plugin::PluginUi>::new(handle, cx))
     });
     (ui, asked)
 }
 
-fn acts(asked: &Asked) -> Vec<Act> {
-    asked
-        .borrow()
-        .iter()
-        .filter_map(|request| match request {
-            Request::Act(action) => serde_json::from_value(action.clone()).ok(),
-            _ => None,
-        })
-        .collect()
+/// The button or switch labelled `label` in the tree `node`: its action
+/// and arguments.
+fn find(node: &Value, label: &str) -> Option<(String, Value)> {
+    match node {
+        Value::Object(piece) => {
+            if piece.get("label").and_then(Value::as_str) == Some(label)
+                && let Some(action) =
+                    piece.get("action").and_then(Value::as_str)
+            {
+                let args = piece.get("args").cloned().unwrap_or(Value::Null);
+                return Some((action.to_owned(), args));
+            }
+            piece.values().find_map(|child| find(child, label))
+        }
+        Value::Array(children) => {
+            children.iter().find_map(|child| find(child, label))
+        }
+        _ => None,
+    }
+}
+
+/// The page in one window: its UI state as the interface keeps it, and
+/// what it asked the host half to do, in order.
+#[derive(Default)]
+struct Window_ {
+    asked: Asked,
+    ui: BTreeMap<String, Value>,
+    acts: Vec<Act>,
+}
+
+impl Window_ {
+    /// What the page holds, as its tree is drawn.
+    fn held(&self) -> page::Held {
+        let draft = |input: &str| {
+            self.ui
+                .get(&tree::draft_key(input))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        page::Held {
+            editor: self
+                .ui
+                .get(page::EDITOR)
+                .map(|value| serde_json::from_value(value.clone()).unwrap()),
+            removing: self
+                .ui
+                .get(page::REMOVING)
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            name: draft(page::NAME_INPUT),
+            entry: draft(page::ENTRY_INPUT),
+        }
+    }
+
+    /// Types `text` in the input `id`, as its editor keeps it.
+    fn type_in(&mut self, id: &str, text: &str) {
+        self.ui.insert(tree::draft_key(id), json!(text));
+    }
+
+    /// Carries out what the page asked, as the interface would.
+    fn take(&mut self) {
+        for request in self.asked.borrow_mut().drain(..) {
+            match request {
+                Request::Ui {
+                    key,
+                    value: Some(value),
+                } => {
+                    self.ui.insert(key, value);
+                }
+                Request::Ui { key, value: None } => {
+                    self.ui.remove(&key);
+                }
+                Request::Act(action) => {
+                    self.acts.push(serde_json::from_value(action).unwrap());
+                }
+                other => panic!("the page asked {other:?}"),
+            }
+        }
+    }
+
+    /// Clicks what is labelled `label` on `repo`'s page of `servers`.
+    fn click(
+        &mut self,
+        cx: &mut TestAppContext,
+        repo: Option<&str>,
+        servers: &Servers,
+        label: &str,
+    ) {
+        let tree = page::tree(repo, servers, &self.held(), false);
+        let (action, args) =
+            find(&tree.value(), label).unwrap_or_else(|| panic!("{label}"));
+        let on = page::on_action(
+            handle_into(&self.asked),
+            servers.user_names.clone(),
+        );
+        cx.update(|cx| on(&action, &args, cx));
+        self.take();
+    }
+
+    fn problem(&self) -> String {
+        self.held().editor.unwrap().problem.unwrap()
+    }
 }
 
 /// The editor sends only a server it may add, and says why otherwise;
 /// removing asks twice; the rest is sent as clicked.
 #[gpui::test]
 fn the_editor_sends_what_it_may(cx: &mut TestAppContext) {
-    let (ui, asked) = window_ui(cx);
     let user = BTreeSet::from(["linear".to_owned()]);
-    ui.update(cx, |ui, cx| {
-        ui.open_add(cx);
-        ui.set_name("linear", cx);
-        ui.set_entry("{ \"command\": \"x\" }", cx);
-        assert!(!ui.save(&user, cx));
-        assert!(
-            ui.editor()
-                .unwrap()
-                .problem
-                .as_deref()
-                .unwrap()
-                .contains("mcp.json")
-        );
-        ui.set_name("git", cx);
-        ui.set_entry("{ \"command\": ", cx);
-        assert!(!ui.save(&user, cx));
-        assert!(
-            ui.editor()
-                .unwrap()
-                .problem
-                .as_deref()
-                .unwrap()
-                .starts_with("The entry is not JSON")
-        );
-        ui.set_entry(
-            "{ \"command\": \"uvx\", \"args\": [\"mcp-server-git\"] }",
-            cx,
-        );
-        assert!(ui.save(&user, cx));
-        assert!(ui.editor().is_none());
-        ui.open_edit("git", &json!({ "command": "uvx" }), cx);
-        ui.set_entry("{ \"command\": \"git-mcp\" }", cx);
-        assert!(ui.save(&user, cx));
-        ui.remove("git", cx);
-        assert_eq!(ui.removing(), Some("git"));
-        ui.remove("git", cx);
-        ui.enable(None, "git", false, cx);
-        ui.enable(Some("r"), "linear", true, cx);
-        ui.approve(
-            "r",
-            &PendingRow {
-                name: "db".into(),
-                hash: "h".into(),
-                ..PendingRow::default()
-            },
-            cx,
-        );
-        ui.reconnect(Some("r"), Some("db"), cx);
-    });
+    let checked = page::checked;
+    // What may be saved.
+    let taken = checked(None, "linear", "{ \"command\": \"x\" }", &user);
+    assert!(taken.unwrap_err().contains("mcp.json"));
+    let broken = checked(None, "git", "{ \"command\": ", &user);
+    assert!(broken.unwrap_err().starts_with("The entry is not JSON"));
+    assert!(checked(None, "git", "{ \"args\": [] }", &user).is_err());
+    // An edit keeps its name, even one the user's file has.
     assert_eq!(
-        acts(&asked),
+        checked(Some("linear"), "ignored", "{ \"command\": \"x\" }", &user),
+        Ok(Act::Edit {
+            name: "linear".into(),
+            entry: json!({ "command": "x" }),
+        })
+    );
+
+    // The same on the page, as clicked.
+    let servers = servers();
+    let repo = Some("r");
+    let mut window = Window_::default();
+    window.click(cx, repo, &servers, "Add a server");
+    assert_eq!(window.held().editor, Some(page::Editor::default()));
+    window.type_in(page::NAME_INPUT, "linear");
+    window.type_in(page::ENTRY_INPUT, "{ \"command\": \"x\" }");
+    window.click(cx, repo, &servers, "Save");
+    assert!(window.problem().contains("mcp.json"));
+    window.type_in(page::NAME_INPUT, "git");
+    window.type_in(page::ENTRY_INPUT, "{ \"command\": ");
+    window.click(cx, repo, &servers, "Save");
+    assert!(window.problem().starts_with("The entry is not JSON"));
+    assert!(window.acts.is_empty());
+    window.type_in(
+        page::ENTRY_INPUT,
+        "{ \"command\": \"uvx\", \"args\": [\"mcp-server-git\"] }",
+    );
+    window.click(cx, repo, &servers, "Save");
+    assert_eq!(window.held().editor, None);
+    // Edit opens on the server's entry as it is.
+    window.click(cx, repo, &servers, "Edit");
+    let held = window.held();
+    assert_eq!(held.editor.unwrap().editing.as_deref(), Some("git"));
+    assert_eq!(
+        serde_json::from_str::<Value>(&held.entry).unwrap(),
+        json!({ "command": "uvx", "args": ["mcp-server-git"] })
+    );
+    window.type_in(page::ENTRY_INPUT, "{ \"command\": \"git-mcp\" }");
+    window.click(cx, repo, &servers, "Save");
+    // Cancel closes the editor, and forgets a removal asked.
+    window.click(cx, repo, &servers, "Add a server");
+    window.click(cx, repo, &servers, "Remove");
+    assert_eq!(window.held().removing.as_deref(), Some("git"));
+    window.click(cx, repo, &servers, "Cancel");
+    assert_eq!(window.held(), page::Held::default());
+    // Removing asks twice.
+    window.click(cx, repo, &servers, "Remove");
+    assert_eq!(window.held().removing.as_deref(), Some("git"));
+    window.click(cx, repo, &servers, "Remove it");
+    assert_eq!(window.held().removing, None);
+    // The rest asks the host half as clicked.
+    window.click(cx, None, &servers, "On in every repository");
+    window.click(cx, repo, &servers, "Approve");
+    window.click(cx, repo, &servers, "Reconnect");
+    let mut unstarted = servers.clone();
+    unstarted.started = false;
+    window.click(cx, repo, &unstarted, "Connect now");
+    assert_eq!(
+        window.acts,
         [
             Act::Add {
                 name: "git".into(),
@@ -1041,19 +1156,18 @@ fn the_editor_sends_what_it_may(cx: &mut TestAppContext) {
                 name: "git".into(),
                 enabled: false,
             },
-            Act::Enable {
-                repo: Some("r".into()),
-                name: "linear".into(),
-                enabled: true,
-            },
             Act::Approve {
                 repo: "r".into(),
                 server: "db".into(),
-                hash: "h".into(),
+                hash: "abc".into(),
             },
             Act::Reconnect {
                 repo: Some("r".into()),
-                server: Some("db".into()),
+                server: Some("git".into()),
+            },
+            Act::Reconnect {
+                repo: Some("r".into()),
+                server: None,
             },
         ]
     );
@@ -1232,6 +1346,8 @@ struct PageView {
     repos: BTreeMap<String, Servers>,
     params: BTreeMap<String, String>,
     compact: bool,
+    /// The plugin's UI state, as the interface keeps it.
+    ui_state: BTreeMap<String, Value>,
 }
 
 impl Render for PageView {
@@ -1263,9 +1379,37 @@ impl Render for PageView {
             &list,
             &cards,
             cx,
-        );
+        )
+        .with_ui_state(&self.ui_state);
         div().size_full().flex().child(page::render(&mut view))
     }
+}
+
+/// Draws the page at `params` in a window, on a computer or a phone,
+/// with the UI state `ui_state`.
+fn draw_page_in(
+    cx: &mut TestAppContext,
+    ui: &Entity<Ui>,
+    repos: &BTreeMap<String, Servers>,
+    params: BTreeMap<String, String>,
+    compact: bool,
+    ui_state: BTreeMap<String, Value>,
+) {
+    cx.update(|cx| cx.set_global(tau_ui_kit::theme::Theme::graphite()));
+    let window = cx.add_window({
+        let (ui, repos) = (ui.clone(), repos.clone());
+        move |_, _| PageView {
+            ui,
+            repos,
+            params,
+            compact,
+            ui_state,
+        }
+    });
+    let cx = VisualTestContext::from_window(*window, cx);
+    let width = if compact { 400. } else { 1400. };
+    cx.simulate_resize(size(px(width), px(900.)));
+    cx.run_until_parked();
 }
 
 /// Draws the page at `params` in a window, on a computer or a phone.
@@ -1276,20 +1420,7 @@ fn draw_page(
     params: BTreeMap<String, String>,
     compact: bool,
 ) {
-    cx.update(|cx| cx.set_global(tau_ui_kit::theme::Theme::graphite()));
-    let window = cx.add_window({
-        let (ui, repos) = (ui.clone(), repos.clone());
-        move |_, _| PageView {
-            ui,
-            repos,
-            params,
-            compact,
-        }
-    });
-    let cx = VisualTestContext::from_window(*window, cx);
-    let width = if compact { 400. } else { 1400. };
-    cx.simulate_resize(size(px(width), px(900.)));
-    cx.run_until_parked();
+    draw_page_in(cx, ui, repos, params, compact, BTreeMap::new());
 }
 
 /// The page draws a repository's servers on a computer and a phone, the
@@ -1334,8 +1465,11 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
         let (repo, shown) = page::servers_of(view);
         assert_eq!((repo, shown.servers.len()), (None, 0));
     });
-    ui.update(cx, |ui, cx| ui.open_add(cx));
-    draw_page(cx, &ui, &repos, BTreeMap::new(), false);
+    let mut window = Window_::default();
+    window.click(cx, None, &repos["r"], "Add a server");
+    window.click(cx, None, &repos["r"], "Save");
+    assert!(window.held().editor.unwrap().problem.is_some());
+    draw_page_in(cx, &ui, &repos, BTreeMap::new(), false, window.ui);
     let entry =
         with_view(cx, &ui, &repos, &BTreeMap::new(), None, false, |view| {
             ui::sidebar(&AtRepo { repo: "r".into() }, view)
@@ -1431,9 +1565,10 @@ fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
     assert_eq!(status.state, "2 servers · 1 connected · 1 needs sign-in");
     assert_eq!(status.tone, tau_ui_kit::theme::Tone::Warn);
 
+    let mut window = Window_::default();
+    window.click(cx, Some("r"), &repos["r"], "Sign in");
+    window.click(cx, None, &repos["r"], "Sign out");
     ui.update(cx, |ui, cx| {
-        ui.sign_in(Some("r"), "db", cx);
-        ui.sign_out(None, "git", cx);
         McpUi.reply(
             ui,
             serde_json::to_value(Reply::SignIn {
@@ -1444,12 +1579,13 @@ fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
             cx,
         );
     });
+    assert!(asked.borrow().is_empty(), "the browser signs in");
     assert_eq!(
-        acts(&asked),
+        window.acts,
         [
             Act::SignIn {
                 repo: Some("r".into()),
-                server: "db".into(),
+                server: "linear".into(),
             },
             Act::SignOut {
                 repo: None,
