@@ -1115,6 +1115,7 @@ fn rules_list(
             String::new(),
         ],
         rows,
+        widths: Vec::new(),
     }
 }
 
@@ -1216,6 +1217,7 @@ fn review(
                     ]
                 })
                 .collect(),
+            widths: Vec::new(),
         });
     }
     page.push(Node::text(
@@ -1556,6 +1558,7 @@ fn try_section(
                 Node::Table {
                     head: Vec::new(),
                     rows,
+                    widths: Vec::new(),
                 },
                 Node::text(format!(
                     "{} {} · {}. Only what a check shows went to Jev; nothing \
