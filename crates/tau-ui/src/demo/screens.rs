@@ -514,7 +514,16 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.navigate(Route::Run(run_id()), cx)
     }),
     // The demo streams tau-reasoning's note in right after the task.
-    ("note-open", |ws, _, cx| ws.toggle_note(&run_id(), 1, cx)),
+    // Its chart is a section of the note, open in the UI state (ADR 0045).
+    ("note-open", |ws, _, cx| {
+        ws.toggle_note(&run_id(), 1, cx);
+        let open = format!("note-{}-n0.open", run_id().0);
+        ws.plugin_handle(tau_reasoning::NAME).set_ui(
+            open,
+            Some(json!(true)),
+            cx,
+        );
+    }),
     // tau-reasoning keeping a long conversation's effort over Jev's
     // pick: its note, then its choices page.
     ("effort-kept", |ws, _, cx| {
