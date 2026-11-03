@@ -199,6 +199,24 @@ pub enum Node {
     },
     /// A line across.
     Rule,
+    /// A heading that opens and closes the pieces under it. Whether it
+    /// is open is the interface's state, under the plugin's `id`; until
+    /// the person clicks, `open` says.
+    Section {
+        id: String,
+        title: String,
+        #[serde(default)]
+        open: bool,
+        #[serde(default, deserialize_with = "nodes")]
+        children: Vec<Node>,
+    },
+    /// Tabs, one shown at a time. Which is chosen is the interface's
+    /// state, under the plugin's `id`; until the person picks, the first.
+    Tabs {
+        id: String,
+        #[serde(default)]
+        tabs: Vec<Tab>,
+    },
     /// What shows where there is nothing yet.
     Empty {
         text: String,
@@ -239,6 +257,24 @@ pub enum Node {
     },
 }
 
+/// One tab of [`Node::Tabs`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Tab {
+    pub label: String,
+    #[serde(default, deserialize_with = "nodes")]
+    pub children: Vec<Node>,
+}
+
+/// The UI state key under which a section's `id` keeps whether it is
+/// open, and tabs' `id` the tab chosen.
+pub fn open_key(id: &str) -> String {
+    format!("{id}.open")
+}
+
+pub fn tab_key(id: &str) -> String {
+    format!("{id}.tab")
+}
+
 /// Children that read one by one, each failing alone.
 fn nodes<'de, D: Deserializer<'de>>(de: D) -> Result<Vec<Node>, D::Error> {
     let values = Option::<Vec<Value>>::deserialize(de)?.unwrap_or_default();
@@ -261,6 +297,13 @@ impl Node {
     pub fn read(value: &Value) -> Self {
         if let Some(text) = value.as_str() {
             return Self::text(text);
+        }
+        // One that did not read before, sent on as it was written: it
+        // keeps why.
+        if value.get("piece").and_then(Value::as_str) == Some("invalid") {
+            return Self::Invalid {
+                why: value["why"].as_str().unwrap_or_default().to_owned(),
+            };
         }
         match Self::deserialize(value) {
             Ok(node) => node,
@@ -310,6 +353,9 @@ pub enum Act {
     Plugin { action: String, args: Value },
     /// Opens a page.
     Navigate(Link),
+    /// Sets a key of the plugin's UI state, or forgets it: a section
+    /// opened, a tab chosen (ADR 0045).
+    Ui { key: String, value: Option<Value> },
 }
 
 /// Carries out what a click asks.
@@ -328,6 +374,12 @@ pub struct Draw<'a> {
     /// How bound settings pieces draw; without it they say they belong
     /// on a settings page.
     pub setting: Option<DrawSetting<'a>>,
+    /// The plugin's UI state, which sections and tabs read; without it
+    /// each shows as it starts.
+    pub ui: Option<&'a std::collections::BTreeMap<String, Value>>,
+    /// What the tree's UI state keys start with: the plugin's own part,
+    /// for a plugin that draws trees for several (tau-luau-plugins).
+    pub prefix: Option<String>,
 }
 
 impl<'a> Draw<'a> {
@@ -337,7 +389,17 @@ impl<'a> Draw<'a> {
             id: id.into(),
             on_act: None,
             setting: None,
+            ui: None,
+            prefix: None,
         }
+    }
+
+    pub fn ui(
+        mut self,
+        ui: &'a std::collections::BTreeMap<String, Value>,
+    ) -> Self {
+        self.ui = Some(ui);
+        self
     }
 
     pub fn on_act(mut self, on_act: OnAct) -> Self {
@@ -348,6 +410,19 @@ impl<'a> Draw<'a> {
     pub fn setting(mut self, setting: DrawSetting<'a>) -> Self {
         self.setting = Some(setting);
         self
+    }
+
+    pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = Some(prefix.into());
+        self
+    }
+
+    /// `key` of the tree's UI state, under its prefix.
+    fn key(&self, key: String) -> String {
+        match &self.prefix {
+            Some(prefix) => format!("{prefix}/{key}"),
+            None => key,
+        }
     }
 
     /// Draws `node`.
@@ -549,6 +624,97 @@ impl<'a> Draw<'a> {
                 .children(self.children(children, depth, path))
                 .into_any_element(),
             Node::Rule => rule(t).into_any_element(),
+            Node::Section {
+                id,
+                title,
+                open,
+                children,
+            } => {
+                let key = self.key(open_key(id));
+                let open = self
+                    .ui
+                    .and_then(|ui| ui.get(&key))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(*open);
+                let head = div()
+                    .id(SharedString::from(format!("{path}:section")))
+                    .flex()
+                    .items_center()
+                    .gap(sp(2.))
+                    .cursor_pointer()
+                    .child(icon(
+                        if open { Icon::Down } else { Icon::Chevron },
+                        IconSize::TINY,
+                        t.dim,
+                    ))
+                    .child(heading(title, t))
+                    .when_some(
+                        self.click(Act::Ui {
+                            key,
+                            value: Some(Value::Bool(!open)),
+                        }),
+                        |head, click| head.on_click(click),
+                    );
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(2.))
+                    .child(head)
+                    .when(open, |column| {
+                        column.children(self.children(children, depth, path))
+                    })
+                    .into_any_element()
+            }
+            Node::Tabs { id, tabs } => {
+                let key = self.key(tab_key(id));
+                let chosen = self
+                    .ui
+                    .and_then(|ui| ui.get(&key))
+                    .and_then(Value::as_u64)
+                    .map_or(0, |n| n as usize)
+                    .min(tabs.len().saturating_sub(1));
+                let bar = div().flex().flex_wrap().gap(sp(0.5)).children(
+                    tabs.iter().take(MAX_CHILDREN).enumerate().map(
+                        |(n, tab)| {
+                            let on = n == chosen;
+                            div()
+                                .id(SharedString::from(format!(
+                                    "{path}:tab{n}"
+                                )))
+                                .px(sp(3.))
+                                .py(sp(1.5))
+                                .rounded(radius::SMALL)
+                                .cursor_pointer()
+                                .typeset(Type::CAPTION)
+                                .text_color(if on { t.text } else { t.dim })
+                                .when(on, |tab| tab.bg(t.raised))
+                                .child(tab.label.clone())
+                                .when_some(
+                                    self.click(Act::Ui {
+                                        key: key.clone(),
+                                        value: Some(Value::from(n)),
+                                    }),
+                                    |tab, click| tab.on_click(click),
+                                )
+                        },
+                    ),
+                );
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(3.))
+                    .child(bar)
+                    .children(tabs.get(chosen).map(|tab| {
+                        div().flex().flex_col().gap(sp(2.)).children(
+                            self.children(
+                                &tab.children,
+                                depth,
+                                &format!("{path}:{chosen}"),
+                            ),
+                        )
+                    }))
+                    .into_any_element()
+            }
             Node::Empty { text } => empty(text.clone(), t).into_any_element(),
             Node::Button {
                 label,
@@ -699,6 +865,31 @@ mod tests {
         let node = Node::read(&piece);
         assert!(node.is_setting());
         assert_eq!(node.value(), piece);
+    }
+
+    /// Sections and tabs read and write their wire shape; where they
+    /// were left is UI state under their `id`, apart from the tree.
+    #[test]
+    fn sections_and_tabs() {
+        let wire = json!({ "piece": "stack", "children": [
+            { "piece": "section", "id": "more", "title": "More", "open": true,
+              "children": [{ "piece": "text", "text": "in" }] },
+            { "piece": "tabs", "id": "views", "tabs": [
+                { "label": "One", "children": [{ "piece": "rule" }] },
+                { "label": "Two", "children": [{ "piece": "nope" }] },
+            ] },
+        ]});
+        let node = Node::read(&wire);
+        let Node::Stack { children } = &node else {
+            panic!("a stack: {node:?}")
+        };
+        let Node::Tabs { tabs, .. } = &children[1] else {
+            panic!("tabs: {:?}", children[1])
+        };
+        assert!(matches!(tabs[1].children[0], Node::Invalid { .. }));
+        assert_eq!(Node::read(&node.value()), node);
+        assert_eq!(open_key("more"), "more.open");
+        assert_eq!(tab_key("views"), "views.tab");
     }
 
     /// Every icon a tree can name is found by its file's name.

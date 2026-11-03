@@ -541,6 +541,8 @@ return tau.plugin {
       ui.rule(), ui.empty("Nothing yet."),
       ui.link("Notes", "notes"),
       ui.link("Theirs", "page", { plugin = "tau-memory", params = { repo = "r" } }),
+      ui.section("more", "More", { "inside" }, { open = true }), ui.section("less", "Less", {}),
+      ui.tabs("views", { { "One", { "first" } }, { "Two", { ui.mono("second") } } }),
     } }
   end,
 }
@@ -566,7 +568,7 @@ async fn every_ui_piece_reads_as_a_tree() {
     let tau_ui_plugin::tree::Node::Stack { children } = &node else {
         panic!("a stack: {node:?}")
     };
-    assert_eq!(children.len(), 26);
+    assert_eq!(children.len(), 29);
     let written = node.value().to_string();
     assert!(!written.contains(r#""piece":"invalid""#), "{written}");
 }

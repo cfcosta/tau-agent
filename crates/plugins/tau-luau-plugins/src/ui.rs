@@ -172,14 +172,23 @@ impl State {
 
 /// Draws a view tree a Luau plugin returned (ADR 0045's tree). A piece
 /// it does not know draws as a red box that says so.
-pub fn draw(piece: &Value, id: &str, t: &Theme, handle: &Handle) -> AnyElement {
-    let handle = handle.clone();
-    Draw::new(t, id.to_owned())
-        .on_act(Rc::new(move |act, cx| {
+/// Its sections and tabs keep their state under `plugin`'s name, the
+/// Luau plugin that drew it.
+pub fn draw(
+    piece: &Value,
+    id: &str,
+    plugin: &str,
+    view: &ViewCx<'_, LuauPluginsUi>,
+) -> AnyElement {
+    let handle = view.handle.clone();
+    Draw::new(view.theme(), id.to_owned())
+        .ui(view.ui_state())
+        .prefix(plugin)
+        .on_act(Rc::new(move |act, cx| match act {
+            tree::Act::Navigate(link) => handle.navigate(link, cx),
+            tree::Act::Ui { key, value } => handle.set_ui(key, value, cx),
             // A plugin's own actions arrive with ADR 0027's phase 2.
-            if let tree::Act::Navigate(link) = act {
-                handle.navigate(link, cx);
-            }
+            tree::Act::Plugin { .. } => {}
         }))
         .draw(&Node::read(piece))
 }
@@ -235,10 +244,9 @@ impl UiPlugin for LuauPluginsUi {
             .status(State::status)
             .contribute(points::CARD, |at: &AtCard, view| {
                 let details = at.data.result.as_ref()?.details.as_ref()?;
-                details.get("plugin")?.as_str()?;
+                let plugin = details.get("plugin")?.as_str()?;
                 let card =
                     details.get("card").filter(|card| !card.is_null())?;
-                let t = view.theme().clone();
                 Some(CardView {
                     body: Some(
                         div()
@@ -247,8 +255,8 @@ impl UiPlugin for LuauPluginsUi {
                             .child(draw(
                                 card,
                                 &format!("luau-card-{}", at.call_id),
-                                &t,
-                                &view.handle,
+                                plugin,
+                                view,
                             ))
                             .into_any_element(),
                     ),

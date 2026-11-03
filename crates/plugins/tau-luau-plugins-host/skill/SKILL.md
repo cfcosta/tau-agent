@@ -138,6 +138,12 @@ Plain tables, drawn by tau on the computer and on the phone:
   rows of pieces or strings
 - `ui.scroll({ ... }, height)`: pieces that scroll past `height` rems
 - `ui.rule()`, `ui.empty(text)`
+- `ui.section(id, title, { ... }, { open = true })`: a heading that
+  opens and closes what is under it
+- `ui.tabs(id, { { "label", { ... } }, ... })`: one tab shown at a
+  time
+- tau keeps where the person left a section or tabs, under its `id`,
+  on every device and across restarts
 - `ui.link(label, page, { plugin = "...", params = { ... } })`: opens
   another plugin's page
 - `ui.status(text, detail, tone)`: the run's status line, from `view`

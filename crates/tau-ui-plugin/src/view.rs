@@ -508,6 +508,12 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         self.ui_state.get(key)
     }
 
+    /// The plugin's whole UI state, for a tree drawn with it
+    /// ([`crate::tree::Draw::ui`]).
+    pub fn ui_state(&self) -> &'a BTreeMap<String, Value> {
+        self.ui_state
+    }
+
     /// The same view, reading other plugins' data from `others`.
     pub fn with_others(
         mut self,

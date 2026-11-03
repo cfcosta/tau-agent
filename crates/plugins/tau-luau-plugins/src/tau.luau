@@ -212,6 +212,29 @@ function ui.scroll(children, height)
 	return { piece = "scroll", children = pieces(children), height = height and tonumber(height) or json.null }
 end
 
+-- A heading that opens and closes `children`. `id` names it among the
+-- plugin's sections, so where the person left it is kept; `opts.open`
+-- says whether it starts open.
+function ui.section(id, title, children, opts)
+	return {
+		piece = "section",
+		id = tostring(id),
+		title = tostring(title),
+		open = (opts and opts.open) == true,
+		children = pieces(children),
+	}
+end
+
+-- Tabs, one shown at a time: a list of `{ label, { pieces } }`. `id`
+-- names them, so the tab the person chose is kept.
+function ui.tabs(id, tabs)
+	local out = array({})
+	for _, tab in ipairs(tabs or {}) do
+		table.insert(out, { label = tostring(tab[1]), children = pieces(tab[2]) })
+	end
+	return { piece = "tabs", id = tostring(id), tabs = out }
+end
+
 function ui.rule()
 	return { piece = "rule" }
 end
