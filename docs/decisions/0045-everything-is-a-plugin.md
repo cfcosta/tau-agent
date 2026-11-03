@@ -193,12 +193,12 @@ not every plugin).
   `alert`, `open_run`, `cancel`, `focus`, `record`) or the plugin's own
   (`act`, answered by `reply`). On the phone an action travels to the
   host.
-- **UI state is the kernel's.** Which section is open, the chosen tab,
-  a draft in a text input and the scroll position are kept by the
-  renderer, keyed by the plugin, the point and the node's `id`, and
-  survive redraws and version changes. A plugin that needs one of them
-  reads it in `view` (`cx.ui(id)`). `UiPlugin::Ui` and its gpui entities
-  go away.
+- **UI state is the kernel's, and it is data.** Which section is open,
+  the chosen tab, a draft in a text input, a selection, and the page
+  open are kept by the kernel as JSON, keyed by the plugin, the point
+  or page, and the node's `id`. A plugin reads them in `view`
+  (`cx.ui(id)`); `UiPlugin::Ui` and its gpui entities go away. See
+  "The interface's state is data" below.
 - **Typed outputs stay typed.** Points whose output is data, not
   drawing (`NavEntry`, `PluginStatus`, `PlanField`, `RowNote`,
   `CardView`, `PaneView`, the context trigger), keep their types, made
@@ -206,6 +206,32 @@ not every plugin).
 - **Cost.** `view` is pure. The renderer re-asks a plugin only when its
   state, data, settings, UI state or version changed, and caches the
   tree; a Luau `view` keeps its 200 ms limit.
+
+### The interface's state is data
+
+Everything the interface shows comes from state that serializes, and is
+saved and sent to phones whole, so a phone, or the computer after a
+restart, draws the same thing from the same state:
+
+- **One state, three parts.** The runs (`RunView`, folded from records
+  as today), the plugins' data and settings, and the interface's own
+  state: the route and its history, and every plugin's UI state.
+  Nothing a plugin or the frame shows lives only in a gpui entity.
+- **Changes are events.** A click, a keystroke in a tree's text input,
+  or a tab chosen is a `UiEvent { plugin, scope, id, value }`. A
+  reducer applies it to the UI state, and the same event goes to the
+  phones, which apply it the same way. The renderer keeps gpui's text
+  inputs only as editors of a draft: each edit is an event, and an
+  input is made again from the state it shows.
+- **Drawing is a function.** `view` is pure: the same state, data,
+  settings and UI state give the same tree, on every device. It reads
+  no clock and no randomness; time comes in as state (a ticker's start,
+  not its count).
+- **Saved.** The interface's state is saved with the store, so a
+  restart opens where the person left it, drafts included.
+- **What is not state.** What the window's layout alone decides, such
+  as a scroll offset, hover, and the caret, stays on each device: a
+  phone and a computer lay the same tree out differently.
 
 ### Capabilities and the Allow click
 
@@ -286,8 +312,9 @@ largest pieces are:
 
 Each step lands on main by itself and leaves tau working.
 
-1. **The tree.** Grow the view tree, its renderer, actions and kernel UI
-   state in `tau-ui-plugin` and `tau-ui-kit`; move the diff and terminal
+1. **The tree.** Grow the view tree, its renderer, actions and the
+   interface's state as data (events, a reducer, saved and sent to
+   phones) in `tau-ui-plugin` and `tau-ui-kit`; move the diff and terminal
    views into kit widgets. Wire Luau's `note`, `page`, buttons and
    actions to it.
 2. **Rust plugins draw trees.** Move each plugin's UI to trees, smallest
