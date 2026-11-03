@@ -3,13 +3,11 @@
 //! chats (ADR 0029). Its rewrites show as the run's, with what they
 //! saved.
 
-use gpui::{AnyElement, div, prelude::*, rems};
+use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tau_agent::plugin::Plugin;
-use tau_ui_kit::{
-    components as ui,
-    theme::{Tone, Type, sp},
-};
+use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
     HostCx,
     HostHalf,
@@ -21,6 +19,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtRun},
+    tree::Node,
 };
 
 use crate::{Compaction, NAME};
@@ -71,51 +70,34 @@ impl UiPlugin for CompactionUi {
 
 /// Its settings pane (ADR 0029): the switch for idle chats.
 fn settings_pane(view: &mut ViewCx<'_, CompactionUi>) -> AnyElement {
-    let t = view.theme().clone();
     let settings = *view.settings;
     let scope = view.scope().map(str::to_owned);
     let handle = view.handle.clone();
-    ui::card(&t)
-        .child(
-            div()
-                .id("compaction-idle")
-                .flex()
-                .items_center()
-                .gap(sp(4.))
-                .px(sp(4.))
-                .py(sp(3.5))
-                .cursor_pointer()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .flex()
-                        .flex_col()
-                        .gap(sp(0.75))
-                        .child("Compact idle chats")
-                        .child(ui::text(
-                            "A long chat left idle is summarized shortly before \
-                             its prompt cache lapses, while the summary still \
-                             reads it from cache: your next message then starts \
-                             from the summary instead of resending everything \
-                             uncached.",
-                            Type::CAPTION,
-                            t.muted,
-                        )),
-                )
-                .child(ui::switch(settings.idle, &t))
-                .on_click(move |_, _, cx| {
-                    handle.save_settings_in(
-                        scope.as_deref(),
-                        &Settings {
-                            idle: !settings.idle,
-                        },
-                        cx,
-                    )
-                }),
-        )
-        .into_any_element()
+    let pane = Node::Card {
+        children: vec![Node::Switch {
+            label: "Compact idle chats".into(),
+            detail: Some(
+                "A long chat left idle is summarized shortly before its \
+                 prompt cache lapses, while the summary still reads it from \
+                 cache: your next message then starts from the summary \
+                 instead of resending everything uncached."
+                    .into(),
+            ),
+            on: settings.idle,
+            action: IDLE.into(),
+            args: Value::Null,
+        }],
+    };
+    view.tree("compaction-settings", &pane, move |action, _, cx| {
+        if action == IDLE {
+            let idle = !settings.idle;
+            handle.save_settings_in(scope.as_deref(), &Settings { idle }, cx);
+        }
+    })
 }
+
+/// The pane's one action: switch compacting idle chats.
+const IDLE: &str = "idle";
 
 /// tau-compaction on the host.
 #[derive(Debug, Clone, Copy, Default)]

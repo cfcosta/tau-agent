@@ -539,6 +539,40 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         self.inputs
     }
 
+    /// Draws `node`, a tree of the plugin's (ADR 0045), named `id` apart
+    /// from its other trees on screen: with the plugin's UI state, the
+    /// window's inputs and widgets, and clicks carried out. A link opens
+    /// its page and a section or a tab changes the UI state; the plugin's
+    /// own actions go to `on_action` with their arguments.
+    pub fn tree(
+        &mut self,
+        id: &str,
+        node: &crate::tree::Node,
+        on_action: impl Fn(&str, &Value, &mut App) + 'static,
+    ) -> gpui::AnyElement {
+        use crate::tree::{Act, Draw};
+
+        let handle = self.handle.clone();
+        let t = self.theme().clone();
+        let mut draw =
+            Draw::new(&t, id.to_owned())
+                .ui(self.ui_state)
+                .on_act(Rc::new(move |act, cx| match act {
+                    Act::Navigate(link) => handle.navigate(link, cx),
+                    Act::Ui { key, value } => handle.set_ui(key, value, cx),
+                    Act::Plugin { action, args } => {
+                        on_action(&action, &args, cx)
+                    }
+                }));
+        if let Some(inputs) = self.inputs {
+            draw = draw.inputs(inputs);
+        }
+        if let Some(widgets) = self.widgets {
+            draw = draw.widgets(widgets);
+        }
+        draw.draw(node, self.cx)
+    }
+
     /// The plugin's whole UI state, for a tree drawn with it
     /// ([`crate::tree::Draw::ui`]).
     pub fn ui_state(&self) -> &'a BTreeMap<String, Value> {

@@ -200,6 +200,22 @@ pub enum Node {
     },
     /// A line across.
     Rule,
+    /// Pieces in a card: a framed group.
+    Card {
+        #[serde(default, deserialize_with = "nodes")]
+        children: Vec<Node>,
+    },
+    /// A setting's row: its label and small print, and a switch showing
+    /// `on`. A click carries out `action`, the plugin's own.
+    Switch {
+        label: String,
+        #[serde(default)]
+        detail: Option<String>,
+        on: bool,
+        action: String,
+        #[serde(default)]
+        args: Value,
+    },
     /// A heading that opens and closes the pieces under it. Whether it
     /// is open is the interface's state, under the plugin's `id`; until
     /// the person clicks, `open` says.
@@ -909,6 +925,49 @@ impl<'a> Draw<'a> {
                 .children(self.children(children, depth, path, cx))
                 .into_any_element(),
             Node::Rule => rule(t).into_any_element(),
+            Node::Card { children } => tau_ui_kit::components::card(t)
+                .flex()
+                .flex_col()
+                .children(self.children(children, depth, path, cx))
+                .into_any_element(),
+            Node::Switch {
+                label,
+                detail,
+                on,
+                action,
+                args,
+            } => div()
+                .id(SharedString::from(format!("{path}:switch")))
+                .flex()
+                .items_center()
+                .gap(sp(4.))
+                .px(sp(4.))
+                .py(sp(3.5))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .flex()
+                        .flex_col()
+                        .gap(sp(0.75))
+                        .child(label.clone())
+                        .when_some(detail.clone(), |column, detail| {
+                            column.child(tau_ui_kit::components::text(
+                                detail,
+                                Type::CAPTION,
+                                t.muted,
+                            ))
+                        }),
+                )
+                .child(tau_ui_kit::components::switch(*on, t))
+                .when_some(
+                    self.click(Act::Plugin {
+                        action: action.clone(),
+                        args: args.clone(),
+                    }),
+                    |row, click| row.cursor_pointer().on_click(click),
+                )
+                .into_any_element(),
             Node::Section {
                 id,
                 title,
@@ -1303,6 +1362,11 @@ mod tests {
               "edges": [["a", "b"]] },
         ]});
         assert_eq!(Node::read(&more).value(), more);
+        let setting = json!({ "piece": "card", "children": [
+            { "piece": "switch", "label": "Compact idle chats", "detail": null,
+              "on": true, "action": "idle", "args": null },
+        ]});
+        assert_eq!(Node::read(&setting).value(), setting);
         assert_eq!(
             Node::read(&json!({ "piece": "terminal", "id": "t" })),
             Node::Terminal {
