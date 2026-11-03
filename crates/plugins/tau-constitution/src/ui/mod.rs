@@ -2,7 +2,7 @@
 //! page, with the editor that writes and tries a rule and the calls and
 //! answers that wait for a person; what the checks did on a run's cards,
 //! in its transcript and inspector; and the repository's entry in the
-//! sidebar.
+//! sidebar. Each is a view tree (ADR 0045).
 
 pub mod page;
 mod run;
@@ -10,14 +10,10 @@ pub mod stats;
 
 use std::collections::BTreeMap;
 
-use gpui::{AppContext as _, Context, Entity};
+use gpui::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tau_ui_kit::{
-    assets::Icon,
-    input::{InputEvent, TextInput},
-    theme::Tone,
-};
+use tau_ui_kit::{assets::Icon, theme::Tone};
 use tau_ui_plugin::{
     CardMark,
     Fold,
@@ -388,10 +384,10 @@ impl UiPlugin for ConstitutionUi {
         &self,
         ui: &mut page::Ui,
         reply: Value,
-        _cx: &mut Context<page::Ui>,
+        cx: &mut Context<page::Ui>,
     ) {
         if let Ok(result) = serde_json::from_value::<TrialResult>(reply) {
-            ui.tried(result);
+            ui.tried(result, cx);
         }
     }
 
@@ -399,7 +395,8 @@ impl UiPlugin for ConstitutionUi {
         Manifest::new()
             .page(
                 Page::new("rules", page::render)
-                    .title(|_| "Constitution".to_owned()),
+                    .title(|_| "Constitution".to_owned())
+                    .framed(),
             )
             .contribute(points::SIDEBAR_REPO, sidebar)
             .contribute_at(points::STATUS, 10, run::status)
@@ -411,33 +408,8 @@ impl UiPlugin for ConstitutionUi {
 }
 
 impl PluginUi for page::Ui {
-    fn new(handle: Handle, cx: &mut Context<Self>) -> Self {
-        let rule_text = cx.new(|cx| {
-            TextInput::new(
-                "A rule in plain words: \"No unwrap or expect outside tests.\"",
-                cx,
-            )
-            .keep_on_submit()
-        });
-        let rule_on =
-            cx.new(|cx| TextInput::new("tool.field", cx).keep_on_submit());
-        // Enter in the rule saves it; Enter in a field adds the field.
-        cx.subscribe(
-            &rule_text,
-            |ui: &mut page::Ui, _: Entity<TextInput>, _: &InputEvent, cx| {
-                ui.save(cx)
-            },
-        )
-        .detach();
-        cx.subscribe(
-            &rule_on,
-            |ui: &mut page::Ui, _: Entity<TextInput>, _: &InputEvent, cx| {
-                ui.add_other_place(cx);
-            },
-        )
-        .detach();
-        cx.observe(&rule_text, |_, _, cx| cx.notify()).detach();
-        page::Ui::new(handle, rule_text, rule_on)
+    fn new(handle: Handle, _: &mut Context<Self>) -> Self {
+        page::Ui::new(handle)
     }
 }
 
