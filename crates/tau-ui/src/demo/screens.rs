@@ -77,6 +77,16 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // The person's own plugins (ADR 0036): their page, and the page of
     // one that waits for them.
     ("plugins-yours", |ws, host, cx| yours(ws, host, None, cx)),
+    // A Luau plugin's view (ADR 0045): its note in the demo run, with one
+    // of each piece, and its page on the plugin's own page.
+    ("luau-note", |ws, _, cx| {
+        luau_view(ws, cx);
+        ws.navigate(Route::Run(run_id()), cx);
+    }),
+    ("luau-page", |ws, host, cx| {
+        luau_view(ws, cx);
+        yours(ws, host, Some("commit-style"), cx);
+    }),
     ("plugins-yours-entry", |ws, host, cx| {
         yours(ws, host, Some("no-force-push"), cx)
     }),
@@ -717,6 +727,78 @@ fn crew(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
 /// The plugins repository with three plugins, one active, one waiting
 /// for the person and one whose tests fail, and a chat there writing
 /// one; then their page, or `entry`'s.
+/// `commit-style`'s state and view in the demo run, as its records
+/// leave them: a note and a page that use every piece the view tree has.
+fn luau_view(ws: &mut Workspace, cx: &mut Context<Workspace>) {
+    use tau_luau_plugins::Record;
+
+    let note = json!({ "piece": "stack", "children": [
+        { "piece": "row", "children": [
+            { "piece": "icon", "name": "check", "tone": "good" },
+            { "piece": "rich", "text": "Checked **3** commits against `feat(scope): title`." },
+        ] },
+        { "piece": "section", "id": "why", "title": "Why one was refused", "open": true,
+          "children": [
+            { "piece": "rows", "rows": [
+                { "key": "commit", "value": "a41c9e2" },
+                { "key": "title", "value": "Fixed the retry loop" },
+                { "key": "rule", "value": "imperative mood" },
+            ] },
+        ] },
+        { "piece": "row", "children": [
+            { "piece": "button", "label": "Allow once", "action": "allow", "args": {}, "kind": "primary" },
+            { "piece": "button", "label": "Explain", "action": "explain", "args": {} },
+        ] },
+    ] });
+    let page = json!({ "piece": "stack", "children": [
+        { "piece": "heading", "text": "Scopes it knows" },
+        { "piece": "tabs", "id": "scopes", "tabs": [
+            { "label": "Used", "children": [
+                { "piece": "table", "head": ["scope", "commits", "last"], "rows": [
+                    [{ "piece": "mono", "text": "tau-ui" }, "41", { "piece": "pill", "text": "today", "tone": "good" }],
+                    [{ "piece": "mono", "text": "tau-vcs-host" }, "17", { "piece": "pill", "text": "2 days" }],
+                    [{ "piece": "mono", "text": "docs" }, "9", { "piece": "badge", "text": "rare", "tone": "warn" }],
+                ] },
+            ] },
+            { "label": "Refused", "children": [
+                { "piece": "list", "items": ["Fixed the retry loop", "WIP"] },
+            ] },
+        ] },
+        { "piece": "progress", "share": 0.82, "label": "82% of commits follow the style" },
+        { "piece": "section", "id": "rules", "title": "The rule, in markdown", "open": false,
+          "children": [{ "piece": "markdown", "text": "A title is **`type(scope): title`**, in the imperative." }] },
+        { "piece": "input", "id": "scope", "placeholder": "Add a scope, then Enter", "submit": "add_scope" },
+        { "piece": "code", "lang": "lua", "text": "ctx.state.scopes[args.text] = true" },
+        { "piece": "rule" },
+        { "piece": "row", "children": [
+            { "piece": "status", "text": "on", "detail": "3 checks", "tone": "good" },
+            { "piece": "link", "label": "Your plugins", "to": { "page": "luau-plugins" } },
+        ] },
+        { "piece": "sparkle" },
+    ] });
+    for record in [
+        Record::State {
+            plugin: "commit-style".into(),
+            state: json!({ "checked": 3 }),
+        },
+        Record::View {
+            plugin: "commit-style".into(),
+            view: json!({
+                "status": { "piece": "status", "text": "on", "detail": "3 checks", "tone": "good" },
+                "note": note,
+                "page": page,
+            }),
+        },
+    ] {
+        let event = RunEvent::PluginReport {
+            run: run_id(),
+            plugin: tau_luau_plugins::NAME.into(),
+            body: serde_json::to_value(record).unwrap_or_default(),
+        };
+        ws.apply(HostUpdate::Event(event), cx);
+    }
+}
+
 fn yours(
     ws: &mut Workspace,
     host: &DemoHost,

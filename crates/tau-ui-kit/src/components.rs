@@ -1187,7 +1187,7 @@ pub fn note(
                 .text_color(ink)
                 .child(head.plugin.clone()),
         )
-        .when(!compact, |row| {
+        .when(!compact && !head.text.is_empty(), |row| {
             row.child(
                 div()
                     .min_w(rems(0.))
@@ -1218,7 +1218,7 @@ pub fn note(
                 .bg(ink.opacity(0.1))
         })
         .child(header)
-        .when(compact, |card| {
+        .when(compact && !head.text.is_empty(), |card| {
             card.child(
                 div()
                     .text_color(t.text_soft)

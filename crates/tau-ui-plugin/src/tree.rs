@@ -512,6 +512,26 @@ impl<'a> Draw<'a> {
         path: &str,
         cx: &mut App,
     ) -> AnyElement {
+        let drawn = self.piece(node, depth, path, cx);
+        // Pieces that size to their content keep it in a column or a
+        // table's cell, which would stretch them across.
+        match node {
+            Node::Icon { .. }
+            | Node::Badge { .. }
+            | Node::Pill { .. }
+            | Node::Button { .. }
+            | Node::Link { .. } => div().flex().child(drawn).into_any_element(),
+            _ => drawn,
+        }
+    }
+
+    fn piece(
+        &self,
+        node: &Node,
+        depth: usize,
+        path: &str,
+        cx: &mut App,
+    ) -> AnyElement {
         let t = self.theme;
         if depth > MAX_DEPTH {
             return invalid("the view nests too deep", t);
