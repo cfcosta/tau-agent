@@ -12,7 +12,7 @@ use tau_goal::{
     NAME,
     Record,
     Status,
-    ui::{GoalHost, State},
+    ui::{GoalHost, State, banner_tree, message_tree, popover_tree, section},
 };
 use tau_ui_plugin::{
     Fold as _,
@@ -21,6 +21,7 @@ use tau_ui_plugin::{
     RunKind,
     Services,
     testing::{FakeRun, run_ctx},
+    tree::Node,
 };
 
 /// One of tau-goal's records, or what it says as a run starts.
@@ -226,5 +227,35 @@ fn starting_checks_and_plugin_presence_follow_key_and_run_kind() {
             assert_eq!(plugins.len(), usize::from(should_check));
             assert!(plugins.iter().all(|plugin| plugin.name() == NAME));
         }
+    }
+}
+
+/// Over any records, every tree tau-goal draws reads back as it was
+/// written: the wire carries it whole, on the computer and the phone.
+#[hegel::test(test_cases = 100)]
+fn its_trees_read_back_as_written(tc: hegel::TestCase) {
+    let records: Vec<Record> = std::iter::once(Record::Set {
+        goal: "tests pass".into(),
+        continuations: 2,
+        budget: 1.0,
+    })
+    .chain(tc.draw(gs::vecs(record().print_as_debug()).max_size(12)))
+    .collect();
+    let mut state = State::default();
+    let mut anchors = FakeRun::default();
+    for record in records {
+        state.apply(record, &mut anchors);
+    }
+    let compact = tc.draw(gs::booleans());
+    let mut trees = vec![
+        popover_tree(tc.draw(gs::booleans()), compact),
+        message_tree("/goal tests pass", Some(&state)).unwrap(),
+    ];
+    if let Some(goal) = &state.goal {
+        trees.push(banner_tree(goal, Some("not checked"), compact));
+        trees.push(section(goal, tc.draw(gs::booleans())));
+    }
+    for tree in trees {
+        assert_eq!(Node::read(&tree.value()), tree);
     }
 }

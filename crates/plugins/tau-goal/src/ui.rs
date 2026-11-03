@@ -2,36 +2,21 @@
 //! done about its goal, the phone's bar, the goal's section of the
 //! inspector, its line in the sidebar and the plugin list, its notes in
 //! the transcript, how a `/goal` message and a continuation read, and the
-//! `/goal` command with its popover.
+//! `/goal` command with its popover. Each drawn one is a view tree (ADR
+//! 0045): the popover's limits are inputs whose drafts are the
+//! interface's state.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
 
-use gpui::{
-    AnyElement,
-    App,
-    AppContext as _,
-    Div,
-    Entity,
-    Hsla,
-    SharedString,
-    div,
-    prelude::*,
-    rems,
-};
+use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tau_agent::plugin::Plugin;
 use tau_jev::Jev;
-use tau_ui_kit::{
-    assets::Icon,
-    components::{self as ui, ButtonKind, Material as _, NoteHead, mono},
-    format::usd,
-    input::{InputEvent, TextInput},
-    prose::rich,
-    theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp},
-};
+use tau_ui_kit::{assets::Icon, format::usd, theme::Tone};
 use tau_ui_plugin::{
     Fold,
     Handle,
@@ -39,7 +24,6 @@ use tau_ui_plugin::{
     HostHalf,
     Manifest,
     PluginInfo,
-    PluginUi,
     Request,
     RowNote,
     RunCtx,
@@ -52,6 +36,7 @@ use tau_ui_plugin::{
     ViewCx,
     needs_jev,
     points::{self, AtAnchor, AtMessage, AtRun},
+    tree::{self, KeyValue, Kind, Node, draft_key},
 };
 
 use crate::{
@@ -98,14 +83,12 @@ pub struct State {
 pub struct Note {
     pub text: String,
     pub detail: String,
-    pub tone: Tone,
+    pub tone: tree::Tone,
 }
 
-/// The `/goal` popover's limits, in this window.
-pub struct Ui {
-    continuations: Entity<TextInput>,
-    budget: Entity<TextInput>,
-}
+/// The `/goal` popover's inputs, by id: their drafts are the limits.
+pub const CONTINUATIONS: &str = "goal-continuations";
+pub const BUDGET: &str = "goal-budget";
 
 impl Fold for State {
     type Record = Record;
@@ -131,7 +114,7 @@ impl Fold for State {
                             "check {} · turn {} · p {:.2} · the run stops",
                             check.n, check.turn, check.p
                         ),
-                        tone: Tone::Good,
+                        tone: tree::Tone::Good,
                     }
                 } else {
                     let next = match check.continuation {
@@ -144,7 +127,7 @@ impl Fold for State {
                             "check {} · turn {} · p {:.2} · {next}",
                             check.n, check.turn, check.p
                         ),
-                        tone: Tone::Warn,
+                        tone: tree::Tone::Warn,
                     }
                 })
             }
@@ -156,13 +139,13 @@ impl Fold for State {
                 Some(Note {
                     text: format!("stopped the goal: {why}, and it is not met"),
                     detail: "before_stop".into(),
-                    tone: Tone::Danger,
+                    tone: tree::Tone::Bad,
                 })
             }
             Record::Error { message } => Some(Note {
                 text: message.clone(),
                 detail: "not checked".into(),
-                tone: Tone::Danger,
+                tone: tree::Tone::Bad,
             }),
             _ => None,
         };
@@ -196,6 +179,15 @@ pub fn tone(goal: &Goal) -> Tone {
         Status::Active | Status::Paused => Tone::Warn,
         Status::Met => Tone::Good,
         Status::Stopped(_) => Tone::Danger,
+    }
+}
+
+/// The goal's tone, as a tree's pieces read it.
+fn tree_tone(goal: &Goal) -> tree::Tone {
+    match goal.status {
+        Status::Active | Status::Paused => tree::Tone::Warn,
+        Status::Met => tree::Tone::Good,
+        Status::Stopped(_) => tree::Tone::Bad,
     }
 }
 
@@ -279,7 +271,7 @@ impl UiPlugin for GoalUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = Ui;
+    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME
@@ -294,8 +286,9 @@ impl UiPlugin for GoalUi {
             .contribute(points::RUN_BANNER, banner)
             .contribute_at(points::INSPECTOR, -100, |at: &AtRun, view| {
                 let goal = view.state?.goal.clone()?;
-                let t = view.theme().clone();
-                Some(section(&goal, at.run.live, &t).into_any_element())
+                let tree = section(&goal, at.run.live);
+                let id = format!("goal-inspector-{}", at.run.id.0);
+                Some(view.tree(&id, &tree, |_, _, _| {}))
             })
             .status(State::status)
             .contribute(points::RUN_ROW, |_: &AtRun, view| {
@@ -316,30 +309,10 @@ impl UiPlugin for GoalUi {
                 })
             })
             .contribute(points::TRANSCRIPT, |at: &AtAnchor, view| {
-                let note = view.state?.notes.get(&at.key)?.clone();
-                let t = view.theme().clone();
-                Some(
-                    ui::note(
-                        SharedString::from(format!(
-                            "goal-{}-{}",
-                            at.run.id.0, at.key
-                        )),
-                        NoteHead {
-                            plugin: NAME.into(),
-                            icon: Icon::Target,
-                            tone: note.tone,
-                            text: note.text,
-                            detail: Some(note.detail),
-                        },
-                        None,
-                        None,
-                        None,
-                        None,
-                        view.compact,
-                        &t,
-                    )
-                    .into_any_element(),
-                )
+                let note = view.state?.notes.get(&at.key)?;
+                let tree = note_tree(note.tone, &note.text, &note.detail);
+                let id = format!("goal-{}-{}", at.run.id.0, at.key);
+                Some(view.tree(&id, &tree, |_, _, _| {}))
             })
             .contribute(points::USER_MESSAGE, user_message)
             .command(
@@ -409,26 +382,26 @@ impl HostHalf for GoalHost {
     }
 }
 
-impl PluginUi for Ui {
-    fn new(handle: Handle, cx: &mut Context<Self>) -> Self {
-        let limit = |text: String, cx: &mut gpui::Context<Ui>| {
-            let input = cx.new(|cx| {
-                let mut input = TextInput::new("", cx).keep_on_submit();
-                input.set_text(text, cx);
-                input
-            });
-            // Enter in a limit sends the goal, as Enter in the composer.
-            let handle = handle.clone();
-            cx.subscribe(&input, move |_, _, _: &InputEvent, cx| {
-                handle.request(Request::Submit, cx)
-            })
-            .detach();
-            input
-        };
-        Ui {
-            continuations: limit(DEFAULT_CONTINUATIONS.to_string(), cx),
-            budget: limit(format!("{DEFAULT_BUDGET:.2}"), cx),
-        }
+/// tau-goal's mark: its target, read as `tone`.
+fn target(tone: tree::Tone) -> Node {
+    Node::Icon {
+        name: "target".into(),
+        tone,
+    }
+}
+
+/// One of tau-goal's notes: what happened, and the small print.
+fn note_tree(tone: tree::Tone, text: &str, detail: &str) -> Node {
+    Node::Card {
+        children: vec![Node::row([
+            target(tone),
+            Node::Mono { text: NAME.into() },
+            Node::text(text),
+            Node::Spacer,
+            Node::Mono {
+                text: detail.into(),
+            },
+        ])],
     }
 }
 
@@ -439,93 +412,62 @@ fn user_message(
     at: &AtMessage,
     view: &mut ViewCx<'_, GoalUi>,
 ) -> Option<AnyElement> {
-    let t = view.theme().clone();
-    if let Some(condition) = set_message(&at.text) {
-        let goal = view.state.and_then(|state| state.goal.as_ref());
-        return Some(
-            goal_set(goal, &condition, &t, view.compact).into_any_element(),
-        );
+    let id = format!("goal-said-{}-{}", at.run.id.0, at.index);
+    let tree = message_tree(&at.text, view.state)?;
+    Some(view.tree(&id, &tree, |_, _, _| {}))
+}
+
+/// The tree a person's message `text` draws as, when tau-goal reads it
+/// as its own; nothing at all for a continuation a check's note says.
+pub fn message_tree(text: &str, state: Option<&State>) -> Option<Node> {
+    if let Some(condition) = set_message(text) {
+        let goal = state.and_then(|state| state.goal.as_ref());
+        return Some(goal_set(goal, &condition));
     }
-    let said = at.text.strip_prefix(CONTINUATION_PREFIX)?;
-    let held = continuation_of(&at.text).is_some_and(|n| {
-        view.state.is_some_and(|state| state.held.contains(&n))
-    });
+    let said = text.strip_prefix(CONTINUATION_PREFIX)?;
+    let held = continuation_of(text)
+        .is_some_and(|n| state.is_some_and(|state| state.held.contains(&n)));
     if held {
-        return Some(div().into_any_element());
+        return Some(Node::stack([]));
     }
     let first = said.lines().next().unwrap_or_default();
-    Some(
-        ui::note(
-            SharedString::from(format!(
-                "goal-said-{}-{}",
-                at.run.id.0, at.index
-            )),
-            NoteHead {
-                plugin: NAME.into(),
-                icon: Icon::Target,
-                tone: Tone::Warn,
-                text: first.trim_end_matches('.').to_owned(),
-                detail: Some("before_stop".into()),
-            },
-            None,
-            None,
-            None,
-            None,
-            view.compact,
-            &t,
-        )
-        .into_any_element(),
-    )
+    Some(note_tree(
+        tree::Tone::Warn,
+        first.trim_end_matches('.'),
+        "before_stop",
+    ))
 }
 
 /// The person setting a goal: the condition, and the goal's limits while
 /// it is the conversation's goal.
-fn goal_set(
-    goal: Option<&Goal>,
-    condition: &str,
-    t: &Theme,
-    compact: bool,
-) -> Div {
-    let limits = goal.filter(|goal| goal.condition == condition).map(|goal| {
-        [
-            format!("up to {} continuations", goal.max_continuations),
-            format!("{} budget", usd(goal.budget)),
-            "checked by Jev".to_owned(),
-        ]
-    });
-    div().flex().justify_end().child(
-        ui::bubble(t)
-            .border_color(t.accent_border)
-            .max_w(rems((if compact { 300. } else { 620. }) / 16.))
-            .flex()
-            .flex_col()
-            .gap(sp(2.))
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(sp(2.))
-                    .child(ui::icon(Icon::Target, IconSize::BASE, t.accent))
-                    .child(mono("/goal", Type::CAPTION, t.accent))
-                    .child(div().flex_1().child(rich(condition, t.text, t))),
-            )
-            .when_some(limits, |bubble, limits| {
-                bubble.child(div().flex().flex_wrap().gap(sp(1.5)).children(
-                    limits.into_iter().map(|limit| {
-                        mono(limit, Type::MICRO, t.muted)
-                            .px(sp(2.))
-                            .py(sp(0.5))
-                            .border_1()
-                            .border_color(t.border)
-                            .rounded(radius::LARGE)
-                    }),
-                ))
+fn goal_set(goal: Option<&Goal>, condition: &str) -> Node {
+    let mut children = vec![Node::row([
+        target(tree::Tone::Info),
+        Node::Mono {
+            text: "/goal".into(),
+        },
+        Node::Rich {
+            text: condition.into(),
+        },
+    ])];
+    if let Some(goal) = goal.filter(|goal| goal.condition == condition) {
+        children.push(Node::row(
+            [
+                format!("up to {} continuations", goal.max_continuations),
+                format!("{} budget", usd(goal.budget)),
+                "checked by Jev".to_owned(),
+            ]
+            .map(|text| Node::Badge {
+                text,
+                tone: tree::Tone::Neutral,
             }),
-    )
+        ));
+    }
+    Node::Card { children }
 }
 
-/// What the goal's buttons do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the goal's buttons do; a button's arguments hold one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Act {
     Pause,
     Edit,
@@ -584,134 +526,117 @@ pub fn act(
     }
 }
 
+/// Every banner button's action: carry out the [`Act`] its arguments
+/// hold.
+const ACT: &str = "act";
+
+/// The phone's bar's action: open the run's details.
+const DETAILS: &str = "details";
+
 /// Above the transcript while the conversation has a goal; on a phone, a
 /// bar that opens the run's details.
 fn banner(at: &AtRun, view: &mut ViewCx<'_, GoalUi>) -> Option<AnyElement> {
     let state = view.state?;
     let goal = state.goal.clone()?;
-    let t = view.theme().clone();
-    let tone_color = t.tone(tone(&goal));
-    if view.compact {
-        let handle = view.handle.clone();
-        return Some(
-            div()
-                .id("phone-goal")
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .min_h(rems(3.))
-                .px(sp(3.5))
-                .py(sp(1.5))
-                .bg(t.accent_soft)
-                .border_b_1()
-                .border_color(t.accent_border)
-                .cursor_pointer()
-                .child(ui::icon(Icon::Target, IconSize::BASE, tone_color))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .flex()
-                        .flex_col()
-                        .gap(sp(0.5))
-                        .child(div().truncate().child(goal.condition.clone()))
-                        .child(
-                            mono(status_line(&goal), Type::MICRO, tone_color)
-                                .truncate(),
-                        ),
-                )
-                .child(ui::icon(Icon::Chevron, IconSize::BASE, t.muted))
-                .on_click(move |_, _, cx| handle.run_details(cx))
-                .into_any_element(),
-        );
+    let why = unchecked(&goal, view.jev, at.run.live, state.checks);
+    let tree = banner_tree(&goal, why, view.compact);
+    let (run, jev, handle) = (at.run.clone(), view.jev, view.handle.clone());
+    let id = format!("goal-banner-{}", at.run.id.0);
+    Some(view.tree(&id, &tree, move |action, args, cx| match action {
+        DETAILS => handle.run_details(cx),
+        ACT => {
+            if let Ok(what) = serde_json::from_value::<Act>(args.clone()) {
+                act(what, &run, &goal, jev, &handle, cx);
+            }
+        }
+        _ => {}
+    }))
+}
+
+/// The banner's tree: the goal, where it stands, why nothing checks it
+/// when nothing does, and its buttons; on a phone, a bar with a button
+/// that opens the run's details.
+pub fn banner_tree(goal: &Goal, why: Option<&str>, compact: bool) -> Node {
+    let tone = tree_tone(goal);
+    if compact {
+        return Node::Card {
+            children: vec![Node::row([
+                target(tone),
+                Node::stack([
+                    Node::text(goal.condition.clone()),
+                    Node::Mono {
+                        text: status_line(goal),
+                    },
+                ]),
+                Node::Spacer,
+                Node::Button {
+                    label: String::new(),
+                    action: DETAILS.into(),
+                    args: Value::Null,
+                    kind: Kind::Secondary,
+                    icon: Some("chevron".into()),
+                },
+            ])],
+        };
     }
-    let (bg, border): (Hsla, Hsla) = match goal.status {
-        Status::Met => (t.green_soft, t.green.opacity(0.35)),
-        Status::Stopped(_) => (t.red_soft, t.red_border),
-        _ => (t.accent_soft, t.accent_border),
-    };
-    let button = |label: &'static str, kind: ButtonKind, what: Act| {
-        let (run, goal, jev, handle) =
-            (at.run.clone(), goal.clone(), view.jev, view.handle.clone());
-        div()
-            .id(SharedString::from(format!("goal-{label}")))
-            .child(ui::button(label, kind, &t))
-            .on_click(move |_, _, cx| act(what, &run, &goal, jev, &handle, cx))
+    let button = |label: &str, kind: Kind, what: Act| Node::Button {
+        label: label.into(),
+        action: ACT.into(),
+        args: serde_json::to_value(what).unwrap_or(Value::Null),
+        kind,
+        icon: None,
     };
     let actions = match goal.status {
         Status::Active => vec![
-            button("Pause", ButtonKind::Secondary, Act::Pause),
-            button("Edit", ButtonKind::Secondary, Act::Edit),
-            button("Clear", ButtonKind::Secondary, Act::Clear),
+            button("Pause", Kind::Secondary, Act::Pause),
+            button("Edit", Kind::Secondary, Act::Edit),
+            button("Clear", Kind::Secondary, Act::Clear),
         ],
         Status::Paused => vec![
-            button("Resume", ButtonKind::Primary, Act::KeepGoing),
-            button("Edit", ButtonKind::Secondary, Act::Edit),
-            button("Clear", ButtonKind::Secondary, Act::Clear),
+            button("Resume", Kind::Primary, Act::KeepGoing),
+            button("Edit", Kind::Secondary, Act::Edit),
+            button("Clear", Kind::Secondary, Act::Clear),
         ],
         Status::Met => vec![
-            button("New goal", ButtonKind::Secondary, Act::Edit),
-            button("Clear", ButtonKind::Secondary, Act::Clear),
+            button("New goal", Kind::Secondary, Act::Edit),
+            button("Clear", Kind::Secondary, Act::Clear),
         ],
         Status::Stopped(_) => vec![
-            button("Keep going · +10", ButtonKind::Primary, Act::KeepGoing),
-            button("Edit", ButtonKind::Secondary, Act::Edit),
-            button("Clear", ButtonKind::Secondary, Act::Clear),
+            button("Keep going · +10", Kind::Primary, Act::KeepGoing),
+            button("Edit", Kind::Secondary, Act::Edit),
+            button("Clear", Kind::Secondary, Act::Clear),
         ],
     };
-    let why = unchecked(&goal, view.jev, at.run.live, state.checks);
-    Some(
-        div()
-            .flex_shrink_0()
-            .mx(sp(6.))
-            .mt(sp(3.))
-            .flex()
-            .items_center()
-            .gap(sp(3.))
-            .px(sp(3.))
-            .py(sp(2.5))
-            .rounded(radius::BOX)
-            .lit(bg, &t)
-            .border_1()
-            .border_color(border)
-            .child(ui::icon(Icon::Target, IconSize::BASE, tone_color))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(rems(0.))
-                    .flex()
-                    .flex_col()
-                    .gap(sp(0.75))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(sp(2.))
-                            .child(mono("goal", Type::MICRO, tone_color))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(rems(0.))
-                                    .truncate()
-                                    .text_color(t.text)
-                                    .child(goal.condition.clone()),
-                            ),
-                    )
-                    .child(mono(status_line(&goal), Type::CAPTION, t.muted))
-                    .children(
-                        why.map(|why| ui::text(why, Type::CAPTION, t.accent)),
-                    ),
-            )
-            .children(actions)
-            .into_any_element(),
-    )
+    let mut about = vec![
+        Node::row([
+            Node::Badge {
+                text: "goal".into(),
+                tone,
+            },
+            Node::text(goal.condition.clone()),
+        ]),
+        Node::Mono {
+            text: status_line(goal),
+        },
+    ];
+    if let Some(why) = why {
+        about.push(Node::Status {
+            text: why.into(),
+            detail: None,
+            tone: tree::Tone::Warn,
+        });
+    }
+    let mut row = vec![target(tone), Node::Stack { children: about }];
+    row.push(Node::Spacer);
+    row.extend(actions);
+    Node::Card {
+        children: vec![Node::Row { children: row }],
+    }
 }
 
 /// The goal's section of the inspector: the condition, where it stands,
 /// its limits, and every check.
-fn section(goal: &Goal, live: bool, t: &Theme) -> Div {
-    let tone_color = t.tone(tone(goal));
+pub fn section(goal: &Goal, live: bool) -> Node {
     let status = match goal.status {
         Status::Active => "working toward it",
         Status::Paused => "paused",
@@ -720,188 +645,149 @@ fn section(goal: &Goal, live: bool, t: &Theme) -> Div {
     };
     let share = |used: f64, of: f64| {
         if of > 0.0 {
-            (used / of).clamp(0.0, 1.0) as f32
+            (used / of).clamp(0.0, 1.0)
         } else {
             1.0
         }
     };
-    let meter = |name: &'static str, value: String, share: f32, fill: Hsla| {
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(1.25))
-            .child(
-                div()
-                    .flex()
-                    .typeset(Type::CAPTION)
-                    .child(div().flex_1().text_color(t.text_soft).child(name))
-                    .child(mono(value, Type::CAPTION, t.muted)),
-            )
-            .child(ui::bar(share, 4., fill, t.border))
-    };
-    let checks = goal.checks.iter().rev().map(|check| {
-        let (verdict, color) = if check.met {
-            ("met", t.green)
+    let working = live && goal.status == Status::Active;
+    let mut checks = Vec::new();
+    if working {
+        checks.push(Node::row([
+            Node::Icon {
+                name: "spinner".into(),
+                tone: tree::Tone::Info,
+            },
+            Node::text("working · checked when it stops"),
+        ]));
+    }
+    checks.extend(goal.checks.iter().rev().map(|check| {
+        let (verdict, tone) = if check.met {
+            ("met", tree::Tone::Good)
         } else {
-            ("not met", t.accent)
+            ("not met", tree::Tone::Warn)
         };
         let then = match check.continuation {
             Some(n) => format!("sent back, {n} of {}", goal.max_continuations),
             None if check.met => "the run stopped".to_owned(),
             None => "stopped here".to_owned(),
         };
-        div()
-            .flex()
-            .gap(sp(2.5))
-            .px(sp(3.))
-            .py(sp(2.25))
-            .border_b_1()
-            .border_color(t.border)
-            .child(
-                mono(format!("#{}", check.n), Type::MICRO, t.dim)
-                    .w(rems(1.375)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(0.75))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(sp(2.))
-                            .child(mono(verdict, Type::CAPTION, color))
-                            .child(div().flex_1())
-                            .child(mono(
-                                format!(
-                                    "turn {} · p {:.2}",
-                                    check.turn, check.p
-                                ),
-                                Type::MICRO,
-                                t.dim,
-                            )),
-                    )
-                    .child(ui::text(then, Type::CAPTION, t.muted)),
-            )
-    });
-    let working = live && goal.status == Status::Active;
+        Node::row([
+            Node::Mono {
+                text: format!("#{}", check.n),
+            },
+            Node::Badge {
+                text: verdict.into(),
+                tone,
+            },
+            Node::text(then),
+            Node::Spacer,
+            Node::Mono {
+                text: format!("turn {} · p {:.2}", check.turn, check.p),
+            },
+        ])
+    }));
+    if checks.is_empty() {
+        checks.push(Node::Empty {
+            text: "Not checked yet.".into(),
+        });
+    }
     let cost: f64 = goal.checks.iter().map(|check| check.cost).sum();
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(3.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .child(div().flex_1().child(ui::heading("Goal", t)))
-                .child(ui::pill(status, tone_color, t.raised)),
-        )
-        .child(
-            div()
-                .px(sp(3.))
-                .py(sp(2.5))
-                .rounded(radius::BOX)
-                .border_1()
-                .border_color(t.border)
-                .raised(t)
-                .child(rich(&goal.condition, t.text, t)),
-        )
-        .child(ui::text(
-            format!(
-                "Checked when the agent stops · met at p ≥ {MET_AT:.1} · up to {} \
-                 continuations and {}",
-                goal.max_continuations,
-                usd(goal.budget)
+    let mut children = vec![
+        Node::row([
+            Node::Heading {
+                text: "Goal".into(),
+            },
+            Node::Spacer,
+            Node::Pill {
+                text: status.into(),
+                tone: tree_tone(goal),
+            },
+        ]),
+        Node::Card {
+            children: vec![Node::Rich {
+                text: goal.condition.clone(),
+            }],
+        },
+        Node::text(format!(
+            "Checked when the agent stops · met at p ≥ {MET_AT:.1} · up to {} \
+             continuations and {}",
+            goal.max_continuations,
+            usd(goal.budget)
+        )),
+        Node::Heading {
+            text: "Limits".into(),
+        },
+        Node::Progress {
+            share: share(
+                f64::from(goal.continuations),
+                f64::from(goal.max_continuations),
             ),
-            Type::CAPTION,
-            t.dim,
-        ))
-        .child(ui::heading("Limits", t))
-        .child(meter(
-            "Continuations",
-            format!("{} / {}", goal.continuations, goal.max_continuations),
-            share(goal.continuations as f64, goal.max_continuations as f64),
-            tone_color,
-        ))
-        .child(meter(
-            "Cost",
-            format!("{} / {}", usd(goal.spent), usd(goal.budget)),
-            share(goal.spent, goal.budget),
-            t.text_soft,
-        ))
-        .child(ui::heading("Checks", t))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .rounded(radius::BOX)
-                .border_1()
-                .border_color(t.border)
-                .overflow_hidden()
-                .when(working, |list| {
-                    list.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(sp(2.))
-                            .px(sp(3.))
-                            .py(sp(2.25))
-                            .border_b_1()
-                            .border_color(t.border)
-                            .child(ui::icon(Icon::Spinner, IconSize::SMALL, t.accent))
-                            .child(ui::text("working · checked when it stops", Type::CAPTION, t.muted)),
-                    )
-                })
-                .children(checks)
-                .when(goal.checks.is_empty() && !working, |list| {
-                    list.child(
-                        div()
-                            .px(sp(3.))
-                            .py(sp(2.25))
-                            .child(ui::text("Not checked yet.", Type::CAPTION, t.muted)),
-                    )
-                }),
-        )
-        .when_some(goal.error.clone(), |body, error| {
-            body.child(ui::text(error, Type::CAPTION, t.red))
-        })
-        .child(ui::key_values(
-            [
-                ("checked by".into(), mono("tau-goal · Jev", Type::CAPTION, t.text)),
-                ("Jev cost".into(), mono(format!("${cost:.5}"), Type::CAPTION, t.text)),
-            ],
-            t,
-        ))
-        .child(ui::text(
-            "Jev reads the goal, the agent's last answer and its last tool results. When \
-             they fall short, the agent is sent back.",
-            Type::CAPTION,
-            t.dim,
-        ))
+            label: Some(format!(
+                "Continuations · {} / {}",
+                goal.continuations, goal.max_continuations
+            )),
+        },
+        Node::Progress {
+            share: share(goal.spent, goal.budget),
+            label: Some(format!(
+                "Cost · {} / {}",
+                usd(goal.spent),
+                usd(goal.budget)
+            )),
+        },
+        Node::Heading {
+            text: "Checks".into(),
+        },
+        Node::Card { children: checks },
+    ];
+    if let Some(error) = &goal.error {
+        children.push(Node::Status {
+            text: error.clone(),
+            detail: None,
+            tone: tree::Tone::Bad,
+        });
+    }
+    children.push(Node::Rows {
+        rows: vec![
+            KeyValue {
+                key: "checked by".into(),
+                value: "tau-goal · Jev".into(),
+            },
+            KeyValue {
+                key: "Jev cost".into(),
+                value: format!("${cost:.5}"),
+            },
+        ],
+    });
+    children.push(Node::text(
+        "Jev reads the goal, the agent's last answer and its last tool results. When \
+         they fall short, the agent is sent back.",
+    ));
+    Node::Stack { children }
 }
 
-/// The limits in the `/goal` popover, or the defaults where a field
-/// does not read as a number.
-pub fn limits(ui: &Ui, cx: &App) -> (u32, f64) {
-    let continuations = ui
-        .continuations
-        .read(cx)
-        .text()
-        .trim()
-        .parse()
-        .unwrap_or(DEFAULT_CONTINUATIONS);
-    let budget = ui
-        .budget
-        .read(cx)
-        .text()
-        .trim()
-        .trim_start_matches('$')
-        .parse()
-        .unwrap_or(DEFAULT_BUDGET);
-    (continuations, budget)
+/// The limits the `/goal` popover's drafts say, or the defaults where
+/// one does not read as a number.
+pub fn limits(continuations: &str, budget: &str) -> (u32, f64) {
+    (
+        continuations
+            .trim()
+            .parse()
+            .unwrap_or(DEFAULT_CONTINUATIONS),
+        budget
+            .trim()
+            .trim_start_matches('$')
+            .parse()
+            .unwrap_or(DEFAULT_BUDGET),
+    )
+}
+
+/// The draft of the popover's input `id`, as the interface keeps it.
+fn draft<'a>(view: &ViewCx<'a, GoalUi>, id: &str) -> &'a str {
+    view.ui_value(&draft_key(id))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
 }
 
 /// `/goal …`: sets the open conversation's goal, or a new run's, with the
@@ -941,8 +827,7 @@ fn run_command(args: &str, view: &mut ViewCx<'_, GoalUi>) {
     let (continuations, budget) = if typed {
         (continuations, budget)
     } else {
-        let ui = view.ui.clone();
-        limits(ui.read(view.cx), view.cx)
+        limits(draft(view, CONTINUATIONS), draft(view, BUDGET))
     };
     let checks = view.state.is_some_and(|state| state.checks);
     let set = Record::Set {
@@ -977,85 +862,74 @@ fn run_command(args: &str, view: &mut ViewCx<'_, GoalUi>) {
     }
 }
 
+/// Enter in one of the popover's limits, by its action: send the goal,
+/// as Enter in the composer would.
+const SUBMIT: &str = "submit-";
+
 /// The `/goal` popover: what a goal does, and its limits.
 fn popover(view: &mut ViewCx<'_, GoalUi>) -> AnyElement {
-    let t = view.theme().clone();
-    let jev = view.jev;
-    let ui = view.ui.read(view.cx);
-    let (continuations, budget) = (ui.continuations.clone(), ui.budget.clone());
-    let limit =
-        |label: &'static str, input: Entity<TextInput>, unit: &'static str| {
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .typeset(Type::CAPTION)
-                .text_color(t.muted)
-                .child(label)
-                .child(
-                    div()
-                        .w(rems(4.))
-                        .h(rems(1.75))
-                        .flex()
-                        .items_center()
-                        .px(sp(2.))
-                        .rounded(radius::CONTROL)
-                        .well(&t)
-                        .typeset(Type::CAPTION.mono())
-                        .text_color(t.text)
-                        .child(input),
-                )
-                .when(!unit.is_empty(), |row| row.child(unit))
+    let tree = popover_tree(view.jev, view.compact);
+    let handle = view.handle.clone();
+    view.tree("goal-popover", &tree, move |action, args, cx| {
+        let Some(id) = action.strip_prefix(SUBMIT) else {
+            return;
         };
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(0.5))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(1.5))
-                .px(sp(2.5))
-                .pt(sp(2.))
-                .pb(sp(2.5))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .child(ui::icon(Icon::Target, IconSize::BASE, t.accent))
-                        .child(mono("/goal", Type::SMALL, t.accent))
-                        .child(mono("<condition>", Type::CAPTION, t.dim)),
-                )
-                .child(ui::text(
-                    if jev {
-                        "The agent keeps going until this holds. Each time it would stop, \
-                         tau-goal asks Jev whether the goal is met; if not, the agent goes on."
-                    } else {
-                        "Goals are checked with Jev: add a TypeSafe key on the Models screen \
-                         first."
-                    },
-                    Type::CAPTION,
-                    if jev { t.muted } else { t.accent },
-                )),
+        // Enter clears an input's draft; a limit keeps what it says.
+        let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+        let value = (!text.is_empty()).then(|| Value::from(text));
+        handle.set_ui(draft_key(id), value, cx);
+        handle.request(Request::Submit, cx);
+    })
+}
+
+/// The popover's tree: the command, what it does or what it needs, and
+/// an input for each limit, drafted by the interface.
+pub fn popover_tree(jev: bool, compact: bool) -> Node {
+    let limit = |id: &str, placeholder: String| Node::Input {
+        id: id.into(),
+        placeholder: Some(placeholder),
+        multiline: false,
+        submit: Some(format!("{SUBMIT}{id}")),
+    };
+    let about = if jev {
+        Node::text(
+            "The agent keeps going until this holds. Each time it would stop, \
+             tau-goal asks Jev whether the goal is met; if not, the agent goes on.",
         )
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(4.))
-                .px(sp(2.5))
-                .py(sp(2.))
-                .border_t_1()
-                .border_b_1()
-                .border_color(t.border)
-                .child(limit("Stop after", continuations, "continuations"))
-                .child(limit("Budget $", budget, "")),
-        )
-        .when(!view.compact, |popover| {
-            popover.child(ui::hints(&[("Enter", "set the goal and start"), ("Esc", "close")], &t))
-        })
-        .into_any_element()
+    } else {
+        Node::Status {
+            text:
+                "Goals are checked with Jev: add a TypeSafe key on the Models \
+                   screen first."
+                    .into(),
+            detail: None,
+            tone: tree::Tone::Warn,
+        }
+    };
+    let mut children = vec![
+        Node::row([
+            target(tree::Tone::Info),
+            Node::Mono {
+                text: "/goal".into(),
+            },
+            Node::Mono {
+                text: "<condition>".into(),
+            },
+        ]),
+        about,
+        Node::Rule,
+        Node::row([
+            Node::text("Stop after"),
+            limit(CONTINUATIONS, DEFAULT_CONTINUATIONS.to_string()),
+            Node::text("continuations"),
+            Node::text("Budget $"),
+            limit(BUDGET, format!("{DEFAULT_BUDGET:.2}")),
+        ]),
+    ];
+    if !compact {
+        children.push(Node::Rich {
+            text: "`Enter` set the goal and start · `Esc` close".into(),
+        });
+    }
+    Node::Stack { children }
 }
