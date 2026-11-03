@@ -275,6 +275,17 @@ impl Icon {
         }
     }
 
+    /// The icon a view tree names: its file's name, `sub-agent` for
+    /// `icons/sub-agent.svg`.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|icon| {
+            icon.path()
+                .strip_prefix("icons/")
+                .and_then(|file| file.strip_suffix(".svg"))
+                == Some(name)
+        })
+    }
+
     const ALL: [Self; 54] = [
         Self::Check,
         Self::Spinner,

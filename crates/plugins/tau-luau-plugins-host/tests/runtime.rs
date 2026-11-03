@@ -516,3 +516,57 @@ async fn a_plugins_tests_run_against_fake_runs() {
             .contains("not even a case")
     );
 }
+
+const EVERY_PIECE: &str = r##"
+local tau = require("tau")
+local ui = tau.ui
+
+return tau.plugin {
+  name = "every-piece",
+  description = "Draws one of each piece.",
+  view = function(state, ctx)
+    return { page = ui.stack {
+      "plain",
+      ui.text("text"), ui.rich("**rich**"), ui.mono("mono"),
+      ui.heading("Heading"), ui.markdown("# md\n\n- a"),
+      ui.icon("memory", "info"), ui.badge("b", "warn"), ui.pill("p", "good"),
+      ui.status("on", "detail", "good"), ui.status("on"),
+      ui.rows { a = 1, b = 2 }, ui.rows { { "k", "v" } },
+      ui.table({ "name", "n" }, { { "a", ui.badge("1") }, { "b", "2" } }),
+      ui.list { "one", ui.mono("two") },
+      ui.progress(0.4, "40%"), ui.progress(2),
+      ui.code("lua", "x = 1"), ui.code(nil, "plain"),
+      ui.row { ui.button("Go", "go"), ui.button("Drop", "drop", { id = 1 }, "danger") },
+      ui.scroll({ "a", "b" }, 10), ui.scroll {},
+      ui.rule(), ui.empty("Nothing yet."),
+      ui.link("Notes", "notes"),
+      ui.link("Theirs", "page", { plugin = "tau-memory", params = { repo = "r" } }),
+    } }
+  end,
+}
+"##;
+
+/// Every piece `tau.ui` builds reads as the interface's view tree, with
+/// nothing invalid: the builders and the tree agree on the wire shape.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_ui_piece_reads_as_a_tree() {
+    let loaded = load("every-piece", files(EVERY_PIECE)).await.unwrap();
+    let drawn = loaded
+        .call(
+            &Hook::View,
+            json!({}),
+            &context("Monday"),
+            no_reach(),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(drawn.error, None);
+    let page = &drawn.value["page"];
+    let node = tau_ui_plugin::tree::Node::read(page);
+    let tau_ui_plugin::tree::Node::Stack { children } = &node else {
+        panic!("a stack: {node:?}")
+    };
+    assert_eq!(children.len(), 26);
+    let written = node.value().to_string();
+    assert!(!written.contains(r#""piece":"invalid""#), "{written}");
+}

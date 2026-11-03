@@ -164,8 +164,76 @@ function ui.row(children)
 	return { piece = "row", children = pieces(children) }
 end
 
-function ui.button(label, action, args)
-	return { piece = "button", label = tostring(label), action = tostring(action), args = args or {} }
+local KINDS = { primary = true, secondary = true, danger = true }
+
+-- A button that carries out the plugin's `actions[action]` with `args`;
+-- `kind` is primary, secondary (the default) or danger.
+function ui.button(label, action, args, kind)
+	kind = kind or "secondary"
+	if not KINDS[kind] then
+		error("a button's kind is primary, secondary or danger, not " .. tostring(kind), 2)
+	end
+	return { piece = "button", label = tostring(label), action = tostring(action), args = args or {}, kind = kind }
+end
+
+function ui.heading(text)
+	return { piece = "heading", text = tostring(text) }
+end
+
+-- Markdown, drawn as a model's reply is.
+function ui.markdown(text)
+	return { piece = "markdown", text = tostring(text) }
+end
+
+-- One of tau's icons, by name: `memory`, `sub-agent`, `check`.
+function ui.icon(name, of)
+	return { piece = "icon", name = tostring(name), tone = tone(of) }
+end
+
+function ui.pill(text, of)
+	return { piece = "pill", text = tostring(text), tone = tone(of) }
+end
+
+-- A header over rows; each row is a list of pieces or strings.
+function ui.table(head, rows)
+	local h = array({})
+	for _, cell in ipairs(head or {}) do
+		table.insert(h, tostring(cell))
+	end
+	local out = array({})
+	for _, row in ipairs(rows or {}) do
+		table.insert(out, pieces(row))
+	end
+	return { piece = "table", head = h, rows = out }
+end
+
+-- Pieces that scroll past `height` rems (24 when not given).
+function ui.scroll(children, height)
+	return { piece = "scroll", children = pieces(children), height = height and tonumber(height) or json.null }
+end
+
+function ui.rule()
+	return { piece = "rule" }
+end
+
+-- What shows where there is nothing yet.
+function ui.empty(text)
+	return { piece = "empty", text = tostring(text) }
+end
+
+-- Text that opens `page` of this plugin, or of `opts.plugin`, with
+-- `opts.params`.
+function ui.link(label, page, opts)
+	opts = opts or {}
+	local params = {}
+	for key, value in pairs(opts.params or {}) do
+		params[tostring(key)] = tostring(value)
+	end
+	return {
+		piece = "link",
+		label = tostring(label),
+		to = { plugin = opts.plugin and tostring(opts.plugin) or json.null, page = tostring(page), params = params },
+	}
 end
 
 -- Pieces bound to a key of the plugin's settings, for its settings page:

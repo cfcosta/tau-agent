@@ -131,6 +131,15 @@ Plain tables, drawn by tau on the computer and on the phone:
   `ui.row({ ... })` (side by side); strings in them are text
 - `ui.progress(share, label)` with `share` from 0 to 1
 - `ui.code(lang, text)`
+- `ui.heading(text)`, `ui.markdown(text)`, `ui.pill(text, tone)`
+- `ui.icon(name, tone)`: one of tau's icons by name, such as
+  `"memory"`, `"check"` or `"sub-agent"`
+- `ui.table({ "head", ... }, { { piece, ... }, ... })`: a header over
+  rows of pieces or strings
+- `ui.scroll({ ... }, height)`: pieces that scroll past `height` rems
+- `ui.rule()`, `ui.empty(text)`
+- `ui.link(label, page, { plugin = "...", params = { ... } })`: opens
+  another plugin's page
 - `ui.status(text, detail, tone)`: the run's status line, from `view`
 
 `view` is called after each hook that changed the state. It must only

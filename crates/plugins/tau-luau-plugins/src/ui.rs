@@ -6,7 +6,7 @@
 //! The drawing reads JSON only, so the phone, which runs no Luau, draws
 //! what the computer does.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
 use gpui::{
     AnyElement,
@@ -54,7 +54,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, CardView},
-    tree::{Draw, Node},
+    tree::{self, Draw, Node},
 };
 
 use crate::{
@@ -172,8 +172,16 @@ impl State {
 
 /// Draws a view tree a Luau plugin returned (ADR 0045's tree). A piece
 /// it does not know draws as a red box that says so.
-pub fn draw(piece: &Value, id: &str, t: &Theme) -> AnyElement {
-    Draw::new(t, id.to_owned()).draw(&Node::read(piece))
+pub fn draw(piece: &Value, id: &str, t: &Theme, handle: &Handle) -> AnyElement {
+    let handle = handle.clone();
+    Draw::new(t, id.to_owned())
+        .on_act(Rc::new(move |act, cx| {
+            // A plugin's own actions arrive with ADR 0027's phase 2.
+            if let tree::Act::Navigate(link) = act {
+                handle.navigate(link, cx);
+            }
+        }))
+        .draw(&Node::read(piece))
 }
 
 /// Draws a settings page: its bound pieces read and save the settings
@@ -240,6 +248,7 @@ impl UiPlugin for LuauPluginsUi {
                                 card,
                                 &format!("luau-card-{}", at.call_id),
                                 &t,
+                                &view.handle,
                             ))
                             .into_any_element(),
                     ),

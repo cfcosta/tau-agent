@@ -32,6 +32,7 @@ pub struct RunInfo {
 /// left empty is the one at hand where the link is followed: `run` the
 /// run in view, `repo` the repository selected.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Link {
     /// The plugin whose page it is; `None` is the plugin making the link.
     pub plugin: Option<String>,

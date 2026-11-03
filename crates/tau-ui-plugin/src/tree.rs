@@ -21,13 +21,30 @@ use gpui::{
     relative,
     rems,
 };
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Map, Value};
 use tau_ui_kit::{
-    components::{ButtonKind, badge, button, code_block, dot, mono},
-    prose::rich,
-    theme::{self, Design as _, Theme, Type, radius, sp},
+    assets::Icon,
+    components::{
+        ButtonKind,
+        badge,
+        button,
+        code_block,
+        dot,
+        empty,
+        heading,
+        icon,
+        mono,
+        pill,
+        rule,
+        table,
+        text_link,
+    },
+    prose::{markdown, rich},
+    theme::{self, Design as _, IconSize, Theme, Type, radius, sp},
 };
+
+use crate::Link;
 
 /// How deep a tree may nest, and how many pieces a list or a row may
 /// hold, before the rest is left out.
@@ -60,78 +77,75 @@ impl From<Tone> for theme::Tone {
     }
 }
 
+/// What a button is for, as its look says.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Primary,
+    #[default]
+    Secondary,
+    Danger,
+}
+
+impl From<Kind> for ButtonKind {
+    fn from(kind: Kind) -> Self {
+        match kind {
+            Kind::Primary => ButtonKind::Primary,
+            Kind::Secondary => ButtonKind::Secondary,
+            Kind::Danger => ButtonKind::Danger,
+        }
+    }
+}
+
 /// A line of [`Node::Rows`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Row {
+pub struct KeyValue {
     pub key: String,
     pub value: String,
 }
 
 /// One piece of a view tree.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Node {
-    Text(String),
-    /// Text with `code` and `**bold**`.
-    Rich(String),
-    Mono(String),
-    Badge {
-        text: String,
-        tone: Tone,
-    },
-    /// A dot, a line and small print: a plugin's status.
-    Status {
-        text: String,
-        detail: Option<String>,
-        tone: Tone,
-    },
-    Rows(Vec<Row>),
-    List(Vec<Node>),
-    /// A bar `share` of the way full, from 0 to 1.
-    Progress {
-        share: f64,
-        label: Option<String>,
-    },
-    Code {
-        lang: Option<String>,
-        text: String,
-    },
-    /// Pieces one under the other.
-    Stack(Vec<Node>),
-    /// Pieces side by side, wrapping.
-    Row(Vec<Node>),
-    /// A button that asks the plugin to carry out `action` with `args`.
-    Button {
-        label: String,
-        action: String,
-        args: Value,
-    },
-    /// A piece bound to a key of the plugin's settings (`toggle`,
-    /// `choice`, `field`), drawn on a settings page only; kept as it
-    /// came, for the page that binds it.
-    Setting(Value),
-    /// A piece that did not read, and why.
-    Invalid(String),
-}
-
-/// The pieces as the wire names them, for the derived parts of reading
-/// and writing.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "piece", rename_all = "lowercase")]
-enum Wire {
+pub enum Node {
     Text {
         text: String,
     },
+    /// Text with `code` and `**bold**`.
     Rich {
         text: String,
     },
     Mono {
         text: String,
     },
+    Heading {
+        text: String,
+    },
+    /// Markdown, as a model's reply draws: paragraphs, lists, code,
+    /// tables, links that open in the browser.
+    Markdown {
+        text: String,
+    },
+    /// One of the interface's icons, by its file's name: `sub-agent`.
+    Icon {
+        name: String,
+        #[serde(default)]
+        tone: Tone,
+    },
     Badge {
         text: String,
         #[serde(default)]
         tone: Tone,
     },
+    /// A filled label: a count, a state.
+    Pill {
+        text: String,
+        #[serde(default)]
+        tone: Tone,
+    },
+    /// A dot, a line and small print: a plugin's status.
     Status {
         text: String,
         #[serde(default)]
@@ -141,12 +155,20 @@ enum Wire {
     },
     Rows {
         #[serde(default)]
-        rows: Vec<Row>,
+        rows: Vec<KeyValue>,
+    },
+    /// A header row over rows of pieces.
+    Table {
+        #[serde(default)]
+        head: Vec<String>,
+        #[serde(default, deserialize_with = "table_rows")]
+        rows: Vec<Vec<Node>>,
     },
     List {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "nodes")]
         items: Vec<Node>,
     },
+    /// A bar `share` of the way full, from 0 to 1.
     Progress {
         #[serde(default)]
         share: f64,
@@ -158,42 +180,96 @@ enum Wire {
         lang: Option<String>,
         text: String,
     },
+    /// Pieces one under the other.
     Stack {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
     },
+    /// Pieces side by side, wrapping.
     Row {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
     },
+    /// Pieces one under the other that scroll past `height` rems.
+    Scroll {
+        #[serde(default)]
+        height: Option<f32>,
+        #[serde(default, deserialize_with = "nodes")]
+        children: Vec<Node>,
+    },
+    /// A line across.
+    Rule,
+    /// What shows where there is nothing yet.
+    Empty {
+        text: String,
+    },
+    /// A button that asks the plugin to carry out `action` with `args`.
     Button {
         label: String,
         action: String,
         #[serde(default)]
         args: Value,
+        #[serde(default)]
+        kind: Kind,
+    },
+    /// Text that opens a page.
+    Link {
+        label: String,
+        to: Link,
+    },
+    /// Pieces bound to a key of the plugin's settings, drawn on a
+    /// settings page only; kept as they came, for the page that binds
+    /// them.
+    Toggle {
+        #[serde(flatten)]
+        rest: Map<String, Value>,
+    },
+    Choice {
+        #[serde(flatten)]
+        rest: Map<String, Value>,
+    },
+    Field {
+        #[serde(flatten)]
+        rest: Map<String, Value>,
+    },
+    /// A piece that did not read, and why.
+    #[serde(skip_deserializing)]
+    Invalid {
+        why: String,
     },
 }
 
-/// The pieces a settings page binds.
-const SETTINGS: [&str; 3] = ["toggle", "choice", "field"];
+/// Children that read one by one, each failing alone.
+fn nodes<'de, D: Deserializer<'de>>(de: D) -> Result<Vec<Node>, D::Error> {
+    let values = Option::<Vec<Value>>::deserialize(de)?.unwrap_or_default();
+    Ok(values.iter().map(Node::read).collect())
+}
+
+fn table_rows<'de, D: Deserializer<'de>>(
+    de: D,
+) -> Result<Vec<Vec<Node>>, D::Error> {
+    let rows = Option::<Vec<Vec<Value>>>::deserialize(de)?.unwrap_or_default();
+    Ok(rows
+        .iter()
+        .map(|row| row.iter().map(Node::read).collect())
+        .collect())
+}
 
 impl Node {
     /// Reads a tree, never failing: what does not read becomes
     /// [`Node::Invalid`] where it stands.
     pub fn read(value: &Value) -> Self {
         if let Some(text) = value.as_str() {
-            return Self::Text(text.to_owned());
+            return Self::text(text);
         }
-        let piece = value.get("piece").and_then(Value::as_str);
-        if piece.is_some_and(|piece| SETTINGS.contains(&piece)) {
-            return Self::Setting(value.clone());
-        }
-        match Wire::deserialize(value) {
-            Ok(wire) => wire.into(),
-            Err(error) => Self::Invalid(match piece {
-                Some(piece) => format!("piece `{piece}`: {error}"),
-                None => "a piece without `piece`".to_owned(),
-            }),
+        match Self::deserialize(value) {
+            Ok(node) => node,
+            Err(error) => Self::Invalid {
+                why: match value.get("piece").and_then(Value::as_str) {
+                    Some(piece) => format!("piece `{piece}`: {error}"),
+                    None => "a piece without `piece`".to_owned(),
+                },
+            },
         }
     }
 
@@ -201,82 +277,45 @@ impl Node {
     pub fn value(&self) -> Value {
         serde_json::to_value(self).unwrap_or_default()
     }
-}
 
-impl From<Wire> for Node {
-    fn from(wire: Wire) -> Self {
-        match wire {
-            Wire::Text { text } => Self::Text(text),
-            Wire::Rich { text } => Self::Rich(text),
-            Wire::Mono { text } => Self::Mono(text),
-            Wire::Badge { text, tone } => Self::Badge { text, tone },
-            Wire::Status { text, detail, tone } => {
-                Self::Status { text, detail, tone }
-            }
-            Wire::Rows { rows } => Self::Rows(rows),
-            Wire::List { items } => Self::List(items),
-            Wire::Progress { share, label } => Self::Progress { share, label },
-            Wire::Code { lang, text } => Self::Code { lang, text },
-            Wire::Stack { children } => Self::Stack(children),
-            Wire::Row { children } => Self::Row(children),
-            Wire::Button {
-                label,
-                action,
-                args,
-            } => Self::Button {
-                label,
-                action,
-                args,
-            },
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    pub fn stack(children: impl IntoIterator<Item = Node>) -> Self {
+        Self::Stack {
+            children: children.into_iter().collect(),
         }
     }
-}
 
-impl<'de> Deserialize<'de> for Node {
-    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
-        Value::deserialize(de).map(|value| Self::read(&value))
+    pub fn row(children: impl IntoIterator<Item = Node>) -> Self {
+        Self::Row {
+            children: children.into_iter().collect(),
+        }
+    }
+
+    /// Whether it is one of the pieces a settings page binds.
+    pub fn is_setting(&self) -> bool {
+        matches!(
+            self,
+            Self::Toggle { .. } | Self::Choice { .. } | Self::Field { .. }
+        )
     }
 }
 
-impl Serialize for Node {
-    fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
-        let wire = match self.clone() {
-            Self::Setting(value) => return value.serialize(ser),
-            Self::Invalid(why) => {
-                return serde_json::json!({ "piece": "invalid", "why": why })
-                    .serialize(ser);
-            }
-            Self::Text(text) => Wire::Text { text },
-            Self::Rich(text) => Wire::Rich { text },
-            Self::Mono(text) => Wire::Mono { text },
-            Self::Badge { text, tone } => Wire::Badge { text, tone },
-            Self::Status { text, detail, tone } => {
-                Wire::Status { text, detail, tone }
-            }
-            Self::Rows(rows) => Wire::Rows { rows },
-            Self::List(items) => Wire::List { items },
-            Self::Progress { share, label } => Wire::Progress { share, label },
-            Self::Code { lang, text } => Wire::Code { lang, text },
-            Self::Stack(children) => Wire::Stack { children },
-            Self::Row(children) => Wire::Row { children },
-            Self::Button {
-                label,
-                action,
-                args,
-            } => Wire::Button {
-                label,
-                action,
-                args,
-            },
-        };
-        wire.serialize(ser)
-    }
+/// What a click in a tree asks for.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Act {
+    /// The plugin's own action, with its arguments.
+    Plugin { action: String, args: Value },
+    /// Opens a page.
+    Navigate(Link),
 }
 
-/// Carries out a button's action with its arguments.
-pub type OnAction = Rc<dyn Fn(&str, &Value, &mut App)>;
+/// Carries out what a click asks.
+pub type OnAct = Rc<dyn Fn(Act, &mut App)>;
 
-/// Draws a bound settings piece.
+/// Draws a bound settings piece, given as JSON.
 pub type DrawSetting<'a> = &'a dyn Fn(&Value, &Theme) -> AnyElement;
 
 /// What a tree is drawn with.
@@ -284,8 +323,8 @@ pub struct Draw<'a> {
     pub theme: &'a Theme,
     /// Names the tree's elements apart from other trees on screen.
     pub id: SharedString,
-    /// What a button does; without it buttons draw but do nothing.
-    pub on_action: Option<OnAction>,
+    /// What clicks do; without it buttons and links draw but do nothing.
+    pub on_act: Option<OnAct>,
     /// How bound settings pieces draw; without it they say they belong
     /// on a settings page.
     pub setting: Option<DrawSetting<'a>>,
@@ -296,13 +335,13 @@ impl<'a> Draw<'a> {
         Self {
             theme,
             id: id.into(),
-            on_action: None,
+            on_act: None,
             setting: None,
         }
     }
 
-    pub fn on_action(mut self, on_action: OnAction) -> Self {
-        self.on_action = Some(on_action);
+    pub fn on_act(mut self, on_act: OnAct) -> Self {
+        self.on_act = Some(on_act);
         self
     }
 
@@ -330,27 +369,69 @@ impl<'a> Draw<'a> {
             .collect()
     }
 
+    /// A clickable element's handler, when clicks do something.
+    fn click(
+        &self,
+        act: Act,
+    ) -> Option<impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut App) + 'static>
+    {
+        let on_act = self.on_act.clone()?;
+        Some(
+            move |_: &gpui::ClickEvent, _: &mut gpui::Window, cx: &mut App| {
+                on_act(act.clone(), cx)
+            },
+        )
+    }
+
     fn at(&self, node: &Node, depth: usize, path: &str) -> AnyElement {
         let t = self.theme;
         if depth > MAX_DEPTH {
             return invalid("the view nests too deep", t);
         }
         match node {
-            Node::Text(text) => div()
+            Node::Text { text } => div()
                 .typeset(Type::SMALL)
                 .text_color(t.text_soft)
                 .child(text.clone())
                 .into_any_element(),
-            Node::Rich(text) => div()
+            Node::Rich { text } => div()
                 .typeset(Type::SMALL)
                 .child(rich(text, t.text_soft, t))
                 .into_any_element(),
-            Node::Mono(text) => mono(text.clone(), Type::CAPTION, t.text_soft)
+            Node::Mono { text } => {
+                mono(text.clone(), Type::CAPTION, t.text_soft)
+                    .into_any_element()
+            }
+            Node::Heading { text } => heading(text, t).into_any_element(),
+            Node::Markdown { text } => div()
+                .typeset(Type::SMALL)
+                .child(markdown(path, text, t.text_soft, t))
                 .into_any_element(),
+            Node::Icon { name, tone } => match Icon::named(name) {
+                Some(glyph) => {
+                    let color = match tone {
+                        Tone::Neutral => t.muted,
+                        tone => t.tone((*tone).into()),
+                    };
+                    icon(glyph, IconSize::COMPACT, color).into_any_element()
+                }
+                None => invalid(&format!("no icon `{name}`"), t),
+            },
             Node::Badge { text, tone } => {
                 let color = t.tone((*tone).into());
                 badge(text.clone(), color, color.opacity(0.4))
                     .into_any_element()
+            }
+            Node::Pill { text, tone } => {
+                let color = match tone {
+                    Tone::Neutral => t.text_soft,
+                    tone => t.tone((*tone).into()),
+                };
+                let bg = match tone {
+                    Tone::Neutral => t.raised,
+                    _ => color.opacity(0.12),
+                };
+                pill(text.clone(), color, bg).into_any_element()
             }
             Node::Status { text, detail, tone } => div()
                 .flex()
@@ -367,7 +448,7 @@ impl<'a> Draw<'a> {
                     row.child(mono(detail, Type::CAPTION, t.dim))
                 })
                 .into_any_element(),
-            Node::Rows(rows) => div()
+            Node::Rows { rows } => div()
                 .flex()
                 .flex_col()
                 .gap(sp(1.))
@@ -388,7 +469,22 @@ impl<'a> Draw<'a> {
                         )
                 }))
                 .into_any_element(),
-            Node::List(items) => div()
+            Node::Table { head, rows } => table(
+                &[],
+                head.iter()
+                    .map(|cell| cell.clone().into_any_element())
+                    .collect(),
+                rows.iter()
+                    .take(MAX_CHILDREN)
+                    .enumerate()
+                    .map(|(n, row)| {
+                        self.children(row, depth, &format!("{path}.{n}"))
+                    })
+                    .collect(),
+                t,
+            )
+            .into_any_element(),
+            Node::List { items } => div()
                 .flex()
                 .flex_col()
                 .gap(sp(1.))
@@ -430,40 +526,68 @@ impl<'a> Draw<'a> {
             Node::Code { lang, text } => {
                 code_block(lang.as_deref(), text, t).into_any_element()
             }
-            Node::Stack(children) => div()
+            Node::Stack { children } => div()
                 .flex()
                 .flex_col()
                 .gap(sp(2.))
                 .children(self.children(children, depth, path))
                 .into_any_element(),
-            Node::Row(children) => div()
+            Node::Row { children } => div()
                 .flex()
                 .flex_wrap()
                 .items_center()
                 .gap(sp(2.))
                 .children(self.children(children, depth, path))
                 .into_any_element(),
+            Node::Scroll { height, children } => div()
+                .id(SharedString::from(format!("{path}:scroll")))
+                .flex()
+                .flex_col()
+                .gap(sp(2.))
+                .max_h(rems(height.unwrap_or(24.).clamp(2., 80.)))
+                .overflow_y_scroll()
+                .children(self.children(children, depth, path))
+                .into_any_element(),
+            Node::Rule => rule(t).into_any_element(),
+            Node::Empty { text } => empty(text.clone(), t).into_any_element(),
             Node::Button {
                 label,
                 action,
                 args,
-            } => match &self.on_action {
-                Some(on_action) => {
-                    let (on_action, action, args) =
-                        (on_action.clone(), action.clone(), args.clone());
-                    button(label.clone(), ButtonKind::Secondary, t)
-                        .id(SharedString::from(format!("{path}:button")))
-                        .on_click(move |_, _, cx| on_action(&action, &args, cx))
-                        .into_any_element()
-                }
+                kind,
+            } => match self.click(Act::Plugin {
+                action: action.clone(),
+                args: args.clone(),
+            }) {
+                Some(click) => button(label.clone(), (*kind).into(), t)
+                    .id(SharedString::from(format!("{path}:button")))
+                    .on_click(click)
+                    .into_any_element(),
                 None => badge(label.clone(), t.muted, t.border_strong)
                     .into_any_element(),
             },
-            Node::Setting(piece) => match self.setting {
-                Some(setting) => setting(piece, t),
-                None => invalid("a setting, drawn on a settings page only", t),
-            },
-            Node::Invalid(why) => invalid(why, t),
+            Node::Link { label, to } => {
+                match self.click(Act::Navigate(to.clone())) {
+                    Some(click) => text_link(label.clone(), Type::SMALL, t)
+                        .id(SharedString::from(format!("{path}:link")))
+                        .on_click(click)
+                        .into_any_element(),
+                    None => div()
+                        .typeset(Type::SMALL)
+                        .text_color(t.accent)
+                        .child(label.clone())
+                        .into_any_element(),
+                }
+            }
+            Node::Toggle { .. } | Node::Choice { .. } | Node::Field { .. } => {
+                match self.setting {
+                    Some(setting) => setting(&node.value(), t),
+                    None => {
+                        invalid("a setting, drawn on a settings page only", t)
+                    }
+                }
+            }
+            Node::Invalid { why } => invalid(why, t),
         }
     }
 }
@@ -497,21 +621,27 @@ mod tests {
             { "piece": "rows", "rows": [{ "key": "a", "value": "1" }] },
             { "piece": "progress", "share": 0.5, "label": "half" },
             { "piece": "code", "lang": "rust", "text": "fn f() {}" },
-            { "piece": "button", "label": "Reset", "action": "reset", "args": { "n": 1 } },
+            { "piece": "button", "label": "Reset", "action": "reset", "args": { "n": 1 }, "kind": "danger" },
             { "piece": "row", "children": [{ "piece": "badge", "text": "x", "tone": "warn" }] },
             { "piece": "list", "items": [{ "piece": "mono", "text": "m" }] },
+            { "piece": "table", "head": ["a"], "rows": [[{ "piece": "text", "text": "1" }]] },
+            { "piece": "scroll", "height": 10.0, "children": [{ "piece": "rule" }] },
+            { "piece": "link", "label": "Notes", "to": { "plugin": null, "page": "notes", "params": {} } },
+            { "piece": "icon", "name": "memory", "tone": "info" },
         ]});
         let node = Node::read(&wire);
-        assert!(matches!(&node, Node::Stack(children) if children.len() == 7));
+        assert!(
+            matches!(&node, Node::Stack { children } if children.len() == 11)
+        );
         assert_eq!(Node::read(&node.value()), node);
         assert_eq!(node.value(), wire);
     }
 
-    /// A bare string is text; nulls Luau writes for missing keys read as
-    /// missing.
+    /// What Luau's builders leave out reads as missing: a bare string is
+    /// text, `null` is no value, a button without a kind is secondary.
     #[test]
-    fn strings_and_nulls() {
-        assert_eq!(Node::read(&json!("hi")), Node::Text("hi".into()));
+    fn strings_nulls_and_defaults() {
+        assert_eq!(Node::read(&json!("hi")), Node::text("hi"));
         assert_eq!(
             Node::read(&json!({ "piece": "code", "lang": null, "text": "x" })),
             Node::Code {
@@ -519,29 +649,46 @@ mod tests {
                 text: "x".into()
             }
         );
+        assert_eq!(
+            Node::read(
+                &json!({ "piece": "button", "label": "Go", "action": "go", "args": {} })
+            ),
+            Node::Button {
+                label: "Go".into(),
+                action: "go".into(),
+                args: json!({}),
+                kind: Kind::Secondary,
+            }
+        );
     }
 
     /// A piece that does not read is invalid where it stands; its
-    /// siblings still read.
+    /// siblings, and the cells of a table, still read.
     #[test]
     fn bad_pieces_stay_local() {
         let node = Node::read(&json!({ "piece": "row", "children": [
             { "piece": "sparkle" },
             { "piece": "badge" },
             { "text": "no piece" },
+            { "piece": "table", "rows": [[{ "piece": "nope" }, "ok"]] },
             { "piece": "text", "text": "fine" },
         ]}));
-        let Node::Row(children) = node else {
+        let Node::Row { children } = node else {
             panic!("a row: {node:?}")
         };
-        assert!(
-            matches!(&children[0], Node::Invalid(why) if why.contains("sparkle"))
-        );
-        assert!(
-            matches!(&children[1], Node::Invalid(why) if why.contains("badge"))
-        );
-        assert!(matches!(&children[2], Node::Invalid(_)));
-        assert_eq!(children[3], Node::Text("fine".into()));
+        let why = |n: usize| match &children[n] {
+            Node::Invalid { why } => why.clone(),
+            other => panic!("invalid: {other:?}"),
+        };
+        assert!(why(0).contains("sparkle"));
+        assert!(why(1).contains("badge"));
+        assert!(why(2).contains("without"));
+        let Node::Table { rows, .. } = &children[3] else {
+            panic!("a table: {:?}", children[3])
+        };
+        assert!(matches!(rows[0][0], Node::Invalid { .. }));
+        assert_eq!(rows[0][1], Node::text("ok"));
+        assert_eq!(children[4], Node::text("fine"));
     }
 
     /// Settings pieces are kept as they came, for the page that binds
@@ -549,7 +696,16 @@ mod tests {
     #[test]
     fn settings_pieces_pass_through() {
         let piece = json!({ "piece": "toggle", "key": "on", "label": null });
-        assert_eq!(Node::read(&piece), Node::Setting(piece.clone()));
-        assert_eq!(Node::read(&piece).value(), piece);
+        let node = Node::read(&piece);
+        assert!(node.is_setting());
+        assert_eq!(node.value(), piece);
+    }
+
+    /// Every icon a tree can name is found by its file's name.
+    #[test]
+    fn icons_by_name() {
+        assert_eq!(Icon::named("sub-agent"), Some(Icon::SubAgent));
+        assert_eq!(Icon::named("memory"), Some(Icon::Memory));
+        assert_eq!(Icon::named("no-such-icon"), None);
     }
 }
