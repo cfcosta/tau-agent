@@ -23,7 +23,9 @@ use tau_agent::tool::RunId;
 use tau_ui_kit::{
     assets::Icon,
     components::{
+        self,
         ButtonKind,
+        NoteHead,
         badge,
         button,
         card,
@@ -54,7 +56,7 @@ use tau_ui_plugin::{
     SlashCommand,
     UiPlugin,
     ViewCx,
-    points::{self, AtCard, CardView},
+    points::{self, AtAnchor, AtCard, CardView},
     tree::{self, Draw, Node},
 };
 
@@ -91,6 +93,10 @@ pub struct LuauPluginsUi;
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct State {
     pub plugins: BTreeMap<String, PluginState>,
+    /// The notes plugins' views drew, by the anchor each was placed at
+    /// in the transcript: the plugin, and the note's tree.
+    #[serde(default)]
+    pub notes: BTreeMap<String, (String, Value)>,
 }
 
 /// One plugin's part in a run, as its records leave it.
@@ -111,10 +117,25 @@ pub struct PluginState {
 impl Fold for State {
     type Record = Record;
 
-    fn apply(&mut self, record: Record, _run: &mut dyn RunCx) {
+    fn apply(&mut self, record: Record, run: &mut dyn RunCx) {
         match record {
             Record::State { plugin, state } => self.of(plugin).state = state,
-            Record::View { plugin, view } => self.of(plugin).view = view,
+            Record::View { plugin, view } => {
+                // A note goes where the run is when it first draws, and
+                // stays there as later ones come.
+                let note = view.get("note").filter(|note| !note.is_null());
+                let last = self
+                    .plugins
+                    .get(&plugin)
+                    .and_then(|part| part.view.get("note"));
+                if let Some(note) = note.filter(|note| Some(*note) != last) {
+                    let key = format!("note-{}", self.notes.len());
+                    self.notes
+                        .insert(key.clone(), (plugin.clone(), note.clone()));
+                    run.transcript(&key);
+                }
+                self.of(plugin).view = view;
+            }
             Record::Log { plugin, lines } => {
                 let logs = &mut self.of(plugin).logs;
                 logs.extend(lines);
@@ -182,19 +203,28 @@ pub fn draw(
     plugin: &str,
     view: &mut ViewCx<'_, LuauPluginsUi>,
 ) -> AnyElement {
+    let run = view.run.map(|run| run.id.0.to_string());
+    let state = view.state.cloned();
+    draw_in(piece, id, plugin, run.zip(state), view)
+}
+
+/// [`draw`], for the run `run` with its state: where its buttons act.
+fn draw_in(
+    piece: &Value,
+    id: &str,
+    plugin: &str,
+    run: Option<(String, State)>,
+    view: &mut ViewCx<'_, LuauPluginsUi>,
+) -> AnyElement {
     let handle = view.handle.clone();
     let t = view.theme().clone();
     // A button acts on the plugin's state in the run drawn.
-    let acting = view.run.map(|run| {
-        let state = view
-            .state
-            .and_then(|state| state.plugins.get(plugin))
+    let acting = run.map(|(run, state)| {
+        let state = state
+            .plugins
+            .get(plugin)
             .map_or_else(|| serde_json::json!({}), |part| part.state.clone());
-        (
-            run.id.0.to_string(),
-            state,
-            view.settings.plugins.get(plugin).cloned(),
-        )
+        (run, state, view.settings.plugins.get(plugin).cloned())
     });
     let plugin_name = plugin.to_owned();
     let mut draw = Draw::new(&t, id.to_owned())
@@ -308,6 +338,31 @@ impl UiPlugin for LuauPluginsUi {
                     ),
                     ..CardView::default()
                 })
+            })
+            .contribute(points::TRANSCRIPT, |at: &AtAnchor, view| {
+                let (plugin, note) = view.state?.notes.get(&at.key)?.clone();
+                let id = format!("luau-note-{}-{}", at.run.id.0, at.key);
+                let body = draw(&note, &id, &plugin, view);
+                let t = view.theme().clone();
+                Some(
+                    components::note(
+                        gpui::SharedString::from(id),
+                        NoteHead {
+                            plugin,
+                            icon: Icon::Plug,
+                            tone: Tone::Info,
+                            text: String::new(),
+                            detail: None,
+                        },
+                        None,
+                        None,
+                        None,
+                        Some(body),
+                        view.compact,
+                        &t,
+                    )
+                    .into_any_element(),
+                )
             })
             .contribute(points::CARD_BADGE, |at: &AtCard, view| {
                 let state: &State = view.state?;
@@ -850,6 +905,28 @@ fn plugin_page(
             &t,
         ));
     }
+    // What its view puts on its page, from the newest run that drew one;
+    // its buttons act on that run.
+    let drawn = view.runs().into_iter().find_map(|(run, state)| {
+        let page = state.plugins.get(entry)?.view.get("page")?.clone();
+        (!page.is_null()).then_some((run, state, page))
+    });
+    if let Some((run, state, page)) = drawn {
+        let id = format!("luau-page-{entry}-{}", run.id.0);
+        let title = if run.title.is_empty() {
+            "In its last run".to_owned()
+        } else {
+            format!("In {}", run.title)
+        };
+        let body = draw_in(
+            &page,
+            &id,
+            entry,
+            Some((run.id.0.to_string(), state)),
+            view,
+        );
+        about = about.child(section(&title, div().child(body), &t));
+    }
     about = about.child(section(
         "Tests",
         if found.tests.is_empty() {
@@ -1067,6 +1144,33 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// A view's note is placed in the transcript where the run is when
+    /// it first draws, and again only when it changes; each keeps the
+    /// note it was placed with.
+    #[test]
+    fn notes_are_placed_where_they_change() {
+        let mut state = State::default();
+        let mut run = tau_ui_plugin::testing::FakeRun::default();
+        let view = |note: Value| Record::View {
+            plugin: "p".into(),
+            view: json!({ "status": { "text": "on" }, "note": note }),
+        };
+        for record in [
+            view(Value::Null),
+            view(json!("first")),
+            view(json!("first")),
+            view(json!({ "piece": "text", "text": "second" })),
+        ] {
+            state.apply(record, &mut run);
+        }
+        assert_eq!(run.anchors, ["note-0", "note-1"]);
+        assert_eq!(state.notes["note-0"], ("p".to_owned(), json!("first")));
+        assert_eq!(
+            state.notes["note-1"].1,
+            json!({ "piece": "text", "text": "second" })
+        );
+    }
 
     /// What an action left folds into the run as its records do: the
     /// state, the log, the error, and the view drawn from the state.

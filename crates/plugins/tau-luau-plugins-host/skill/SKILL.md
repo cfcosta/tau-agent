@@ -85,7 +85,7 @@ Every field but `name` is optional.
 | `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
 | `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
 | `run_end`     | `{ stop, turns, cost }`                    | nothing                                    | 10 s   |
-| `view`        | the run's state                            | `{ status = ui.status(...) }`, or `{}`     | 200 ms |
+| `view`        | the run's state                            | `{ status?, note?, page? }`, or `{}`       | 200 ms |
 | `actions[x]`  | a button's or an input's arguments         | nothing; what it does to `ctx.state` stays | 2 s    |
 
 - `tau.block(why)` keeps the call from running; the model reads why.
@@ -156,7 +156,14 @@ Plain tables, drawn by tau on the computer and on the phone:
 - `ui.status(text, detail, tone)`: the run's status line, from `view`
 
 `view` is called after each hook that changed the state. It must only
-read the state: it has no tools.
+read the state: it has no tools. What it returns goes in three places:
+
+- `status`: a `ui.status(...)`, the run's status line.
+- `note`: a piece shown in the run's conversation, where the run is
+  when the note first appears; a different note later shows where the
+  run is then, and the earlier one stays.
+- `page`: pieces shown on the plugin's own page, from its newest run;
+  buttons there act on that run.
 
 ### Settings
 
