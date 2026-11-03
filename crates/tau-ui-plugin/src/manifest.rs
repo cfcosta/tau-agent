@@ -71,6 +71,8 @@ pub struct Page<P: UiPlugin> {
     pub name: &'static str,
     title: Title<P>,
     draw: Draw<P>,
+    /// Whether the interface puts it in a page's frame (ADR 0045).
+    framed: bool,
 }
 
 impl<P: UiPlugin> Page<P> {
@@ -85,7 +87,16 @@ impl<P: UiPlugin> Page<P> {
             name,
             title: Box::new(move |_| name.to_owned()),
             draw: Box::new(draw),
+            framed: false,
         }
+    }
+
+    /// The interface frames the page: it scrolls, with a page's margins
+    /// on the computer and the phone, so a tree drawn there needs no
+    /// frame of its own (ADR 0045).
+    pub fn framed(mut self) -> Self {
+        self.framed = true;
+        self
     }
 
     /// The page's title, for the title bar and history.
@@ -98,7 +109,33 @@ impl<P: UiPlugin> Page<P> {
     }
 
     pub(crate) fn draw(&self, cx: &mut ViewCx<'_, P>) -> AnyElement {
-        (self.draw)(cx)
+        let drawn = (self.draw)(cx);
+        if !self.framed {
+            return drawn;
+        }
+        use gpui::{
+            InteractiveElement as _,
+            IntoElement as _,
+            ParentElement as _,
+            StatefulInteractiveElement as _,
+            Styled as _,
+        };
+        use tau_ui_kit::theme::sp;
+        gpui::div()
+            .id(gpui::SharedString::from(format!("page-{}", self.name)))
+            .flex_1()
+            .min_h(gpui::rems(0.))
+            .overflow_y_scroll()
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(4.5))
+                    .px(sp(if cx.compact { 4. } else { 8. }))
+                    .py(sp(if cx.compact { 4. } else { 6. }))
+                    .child(drawn),
+            )
+            .into_any_element()
     }
 
     pub(crate) fn title_of(&self, cx: &mut ViewCx<'_, P>) -> String {

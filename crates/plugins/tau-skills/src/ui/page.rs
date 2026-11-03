@@ -1,10 +1,8 @@
 //! The Skills screen: each skill in the person's folder, with what it
 //! is for, and each folder that is not one, with why. A view tree
-//! (ADR 0045) in the screen's frame.
+//! (ADR 0045), in the frame the interface gives a page.
 
-use gpui::IntoElement as _;
 use serde_json::json;
-use tau_ui_kit::components as ui;
 use tau_ui_plugin::{
     ViewCx,
     tree::{Kind, Node, Tone},
@@ -24,14 +22,13 @@ pub fn render(view: &mut ViewCx<'_, SkillsUi>) -> gpui::AnyElement {
     let skills = view.data.clone();
     let tree = tree(&skills);
     let dir = skills.dir.clone();
-    let body = view.tree("skills", &tree, move |action, _, cx| {
+    view.tree("skills", &tree, move |action, _, cx| {
         if action == OPEN_FOLDER
             && let Some(dir) = &dir
         {
             cx.reveal_path(dir);
         }
-    });
-    ui::screen("skills", view.compact, body).into_any_element()
+    })
 }
 
 /// The screen: its header, then the skills and the folders that are not.

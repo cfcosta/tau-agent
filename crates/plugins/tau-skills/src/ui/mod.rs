@@ -36,7 +36,11 @@ impl UiPlugin for SkillsUi {
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
-            .page(Page::new("skills", page::render).title(page::title))
+            .page(
+                Page::new("skills", page::render)
+                    .title(page::title)
+                    .framed(),
+            )
             .contribute_at(points::SIDEBAR, 20, sidebar)
             .contribute(points::CARD, card::card)
             .listed_commands(commands, run_command)
