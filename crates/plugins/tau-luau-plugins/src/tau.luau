@@ -261,6 +261,40 @@ function ui.terminal(id, text, opts)
 	}
 end
 
+-- The time since `since`, in milliseconds since 1970 (`ctx.now.unix *
+-- 1000` from a hook), counting until it `stopped`. `id` names it.
+function ui.ticker(id, since, stopped)
+	return {
+		piece = "ticker",
+		id = tostring(id),
+		since = math.floor(tonumber(since) or 0),
+		["until"] = stopped and math.floor(tonumber(stopped) or 0) or json.null,
+	}
+end
+
+-- A small map: `nodes` are `{ id, label, x, y, tone, focus, page }`, with
+-- `x` and `y` from 0 to 1 and `page` one of this plugin's pages to open;
+-- `edges` are `{ from_id, to_id }`. `height` is in rems (12.5 by default).
+function ui.graph(nodes, edges, height)
+	local out = array({})
+	for _, node in ipairs(nodes or {}) do
+		table.insert(out, {
+			id = tostring(node.id),
+			label = node.label and tostring(node.label) or json.null,
+			x = tonumber(node.x) or 0.5,
+			y = tonumber(node.y) or 0.5,
+			tone = tone(node.tone),
+			focus = node.focus == true,
+			to = node.page and { plugin = json.null, page = tostring(node.page), params = node.params or {} } or json.null,
+		})
+	end
+	local lines = array({})
+	for _, edge in ipairs(edges or {}) do
+		table.insert(lines, { tostring(edge[1]), tostring(edge[2]) })
+	end
+	return { piece = "graph", nodes = out, edges = lines, height = tonumber(height) or 12.5 }
+end
+
 -- Tabs, one shown at a time: a list of `{ label, { pieces } }`. `id`
 -- names them, so the tab the person chose is kept.
 function ui.tabs(id, tabs)

@@ -244,6 +244,24 @@ pub enum Node {
         #[serde(default)]
         live: bool,
     },
+    /// The time since `since`, counting while `until` is not given, in
+    /// milliseconds since 1970: the state says when, the interface counts.
+    Ticker {
+        id: String,
+        since: i64,
+        #[serde(default)]
+        until: Option<i64>,
+    },
+    /// A small map: nodes at fractions of a box `height` rems tall,
+    /// joined by `edges` of node ids.
+    Graph {
+        #[serde(default = "default_graph_height")]
+        height: f32,
+        #[serde(default)]
+        nodes: Vec<GraphNode>,
+        #[serde(default)]
+        edges: Vec<(String, String)>,
+    },
     /// Tabs, one shown at a time. Which is chosen is the interface's
     /// state, under the plugin's `id`; until the person picks, the first.
     Tabs {
@@ -309,6 +327,28 @@ pub fn tab_key(id: &str) -> String {
     format!("{id}.tab")
 }
 
+fn default_graph_height() -> f32 {
+    12.5
+}
+
+/// A node of [`Node::Graph`]: where it is, from 0 to 1 across and down,
+/// how it reads, and the page it opens.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    pub x: f32,
+    pub y: f32,
+    #[serde(default)]
+    pub tone: Tone,
+    /// The one the map is about: drawn larger, in the accent.
+    #[serde(default)]
+    pub focus: bool,
+    #[serde(default)]
+    pub to: Option<Link>,
+}
+
 fn default_cols() -> u16 {
     80
 }
@@ -327,8 +367,23 @@ pub struct TerminalSpec {
     pub live: bool,
 }
 
-/// Draws a terminal, kept by the interface from one draw to the next.
-pub type Terminals<'a> = &'a dyn Fn(TerminalSpec, &mut App) -> AnyElement;
+/// What a ticker is drawn from: its key, and the time it counts from and,
+/// once it stops, to, in milliseconds since 1970.
+pub struct TickerSpec {
+    pub key: String,
+    pub since: i64,
+    pub until: Option<i64>,
+}
+
+/// A piece the interface draws with a view it keeps from one draw to
+/// the next.
+pub enum WidgetSpec {
+    Terminal(TerminalSpec),
+    Ticker(TickerSpec),
+}
+
+/// Draws a widget, kept by the interface from one draw to the next.
+pub type Widgets<'a> = &'a dyn Fn(WidgetSpec, &mut App) -> AnyElement;
 
 /// The UI state key under which an input's `id` keeps its draft.
 pub fn draft_key(id: &str) -> String {
@@ -463,9 +518,9 @@ pub struct Draw<'a> {
     /// Where inputs' editors come from; without it inputs show their
     /// draft and take no keys.
     pub inputs: Option<Inputs<'a>>,
-    /// Where terminals' screens come from; without it a terminal shows
-    /// that it is drawn where one is kept.
-    pub terminals: Option<Terminals<'a>>,
+    /// Where widgets' views come from (terminals, tickers); without it a
+    /// widget shows that it is drawn where one is kept.
+    pub widgets: Option<Widgets<'a>>,
 }
 
 impl<'a> Draw<'a> {
@@ -478,7 +533,7 @@ impl<'a> Draw<'a> {
             ui: None,
             prefix: None,
             inputs: None,
-            terminals: None,
+            widgets: None,
         }
     }
 
@@ -500,8 +555,8 @@ impl<'a> Draw<'a> {
         self
     }
 
-    pub fn terminals(mut self, terminals: Terminals<'a>) -> Self {
-        self.terminals = Some(terminals);
+    pub fn widgets(mut self, widgets: Widgets<'a>) -> Self {
+        self.widgets = Some(widgets);
         self
     }
 
@@ -540,6 +595,108 @@ impl<'a> Draw<'a> {
             drawn.push(self.at(child, depth + 1, &format!("{path}.{n}"), cx));
         }
         drawn
+    }
+
+    /// A graph: its edges painted under its nodes, each node a dot with
+    /// its label, opening its page when it has one.
+    fn graph(
+        &self,
+        height: f32,
+        nodes: &[GraphNode],
+        edges: &[(String, String)],
+        path: &str,
+    ) -> AnyElement {
+        let t = self.theme;
+        let spot = |id: &str| {
+            nodes
+                .iter()
+                .find(|node| node.id == id)
+                .map(|node| (node.x.clamp(0., 1.), node.y.clamp(0., 1.)))
+        };
+        let lines: Vec<((f32, f32), (f32, f32))> = edges
+            .iter()
+            .take(MAX_CHILDREN)
+            .filter_map(|(from, to)| Some((spot(from)?, spot(to)?)))
+            .collect();
+        let edge = t.border_strong;
+        let painted = gpui::canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                let at = |(x, y): (f32, f32)| {
+                    gpui::point(
+                        bounds.left() + bounds.size.width * x,
+                        bounds.top() + bounds.size.height * y,
+                    )
+                };
+                for (from, to) in &lines {
+                    let mut line = gpui::PathBuilder::stroke(gpui::px(1.5));
+                    line.move_to(at(*from));
+                    line.line_to(at(*to));
+                    if let Ok(line) = line.build() {
+                        window.paint_path(line, edge);
+                    }
+                }
+            },
+        )
+        .absolute()
+        .size_full();
+        let drawn =
+            nodes
+                .iter()
+                .take(MAX_CHILDREN)
+                .enumerate()
+                .map(|(n, node)| {
+                    let (size, color) = if node.focus {
+                        (18., t.accent)
+                    } else {
+                        let color = match node.tone {
+                            Tone::Neutral => t.slate,
+                            tone => t.tone(tone.into()),
+                        };
+                        (12., color)
+                    };
+                    div()
+                        .id(SharedString::from(format!("{path}:node{n}")))
+                        .absolute()
+                        .left(relative(node.x.clamp(0., 1.)))
+                        .top(relative(node.y.clamp(0., 1.)))
+                        .w(rems(7.5))
+                        .ml(sp(-15.))
+                        .mt(rems((-size / 2.) / 16.))
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .child(
+                            div()
+                                .size(rems(size / 16.))
+                                .rounded(rems((size / 2.) / 16.))
+                                .bg(color)
+                                .border_2()
+                                .border_color(t.panel),
+                        )
+                        .children(node.label.clone().map(|label| {
+                            div()
+                                .mt(sp(1.))
+                                .max_w(rems(7.5))
+                                .truncate()
+                                .typeset(Type::MICRO)
+                                .text_color(t.muted)
+                                .child(label)
+                        }))
+                        .when_some(
+                            node.to
+                                .clone()
+                                .and_then(|to| self.click(Act::Navigate(to))),
+                            |node, click| node.cursor_pointer().on_click(click),
+                        )
+                });
+        div()
+            .relative()
+            .h(rems(height.clamp(4., 40.)))
+            .w_full()
+            .child(painted)
+            .children(drawn)
+            .into_any_element()
     }
 
     /// A clickable element's handler, when clicks do something.
@@ -900,15 +1057,15 @@ impl<'a> Draw<'a> {
                 cols,
                 rows,
                 live,
-            } => match self.terminals {
-                Some(terminals) => terminals(
-                    TerminalSpec {
+            } => match self.widgets {
+                Some(widgets) => widgets(
+                    WidgetSpec::Terminal(TerminalSpec {
                         key: self.key(format!("{id}.terminal")),
                         bytes: text.as_bytes().to_vec(),
                         cols: (*cols).clamp(10, 400),
                         rows: (*rows).clamp(2, 200),
                         live: *live,
-                    },
+                    }),
                     cx,
                 ),
                 None => invalid(
@@ -916,6 +1073,30 @@ impl<'a> Draw<'a> {
                     t,
                 ),
             },
+            Node::Ticker { id, since, until } => match self.widgets {
+                Some(widgets) => widgets(
+                    WidgetSpec::Ticker(TickerSpec {
+                        key: self.key(format!("{id}.ticker")),
+                        since: *since,
+                        until: *until,
+                    }),
+                    cx,
+                ),
+                // Without a clock, what it read when it stopped, if it did.
+                None => mono(
+                    until.map_or_else(String::new, |until| {
+                        tau_ui_kit::ticker::reading(*since, until)
+                    }),
+                    Type::CAPTION,
+                    t.text_soft,
+                )
+                .into_any_element(),
+            },
+            Node::Graph {
+                height,
+                nodes,
+                edges,
+            } => self.graph(*height, nodes, edges, path),
             Node::Empty { text } => empty(text.clone(), t).into_any_element(),
             Node::Button {
                 label,
@@ -1111,6 +1292,17 @@ mod tests {
               "cols": 40, "rows": 4, "live": false },
         ]});
         assert_eq!(Node::read(&widgets).value(), widgets);
+        let more = json!({ "piece": "stack", "children": [
+            { "piece": "ticker", "id": "load", "since": 1000, "until": null },
+            { "piece": "graph", "height": 10.0,
+              "nodes": [
+                { "id": "a", "label": "A", "x": 0.5, "y": 0.5, "tone": "neutral", "focus": true, "to": null },
+                { "id": "b", "label": null, "x": 0.25, "y": 0.25, "tone": "info", "focus": false,
+                  "to": { "plugin": null, "page": "note", "params": { "id": "b" } } },
+              ],
+              "edges": [["a", "b"]] },
+        ]});
+        assert_eq!(Node::read(&more).value(), more);
         assert_eq!(
             Node::read(&json!({ "piece": "terminal", "id": "t" })),
             Node::Terminal {

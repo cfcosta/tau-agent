@@ -181,7 +181,7 @@ impl Workspace {
             plugin_focus: _,
             // Editors of drafts kept in `ui_state`, each window's own.
             tree_inputs: _,
-            tree_terminals: _,
+            tree_widgets: _,
             // A note over the composer is the window's own.
             composer_note: _,
             // Where each window is on the Plugins screen is its own.

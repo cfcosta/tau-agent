@@ -16,6 +16,7 @@ pub mod prose;
 pub mod select;
 pub mod syntax;
 pub mod theme;
+pub mod ticker;
 
 use gpui::App;
 

@@ -142,6 +142,12 @@ Plain tables, drawn by tau on the computer and on the phone:
 - `ui.diff(text, path)`: a unified diff, colored as `path`'s language
 - `ui.terminal(id, text, { cols = 80, rows = 24, live = false })`: what
   a program wrote, escapes and all, on a terminal tau keeps under `id`
+- `ui.ticker(id, since, stopped)`: the time since `since` (milliseconds
+  since 1970), counting until `stopped` is given; keep `since` in the
+  state
+- `ui.graph(nodes, edges, height)`: a small map of nodes
+  (`{ id, label, x, y, tone, focus, page }`, `x` and `y` from 0 to 1)
+  joined by `{ from, to }` edges
 - `ui.section(id, title, { ... }, { open = true })`: a heading that
   opens and closes what is under it
 - `ui.tabs(id, { { "label", { ... } }, ... })`: one tab shown at a

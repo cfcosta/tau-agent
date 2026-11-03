@@ -1,7 +1,12 @@
-//! The screens of plugins' tree terminals (ADR 0045). The tree carries
-//! what was written; the window keeps a [`TerminalView`] per terminal,
-//! for its scrollback and selection, fed what the tree gained since it
-//! last drew, and frozen once the program ends.
+//! The views of plugins' tree widgets (ADR 0045), kept by the window
+//! from one draw to the next.
+//!
+//! - A terminal: the tree carries what was written; the window keeps a
+//!   [`TerminalView`] per terminal, for its scrollback and selection,
+//!   fed what the tree gained since it last drew, and frozen once the
+//!   program ends.
+//! - A ticker: the tree carries when it started and stopped; the window
+//!   keeps a [`Ticker`] that counts.
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -15,8 +20,11 @@ use gpui::{
     rems,
 };
 use tau_terminal::{Size, TerminalView, ViewOptions};
-use tau_ui_kit::theme::{MONO, Theme, theme};
-use tau_ui_plugin::tree::TerminalSpec;
+use tau_ui_kit::{
+    theme::{MONO, Theme, theme},
+    ticker::Ticker,
+};
+use tau_ui_plugin::tree::{TerminalSpec, TickerSpec, WidgetSpec};
 
 /// One terminal's screen, and what it was fed.
 struct Screen {
@@ -25,10 +33,51 @@ struct Screen {
     size: (u16, u16),
 }
 
-/// Every tree terminal's screen in one window, by plugin and key.
+/// Every tree widget's view in one window, by plugin and key.
 #[derive(Default)]
-pub struct TreeTerminals {
+pub struct TreeWidgets {
     screens: HashMap<String, Screen>,
+    tickers: HashMap<String, Entity<Ticker>>,
+}
+
+/// `spec`'s widget for `plugin`, drawn.
+pub fn widget(
+    widgets: &Rc<RefCell<TreeWidgets>>,
+    plugin: &str,
+    spec: WidgetSpec,
+    cx: &mut App,
+) -> AnyElement {
+    match spec {
+        WidgetSpec::Terminal(spec) => screen(widgets, plugin, spec, cx),
+        WidgetSpec::Ticker(spec) => {
+            ticker(widgets, plugin, spec, cx).into_any_element()
+        }
+    }
+}
+
+/// The ticker of `spec` for `plugin`, made the first time, and set to
+/// what the tree says it counts from and to.
+fn ticker(
+    widgets: &Rc<RefCell<TreeWidgets>>,
+    plugin: &str,
+    spec: TickerSpec,
+    cx: &mut App,
+) -> Entity<Ticker> {
+    let id = format!("{plugin}\u{0}{}", spec.key);
+    let kept = widgets.borrow().tickers.get(&id).cloned();
+    match kept {
+        Some(ticker) => {
+            ticker.update(cx, |ticker, cx| {
+                ticker.set(spec.since, spec.until, cx)
+            });
+            ticker
+        }
+        None => {
+            let ticker = cx.new(|_| Ticker::new(spec.since, spec.until));
+            widgets.borrow_mut().tickers.insert(id, ticker.clone());
+            ticker
+        }
+    }
 }
 
 fn options(cols: u16, rows: u16, t: &Theme) -> ViewOptions {
@@ -72,8 +121,8 @@ fn made(
 /// The screen of `spec`'s terminal for `plugin`, drawn: made the first
 /// time, then fed what was written since, or made again from the start
 /// when what was written is not what it was fed and more.
-pub fn screen(
-    terminals: &Rc<RefCell<TreeTerminals>>,
+fn screen(
+    terminals: &Rc<RefCell<TreeWidgets>>,
     plugin: &str,
     spec: TerminalSpec,
     cx: &mut App,
@@ -88,7 +137,7 @@ pub fn screen(
 
 /// [`screen`]'s view, or none when no terminal could be made.
 fn view(
-    terminals: &Rc<RefCell<TreeTerminals>>,
+    terminals: &Rc<RefCell<TreeWidgets>>,
     plugin: &str,
     spec: TerminalSpec,
     cx: &mut App,
@@ -167,13 +216,33 @@ mod tests {
         }
     }
 
+    /// A ticker is made once for its key and set to what each draw says
+    /// it counts from and to.
+    #[gpui::test]
+    fn a_ticker_is_kept_and_set(cx: &mut gpui::TestAppContext) {
+        let widgets = Rc::new(RefCell::new(TreeWidgets::default()));
+        let spec = |until| TickerSpec {
+            key: "load.ticker".into(),
+            since: 1_000,
+            until,
+        };
+        let first = cx.update(|cx| ticker(&widgets, "p", spec(None), cx));
+        let again =
+            cx.update(|cx| ticker(&widgets, "p", spec(Some(84_999)), cx));
+        assert_eq!(first, again);
+        assert_eq!(widgets.borrow().tickers.len(), 1);
+        drop((first, again));
+        widgets.borrow_mut().tickers.clear();
+        cx.run_until_parked();
+    }
+
     /// A terminal is fed what it gained while it runs, frozen when it
     /// ends, and made again when what was written is not what it was fed
     /// and more.
     #[gpui::test]
     fn a_terminal_follows_what_was_written(cx: &mut gpui::TestAppContext) {
         cx.update(tau_ui_kit::init);
-        let terminals = Rc::new(RefCell::new(TreeTerminals::default()));
+        let terminals = Rc::new(RefCell::new(TreeWidgets::default()));
         let kept = || {
             terminals
                 .borrow()

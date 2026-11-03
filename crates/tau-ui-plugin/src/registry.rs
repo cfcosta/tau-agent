@@ -55,8 +55,8 @@ pub struct Env<'a> {
     pub ui_state: &'a BTreeMap<String, Value>,
     /// Where its trees' inputs get their editors (ADR 0045).
     pub inputs: crate::tree::Inputs<'a>,
-    /// Where its trees' terminals are kept (ADR 0045).
-    pub terminals: crate::tree::Terminals<'a>,
+    /// Where its trees' widgets are kept (ADR 0045).
+    pub widgets: crate::tree::Widgets<'a>,
     pub cx: &'a mut App,
 }
 
@@ -307,7 +307,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
         .with_others(env.others)
         .with_ui_state(env.ui_state)
         .with_inputs(env.inputs)
-        .with_terminals(env.terminals);
+        .with_widgets(env.widgets);
         Some(f(&mut view))
     }
 }

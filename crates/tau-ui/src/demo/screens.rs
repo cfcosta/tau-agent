@@ -732,10 +732,16 @@ fn crew(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
 fn luau_view(ws: &mut Workspace, cx: &mut Context<Workspace>) {
     use tau_luau_plugins::Record;
 
+    // Its check started a minute and a bit ago.
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as i64)
+        - 83_000;
     let note = json!({ "piece": "stack", "children": [
         { "piece": "row", "children": [
             { "piece": "icon", "name": "check", "tone": "good" },
             { "piece": "rich", "text": "Checked **3** commits against `feat(scope): title`." },
+            { "piece": "ticker", "id": "check", "since": started },
         ] },
         { "piece": "section", "id": "why", "title": "Why one was refused", "open": true,
           "children": [
@@ -751,6 +757,14 @@ fn luau_view(ws: &mut Workspace, cx: &mut Context<Workspace>) {
         ] },
     ] });
     let page = json!({ "piece": "stack", "children": [
+        { "piece": "graph", "height": 9.0,
+          "nodes": [
+            { "id": "style", "label": "commit-style", "x": 0.5, "y": 0.5, "focus": true },
+            { "id": "ui", "label": "tau-ui", "x": 0.2, "y": 0.25, "tone": "info" },
+            { "id": "vcs", "label": "tau-vcs-host", "x": 0.8, "y": 0.3, "tone": "info" },
+            { "id": "docs", "label": "docs", "x": 0.5, "y": 0.85 },
+          ],
+          "edges": [["style", "ui"], ["style", "vcs"], ["style", "docs"]] },
         { "piece": "heading", "text": "Scopes it knows" },
         { "piece": "tabs", "id": "scopes", "tabs": [
             { "label": "Used", "children": [
@@ -775,6 +789,7 @@ fn luau_view(ws: &mut Workspace, cx: &mut Context<Workspace>) {
           "text": "\u{1b}[1mcommit-style\u{1b}[0m checked 3 commits\r\n\u{1b}[32m✓\u{1b}[0m 2 follow the style\r\n\u{1b}[31m✗\u{1b}[0m a41c9e2: Fixed the retry loop\r\n" },
         { "piece": "rule" },
         { "piece": "row", "children": [
+            { "piece": "ticker", "id": "since", "since": started },
             { "piece": "status", "text": "on", "detail": "3 checks", "tone": "good" },
             { "piece": "link", "label": "Your plugins", "to": { "page": "luau-plugins" } },
         ] },

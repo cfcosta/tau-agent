@@ -447,8 +447,8 @@ pub struct ViewCx<'a, P: UiPlugin> {
     ui_state: &'a BTreeMap<String, Value>,
     /// Where its trees' inputs get their editors: see [`Self::inputs`].
     inputs: Option<crate::tree::Inputs<'a>>,
-    /// Where its trees' terminals are kept: see [`Self::terminals`].
-    terminals: Option<crate::tree::Terminals<'a>>,
+    /// Where its trees' widgets are kept: see [`Self::widgets`].
+    widgets: Option<crate::tree::Widgets<'a>>,
     pub cx: &'a mut App,
 }
 
@@ -494,7 +494,7 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             others: &NO_OTHERS,
             ui_state: &NO_UI_STATE,
             inputs: None,
-            terminals: None,
+            widgets: None,
             cx,
         }
     }
@@ -520,19 +520,16 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         self
     }
 
-    /// The same view, drawing its trees' terminals with `terminals`.
-    pub fn with_terminals(
-        mut self,
-        terminals: crate::tree::Terminals<'a>,
-    ) -> Self {
-        self.terminals = Some(terminals);
+    /// The same view, drawing its trees' widgets with `widgets`.
+    pub fn with_widgets(mut self, widgets: crate::tree::Widgets<'a>) -> Self {
+        self.widgets = Some(widgets);
         self
     }
 
-    /// Where the interface keeps the screens of the plugin's trees'
-    /// terminals ([`crate::tree::Draw::terminals`]).
-    pub fn terminals(&self) -> Option<crate::tree::Terminals<'a>> {
-        self.terminals
+    /// Where the interface keeps the views of the plugin's trees'
+    /// widgets ([`crate::tree::Draw::widgets`]).
+    pub fn widgets(&self) -> Option<crate::tree::Widgets<'a>> {
+        self.widgets
     }
 
     /// Where the interface keeps the editors of the plugin's trees'

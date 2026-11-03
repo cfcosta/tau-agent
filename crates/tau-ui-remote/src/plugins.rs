@@ -365,10 +365,10 @@ impl Workspace {
                            cx: &mut App| {
             crate::tree_inputs::editor(&tree_inputs, &handle, spec, cx)
         };
-        let tree_terminals = self.tree_terminals.clone();
-        let terminals = move |spec: tau_ui_plugin::tree::TerminalSpec,
-                              cx: &mut App| {
-            crate::tree_terminals::screen(&tree_terminals, name, spec, cx)
+        let tree_widgets = self.tree_widgets.clone();
+        let widgets = move |spec: tau_ui_plugin::tree::WidgetSpec,
+                            cx: &mut App| {
+            crate::tree_widgets::widget(&tree_widgets, name, spec, cx)
         };
         let env = Env {
             ui,
@@ -387,7 +387,7 @@ impl Workspace {
             others: &self.catalog.plugin_data,
             ui_state: self.ui_state.of(name),
             inputs: &inputs,
-            terminals: &terminals,
+            widgets: &widgets,
             cx,
         };
         Some(f(plugin, env))
