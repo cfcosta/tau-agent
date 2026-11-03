@@ -51,6 +51,8 @@ pub struct Env<'a> {
     pub cards: &'a dyn Fn(&tau_agent::tool::RunId) -> Vec<crate::CardInfo>,
     /// Every plugin's data, by plugin.
     pub others: &'a BTreeMap<String, PluginValue>,
+    /// The plugin's UI state (ADR 0045).
+    pub ui_state: &'a BTreeMap<String, Value>,
     pub cx: &'a mut App,
 }
 
@@ -298,7 +300,8 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
             env.cards,
             env.cx,
         )
-        .with_others(env.others);
+        .with_others(env.others)
+        .with_ui_state(env.ui_state);
         Some(f(&mut view))
     }
 }

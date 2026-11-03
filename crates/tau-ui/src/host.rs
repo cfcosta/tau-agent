@@ -279,6 +279,9 @@ pub struct Host {
     /// The saves of `repos.json`, and of the model settings, in order.
     list_saving: Saving,
     settings_saving: Saving,
+    /// Every plugin's UI state, and its saves (ADR 0045).
+    ui_state: Mutex<tau_ui_plugin::UiState>,
+    ui_saving: Saving,
     /// Each repository's own locks, by name (ADR 0028).
     repo_states: Mutex<HashMap<String, Arc<RepoState>>>,
     /// Asks the catalog's builder for a new one ([`Host::catalog_changed`]).
@@ -340,6 +343,7 @@ pub mod queue;
 mod repos;
 mod startup;
 mod sub_agents;
+mod ui_state;
 mod uploads;
 
 pub use self::{
@@ -528,11 +532,12 @@ impl Host {
         if let Err(error) = runtime.block_on(store.interrupt_running()) {
             eprintln!("tau-ui: cannot mark interrupted runs: {error:#}");
         }
-        let (settings, list, jev_key) = runtime.block_on(async {
+        let (settings, list, jev_key, ui_state) = runtime.block_on(async {
             (
                 load_settings(&config.settings, &config.default_model()).await,
                 RepoList::load(&config.repo_list).await,
                 config.credentials.jev_key().await,
+                Self::load_ui_state(&config).await,
             )
         });
         let repos = Arc::default();
@@ -574,6 +579,8 @@ impl Host {
             jev_key: Mutex::new(jev_key),
             list_saving: Saving::default(),
             settings_saving: Saving::default(),
+            ui_state: Mutex::new(ui_state),
+            ui_saving: Saving::default(),
             repo_states: Mutex::default(),
             catalog_wanted: Arc::default(),
             catalog_feed: tokio::sync::watch::Sender::new(None),

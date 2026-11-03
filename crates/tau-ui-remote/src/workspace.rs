@@ -221,6 +221,9 @@ fn own_keys() -> Vec<KeyBinding> {
 /// What the user asked for. The host subscribes and acts on these.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WorkspaceEvent {
+    /// A plugin's UI state changed here: the host keeps it, and every
+    /// interface shows it (ADR 0045).
+    Ui(tau_ui_plugin::UiEvent),
     /// Start a new run with this prompt, on this model, in this
     /// repository.
     NewRun {
@@ -496,6 +499,8 @@ pub struct Workspace {
     /// History's query box, and what the last query returned.
     pub(crate) query: Entity<TextInput>,
     pub(crate) query_result: Option<Result<tau_store::Table, String>>,
+    /// Every plugin's UI state, alike on every interface (ADR 0045).
+    pub(crate) ui_state: tau_ui_plugin::UiState,
     /// Files attached to the next message.
     pub(crate) attachments: Vec<crate::attach::Attachment>,
     /// The search palette, and what is typed in it.
@@ -848,6 +853,7 @@ impl Workspace {
             history_filter,
             query,
             query_result: None,
+            ui_state: tau_ui_plugin::UiState::default(),
             searching: false,
             search,
             attachments: Vec::new(),
@@ -1185,6 +1191,8 @@ impl Workspace {
             }
             HostUpdate::Setup(update) => self.update_setup(update, cx),
             HostUpdate::Snapshot(synced) => self.restore(*synced, cx),
+            HostUpdate::Ui(event) => self.ui_state.apply(&event),
+            HostUpdate::UiState(state) => self.ui_state = state,
             HostUpdate::BranchKept(run) => {
                 self.kept_branch = Some(run);
                 cx.notify();

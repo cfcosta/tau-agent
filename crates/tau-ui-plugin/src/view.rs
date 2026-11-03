@@ -204,6 +204,13 @@ pub enum Request {
     /// Ends the plugin's step of first-run setup ([`crate::points::SETUP`]):
     /// setup goes on to the next step, or to Ready.
     SetupDone,
+    /// Sets `key` of the plugin's UI state, or forgets it: every
+    /// interface of this tau shows the change, and the host keeps it
+    /// (ADR 0045).
+    Ui {
+        key: String,
+        value: Option<Value>,
+    },
 }
 
 /// Where a [`Handle`]'s requests go: the interface, which carries out
@@ -229,6 +236,22 @@ impl Handle {
 
     pub fn request(&self, request: Request, cx: &mut App) {
         (self.sink)(self.plugin, request, cx);
+    }
+
+    /// Sets `key` of the plugin's UI state to `value`, or forgets it.
+    pub fn set_ui(
+        &self,
+        key: impl Into<String>,
+        value: Option<Value>,
+        cx: &mut App,
+    ) {
+        self.request(
+            Request::Ui {
+                key: key.into(),
+                value,
+            },
+            cx,
+        );
     }
 
     /// Asks the plugin's host half to carry out `action`.
@@ -420,11 +443,15 @@ pub struct ViewCx<'a, P: UiPlugin> {
     cards: &'a dyn Fn(&RunId) -> Vec<crate::CardInfo>,
     /// Every plugin's data, by plugin: see [`Self::data_of`].
     others: &'a BTreeMap<String, crate::PluginValue>,
+    /// The plugin's UI state: see [`Self::ui_value`].
+    ui_state: &'a BTreeMap<String, Value>,
     pub cx: &'a mut App,
 }
 
 /// No plugin's data, for a view made without it.
 static NO_OTHERS: BTreeMap<String, crate::PluginValue> = BTreeMap::new();
+/// No UI state, for a view made without it.
+static NO_UI_STATE: BTreeMap<String, Value> = BTreeMap::new();
 
 impl<'a, P: UiPlugin> ViewCx<'a, P> {
     #[allow(clippy::too_many_arguments)]
@@ -461,8 +488,24 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             runs,
             cards,
             others: &NO_OTHERS,
+            ui_state: &NO_UI_STATE,
             cx,
         }
+    }
+
+    /// The same view, reading the plugin's UI state from `ui_state`.
+    pub fn with_ui_state(
+        mut self,
+        ui_state: &'a BTreeMap<String, Value>,
+    ) -> Self {
+        self.ui_state = ui_state;
+        self
+    }
+
+    /// `key` of the plugin's UI state, as every interface has it
+    /// (ADR 0045); set it with [`Handle::set_ui`].
+    pub fn ui_value(&self, key: &str) -> Option<&'a Value> {
+        self.ui_state.get(key)
     }
 
     /// The same view, reading other plugins' data from `others`.

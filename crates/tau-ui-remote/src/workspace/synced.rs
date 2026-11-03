@@ -32,6 +32,7 @@ pub struct Synced {
     #[serde(with = "pairs")]
     pub branch_code: HashMap<(RunId, RunId), CodeState>,
     pub query_result: Option<Result<tau_store::Table, String>>,
+    pub ui_state: tau_ui_plugin::UiState,
 }
 
 impl Workspace {
@@ -51,6 +52,7 @@ impl Workspace {
             pull_requests,
             branch_code,
             query_result,
+            ui_state,
         } = synced;
         self.set_catalog(catalog, cx);
         self.queued = queued;
@@ -62,6 +64,7 @@ impl Workspace {
         self.pull_requests = pull_requests;
         self.branch_code = branch_code;
         self.query_result = query_result;
+        self.ui_state = ui_state;
         self.replace_runs(runs, cx);
     }
 
@@ -81,6 +84,7 @@ impl Workspace {
             pull_requests,
             branch_code,
             query_result,
+            ui_state,
             // The device's own.
             name: _,
             route: _,
@@ -196,6 +200,7 @@ impl Workspace {
             pull_requests: pull_requests.clone(),
             branch_code: branch_code.clone(),
             query_result: query_result.clone(),
+            ui_state: ui_state.clone(),
         }
     }
 }

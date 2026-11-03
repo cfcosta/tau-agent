@@ -773,6 +773,10 @@ impl Host {
     ) -> Arc<Host> {
         let host = Arc::new(self);
         let attached = host.clone();
+        // Where plugins' UIs were left, as the host saved it (ADR 0045).
+        workspace.update(cx, |ws, cx| {
+            ws.apply(HostUpdate::UiState(host.ui_state()), cx)
+        });
         show_catalogs(&host, workspace, cx);
         {
             let history = host.spawn(async move |host| host.history().await);
@@ -1361,6 +1365,24 @@ impl Host {
                                 "tau-ui: cannot save the repository list: {error:#}"
                             );
                         }
+                    });
+                }
+                WorkspaceEvent::Ui(event) => {
+                    // Every interface shows it: this one did already, and
+                    // applying it again leaves it as it is.
+                    let (saved, shown) = (event.clone(), event.clone());
+                    handler.spawn(async move |host| {
+                        if let Err(error) = host.set_ui(&saved).await {
+                            eprintln!(
+                                "tau-ui: cannot save the interface's state: {error:#}"
+                            );
+                        }
+                    });
+                    let workspace = workspace.clone();
+                    cx.defer(move |cx| {
+                        workspace.update(cx, |ws, cx| {
+                            ws.apply(HostUpdate::Ui(shown), cx);
+                        });
                     });
                 }
                 // `phone_server::serve` handles these in its own

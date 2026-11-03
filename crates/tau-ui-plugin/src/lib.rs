@@ -38,6 +38,7 @@ pub mod services;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod tree;
+pub mod ui_state;
 pub mod value;
 pub mod view;
 
@@ -102,6 +103,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 pub use services::Services;
 use tau_agent::plugin::Plugin;
+pub use ui_state::{UiEvent, UiState};
 pub use value::PluginValue;
 pub use view::{
     ENTRY,

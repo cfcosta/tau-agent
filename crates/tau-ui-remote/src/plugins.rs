@@ -270,6 +270,17 @@ impl Workspace {
             Request::Cancel(run) => cx.emit(WorkspaceEvent::Cancel { run }),
             Request::Note(text) => self.show_composer_note(text, cx),
             Request::SetupDone => self.plugin_setup_step_done(plugin, cx),
+            Request::Ui { key, value } => {
+                // Shown here at once; the host keeps it, and tells the
+                // other interfaces.
+                let event = tau_ui_plugin::UiEvent {
+                    plugin: plugin.to_owned(),
+                    key,
+                    value,
+                };
+                self.ui_state.apply(&event);
+                cx.emit(WorkspaceEvent::Ui(event));
+            }
         }
         cx.notify();
     }
@@ -363,6 +374,7 @@ impl Workspace {
             runs: &runs,
             cards: &cards,
             others: &self.catalog.plugin_data,
+            ui_state: self.ui_state.of(name),
             cx,
         };
         Some(f(plugin, env))

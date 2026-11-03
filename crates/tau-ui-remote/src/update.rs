@@ -185,6 +185,10 @@ pub enum HostUpdate {
     /// Everything an interface shows alike, for one that just connected:
     /// what the host's interface shows.
     Snapshot(Box<crate::workspace::Synced>),
+    /// A change to a plugin's UI state, from any interface (ADR 0045).
+    Ui(tau_ui_plugin::UiEvent),
+    /// Every plugin's UI state, as the host kept it.
+    UiState(tau_ui_plugin::UiState),
 }
 
 impl HostUpdate {

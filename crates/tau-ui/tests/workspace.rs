@@ -3514,3 +3514,70 @@ fn a_host_half_wakes_a_chat_that_is_idle(cx: &mut TestAppContext) {
         Waking::Gone
     );
 }
+
+/// A plugin's UI state changed on a phone (ADR 0045) shows there at
+/// once, goes to the host as an event, and comes back to every
+/// interface from the computer: the phone and the computer then show
+/// the same state.
+#[gpui::test]
+fn a_plugins_ui_state_set_on_a_phone_reaches_the_computer(
+    cx: &mut TestAppContext,
+) {
+    use tau_ui_remote::{update::HostUpdate, workspace::WorkspaceEvent};
+
+    let (computer, mut computer_cx, _) = open(cx);
+    let (phone, mut phone_cx, _) = open(cx);
+    let echoed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = echoed.clone();
+    computer_cx.update(|_, cx| {
+        cx.subscribe(&computer, move |_, update: &HostUpdate, _| {
+            seen.borrow_mut().push(update.clone())
+        })
+        .detach()
+    });
+    computer.update(&mut computer_cx, |ws, _| ws.set_mirrored(true));
+    let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let up = sent.clone();
+    phone_cx.update(|_, cx| {
+        cx.subscribe(&phone, move |_, event: &WorkspaceEvent, _| {
+            if let WorkspaceEvent::Ui(event) = event {
+                up.borrow_mut().push(event.clone())
+            }
+        })
+        .detach()
+    });
+
+    phone.update(&mut phone_cx, |ws, cx| {
+        ws.plugin_handle(tau_goal::NAME).set_ui(
+            "open",
+            Some(serde_json::json!(true)),
+            cx,
+        )
+    });
+    phone_cx.run_until_parked();
+    let shown = |ws: &tau_ui_remote::workspace::Workspace| {
+        ws.synced().ui_state.get(tau_goal::NAME, "open").cloned()
+    };
+    assert_eq!(
+        phone.update(&mut phone_cx, |ws, _| shown(ws)),
+        Some(serde_json::json!(true))
+    );
+
+    // The host applies what the phone sent on the computer, which echoes
+    // it to the phones.
+    let events: Vec<_> = sent.borrow_mut().drain(..).collect();
+    assert_eq!(events.len(), 1);
+    computer.update(&mut computer_cx, |ws, cx| {
+        ws.apply(HostUpdate::Ui(events[0].clone()), cx)
+    });
+    computer_cx.run_until_parked();
+    phone.update(&mut phone_cx, |ws, cx| {
+        for update in echoed.borrow_mut().drain(..) {
+            ws.apply(update, cx);
+        }
+    });
+    assert_eq!(
+        phone.update(&mut phone_cx, |ws, _| ws.synced()),
+        computer.update(&mut computer_cx, |ws, _| ws.synced()),
+    );
+}

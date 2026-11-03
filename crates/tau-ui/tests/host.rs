@@ -4213,3 +4213,59 @@ fn a_command_left_running_goes_on_in_the_next_turn() {
     assert!(!answered.contains("No process"), "{answered}");
     llm.assert_exhausted();
 }
+
+/// The interface's state for plugins (ADR 0045) is saved as it changes,
+/// and a host made again over the same files has it as it was left.
+#[test]
+fn the_interfaces_state_comes_back_after_a_restart() {
+    use tau_ui_plugin::UiEvent;
+
+    let repo_list = fresh_repo_list();
+    let make = || {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+        let config = HostConfig {
+            account: test_account(),
+            credentials: Credentials::new(
+                fresh_repo_list().with_extension("config"),
+            ),
+            model: Some("gpt-6-luna".into()),
+            store: repo_list.with_file_name("runs.db"),
+            repos: repo_list.with_file_name("repos"),
+            settings: fresh_repo_list().with_extension("models"),
+            repo_list: repo_list.clone(),
+            skills: std::env::temp_dir().join("tau-test-skills-none"),
+            home: None,
+            identity: Identity::default(),
+        };
+        let agent = Agent::new(ScriptedModel::new()).name("coder");
+        Host::with_agent(runtime, agent, store, config).0
+    };
+    let set = |key: &str, value: Option<serde_json::Value>| UiEvent {
+        plugin: "tau-goal".into(),
+        key: key.into(),
+        value,
+    };
+
+    let first = make();
+    assert_eq!(first.ui_state(), tau_ui_plugin::UiState::default());
+    for event in [
+        set("open", Some(serde_json::json!(true))),
+        set("draft", Some(serde_json::json!("half a goal"))),
+        set("open", None),
+    ] {
+        tau_testing::block_on_io(first.set_ui(&event)).unwrap();
+    }
+    let left = first.ui_state();
+    assert_eq!(
+        left.get("tau-goal", "draft"),
+        Some(&serde_json::json!("half a goal"))
+    );
+    assert_eq!(left.get("tau-goal", "open"), None);
+    drop(first);
+
+    assert_eq!(make().ui_state(), left);
+}
