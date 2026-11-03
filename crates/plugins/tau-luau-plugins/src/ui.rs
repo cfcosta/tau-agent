@@ -15,7 +15,6 @@ use gpui::{
     Styled,
     div,
     prelude::*,
-    relative,
     rems,
 };
 use serde::{Deserialize, Serialize};
@@ -55,6 +54,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, CardView},
+    tree::{Draw, Node},
 };
 
 use crate::{
@@ -78,10 +78,6 @@ pub const PAGE: &str = "luau-plugins";
 /// The command that writes or changes a plugin.
 const COMMAND: &str = "plugin";
 
-/// How deep a view tree may nest, and how many pieces a list or a row
-/// may hold, before the rest is left out.
-const MAX_DEPTH: usize = 12;
-const MAX_CHILDREN: usize = 200;
 /// Log lines a run keeps per plugin, the newest.
 const MAX_LOGS: usize = 200;
 
@@ -174,207 +170,19 @@ impl State {
     }
 }
 
-/// A piece's tone, as the theme has it.
-fn tone(of: &Value) -> Tone {
-    match of.as_str() {
-        Some("good") => Tone::Good,
-        Some("warn") => Tone::Warn,
-        Some("bad") => Tone::Danger,
-        Some("info") => Tone::Info,
-        _ => Tone::Quiet,
-    }
-}
-
-/// Draws a view tree a Luau plugin returned. A piece it does not know,
-/// or past [`MAX_DEPTH`], draws as a red box that says so.
-pub fn draw(piece: &Value, t: &Theme) -> AnyElement {
-    draw_at(piece, t, 0, None)
+/// Draws a view tree a Luau plugin returned (ADR 0045's tree). A piece
+/// it does not know draws as a red box that says so.
+pub fn draw(piece: &Value, id: &str, t: &Theme) -> AnyElement {
+    Draw::new(t, id.to_owned()).draw(&Node::read(piece))
 }
 
 /// Draws a settings page: its bound pieces read and save the settings
 /// through `bind` (ADR 0029).
 pub fn draw_bound(piece: &Value, t: &Theme, bind: &Bind) -> AnyElement {
-    draw_at(piece, t, 0, Some(bind))
-}
-
-fn text(piece: &Value, key: &str) -> String {
-    piece[key].as_str().unwrap_or_default().to_owned()
-}
-
-fn children(
-    piece: &Value,
-    key: &str,
-    t: &Theme,
-    depth: usize,
-    bind: Option<&Bind>,
-) -> Vec<AnyElement> {
-    piece[key]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .take(MAX_CHILDREN)
-        .map(|child| draw_at(child, t, depth + 1, bind))
-        .collect()
-}
-
-fn unknown(what: String, t: &Theme) -> AnyElement {
-    div()
-        .px(sp(2.))
-        .py(sp(1.))
-        .rounded(radius::SMALL)
-        .border_1()
-        .border_color(t.red_border)
-        .typeset(Type::CAPTION)
-        .text_color(t.red)
-        .child(what)
-        .into_any_element()
-}
-
-fn draw_at(
-    piece: &Value,
-    t: &Theme,
-    depth: usize,
-    bind: Option<&Bind>,
-) -> AnyElement {
-    if depth > MAX_DEPTH {
-        return unknown("the view nests too deep".into(), t);
-    }
-    if let Some(plain) = piece.as_str() {
-        return div()
-            .typeset(Type::SMALL)
-            .text_color(t.text_soft)
-            .child(plain.to_owned())
-            .into_any_element();
-    }
-    match piece["piece"].as_str().unwrap_or_default() {
-        "text" => div()
-            .typeset(Type::SMALL)
-            .text_color(t.text_soft)
-            .child(text(piece, "text"))
-            .into_any_element(),
-        "rich" => div()
-            .typeset(Type::SMALL)
-            .child(rich(&text(piece, "text"), t.text_soft, t))
-            .into_any_element(),
-        "mono" => mono(text(piece, "text"), Type::CAPTION, t.text_soft)
-            .into_any_element(),
-        "badge" => {
-            let color = t.tone(tone(&piece["tone"]));
-            badge(text(piece, "text"), color, color.opacity(0.4))
-                .into_any_element()
-        }
-        "status" => {
-            let color = t.tone(tone(&piece["tone"]));
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .child(dot(color, 7.))
-                .child(
-                    div()
-                        .typeset(Type::SMALL)
-                        .text_color(t.text)
-                        .child(text(piece, "text")),
-                )
-                .when_some(piece["detail"].as_str(), |row, detail| {
-                    row.child(mono(detail.to_owned(), Type::CAPTION, t.dim))
-                })
-                .into_any_element()
-        }
-        "rows" => div()
-            .flex()
-            .flex_col()
-            .gap(sp(1.))
-            .children(
-                piece["rows"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .take(MAX_CHILDREN)
-                    .map(|row| {
-                        div()
-                            .flex()
-                            .gap(sp(3.))
-                            .child(
-                                mono(text(row, "key"), Type::CAPTION, t.dim)
-                                    .w(rems(8.))
-                                    .flex_shrink_0(),
-                            )
-                            .child(
-                                div()
-                                    .typeset(Type::SMALL)
-                                    .text_color(t.text_soft)
-                                    .child(text(row, "value")),
-                            )
-                    }),
-            )
-            .into_any_element(),
-        "list" => div()
-            .flex()
-            .flex_col()
-            .gap(sp(1.))
-            .children(children(piece, "items", t, depth, bind).into_iter().map(
-                |item| {
-                    div()
-                        .flex()
-                        .gap(sp(2.))
-                        .child(div().text_color(t.dim).child("•"))
-                        .child(div().flex_1().min_w(rems(0.)).child(item))
-                },
-            ))
-            .into_any_element(),
-        "progress" => {
-            let share =
-                piece["share"].as_f64().unwrap_or(0.).clamp(0., 1.) as f32;
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(1.))
-                .when_some(piece["label"].as_str(), |column, label| {
-                    column.child(mono(label.to_owned(), Type::CAPTION, t.dim))
-                })
-                .child(
-                    div()
-                        .w_full()
-                        .h(rems(0.375))
-                        .rounded(radius::SMALL)
-                        .bg(t.raised)
-                        .child(
-                            div()
-                                .h_full()
-                                .w(relative(share))
-                                .rounded(radius::SMALL)
-                                .bg(t.accent),
-                        ),
-                )
-                .into_any_element()
-        }
-        "code" => code_block(piece["lang"].as_str(), &text(piece, "text"), t)
-            .into_any_element(),
-        "stack" => div()
-            .flex()
-            .flex_col()
-            .gap(sp(2.))
-            .children(children(piece, "children", t, depth, bind))
-            .into_any_element(),
-        "row" => div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(sp(2.))
-            .children(children(piece, "children", t, depth, bind))
-            .into_any_element(),
-        // Buttons send their action once actions arrive (ADR 0027, phase 2).
-        "button" => badge(text(piece, "label"), t.muted, t.border_strong)
-            .into_any_element(),
-        "toggle" | "choice" | "field" => match bind {
-            Some(bind) => crate::pane::bound(piece, t, bind),
-            None => {
-                unknown("a setting, drawn on a settings page only".into(), t)
-            }
-        },
-        other => unknown(format!("unknown piece `{other}`"), t),
-    }
+    let setting = |piece: &Value, t: &Theme| crate::pane::bound(piece, t, bind);
+    Draw::new(t, "luau-settings")
+        .setting(&setting)
+        .draw(&Node::read(piece))
 }
 
 impl UiPlugin for LuauPluginsUi {
@@ -428,7 +236,11 @@ impl UiPlugin for LuauPluginsUi {
                         div()
                             .px(sp(3.5))
                             .py(sp(2.5))
-                            .child(draw(card, &t))
+                            .child(draw(
+                                card,
+                                &format!("luau-card-{}", at.call_id),
+                                &t,
+                            ))
                             .into_any_element(),
                     ),
                     ..CardView::default()

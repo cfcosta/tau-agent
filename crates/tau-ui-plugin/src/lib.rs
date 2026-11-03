@@ -37,6 +37,7 @@ pub mod run;
 pub mod services;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod tree;
 pub mod value;
 pub mod view;
 
