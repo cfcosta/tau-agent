@@ -870,6 +870,7 @@ fn details(server: &ServerRow) -> Vec<Node> {
                 "Called as".into(),
             ],
             rows: server.tools.iter().map(tool_row).collect(),
+            widths: vec![1.5, 1., 1.5, 2.],
         });
     }
     if has_more(server) {
