@@ -103,6 +103,9 @@ struct Inner {
 #[derive(Debug, Default)]
 struct RunState {
     states: HashMap<String, Value>,
+    /// Each plugin's state as last stored with the run, by this run or
+    /// as it started: a stored state that differs came from elsewhere.
+    stored: HashMap<String, Value>,
     failures: HashMap<String, u32>,
     /// The digest of each plugin's version the run last drew.
     drawn: HashMap<String, String>,
@@ -219,12 +222,42 @@ impl Inner {
         {
             return None;
         }
+        // Views and cards only draw the state; anything else may change
+        // it, so it starts from the state as stored.
+        if !matches!(hook, Hook::View | Hook::Card(_)) {
+            self.catch_up(state, ctx).await;
+        }
         let context = self.context(&ctx.run, state, active);
         let outcome = active
             .loaded
             .call(&hook, input, &context, reach, ctx.cancel.child_token())
             .await;
         self.apply(active, &hook, outcome, state, ctx).await
+    }
+
+    /// Takes each plugin's state stored with the run since this run last
+    /// knew it: what an interface recorded meanwhile, such as an action
+    /// a button carried out (ADR 0045).
+    async fn catch_up(&self, state: &mut RunState, ctx: &PluginCtx) {
+        let Ok(records) = ctx.records().await else {
+            return;
+        };
+        let mut last: HashMap<String, Value> = HashMap::new();
+        for record in records {
+            if let Ok(Record::State {
+                plugin,
+                state: stored,
+            }) = serde_json::from_value::<Record>(record)
+            {
+                last.insert(plugin, stored);
+            }
+        }
+        for (plugin, stored) in last {
+            if state.stored.get(&plugin) != Some(&stored) {
+                state.states.insert(plugin.clone(), stored.clone());
+                state.stored.insert(plugin, stored);
+            }
+        }
     }
 
     async fn apply(
@@ -262,6 +295,7 @@ impl Inner {
         }
         if state.states.get(&plugin) != Some(&outcome.state) {
             state.states.insert(plugin.clone(), outcome.state.clone());
+            state.stored.insert(plugin.clone(), outcome.state.clone());
             ctx.publish(&Record::State {
                 plugin: plugin.clone(),
                 state: outcome.state,
@@ -371,6 +405,7 @@ impl Plugin for LuauPlugins {
                 else {
                     continue;
                 };
+                state.stored.insert(plugin.clone(), kept.clone());
                 state.states.insert(plugin, kept);
             }
             for active in self.0.active().iter() {

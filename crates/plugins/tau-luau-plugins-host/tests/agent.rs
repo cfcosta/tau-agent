@@ -633,3 +633,84 @@ fn the_clock_names_the_day(tc: TestCase) {
         serde_json::json!({ "unix": unix, "iso": iso, "weekday": weekday })
     );
 }
+
+/// `click`: stores a plugin's state with the run as an interface does
+/// when a button's action changed it (ADR 0045).
+struct Click {
+    store: Store,
+    state: Value,
+}
+
+#[async_trait]
+impl AgentTool for Click {
+    fn name(&self) -> &str {
+        "click"
+    }
+
+    fn description(&self) -> &str {
+        "Clicks a button."
+    }
+
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::LazyLock<Value> =
+            std::sync::LazyLock::new(|| json!({ "type": "object" }));
+        &SCHEMA
+    }
+
+    async fn call(
+        &self,
+        _args: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let body = serde_json::to_string(&Record::State {
+            plugin: "counter".into(),
+            state: self.state.clone(),
+        })
+        .unwrap();
+        self.store
+            .append_turn(
+                &ctx.run.0,
+                &[tau_store::Entry::Plugin {
+                    plugin: NAME.into(),
+                    body,
+                }],
+                tau_store::TurnUsage::default(),
+            )
+            .await
+            .map_err(|error| ToolError::from(error.to_string()))?;
+        Ok(ToolOutput::text("clicked"))
+    }
+}
+
+/// A state an interface stores with a run while it goes on is the one
+/// the plugin's next hook starts from: a button clicked mid-run sticks.
+#[test]
+fn a_state_stored_mid_run_is_where_the_next_hook_starts() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("mark", json!({})))
+        .turn(|t| t.tool_call("click", json!({})))
+        .turn(|t| t.tool_call("mark", json!({})))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(llm)
+        .tool(Click {
+            store: store.clone(),
+            state: json!({ "n": 10 }),
+        })
+        .plugin(LuauPlugins::new(
+            vec![active("counter", COUNTER_V1)],
+            json!({ "kind": "chat", "repo": "r", "model": "m" }),
+            None,
+        ));
+    let events: Vec<RunEvent> = block_on_io(async {
+        let mut run = agent.start("mark, click, mark", &store);
+        let events = run.events().collect().await;
+        run.outcome().await.unwrap();
+        events
+    });
+    let marks: Vec<String> = results(&events)
+        .into_iter()
+        .filter(|text| text != "clicked")
+        .collect();
+    assert_eq!(marks, ["v1 1", "v1 11"], "{events:#?}");
+}
