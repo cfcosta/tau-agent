@@ -18,6 +18,7 @@ take one path.
 | `catalog::Catalog`               | What the workspace shows beyond runs: plugins, repositories, the store, plugins' jobs        |
 | `plugins`                        | The plugins in order (`plugins::plugins`), UI halves only, and `install` for a host's        |
 | `remote`                         | The phone's side: `remote::connect` pairs with a computer and applies what it sends          |
+| `views`                          | Plugins' views by name (ADR 0046): the computer builds them, a phone draws what comes back   |
 | `attention`                      | Whether a chat needs the person: `Attention::of` over a run's `Facts`                        |
 | `setup`, `pairing`, `phones`     | Onboarding, a phone's pairing, and the computer's list of phones                             |
 | `pull_request`, `push`, `queue`  | Pull requests, pushing main, and the landing queue, as the host reports them                 |
@@ -106,3 +107,4 @@ tau's own repositories. Unit tests sit in `src/`.
 - [docs/decisions/0013-phones-connect-to-a-running-tau.md](../../docs/decisions/0013-phones-connect-to-a-running-tau.md)
 - [docs/decisions/0017-plugins-bring-their-ui.md](../../docs/decisions/0017-plugins-bring-their-ui.md)
 - [docs/decisions/0030-host-halves-are-crates.md](../../docs/decisions/0030-host-halves-are-crates.md)
+- [docs/decisions/0046-the-phone-draws-what-the-computer-builds.md](../../docs/decisions/0046-the-phone-draws-what-the-computer-builds.md)

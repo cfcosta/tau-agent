@@ -28,8 +28,12 @@ still builds and tests on the desktop.
 ## How it fits
 
 It builds on `tau-ui-remote` (the interface, and its phone-side `remote`)
-and `tau-remote` (`PairingCode`). It brings each plugin's UI half and none
-of their host halves, so no tools, Luau, jj-lib or MCP client end up in the
+and `tau-remote` (`PairingCode`). It draws plugins' views as the computer
+builds them, and sends their clicks, commands and keys to the computer,
+which carries them out
+([0046](../../docs/decisions/0046-the-phone-draws-what-the-computer-builds.md)).
+It still links each plugin's UI half, which the kernel names, and none of
+their host halves, so no tools, Luau, jj-lib or MCP client end up in the
 APK. Nothing depends on it.
 
 ## Building
