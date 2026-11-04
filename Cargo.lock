@@ -10284,6 +10284,7 @@ dependencies = [
  "pulldown-cmark",
  "qrcode",
  "serde",
+ "serde_json",
  "similar 3.2.0",
  "tau-terminal",
  "tree-sitter-bash",

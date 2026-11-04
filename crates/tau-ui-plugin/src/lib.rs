@@ -41,6 +41,7 @@ pub mod tree;
 pub mod ui_state;
 pub mod value;
 pub mod view;
+pub mod wire;
 
 pub use host::{
     By,

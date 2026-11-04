@@ -278,12 +278,15 @@ impl Icon {
     /// The icon a view tree names: its file's name, `sub-agent` for
     /// `icons/sub-agent.svg`.
     pub fn named(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|icon| {
-            icon.path()
-                .strip_prefix("icons/")
-                .and_then(|file| file.strip_suffix(".svg"))
-                == Some(name)
-        })
+        Self::ALL.into_iter().find(|icon| icon.name() == name)
+    }
+
+    /// Its file's name, as a view tree and the wire name it.
+    pub fn name(self) -> &'static str {
+        let path = self.path();
+        path.strip_prefix("icons/")
+            .and_then(|file| file.strip_suffix(".svg"))
+            .unwrap_or(path)
     }
 
     const ALL: [Self; 54] = [
@@ -348,6 +351,23 @@ impl Icon {
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{}</svg>"#,
             self.body()
         )
+    }
+}
+
+/// An icon crosses by its file's name; one this build does not have
+/// reads as the plug.
+impl serde::Serialize for Icon {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.name())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Icon {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        d: D,
+    ) -> Result<Self, D::Error> {
+        let name = String::deserialize(d)?;
+        Ok(Self::named(&name).unwrap_or(Self::Plug))
     }
 }
 
@@ -439,6 +459,22 @@ pub fn load_fonts(cx: &App) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each icon crosses by a name of its own, and reads back as itself;
+    /// a name this build lacks reads as the plug.
+    #[test]
+    fn every_icon_reads_back_by_its_name() {
+        for icon in Icon::ALL {
+            let json = serde_json::to_value(icon).unwrap();
+            assert_eq!(json, serde_json::json!(icon.name()));
+            assert_eq!(serde_json::from_value::<Icon>(json).unwrap(), icon);
+        }
+        let unknown = serde_json::json!("not-an-icon");
+        assert_eq!(
+            serde_json::from_value::<Icon>(unknown).unwrap(),
+            Icon::Plug
+        );
+    }
 
     #[test]
     fn every_icon_is_served_as_svg() {

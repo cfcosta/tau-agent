@@ -53,6 +53,12 @@ pub trait PointCx: 'static {
     fn key(&self) -> String {
         String::new()
     }
+
+    /// The context by name, as it crosses to the computer that rebuilds
+    /// it (ADR 0046); none for one that stays on the computer.
+    fn wire(&self) -> Option<crate::wire::AtKey> {
+        None
+    }
 }
 
 type Contribute<P> = Box<

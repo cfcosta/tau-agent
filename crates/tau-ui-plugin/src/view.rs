@@ -75,7 +75,7 @@ impl Link {
 
 /// An entry in the interface's navigation: the sidebar, the phone's
 /// lists, and search.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NavEntry {
     pub label: String,
     pub icon: Icon,
@@ -118,7 +118,7 @@ pub struct PluginStatus {
 
 /// What a plugin adds to a run's row in the sidebar: a line under its
 /// title, and small print at its end.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RowNote {
     /// Under the title in the sidebar.
     pub line: Option<String>,
@@ -138,8 +138,10 @@ pub struct PlanField {
     pub set_by: Option<String>,
 }
 
-/// What a plugin's UI asks of the interface.
-#[derive(Debug, Clone, PartialEq)]
+/// What a plugin's UI asks of the interface. It crosses to a phone that
+/// clicked when it is for that phone's window (ADR 0046).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "request", content = "with", rename_all = "snake_case")]
 pub enum Request {
     /// The plugin's host half carries it out (`UiPlugin::act`).
     Act(Value),

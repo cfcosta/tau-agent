@@ -9,13 +9,18 @@ use crate::{
     manifest::{Point, PointCx},
     tree::Node,
     view::{NavEntry, PlanField, PluginStatus, RowNote, RunInfo},
+    wire::AtKey,
 };
 
 /// No context: the app as a whole.
 #[derive(Debug, Clone, Default)]
 pub struct AtApp;
 
-impl PointCx for AtApp {}
+impl PointCx for AtApp {
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::App)
+    }
+}
 
 /// A repository.
 #[derive(Debug, Clone)]
@@ -26,6 +31,12 @@ pub struct AtRepo {
 impl PointCx for AtRepo {
     fn key(&self) -> String {
         self.repo.clone()
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Repo {
+            repo: self.repo.clone(),
+        })
     }
 }
 
@@ -93,6 +104,12 @@ impl PointCx for AtRun {
     fn key(&self) -> String {
         self.run.id.0.to_string()
     }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Run {
+            run: self.run.id.clone(),
+        })
+    }
 }
 
 /// A message the person sent, in a run's transcript.
@@ -112,6 +129,13 @@ impl PointCx for AtMessage {
     fn key(&self) -> String {
         format!("{}-{}", self.run.id.0, self.index)
     }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Message {
+            run: self.run.id.clone(),
+            index: self.index,
+        })
+    }
 }
 
 /// One of the plugin's anchors in a run's transcript.
@@ -130,6 +154,14 @@ impl PointCx for AtAnchor {
 
     fn key(&self) -> String {
         format!("{}-{}", self.run.id.0, self.key)
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Anchor {
+            run: self.run.id.clone(),
+            key: self.key.clone(),
+            index: self.index,
+        })
     }
 }
 
@@ -153,6 +185,14 @@ impl PointCx for AtRewrite {
     fn key(&self) -> String {
         format!("{}-{}", self.run.id.0, self.key)
     }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Rewrite {
+            run: self.run.id.clone(),
+            key: self.key.clone(),
+            index: self.index,
+        })
+    }
 }
 
 /// A tool call's card, with the anchors the plugin attached to it.
@@ -172,7 +212,8 @@ pub struct AtCard {
 }
 
 /// How a tool's own plugin draws its card, in tau-ui's frame.
-#[derive(Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CardView {
     /// In place of the summary of its arguments.
     pub head: Option<Node>,
@@ -194,6 +235,7 @@ pub struct CardView {
 }
 
 /// What a plugin shows in a run's pane ([`PANE`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PaneView {
     /// What the pane's bar, and the button that opens it, call it.
     pub title: String,
@@ -211,6 +253,13 @@ impl PointCx for AtCard {
 
     fn key(&self) -> String {
         format!("{}-{}", self.run.id.0, self.call_id)
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Card {
+            run: self.run.id.clone(),
+            call: self.call_id.clone(),
+        })
     }
 }
 

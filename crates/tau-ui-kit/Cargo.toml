@@ -31,4 +31,5 @@ tree-sitter-typescript.workspace = true
 [dev-dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 hegeltest.workspace = true
+serde_json.workspace = true
 similar.workspace = true

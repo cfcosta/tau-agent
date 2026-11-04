@@ -68,7 +68,7 @@ pub struct CommandsAt<'a> {
 }
 
 /// A slash command, by name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CommandInfo {
     pub name: String,
     pub hint: String,
