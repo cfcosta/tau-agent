@@ -400,3 +400,42 @@ fn the_form_offers_the_person_s_mcp_servers_that_are_on() {
     assert!(mcp_servers(None).is_empty());
     assert!(mcp_servers(Some(&serde_json::json!([1, 2]))).is_empty());
 }
+
+#[test]
+fn a_form_left_unnamed_takes_its_purpose_s_name() {
+    use tau_agents::{Act, ui::Form};
+    let form = Form {
+        name: String::new(),
+        purpose: "watch the advisories feed".into(),
+        model: None,
+        daily_cap: 1.0,
+        window_secs: 30,
+        servers: Default::default(),
+        making: None,
+        error: None,
+    };
+    let suggested = suggest_name(&form.purpose);
+    assert_eq!(form.chosen_name(), suggested);
+    let Ok(Act::Create { name, .. }) = form.act() else {
+        panic!("the form makes an agent: {:?}", form.act())
+    };
+    assert_eq!(name, suggested);
+    // A name typed wins; one that is not a name is refused.
+    let named = Form {
+        name: " deps ".into(),
+        ..form.clone()
+    };
+    assert_eq!(named.chosen_name(), "deps");
+    let bad = Form {
+        name: "Deps!".into(),
+        ..form.clone()
+    };
+    assert!(bad.act().is_err());
+    // Without a purpose there is nothing to do, nor a name from it.
+    let empty = Form {
+        purpose: " ".into(),
+        ..form
+    };
+    assert_eq!(empty.chosen_name(), "");
+    assert!(empty.act().is_err());
+}

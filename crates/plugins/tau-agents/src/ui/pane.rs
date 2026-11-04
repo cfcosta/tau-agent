@@ -1,28 +1,16 @@
 //! tau-agents' settings pane (ADR 0029): an agent's model and effort,
 //! the most it may spend a day, and how long its events gather. Each
 //! agent keeps them as its repository's copy, in tau's data, where the
-//! agent cannot change them.
+//! agent cannot change them. A view tree (ADR 0045).
 
-use gpui::{
-    AnyElement,
-    Div,
-    InteractiveElement,
-    IntoElement,
-    ParentElement,
-    SharedString,
-    StatefulInteractiveElement,
-    Styled,
-    div,
-    prelude::FluentBuilder,
-    rems,
+use gpui::AnyElement;
+use serde_json::Value;
+use tau_ui_plugin::{
+    ViewCx,
+    tree::{Kind, Node},
 };
-use tau_ui_kit::{
-    components::{self as ui, Material as _},
-    theme::{Design as _, Type, radius, sp},
-};
-use tau_ui_plugin::ViewCx;
 
-use super::AgentsUi;
+use super::{AgentsUi, SETTINGS, button};
 use crate::Settings;
 
 /// The efforts an agent can run at.
@@ -36,65 +24,43 @@ const WINDOWS: [(u64, &str); 4] =
     [(10, "10 s"), (30, "30 s"), (60, "1 min"), (300, "5 min")];
 
 pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
-    let t = view.theme().clone();
-    let settings = view.settings.clone();
+    let tree = pane(view.settings);
     let scope = view.scope().map(str::to_owned);
-    let segment = |id: String, label: String, on: bool, next: Settings| {
-        let handle = view.handle.clone();
-        let scope = scope.clone();
-        div()
-            .id(SharedString::from(id))
-            .h(rems(1.75))
-            .px(sp(2.5))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(radius::CONTROL)
-            .typeset(Type::CAPTION)
-            .cursor_pointer()
-            .text_color(if on { t.text } else { t.muted })
-            .when(on, |segment| segment.key(&t))
-            .child(label)
-            .on_click(move |_, _, cx| {
-                handle.save_settings_in(scope.as_deref(), &next, cx)
-            })
+    let handle = view.handle.clone();
+    view.tree("agents-settings", &tree, move |action, args, cx| {
+        if action != SETTINGS {
+            return;
+        }
+        if let Ok(settings) = serde_json::from_value::<Settings>(args.clone()) {
+            handle.save_settings_in(scope.as_deref(), &settings, cx);
+        }
+    })
+}
+
+/// The pane's tree: a row of choices for each setting, the one chosen
+/// marked.
+pub fn pane(settings: &Settings) -> Node {
+    let choice = |label: String, on: bool, next: Settings| {
+        button(
+            &label,
+            if on { Kind::Primary } else { Kind::Secondary },
+            SETTINGS,
+            serde_json::to_value(next).unwrap_or(Value::Null),
+        )
     };
-    let row = |name: &'static str, caption: &'static str, choices: Div| {
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(2.))
-            .px(sp(4.))
-            .py(sp(3.5))
-            .border_b_1()
-            .border_color(t.border)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(0.75))
-                    .child(name)
-                    .child(ui::text(caption, Type::CAPTION, t.muted)),
-            )
-            .child(choices)
-    };
-    let group = |children: Vec<gpui::Stateful<Div>>| {
-        div()
-            .flex()
-            .flex_wrap()
-            .gap(sp(0.5))
-            .p(sp(0.75))
-            .rounded(radius::CONTROL)
-            .well(&t)
-            .children(children)
+    let row = |name: &str, caption: &str, choices: Vec<Node>| {
+        Node::stack([
+            Node::Heading { text: name.into() },
+            Node::text(caption),
+            Node::Row { children: choices },
+        ])
     };
     let model = settings.model();
     let models = tau_ai::model::plan_models()
         .into_iter()
         .map(|plan| {
             let id = plan.id.to_owned();
-            segment(
-                format!("agent-model-{id}"),
+            choice(
                 id.clone(),
                 model == id,
                 Settings {
@@ -107,8 +73,7 @@ pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
     let efforts = EFFORTS
         .into_iter()
         .map(|effort| {
-            segment(
-                format!("agent-effort-{effort}"),
+            choice(
                 effort.to_owned(),
                 settings.effort() == effort,
                 Settings {
@@ -121,8 +86,7 @@ pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
     let caps = CAPS
         .into_iter()
         .map(|cap| {
-            segment(
-                format!("agent-cap-{cap}"),
+            choice(
                 format!("${cap:.2}"),
                 (settings.daily_cap - cap).abs() < f64::EPSILON,
                 Settings {
@@ -135,8 +99,7 @@ pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
     let windows = WINDOWS
         .into_iter()
         .map(|(seconds, label)| {
-            segment(
-                format!("agent-window-{seconds}"),
+            choice(
                 label.to_owned(),
                 settings.window_secs == seconds,
                 Settings {
@@ -146,22 +109,27 @@ pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
             )
         })
         .collect();
-    ui::card(&t)
-        .child(row(
-            "Model",
-            "What its turns run on. A small model keeps it cheap.",
-            group(models),
-        ))
-        .child(row("Effort", "How hard each turn thinks.", group(efforts)))
-        .child(row(
-            "Most it may spend a day",
-            "At the cap it stops until tomorrow, or until you allow more.",
-            group(caps),
-        ))
-        .child(row(
-            "Gather events for",
-            "An event waits this long for others, so a burst is one turn.",
-            group(windows),
-        ))
-        .into_any_element()
+    Node::Card {
+        children: vec![
+            row(
+                "Model",
+                "What its turns run on. A small model keeps it cheap.",
+                models,
+            ),
+            Node::Rule,
+            row("Effort", "How hard each turn thinks.", efforts),
+            Node::Rule,
+            row(
+                "Most it may spend a day",
+                "At the cap it stops until tomorrow, or until you allow more.",
+                caps,
+            ),
+            Node::Rule,
+            row(
+                "Gather events for",
+                "An event waits this long for others, so a burst is one turn.",
+                windows,
+            ),
+        ],
+    }
 }

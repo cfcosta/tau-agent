@@ -1,38 +1,29 @@
 //! What an agent's conversation shows around it: a banner with where it
-//! stands, a panel in the inspector, and its events as cards.
+//! stands, a panel in the inspector, and its events as cards. Each is a
+//! view tree (ADR 0045).
 
-use gpui::{
-    AnyElement,
-    Div,
-    InteractiveElement,
-    IntoElement,
-    ParentElement,
-    SharedString,
-    StatefulInteractiveElement,
-    Styled,
-    div,
-    prelude::FluentBuilder,
-    rems,
-};
-use tau_ui_kit::{
-    assets::Icon,
-    components::{ButtonKind, bar, button, field, icon, mono},
-    format::usd,
-    theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp, weight},
-};
+use gpui::AnyElement;
+use serde_json::{Value, json};
+use tau_ui_kit::format::usd;
 use tau_ui_plugin::{
     ViewCx,
     points::{AtMessage, AtRun},
+    tree::{Kind, Node, Tone, draft_key},
 };
 
-use super::{AgentsUi, mark, status_pill};
-use crate::{
-    Act,
-    Agent,
-    Status,
-    event::Message,
-    shown::{now, relative},
+use super::{
+    AgentsUi,
+    DETAILS,
+    SAVE_SECRET,
+    SECRET_NAME_INPUT,
+    SECRET_VALUE_INPUT,
+    act_button,
+    button,
+    on_action,
+    status_pill,
+    tree_tone,
 };
+use crate::{Act, Agent, Status, event::Message};
 
 /// Above an agent's conversation: the agent, where it stands, its model,
 /// and the way to pause it or let it go on.
@@ -44,92 +35,64 @@ pub(super) fn banner(
         .data
         .agent_of_main(&at.run.repo, &at.run.id.to_string())?
         .clone();
-    let t = view.theme().clone();
-    let paused = agent.status == Status::Paused;
-    let toggle = {
-        let handle = view.handle.clone();
-        let name = agent.name.clone();
-        button(
-            if paused { "Resume" } else { "Pause" },
-            ButtonKind::Secondary,
-            &t,
-        )
-        .id("agent-pause")
-        .on_click(move |_, _, cx| {
-            let agent = name.clone();
-            if paused {
-                handle.act(Act::Resume { agent }, cx)
-            } else {
-                handle.act(Act::Pause { agent }, cx)
-            }
-        })
-    };
-    // On a phone the panel is in the run's sheet: what the agent left
-    // the person opens it from here.
-    let waits = agent.waits_on_you();
-    let for_you = (view.compact && waits > 0).then(|| {
-        let handle = view.handle.clone();
-        button(format!("{waits} for you"), ButtonKind::Primary, &t)
-            .id("agent-for-you")
-            .on_click(move |_, _, cx| handle.run_details(cx))
-    });
-    let queued = (agent.queued > 0).then(|| {
-        div().typeset(Type::CAPTION).text_color(t.dim).child(
-            match agent.queued {
-                1 => "1 event waiting".to_owned(),
-                n => format!("{n} events waiting"),
-            },
-        )
-    });
-    Some(
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(sp(3.))
-            .px(sp(4.))
-            .py(sp(2.5))
-            .border_b_1()
-            .border_color(t.border)
-            .child(mark(&agent.name, 28., &t))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(rems(12.))
-                    .flex()
-                    .flex_col()
-                    .gap(sp(0.5))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(sp(2.))
-                            .child(mono(agent.name.clone(), Type::BODY, t.text))
-                            .child(status_pill(&agent.status, &t)),
-                    )
-                    .child(
-                        div()
-                            .typeset(Type::CAPTION)
-                            .text_color(t.dim)
-                            .truncate()
-                            .child(format!(
-                                "{} · {} effort · {} of {} today",
-                                agent.model,
-                                agent.effort,
-                                usd(agent.spend_today),
-                                usd(agent.cap_today),
-                            )),
-                    ),
-            )
-            .children(queued)
-            .children(for_you)
-            .child(toggle)
-            .into_any_element(),
-    )
+    let tree = banner_tree(&agent, view.compact);
+    let id = format!("agent-banner-{}", at.run.id.0);
+    let actions = on_action(view.handle.clone(), None, None);
+    Some(view.tree(&id, &tree, actions))
 }
 
-/// The agent's panel in the inspector: what it spent today, what wakes
-/// it, and its versions.
+/// The banner's tree. On a phone the panel is in the run's sheet: what
+/// the agent left the person opens it from here.
+pub fn banner_tree(agent: &Agent, compact: bool) -> Node {
+    let paused = agent.status == Status::Paused;
+    let name = agent.name.clone();
+    let mut head = vec![
+        Node::Icon {
+            name: "sub-agent".into(),
+            tone: tree_tone(&agent.status),
+        },
+        Node::Mono {
+            text: agent.name.clone(),
+        },
+        status_pill(&agent.status),
+        Node::Spacer,
+    ];
+    if agent.queued > 0 {
+        head.push(Node::text(match agent.queued {
+            1 => "1 event waiting".to_owned(),
+            n => format!("{n} events waiting"),
+        }));
+    }
+    let waits = agent.waits_on_you();
+    if compact && waits > 0 {
+        head.push(button(
+            &format!("{waits} for you"),
+            Kind::Primary,
+            DETAILS,
+            Value::Null,
+        ));
+    }
+    head.push(if paused {
+        act_button("Resume", Kind::Secondary, &Act::Resume { agent: name })
+    } else {
+        act_button("Pause", Kind::Secondary, &Act::Pause { agent: name })
+    });
+    Node::Card {
+        children: vec![
+            Node::Row { children: head },
+            Node::text(format!(
+                "{} · {} effort · {} of {} today",
+                agent.model,
+                agent.effort,
+                usd(agent.spend_today),
+                usd(agent.cap_today),
+            )),
+        ],
+    }
+}
+
+/// The agent's panel in the inspector: what it left the person, what it
+/// spent today, what wakes it, its keys and its versions.
 pub(super) fn panel(
     at: &AtRun,
     view: &mut ViewCx<'_, AgentsUi>,
@@ -138,409 +101,307 @@ pub(super) fn panel(
         .data
         .agent_of_main(&at.run.repo, &at.run.id.to_string())?
         .clone();
-    let t = view.theme().clone();
-    let now = now();
-    let allow = (agent.status == Status::AtCap).then(|| {
-        let handle = view.handle.clone();
-        let name = agent.name.clone();
-        button("Allow $1 more today", ButtonKind::Primary, &t)
-            .id("agent-allow")
-            .on_click(move |_, _, cx| {
-                handle.act(
-                    Act::AllowMore {
-                        agent: name.clone(),
-                        amount: 1.0,
-                    },
-                    cx,
-                )
-            })
-    });
-    let today = section("Today", &t)
-        .child(
-            div()
-                .flex()
-                .items_baseline()
-                .gap(sp(1.))
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .child(
-                    div()
-                        .typeset(Type::SMALL)
-                        .text_color(t.text)
-                        .child(usd(agent.spend_today)),
-                )
-                .child(format!("of {}", usd(agent.cap_today))),
-        )
-        .child(bar(agent.spent_share(), 5., t.roles.cost, t.raised))
-        .child(
-            div()
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .child("At its cap it stops and waits. Only you can raise it."),
-        )
-        .children(allow);
-    let scheduled = scheduled(&agent, view, &t, now);
-    let wakes = section("What wakes it", &t)
-        .children(if agent.triggers.is_empty() {
-            if scheduled.is_empty() {
-                vec![div().typeset(Type::CAPTION).text_color(t.dim).child(
-                    "Nothing yet: it declares this in its agent.luau, or \
-                     schedules it from its conversation.",
-                )]
-            } else {
-                Vec::new()
-            }
-        } else {
-            agent
-                .triggers
-                .iter()
-                .map(|trigger| {
-                    // A stream says whether it is open; the rest, when
-                    // they fire next or fired last.
-                    let when = trigger
-                        .connection()
-                        .map(str::to_owned)
-                        .or_else(|| {
-                            trigger.next.map(|next| relative(next, now))
-                        })
-                        .or_else(|| {
-                            trigger.last.map(|last| relative(last, now))
-                        })
-                        .unwrap_or_default();
-                    let when_color = if trigger.live == Some(true) {
-                        t.green
-                    } else {
-                        t.dim
-                    };
-                    let row = div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .child(
-                            mono(
-                                trigger.kind_label(),
-                                Type::MICRO,
-                                t.text_soft,
-                            )
-                            .px(sp(1.5))
-                            .py(sp(0.25))
-                            .rounded(radius::SMALL)
-                            .bg(t.raised),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(rems(0.))
-                                .truncate()
-                                .typeset(Type::CAPTION)
-                                .text_color(t.text_soft)
-                                .child(trigger.label()),
-                        )
-                        .child(
-                            div()
-                                .typeset(Type::MICRO)
-                                .text_color(when_color)
-                                .child(when),
-                        );
-                    // A poll or a stream that failed says why, under it.
-                    div().flex().flex_col().gap(sp(0.5)).child(row).children(
-                        trigger.error.clone().map(|error| {
-                            div()
-                                .typeset(Type::MICRO)
-                                .text_color(t.red)
-                                .line_clamp(2)
-                                .child(error)
-                        }),
-                    )
-                })
-                .collect()
-        })
-        .children(scheduled);
-    let keys = secrets(&agent, view, &t);
-    let left = super::notices::rows(&agent, view, &t);
-    let versions = section("Versions", &t).children(
-        agent
-            .versions
-            .iter()
-            .map(|version| version_row(version, &t)),
+    let draft = |key: &str| {
+        view.ui_value(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let secret = (
+        draft(&draft_key(SECRET_NAME_INPUT)).unwrap_or_default(),
+        draft(&draft_key(SECRET_VALUE_INPUT)).unwrap_or_default(),
     );
-    Some(
-        div()
-            .flex()
-            .flex_col()
-            .when(!left.is_empty(), |panel| {
-                panel.child(section("For you", &t).gap(sp(3.)).children(left))
-            })
-            .child(today)
-            .child(wakes)
-            .child(keys)
-            .when(!agent.versions.is_empty(), |panel| panel.child(versions))
-            .when_some(agent.sandbox.clone(), |panel, problem| {
-                panel.child(
-                    section("Commands", &t).child(
-                        div()
-                            .typeset(Type::CAPTION)
-                            .text_color(t.tone(Tone::Warn))
-                            .child(problem),
-                    ),
-                )
-            })
-            .when_some(broken(&agent), |panel, error| {
-                panel.child(section("Broken", &t).child(
-                    div().typeset(Type::CAPTION).text_color(t.red).child(error),
-                ))
-            })
-            .into_any_element(),
-    )
+    let tree = panel_tree(&agent, &draft);
+    let id = format!("agent-panel-{}", at.run.id.0);
+    let actions = on_action(view.handle.clone(), None, Some(secret));
+    Some(view.tree(&id, &tree, actions))
+}
+
+/// The panel's tree, its fields' drafts read with `draft`.
+pub fn panel_tree(
+    agent: &Agent,
+    draft: &dyn Fn(&str) -> Option<String>,
+) -> Node {
+    let section = |id: &str, title: &str, children: Vec<Node>| Node::Section {
+        id: format!("agent-panel-{id}"),
+        title: title.into(),
+        open: true,
+        children,
+    };
+    let mut panel = Vec::new();
+    let left = super::notices::rows(agent, draft);
+    if !left.is_empty() {
+        panel.push(section("for-you", "For you", left));
+    }
+    let mut today = vec![
+        Node::Progress {
+            share: f64::from(agent.spent_share()),
+            label: Some(format!(
+                "{} of {}",
+                usd(agent.spend_today),
+                usd(agent.cap_today)
+            )),
+        },
+        Node::text("At its cap it stops and waits. Only you can raise it."),
+    ];
+    if agent.status == Status::AtCap {
+        today.push(Node::row([act_button(
+            "Allow $1 more today",
+            Kind::Primary,
+            &Act::AllowMore {
+                agent: agent.name.clone(),
+                amount: 1.0,
+            },
+        )]));
+    }
+    panel.push(section("today", "Today", today));
+    let mut wakes: Vec<Node> = agent
+        .triggers
+        .iter()
+        .map(|trigger| {
+            // A stream says whether it is open; the rest, when they fire
+            // next or fired last.
+            let when = match (trigger.connection(), trigger.next, trigger.last)
+            {
+                (Some(connection), ..) => Node::Pill {
+                    text: connection.into(),
+                    tone: if trigger.live == Some(true) {
+                        Tone::Good
+                    } else {
+                        Tone::Neutral
+                    },
+                },
+                (None, Some(next), _) => Node::Due {
+                    id: format!("trigger-{}-{}-next", agent.name, trigger.name),
+                    at: next * 1000,
+                },
+                (None, None, Some(last)) => ago(
+                    format!("trigger-{}-{}-last", agent.name, trigger.name),
+                    last,
+                ),
+                (None, None, None) => Node::text(""),
+            };
+            let mut rows = vec![Node::row([
+                Node::Pill {
+                    text: trigger.kind_label().into(),
+                    tone: Tone::Neutral,
+                },
+                Node::text(trigger.label()),
+                Node::Spacer,
+                when,
+            ])];
+            // A poll or a stream that failed says why, under it.
+            if let Some(error) = &trigger.error {
+                rows.push(Node::Status {
+                    text: error.clone(),
+                    detail: None,
+                    tone: Tone::Bad,
+                });
+            }
+            Node::Stack { children: rows }
+        })
+        .collect();
+    wakes.extend(scheduled(agent));
+    if wakes.is_empty() {
+        wakes.push(Node::text(
+            "Nothing yet: it declares this in its agent.luau, or schedules \
+             it from its conversation.",
+        ));
+    }
+    panel.push(section("wakes", "What wakes it", wakes));
+    panel.push(section("keys", "Keys", secrets(agent, draft)));
+    if !agent.versions.is_empty() {
+        panel.push(section(
+            "versions",
+            "Versions",
+            agent.versions.iter().map(version_row).collect(),
+        ));
+    }
+    if let Some(problem) = &agent.sandbox {
+        panel.push(section(
+            "commands",
+            "Commands",
+            vec![Node::Status {
+                text: problem.clone(),
+                detail: None,
+                tone: Tone::Warn,
+            }],
+        ));
+    }
+    if let Status::Broken { error } = &agent.status {
+        panel.push(section(
+            "broken",
+            "Broken",
+            vec![Node::Status {
+                text: error.clone(),
+                detail: None,
+                tone: Tone::Bad,
+            }],
+        ));
+    }
+    Node::Stack { children: panel }
+}
+
+/// The time since `at`, in seconds since the epoch, counting: `4:12 ago`.
+pub(super) fn ago(id: String, at: i64) -> Node {
+    Node::row([
+        Node::Ticker {
+            id,
+            since: at * 1000,
+            until: None,
+        },
+        Node::Mono { text: "ago".into() },
+    ])
 }
 
 /// What `agent` scheduled for itself, soonest first: what and when, the
 /// note it left itself under, and a way for the person to cancel it.
-fn scheduled(
-    agent: &Agent,
-    view: &mut ViewCx<'_, AgentsUi>,
-    t: &Theme,
-    now: i64,
-) -> Vec<Div> {
+fn scheduled(agent: &Agent) -> Vec<Node> {
     agent
         .scheduled
         .iter()
         .map(|scheduled| {
-            let handle = view.handle.clone();
-            let (name, key) = (agent.name.clone(), scheduled.name.clone());
-            let cancel = div()
-                .id(SharedString::from(format!(
-                    "scheduled-{}-{}-cancel",
-                    agent.name, scheduled.name
-                )))
-                .size(rems(1.25))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(radius::SMALL)
-                .cursor_pointer()
-                .hover(|style| style.bg(t.raised))
-                .child(icon(Icon::Close, IconSize::SMALL, t.dim))
-                .on_click(move |_, _, cx| {
-                    handle.act(
-                        Act::Unschedule {
-                            agent: name.clone(),
-                            name: key.clone(),
-                        },
-                        cx,
-                    )
-                });
             let repeats = !matches!(scheduled.when, crate::When::Once { .. });
-            let row = div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .child(
-                    mono(
-                        if repeats { "repeats" } else { "once" },
-                        Type::MICRO,
-                        t.text_soft,
-                    )
-                    .px(sp(1.5))
-                    .py(sp(0.25))
-                    .rounded(radius::SMALL)
-                    .bg(t.raised),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .truncate()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.text_soft)
-                        .child(if repeats {
-                            format!(
-                                "{} · {}",
-                                scheduled.name,
-                                scheduled.when.label()
-                            )
-                        } else {
-                            scheduled.name.clone()
-                        }),
-                )
-                .child(
-                    div()
-                        .typeset(Type::MICRO)
-                        .text_color(t.dim)
-                        .child(relative(scheduled.next, now)),
-                )
-                .child(cancel);
-            div().flex().flex_col().gap(sp(0.5)).child(row).child(
-                div()
-                    .typeset(Type::MICRO)
-                    .text_color(t.dim)
-                    .line_clamp(2)
-                    .child(scheduled.note.clone()),
-            )
+            let cancel = Node::Button {
+                label: String::new(),
+                action: super::ACT.into(),
+                args: serde_json::to_value(Act::Unschedule {
+                    agent: agent.name.clone(),
+                    name: scheduled.name.clone(),
+                })
+                .unwrap_or(Value::Null),
+                kind: Kind::Secondary,
+                icon: Some("close".into()),
+            };
+            Node::stack([
+                Node::row([
+                    Node::Pill {
+                        text: if repeats { "repeats" } else { "once" }.into(),
+                        tone: Tone::Neutral,
+                    },
+                    Node::text(if repeats {
+                        format!(
+                            "{} · {}",
+                            scheduled.name,
+                            scheduled.when.label()
+                        )
+                    } else {
+                        scheduled.name.clone()
+                    }),
+                    Node::Spacer,
+                    Node::Due {
+                        id: format!(
+                            "scheduled-{}-{}",
+                            agent.name, scheduled.name
+                        ),
+                        at: scheduled.next * 1000,
+                    },
+                    cancel,
+                ]),
+                Node::Mono {
+                    text: scheduled.note.clone(),
+                },
+            ])
         })
         .collect()
 }
 
 /// The secrets `agent` names, by name, and a way to save one: tau's
 /// secret store holds the values, which never come back here.
-fn secrets(agent: &Agent, view: &mut ViewCx<'_, AgentsUi>, t: &Theme) -> Div {
-    let rows = agent.secrets.iter().map(|secret| {
-        let (state, tone) = if secret.set {
-            ("set", t.green)
-        } else {
-            ("missing", t.roles.waiting)
-        };
-        let remove = secret.set.then(|| {
-            let handle = view.handle.clone();
-            let name = secret.name.clone();
-            let agent = agent.name.clone();
-            div()
-                .id(SharedString::from(format!(
-                    "secret-remove-{}",
-                    secret.name
-                )))
-                .typeset(Type::MICRO)
-                .text_color(t.dim)
-                .cursor_pointer()
-                .child("Remove")
-                .on_click(move |_, _, cx| {
-                    handle.act(
-                        Act::RemoveSecret {
-                            agent: agent.clone(),
-                            name: name.clone(),
-                        },
-                        cx,
-                    )
-                })
-        });
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(2.))
-            .child(div().flex_1().min_w(rems(0.)).truncate().child(mono(
-                secret.name.clone(),
-                Type::CAPTION,
-                t.text_soft,
-            )))
-            .child(div().typeset(Type::MICRO).text_color(tone).child(state))
-            .children(remove)
-    });
-    let ui = view.ui.read(view.cx);
-    let (name, value) = (ui.secret_name.clone(), ui.secret_value.clone());
-    let ready = !name.read(view.cx).text().trim().is_empty()
-        && !value.read(view.cx).text().is_empty();
-    let save = {
-        let ui = view.ui.clone();
-        let agent = agent.name.clone();
-        button("Save", ButtonKind::Secondary, t)
-            .id("secret-save")
-            .when(!ready, |button| button.opacity(0.5))
-            .on_click(move |_, _, cx| {
-                ui.update(cx, |ui, cx| ui.save_secret(&agent, cx))
-            })
-    };
-    section("Keys", t)
-        .children(rows)
-        .when(agent.secrets.is_empty(), |section| {
-            section.child(
-                div()
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child("Its agent.luau names none yet."),
-            )
+fn secrets(agent: &Agent, draft: &dyn Fn(&str) -> Option<String>) -> Vec<Node> {
+    let mut rows: Vec<Node> = agent
+        .secrets
+        .iter()
+        .map(|secret| {
+            let mut row = vec![
+                Node::Mono {
+                    text: secret.name.clone(),
+                },
+                Node::Spacer,
+                Node::Pill {
+                    text: if secret.set { "set" } else { "missing" }.into(),
+                    tone: if secret.set { Tone::Good } else { Tone::Warn },
+                },
+            ];
+            if secret.set {
+                row.push(act_button(
+                    "Remove",
+                    Kind::Secondary,
+                    &Act::RemoveSecret {
+                        agent: agent.name.clone(),
+                        name: secret.name.clone(),
+                    },
+                ));
+            }
+            Node::Row { children: row }
         })
-        .child(
-            div()
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .child("Kept in this agent's own secret store. Its requests name them; no one reads them back."),
-        )
-        .child(field(&name, true, t))
-        .child(field(&value, true, t))
-        .child(save)
-}
-
-/// Why nothing wakes `agent`, when nothing does.
-fn broken(agent: &Agent) -> Option<String> {
-    match &agent.status {
-        Status::Broken { error } => Some(error.clone()),
-        _ => None,
+        .collect();
+    if agent.secrets.is_empty() {
+        rows.push(Node::text("Its agent.luau names none yet."));
     }
-}
-
-/// A section of the agent's panel, under its heading.
-fn section(title: &'static str, t: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .p(sp(3.))
-        .border_b_1()
-        .border_color(t.border)
-        .child(
-            div()
-                .typeset(Type::CAPTION)
-                .font_weight(weight::STRONG)
-                .text_color(t.text)
-                .child(title),
-        )
+    rows.push(Node::text(
+        "Kept in this agent's own secret store. Its requests name them; no \
+         one reads them back.",
+    ));
+    rows.push(Node::Input {
+        id: SECRET_NAME_INPUT.into(),
+        placeholder: Some("github".into()),
+        multiline: false,
+        submit: None,
+        keep: true,
+    });
+    // ADR 0045: not masked yet — needs a masked Input, so the value is
+    // drawn as dots.
+    rows.push(Node::Input {
+        id: SECRET_VALUE_INPUT.into(),
+        placeholder: Some("its value".into()),
+        multiline: false,
+        submit: None,
+        keep: true,
+    });
+    let ready = draft(&draft_key(SECRET_NAME_INPUT))
+        .is_some_and(|name| !name.trim().is_empty())
+        && draft(&draft_key(SECRET_VALUE_INPUT))
+            .is_some_and(|value| !value.is_empty());
+    rows.push(Node::row([button(
+        "Save",
+        if ready {
+            Kind::Primary
+        } else {
+            Kind::Secondary
+        },
+        SAVE_SECRET,
+        json!({ "agent": agent.name }),
+    )]));
+    rows
 }
 
 /// A version of its `agent.luau`: live, failed, or one before.
-fn version_row(version: &crate::Version, t: &Theme) -> Div {
+fn version_row(version: &crate::Version) -> Node {
     let passed = version.tests.iter().filter(|test| test.passed).count();
-    let color = if version.live {
-        t.green
+    let (tone, state) = if version.live {
+        (Tone::Good, "live")
     } else if version.error.is_some() {
-        t.red
+        (Tone::Bad, "never live")
     } else {
-        t.dim
-    };
-    let state = if version.live {
-        "live".to_owned()
-    } else if version.error.is_some() {
-        "never live".to_owned()
-    } else {
-        String::new()
+        (Tone::Neutral, "")
     };
     let short: String = version.commit.chars().take(8).collect();
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(0.5))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .child(tau_ui_kit::components::dot(color, 7.))
-                .child(mono(short, Type::MICRO, t.text_soft))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .truncate()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.text_soft)
-                        .child(version.summary.clone()),
-                )
-                .child(
-                    div().typeset(Type::MICRO).text_color(color).child(state),
-                ),
-        )
-        .when(!version.tests.is_empty(), |row| {
-            row.child(
-                div()
-                    .pl(sp(4.))
-                    .typeset(Type::MICRO)
-                    .text_color(t.dim)
-                    .child(format!(
-                        "{passed} of {} tests pass",
-                        version.tests.len()
-                    )),
-            )
-        })
+    let mut row = vec![Node::row([
+        Node::Status {
+            text: version.summary.clone(),
+            detail: Some(short),
+            tone,
+        },
+        Node::Spacer,
+        Node::Mono { text: state.into() },
+    ])];
+    if !version.tests.is_empty() {
+        row.push(Node::text(format!(
+            "{passed} of {} tests pass",
+            version.tests.len()
+        )));
+    }
+    Node::Stack { children: row }
 }
 
 /// An event message, drawn as the batch it is: how many came and when,
@@ -550,78 +411,48 @@ pub(super) fn event_card(
     view: &mut ViewCx<'_, AgentsUi>,
 ) -> Option<AnyElement> {
     let message = Message::parse(&at.text)?;
-    let t = view.theme().clone();
-    let count = message.events.len();
-    let head = div()
-        .flex()
-        .items_center()
-        .gap(sp(2.))
-        .px(sp(3.))
-        .py(sp(2.))
-        .child(icon(Icon::Clock, IconSize::SMALL, t.roles.agent))
-        .child(
-            div()
-                .flex_1()
-                .typeset(Type::CAPTION)
-                .text_color(t.text)
-                .child(match count {
-                    1 => "1 event".to_owned(),
-                    n => format!("{n} events"),
-                }),
-        )
-        .child(mono(message.span.clone(), Type::MICRO, t.dim));
-    let lines = message.events.iter().enumerate().map(|(index, event)| {
-        div()
-            .id(SharedString::from(format!("event-{}-{index}", at.index)))
-            .flex()
-            .flex_col()
-            .gap(sp(0.5))
-            .px(sp(3.))
-            .py(sp(1.75))
-            .border_t_1()
-            .border_color(t.border)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .child(
-                        mono(event.kind.as_str(), Type::MICRO, t.text_soft)
-                            .px(sp(1.5))
-                            .py(sp(0.25))
-                            .rounded(radius::SMALL)
-                            .bg(t.raised),
-                    )
-                    .child(
-                        div()
-                            .typeset(Type::CAPTION)
-                            .text_color(t.text)
-                            .child(event.trigger.clone()),
-                    )
-                    .child(
-                        mono(event.id.clone(), Type::MICRO, t.dim)
-                            .flex_1()
-                            .min_w(rems(0.))
-                            .truncate(),
-                    )
-                    .child(mono(event.time.clone(), Type::MICRO, t.dim)),
-            )
-            .when(!event.data.is_empty() && event.data != "null", |line| {
-                line.child(
-                    mono(event.data.clone(), Type::MICRO, t.muted).truncate(),
-                )
-            })
-    });
-    Some(
-        div()
-            .max_w(rems(40.))
-            .rounded(radius::BOX)
-            .border_1()
-            .border_color(t.border)
-            .bg(t.card)
-            .overflow_hidden()
-            .child(head)
-            .children(lines)
-            .into_any_element(),
-    )
+    let tree = event_tree(&message);
+    let id = format!("agent-events-{}-{}", at.run.id.0, at.index);
+    Some(view.tree(&id, &tree, |_, _, _| {}))
+}
+
+/// The event card's tree.
+pub fn event_tree(message: &Message) -> Node {
+    let mut card = vec![Node::row([
+        Node::Icon {
+            name: "clock".into(),
+            tone: Tone::Info,
+        },
+        Node::text(match message.events.len() {
+            1 => "1 event".to_owned(),
+            n => format!("{n} events"),
+        }),
+        Node::Spacer,
+        Node::Mono {
+            text: message.span.clone(),
+        },
+    ])];
+    for event in &message.events {
+        card.push(Node::Rule);
+        card.push(Node::row([
+            Node::Pill {
+                text: event.kind.as_str().into(),
+                tone: Tone::Neutral,
+            },
+            Node::text(event.trigger.clone()),
+            Node::Mono {
+                text: event.id.clone(),
+            },
+            Node::Spacer,
+            Node::Mono {
+                text: event.time.clone(),
+            },
+        ]));
+        if !event.data.is_empty() && event.data != "null" {
+            card.push(Node::Mono {
+                text: event.data.clone(),
+            });
+        }
+    }
+    Node::Card { children: card }
 }

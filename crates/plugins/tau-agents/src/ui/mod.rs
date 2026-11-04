@@ -4,7 +4,9 @@
 //! commands in every composer.
 //!
 //! What it shows comes from the host as the [`Overview`]; what the
-//! person asks goes back as an [`Act`].
+//! person asks goes back as an [`Act`]. Each drawn one is a view tree
+//! (ADR 0045): the form's fields and choices are the interface's UI
+//! state.
 
 mod notices;
 mod page;
@@ -13,21 +15,11 @@ mod run;
 
 use std::sync::Arc;
 
-use gpui::{
-    AppContext as _,
-    Context,
-    Div,
-    Entity,
-    ParentElement,
-    Styled,
-    div,
-    rems,
-};
-use serde_json::Value;
+use gpui::{App, Context, Div, ParentElement, Styled, div, rems};
+use serde_json::{Value, json};
 use tau_agent::tool::RunId;
 use tau_ui_kit::{
     assets::Icon,
-    input::TextInput,
     theme::{Design as _, Theme, Tone, Type, radius, weight},
 };
 use tau_ui_plugin::{
@@ -42,6 +34,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtRun},
+    tree::{self, draft_key},
 };
 
 use crate::{Act, Agent, COMMAND, NAME, Overview, Settings, Status};
@@ -74,62 +67,162 @@ pub fn mcp_servers(data: Option<&Value>) -> Vec<String> {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AgentsUi;
 
-/// What a window keeps of tau-agents: the New agent form.
+/// What a window keeps of tau-agents: the handle the host's answers go
+/// through. The New agent form, the secret and answer fields are its
+/// trees' inputs, in the UI state.
 pub struct Ui {
     handle: Handle,
-    pub(crate) name: Entity<TextInput>,
-    pub(crate) purpose: Entity<TextInput>,
-    /// The name the form last gave from the purpose: a name still equal
-    /// to it follows the purpose as it changes.
-    suggested: String,
-    /// Its model; `None` is the default.
-    pub(crate) model: Option<String>,
-    pub(crate) daily_cap: f64,
-    pub(crate) window_secs: u64,
-    /// The person's MCP servers it starts with.
-    pub(crate) servers: std::collections::BTreeSet<String>,
-    /// The agent the host made, until its conversation opens.
-    pub(crate) making: Option<String>,
-    /// Why the host could not make it.
-    pub(crate) error: Option<String>,
-    /// A secret to save from an agent's panel: its name, and its value,
-    /// drawn as dots and cleared once sent.
-    pub(crate) secret_name: Entity<TextInput>,
-    pub(crate) secret_value: Entity<TextInput>,
-    /// The answer to an agent's question that offers no choices.
-    pub(crate) answer: Entity<TextInput>,
 }
 
-impl Ui {
-    /// Fills the form for an agent that does `purpose`.
-    pub(crate) fn prefill(&mut self, purpose: &str, cx: &mut Context<Self>) {
-        self.error = None;
-        self.purpose
-            .update(cx, |input, cx| input.set_text(purpose.to_owned(), cx));
-        self.follow_purpose(cx);
+/// The New agent form's inputs, by id: their drafts are its name and
+/// what it should do.
+pub const NAME_INPUT: &str = "new-agent-name";
+pub const PURPOSE_INPUT: &str = "new-agent-purpose";
+/// The fields of a secret to save from an agent's panel.
+pub const SECRET_NAME_INPUT: &str = "agent-secret-name";
+pub const SECRET_VALUE_INPUT: &str = "agent-secret-value";
+
+/// The UI state keys of the form's choices: its model (none for the
+/// default), cap, window and MCP servers; the agent the host made,
+/// until its conversation opens; and why the host could not make it.
+pub const MODEL: &str = "new-agent.model";
+pub const CAP: &str = "new-agent.cap";
+pub const WINDOW: &str = "new-agent.window";
+pub const SERVERS: &str = "new-agent.servers";
+pub const MAKING: &str = "new-agent.making";
+pub const ERROR: &str = "new-agent.error";
+
+/// The trees' actions. [`ACT`] carries out the [`Act`] its arguments
+/// hold.
+pub(crate) const ACT: &str = "act";
+/// Opens the page its arguments name.
+pub(crate) const GO: &str = "go";
+/// Opens the run its arguments name: `{ "run": id }`.
+pub(crate) const OPEN: &str = "open";
+/// Opens the run's details, where a phone keeps the panel.
+pub(crate) const DETAILS: &str = "details";
+/// Sets a key of the UI state: `{ "key", "value" }`, a null value
+/// forgetting it.
+pub(crate) const SET: &str = "set";
+/// Asks the host to make the agent the form describes.
+pub(crate) const START: &str = "start";
+/// Saves the secret the panel's fields hold: `{ "agent" }`.
+pub(crate) const SAVE_SECRET: &str = "save-secret";
+/// Saves the settings its arguments hold.
+pub(crate) const SETTINGS: &str = "settings";
+/// Answers a question with its field's draft: `{ "agent", "notice",
+/// "answer" }`; Enter in the field sends `answer:<agent>/<notice>`.
+pub(crate) const ANSWER: &str = "answer";
+
+/// The input of the answer to `agent`'s question `notice`.
+pub(crate) fn answer_input(agent: &str, notice: &str) -> String {
+    format!("agent-answer-{agent}-{notice}")
+}
+
+/// A button that carries out `act`.
+pub(crate) fn act_button(
+    label: &str,
+    kind: tree::Kind,
+    act: &Act,
+) -> tree::Node {
+    tree::Node::Button {
+        label: label.to_owned(),
+        action: ACT.into(),
+        args: serde_json::to_value(act).unwrap_or(Value::Null),
+        kind,
+        icon: None,
+    }
+}
+
+/// A button that carries out `action` with `args`.
+pub(crate) fn button(
+    label: &str,
+    kind: tree::Kind,
+    action: &str,
+    args: Value,
+) -> tree::Node {
+    tree::Node::Button {
+        label: label.to_owned(),
+        action: action.to_owned(),
+        args,
+        kind,
+        icon: None,
+    }
+}
+
+/// The New agent form as the UI state holds it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Form {
+    /// The name typed; empty takes the one from the purpose.
+    pub name: String,
+    pub purpose: String,
+    /// Its model; `None` is the default.
+    pub model: Option<String>,
+    pub daily_cap: f64,
+    pub window_secs: u64,
+    /// The person's MCP servers it starts with.
+    pub servers: std::collections::BTreeSet<String>,
+    /// The agent the host made, until its conversation opens.
+    pub making: Option<String>,
+    /// Why the host could not make it.
+    pub error: Option<String>,
+}
+
+impl Form {
+    /// The form in `view`'s UI state.
+    pub fn of(view: &ViewCx<'_, AgentsUi>) -> Self {
+        let defaults = Settings::default();
+        let text = |key: &str| {
+            view.ui_value(key)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        Self {
+            name: text(&draft_key(NAME_INPUT)).unwrap_or_default(),
+            purpose: text(&draft_key(PURPOSE_INPUT)).unwrap_or_default(),
+            model: text(MODEL),
+            daily_cap: view
+                .ui_value(CAP)
+                .and_then(Value::as_f64)
+                .unwrap_or(defaults.daily_cap),
+            window_secs: view
+                .ui_value(WINDOW)
+                .and_then(Value::as_u64)
+                .unwrap_or(defaults.window_secs),
+            servers: view
+                .ui_value(SERVERS)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|server| server.as_str().map(str::to_owned))
+                .collect(),
+            making: text(MAKING),
+            error: text(ERROR),
+        }
     }
 
-    /// Names the agent after its purpose, unless the person named it.
-    fn follow_purpose(&mut self, cx: &mut Context<Self>) {
-        let name = self.name.read(cx).text().to_owned();
-        if !name.is_empty() && name != self.suggested {
-            return;
-        }
-        let purpose = self.purpose.read(cx).text().to_owned();
-        let suggested = if purpose.trim().is_empty() {
+    /// The name the purpose gives, for a form whose name is left empty.
+    pub fn suggested(&self) -> String {
+        if self.purpose.trim().is_empty() {
             String::new()
         } else {
-            crate::shown::suggest_name(&purpose)
-        };
-        self.suggested = suggested.clone();
-        self.name
-            .update(cx, |input, cx| input.set_text(suggested, cx));
+            crate::shown::suggest_name(&self.purpose)
+        }
+    }
+
+    /// The name it makes the agent with: the one typed, or else the
+    /// purpose's.
+    pub fn chosen_name(&self) -> String {
+        match self.name.trim() {
+            "" => self.suggested(),
+            name => name.to_owned(),
+        }
     }
 
     /// The form, as what the host is asked to make.
-    pub(crate) fn act(&self, cx: &gpui::App) -> Result<Act, String> {
-        let name = self.name.read(cx).text().trim().to_owned();
-        let purpose = self.purpose.read(cx).text().trim().to_owned();
+    pub fn act(&self) -> Result<Act, String> {
+        let name = self.chosen_name();
+        let purpose = self.purpose.trim().to_owned();
         if !crate::valid_name(&name) {
             return Err("A name is lower-case letters, digits and dashes, \
                         starting with a letter."
@@ -147,111 +240,135 @@ impl Ui {
             servers: self.servers.iter().cloned().collect(),
         })
     }
+}
 
-    /// Asks the host to make the agent the form describes.
-    pub(crate) fn submit(&mut self, cx: &mut Context<Self>) {
-        match self.act(cx) {
-            Ok(act) => {
-                self.error = None;
-                self.handle.act(act, cx);
+/// Clears the form once its agent's conversation opened.
+pub(crate) fn reset(handle: &Handle, cx: &mut App) {
+    for key in [
+        draft_key(NAME_INPUT),
+        draft_key(PURPOSE_INPUT),
+        MODEL.into(),
+        CAP.into(),
+        WINDOW.into(),
+        SERVERS.into(),
+        MAKING.into(),
+        ERROR.into(),
+    ] {
+        handle.set_ui(key, None, cx);
+    }
+}
+
+/// What the trees' buttons and inputs do, through `handle`: `form` and
+/// `secret` are the form and the panel's secret fields as drawn.
+pub(crate) fn on_action(
+    handle: Handle,
+    form: Option<Form>,
+    secret: Option<(String, String)>,
+) -> impl Fn(&str, &Value, &mut App) + 'static {
+    move |action, args, cx| {
+        let text = |key: &str| {
+            args.get(key).and_then(Value::as_str).map(str::to_owned)
+        };
+        if let Some(at) = action.strip_prefix(&format!("{ANSWER}:")) {
+            // Enter in a question's field: `<agent>/<notice>`, a name
+            // having no slash.
+            let answer = text("text").unwrap_or_default().trim().to_owned();
+            if let Some((agent, notice)) = at.split_once('/')
+                && !answer.is_empty()
+            {
+                handle.act(
+                    Act::Answer {
+                        agent: agent.to_owned(),
+                        notice: notice.to_owned(),
+                        answer,
+                    },
+                    cx,
+                );
             }
-            Err(error) => self.error = Some(error),
-        }
-        cx.notify();
-    }
-
-    /// Saves the secret the panel's fields hold as `agent`'s, and
-    /// forgets its value.
-    pub(crate) fn save_secret(&mut self, agent: &str, cx: &mut Context<Self>) {
-        let name = self.secret_name.read(cx).text().trim().to_owned();
-        let value = self.secret_value.read(cx).text().to_owned();
-        if name.is_empty() || value.is_empty() {
             return;
         }
-        let agent = agent.to_owned();
-        self.handle.act(Act::SetSecret { agent, name, value }, cx);
-        self.secret_name.update(cx, |input, cx| input.clear(cx));
-        self.secret_value.update(cx, |input, cx| input.clear(cx));
-        cx.notify();
-    }
-
-    /// Answers `agent`'s question `notice` with what the answer field
-    /// holds, and clears it.
-    pub(crate) fn send_answer(
-        &mut self,
-        agent: &str,
-        notice: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let answer = self.answer.read(cx).text().trim().to_owned();
-        if answer.is_empty() {
-            return;
+        match action {
+            ACT => {
+                if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
+                    handle.act(act, cx);
+                }
+            }
+            GO => {
+                if let Some(page) = text("page") {
+                    handle.navigate(Link::page(page), cx);
+                }
+            }
+            OPEN => {
+                if let Some(run) = text("run") {
+                    handle.open_run(&RunId(Arc::from(run.as_str())), cx);
+                }
+            }
+            DETAILS => handle.run_details(cx),
+            SET => {
+                if let Some(key) = text("key") {
+                    let value =
+                        args.get("value").filter(|value| !value.is_null());
+                    handle.set_ui(key, value.cloned(), cx);
+                }
+            }
+            START => {
+                let Some(form) = &form else { return };
+                match form.act() {
+                    Ok(act) => {
+                        handle.set_ui(ERROR, None, cx);
+                        handle.act(act, cx);
+                    }
+                    Err(error) => {
+                        handle.set_ui(ERROR, Some(Value::String(error)), cx)
+                    }
+                }
+            }
+            SAVE_SECRET => {
+                let (Some(agent), Some((name, value))) =
+                    (text("agent"), secret.clone())
+                else {
+                    return;
+                };
+                let name = name.trim().to_owned();
+                if name.is_empty() || value.is_empty() {
+                    return;
+                }
+                handle.act(Act::SetSecret { agent, name, value }, cx);
+                handle.set_ui(draft_key(SECRET_NAME_INPUT), None, cx);
+                handle.set_ui(draft_key(SECRET_VALUE_INPUT), None, cx);
+            }
+            ANSWER => {
+                let (Some(agent), Some(notice), Some(answer)) =
+                    (text("agent"), text("notice"), text("answer"))
+                else {
+                    return;
+                };
+                let answer = answer.trim().to_owned();
+                if answer.is_empty() {
+                    return;
+                }
+                handle.set_ui(
+                    draft_key(&answer_input(&agent, &notice)),
+                    None,
+                    cx,
+                );
+                handle.act(
+                    Act::Answer {
+                        agent,
+                        notice,
+                        answer,
+                    },
+                    cx,
+                );
+            }
+            _ => {}
         }
-        self.handle.act(
-            Act::Answer {
-                agent: agent.to_owned(),
-                notice: notice.to_owned(),
-                answer,
-            },
-            cx,
-        );
-        self.answer.update(cx, |input, cx| input.clear(cx));
-        cx.notify();
-    }
-
-    /// Clears the form once its agent's conversation opened.
-    fn reset(&mut self, cx: &mut Context<Self>) {
-        self.making = None;
-        self.error = None;
-        self.suggested.clear();
-        self.servers.clear();
-        self.name.update(cx, |input, cx| input.clear(cx));
-        self.purpose.update(cx, |input, cx| input.clear(cx));
     }
 }
 
 impl PluginUi for Ui {
-    fn new(handle: Handle, cx: &mut Context<Self>) -> Self {
-        let name =
-            cx.new(|cx| TextInput::new("pr-triage", cx).keep_on_submit());
-        let purpose = cx.new(|cx| {
-            TextInput::new(
-                "Watch new pull requests on tau-agent, label them, and \
-                 tell me when one touches auth.",
-                cx,
-            )
-            .multiline()
-            .keep_on_submit()
-        });
-        cx.observe(&name, |_, _, cx| cx.notify()).detach();
-        cx.observe(&purpose, |ui: &mut Ui, _, cx| {
-            ui.follow_purpose(cx);
-            cx.notify();
-        })
-        .detach();
-        let secret_name = cx.new(|cx| TextInput::new("github", cx));
-        let secret_value =
-            cx.new(|cx| TextInput::new("its value", cx).masked());
-        cx.observe(&secret_name, |_, _, cx| cx.notify()).detach();
-        cx.observe(&secret_value, |_, _, cx| cx.notify()).detach();
-        let answer = cx.new(|cx| TextInput::new("Your answer", cx));
-        cx.observe(&answer, |_, _, cx| cx.notify()).detach();
-        let defaults = Settings::default();
-        Self {
-            secret_name,
-            secret_value,
-            answer,
-            handle,
-            name,
-            purpose,
-            suggested: String::new(),
-            model: None,
-            daily_cap: defaults.daily_cap,
-            window_secs: defaults.window_secs,
-            servers: Default::default(),
-            making: None,
-            error: None,
-        }
+    fn new(handle: Handle, _: &mut Context<Self>) -> Self {
+        Self { handle }
     }
 }
 
@@ -269,12 +386,11 @@ impl UiPlugin for AgentsUi {
     /// The host made the agent, or says why not.
     fn reply(&self, ui: &mut Ui, reply: Value, cx: &mut Context<Ui>) {
         if let Some(repo) = reply.get("repo").and_then(Value::as_str) {
-            ui.making = Some(repo.to_owned());
+            ui.handle.set_ui(MAKING, Some(json!(repo)), cx);
         } else if let Some(error) = reply.get("error").and_then(Value::as_str) {
-            ui.making = None;
-            ui.error = Some(error.to_owned());
+            ui.handle.set_ui(MAKING, None, cx);
+            ui.handle.set_ui(ERROR, Some(json!(error)), cx);
         }
-        cx.notify();
     }
 
     fn read_prompt(&self, prompt: &str) -> Option<String> {
@@ -286,9 +402,15 @@ impl UiPlugin for AgentsUi {
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(
-                Page::new(OVERVIEW, page::overview).title(|_| "Agents".into()),
+                Page::new(OVERVIEW, page::overview)
+                    .framed()
+                    .title(|_| "Agents".into()),
             )
-            .page(Page::new(NEW, page::new_agent).title(|_| "New agent".into()))
+            .page(
+                Page::new(NEW, page::new_agent)
+                    .framed()
+                    .title(|_| "New agent".into()),
+            )
             .settings(pane::render)
             .command(
                 SlashCommand::new(
@@ -319,7 +441,12 @@ impl UiPlugin for AgentsUi {
 /// `/agent <purpose>`: the New agent form, filled in from what follows.
 fn new_agent(args: &str, view: &mut ViewCx<'_, AgentsUi>) {
     let purpose = args.trim().to_owned();
-    view.ui.update(view.cx, |ui, cx| ui.prefill(&purpose, cx));
+    view.handle.set_ui(ERROR, None, view.cx);
+    view.handle.set_ui(
+        draft_key(PURPOSE_INPUT),
+        (!purpose.is_empty()).then(|| json!(purpose)),
+        view.cx,
+    );
     view.handle.navigate(Link::page(NEW), view.cx);
 }
 
@@ -402,8 +529,27 @@ pub(crate) fn tone(status: &Status) -> Tone {
     }
 }
 
+/// The tone of an agent's state, as a tree's pieces read it.
+pub(crate) fn tree_tone(status: &Status) -> tree::Tone {
+    match status {
+        Status::Working => tree::Tone::Info,
+        Status::Waiting => tree::Tone::Neutral,
+        Status::Paused | Status::AtCap => tree::Tone::Warn,
+        Status::Broken { .. } => tree::Tone::Bad,
+    }
+}
+
+/// An agent's state on a pill: `working`, `at its cap`.
+pub(crate) fn status_pill(status: &Status) -> tree::Node {
+    tree::Node::Pill {
+        text: status.label().to_owned(),
+        tone: tree_tone(status),
+    }
+}
+
 /// An agent's mark: its letter in a ring of its color, round where a
-/// repository's is square.
+/// repository's is square. The sidebar draws it; the plugin's trees
+/// show the agent's icon.
 pub fn mark(name: &str, size: f32, t: &Theme) -> Div {
     let letter = name
         .chars()
@@ -424,19 +570,4 @@ pub fn mark(name: &str, size: f32, t: &Theme) -> Div {
         .typeset(Type::MICRO.sized(size * 0.55))
         .font_weight(weight::STRONG)
         .child(letter)
-}
-
-/// An agent's state on a small tinted pill: `working`, `at its cap`.
-pub fn status_pill(status: &Status, t: &Theme) -> Div {
-    let color = t.tone(tone(status));
-    div()
-        .flex_shrink_0()
-        .px(tau_ui_kit::theme::sp(1.75))
-        .rounded(radius::FULL)
-        .border_1()
-        .border_color(color.opacity(0.4))
-        .bg(color.opacity(0.1))
-        .typeset(Type::MICRO)
-        .text_color(color)
-        .child(status.label())
 }
