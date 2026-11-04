@@ -111,6 +111,9 @@ struct Bridge {
     /// Bumped by every start and stop: a server that finishes starting
     /// after a later one asked for is stopped, not kept.
     generation: u64,
+    /// Phones' views wait to be built again after what the host applied
+    /// (ADR 0046): one rebuild for a burst of updates.
+    refreshing: bool,
 }
 
 /// Serves phones for `workspace` from `dir` (usually
@@ -163,6 +166,7 @@ fn serving(
         listening: None,
         countdown: None,
         generation: 0,
+        refreshing: false,
     }));
     if bridge.borrow().settings.allow {
         start(&bridge, workspace, cx);
@@ -170,28 +174,73 @@ fn serving(
     show(&bridge, workspace, cx);
 
     // What the host applies goes to every phone; an answer to a request
-    // goes to the phones there now, unnumbered and not kept.
+    // goes to the phones there now, unnumbered and not kept. After it,
+    // the views phones asked for are built again (ADR 0046).
     let echo = bridge.clone();
-    cx.subscribe(workspace, move |_, update: &HostUpdate, _| {
-        if let Some(server) = &echo.borrow().server
-            && let Some(body) = to_phones(update)
-        {
+    cx.subscribe(workspace, move |workspace, update: &HostUpdate, cx| {
+        let Some(server) = echo.borrow().server.clone() else {
+            return;
+        };
+        if let Some(body) = to_phones(update) {
             if transient(update) {
                 server.broadcast_transient(body);
             } else {
                 server.broadcast(body);
             }
         }
+        if !matches!(update, HostUpdate::Views { .. }) {
+            refresh_views(&echo, &workspace, cx);
+        }
     })
     .detach();
 
     let requests = bridge;
     cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
-        if let WorkspaceEvent::Phones(request) = event {
-            handle(&requests, request.clone(), &workspace, cx);
+        match event {
+            WorkspaceEvent::Phones(request) => {
+                handle(&requests, request.clone(), &workspace, cx);
+            }
+            // A phone asks for the plugins' views it draws (ADR 0046).
+            WorkspaceEvent::AskViews(keys) => {
+                let Some(server) = requests.borrow().server.clone() else {
+                    return;
+                };
+                let answers =
+                    workspace.update(cx, |ws, _| ws.ask_views(keys.clone()));
+                if let Some(body) = to_phones(&answers) {
+                    server.broadcast_transient(body);
+                }
+            }
+            _ => {}
         }
     })
     .detach();
+}
+
+/// Builds the views phones asked for again once what the host applies
+/// now is in, and sends those that changed.
+fn refresh_views(
+    bridge: &Rc<RefCell<Bridge>>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    if std::mem::replace(&mut bridge.borrow_mut().refreshing, true) {
+        return;
+    }
+    let (bridge, workspace) = (bridge.clone(), workspace.downgrade());
+    cx.defer(move |cx| {
+        bridge.borrow_mut().refreshing = false;
+        let Some(server) = bridge.borrow().server.clone() else {
+            return;
+        };
+        let changed = workspace
+            .update(cx, |ws, _| ws.refresh_views())
+            .ok()
+            .flatten();
+        if let Some(body) = changed.as_ref().and_then(to_phones) {
+            server.broadcast_transient(body);
+        }
+    });
 }
 
 /// What phones are sent of `update`: all but onboarding, which stays
@@ -216,6 +265,7 @@ pub fn transient(update: &HostUpdate) -> bool {
         HostUpdate::Picture { .. }
             | HostUpdate::PluginReply { .. }
             | HostUpdate::PluginFetched { .. }
+            | HostUpdate::Views { .. }
     )
 }
 
@@ -478,7 +528,10 @@ fn stop(
     state.countdown = None;
     state.phones.listening = None;
     state.phones.code = None;
-    workspace.update(cx, |ws, _| ws.set_mirrored(false));
+    workspace.update(cx, |ws, _| {
+        ws.set_mirrored(false);
+        ws.forget_views();
+    });
 }
 
 fn on_event(

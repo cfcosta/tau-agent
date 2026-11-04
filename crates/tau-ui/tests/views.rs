@@ -3,13 +3,12 @@
 //! itself, for every place the demo's runs and screens have.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use serde::Serialize;
 use tau_ui::demo;
 use tau_ui_plugin::{
     Point,
     PointCx,
     points::{self, AtApp, AtRepo, AtRun},
-    wire::{Built, Contributed, Layout, View, ViewKey},
+    wire::{Built, Contributed, Layout, View, ViewKey, Wired},
 };
 use tau_ui_remote::{
     Workspace,
@@ -53,7 +52,7 @@ fn open(
 
 /// What `ws` draws at `point` with the context `at` gives each plugin,
 /// as the built view says it.
-fn drawn<'c, Cx: PointCx, Out: Serialize + 'static>(
+fn drawn<'c, Cx: PointCx, Out: Wired>(
     ws: &Workspace,
     point: Point<Cx, Out>,
     at: impl Fn(&str) -> Option<&'c Cx>,
@@ -63,7 +62,7 @@ fn drawn<'c, Cx: PointCx, Out: Serialize + 'static>(
         .into_iter()
         .map(|(plugin, out)| Contributed {
             plugin: plugin.to_owned(),
-            out: serde_json::to_value(out).unwrap(),
+            out: out.to_wire().unwrap(),
         })
         .collect();
     Built::Outs { outs }
@@ -325,4 +324,157 @@ fn a_view_is_built_in_the_phone_s_layout(cx: &mut TestAppContext) {
         };
         assert!(commands.iter().any(|(_, command)| command.name == "goal"));
     });
+}
+
+/// A run's plugin lines, as `ws` draws them.
+fn statuses(
+    ws: &Workspace,
+) -> Vec<(&'static str, tau_ui_plugin::PluginStatus)> {
+    let at = AtRun {
+        run: ws.run(&demo::run_id()).unwrap().info(),
+    };
+    ws.contributions_named(points::STATUS, |_| Some(&at))
+}
+
+/// A phone in one process with the computer: it draws plugins' views
+/// from what the computer builds, asked for once it has drawn without
+/// them, and gets them again pushed after a change.
+#[gpui::test]
+fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
+    use std::{cell::RefCell, rc::Rc};
+
+    use gpui::{px, size};
+    use tau_ui_remote::{
+        route::Route,
+        update::HostUpdate,
+        workspace::WorkspaceEvent,
+    };
+
+    let (computer, mut ccx, _host) = open(cx);
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("tau", Vec::new(), Catalog::default(), window, cx)
+    });
+    let phone = window.root(cx).unwrap();
+    let mut pcx = VisualTestContext::from_window(*window, cx);
+    pcx.simulate_resize(size(px(400.), px(844.)));
+    let asked: Rc<RefCell<Vec<ViewKey>>> = Rc::default();
+    let seen = asked.clone();
+    pcx.update(|_, cx| {
+        cx.subscribe(&phone, move |_, event: &WorkspaceEvent, _| {
+            if let WorkspaceEvent::AskViews(keys) = event {
+                seen.borrow_mut().extend(keys.iter().cloned());
+            }
+        })
+        .detach()
+    });
+    let snapshot = computer.read_with(&ccx, |ws, _| ws.snapshot());
+    phone.update(&mut pcx, |ws, cx| {
+        ws.draw_remote_views();
+        ws.apply(snapshot, cx);
+        ws.navigate(Route::Run(demo::run_id()), cx);
+    });
+    pcx.run_until_parked();
+
+    // It has drawn, and asked; nothing came yet, so it shows none of
+    // the plugins' lines it would build itself.
+    assert!(
+        !asked.borrow().is_empty(),
+        "the phone asks for what it draws"
+    );
+    assert!(phone.read_with(&pcx, |ws, _| statuses(ws)).is_empty());
+
+    // The computer answers what it asks, until it asks for nothing new.
+    let relay = |pcx: &mut VisualTestContext,
+                     ccx: &mut VisualTestContext| {
+        for _ in 0..8 {
+            let keys = std::mem::take(&mut *asked.borrow_mut());
+            if keys.is_empty() {
+                return;
+            }
+            let answers = computer.update(ccx, |ws, _| ws.ask_views(keys));
+            phone.update(pcx, |ws, cx| ws.apply(answers, cx));
+            pcx.run_until_parked();
+        }
+        panic!("the phone keeps asking");
+    };
+    relay(&mut pcx, &mut ccx);
+    let on_computer = computer.read_with(&ccx, |ws, _| statuses(ws));
+    assert!(!on_computer.is_empty());
+    assert_eq!(phone.read_with(&pcx, |ws, _| statuses(ws)), on_computer);
+
+    // A goal set on the computer: what changed comes to the phone
+    // pushed, and the phone draws the goal's banner from its tree.
+    computer.update(&mut ccx, |ws, cx| {
+        ws.apply(
+            HostUpdate::PluginFold {
+                run: demo::run_id(),
+                plugin: tau_goal::NAME.into(),
+                body: serde_json::to_value(tau_goal::Record::Set {
+                    goal: "it ships".into(),
+                    continuations: 3,
+                    budget: 2.0,
+                })
+                .unwrap(),
+            },
+            cx,
+        )
+    });
+    let pushed = computer.update(&mut ccx, |ws, _| ws.refresh_views());
+    let Some(HostUpdate::Views { answers }) = pushed else {
+        panic!("nothing changed for the phone");
+    };
+    assert!(!answers.is_empty());
+    phone.update(&mut pcx, |ws, cx| {
+        ws.apply(HostUpdate::Views { answers }, cx)
+    });
+    pcx.run_until_parked();
+    relay(&mut pcx, &mut ccx);
+    assert_eq!(
+        phone.read_with(&pcx, |ws, _| statuses(ws)),
+        computer.read_with(&ccx, |ws, _| statuses(ws))
+    );
+    // The goal's banner, its tree as the computer built it in the
+    // phone's layout.
+    let banners = |ws: &Workspace| {
+        let at = AtRun {
+            run: ws.run(&demo::run_id()).unwrap().info(),
+        };
+        let banners = ws.contributions_named(points::RUN_BANNER, |_| Some(&at));
+        banners
+            .into_iter()
+            .map(|(plugin, tree)| (plugin, tree.to_wire()))
+            .collect::<Vec<_>>()
+    };
+    let on_phone = phone.read_with(&pcx, |ws, _| banners(ws));
+    assert!(on_phone.iter().any(|(plugin, _)| *plugin == tau_goal::NAME));
+    let layout = phone.read_with(&pcx, |ws, _| ws.view_layout());
+    let built = computer.read_with(&ccx, |ws, _| {
+        ws.build_view(&ViewKey {
+            view: View::Point {
+                point: points::RUN_BANNER.name.to_owned(),
+                at: tau_ui_plugin::wire::AtKey::Run {
+                    run: demo::run_id(),
+                },
+            },
+            layout,
+        })
+    });
+    let Built::Outs { outs } = built else {
+        panic!("no banners");
+    };
+    let built: Vec<_> = outs
+        .into_iter()
+        .map(|out| (out.plugin, Some(out.out)))
+        .collect();
+    let on_phone: Vec<_> = on_phone
+        .into_iter()
+        .map(|(plugin, tree)| (plugin.to_owned(), tree))
+        .collect();
+    assert_eq!(on_phone, built);
+    // Built again with nothing new, nothing goes.
+    assert!(
+        computer
+            .update(&mut ccx, |ws, _| ws.refresh_views())
+            .is_none()
+    );
 }

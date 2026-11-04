@@ -8,7 +8,7 @@
 //! [`WorkspaceEvent`], for the host to carry out.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -254,6 +254,9 @@ pub enum WorkspaceEvent {
         plugin: String,
         action: serde_json::Value,
     },
+    /// A phone asks the computer for the plugins' views it drew without
+    /// (ADR 0046).
+    AskViews(Vec<tau_ui_plugin::wire::ViewKey>),
     /// A tree's image asks its plugin's host half for the picture `key`
     /// with `action` (ADR 0045).
     PluginFetch {
@@ -697,6 +700,12 @@ pub struct Workspace {
     pub(crate) weak: gpui::WeakEntity<Workspace>,
     /// What plugins' handles asked, to carry out after the event.
     pub(crate) plugin_requests: crate::plugins::Requests,
+    /// On a phone, the plugins' views the computer built (ADR 0046).
+    pub(crate) remote_views:
+        Option<std::cell::RefCell<crate::views::ViewCache>>,
+    /// On the computer, each view a phone asked for, as last built.
+    pub(crate) phone_views:
+        BTreeMap<tau_ui_plugin::wire::ViewKey, tau_ui_plugin::wire::Built>,
     /// What a plugin asked to give the keys to, as the window draws.
     pub(crate) plugin_focus: Option<gpui::FocusHandle>,
     /// A plugin's note over the composer, and the task that takes it
@@ -935,6 +944,8 @@ impl Workspace {
             reduce_motion: false,
             weak: cx.weak_entity(),
             plugin_requests,
+            remote_views: None,
+            phone_views: BTreeMap::new(),
             plugin_focus: None,
             composer_note: None,
             plugins_screen: Default::default(),
@@ -1167,6 +1178,7 @@ impl Workspace {
                 }
                 cx.notify();
             }
+            HostUpdate::Views { answers } => self.take_views(answers, cx),
             HostUpdate::PluginFetched { plugin, key, reply } => {
                 self.tree_widgets
                     .borrow_mut()
@@ -1194,7 +1206,10 @@ impl Workspace {
                 }
             }
             HostUpdate::Setup(update) => self.update_setup(update, cx),
-            HostUpdate::Snapshot(synced) => self.restore(*synced, cx),
+            HostUpdate::Snapshot(synced) => {
+                self.restore(*synced, cx);
+                self.ask_views_again();
+            }
             HostUpdate::Ui(event) => self.ui_state.apply(&event),
             HostUpdate::UiState(state) => self.ui_state = state,
             HostUpdate::BranchKept(run) => {

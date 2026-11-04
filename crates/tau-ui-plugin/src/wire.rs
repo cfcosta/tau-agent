@@ -77,6 +77,12 @@ pub enum View {
     },
     /// The commands every plugin lists where the composer is.
     Commands { repo: Option<String> },
+    /// The title of `plugin`'s page `page`, with its parameters.
+    Title {
+        plugin: String,
+        page: String,
+        params: BTreeMap<String, String>,
+    },
 }
 
 /// How the window that draws a view is laid out: what a view may read
@@ -138,6 +144,49 @@ pub struct Contributed {
     pub out: serde_json::Value,
 }
 
+/// A point's output as it crosses: what the computer sends of it, and
+/// what the phone reads back. Setup's steps stay on the computer.
+pub trait Wired: Sized + 'static {
+    fn to_wire(&self) -> Option<serde_json::Value>;
+    fn from_wire(value: serde_json::Value) -> Option<Self>;
+}
+
+macro_rules! wired {
+    ($($out:ty),* $(,)?) => {$(
+        impl Wired for $out {
+            fn to_wire(&self) -> Option<serde_json::Value> {
+                serde_json::to_value(self).ok()
+            }
+
+            fn from_wire(value: serde_json::Value) -> Option<Self> {
+                serde_json::from_value(value).ok()
+            }
+        }
+    )*};
+}
+
+wired!(
+    crate::tree::Node,
+    crate::NavEntry,
+    crate::PluginStatus,
+    crate::PlanField,
+    crate::RowNote,
+    crate::points::CardView,
+    crate::points::PaneView,
+    f32,
+    String,
+);
+
+impl Wired for crate::points::SetupView {
+    fn to_wire(&self) -> Option<serde_json::Value> {
+        None
+    }
+
+    fn from_wire(_: serde_json::Value) -> Option<Self> {
+        None
+    }
+}
+
 /// A view, built: what the phone draws for its [`ViewKey`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "built", rename_all = "snake_case")]
@@ -155,6 +204,8 @@ pub enum Built {
     Commands {
         commands: Vec<(String, crate::registry::CommandInfo)>,
     },
+    /// A page's title.
+    Title { title: String },
     /// Nothing is there: no such plugin, page, run or call.
     Nothing,
 }

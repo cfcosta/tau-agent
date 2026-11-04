@@ -32,6 +32,13 @@ impl Render for Workspace {
         self.sync_transcript();
         self.release_focus(window, cx);
         self.plugin_focus(window, cx);
+        // A phone asks for the views it draws without, once drawn.
+        if self.draws_remote_views() {
+            let this = cx.weak_entity();
+            cx.defer(move |cx| {
+                let _ = this.update(cx, |ws, cx| ws.ask_for_views(cx));
+            });
+        }
         if let Route::Setup(step) = self.route {
             screens::setup::observe(self, step, window, cx);
         }

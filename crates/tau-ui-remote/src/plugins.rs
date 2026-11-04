@@ -21,6 +21,7 @@ use tau_ui_plugin::{
     Request,
     RunInfo,
     points,
+    wire::{Built, View, Wired},
 };
 
 use crate::{
@@ -650,7 +651,7 @@ impl Workspace {
 
     /// What plugins contribute at `point`, in order: by each
     /// contribution's order, then the registry's.
-    pub fn contributions<Cx: PointCx, Out: 'static>(
+    pub fn contributions<Cx: PointCx, Out: Wired>(
         &self,
         point: Point<Cx, Out>,
         at: &Cx,
@@ -659,7 +660,7 @@ impl Workspace {
     }
 
     /// What `plugin` alone contributes at `point`: at one of its anchors.
-    pub fn contributions_of<Cx: PointCx, Out: 'static>(
+    pub fn contributions_of<Cx: PointCx, Out: Wired>(
         &self,
         plugin: &str,
         point: Point<Cx, Out>,
@@ -670,7 +671,7 @@ impl Workspace {
 
     /// What plugins contribute at `point`, each with the context `at`
     /// gives it (none skips the plugin), in order.
-    pub fn contributions_with<'c, Cx: PointCx, Out: 'static>(
+    pub fn contributions_with<'c, Cx: PointCx, Out: Wired>(
         &self,
         point: Point<Cx, Out>,
         at: impl Fn(&str) -> Option<&'c Cx>,
@@ -683,7 +684,7 @@ impl Workspace {
 
     /// What plugins contribute at `point`, in order, each with the plugin
     /// that gave it.
-    pub fn contributions_by<Cx: PointCx, Out: 'static>(
+    pub fn contributions_by<Cx: PointCx, Out: Wired>(
         &self,
         point: Point<Cx, Out>,
         at: &Cx,
@@ -693,7 +694,7 @@ impl Workspace {
 
     /// What plugins contribute at `point`, in order, each with the plugin
     /// that gave it and the context `at` gave it.
-    pub fn contributions_named<'c, Cx: PointCx, Out: 'static>(
+    pub fn contributions_named<'c, Cx: PointCx, Out: Wired>(
         &self,
         point: Point<Cx, Out>,
         at: impl Fn(&str) -> Option<&'c Cx>,
@@ -702,12 +703,18 @@ impl Workspace {
     }
 
     /// [`Self::contributions_named`], laid out as `layout` says.
-    pub(crate) fn contributions_in<'c, Cx: PointCx, Out: 'static>(
+    pub(crate) fn contributions_in<'c, Cx: PointCx, Out: Wired>(
         &self,
         point: Point<Cx, Out>,
         at: impl Fn(&str) -> Option<&'c Cx>,
         layout: Option<tau_ui_plugin::wire::Layout>,
     ) -> Vec<(&'static str, Out)> {
+        // A phone draws what the computer built (ADR 0046).
+        if layout.is_none()
+            && let Some(outs) = self.remote_contributions(point.name, &at)
+        {
+            return outs;
+        }
         let empty = BTreeMap::new();
         let mut found: Vec<(i32, usize, &'static str, Out)> = Vec::new();
         for (n, plugin) in registry().plugins().enumerate() {
@@ -747,6 +754,40 @@ impl Workspace {
             .collect()
     }
 
+    /// What plugins contribute at `point`, as the computer built it for
+    /// this window; none on a window that builds its own.
+    fn remote_contributions<'c, Cx: PointCx, Out: Wired>(
+        &self,
+        point: &'static str,
+        at: &impl Fn(&str) -> Option<&'c Cx>,
+    ) -> Option<Vec<(&'static str, Out)>> {
+        if !self.draws_remote_views() {
+            return None;
+        }
+        // Every plugin's context names the same place.
+        let place =
+            registry().plugins().find_map(|plugin| at(plugin.name()))?;
+        let Some(place) = place.wire() else {
+            return Some(Vec::new());
+        };
+        let view = View::Point {
+            point: point.to_owned(),
+            at: place,
+        };
+        let Some(Some(Built::Outs { outs })) = self.remote_view(view) else {
+            return Some(Vec::new());
+        };
+        let outs = outs
+            .into_iter()
+            .filter(|out| at(&out.plugin).is_some())
+            .filter_map(|out| {
+                let plugin = registry().get(&out.plugin)?.name();
+                Some((plugin, Out::from_wire(out.out)?))
+            })
+            .collect();
+        Some(outs)
+    }
+
     /// `plugin`'s page `page`, drawn with `params`.
     pub(crate) fn plugin_page(
         &self,
@@ -768,11 +809,20 @@ impl Workspace {
         let run = params.get("run").and_then(|id| {
             self.runs.iter().find(|run| &*run.id.0 == id.as_str())
         });
-        let (tree, framed) = self
-            .with_plugin(erased.as_ref(), run, params, |plugin, env| {
-                plugin.draw_page(page, env)
-            })
-            .flatten()?;
+        let remote = self.remote_view(View::Page {
+            plugin: erased.name().to_owned(),
+            page: page.to_owned(),
+            params: params.clone(),
+        });
+        let (tree, framed) = match remote {
+            Some(Some(Built::Page { tree, framed })) => (tree, framed),
+            Some(_) => return None,
+            None => self
+                .with_plugin(erased.as_ref(), run, params, |plugin, env| {
+                    plugin.draw_page(page, env)
+                })
+                .flatten()?,
+        };
         let origin = Origin {
             run: run.map(|run| run.id.clone()),
             params: params.clone(),
@@ -821,11 +871,20 @@ impl Workspace {
         if let Some(entry) = entry {
             params.insert(tau_ui_plugin::ENTRY.to_owned(), entry.to_owned());
         }
-        let tree = self
-            .with_plugin(erased.as_ref(), None, &params, |plugin, env| {
-                plugin.draw_settings(env)
-            })
-            .flatten()?;
+        let remote = self.remote_view(View::Settings {
+            plugin: erased.name().to_owned(),
+            scope: scope.map(str::to_owned),
+            entry: entry.map(str::to_owned),
+        });
+        let tree = match remote {
+            Some(Some(Built::Tree { tree })) => tree,
+            Some(_) => return None,
+            None => self
+                .with_plugin(erased.as_ref(), None, &params, |plugin, env| {
+                    plugin.draw_settings(env)
+                })
+                .flatten()?,
+        };
         let id = format!(
             "{}-settings-{}-{}",
             erased.name(),
@@ -844,6 +903,17 @@ impl Workspace {
         params: &BTreeMap<String, String>,
     ) -> Option<String> {
         let erased = registry().get(plugin)?;
+        let remote = self.remote_view(View::Title {
+            plugin: erased.name().to_owned(),
+            page: page.to_owned(),
+            params: params.clone(),
+        });
+        if let Some(remote) = remote {
+            return match remote {
+                Some(Built::Title { title }) => Some(title),
+                _ => None,
+            };
+        }
         let run = params.get("run").and_then(|id| {
             self.runs.iter().find(|run| &*run.id.0 == id.as_str())
         });
@@ -925,6 +995,19 @@ impl Workspace {
         repo: Option<&str>,
     ) -> Vec<tau_ui_plugin::registry::CommandInfo> {
         let name = plugin.name();
+        let remote = self.remote_view(View::Commands {
+            repo: repo.map(str::to_owned),
+        });
+        if let Some(remote) = remote {
+            let Some(Built::Commands { commands }) = remote else {
+                return Vec::new();
+            };
+            return commands
+                .into_iter()
+                .filter(|(by, _)| by == name)
+                .map(|(_, command)| command)
+                .collect();
+        }
         let unset = PluginValue::default();
         let data = self.catalog.plugin_data.get(name).unwrap_or(&unset);
         let repo = repo.and_then(|repo| {
@@ -1009,14 +1092,24 @@ impl Workspace {
     ) -> Option<AnyElement> {
         let erased = registry().get(plugin)?;
         let run = self.current().filter(|_| self.route != Route::NewRun);
-        let tree = self
-            .with_plugin(
-                erased.as_ref(),
-                run,
-                &BTreeMap::new(),
-                |plugin, env| plugin.command_popover(command, args, env),
-            )
-            .flatten()?;
+        let remote = self.remote_view(View::Popover {
+            plugin: erased.name().to_owned(),
+            command: command.to_owned(),
+            args: args.to_owned(),
+            run: run.map(|run| run.id.clone()),
+        });
+        let tree = match remote {
+            Some(Some(Built::Tree { tree })) => tree,
+            Some(_) => return None,
+            None => self
+                .with_plugin(
+                    erased.as_ref(),
+                    run,
+                    &BTreeMap::new(),
+                    |plugin, env| plugin.command_popover(command, args, env),
+                )
+                .flatten()?,
+        };
         let origin = Origin {
             run: run.map(|run| run.id.clone()),
             params: BTreeMap::new(),

@@ -178,6 +178,9 @@ impl Workspace {
             // Plugins keep what interfaces share in their records, which
             // are folded into the runs.
             plugin_requests: _,
+            // Each window's own: a phone's views, a computer's asks.
+            remote_views: _,
+            phone_views: _,
             plugin_focus: _,
             // Editors of drafts kept in `ui_state`, each window's own.
             tree_inputs: _,

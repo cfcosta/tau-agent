@@ -164,6 +164,9 @@ pub fn connect(
             return;
         }
     };
+    // The phone draws plugins' views as the computer builds them (ADR
+    // 0046).
+    workspace.update(cx, |ws, _| ws.draw_remote_views());
     let (news, mut arrivals) = mpsc::unbounded_channel();
     let credentials = load(&platform.dir);
     let name = platform.name.clone();

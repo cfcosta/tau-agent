@@ -1,10 +1,17 @@
 //! Plugins' views built for a phone (ADR 0046): the computer builds the
 //! view a [`ViewKey`] names from its own state, as it would draw it in
 //! the phone's layout, and the phone draws what comes back.
+//!
+//! - On the phone, a [`ViewCache`] holds what came back; a view it lacks
+//!   is asked for once the window has drawn, and draws as nothing until
+//!   it comes.
+//! - On the computer, [`Workspace::ask_views`] builds and keeps what
+//!   phones asked for, and [`Workspace::refresh_views`] builds them again
+//!   after a change, giving those whose answer changed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use serde::Serialize;
+use gpui::Context;
 use tau_ui_plugin::{
     Point,
     PointCx,
@@ -18,16 +25,157 @@ use tau_ui_plugin::{
         AtRewrite,
         AtRun,
     },
-    wire::{AtKey, Built, Contributed, Layout, View, ViewKey},
+    wire::{AtKey, Built, Contributed, Layout, View, ViewKey, Wired},
 };
 
 use crate::{
     plugins::registry,
+    update::HostUpdate,
     view::{Item, RunView},
-    workspace::Workspace,
+    workspace::{Workspace, WorkspaceEvent},
 };
 
+/// What a phone has of plugins' views: each one the computer sent, and
+/// those it lacks, to ask for once the window has drawn.
+#[derive(Debug, Default)]
+pub struct ViewCache {
+    built: HashMap<ViewKey, Built>,
+    /// Drawn without an answer, and not asked for yet.
+    missing: BTreeSet<ViewKey>,
+    /// Asked for, with no answer yet.
+    asked: BTreeSet<ViewKey>,
+}
+
+impl ViewCache {
+    /// The view `key` names, if the computer sent it; else it is asked
+    /// for once the window has drawn.
+    pub fn get(&mut self, key: &ViewKey) -> Option<&Built> {
+        if !self.built.contains_key(key) && !self.asked.contains(key) {
+            self.missing.insert(key.clone());
+        }
+        self.built.get(key)
+    }
+
+    /// The views to ask for now: those drawn without one since the last
+    /// ask.
+    fn take_missing(&mut self) -> Vec<ViewKey> {
+        let missing = std::mem::take(&mut self.missing);
+        self.asked.extend(missing.iter().cloned());
+        missing.into_iter().collect()
+    }
+
+    /// Keeps what the computer sent.
+    fn take(&mut self, answers: Vec<(ViewKey, Built)>) {
+        for (key, built) in answers {
+            self.asked.remove(&key);
+            self.built.insert(key, built);
+        }
+    }
+
+    /// Asks again for everything the phone has, as the computer it
+    /// reaches may not know what it asked: it shows what it had until
+    /// the answers come.
+    fn ask_again(&mut self) {
+        self.asked.clear();
+        self.missing.extend(self.built.keys().cloned());
+    }
+}
+
 impl Workspace {
+    /// Draws plugins' views from what the computer builds (ADR 0046):
+    /// a phone's window.
+    pub fn draw_remote_views(&mut self) {
+        self.remote_views = Some(std::cell::RefCell::new(ViewCache::default()));
+    }
+
+    /// Whether this window draws plugins' views from the computer.
+    pub fn draws_remote_views(&self) -> bool {
+        self.remote_views.is_some()
+    }
+
+    /// This window's layout, as a view built for it reads it.
+    pub fn view_layout(&self) -> Layout {
+        Layout::of(self.compact(), f32::from(self.screen_width()))
+    }
+
+    /// The view `view` in this window's layout, as the computer sent it;
+    /// `None` on a window that builds its own, or before it came.
+    pub(crate) fn remote_view(&self, view: View) -> Option<Option<Built>> {
+        let cache = self.remote_views.as_ref()?;
+        let key = ViewKey {
+            view,
+            layout: self.view_layout(),
+        };
+        Some(cache.borrow_mut().get(&key).cloned())
+    }
+
+    /// Asks the computer for the views this window drew without.
+    pub(crate) fn ask_for_views(&mut self, cx: &mut Context<Self>) {
+        let Some(cache) = &self.remote_views else {
+            return;
+        };
+        let missing = cache.borrow_mut().take_missing();
+        if !missing.is_empty() {
+            cx.emit(WorkspaceEvent::AskViews(missing));
+        }
+    }
+
+    /// Keeps the views the computer sent, and draws them.
+    pub(crate) fn take_views(
+        &mut self,
+        answers: Vec<(ViewKey, Built)>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(cache) = &self.remote_views {
+            cache.borrow_mut().take(answers);
+            cx.notify();
+        }
+    }
+
+    /// After a snapshot, the computer may not know what this window
+    /// asked: it asks again.
+    pub(crate) fn ask_views_again(&mut self) {
+        if let Some(cache) = &self.remote_views {
+            cache.borrow_mut().ask_again();
+        }
+    }
+
+    /// Builds the views a phone asked for, keeps them to build again
+    /// after a change, and gives them to send.
+    pub fn ask_views(&mut self, keys: Vec<ViewKey>) -> HostUpdate {
+        let answers: Vec<(ViewKey, Built)> = keys
+            .into_iter()
+            .map(|key| {
+                let built = self.build_view(&key);
+                (key, built)
+            })
+            .collect();
+        for (key, built) in &answers {
+            self.phone_views.insert(key.clone(), built.clone());
+        }
+        HostUpdate::Views { answers }
+    }
+
+    /// Builds again every view phones asked for, and gives those whose
+    /// answer changed, if any did.
+    pub fn refresh_views(&mut self) -> Option<HostUpdate> {
+        let keys: Vec<ViewKey> = self.phone_views.keys().cloned().collect();
+        let mut answers = Vec::new();
+        for key in keys {
+            let built = self.build_view(&key);
+            if self.phone_views.get(&key) != Some(&built) {
+                self.phone_views.insert(key.clone(), built.clone());
+                answers.push((key, built));
+            }
+        }
+        (!answers.is_empty()).then_some(HostUpdate::Views { answers })
+    }
+
+    /// Forgets what phones asked for: none is connected.
+    pub fn forget_views(&mut self) {
+        self.phone_views.clear();
+    }
+
     /// The view `key` names, built from what this window has: the same
     /// for the same state, since views are pure (ADR 0045).
     pub fn build_view(&self, key: &ViewKey) -> Built {
@@ -103,6 +251,27 @@ impl Workspace {
                 )
                 .flatten()
                 .map_or(Built::Nothing, |tree| Built::Tree { tree })
+            }
+            View::Title {
+                plugin,
+                page,
+                params,
+            } => {
+                let Some(erased) = registry().get(plugin) else {
+                    return Built::Nothing;
+                };
+                let run = params.get("run").and_then(|id| {
+                    self.runs.iter().find(|run| &*run.id.0 == id.as_str())
+                });
+                self.with_plugin_in(
+                    erased.as_ref(),
+                    run,
+                    params,
+                    layout,
+                    |plugin, env| plugin.page_title(page, env),
+                )
+                .flatten()
+                .map_or(Built::Nothing, |title| Built::Title { title })
             }
             View::Commands { repo } => Built::Commands {
                 commands: registry()
@@ -214,7 +383,7 @@ impl Workspace {
 
     /// Each plugin's output at `point`, with the context `at` gives it,
     /// as JSON.
-    fn outs<'c, Cx: PointCx, Out: Serialize + 'static>(
+    fn outs<'c, Cx: PointCx, Out: Wired>(
         &self,
         point: Point<Cx, Out>,
         at: impl Fn(&str) -> Option<&'c Cx>,
@@ -226,7 +395,7 @@ impl Workspace {
             .filter_map(|(plugin, out)| {
                 Some(Contributed {
                     plugin: plugin.to_owned(),
-                    out: serde_json::to_value(out).ok()?,
+                    out: out.to_wire()?,
                 })
             })
             .collect();
@@ -235,7 +404,7 @@ impl Workspace {
 
     /// Each plugin's output at a card's `point`, each given its anchors
     /// on the card.
-    fn card_outs<Out: Serialize + 'static>(
+    fn card_outs<Out: Wired>(
         &self,
         point: Point<AtCard, Out>,
         at: &AtKey,

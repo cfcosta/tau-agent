@@ -164,6 +164,12 @@ pub enum HostUpdate {
         plugin: String,
         reply: serde_json::Value,
     },
+    /// Plugins' views the computer built for phones, each for the key a
+    /// phone asked by (ADR 0046).
+    Views {
+        answers:
+            Vec<(tau_ui_plugin::wire::ViewKey, tau_ui_plugin::wire::Built)>,
+    },
     /// The picture `key` a plugin's host half answered a tree's image
     /// with (ADR 0045).
     PluginFetched {
