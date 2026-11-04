@@ -12,15 +12,18 @@ use tau_tools::{
     artifact_grant::ArtifactRecord,
     ui::{
         ArtifactStatus,
+        PEEK,
         ReadView,
         State,
         artifact_status,
         diff_of,
         output_lines,
+        read_body,
+        term::TermOutput,
     },
 };
 use tau_ui_kit::diff::{DiffKind, DiffLine};
-use tau_ui_plugin::{CallData, CallResult, Fold, testing::FakeRun};
+use tau_ui_plugin::{CallData, CallResult, Fold, testing::FakeRun, tree::Node};
 
 /// A result's diff is read as tau-ui-kit reads any diff (its property
 /// is `a_whole_file_diff_gives_back_both_sides`): a successful call's
@@ -199,4 +202,43 @@ fn a_read_without_text_has_no_lines() {
     assert_eq!(of(json!({}), true), None);
     // An older result, without the counts, reads as the whole file.
     assert_eq!(of(json!({}), false).unwrap().label(), "1 line");
+}
+
+/// A command's terminal is its chunks joined in order while it runs, and
+/// none before it wrote anything.
+#[test]
+fn a_running_terminal_is_its_chunks_in_order() {
+    let chunk = |seq: u64, text: &str| {
+        use base64::Engine as _;
+        json!({"term": {
+            "seq": seq,
+            "bytes": base64::engine::general_purpose::STANDARD.encode(text),
+        }})
+    };
+    let mut data = CallData::default();
+    assert_eq!(TermOutput::of(&data, false), None);
+    data.updates = vec![chunk(0, "a"), chunk(2, "c"), chunk(1, "b")];
+    let term = TermOutput::of(&data, false).expect("a terminal");
+    assert_eq!(term.bytes.as_slice(), b"ab");
+    assert_eq!(term.end, None);
+}
+
+/// A `read` card shows its first lines and a button for the rest, and
+/// every line once opened.
+#[test]
+fn a_read_card_opens_to_every_line() {
+    let read = ReadView {
+        first: 1,
+        total: 10,
+        lines: (1..=10).map(|n| format!("line {n}")).collect(),
+    };
+    let code = |node: &Node| match node {
+        Node::Stack { children } => match &children[0] {
+            Node::Code { text, .. } => text.lines().count(),
+            other => panic!("code: {other:?}"),
+        },
+        other => panic!("a stack: {other:?}"),
+    };
+    assert_eq!(code(&read_body(&read, Some("rust"), false, None)), PEEK);
+    assert_eq!(code(&read_body(&read, Some("rust"), true, None)), 10);
 }

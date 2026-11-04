@@ -2,6 +2,12 @@
 //! result (`docs/reference/tools.md`, "exec_command and write_stdin").
 
 use serde_json::Value;
+use tau_ui_plugin::CallData;
+
+/// The size tool output runs at, which a command's terminal has until
+/// its result says otherwise: 120 columns by 40 rows.
+pub const COLS: u16 = 120;
+pub const ROWS: u16 = 40;
 
 /// What one call of `exec_command` or `write_stdin` saw of a command's
 /// terminal, from the `term` details of its updates and result
@@ -53,6 +59,26 @@ impl TermOutput {
             seen: String::new(),
             cut: false,
         }
+    }
+
+    /// The terminal a call drew: its result's replay once it ended,
+    /// else the chunks its updates carried, folded in order; `None` for
+    /// a command that ran without one, or has not written yet. `cut`
+    /// says whether a plugin cut what the model got.
+    pub fn of(data: &CallData, cut: bool) -> Option<Self> {
+        if let Some(result) = &data.result {
+            let term = result.details.as_ref()?.get("term")?;
+            let mut output = Self::from_result(term, result.text.clone())?;
+            output.cut = cut;
+            return Some(output);
+        }
+        let mut output = Self::new(COLS, ROWS);
+        for update in &data.updates {
+            if let Some(term) = update.get("term") {
+                output.push_chunk(term);
+            }
+        }
+        (output.next_seq > 0).then_some(output)
     }
 
     /// `120×40`.

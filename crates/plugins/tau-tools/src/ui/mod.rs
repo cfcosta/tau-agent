@@ -1,6 +1,8 @@
 //! tau-tools' UI (ADR 0017): the cards of its tools in a run's
-//! transcript. `exec_command` and `write_stdin` show their terminal, or
-//! the last lines of their output; `edit` and `write`, the diff they made; `ls`, the directory.
+//! transcript, each a view tree (ADR 0045). `exec_command` and
+//! `write_stdin` show their terminal, or the last lines of their output;
+//! `read`, the lines the model got; `edit` and `write`, the diff they
+//! made; `ls`, the directory.
 //!
 //! The host builds the plugin's tools on the run's workspace, where they
 //! act (`tau-tools-host`); this UI draws what they return.
@@ -11,19 +13,11 @@ pub mod term;
 #[cfg(feature = "terminal")]
 pub mod term_card;
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::collections::BTreeMap;
 
-use gpui::{Div, div, prelude::*, rems};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tau_ui_kit::{
-    diff,
-    syntax,
-    theme::{Design as _, MONO, Theme, Tone, Type, sp},
-};
+use tau_ui_kit::{diff, syntax, theme::Tone};
 use tau_ui_plugin::{
     CallData,
     Fold,
@@ -33,6 +27,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, AtRun, CardView},
+    tree::{Kind, Node},
 };
 
 use self::listing::DirListing;
@@ -45,16 +40,11 @@ pub const NAME: &str = "tau-tools";
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ToolsUi;
 
-/// The cards' state in one window: each command's screen.
+/// What the host half answered in one window: each artifact's last
+/// preview, by its id.
 #[derive(Default)]
 pub struct Ui {
-    #[cfg(feature = "terminal")]
-    pub terms: term_card::TermCards,
-    previews: BTreeMap<String, Value>,
-    /// The `read` cards opened past their first lines.
-    reads: BTreeSet<(tau_agent::tool::RunId, String)>,
-    /// Each `read` card's lines, highlighted once.
-    colors: BTreeMap<(tau_agent::tool::RunId, String), Arc<syntax::Lines>>,
+    pub previews: BTreeMap<String, Value>,
 }
 
 /// Serializable grant fold shared by live and reloaded runs, including phones.
@@ -167,8 +157,10 @@ fn artifact_error(data: &CallData) -> Option<ArtifactStatus> {
         .map(|error| ArtifactStatus::Unavailable(error.to_owned()))
 }
 
-fn artifact_line(status: &ArtifactStatus, t: &Theme) -> Div {
-    let label = match status {
+/// What a card or the inspector says of an artifact: what it is and
+/// where it came from, or why it is missing.
+fn artifact_line(status: &ArtifactStatus) -> Node {
+    let text = match status {
         ArtifactStatus::Available {
             metadata,
             source,
@@ -189,10 +181,7 @@ fn artifact_line(status: &ArtifactStatus, t: &Theme) -> Div {
             format!("Artifact unavailable: {reason}")
         }
     };
-    div()
-        .px(sp(3.))
-        .py(sp(1.))
-        .child(tau_ui_kit::components::mono(label, Type::MICRO, t.muted))
+    Node::Mono { text }
 }
 
 /// The lines a card shows of a `read` before it is opened.
@@ -259,96 +248,6 @@ impl ReadView {
     }
 }
 
-/// A `read`'s first lines, numbered, and the row that shows the rest.
-fn peek(
-    read: &ReadView,
-    colors: Option<&syntax::Lines>,
-    open: bool,
-    call_id: &str,
-    toggle: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-    t: &Theme,
-) -> Div {
-    let shown = if open {
-        read.lines.len()
-    } else {
-        read.lines.len().min(PEEK)
-    };
-    let rest = read.lines.len() - read.lines.len().min(PEEK);
-    let last = read.first + read.lines.len();
-    // Half a rem per digit of the last line's number.
-    let gutter = 0.5 * last.to_string().len() as f32;
-    div()
-        .flex()
-        .flex_col()
-        .pb(sp(1.5))
-        .font_family(MONO)
-        .typeset(Type::CAPTION)
-        .line_height(rems(1.25))
-        .children(read.lines[..shown].iter().enumerate().map(|(i, line)| {
-            div()
-                .flex()
-                .gap(sp(3.))
-                .px(sp(3.))
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .w(rems(gutter))
-                        .flex()
-                        .justify_end()
-                        .text_color(t.dim.opacity(0.7))
-                        .child((read.first + i).to_string()),
-                )
-                .child(
-                    div().text_color(t.text_soft).child(
-                        match colors.and_then(|colors| colors.get(i)) {
-                            Some(parts) if !line.is_empty() => {
-                                tau_ui_kit::select::selectable(
-                                    gpui::StyledText::new(line.clone())
-                                        .with_runs(syntax::runs(
-                                            line,
-                                            parts,
-                                            t.text_soft,
-                                            &t.syntax,
-                                        )),
-                                )
-                                .into_any_element()
-                            }
-                            _ => tau_ui_kit::select::selectable(
-                                gpui::StyledText::new(line.clone()),
-                            )
-                            .into_any_element(),
-                        },
-                    ),
-                )
-        }))
-        .when(rest > 0, |body| {
-            body.child(
-                div()
-                    .id(gpui::SharedString::from(format!("read-{call_id}")))
-                    .flex()
-                    .items_center()
-                    .min_h(rems(1.75))
-                    .px(sp(3.))
-                    .pl(rems(gutter + 1.5))
-                    .cursor_pointer()
-                    .text_color(t.dim)
-                    .hover(|row| row.text_color(t.text_soft))
-                    .child(if open {
-                        "show less".to_owned()
-                    } else {
-                        format!(
-                            "+ {} more {}",
-                            tau_ui_kit::format::grouped(rest),
-                            if rest == 1 { "line" } else { "lines" }
-                        )
-                    })
-                    .on_click(toggle),
-            )
-        })
-}
-
 /// The diff a call's result carries, when it carries one.
 pub fn diff_of(data: &CallData) -> Option<Vec<diff::DiffLine>> {
     let result = data.result.as_ref().filter(|result| !result.error)?;
@@ -372,26 +271,36 @@ fn tail(lines: Vec<String>, count: usize) -> Vec<String> {
     lines[start..].to_vec()
 }
 
-/// Output lines, a passing test's in green.
-fn output(lines: &[String], t: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .px(sp(3.))
-        .py(sp(2.))
-        .font_family(MONO)
-        .typeset(Type::CAPTION)
-        .line_height(rems(1.25))
-        .text_color(t.muted)
-        .children(lines.iter().map(|line| {
-            let pass = line.trim_start().starts_with("PASS");
-            div()
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .when(pass, |row| row.text_color(t.green))
-                .child(line.clone())
-        }))
+/// The key of the UI state that holds whether a `read` card shows all
+/// its lines.
+fn read_key(at: &AtCard) -> String {
+    format!("read-open/{}/{}", at.run.id.0, at.call_id)
 }
+
+/// The tree's name for a language tau-ui-kit highlights.
+fn lang_name(lang: syntax::Lang) -> &'static str {
+    use syntax::Lang;
+    match lang {
+        Lang::Bash => "bash",
+        Lang::Go => "go",
+        Lang::JavaScript => "javascript",
+        Lang::Json => "json",
+        Lang::Luau => "luau",
+        Lang::Nix => "nix",
+        Lang::Python => "python",
+        Lang::Rust => "rust",
+        Lang::Toml => "toml",
+        Lang::Tsx => "tsx",
+        Lang::TypeScript => "typescript",
+    }
+}
+
+/// The action of the inspector's preview buttons, whose arguments are
+/// the [`Action`] to ask the host half.
+const ACT: &str = "act";
+/// The action of a `read` card's button that shows its other lines, or
+/// hides them again.
+const MORE: &str = "more";
 
 impl UiPlugin for ToolsUi {
     type State = State;
@@ -425,111 +334,23 @@ impl UiPlugin for ToolsUi {
             .contribute(points::INSPECTOR, |_: &AtRun, view| {
                 let state = view.state?;
                 let run = view.run?.id.clone();
-                let t = view.theme().clone();
                 let previews = view.ui.read(view.cx).previews.clone();
+                let tree = inspector(state, &run, &previews);
                 let handle = view.handle.clone();
-                Some(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(sp(2.))
-                        .child(tau_ui_kit::components::heading(
-                            &format!("Artifacts · {}", state.grants.len()),
-                            &t,
-                        ))
-                        .when_some(state.error.clone(), |section, error| {
-                            section.child(artifact_line(
-                                &ArtifactStatus::Unavailable(error),
-                                &t,
-                            ))
-                        })
-                        .children(state.grants.values().map(move |grant| {
-                            let id = grant.artifact.id.clone();
-                            let status = ArtifactStatus::Available {
-                                metadata: grant.artifact.clone(),
-                                source: grant.source.clone(),
-                                source_complete: grant.source_complete,
-                            };
-                            let preview = previews.get(&id).cloned();
-                            let next_offset = preview
-                                .as_ref()
-                                .and_then(|value| value.get("next_offset"))
-                                .and_then(Value::as_u64)
-                                .unwrap_or(0);
-                            let data = preview
-                                .as_ref()
-                                .and_then(|value| value.get("data"))
-                                .and_then(Value::as_str)
-                                .unwrap_or("");
-                            let error = preview
-                                .as_ref()
-                                .and_then(|value| value.get("error"))
-                                .and_then(Value::as_str);
-                            let mut row = div()
-                                .flex()
-                                .flex_col()
-                                .child(artifact_line(&status, &t));
-                            if !data.is_empty() {
-                                row = row.child(tau_ui_kit::components::mono(
-                                    format!(
-                                        "Preview at byte {}: {}",
-                                        preview
-                                            .as_ref()
-                                            .and_then(|v| v.get("offset"))
-                                            .and_then(Value::as_u64)
-                                            .unwrap_or(0),
-                                        data
-                                    ),
-                                    Type::CAPTION,
-                                    t.text_soft,
-                                ));
-                            }
-                            if let Some(error) = error {
-                                row = row.child(artifact_line(
-                                    &ArtifactStatus::Unavailable(
-                                        error.to_owned(),
-                                    ),
-                                    &t,
-                                ));
-                            }
-                            for (encoding, label) in [
-                                ("utf8", "Preview text"),
-                                ("base64", "Preview base64"),
-                            ] {
-                                let run = run.clone();
-                                let id = id.clone();
-                                let handle = handle.clone();
-                                let action = json!(Action::Read {
-                                    run,
-                                    id: id.clone(),
-                                    offset: next_offset,
-                                    encoding: encoding.into()
-                                });
-                                row = row.child(
-                                    div()
-                                        .id(gpui::SharedString::from(format!(
-                                            "artifact-{encoding}-{id}"
-                                        )))
-                                        .flex()
-                                        .items_center()
-                                        .min_h(rems(2.))
-                                        .px(sp(3.))
-                                        .py(sp(1.))
-                                        .cursor_pointer()
-                                        .child(tau_ui_kit::components::mono(
-                                            label,
-                                            Type::MICRO,
-                                            t.blue,
-                                        ))
-                                        .on_click(move |_, _, cx| {
-                                            handle.act(action.clone(), cx)
-                                        }),
-                                );
-                            }
-                            row
-                        }))
-                        .into_any_element(),
-                )
+                Some(view.tree(
+                    &format!("tools-inspector-{}", run.0),
+                    &tree,
+                    move |action, args, cx| {
+                        if action != ACT {
+                            return;
+                        }
+                        if let Ok(act) =
+                            serde_json::from_value::<Action>(args.clone())
+                        {
+                            handle.act(act, cx);
+                        }
+                    },
+                ))
             })
             .contribute_at(points::STATUS, -20, |_: &AtRun, _| {
                 Some(PluginStatus {
@@ -541,105 +362,221 @@ impl UiPlugin for ToolsUi {
     }
 }
 
+/// The inspector's artifacts: each one the run was granted, what the host
+/// half last read of it, and buttons to read on as text or base64.
+pub fn inspector(
+    state: &State,
+    run: &tau_agent::tool::RunId,
+    previews: &BTreeMap<String, Value>,
+) -> Node {
+    let mut pieces = vec![Node::Heading {
+        text: format!("Artifacts · {}", state.grants.len()),
+    }];
+    if let Some(error) = &state.error {
+        pieces.push(artifact_line(&ArtifactStatus::Unavailable(error.clone())));
+    }
+    for grant in state.grants.values() {
+        let id = grant.artifact.id.clone();
+        let mut entry = vec![artifact_line(&ArtifactStatus::Available {
+            metadata: grant.artifact.clone(),
+            source: grant.source.clone(),
+            source_complete: grant.source_complete,
+        })];
+        let preview = previews.get(&id);
+        let field = |key: &str| preview.and_then(|value| value.get(key));
+        let next_offset = field("next_offset").and_then(Value::as_u64);
+        let data = field("data").and_then(Value::as_str).unwrap_or("");
+        if !data.is_empty() {
+            entry.push(Node::Mono {
+                text: format!(
+                    "Preview at byte {}: {data}",
+                    field("offset").and_then(Value::as_u64).unwrap_or(0)
+                ),
+            });
+        }
+        if let Some(error) = field("error").and_then(Value::as_str) {
+            entry.push(artifact_line(&ArtifactStatus::Unavailable(
+                error.to_owned(),
+            )));
+        }
+        let button = |encoding: &str, label: &str| Node::Button {
+            label: label.into(),
+            action: ACT.into(),
+            args: json!(Action::Read {
+                run: run.clone(),
+                id: id.clone(),
+                offset: next_offset.unwrap_or(0),
+                encoding: encoding.into(),
+            }),
+            kind: Kind::Secondary,
+            icon: None,
+        };
+        entry.push(Node::row([
+            button("utf8", "Preview text"),
+            button("base64", "Preview base64"),
+        ]));
+        pieces.push(Node::stack(entry));
+    }
+    Node::stack(pieces)
+}
+
+/// A `read` card's body: its first lines, or all of them once opened,
+/// highlighted as `lang`, the button that shows the rest, and why its
+/// artifact was not kept, when it was not.
+pub fn read_body(
+    read: &ReadView,
+    lang: Option<&str>,
+    open: bool,
+    missing: Option<&ArtifactStatus>,
+) -> Node {
+    let mut pieces = Vec::new();
+    if !read.lines.is_empty() {
+        let shown = if open {
+            read.lines.len()
+        } else {
+            read.lines.len().min(PEEK)
+        };
+        pieces.push(Node::Code {
+            lang: lang.map(str::to_owned),
+            text: read.lines[..shown].join("\n"),
+        });
+        let rest = read.lines.len() - read.lines.len().min(PEEK);
+        if rest > 0 {
+            pieces.push(Node::Button {
+                label: if open {
+                    "show less".to_owned()
+                } else {
+                    format!(
+                        "+ {} more {}",
+                        tau_ui_kit::format::grouped(rest),
+                        if rest == 1 { "line" } else { "lines" }
+                    )
+                },
+                action: MORE.into(),
+                args: json!(!open),
+                kind: Kind::Secondary,
+                icon: None,
+            });
+        }
+    }
+    if let Some(status) = missing {
+        pieces.push(artifact_line(status));
+    }
+    Node::stack(pieces)
+}
+
+/// Output lines, as the model got them.
+fn output(lines: &[String]) -> Node {
+    Node::Code {
+        lang: None,
+        text: lines.join("\n"),
+    }
+}
+
 /// A card of one of its tools.
 fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
-    let t = view.theme().clone();
     let compact = view.compact;
     let data = &at.data;
+    let id = format!("{}-{}", at.run.id.0, at.call_id);
+    let ignore = |_: &str, _: &Value, _: &mut gpui::App| {};
     match at.tool.as_str() {
         "exec_command" | "write_stdin" => {
             #[cfg(feature = "terminal")]
-            if let Some(view) = terminal(at, view, &t, compact) {
-                return Some(view);
+            if let Some(term) = term::TermOutput::of(data, at.cut.is_some()) {
+                let tree = term_card::body(&id, &term, at.cut.as_ref());
+                let body = view.tree(
+                    &format!("tools-term-{id}"),
+                    &tree,
+                    |action, args, cx| {
+                        if action != term_card::OPEN {
+                            return;
+                        }
+                        if let Some(path) =
+                            args.get("path").and_then(Value::as_str)
+                        {
+                            cx.open_with_system(std::path::Path::new(path));
+                        }
+                    },
+                );
+                return Some(CardView {
+                    failed: term.failure(),
+                    body: Some(body),
+                    inset: true,
+                    ..CardView::default()
+                });
             }
             let lines = match &data.result {
                 Some(_) => tail(output_lines(data), 4),
                 None => tail(output_lines(data), 6),
             };
             Some(CardView {
-                body: (!lines.is_empty())
-                    .then(|| output(&lines, &t).into_any_element()),
+                body: (!lines.is_empty()).then(|| {
+                    view.tree(
+                        &format!("tools-out-{id}"),
+                        &output(&lines),
+                        ignore,
+                    )
+                }),
                 ..CardView::default()
             })
         }
         "read" => {
             let read = ReadView::of(data)?;
-            let key = (at.run.id.clone(), at.call_id.clone());
-            let open = view.ui.read(view.cx).reads.contains(&key);
-            let colors = at
-                .data
+            let key = read_key(at);
+            let open = view
+                .ui_value(&key)
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let lang = data
                 .args
                 .get("path")
                 .and_then(Value::as_str)
                 .and_then(syntax::Lang::of_path)
-                .map(|lang| {
-                    view.ui.update(view.cx, |ui, _| {
-                        ui.colors
-                            .entry(key.clone())
-                            .or_insert_with(|| {
-                                Arc::new(syntax::highlight_lines(
-                                    lang,
-                                    &read.lines,
-                                ))
-                            })
-                            .clone()
-                    })
-                });
-            let (ui, handle) = (view.ui.clone(), view.handle.clone());
-            let toggle = move |_: &gpui::ClickEvent,
-                               _: &mut gpui::Window,
-                               cx: &mut gpui::App| {
-                ui.update(cx, |ui, _| {
-                    if !ui.reads.remove(&key) {
-                        ui.reads.insert(key.clone());
-                    }
-                });
-                handle.refresh(cx);
-            };
+                .map(lang_name);
             // Provenance is the inspector's; the card says only that
             // keeping it failed.
             let missing = artifact_error(data);
+            if read.lines.is_empty() && missing.is_none() {
+                return Some(CardView {
+                    label: Some(read.label()),
+                    ..CardView::default()
+                });
+            }
+            let tree = read_body(&read, lang, open, missing.as_ref());
+            let handle = view.handle.clone();
+            let body = view.tree(
+                &format!("tools-read-{id}"),
+                &tree,
+                move |action, args, cx| {
+                    if action == MORE {
+                        handle.set_ui(key.clone(), Some(args.clone()), cx);
+                    }
+                },
+            );
             Some(CardView {
                 label: Some(read.label()),
-                body: (!read.lines.is_empty() || missing.is_some()).then(
-                    || {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .when(!read.lines.is_empty(), |body| {
-                                body.child(peek(
-                                    &read,
-                                    colors.as_deref(),
-                                    open,
-                                    &at.call_id,
-                                    toggle,
-                                    &t,
-                                ))
-                            })
-                            .when_some(missing.as_ref(), |body, status| {
-                                body.child(artifact_line(status, &t))
-                            })
-                            .into_any_element()
-                    },
-                ),
+                body: Some(body),
                 ..CardView::default()
             })
         }
         "edit" | "write" => {
-            let lines = diff_of(data)?;
+            let result = data.result.as_ref().filter(|result| !result.error)?;
+            let text = result.details.as_ref()?.get("diff")?.as_str()?;
+            let tree = Node::Diff {
+                text: text.to_owned(),
+                path: data
+                    .args
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            };
             Some(CardView {
-                label: Some(diff::stat(&lines)),
-                body: Some(
-                    diff::view(
-                        &lines,
-                        data.args
-                            .get("path")
-                            .and_then(Value::as_str)
-                            .and_then(syntax::Lang::of_path),
-                        &t,
-                    )
-                    .into_any_element(),
-                ),
+                label: Some(diff::stat(&diff::parse(text))),
+                body: Some(view.tree(
+                    &format!("tools-diff-{id}"),
+                    &tree,
+                    ignore,
+                )),
                 // A whole file can be long: a write's diff opens on a
                 // click, an edit's few lines show at once.
                 folds: at.tool == "write",
@@ -649,58 +586,20 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
         listing::TOOL => {
             let result = data.result.as_ref().filter(|result| !result.error)?;
             let listing = DirListing::parse(result.details.as_ref()?)?;
+            let head = listing_card::summary(&listing, &at.summary, compact);
+            let body = listing_card::body(&listing, compact);
             Some(CardView {
-                head: Some(
-                    listing_card::summary(&listing, &at.summary, &t, compact)
-                        .into_any_element(),
-                ),
+                head: Some(view.tree(
+                    &format!("tools-ls-head-{id}"),
+                    &head,
+                    ignore,
+                )),
                 label: Some(listing.summary()),
-                body: Some(
-                    listing_card::body(&listing, &t, compact)
-                        .into_any_element(),
-                ),
+                body: Some(view.tree(&format!("tools-ls-{id}"), &body, ignore)),
                 folds: true,
                 ..CardView::default()
             })
         }
         _ => None,
     }
-}
-
-/// A command run under a terminal: its screen.
-#[cfg(feature = "terminal")]
-fn terminal(
-    at: &AtCard,
-    view: &mut ViewCx<'_, ToolsUi>,
-    t: &Theme,
-    compact: bool,
-) -> Option<CardView> {
-    let key = (at.run.id.clone(), at.call_id.clone());
-    let cut = at.cut.is_some();
-    let term = view
-        .ui
-        .update(view.cx, |ui, _| ui.terms.output(&key, &at.data, cut))?;
-    let ui = view.ui.clone();
-    let handle = view.handle.clone();
-    Some(CardView {
-        failed: term.failure(),
-        body: Some(
-            div()
-                .flex()
-                .flex_col()
-                .child(term_card::body(
-                    &ui,
-                    &handle,
-                    key,
-                    &term,
-                    at.cut.as_ref(),
-                    t,
-                    compact,
-                    view.cx,
-                ))
-                .into_any_element(),
-        ),
-        inset: true,
-        ..CardView::default()
-    })
 }

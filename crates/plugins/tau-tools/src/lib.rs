@@ -3,8 +3,8 @@
 //! tools themselves are `tau-tools-host`'s; a phone draws their cards
 //! without them (ADR 0030).
 //!
-//! The `terminal` feature draws the commands' output as a terminal, through
-//! tau-terminal (libghostty-vt)
+//! The `terminal` feature draws the commands' output as a terminal: the
+//! view tree's, which the interface keeps
 //! (`docs/decisions/0010-terminal-rendering.md`).
 
 pub mod artifact_grant;
