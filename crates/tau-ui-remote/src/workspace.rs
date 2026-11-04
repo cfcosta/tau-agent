@@ -681,7 +681,10 @@ pub struct Workspace {
     frame: Option<(f32, f32)>,
     /// The window's width at the last frame, for screens that size
     /// their columns to it.
-    width: gpui::Pixels,
+    pub(crate) width: gpui::Pixels,
+    /// The window's height at the last frame, where a plugin's modal
+    /// lays its backdrop.
+    pub(crate) height: gpui::Pixels,
     _subscriptions: Vec<Subscription>,
     /// The workspace itself, for plugins' handles.
     pub(crate) weak: gpui::WeakEntity<Workspace>,
@@ -965,6 +968,7 @@ impl Workspace {
             mirrored: false,
             frame: None,
             width: NARROW_MAX,
+            height: px(900.),
             _subscriptions: subscriptions,
         };
         // Scrolling up stops following new output; back at the bottom,

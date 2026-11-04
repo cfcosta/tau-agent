@@ -237,6 +237,19 @@ function ui.input(id, opts)
 		placeholder = opts.placeholder and tostring(opts.placeholder) or json.null,
 		multiline = opts.multiline == true,
 		submit = opts.submit and tostring(opts.submit) or json.null,
+		keep = opts.keep == true,
+	}
+end
+
+-- A panel over the page, for a choice or a form: put it in the view only
+-- while it is open. A click outside it carries out `opts.dismiss`.
+function ui.modal(title, children, opts)
+	opts = opts or {}
+	return {
+		piece = "modal",
+		title = tostring(title),
+		children = pieces(children),
+		dismiss = opts.dismiss and tostring(opts.dismiss) or json.null,
 	}
 end
 

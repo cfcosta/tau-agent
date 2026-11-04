@@ -228,6 +228,8 @@ fn draw_in(
     });
     let plugin_name = plugin.to_owned();
     let mut draw = Draw::new(&t, id.to_owned())
+        .width(view.width)
+        .window(view.window())
         .ui(view.ui_state())
         .prefix(plugin)
         .on_act(Rc::new(move |act, cx| match act {

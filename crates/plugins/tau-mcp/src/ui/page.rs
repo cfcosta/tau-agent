@@ -415,20 +415,14 @@ fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
     Node::stack(intro)
 }
 
-/// The editor of a server the page adds: its name, and its entry as the
-/// files write it.
+/// The editor of a server the page adds, over the page: its name, and
+/// its entry as the files write it. A click outside it cancels.
 fn editor_card(editor: &Editor, held: &Held) -> Node {
+    let title = match &editor.editing {
+        Some(_) => "Edit server",
+        None => "Add server",
+    };
     let mut body = vec![
-        Node::row([
-            icon("plug", Tone::Info),
-            Node::Heading {
-                text: match &editor.editing {
-                    Some(_) => "Edit server",
-                    None => "Add server",
-                }
-                .into(),
-            },
-        ]),
         Node::Rich {
             text: "The entry as mcp.json writes it: `command` and `args` for \
                    a program, or `url` and `headers` for HTTP; `exposure`, \
@@ -443,6 +437,7 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
                 placeholder: Some("linear".into()),
                 multiline: false,
                 submit: None,
+                keep: false,
             },
         },
         Node::Input {
@@ -453,6 +448,7 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
             ),
             multiline: true,
             submit: None,
+            keep: false,
         },
     ];
     if let Some(problem) = &editor.problem {
@@ -474,8 +470,10 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
             }),
         ),
     ]));
-    Node::Card {
-        children: vec![Node::stack(body)],
+    Node::Modal {
+        title: title.into(),
+        children: body,
+        dismiss: Some(CANCEL.into()),
     }
 }
 

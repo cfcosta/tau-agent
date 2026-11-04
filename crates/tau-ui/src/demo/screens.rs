@@ -80,6 +80,15 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("mcp", |ws, _, cx| {
         plugin_page(ws, tau_mcp_host::NAME, "servers", "repo", cx)
     }),
+    // Its editor, open over the page as a modal (ADR 0045).
+    ("mcp-add", |ws, _, cx| {
+        plugin_page(ws, tau_mcp_host::NAME, "servers", "repo", cx);
+        ws.plugin_handle(tau_mcp_host::NAME).set_ui(
+            tau_mcp::ui::page::EDITOR,
+            Some(json!({ "editing": null, "problem": null })),
+            cx,
+        );
+    }),
     // The person's own plugins (ADR 0036): their page, and the page of
     // one that waits for them.
     ("plugins-yours", |ws, host, cx| yours(ws, host, None, cx)),

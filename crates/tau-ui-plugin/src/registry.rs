@@ -57,6 +57,8 @@ pub struct Env<'a> {
     pub inputs: crate::tree::Inputs<'a>,
     /// Where its trees' widgets are kept (ADR 0045).
     pub widgets: crate::tree::Widgets<'a>,
+    /// The window's size, in pixels: where a modal lays its backdrop.
+    pub window: (f32, f32),
     pub cx: &'a mut App,
 }
 
@@ -307,7 +309,8 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
         .with_others(env.others)
         .with_ui_state(env.ui_state)
         .with_inputs(env.inputs)
-        .with_widgets(env.widgets);
+        .with_widgets(env.widgets)
+        .with_window(env.window);
         Some(f(&mut view))
     }
 }

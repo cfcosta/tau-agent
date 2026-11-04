@@ -172,6 +172,7 @@ impl Workspace {
             mirrored: _,
             frame: _,
             width: _,
+            height: _,
             _subscriptions: _,
             weak: _,
             // Plugins keep what interfaces share in their records, which

@@ -449,6 +449,8 @@ pub struct ViewCx<'a, P: UiPlugin> {
     inputs: Option<crate::tree::Inputs<'a>>,
     /// Where its trees' widgets are kept: see [`Self::widgets`].
     widgets: Option<crate::tree::Widgets<'a>>,
+    /// The window's size, in pixels: see [`Self::with_window`].
+    window: (f32, f32),
     pub cx: &'a mut App,
 }
 
@@ -495,6 +497,7 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             ui_state: &NO_UI_STATE,
             inputs: None,
             widgets: None,
+            window: (960., 720.),
             cx,
         }
     }
@@ -518,6 +521,18 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     pub fn with_inputs(mut self, inputs: crate::tree::Inputs<'a>) -> Self {
         self.inputs = Some(inputs);
         self
+    }
+
+    /// The same view, in a window of `window`'s size, where its trees'
+    /// modals lay their backdrops.
+    pub fn with_window(mut self, window: (f32, f32)) -> Self {
+        self.window = window;
+        self
+    }
+
+    /// The window's size, in pixels.
+    pub fn window(&self) -> (f32, f32) {
+        self.window
     }
 
     /// The same view, drawing its trees' widgets with `widgets`.
@@ -554,16 +569,15 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
 
         let handle = self.handle.clone();
         let t = self.theme().clone();
-        let mut draw =
-            Draw::new(&t, id.to_owned())
-                .ui(self.ui_state)
-                .on_act(Rc::new(move |act, cx| match act {
-                    Act::Navigate(link) => handle.navigate(link, cx),
-                    Act::Ui { key, value } => handle.set_ui(key, value, cx),
-                    Act::Plugin { action, args } => {
-                        on_action(&action, &args, cx)
-                    }
-                }));
+        let mut draw = Draw::new(&t, id.to_owned())
+            .width(self.width)
+            .window(self.window)
+            .ui(self.ui_state)
+            .on_act(Rc::new(move |act, cx| match act {
+                Act::Navigate(link) => handle.navigate(link, cx),
+                Act::Ui { key, value } => handle.set_ui(key, value, cx),
+                Act::Plugin { action, args } => on_action(&action, &args, cx),
+            }));
         if let Some(inputs) = self.inputs {
             draw = draw.inputs(inputs);
         }

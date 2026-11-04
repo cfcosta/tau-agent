@@ -389,6 +389,7 @@ impl Workspace {
             ui_state: self.ui_state.of(name),
             inputs: &inputs,
             widgets: &widgets,
+            window: (f32::from(self.width), f32::from(self.height)),
             cx,
         };
         Some(f(plugin, env))

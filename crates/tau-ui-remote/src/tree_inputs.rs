@@ -87,12 +87,16 @@ fn make(
         draft,
         placeholder,
         multiline,
+        keep,
         on_submit,
     } = spec;
     let input = cx.new(|cx| {
         let mut input = TextInput::new(placeholder, cx);
         if multiline {
             input = input.multiline();
+        }
+        if keep {
+            input = input.keep_on_submit();
         }
         input.set_text(draft.clone(), cx);
         input
@@ -158,6 +162,7 @@ mod tests {
             draft: draft.into(),
             placeholder: String::new(),
             multiline: false,
+            keep: false,
             on_submit: None,
         }
     }

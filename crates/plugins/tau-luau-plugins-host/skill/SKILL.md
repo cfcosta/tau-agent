@@ -156,7 +156,10 @@ Plain tables, drawn by tau on the computer and on the phone:
   `actions[action](args, ctx)` on the run's state, then draws `view`
   again; `kind` is `"primary"`, `"secondary"` or `"danger"`
 - `ui.input(id, { placeholder = "...", multiline = true, submit = "action" })`:
-  a text input; Enter carries out `submit` with `{ text = ... }`
+  a text input; Enter carries out `submit` with `{ text = ... }` and
+  empties it, or keeps what it holds with `keep = true`
+- `ui.modal(title, { ... }, { dismiss = "action" })`: a panel over the
+  page; return it from `view` only while it should show
 - tau keeps where the person left a section or tabs, and what they
   typed in an input, under its `id`, on every device and across
   restarts

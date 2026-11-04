@@ -547,6 +547,7 @@ return tau.plugin {
       ui.diff("@@ -1 +1 @@\n-a\n+b\n", "src/lib.rs"), ui.diff("-x\n"),
       ui.terminal("out", "ok\r\n", { cols = 40, rows = 4 }), ui.terminal("live", "", { live = true }),
       ui.ticker("load", 1000), ui.ticker("done", 1000, 61000),
+      ui.input("limit", { keep = true }), ui.modal("Sure?", { "It cannot be undone." }, { dismiss = "cancel" }),
       ui.graph({ { id = "a", label = "A", focus = true }, { id = "b", x = 0.2, y = 0.2, tone = "info", page = "note" } }, { { "a", "b" } }),
     } }
   end,
@@ -573,7 +574,7 @@ async fn every_ui_piece_reads_as_a_tree() {
     let tau_ui_plugin::tree::Node::Stack { children } = &node else {
         panic!("a stack: {node:?}")
     };
-    assert_eq!(children.len(), 38);
+    assert_eq!(children.len(), 40);
     let written = node.value().to_string();
     assert!(!written.contains(r#""piece":"invalid""#), "{written}");
 }

@@ -38,10 +38,14 @@ impl Render for Workspace {
         let t = theme(cx).clone();
         // Every size is in rems: the zoom sets the rem.
         window.set_rem_size(px(16. * self.zoom));
-        let width = match self.frame {
-            Some((width, _)) => px(width),
-            None => window.viewport_size().width,
+        let (width, height) = match self.frame {
+            Some((width, height)) => (px(width), px(height)),
+            None => {
+                let size = window.viewport_size();
+                (size.width, size.height)
+            }
         };
+        self.height = height;
         // Zoomed in, the window holds less: the layouts change at the
         // widths they would for a window that much smaller.
         let phone = self.phone_preview || width / self.zoom < PHONE_MAX;

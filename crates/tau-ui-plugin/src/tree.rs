@@ -247,6 +247,20 @@ pub enum Node {
         multiline: bool,
         #[serde(default)]
         submit: Option<String>,
+        /// Whether Enter keeps the draft: a value to keep, not a message
+        /// to send.
+        #[serde(default)]
+        keep: bool,
+    },
+    /// A panel over the page, for a choice or a form that stops the rest
+    /// until it is done. The tree holds it only while it is open; a
+    /// click outside it carries out `dismiss`, the plugin's own action.
+    Modal {
+        title: String,
+        #[serde(default, deserialize_with = "nodes")]
+        children: Vec<Node>,
+        #[serde(default)]
+        dismiss: Option<String>,
     },
     /// A unified diff, its lines colored as `path`'s language when known.
     Diff {
@@ -432,6 +446,7 @@ pub struct InputSpec {
     pub draft: String,
     pub placeholder: String,
     pub multiline: bool,
+    pub keep: bool,
     pub on_submit: Option<OnSubmit>,
 }
 
@@ -556,6 +571,10 @@ pub struct Draw<'a> {
     /// Where widgets' views come from (terminals, tickers); without it a
     /// widget shows that it is drawn where one is kept.
     pub widgets: Option<Widgets<'a>>,
+    /// The width the tree is laid out in, in pixels.
+    pub width: f32,
+    /// The window's size, in pixels, where a modal lays its backdrop.
+    pub window: (f32, f32),
 }
 
 impl<'a> Draw<'a> {
@@ -569,6 +588,8 @@ impl<'a> Draw<'a> {
             prefix: None,
             inputs: None,
             widgets: None,
+            width: 960.,
+            window: (960., 720.),
         }
     }
 
@@ -587,6 +608,16 @@ impl<'a> Draw<'a> {
 
     pub fn setting(mut self, setting: DrawSetting<'a>) -> Self {
         self.setting = Some(setting);
+        self
+    }
+
+    pub fn window(mut self, window: (f32, f32)) -> Self {
+        self.window = window;
+        self
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
         self
     }
 
@@ -1107,6 +1138,7 @@ impl<'a> Draw<'a> {
                 placeholder,
                 multiline,
                 submit,
+                keep,
             } => {
                 let key = self.key(draft_key(id));
                 let draft = self
@@ -1139,6 +1171,7 @@ impl<'a> Draw<'a> {
                         draft,
                         placeholder: placeholder.clone().unwrap_or_default(),
                         multiline: *multiline,
+                        keep: *keep,
                         on_submit,
                     },
                     cx,
@@ -1213,6 +1246,78 @@ impl<'a> Draw<'a> {
                 nodes,
                 edges,
             } => self.graph(*height, nodes, edges, path),
+            Node::Modal {
+                title,
+                children,
+                dismiss,
+            } => {
+                const WIDE: f32 = 440.;
+                let dismissed = self.on_act.clone().zip(dismiss.clone()).map(
+                    |(on_act, action)| {
+                        move |_: &gpui::MouseDownEvent,
+                              _: &mut gpui::Window,
+                              cx: &mut App| {
+                            on_act(
+                                Act::Plugin {
+                                    action: action.clone(),
+                                    args: Value::Null,
+                                },
+                                cx,
+                            )
+                        }
+                    },
+                );
+                let panel = div()
+                    .id(SharedString::from(format!("{path}:modal")))
+                    .mt(gpui::px(72.))
+                    .w(gpui::px(WIDE))
+                    .max_w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(3.))
+                    .p(sp(5.))
+                    .bg(t.panel)
+                    .border_1()
+                    .border_color(t.border_strong)
+                    .rounded(radius::CARD)
+                    .shadow_lg()
+                    // A click on it stays in it.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation()
+                    })
+                    .child(
+                        div()
+                            .typeset(Type::SUBTITLE)
+                            .font_weight(tau_ui_kit::theme::weight::STRONG)
+                            .child(title.clone()),
+                    )
+                    .children(self.children(children, depth, path, cx));
+                // The backdrop: the window's width, and taller than any
+                // window; what is under it takes no clicks.
+                let backdrop = div()
+                    .id(SharedString::from(format!("{path}:backdrop")))
+                    .w(gpui::px(self.window.0))
+                    .h(gpui::px(self.window.1))
+                    .px(sp(2.))
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .bg(t.scrim)
+                    .occlude()
+                    .when_some(dismissed, |backdrop, dismissed| {
+                        backdrop
+                            .on_mouse_down(gpui::MouseButton::Left, dismissed)
+                    })
+                    .child(panel);
+                gpui::deferred(
+                    gpui::anchored()
+                        .position_mode(gpui::AnchoredPositionMode::Window)
+                        .position(gpui::point(gpui::px(0.), gpui::px(0.)))
+                        .child(backdrop),
+                )
+                .with_priority(2)
+                .into_any_element()
+            }
             Node::Empty { text } => empty(text.clone(), t).into_any_element(),
             Node::Button {
                 label,
@@ -1456,6 +1561,11 @@ mod tests {
               "on": true, "action": "idle", "args": null },
         ]});
         assert_eq!(Node::read(&setting).value(), setting);
+        let modal = json!({ "piece": "modal", "title": "Add server",
+            "children": [{ "piece": "input", "id": "name", "placeholder": null,
+                           "multiline": false, "submit": null, "keep": true }],
+            "dismiss": "cancel" });
+        assert_eq!(Node::read(&modal).value(), modal);
         assert_eq!(
             Node::read(&json!({ "piece": "terminal", "id": "t" })),
             Node::Terminal {
@@ -1467,7 +1577,7 @@ mod tests {
             }
         );
         let input = json!({ "piece": "input", "id": "note", "placeholder": null,
-                            "multiline": true, "submit": "save" });
+                            "multiline": true, "submit": "save", "keep": false });
         assert_eq!(Node::read(&input).value(), input);
         assert_eq!(tab_key("views"), "views.tab");
     }
