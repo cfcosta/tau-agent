@@ -40,12 +40,17 @@ impl Workspace {
 
     /// Records what the phone's remote learned: once paired, the phone
     /// is named; a computer that does not answer says so; one that
-    /// answers again leads back to the runs.
+    /// answers again leads back to the runs, and is asked again for the
+    /// plugins' views the phone draws: what it pushed while the phone was
+    /// away was lost (ADR 0046).
     pub fn update_pairing(
         &mut self,
         update: PairingUpdate,
         cx: &mut Context<Self>,
     ) {
+        if matches!(update, PairingUpdate::Connected(_)) {
+            self.ask_views_again();
+        }
         let next = match &update {
             PairingUpdate::Paired(_) => Some(Route::Pair(PairStep::Paired)),
             PairingUpdate::Unreachable { .. } => {

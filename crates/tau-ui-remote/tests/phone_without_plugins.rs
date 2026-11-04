@@ -237,3 +237,55 @@ fn a_phone_without_plugins_draws_and_acts_through_the_computer(
         .read_with(&cx, |ws, _| ws.run(&run_id()).unwrap().plugin_states.len());
     assert_eq!(states, 0);
 }
+
+/// A phone that reaches the computer again asks again for every view it
+/// draws: what the computer pushed while it was away went to nobody,
+/// and a phone that came back from its last message gets no snapshot
+/// to ask after. Found by `tau-ui`'s plugins model.
+#[gpui::test]
+fn a_phone_that_comes_back_asks_again_for_what_it_draws(
+    cx: &mut TestAppContext,
+) {
+    use tau_ui_remote::pairing::{Computer, PairingUpdate};
+
+    let (workspace, mut cx, events) = open(cx);
+    let asked: Vec<_> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::AskViews(keys) => Some(keys.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert!(!asked.is_empty(), "it asks for what it draws");
+    workspace.update(&mut cx, |ws, cx| ws.apply(answer(&asked), cx));
+    cx.run_until_parked();
+    events.borrow_mut().clear();
+
+    let computer = Computer {
+        name: "desk".into(),
+        address: tau_remote::Address {
+            host: "100.84.12.7".into(),
+            port: tau_remote::Address::DEFAULT_PORT,
+        },
+        fingerprint: tau_remote::Fingerprint([7; 32]),
+        via: None,
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.update_pairing(PairingUpdate::Connected(computer), cx)
+    });
+    cx.run_until_parked();
+    let again: Vec<_> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::AskViews(keys) => Some(keys.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    for key in &asked {
+        assert!(again.contains(key), "{key:?} is not asked again: {again:?}");
+    }
+}

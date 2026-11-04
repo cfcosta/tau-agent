@@ -448,6 +448,13 @@ and `tests/core_names_no_plugin.rs` checks that neither its sources
 outside their tests nor tau-phone's name a plugin crate, a plugin's
 name or its tools, and that neither links one.
 
+A phone draws each plugin view from what the computer builds for it
+(`Workspace::build_view` of a `ViewKey`): it asks for the views it drew
+without, the computer pushes those whose answer changed, and the phone
+asks again for every view it has after a snapshot and whenever it
+reaches the computer again, since what was pushed while it was away
+reached nobody.
+
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,
   `tau-<plugin>-host`: tau-codemode (Luau), tau-luau-plugins, tau-vcs
