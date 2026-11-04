@@ -428,6 +428,19 @@ impl Workspace {
         params: &BTreeMap<String, String>,
         f: impl FnOnce(&dyn ErasedPlugin, Env<'_>) -> R,
     ) -> Option<R> {
+        self.with_plugin_in(plugin, run, params, None, f)
+    }
+
+    /// [`Self::with_plugin`], laid out as `layout` says rather than as
+    /// this window is: a phone's view, built here (ADR 0046).
+    pub(crate) fn with_plugin_in<R>(
+        &self,
+        plugin: &dyn ErasedPlugin,
+        run: Option<&RunView>,
+        params: &BTreeMap<String, String>,
+        layout: Option<tau_ui_plugin::wire::Layout>,
+        f: impl FnOnce(&dyn ErasedPlugin, Env<'_>) -> R,
+    ) -> Option<R> {
         let name = plugin.name();
         let info = run.map(RunView::info);
         // Each value the plugin has not got yet is unset, and typed apart
@@ -483,9 +496,13 @@ impl Workspace {
             repos: &repos,
             run: info.as_ref(),
             params,
-            compact: self.compact(),
+            compact: layout
+                .map_or_else(|| self.compact(), |layout| layout.compact),
             jev: self.catalog.models.access.jev,
-            width: f32::from(self.screen_width()),
+            width: layout.map_or_else(
+                || f32::from(self.screen_width()),
+                |layout| layout.width(),
+            ),
             handle: self.plugin_handle(name),
             runs: &runs,
             cards: &cards,
@@ -676,10 +693,20 @@ impl Workspace {
 
     /// What plugins contribute at `point`, in order, each with the plugin
     /// that gave it and the context `at` gave it.
-    pub(crate) fn contributions_named<'c, Cx: PointCx, Out: 'static>(
+    pub fn contributions_named<'c, Cx: PointCx, Out: 'static>(
         &self,
         point: Point<Cx, Out>,
         at: impl Fn(&str) -> Option<&'c Cx>,
+    ) -> Vec<(&'static str, Out)> {
+        self.contributions_in(point, at, None)
+    }
+
+    /// [`Self::contributions_named`], laid out as `layout` says.
+    pub(crate) fn contributions_in<'c, Cx: PointCx, Out: 'static>(
+        &self,
+        point: Point<Cx, Out>,
+        at: impl Fn(&str) -> Option<&'c Cx>,
+        layout: Option<tau_ui_plugin::wire::Layout>,
     ) -> Vec<(&'static str, Out)> {
         let empty = BTreeMap::new();
         let mut found: Vec<(i32, usize, &'static str, Out)> = Vec::new();
@@ -691,9 +718,13 @@ impl Workspace {
                 self.runs.iter().find(|run| run.id == info.id)
             });
             let outs = self
-                .with_plugin(plugin.as_ref(), run, &empty, |plugin, env| {
-                    plugin.contribute(point.name, at, env)
-                })
+                .with_plugin_in(
+                    plugin.as_ref(),
+                    run,
+                    &empty,
+                    layout,
+                    |plugin, env| plugin.contribute(point.name, at, env),
+                )
                 .unwrap_or_default();
             for (order, mut out) in outs {
                 // A plugin's navigation entry leads to its own page unless
@@ -884,11 +915,19 @@ impl Workspace {
         &self,
         plugin: &dyn tau_ui_plugin::ErasedPlugin,
     ) -> Vec<tau_ui_plugin::registry::CommandInfo> {
+        self.plugin_commands_in(plugin, self.command_repo().as_deref())
+    }
+
+    /// `plugin`'s commands where the composer is in `repo`, or in none.
+    pub(crate) fn plugin_commands_in(
+        &self,
+        plugin: &dyn tau_ui_plugin::ErasedPlugin,
+        repo: Option<&str>,
+    ) -> Vec<tau_ui_plugin::registry::CommandInfo> {
         let name = plugin.name();
         let unset = PluginValue::default();
         let data = self.catalog.plugin_data.get(name).unwrap_or(&unset);
-        let repo = self.command_repo();
-        let repo = repo.as_deref().and_then(|repo| {
+        let repo = repo.and_then(|repo| {
             let value = self.catalog.repo(repo)?.plugins.get(name)?;
             Some((repo, value))
         });

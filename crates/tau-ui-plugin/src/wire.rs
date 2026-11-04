@@ -138,6 +138,27 @@ pub struct Contributed {
     pub out: serde_json::Value,
 }
 
+/// A view, built: what the phone draws for its [`ViewKey`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "built", rename_all = "snake_case")]
+pub enum Built {
+    /// Each plugin's output at a point, in order.
+    Outs { outs: Vec<Contributed> },
+    /// A page's tree, and whether the interface frames it.
+    Page {
+        tree: crate::tree::Node,
+        framed: bool,
+    },
+    /// A settings pane's or a popover's tree.
+    Tree { tree: crate::tree::Node },
+    /// Each plugin's commands where the composer is, by plugin.
+    Commands {
+        commands: Vec<(String, crate::registry::CommandInfo)>,
+    },
+    /// Nothing is there: no such plugin, page, run or call.
+    Nothing,
+}
+
 #[cfg(test)]
 mod tests {
     use hegel::{TestCase, generators as gs};

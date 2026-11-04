@@ -1460,7 +1460,7 @@ impl Workspace {
     }
 
     /// Whether the window has the phone's layout.
-    pub(crate) fn compact(&self) -> bool {
+    pub fn compact(&self) -> bool {
         self.phone_preview || self.width < PHONE_MAX
     }
 

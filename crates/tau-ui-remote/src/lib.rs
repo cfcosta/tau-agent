@@ -61,6 +61,7 @@ pub mod tree_widgets;
 pub mod ui;
 pub mod update;
 pub mod view;
+pub mod views;
 pub mod workspace;
 
 use gpui::App;
