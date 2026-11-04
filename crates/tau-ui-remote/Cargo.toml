@@ -24,6 +24,7 @@ tau-ask = { path = "../plugins/tau-ask", default-features = false }
 tau-luau-plugins.workspace = true
 tau-tools.workspace = true
 tau-goal.workspace = true
+tau-vcs.workspace = true
 
 [dependencies]
 base64.workspace = true
@@ -38,7 +39,6 @@ tau-remote.workspace = true
 tau-store.workspace = true
 # Draws the view tree's terminals.
 tau-terminal.workspace = true
-tau-vcs.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 futures-util.workspace = true

@@ -189,7 +189,5 @@ fn writing_a_plugin_starts_on_a_new_run_s_composer(cx: &mut TestAppContext) {
 /// Gives this process every plugin tau comes with, once.
 fn install_plugins() {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        tau_ui_remote::plugins::install(tau_plugins::plugins())
-    });
+    ONCE.call_once(|| tau_ui_remote::plugins::install(tau_plugins::plugins()));
 }

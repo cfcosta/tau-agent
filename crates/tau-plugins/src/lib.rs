@@ -55,4 +55,3 @@ pub fn plugins() -> Registry {
         // registered before it, or scripts' signatures miss them.
         .with(tau_codemode::CodemodeUi)
 }
-

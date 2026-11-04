@@ -58,7 +58,7 @@ pub fn item(
         let card = match run.ending {
             Some(_) => super::ending::landed_card(ws, run, t, cx),
             None => super::interrupted::card(run, t, cx)
-                .or_else(|| super::landing::card(ws, run, t, compact, cx)),
+                .or_else(|| super::landing::card(ws, run, t, cx)),
         };
         // A main chat's: what waits to land on it, and conflicts left
         // on it.
@@ -211,11 +211,11 @@ fn item_view(
             .flex_col()
             .gap(sp(2.))
             .child(super::interrupted::finished_landing(&card.title, t))
-            .child(landed(card, t, compact, cx))
+            .child(landed(ws, run, card, t, cx))
             .into_any_element(),
-        Item::Landed(card) => landed(card, t, compact, cx).into_any_element(),
+        Item::Landed(card) => landed(ws, run, card, t, cx).into_any_element(),
         Item::ForkReady { fork } => {
-            fork_ready(ws, run, fork, t, compact, cx).into_any_element()
+            fork_ready(ws, run, fork, t, cx).into_any_element()
         }
         // tau's own message, unless a plugin reads it as its own (an
         // agent's events).
@@ -802,9 +802,10 @@ fn tool(
 /// A child run's landing, in its parent's chat: what came, and what is
 /// left to resolve. The child's title opens its closed chat.
 fn landed(
+    ws: &Workspace,
+    run: &RunView,
     card: &LandedCard,
     t: &Theme,
-    compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Div {
     let from = card.from.clone();
@@ -829,7 +830,7 @@ fn landed(
                     card.from.0,
                     card.changes
                         .first()
-                        .map_or("", |change| change.info.commit_id.as_str())
+                        .map_or("", |change| change.commit_id.as_str())
                 )))
                 .flex()
                 .items_center()
@@ -856,16 +857,29 @@ fn landed(
         .when(
             !card.changes.is_empty() || !card.conflicts.is_empty(),
             |card_box| {
-                let body = tau_vcs::ui::landed::landed_body(card, compact);
-                let newest = card
-                    .changes
-                    .first()
-                    .map_or("", |change| change.info.commit_id.as_str());
-                let id = format!("landed-body-{}-{newest}", card.from.0);
+                let at = tau_ui_plugin::points::AtChanges {
+                    run: run.info(),
+                    changes: card.changes.clone(),
+                };
                 card_box.child(
-                    div().p(sp(3.)).border_t_1().border_color(t.border).child(
-                        tau_ui_plugin::tree::Draw::new(t, id).draw(&body, cx),
-                    ),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(sp(2.))
+                        .p(sp(3.))
+                        .border_t_1()
+                        .border_color(t.border)
+                        .children(ws.drawn(
+                            tau_ui_plugin::points::CHANGES,
+                            &at,
+                            cx,
+                        ))
+                        .when(!card.conflicts.is_empty(), |body| {
+                            body.child(div().text_color(t.red).child(format!(
+                                "Conflicts in {}: the next turn resolves them.",
+                                card.conflicts.join(", ")
+                            )))
+                        }),
                 )
             },
         )
@@ -903,7 +917,6 @@ fn fork_ready(
     run: &RunView,
     fork: &tau_agent::tool::RunId,
     t: &Theme,
-    compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Div {
     let Some(view) = ws.run(fork).filter(|_| !ws.is_closed(fork)) else {
@@ -955,7 +968,7 @@ fn fork_ready(
                 .py(sp(2.5))
                 .border_t_1()
                 .border_color(t.border)
-                .children(super::landing::controls(ws, view, t, compact, cx))
+                .children(super::landing::controls(ws, view, t, cx))
                 .child(
                     div()
                         .flex()

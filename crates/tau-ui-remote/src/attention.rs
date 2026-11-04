@@ -31,8 +31,8 @@ pub struct Forecast {
     pub conflicts: Vec<String>,
 }
 
-impl From<&tau_vcs::Landing> for Forecast {
-    fn from(landing: &tau_vcs::Landing) -> Self {
+impl From<&tau_ui_plugin::vcs::Landing> for Forecast {
+    fn from(landing: &tau_ui_plugin::vcs::Landing) -> Self {
         Self {
             changes: landing.changes.len(),
             conflicts: landing.conflicts.clone(),

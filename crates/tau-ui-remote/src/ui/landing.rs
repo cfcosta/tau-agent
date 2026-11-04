@@ -4,8 +4,7 @@
 //! chat share.
 
 use gpui::{Context, SharedString, div, prelude::*, rems};
-use tau_ui_plugin::tree::Draw;
-use tau_vcs::ui::{change_log::Change, log_card};
+use tau_ui_plugin::points::{self, AtChanges};
 
 use crate::{
     assets::Icon,
@@ -34,11 +33,10 @@ pub fn card(
     ws: &Workspace,
     run: &RunView,
     t: &Theme,
-    compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Option<gpui::Div> {
     let target = target(ws, run)?;
-    let body = controls(ws, run, t, compact, cx)?;
+    let body = controls(ws, run, t, cx)?;
     Some(
         div()
             .flex()
@@ -82,7 +80,6 @@ pub fn controls(
     ws: &Workspace,
     run: &RunView,
     t: &Theme,
-    compact: bool,
     cx: &mut Context<Workspace>,
 ) -> Option<gpui::Div> {
     let parent = target(ws, run)?;
@@ -200,8 +197,7 @@ pub fn controls(
                     })),
             ),
         Some(LandingState::Preview(Ok(preview))) => {
-            let changes: Vec<Change> =
-                preview.changes.iter().cloned().map(Change::new).collect();
+            let changes = &preview.changes;
             let summary = match changes.len() {
                 0 => format!("Nothing to land: {parent} has all of it."),
                 1 => format!(
@@ -217,12 +213,17 @@ pub fn controls(
                 .flex_col()
                 .gap(sp(2.))
                 .child(caption(summary, t.text_soft))
-                .child(
-                    ui::card(t).p(sp(3.)).child(
-                        Draw::new(t, format!("landing-{}", run.id.0))
-                            .draw(&log_card::stack(&changes, compact), cx),
-                    ),
-                )
+                .when(!changes.is_empty(), |column| {
+                    let at = AtChanges {
+                        run: run.info(),
+                        changes: changes.clone(),
+                    };
+                    column.child(ui::card(t).p(sp(3.)).children(ws.drawn(
+                        points::CHANGES,
+                        &at,
+                        cx,
+                    )))
+                })
                 .when(waits, |column| {
                     column.child(caption(
                         format!(

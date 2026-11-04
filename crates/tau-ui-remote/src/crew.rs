@@ -59,8 +59,8 @@ impl Workspace {
         let round: HashSet<RunId> = main.items[since..]
             .iter()
             .filter_map(|item| match item {
-                Item::Tool(card) if card.tool == tau_vcs::details::SPAWN => {
-                    tau_vcs::ui::spawned(&card.data)
+                Item::Tool(card) if card.tool == tau_ui_plugin::vcs::SPAWN => {
+                    tau_ui_plugin::vcs::spawned(&card.data)
                 }
                 _ => None,
             })

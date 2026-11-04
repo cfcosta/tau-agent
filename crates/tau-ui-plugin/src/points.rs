@@ -195,6 +195,37 @@ impl PointCx for AtRewrite {
     }
 }
 
+/// Changes as they sit on a run's stack, newest first: a landing's
+/// preview, and the card a landing leaves in the parent's chat.
+#[derive(Debug, Clone)]
+pub struct AtChanges {
+    /// The run whose chat shows them: the child's, in its landing's
+    /// preview; the parent's, on the card a landing leaves.
+    pub run: RunInfo,
+    pub changes: Vec<crate::vcs::ChangeInfo>,
+}
+
+impl PointCx for AtChanges {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        let newest = self
+            .changes
+            .first()
+            .map_or("", |change| change.commit_id.as_str());
+        format!("{}-{newest}", self.run.id.0)
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Changes {
+            run: self.run.id.clone(),
+            changes: self.changes.clone(),
+        })
+    }
+}
+
 /// A tool call's card, with the anchors the plugin attached to it.
 #[derive(Debug, Clone)]
 pub struct AtCard {
@@ -282,6 +313,9 @@ pub const CARD_BODY: Point<AtCard> = Point::new("tau.run.card.body");
 /// output.
 pub const CARD_STAT: Point<AtCard, PluginStatus> =
     Point::new("tau.run.card.stat");
+/// Changes a landing brings, drawn by the VCS slot's plugin: the first
+/// contribution draws them.
+pub const CHANGES: Point<AtChanges> = Point::new("tau.run.changes");
 /// Above a run's transcript.
 pub const RUN_BANNER: Point<AtRun> = Point::new("tau.run.banner");
 /// A section of the run inspector.

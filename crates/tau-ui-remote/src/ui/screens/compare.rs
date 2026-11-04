@@ -40,8 +40,8 @@ use crate::{
         FileStat,
         Origin,
         RunView,
-        ToolCard,
         Tone,
+        ToolCard,
         tokens,
         usd,
     },
@@ -463,8 +463,9 @@ fn branch(
                 .child(ui::stat("tokens", tokens(run.usage.tokens), t))
                 .child(ui::stat("cost", usd(run.usage.cost), t))
                 .children(
-                    stat.as_ref()
-                        .map(|stat| ui::stat(&stat.name, stat.state.clone(), t)),
+                    stat.as_ref().map(|stat| {
+                        ui::stat(&stat.name, stat.state.clone(), t)
+                    }),
                 ),
         )
         .children(run.last_text().map(|text| {
@@ -522,7 +523,7 @@ fn branch(
                     )
                 }),
         )
-        .children(landing::controls(ws, run, t, compact, cx))
+        .children(landing::controls(ws, run, t, cx))
         .when(ws.kept_branch.as_ref() == Some(&run.id), |column| {
             column.child(
                 div().typeset(Type::CAPTION).text_color(t.green).child(
@@ -550,6 +551,9 @@ fn card_stat(
             .find(|(name, _)| *name == plugin)
             .map(|(_, at)| at)
     };
-    let (_, stat) = ws.contributions_named(points::CARD_STAT, at).into_iter().next()?;
+    let (_, stat) = ws
+        .contributions_named(points::CARD_STAT, at)
+        .into_iter()
+        .next()?;
     Some(stat)
 }

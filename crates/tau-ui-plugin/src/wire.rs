@@ -44,6 +44,12 @@ pub enum AtKey {
         run: RunId,
         call: String,
     },
+    /// Changes on a run's stack: a landing's. They are few, and the
+    /// computer may no longer have them, so they cross whole.
+    Changes {
+        run: RunId,
+        changes: Vec<crate::vcs::ChangeInfo>,
+    },
 }
 
 /// What a view is of.
@@ -226,7 +232,7 @@ mod tests {
 
     fn at(tc: &TestCase) -> AtKey {
         let index = tc.draw(gs::integers::<usize>().max_value(1_000));
-        match tc.draw(gs::integers::<u8>().max_value(6)) {
+        match tc.draw(gs::integers::<u8>().max_value(7)) {
             0 => AtKey::App,
             1 => AtKey::Repo { repo: word(tc) },
             2 => AtKey::Run { run: run(tc) },
@@ -244,10 +250,32 @@ mod tests {
                 key: word(tc),
                 index,
             },
-            _ => AtKey::Card {
+            6 => AtKey::Card {
                 run: run(tc),
                 call: word(tc),
             },
+            _ => AtKey::Changes {
+                run: run(tc),
+                changes: (0..tc.draw(gs::integers::<usize>().max_value(3)))
+                    .map(|_| change(tc))
+                    .collect(),
+            },
+        }
+    }
+
+    fn change(tc: &TestCase) -> crate::vcs::ChangeInfo {
+        crate::vcs::ChangeInfo {
+            change_id: word(tc),
+            commit_id: word(tc),
+            description: word(tc),
+            empty: tc.draw(gs::booleans()),
+            conflict: tc.draw(gs::booleans()),
+            immutable: tc.draw(gs::booleans()),
+            working_copy: tc.draw(gs::booleans()),
+            divergent: tc.draw(gs::booleans()),
+            bookmarks: (0..tc.draw(gs::integers::<usize>().max_value(2)))
+                .map(|_| word(tc))
+                .collect(),
         }
     }
 

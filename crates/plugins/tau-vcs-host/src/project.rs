@@ -1067,7 +1067,11 @@ impl ProjectRepo {
                 None => {
                     let parent = up(&then)?;
                     if is_wc(&parent)?
-                        || unsafe_to_stand(repo.as_ref(), &then, &working_copies)?
+                        || unsafe_to_stand(
+                            repo.as_ref(),
+                            &then,
+                            &working_copies,
+                        )?
                     {
                         then = parent;
                     } else {

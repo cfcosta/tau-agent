@@ -37,7 +37,7 @@ use tau_agent::{
     event::{RunEvent, StopReason},
     tool::RunId,
 };
-use tau_vcs::Landing;
+use tau_ui_plugin::vcs::Landing;
 
 use crate::{
     assets::Icon,
@@ -1320,7 +1320,7 @@ impl Workspace {
             let task = call
                 .as_deref()
                 .and_then(|call| view.call(call))
-                .filter(|(tool, _)| *tool == tau_vcs::details::SPAWN)
+                .filter(|(tool, _)| *tool == tau_ui_plugin::vcs::SPAWN)
                 .and_then(|(_, args)| args.get("task")?.as_str())
                 .map(str::to_owned)
                 .unwrap_or_default();

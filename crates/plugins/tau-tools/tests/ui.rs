@@ -27,8 +27,10 @@ use tau_tools::{
         tests_stat,
     },
 };
-use tau_ui_kit::diff::{DiffKind, DiffLine};
-use tau_ui_kit::theme::Tone;
+use tau_ui_kit::{
+    diff::{DiffKind, DiffLine},
+    theme::Tone,
+};
 use tau_ui_plugin::{
     CallData,
     CallResult,

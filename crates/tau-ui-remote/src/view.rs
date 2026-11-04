@@ -270,7 +270,38 @@ pub const DROPPED_RECORD: &str = "dropped";
 /// in a stored run as in a live one.
 pub const TAU_MESSAGE_RECORD: &str = "tau-message";
 
-pub use tau_vcs::ui::landed::{LandedCard, LandingRecord};
+pub use tau_ui_plugin::vcs::LandingRecord;
+
+/// A child run that landed on this run: what it brought.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LandedCard {
+    pub from: RunId,
+    /// The child's title, as the run list called it.
+    pub title: String,
+    /// Its changes on this run's stack, newest first.
+    pub changes: Vec<tau_ui_plugin::vcs::ChangeInfo>,
+    /// Paths left with conflict markers for this run's next turn.
+    pub conflicts: Vec<String>,
+    /// tau finished the landing at start, after closing in its middle.
+    #[serde(default)]
+    pub recovered: bool,
+    /// The chat went on after it landed (ADR 0034).
+    #[serde(default)]
+    pub kept: bool,
+}
+
+impl LandedCard {
+    pub fn from_record(record: LandingRecord) -> Self {
+        Self {
+            from: RunId(record.from.into()),
+            title: record.title,
+            changes: record.landing.changes,
+            conflicts: record.landing.conflicts,
+            recovered: record.recovered,
+            kept: record.kept,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCard {
@@ -1830,8 +1861,7 @@ impl RunView {
     }
 }
 
-/// The tool that proposes a run's landing (ADR 0014).
-const LAND: &str = "vcs_land";
+use tau_ui_plugin::vcs::LAND;
 
 /// Whether a result's `details.calls`, the calls a tool made through
 /// the loop as it lists them (`plugins.md`, "In tau-ui"), hold a

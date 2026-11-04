@@ -116,10 +116,8 @@ fn install() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         tau_ui_remote::plugins::install(
-            tau_ui::hosted::halves(
-                tau_plugins::plugins().with(Resumer),
-            )
-            .host(ResumerHost),
+            tau_ui::hosted::halves(tau_plugins::plugins().with(Resumer))
+                .host(ResumerHost),
         )
     });
 }

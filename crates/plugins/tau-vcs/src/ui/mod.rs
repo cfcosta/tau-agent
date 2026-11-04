@@ -27,6 +27,7 @@ use tau_ui_plugin::{
     ViewCx,
     points::{self, AtCard, CardView},
     tree::{Kind, Node, Tone},
+    vcs::spawned,
 };
 
 use self::{
@@ -90,12 +91,6 @@ impl Card {
 fn details(data: &CallData) -> Option<&Value> {
     let result = data.result.as_ref().filter(|result| !result.error)?;
     result.details.as_ref()
-}
-
-/// The sub-agent a `spawn` call started.
-pub fn spawned(data: &CallData) -> Option<RunId> {
-    let run = details(data)?.get("run")?.as_str()?;
-    Some(RunId(run.into()))
 }
 
 /// A button that opens `child`'s chat.
@@ -185,7 +180,9 @@ impl UiPlugin for VcsUi {
     }
 
     fn manifest(&self) -> Manifest<Self> {
-        Manifest::new().contribute(points::CARD, card)
+        Manifest::new()
+            .contribute(points::CARD, card)
+            .contribute(points::CHANGES, landed::changes)
     }
 
     /// What a card's buttons ask: a log's pick, or a sub-agent's chat.

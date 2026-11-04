@@ -32,7 +32,7 @@ pub struct Waiting {
 /// How a sub-agent waiting in the queue ended.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubAgentEnd {
-    /// The limit that cut it short, as `tau_vcs` names it, if one did.
+    /// The limit that cut it short, as the VCS names it, if one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<String>,
     /// Why it has nothing to land, if it has not: it failed, or its work

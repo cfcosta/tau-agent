@@ -360,8 +360,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
                     card.title.clone(),
                     card.changes
                         .iter()
-                        .map(|change| {
-                            let info = &change.info;
+                        .map(|info| {
                             (
                                 info.description.clone(),
                                 info.empty,

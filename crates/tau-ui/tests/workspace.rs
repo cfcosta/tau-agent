@@ -1935,8 +1935,8 @@ fn a_fork_lands_on_its_parent(cx: &mut TestAppContext) {
             .expect("a landed card in the parent");
         assert_eq!(card.from, fork);
         assert_eq!(
-            card.changes[0].subject,
-            "cap the backoff at the policy's max"
+            card.changes[0].description,
+            "feat(tau-ai): cap the backoff at the policy's max\n"
         );
         assert!(!waiting(ws), "landed, it no longer waits");
     });
@@ -2057,7 +2057,7 @@ fn a_sub_agent_is_a_chat_until_it_lands(cx: &mut TestAppContext) {
         assert!(ws.is_closed(&child));
         assert!(ws.run(&parent).unwrap().items.iter().any(|item| matches!(item, Item::Landed(card) if card.from == child)));
         let card = ws.run(&parent).unwrap().tool("d1").unwrap();
-        assert_eq!(tau_vcs::ui::spawned(&card.data), Some(RunId("d1".into())));
+        assert_eq!(tau_ui_plugin::vcs::spawned(&card.data), Some(RunId("d1".into())));
         // The host takes the closings. The sidebar never lists
         // sub-agents: they are main's crew, in its chat's tray.
         for run in [&child, &sibling] {

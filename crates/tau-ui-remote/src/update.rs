@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 use tau_agent::{event::RunEvent, tool::RunId};
-use tau_vcs::Landing;
+use tau_ui_plugin::vcs::Landing;
 
 use crate::{
     catalog::{Catalog, Repo},
