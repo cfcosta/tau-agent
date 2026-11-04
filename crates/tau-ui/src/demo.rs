@@ -1158,9 +1158,13 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 .detach();
             }
             // Off the UI thread, as on a host: an action may ask Jev.
-            WorkspaceEvent::PluginAct { plugin, action } => {
-                let (job, plugin, action) =
-                    (host.clone(), plugin.clone(), action.clone());
+            WorkspaceEvent::PluginAct {
+                plugin,
+                action,
+                asker,
+            } => {
+                let (job, plugin, action, asker) =
+                    (host.clone(), plugin.clone(), action.clone(), *asker);
                 let workspace = workspace.downgrade();
                 let acting = cx.background_executor().spawn({
                     let plugin = plugin.clone();
@@ -1172,7 +1176,11 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                     let _ = workspace.update(cx, |ws, cx| {
                         match done {
                             Ok(Some(reply)) => ws.apply(
-                                HostUpdate::PluginReply { plugin, reply },
+                                HostUpdate::PluginReply {
+                                    plugin,
+                                    reply,
+                                    asker,
+                                },
                                 cx,
                             ),
                             Ok(None) => {}

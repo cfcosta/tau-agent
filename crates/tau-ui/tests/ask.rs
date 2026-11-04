@@ -100,7 +100,7 @@ fn sent(events: &Events) -> Vec<Act> {
         .borrow()
         .iter()
         .filter_map(|event| match event {
-            WorkspaceEvent::PluginAct { plugin, action }
+            WorkspaceEvent::PluginAct { plugin, action, .. }
                 if plugin == tau_ask::NAME =>
             {
                 serde_json::from_value(action.clone()).ok()

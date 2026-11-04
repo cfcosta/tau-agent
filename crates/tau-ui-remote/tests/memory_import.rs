@@ -160,7 +160,7 @@ fn acts(events: &Events) -> Vec<Act> {
         .borrow()
         .iter()
         .filter_map(|event| match event {
-            WorkspaceEvent::PluginAct { plugin, action }
+            WorkspaceEvent::PluginAct { plugin, action, .. }
                 if plugin == MEMORY =>
             {
                 Some(serde_json::from_value::<Act>(action.clone()).unwrap())

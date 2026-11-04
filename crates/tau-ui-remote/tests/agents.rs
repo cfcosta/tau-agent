@@ -210,7 +210,7 @@ fn an_agent_s_command_goes_to_it_and_starts_nothing(cx: &mut TestAppContext) {
     let acts: Vec<&serde_json::Value> = events
         .iter()
         .filter_map(|event| match event {
-            WorkspaceEvent::PluginAct { plugin, action }
+            WorkspaceEvent::PluginAct { plugin, action, .. }
                 if plugin == tau_agents::NAME =>
             {
                 Some(action)

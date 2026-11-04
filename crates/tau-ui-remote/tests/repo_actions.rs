@@ -106,7 +106,7 @@ fn a_plugin_s_action_is_drawn_on_the_repository_page_and_does_its_work(
     assert!(
         events.borrow().iter().any(|event| matches!(
             event,
-            WorkspaceEvent::PluginAct { plugin, action }
+            WorkspaceEvent::PluginAct { plugin, action, .. }
                 if plugin == "tidy" && action["tidy"] == REPO
         )),
         "{:?}",

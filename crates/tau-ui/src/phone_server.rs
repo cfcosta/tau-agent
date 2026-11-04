@@ -211,6 +211,17 @@ fn serving(
                     server.broadcast_transient(body);
                 }
             }
+            // A phone's click, command or key: carried out here, and
+            // what is for its window goes back to it (ADR 0046).
+            WorkspaceEvent::PluginCall {
+                id,
+                plugin,
+                origin,
+                layout,
+                call,
+            } => workspace.update(cx, |ws, cx| {
+                ws.answer_call(*id, plugin, origin, *layout, call, cx)
+            }),
             _ => {}
         }
     })
@@ -266,6 +277,7 @@ pub fn transient(update: &HostUpdate) -> bool {
             | HostUpdate::PluginReply { .. }
             | HostUpdate::PluginFetched { .. }
             | HostUpdate::Views { .. }
+            | HostUpdate::Called { .. }
     )
 }
 

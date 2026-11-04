@@ -163,6 +163,17 @@ pub enum HostUpdate {
     PluginReply {
         plugin: String,
         reply: serde_json::Value,
+        /// The phone's call whose action it answers, when a phone's
+        /// click asked (ADR 0046).
+        #[serde(default)]
+        asker: Option<u64>,
+    },
+    /// What a phone's call to a plugin asks of its own window, after the
+    /// computer carried it out (ADR 0046).
+    Called {
+        id: u64,
+        plugin: String,
+        requests: Vec<tau_ui_plugin::Request>,
     },
     /// Plugins' views the computer built for phones, each for the key a
     /// phone asked by (ADR 0046).

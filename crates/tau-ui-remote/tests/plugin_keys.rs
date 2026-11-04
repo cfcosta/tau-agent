@@ -88,7 +88,7 @@ fn ctrl_2_opens_the_repositorys_memory_and_conflicting_keys_are_dropped(
             .borrow()
             .iter()
             .filter_map(|event| match event {
-                WorkspaceEvent::PluginAct { plugin, action }
+                WorkspaceEvent::PluginAct { plugin, action, .. }
                     if plugin == "keys" =>
                 {
                     Some(format!("{} {}", action["key"], action["repo"]))

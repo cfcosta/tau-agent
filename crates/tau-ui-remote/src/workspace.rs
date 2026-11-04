@@ -253,6 +253,17 @@ pub enum WorkspaceEvent {
     PluginAct {
         plugin: String,
         action: serde_json::Value,
+        /// The phone's call that asked, if one did (ADR 0046).
+        asker: Option<u64>,
+    },
+    /// A phone's click, command or key for a plugin, which the computer
+    /// carries out where the phone drew it (ADR 0046).
+    PluginCall {
+        id: u64,
+        plugin: String,
+        origin: crate::plugins::Origin,
+        layout: tau_ui_plugin::wire::Layout,
+        call: crate::plugins::PluginCall,
     },
     /// A phone asks the computer for the plugins' views it drew without
     /// (ADR 0046).
@@ -703,6 +714,12 @@ pub struct Workspace {
     /// On a phone, the plugins' views the computer built (ADR 0046).
     pub(crate) remote_views:
         Option<std::cell::RefCell<crate::views::ViewCache>>,
+    /// On a phone, the calls it sent the computer and has not heard back
+    /// from (ADR 0046).
+    pub(crate) calls: HashSet<u64>,
+    /// On the computer, the phone's call being carried out, which what
+    /// it asks of a host half answers.
+    pub(crate) asker: Option<u64>,
     /// On the computer, each view a phone asked for, as last built.
     pub(crate) phone_views:
         BTreeMap<tau_ui_plugin::wire::ViewKey, tau_ui_plugin::wire::Built>,
@@ -945,6 +962,8 @@ impl Workspace {
             weak: cx.weak_entity(),
             plugin_requests,
             remote_views: None,
+            calls: HashSet::new(),
+            asker: None,
             phone_views: BTreeMap::new(),
             plugin_focus: None,
             composer_note: None,
@@ -1179,14 +1198,23 @@ impl Workspace {
                 cx.notify();
             }
             HostUpdate::Views { answers } => self.take_views(answers, cx),
+            HostUpdate::Called {
+                id,
+                plugin,
+                requests,
+            } => self.called_back(id, &plugin, requests, cx),
             HostUpdate::PluginFetched { plugin, key, reply } => {
                 self.tree_widgets
                     .borrow_mut()
                     .fetched(&plugin, &key, &reply);
                 cx.notify();
             }
-            HostUpdate::PluginReply { plugin, reply } => {
-                self.plugin_reply(&plugin, reply, cx);
+            HostUpdate::PluginReply {
+                plugin,
+                reply,
+                asker,
+            } => {
+                self.plugin_reply(&plugin, reply, asker, cx);
             }
             HostUpdate::Titled { run, title } => self.retitle(&run, title, cx),
             HostUpdate::Repo { repo, main } => {

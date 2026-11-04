@@ -384,8 +384,7 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
     assert!(phone.read_with(&pcx, |ws, _| statuses(ws)).is_empty());
 
     // The computer answers what it asks, until it asks for nothing new.
-    let relay = |pcx: &mut VisualTestContext,
-                     ccx: &mut VisualTestContext| {
+    let relay = |pcx: &mut VisualTestContext, ccx: &mut VisualTestContext| {
         for _ in 0..8 {
             let keys = std::mem::take(&mut *asked.borrow_mut());
             if keys.is_empty() {
@@ -476,5 +475,186 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
         computer
             .update(&mut ccx, |ws, _| ws.refresh_views())
             .is_none()
+    );
+
+    // A click on the phone runs on the computer, where the phone drew
+    // it: the banner's chevron opens the phone's run details, not the
+    // computer's; Edit fills the phone's composer; Pause records with
+    // the run, and gives the phone nothing to do.
+    let banner = serde_json::to_value(&on_phone).unwrap();
+    let chevron = find_button(&banner, "").expect("the banner's chevron");
+    let calls: Rc<RefCell<Vec<WorkspaceEvent>>> = Rc::default();
+    let seen = calls.clone();
+    pcx.update(|_, cx| {
+        cx.subscribe(&phone, move |_, event: &WorkspaceEvent, _| {
+            if matches!(event, WorkspaceEvent::PluginCall { .. }) {
+                seen.borrow_mut().push(event.clone());
+            }
+        })
+        .detach()
+    });
+    let mirrored: Rc<RefCell<Vec<HostUpdate>>> = Rc::default();
+    let records: Rc<RefCell<Vec<serde_json::Value>>> = Rc::default();
+    let (seen, recorded) = (mirrored.clone(), records.clone());
+    computer.update(&mut ccx, |ws, cx| {
+        ws.set_mirrored(true);
+        cx.subscribe_self(move |_, update: &HostUpdate, _| {
+            seen.borrow_mut().push(update.clone())
+        })
+        .detach();
+        cx.subscribe_self(move |_, event: &WorkspaceEvent, _| {
+            if let WorkspaceEvent::PluginRecord { body, .. } = event {
+                recorded.borrow_mut().push(body.clone());
+            }
+        })
+        .detach();
+    });
+    let click = |(action, args): (String, serde_json::Value),
+                 pcx: &mut VisualTestContext,
+                 ccx: &mut VisualTestContext| {
+        let origin = tau_ui_remote::plugins::Origin {
+            run: Some(demo::run_id()),
+            params: Default::default(),
+        };
+        phone.update(pcx, |ws, cx| {
+            ws.plugin_action(tau_goal::NAME, &action, &args, &origin, cx)
+        });
+        pcx.run_until_parked();
+        let asked: Vec<WorkspaceEvent> = calls.borrow_mut().drain(..).collect();
+        for event in asked {
+            let WorkspaceEvent::PluginCall {
+                id,
+                plugin,
+                origin,
+                layout,
+                call,
+            } = event
+            else {
+                continue;
+            };
+            computer.update(ccx, |ws, cx| {
+                ws.answer_call(id, &plugin, &origin, layout, &call, cx)
+            });
+        }
+        ccx.run_until_parked();
+        let back: Vec<HostUpdate> = mirrored.borrow_mut().drain(..).collect();
+        for update in back {
+            if matches!(update, HostUpdate::Called { .. }) {
+                phone.update(pcx, |ws, cx| ws.apply(update, cx));
+            }
+        }
+        pcx.run_until_parked();
+    };
+    assert!(!phone.read_with(&pcx, |ws, _| ws.sheet_is_open()));
+    click(chevron, &mut pcx, &mut ccx);
+    assert!(phone.read_with(&pcx, |ws, _| ws.sheet_is_open()));
+    assert!(!computer.read_with(&ccx, |ws, _| ws.sheet_is_open()));
+    // The computer's own banner's buttons, sent from the phone.
+    let act = |what: &str| ("act".to_owned(), serde_json::json!(what));
+    click(act("Edit"), &mut pcx, &mut ccx);
+    assert_eq!(
+        phone.read_with(&pcx, |ws, cx| ws.composer_text(cx).to_owned()),
+        "/goal it ships"
+    );
+    assert_eq!(
+        computer.read_with(&ccx, |ws, cx| ws.composer_text(cx).to_owned()),
+        ""
+    );
+    assert!(records.borrow().is_empty());
+    click(act("Pause"), &mut pcx, &mut ccx);
+    assert_eq!(*records.borrow(), [serde_json::json!({ "kind": "paused" })]);
+}
+
+/// The action and arguments of the button labelled `label` in `tree`'s
+/// JSON.
+fn find_button(
+    tree: &serde_json::Value,
+    label: &str,
+) -> Option<(String, serde_json::Value)> {
+    match tree {
+        serde_json::Value::Object(map) => {
+            if map.get("piece").and_then(|p| p.as_str()) == Some("button")
+                && map.get("label").and_then(|l| l.as_str()) == Some(label)
+            {
+                let action = map.get("action")?.as_str()?.to_owned();
+                let args = map.get("args").cloned().unwrap_or_default();
+                return Some((action, args));
+            }
+            map.values().find_map(|value| find_button(value, label))
+        }
+        serde_json::Value::Array(items) => {
+            items.iter().find_map(|item| find_button(item, label))
+        }
+        _ => None,
+    }
+}
+
+/// A host half's answer to an action a phone's call asked for goes to
+/// that phone: on the computer, what it asks of a window is sent back
+/// for the call, not carried out on the computer's own; a phone that
+/// did not make the call leaves it alone.
+#[gpui::test]
+fn a_reply_goes_to_the_window_that_asked(cx: &mut TestAppContext) {
+    use std::{cell::RefCell, rc::Rc};
+
+    use tau_ui_remote::update::HostUpdate;
+
+    let (computer, mut ccx, _host) = open(cx);
+    let mirrored: Rc<RefCell<Vec<HostUpdate>>> = Rc::default();
+    let seen = mirrored.clone();
+    computer.update(&mut ccx, |ws, cx| {
+        ws.set_mirrored(true);
+        cx.subscribe_self(move |_, update: &HostUpdate, _| {
+            seen.borrow_mut().push(update.clone())
+        })
+        .detach();
+    });
+    let reply = |asker| HostUpdate::PluginReply {
+        plugin: tau_mcp::NAME.into(),
+        reply: serde_json::to_value(tau_mcp::ui::Reply::Prompt {
+            text: "Fix it.".into(),
+        })
+        .unwrap(),
+        asker,
+    };
+    computer.update(&mut ccx, |ws, cx| ws.apply(reply(Some(7)), cx));
+    let called: Vec<HostUpdate> = mirrored
+        .borrow()
+        .iter()
+        .filter(|update| matches!(update, HostUpdate::Called { .. }))
+        .cloned()
+        .collect();
+    assert_eq!(
+        called,
+        [HostUpdate::Called {
+            id: 7,
+            plugin: tau_mcp::NAME.into(),
+            requests: vec![tau_ui_plugin::Request::Composer("Fix it.".into())],
+        }]
+    );
+    assert_eq!(
+        computer.read_with(&ccx, |ws, cx| ws.composer_text(cx).to_owned()),
+        ""
+    );
+    // Its own action's answer is the computer's.
+    computer.update(&mut ccx, |ws, cx| ws.apply(reply(None), cx));
+    assert_eq!(
+        computer.read_with(&ccx, |ws, cx| ws.composer_text(cx).to_owned()),
+        "Fix it."
+    );
+
+    // A phone that made no call 7 does nothing with it.
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("tau", Vec::new(), Catalog::default(), window, cx)
+    });
+    let phone = window.root(cx).unwrap();
+    let mut pcx = VisualTestContext::from_window(*window, cx);
+    phone.update(&mut pcx, |ws, cx| {
+        ws.draw_remote_views();
+        ws.apply(called[0].clone(), cx);
+    });
+    assert_eq!(
+        phone.read_with(&pcx, |ws, cx| ws.composer_text(cx).to_owned()),
+        ""
     );
 }

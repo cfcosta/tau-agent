@@ -180,6 +180,8 @@ impl Workspace {
             plugin_requests: _,
             // Each window's own: a phone's views, a computer's asks.
             remote_views: _,
+            calls: _,
+            asker: _,
             phone_views: _,
             plugin_focus: _,
             // Editors of drafts kept in `ui_state`, each window's own.

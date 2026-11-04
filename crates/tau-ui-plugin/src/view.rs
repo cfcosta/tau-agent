@@ -225,6 +225,32 @@ pub enum Request {
     },
 }
 
+impl Request {
+    /// Whether it is for the window whose click asked it, rather than
+    /// for every interface (ADR 0046): what a phone carries out itself
+    /// when the computer ran its click.
+    pub fn for_window(&self) -> bool {
+        matches!(
+            self,
+            Self::Navigate(_)
+                | Self::Alert { .. }
+                | Self::Composer(_)
+                | Self::RunDetails
+                | Self::OpenPane
+                | Self::Submit
+                | Self::Refresh
+                | Self::OpenRun(_)
+                | Self::AskJevKey
+                | Self::OpenUrl(_)
+                | Self::Reveal(_)
+                | Self::Open(_)
+                | Self::Copy(_)
+                | Self::Note(_)
+                | Self::SetupDone
+        )
+    }
+}
+
 /// Where a [`Handle`]'s requests go: the interface, which carries out
 /// what `plugin` asked once the plugin's handler returns.
 pub type Sink = Rc<dyn Fn(&'static str, Request)>;

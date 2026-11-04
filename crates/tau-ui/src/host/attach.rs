@@ -1071,10 +1071,14 @@ impl Host {
                         cx,
                     );
                 }
-                WorkspaceEvent::PluginAct { plugin, action } => {
+                WorkspaceEvent::PluginAct {
+                    plugin,
+                    action,
+                    asker,
+                } => {
                     // On the host: an action may ask Jev, or the store.
-                    let (job_plugin, plugin, action) =
-                        (plugin.clone(), plugin.clone(), action.clone());
+                    let (job_plugin, plugin, action, asker) =
+                        (plugin.clone(), plugin.clone(), action.clone(), *asker);
                     let failed = alert(format!("{plugin} could not do that"));
                     on_host(
                         &handler,
@@ -1082,7 +1086,14 @@ impl Host {
                         async move |host| host.plugin_act(&job_plugin, action).await,
                         move |ws, reply, cx| {
                             if let Some(reply) = reply {
-                                ws.apply(HostUpdate::PluginReply { plugin, reply }, cx)
+                                ws.apply(
+                                    HostUpdate::PluginReply {
+                                        plugin,
+                                        reply,
+                                        asker,
+                                    },
+                                    cx,
+                                )
                             }
                         },
                         failed,

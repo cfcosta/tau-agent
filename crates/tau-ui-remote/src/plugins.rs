@@ -201,10 +201,43 @@ impl Asker {
 
 /// Where a plugin's tree was drawn: the run and the page's parameters
 /// its actions are carried out with ([`Workspace::plugin_action`]).
-#[derive(Debug, Clone, Default)]
+#[derive(
+    Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize,
+)]
 pub struct Origin {
     pub run: Option<tau_agent::tool::RunId>,
     pub params: BTreeMap<String, String>,
+}
+
+/// What a phone asks the computer to carry out for a plugin (ADR 0046).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "call", rename_all = "snake_case")]
+pub enum PluginCall {
+    /// A button, a switch, an input's Enter or a key in its tree.
+    Action { action: String, args: Value },
+    /// A slash command typed in the composer, in `repo`.
+    Command {
+        name: String,
+        args: String,
+        repo: Option<String>,
+    },
+    /// A key it binds, pressed in `repo`.
+    Key { key: String, repo: Option<String> },
+}
+
+/// A new call's id: apart from every other phone's, without a source of
+/// randomness of its own.
+fn call_id() -> u64 {
+    use std::{
+        hash::{BuildHasher as _, Hasher as _},
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let mut hasher =
+        std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u64(NEXT.fetch_add(1, Ordering::Relaxed));
+    hasher.finish()
 }
 
 impl Origin {
@@ -283,6 +316,7 @@ impl Workspace {
             Request::Act(action) => cx.emit(WorkspaceEvent::PluginAct {
                 plugin: plugin.to_owned(),
                 action,
+                asker: self.asker,
             }),
             Request::Navigate(link) => {
                 let link = link.from(plugin);
@@ -411,13 +445,133 @@ impl Workspace {
         &mut self,
         plugin: &str,
         reply: Value,
+        asker: Option<u64>,
         cx: &mut Context<Self>,
     ) {
+        // The computer answers what a phone's call asked (ADR 0046).
+        if self.draws_remote_views() {
+            return;
+        }
         if let Some(erased) = registry().get(plugin) {
             erased.reply(reply, &self.plugin_handle(erased.name()));
+            self.carry_out_for(erased.name(), asker, cx);
         }
-        self.drain_plugin_requests(cx);
         cx.notify();
+    }
+
+    /// Carries out what `plugin`'s handle asked, for the phone's call
+    /// `asker` when one asked: what is for its window goes back to it
+    /// ([`HostUpdate::Called`]); the rest is carried out here.
+    fn carry_out_for(
+        &mut self,
+        plugin: &'static str,
+        asker: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = asker else {
+            self.drain_plugin_requests(cx);
+            return;
+        };
+        let requests: Vec<(&'static str, Request)> =
+            self.plugin_requests.borrow_mut().drain(..).collect();
+        let mut windows = Vec::new();
+        self.asker = Some(id);
+        for (by, request) in requests {
+            if by == plugin && request.for_window() {
+                windows.push(request);
+            } else {
+                self.plugin_request(by, request, cx);
+            }
+        }
+        self.asker = None;
+        if !windows.is_empty() {
+            // Applied here, it reaches the phones through the mirror.
+            self.apply(
+                crate::update::HostUpdate::Called {
+                    id,
+                    plugin: plugin.to_owned(),
+                    requests: windows,
+                },
+                cx,
+            );
+        }
+    }
+
+    /// Asks the computer to carry out `call` for `plugin`, where this
+    /// phone drew it: what is for this window comes back.
+    fn call_computer(
+        &mut self,
+        plugin: &str,
+        origin: Origin,
+        call: PluginCall,
+        cx: &mut Context<Self>,
+    ) {
+        let id = call_id();
+        self.calls.insert(id);
+        cx.emit(WorkspaceEvent::PluginCall {
+            id,
+            plugin: plugin.to_owned(),
+            origin,
+            layout: self.view_layout(),
+            call,
+        });
+    }
+
+    /// Carries out a phone's call `id` for `plugin`, as the phone drew it
+    /// at `origin` in `layout` (ADR 0046).
+    pub fn answer_call(
+        &mut self,
+        id: u64,
+        plugin: &str,
+        origin: &Origin,
+        layout: tau_ui_plugin::wire::Layout,
+        call: &PluginCall,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(erased) = registry().get(plugin) else {
+            return;
+        };
+        let run = origin.run.as_ref().and_then(|run| self.run(run)).cloned();
+        self.with_plugin_in(
+            erased.as_ref(),
+            run.as_ref(),
+            &origin.params,
+            Some(layout),
+            |plugin, env| match call {
+                PluginCall::Action { action, args } => {
+                    plugin.on_action(action, args, env)
+                }
+                PluginCall::Command { name, args, repo } => {
+                    plugin.run_command(name, args, repo.as_deref(), env);
+                }
+                PluginCall::Key { key, repo } => {
+                    let at = tau_ui_plugin::KeyAt { repo: repo.clone() };
+                    plugin.press_key(key, &at, env);
+                }
+            },
+        );
+        self.carry_out_for(erased.name(), Some(id), cx);
+        cx.notify();
+    }
+
+    /// Carries out what the computer sent back for this phone's call
+    /// `id`; another phone's is not this window's.
+    pub(crate) fn called_back(
+        &mut self,
+        id: u64,
+        plugin: &str,
+        requests: Vec<Request>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.calls.remove(&id) {
+            return;
+        }
+        let Some(erased) = registry().get(plugin) else {
+            return;
+        };
+        for request in requests {
+            self.plugin_request(erased.name(), request, cx);
+        }
     }
 
     /// Runs `f` with what `plugin` draws from: its values, the run when
@@ -589,6 +743,14 @@ impl Workspace {
         origin: &Origin,
         cx: &mut Context<Self>,
     ) {
+        if self.draws_remote_views() {
+            let call = PluginCall::Action {
+                action: action.to_owned(),
+                args: args.clone(),
+            };
+            self.call_computer(plugin, origin.clone(), call, cx);
+            return;
+        }
         let Some(erased) = registry().get(plugin) else {
             return;
         };
@@ -1041,6 +1203,19 @@ impl Workspace {
             .filter(|_| self.route != Route::NewRun)
             .cloned();
         let repo = self.command_repo();
+        if self.draws_remote_views() {
+            let origin = Origin {
+                run: run.map(|run| run.id),
+                params: BTreeMap::new(),
+            };
+            let call = PluginCall::Command {
+                name: name.to_owned(),
+                args: args.trim().to_owned(),
+                repo,
+            };
+            self.call_computer(plugin.name(), origin, call, cx);
+            return true;
+        }
         let params = BTreeMap::new();
         let ran = self
             .with_plugin(
@@ -1071,6 +1246,14 @@ impl Workspace {
         let at = tau_ui_plugin::KeyAt {
             repo: self.selected_repo().map(str::to_owned),
         };
+        if self.draws_remote_views() {
+            let call = PluginCall::Key {
+                key: key.to_owned(),
+                repo: at.repo,
+            };
+            self.call_computer(erased.name(), Origin::default(), call, cx);
+            return;
+        }
         self.with_plugin(
             erased.as_ref(),
             None,
