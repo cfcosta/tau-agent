@@ -14,22 +14,18 @@
 //!
 //! Plugins' verdicts on a nested call ([`CallData::nested_marks`]) mark
 //! its row in both.
+//!
+//! Each is a view tree (ADR 0045): an output item, a trace, a module's
+//! source and tests and a promotion's exact request are sections, open
+//! or closed as the interface keeps them.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::Write,
-};
+use std::{collections::BTreeMap, io::Write};
 
-use gpui::{App, Context, Div, Entity, SharedString, div, prelude::*, rems};
+use gpui::{AnyElement, App, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
-use tau_ui_kit::{
-    assets::Icon,
-    components::{self as ui, ButtonKind, code_block, heading, icon, mono},
-    format::fine_usd,
-    theme::{IconSize, Theme, Tone, Type, sp},
-};
+use tau_ui_kit::{format::fine_usd, theme};
 use tau_ui_plugin::{
     CallData,
     CardMark,
@@ -43,6 +39,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, AtRun, CardView},
+    tree::{KeyValue, Kind, Node, Tone},
 };
 
 use crate::{
@@ -62,30 +59,16 @@ use crate::{
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CodemodeUi;
 
-/// Disclosure state: the inspector's opened source and test details,
-/// and the cards' opened output items.
-pub struct InspectorUi {
-    open: BTreeSet<String>,
-    pub open_traces: BTreeSet<(String, String)>,
+/// What the plugin keeps per window: its way back to the window, to say
+/// why an action failed. Which sections are open is the interface's
+/// state, under their ids (ADR 0045).
+pub struct Ui {
     handle: Handle,
 }
 
-impl PluginUi for InspectorUi {
+impl PluginUi for Ui {
     fn new(handle: Handle, _: &mut Context<Self>) -> Self {
-        Self {
-            open: BTreeSet::new(),
-            open_traces: BTreeSet::new(),
-            handle,
-        }
-    }
-}
-
-impl InspectorUi {
-    /// Opens what `key` names, or closes it when open.
-    pub fn toggle(&mut self, key: String) {
-        if !self.open.remove(&key) {
-            self.open.insert(key);
-        }
+        Self { handle }
     }
 }
 
@@ -205,12 +188,6 @@ pub struct State {
     pub promotion_bytes: usize,
     /// Private inference records; a start without a finish is interrupted.
     pub inference: Vec<crate::inference_trace::Record>,
-}
-
-/// Disclosure state is local to this window and never stored in a run.
-#[derive(Default)]
-pub struct Ui {
-    pub open_traces: BTreeSet<(String, String)>,
 }
 
 impl Fold for State {
@@ -566,7 +543,7 @@ impl UiPlugin for CodemodeUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = InspectorUi;
+    type Ui = Ui;
 
     fn name(&self) -> &'static str {
         PLUGIN
@@ -591,51 +568,7 @@ impl UiPlugin for CodemodeUi {
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::CARD, card)
-            .contribute(points::INSPECTOR, |_: &AtRun, view| {
-                let state = view.state?;
-                let t = view.theme().clone();
-                let open = view.ui.read(view.cx).open.clone();
-                Some(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(sp(4.))
-                        .child(store_section(state, view))
-                        .when_some(
-                            view.run.and_then(|run| {
-                                state.repository_pins.get(run.id.0.as_ref())
-                            }),
-                            |section, pin| {
-                                section.child(repository_section(
-                                    pin,
-                                    &open,
-                                    view.ui.clone(),
-                                    view.handle.clone(),
-                                    &t,
-                                ))
-                            },
-                        )
-                        .child(modules_section(
-                            &state.modules,
-                            view.run.map(|run| &run.id),
-                            &open,
-                            view.ui.clone(),
-                            view.handle.clone(),
-                            &t,
-                        ))
-                        .when_some(view.run, |section, run| {
-                            section.child(promotions_section(
-                                &state.promotions,
-                                &run.id,
-                                &open,
-                                view.ui.clone(),
-                                view.handle.clone(),
-                                &t,
-                            ))
-                        })
-                        .into_any_element(),
-                )
-            })
+            .contribute(points::INSPECTOR, inspector)
             .contribute(points::STATUS, |at: &AtRun, view| {
                 let scripts = view
                     .cards(&at.run.id)
@@ -651,10 +584,63 @@ impl UiPlugin for CodemodeUi {
                 Some(PluginStatus {
                     name: PLUGIN.into(),
                     state,
-                    tone: Tone::Quiet,
+                    tone: theme::Tone::Quiet,
                 })
             })
     }
+}
+
+/// Every button's action: carry out the [`Action`] its arguments hold.
+const ACT: &str = "act";
+
+/// A button that asks the host half for `action`.
+fn button(label: &str, action: &Action) -> Node {
+    Node::Button {
+        label: label.into(),
+        action: ACT.into(),
+        args: serde_json::to_value(action).unwrap_or(Value::Null),
+        kind: Kind::Secondary,
+        icon: None,
+    }
+}
+
+/// What a tree's buttons ask: the action in their arguments.
+fn on_act(handle: Handle) -> impl Fn(&str, &Value, &mut App) + 'static {
+    move |action, args, cx| {
+        if action != ACT {
+            return;
+        }
+        if let Ok(action) = serde_json::from_value::<Action>(args.clone()) {
+            handle.act(action, cx);
+        }
+    }
+}
+
+fn icon(name: &str, tone: Tone) -> Node {
+    Node::Icon {
+        name: name.into(),
+        tone,
+    }
+}
+
+fn mono(text: impl Into<String>) -> Node {
+    Node::Mono { text: text.into() }
+}
+
+fn heading(text: impl Into<String>) -> Node {
+    Node::Heading { text: text.into() }
+}
+
+fn code(lang: &str, text: impl Into<String>) -> Node {
+    Node::Code {
+        lang: Some(lang.into()),
+        text: text.into(),
+    }
+}
+
+/// A line marked by an icon in its tone: an error, a verdict.
+fn marked(name: &str, tone: Tone, text: impl Into<String>) -> Node {
+    Node::row([icon(name, tone), mono(text)])
 }
 
 /// Its entry on the Plugins screen: Jev is optional.
@@ -676,7 +662,6 @@ pub fn card(
     if at.tool != NAME {
         return None;
     }
-    let t = view.theme().clone();
     let data = &at.data;
     let calls = calls(&at.call_id, data);
     let details = data.result.as_ref().and_then(|r| r.details.as_ref());
@@ -684,40 +669,27 @@ pub fn card(
         .result
         .as_ref()
         .and_then(|result| failure(&result.text, result.error));
-    let items = details.map(outline::items).unwrap_or_default();
-    let output = (!items.is_empty()).then(|| {
-        let ui_state = view.ui.clone();
-        let handle = view.handle.clone();
-        outline::outline(
-            &at.call_id,
-            &items,
-            &view.read_ui().open,
-            move |key, cx| {
-                ui_state.update(cx, |ui, _| ui.toggle(key));
-                handle.refresh(cx);
-            },
-            &t,
-        )
-    });
     let code = script(data);
+    let ignore = |_: &str, _: &Value, _: &mut App| {};
+    let head = view.tree(
+        &format!("codemode-card-head-{}", at.call_id),
+        &mono(first_line(code)),
+        ignore,
+    );
+    let body = view.tree(
+        &format!("codemode-card-body-{}", at.call_id),
+        &body(&at.call_id, code, &calls, failed.clone(), details),
+        ignore,
+    );
     Some(CardView {
-        head: Some(
-            mono(first_line(code).to_owned(), Type::CAPTION, t.text_soft)
-                .flex_1()
-                .min_w(rems(0.))
-                .truncate()
-                .into_any_element(),
-        ),
+        head: Some(head),
         label: Some(label(&calls, details)),
         failed: failed
             .as_ref()
             .map(|error| error.lines().next().unwrap_or_default().to_owned()),
-        edge: failed.as_ref().map(|_| Tone::Danger),
+        edge: failed.as_ref().map(|_| theme::Tone::Danger),
         shape: None,
-        body: Some(
-            body(code, &calls, output, failed.clone(), details, &t)
-                .into_any_element(),
-        ),
+        body: Some(body),
         // Open while it runs, so its calls show as they come; closed once
         // it ended, down to its header.
         folds: data.result.is_some(),
@@ -725,66 +697,59 @@ pub fn card(
     })
 }
 
-/// The script, its calls, its output, why it failed and what it
-/// stored.
-fn body(
+/// The card's body: the script, its calls, its output (each item a
+/// section that opens), why it failed and what it stored.
+pub fn body(
+    call_id: &str,
     code: &str,
     calls: &Calls,
-    output: Option<Div>,
     failed: Option<String>,
     details: Option<&Value>,
-    t: &Theme,
-) -> Div {
+) -> Node {
+    let mut body = vec![self::code("luau", formatted(code))];
+    if !calls.rows.is_empty() {
+        body.push(heading(format!("Calls · {}", calls.rows.len())));
+        body.push(Node::Table {
+            head: Vec::new(),
+            rows: calls.rows.iter().map(call_row).collect(),
+            widths: vec![0.4, 2., 6., 1.4, 1.2],
+        });
+        if !calls.complete {
+            body.push(Node::text(
+                "More calls were made than the result lists.",
+            ));
+        }
+    }
+    let items = details.map(outline::items).unwrap_or_default();
+    if !items.is_empty() {
+        body.push(heading("Output"));
+        body.push(outline::outline(call_id, &items));
+    }
+    if let Some(error) = failed {
+        body.push(marked("blocked", Tone::Bad, error));
+    }
     let writes = details
         .and_then(|details| details.get("store"))
         .and_then(|store| serde_json::from_value::<Writes>(store.clone()).ok())
         .filter(|writes| !writes.is_empty());
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .px(sp(3.))
-        .py(sp(2.5))
-        .child(code_block(Some("luau"), &formatted(code), t))
-        .when(!calls.rows.is_empty(), |body| {
-            body.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(heading(&format!("Calls · {}", calls.rows.len()), t))
-                    .children(calls.rows.iter().map(|row| call_row(row, t)))
-                    .when(!calls.complete, |list| {
-                        list.child(mono(
-                            "More calls were made than the result lists.",
-                            Type::MICRO,
-                            t.dim,
-                        ))
-                    }),
-            )
-        })
-        .when_some(output, |body, output| {
-            body.child(heading("Output", t)).child(output)
-        })
-        .when_some(failed, |body, error| {
-            body.child(mono(error, Type::CAPTION, t.red))
-        })
-        .when_some(writes, |body, writes| {
-            let mut parts = Vec::new();
-            if !writes.set.is_empty() {
-                let keys: Vec<&str> =
-                    writes.set.keys().map(String::as_str).collect();
-                parts.push(format!("stored {}", keys.join(", ")));
-            }
-            if !writes.delete.is_empty() {
-                parts.push(format!("deleted {}", writes.delete.join(", ")));
-            }
-            body.child(mono(parts.join(" · "), Type::MICRO, t.dim))
-        })
+    if let Some(writes) = writes {
+        let mut parts = Vec::new();
+        if !writes.set.is_empty() {
+            let keys: Vec<&str> =
+                writes.set.keys().map(String::as_str).collect();
+            parts.push(format!("stored {}", keys.join(", ")));
+        }
+        if !writes.delete.is_empty() {
+            parts.push(format!("deleted {}", writes.delete.join(", ")));
+        }
+        body.push(Node::text(parts.join(" · ")));
+    }
+    Node::stack(body)
 }
 
-/// One call: how it went, the tool, its arguments, its time and cost;
-/// its error and plugins' verdicts under it.
-fn call_row(row: &Row, t: &Theme) -> Div {
+/// One call's row: how it went, the tool, its arguments with its error
+/// and plugins' verdicts under them, its cost and its time.
+fn call_row(row: &Row) -> Vec<Node> {
     let blocked = row.marks.iter().find_map(|mark| match &mark.mark {
         CardMark::Blocked { reason } => Some((mark.plugin.clone(), reason)),
         CardMark::Flagged => None,
@@ -795,157 +760,467 @@ fn call_row(row: &Row, t: &Theme) -> Div {
         .find(|mark| mark.mark == CardMark::Flagged)
         .map(|mark| mark.plugin.clone());
     let status = match row.status {
-        _ if blocked.is_some() => icon(Icon::Blocked, IconSize::SMALL, t.red),
-        CallStatus::Running => icon(Icon::Spinner, IconSize::SMALL, t.accent),
-        CallStatus::Ok => icon(Icon::Check, IconSize::SMALL, t.green),
-        CallStatus::Error => icon(Icon::Blocked, IconSize::SMALL, t.red),
-        CallStatus::Cancelled => icon(Icon::Close, IconSize::SMALL, t.dim),
+        _ if blocked.is_some() => icon("blocked", Tone::Bad),
+        CallStatus::Running => icon("spinner", Tone::Info),
+        CallStatus::Ok => icon("check", Tone::Good),
+        CallStatus::Error => icon("blocked", Tone::Bad),
+        CallStatus::Cancelled => icon("close", Tone::Neutral),
     };
     let when = match (row.status, row.ms) {
         (CallStatus::Cancelled, _) => "cancelled".to_owned(),
         (_, Some(ms)) => format!("{ms} ms"),
         (_, None) => String::new(),
     };
-    div()
-        .flex()
-        .flex_col()
-        .py(sp(1.))
-        .border_b_1()
-        .border_color(t.border)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .child(status)
-                .child(
-                    mono(row.name.clone(), Type::CAPTION, t.blue)
-                        .flex_shrink_0(),
-                )
-                .child(
-                    mono(row.args.clone(), Type::MICRO, t.dim)
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .truncate(),
-                )
-                .children(row.cost.filter(|cost| *cost > 0.0).map(|cost| {
-                    mono(
-                        format!(
-                            "{}{}",
-                            fine_usd(cost),
-                            if row.usage_uncertain {
-                                " reported partial"
-                            } else {
-                                ""
-                            }
-                        ),
-                        Type::MICRO,
-                        t.dim,
-                    )
-                    .flex_shrink_0()
-                }))
-                .child(mono(when, Type::MICRO, t.dim).flex_shrink_0()),
-        )
-        .when_some(row.error.clone(), |row, error| {
-            row.child(mono(error, Type::MICRO, t.red).pl(sp(6.)))
-        })
-        .when_some(row.progress.clone(), |row, progress| {
-            row.child(mono(progress, Type::MICRO, t.muted).pl(sp(6.)))
-        })
-        .when_some(blocked, |row, (plugin, reason)| {
-            row.child(
-                mono(
-                    format!("blocked by {plugin}: {reason}"),
-                    Type::MICRO,
-                    t.red,
-                )
-                .pl(sp(6.)),
+    let cost = row
+        .cost
+        .filter(|cost| *cost > 0.0)
+        .map(|cost| {
+            format!(
+                "{}{}",
+                fine_usd(cost),
+                if row.usage_uncertain {
+                    " reported partial"
+                } else {
+                    ""
+                }
             )
         })
-        .when_some(flagged, |row, plugin| {
-            row.child(
-                mono(format!("flagged by {plugin}"), Type::MICRO, t.accent)
-                    .pl(sp(6.)),
-            )
-        })
+        .unwrap_or_default();
+    let mut what = vec![mono(row.args.clone())];
+    if let Some(error) = &row.error {
+        what.push(marked("blocked", Tone::Bad, error.clone()));
+    }
+    if let Some(progress) = &row.progress {
+        what.push(Node::text(progress.clone()));
+    }
+    if let Some((plugin, reason)) = blocked {
+        what.push(marked(
+            "blocked",
+            Tone::Bad,
+            format!("blocked by {plugin}: {reason}"),
+        ));
+    }
+    if let Some(plugin) = flagged {
+        what.push(marked(
+            "warning",
+            Tone::Warn,
+            format!("flagged by {plugin}"),
+        ));
+    }
+    vec![
+        status,
+        mono(row.name.clone()),
+        Node::stack(what),
+        Node::text(cost),
+        Node::text(when),
+    ]
 }
 
-/// The store a run's scripts kept, key by key.
-fn store_section(state: &State, view: &ViewCx<'_, CodemodeUi>) -> Div {
-    let t = view.theme();
+/// The inspector: the store a run's scripts kept, its repository's
+/// modules, its own, and its promotion requests.
+pub fn inspector(
+    _: &AtRun,
+    view: &mut ViewCx<'_, CodemodeUi>,
+) -> Option<AnyElement> {
+    let state = view.state?;
+    let run = view.run.map(|run| run.id.clone());
+    let tree = inspector_tree(state, run.as_ref());
+    let handle = view.handle.clone();
+    let id = run.as_ref().map_or(String::new(), ToString::to_string);
+    Some(view.tree(&format!("codemode-inspector-{id}"), &tree, on_act(handle)))
+}
+
+/// The inspector's tree for `state`, in `run` when there is one.
+pub fn inspector_tree(state: &State, run: Option<&RunId>) -> Node {
+    let mut sections = vec![store_section(state, run)];
+    if let Some((run, pin)) = run
+        .and_then(|run| Some((run, state.repository_pins.get(run.0.as_ref())?)))
+    {
+        sections.push(repository_section(pin, run));
+    }
+    sections.push(modules_section(&state.modules, run));
+    if let Some(run) = run {
+        sections.push(promotions_section(&state.promotions, run));
+    }
+    Node::stack(sections)
+}
+
+/// The store a run's scripts kept, key by key, and its scripts' private
+/// inference traces, each a section that opens to what it holds.
+fn store_section(state: &State, run: Option<&RunId>) -> Node {
+    let run = run.map_or(String::new(), ToString::to_string);
+    let mut section =
+        vec![heading(format!("Codemode store · {}", state.store.len()))];
+    section.push(if state.store.is_empty() {
+        Node::text("Its scripts deleted everything they stored.")
+    } else {
+        Node::Rows {
+            rows: state
+                .store
+                .iter()
+                .map(|(key, value)| KeyValue {
+                    key: key.clone(),
+                    value: preview(&value.to_string(), MAX_ARGS_CHARS),
+                })
+                .collect(),
+        }
+    });
     let inference = inference_traces(state);
-    let run = view.run.map_or(String::new(), |run| run.id.to_string());
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(3.))
-        .child(heading(
-            &format!("Codemode store · {}", state.store.len()),
-            t,
-        ))
-        .child(if state.store.is_empty() {
-            ui::text(
-                "Its scripts deleted everything they stored.",
-                Type::CAPTION,
-                t.muted,
-            )
-        } else {
-            ui::key_values(
-                state.store.iter().map(|(key, value)| {
-                    (
-                        key.clone().into(),
-                        mono(
-                            preview(&value.to_string(), MAX_ARGS_CHARS),
-                            Type::CAPTION,
-                            t.text_soft,
-                        ),
+    if !inference.is_empty() {
+        section.push(heading("Inference traces"));
+        section.extend(inference.into_iter().map(|(id, trace)| {
+            Node::Section {
+                id: format!("codemode-trace-{run}-{id}"),
+                title: format!("{id} · {}", trace.status()),
+                open: false,
+                children: trace_sections(&trace, true)
+                    .into_iter()
+                    .flat_map(|(name, value)| {
+                        [
+                            heading(name),
+                            Node::Code {
+                                lang: None,
+                                text: value,
+                            },
+                        ]
+                    })
+                    .collect(),
+            }
+        }));
+    }
+    Node::stack(section)
+}
+
+/// The selected version first, followed by each previous immutable version.
+fn modules_section(library: &modules::Library, run: Option<&RunId>) -> Node {
+    let mut section = vec![heading(format!(
+        "Codemode modules · {}",
+        library.selected().len()
+    ))];
+    if library.selected().is_empty() {
+        section.push(Node::text("No modules defined in this run."));
+        return Node::stack(section);
+    }
+    let Some(run) = run else {
+        return Node::stack(section);
+    };
+    for (name, selected) in library.selected() {
+        section.push(heading(name.clone()));
+        if let Some(definition) = library.versions().get(selected) {
+            section.push(version_row(
+                definition,
+                true,
+                library.tests(selected),
+                Scope::Run(run),
+            ));
+        }
+        let previous: Vec<_> = library
+            .versions()
+            .values()
+            .filter(|definition| {
+                definition.name() == name && definition.version() != selected
+            })
+            .collect();
+        if !previous.is_empty() {
+            section.push(Node::text("Previous immutable versions"));
+            for definition in previous {
+                section.push(version_row(
+                    definition,
+                    false,
+                    library.tests(definition.version()),
+                    Scope::Run(run),
+                ));
+            }
+        }
+    }
+    Node::stack(section)
+}
+
+/// Draw only definitions captured in this run's persisted repository pin.
+fn repository_section(pin: &modules::RepositoryPin, run: &RunId) -> Node {
+    let mut section = vec![heading(format!(
+        "Repository modules · {} selected",
+        pin.selected.len()
+    ))];
+    for (name, version) in &pin.selected {
+        if let Some(definition) = pin.resolve(name, Some(version)) {
+            section.push(heading(name.clone()));
+            section.push(version_row(definition, true, &[], Scope::Pin(run)));
+        }
+    }
+    for definition in pin.versions.values() {
+        if pin
+            .selected
+            .get(definition.name())
+            .is_some_and(|version| version == definition.version())
+        {
+            continue;
+        }
+        section.push(heading(definition.name().to_owned()));
+        section.push(version_row(definition, false, &[], Scope::Pin(run)));
+    }
+    Node::stack(section)
+}
+
+fn promotions_section(records: &[promotion::Record], run: &RunId) -> Node {
+    let requests: Vec<_> = records
+        .iter()
+        .filter_map(|record| match record {
+            promotion::Record::Requested(request)
+                if request.owner == run.0.as_ref() =>
+            {
+                Some(request.as_ref())
+            }
+            _ => None,
+        })
+        .collect();
+    let mut section = vec![heading(format!(
+        "Repository promotion requests · {}",
+        requests.len()
+    ))];
+    for request in requests {
+        let decisions: Vec<_> = records
+            .iter()
+            .filter_map(|record| match record {
+                promotion::Record::Decided(terminal)
+                    if terminal.request_id == request.id
+                        && terminal.owner == request.owner
+                        && terminal.digest == request.digest =>
+                {
+                    Some(terminal.decision)
+                }
+                _ => None,
+            })
+            .collect();
+        let status = match decisions.as_slice() {
+            [] => "Pending",
+            [promotion::Decision::Approved] => "Approved",
+            [promotion::Decision::Declined] => "Declined",
+            _ => "Conflicting",
+        };
+        let mut exact = vec![
+            Node::text(format!(
+                "Repository: {} · key {}",
+                request.repository_scope, request.repository_key
+            )),
+            Node::text(format!("Content digest: {}", request.digest)),
+            Node::text(format!(
+                "Dependencies: {}",
+                compact_json_preview(request.root.dependencies(), 2048)
+            )),
+            Node::text(format!(
+                "Closure: {}",
+                compact_json_preview(&request.versions, 4096)
+            )),
+            Node::text(format!("Test evidence: {}", request.tests.len())),
+            code("luau", formatted(request.root.source())),
+            code(
+                "json",
+                compact_json_preview(request.root.signatures(), 16 * 1024),
+            ),
+        ];
+        exact.extend(
+            request
+                .tests
+                .iter()
+                .map(|test| code("json", compact_json_preview(test, 4096))),
+        );
+        let mut card = vec![
+            mono(format!(
+                "{status} · {}@{} · {}",
+                request.root.name(),
+                request.root.version(),
+                request.id
+            )),
+            Node::Section {
+                id: format!("codemode-promotion-{run}-{}", request.id),
+                title: "Show exact request".into(),
+                open: false,
+                children: exact,
+            },
+        ];
+        if status == "Pending" {
+            card.push(Node::row(
+                [
+                    ("Approve", promotion::Decision::Approved),
+                    ("Decline", promotion::Decision::Declined),
+                ]
+                .map(|(label, decision)| {
+                    button(
+                        label,
+                        &Action::Promote {
+                            run: run.clone(),
+                            request_id: request.id.clone(),
+                            decision,
+                        },
                     )
                 }),
-                t,
-            )
-        })
-        .when(!inference.is_empty(), |section| {
-            section.child(heading("Inference traces", t)).children(
-                inference.into_iter().map(|(id, trace)| {
-                    let key = (run.clone(), id.clone());
-                    let open = view.read_ui().open_traces.contains(&key);
-                    let ui_state = view.ui.clone();
-                    let refresh = view.handle.clone();
-                    let header = div()
-                        .id(SharedString::from(format!(
-                            "inference-trace-{run}-{id}"
-                        )))
-                        .cursor_pointer()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .child(icon(
-                            if open { Icon::Down } else { Icon::Chevron },
-                            IconSize::SMALL,
-                            t.dim,
-                        ))
-                        .child(mono(
-                            format!("{id} · {}", trace.status()),
-                            Type::CAPTION,
-                            t.text_soft,
-                        ))
-                        .on_click(move |_, _, cx| {
-                            ui_state.update(cx, |ui, _| {
-                                if !ui.open_traces.remove(&key) {
-                                    ui.open_traces.insert(key.clone());
-                                }
-                            });
-                            refresh.refresh(cx);
-                        });
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(sp(1.))
-                        .child(header)
-                        .when(open, |row| row.child(trace_detail(&trace, t)))
-                }),
-            )
-        })
+            ));
+        }
+        section.push(Node::Card {
+            children: vec![Node::stack(card)],
+        });
+    }
+    Node::stack(section)
+}
+
+/// Where a module version is listed: among the run's own, which it can
+/// select and which have tests, or in its repository's pin.
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    Run(&'a RunId),
+    Pin(&'a RunId),
+}
+
+/// One module version: what it is, its source, signatures and tests,
+/// each a section that opens; a previous one of the run's own can be
+/// selected.
+fn version_row(
+    definition: &modules::Definition,
+    selected: bool,
+    tests: &[modules::ModuleTest],
+    scope: Scope<'_>,
+) -> Node {
+    let name = definition.name();
+    let version = definition.version();
+    let (run, own) = match scope {
+        Scope::Run(run) => (run, true),
+        Scope::Pin(run) => (run, false),
+    };
+    let id = |what: &str| {
+        format!(
+            "codemode-module-{}-{run}-{what}-{version}",
+            if own { "run" } else { "pin" }
+        )
+    };
+    let mut header = vec![mono(format!(
+        "{} · {}",
+        if selected { "Selected" } else { "Version" },
+        version
+    ))];
+    if !selected && own {
+        header.push(Node::Spacer);
+        header.push(button(
+            "Select version",
+            &Action::Select {
+                run: run.clone(),
+                name: name.to_owned(),
+                version: version.to_owned(),
+            },
+        ));
+    }
+    // Compact definitions are bounded at 16 KiB; no pretty-print
+    // amplification.
+    let signatures = serde_json::to_string(definition.signatures())
+        .expect("signatures are JSON");
+    let mut row = vec![
+        Node::row(header),
+        Node::text(format!(
+            "Signatures: {}",
+            compact_json_preview(definition.signatures(), 1024)
+        )),
+        Node::text(format!(
+            "Dependencies: {}",
+            if definition.dependencies().is_empty() {
+                "none".to_owned()
+            } else {
+                definition
+                    .dependencies()
+                    .iter()
+                    .map(|(name, version)| format!("{name}@{version}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        )),
+        Node::Section {
+            id: id("source"),
+            title: "Show source".into(),
+            open: false,
+            children: vec![code("luau", formatted(definition.source()))],
+        },
+        Node::Section {
+            id: id("signatures"),
+            title: "Show signatures".into(),
+            open: false,
+            children: vec![code("json", signatures)],
+        },
+    ];
+    if own {
+        row.push(mono(format!("Controlled tests · {}", tests.len())));
+        row.push(Node::text(
+            "Tests use supplied fake calls and exact module versions; \
+             passing is evidence for those inputs, not proof of live \
+             behavior.",
+        ));
+        for (index, test) in tests.iter().enumerate() {
+            row.push(test_section(
+                test,
+                index,
+                version,
+                id(&format!("test-{index}")),
+            ));
+        }
+    }
+    Node::Card {
+        children: vec![Node::stack(row)],
+    }
+}
+
+/// A module's test: whether it passed, and, open, its script, the fake
+/// calls it was given, what it returned and called, and its error.
+fn test_section(
+    test: &modules::ModuleTest,
+    index: usize,
+    version: &str,
+    id: String,
+) -> Node {
+    let report = test.result();
+    let mut children = vec![
+        code("luau", formatted(test.code())),
+        Node::text(format!(
+            "Fake calls: {}",
+            compact_json_preview(&test.tools(), 2048)
+        )),
+        Node::text(format!(
+            "Output{}: {}",
+            if report.output_truncated {
+                " (truncated)"
+            } else {
+                ""
+            },
+            preview(&report.output, 2048)
+        )),
+        Node::text(format!(
+            "Calls: {}",
+            compact_json_preview(&report.calls, 2048)
+        )),
+    ];
+    if let Some(error) = &report.error {
+        children.push(marked(
+            "blocked",
+            Tone::Bad,
+            format!(
+                "Error{}: {}",
+                if report.error_truncated {
+                    " (truncated)"
+                } else {
+                    ""
+                },
+                preview(error, 2048)
+            ),
+        ));
+    }
+    Node::Section {
+        id,
+        title: format!(
+            "{} · test {} · {}",
+            if report.passed { "Passed" } else { "Failed" },
+            index + 1,
+            version
+        ),
+        open: false,
+        children,
+    }
 }
 
 /// Compact JSON written into a byte cap; a large fake fixture never gets
@@ -975,498 +1250,6 @@ pub fn compact_json_preview(value: &impl Serialize, limit: usize) -> String {
         text.push('…');
     }
     text
-}
-
-fn disclosure(
-    key: String,
-    label: String,
-    open: bool,
-    ui_state: gpui::Entity<InspectorUi>,
-    handle: Handle,
-    t: &Theme,
-) -> gpui::Stateful<Div> {
-    div()
-        .id(SharedString::from(key.clone()))
-        .min_h(rems(2.))
-        .flex()
-        .items_center()
-        .gap(sp(1.))
-        .cursor_pointer()
-        .child(icon(
-            if open { Icon::Down } else { Icon::Chevron },
-            IconSize::SMALL,
-            t.dim,
-        ))
-        .child(mono(label, Type::MICRO, t.text_soft))
-        .on_click(move |_, _, cx| {
-            ui_state.update(cx, |ui, _| ui.toggle(key.clone()));
-            handle.refresh(cx);
-        })
-}
-
-/// The selected version first, followed by each previous immutable version.
-fn modules_section(
-    library: &modules::Library,
-    run: Option<&RunId>,
-    open: &BTreeSet<String>,
-    ui_state: Entity<InspectorUi>,
-    handle: Handle,
-    t: &Theme,
-) -> Div {
-    let mut section = div().flex().flex_col().gap(sp(2.)).child(heading(
-        &format!("Codemode modules · {}", library.selected().len()),
-        t,
-    ));
-    if library.selected().is_empty() {
-        return section.child(ui::text(
-            "No modules defined in this run.",
-            Type::CAPTION,
-            t.muted,
-        ));
-    }
-    let Some(run) = run else {
-        return section;
-    };
-    for (name, selected) in library.selected() {
-        section = section.child(heading(name, t));
-        if let Some(definition) = library.versions().get(selected) {
-            section = section.child(version_row(
-                definition,
-                true,
-                library.tests(selected),
-                Some(run),
-                open,
-                (ui_state.clone(), handle.clone()),
-                t,
-            ));
-        }
-        let previous: Vec<_> = library
-            .versions()
-            .values()
-            .filter(|definition| {
-                definition.name() == name && definition.version() != selected
-            })
-            .collect();
-        if !previous.is_empty() {
-            section = section.child(mono(
-                "Previous immutable versions",
-                Type::MICRO,
-                t.dim,
-            ));
-            for definition in previous {
-                section = section.child(version_row(
-                    definition,
-                    false,
-                    library.tests(definition.version()),
-                    Some(run),
-                    open,
-                    (ui_state.clone(), handle.clone()),
-                    t,
-                ));
-            }
-        }
-    }
-    section
-}
-
-/// Draw only definitions captured in this run's persisted repository pin.
-fn repository_section(
-    pin: &modules::RepositoryPin,
-    open: &BTreeSet<String>,
-    ui_state: Entity<InspectorUi>,
-    handle: Handle,
-    t: &Theme,
-) -> Div {
-    let mut section = div().flex().flex_col().gap(sp(2.)).child(heading(
-        &format!("Repository modules · {} selected", pin.selected.len()),
-        t,
-    ));
-    for (name, version) in &pin.selected {
-        if let Some(definition) = pin.resolve(name, Some(version)) {
-            section = section.child(heading(name, t)).child(version_row(
-                definition,
-                true,
-                &[],
-                None,
-                open,
-                (ui_state.clone(), handle.clone()),
-                t,
-            ));
-        }
-    }
-    for definition in pin.versions.values() {
-        if pin
-            .selected
-            .get(definition.name())
-            .is_some_and(|version| version == definition.version())
-        {
-            continue;
-        }
-        section =
-            section
-                .child(heading(definition.name(), t))
-                .child(version_row(
-                    definition,
-                    false,
-                    &[],
-                    None,
-                    open,
-                    (ui_state.clone(), handle.clone()),
-                    t,
-                ));
-    }
-    section
-}
-
-fn promotions_section(
-    records: &[promotion::Record],
-    run: &RunId,
-    open: &BTreeSet<String>,
-    ui_state: Entity<InspectorUi>,
-    handle: Handle,
-    t: &Theme,
-) -> Div {
-    let requests: Vec<_> = records
-        .iter()
-        .filter_map(|record| match record {
-            promotion::Record::Requested(request)
-                if request.owner == run.0.as_ref() =>
-            {
-                Some(request.as_ref())
-            }
-            _ => None,
-        })
-        .collect();
-    let mut section = div().flex().flex_col().gap(sp(2.)).child(heading(
-        &format!("Repository promotion requests · {}", requests.len()),
-        t,
-    ));
-    for request in requests {
-        let decisions: Vec<_> = records
-            .iter()
-            .filter_map(|record| match record {
-                promotion::Record::Decided(terminal)
-                    if terminal.request_id == request.id
-                        && terminal.owner == request.owner
-                        && terminal.digest == request.digest =>
-                {
-                    Some(terminal.decision)
-                }
-                _ => None,
-            })
-            .collect();
-        let status = match decisions.as_slice() {
-            [] => "Pending",
-            [promotion::Decision::Approved] => "Approved",
-            [promotion::Decision::Declined] => "Declined",
-            _ => "Conflicting",
-        };
-        let key = format!("promotion-{}", request.id);
-        let expanded = open.contains(&key);
-        let mut row = div()
-            .flex()
-            .flex_col()
-            .gap(sp(1.))
-            .p(sp(2.))
-            .border_1()
-            .border_color(t.border)
-            .rounded(tau_ui_kit::theme::radius::BOX)
-            .child(mono(
-                format!(
-                    "{status} · {}@{} · {}",
-                    request.root.name(),
-                    request.root.version(),
-                    request.id
-                ),
-                Type::MICRO,
-                t.text_soft,
-            ))
-            .child(disclosure(
-                key,
-                "Show exact request".into(),
-                expanded,
-                ui_state.clone(),
-                handle.clone(),
-                t,
-            ));
-        if expanded {
-            row = row
-                .child(mono(
-                    format!(
-                        "Repository: {} · key {}",
-                        request.repository_scope, request.repository_key
-                    ),
-                    Type::MICRO,
-                    t.dim,
-                ))
-                .child(mono(
-                    format!("Content digest: {}", request.digest),
-                    Type::MICRO,
-                    t.dim,
-                ))
-                .child(mono(
-                    format!(
-                        "Dependencies: {}",
-                        compact_json_preview(request.root.dependencies(), 2048)
-                    ),
-                    Type::MICRO,
-                    t.muted,
-                ))
-                .child(mono(
-                    format!(
-                        "Closure: {}",
-                        compact_json_preview(&request.versions, 4096)
-                    ),
-                    Type::MICRO,
-                    t.muted,
-                ))
-                .child(mono(
-                    format!("Test evidence: {}", request.tests.len()),
-                    Type::MICRO,
-                    t.muted,
-                ))
-                .child(code_block(
-                    Some("luau"),
-                    &formatted(request.root.source()),
-                    t,
-                ))
-                .child(code_block(
-                    Some("json"),
-                    &compact_json_preview(request.root.signatures(), 16 * 1024),
-                    t,
-                ));
-            for test in &request.tests {
-                row = row.child(code_block(
-                    Some("json"),
-                    &compact_json_preview(test, 4096),
-                    t,
-                ));
-            }
-        }
-        if status == "Pending" {
-            for (label, decision) in [
-                ("Approve", promotion::Decision::Approved),
-                ("Decline", promotion::Decision::Declined),
-            ] {
-                let (run, request_id, handle) =
-                    (run.clone(), request.id.clone(), handle.clone());
-                row = row.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "promotion-{label}-{request_id}"
-                        )))
-                        .child(ui::button(label, ButtonKind::Secondary, t))
-                        .on_click(move |_, _, cx| {
-                            decide_promotion(
-                                &run,
-                                &request_id,
-                                decision,
-                                &handle,
-                                cx,
-                            )
-                        }),
-                );
-            }
-        }
-        section = section.child(row);
-    }
-    section
-}
-
-fn version_row(
-    definition: &modules::Definition,
-    selected: bool,
-    tests: &[modules::ModuleTest],
-    run: Option<&RunId>,
-    open: &BTreeSet<String>,
-    controls: (Entity<InspectorUi>, Handle),
-    t: &Theme,
-) -> Div {
-    let (ui_state, handle) = controls;
-    let name = definition.name();
-    let version = definition.version();
-    let source_key = format!("module-source-{version}");
-    let source_open = open.contains(&source_key);
-    let signatures_key = format!("module-signatures-{version}");
-    let signatures_open = open.contains(&signatures_key);
-    let mut row = div()
-        .flex()
-        .flex_col()
-        .gap(sp(1.5))
-        .p(sp(2.))
-        .border_1()
-        .border_color(t.border)
-        .rounded(tau_ui_kit::theme::radius::BOX)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .child(
-                    mono(
-                        format!(
-                            "{} · {}",
-                            if selected { "Selected" } else { "Version" },
-                            version
-                        ),
-                        Type::MICRO,
-                        t.text_soft,
-                    )
-                    .flex_1()
-                    .min_w(rems(0.))
-                    .truncate(),
-                )
-                .when(!selected && run.is_some(), |header| {
-                    let (run, name, version, handle) = (
-                        run.expect("scratch row has a run").clone(),
-                        name.to_owned(),
-                        version.to_owned(),
-                        handle.clone(),
-                    );
-                    header.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "module-select-{version}"
-                            )))
-                            .child(ui::button(
-                                "Select version",
-                                ButtonKind::Secondary,
-                                t,
-                            ))
-                            .on_click(move |_, _, cx| {
-                                select_version(
-                                    &run, &name, &version, &handle, cx,
-                                )
-                            }),
-                    )
-                }),
-        )
-        .child(mono(
-            format!(
-                "Signatures: {}",
-                compact_json_preview(definition.signatures(), 1024)
-            ),
-            Type::MICRO,
-            t.muted,
-        ))
-        .child(mono(
-            format!(
-                "Dependencies: {}",
-                if definition.dependencies().is_empty() {
-                    "none".to_owned()
-                } else {
-                    definition
-                        .dependencies()
-                        .iter()
-                        .map(|(name, version)| format!("{name}@{version}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                }
-            ),
-            Type::MICRO,
-            t.muted,
-        ))
-        .child(disclosure(
-            source_key,
-            "Show source".into(),
-            source_open,
-            ui_state.clone(),
-            handle.clone(),
-            t,
-        ));
-    if source_open {
-        row = row.child(code_block(
-            Some("luau"),
-            &formatted(definition.source()),
-            t,
-        ));
-    }
-    row = row.child(disclosure(
-        signatures_key,
-        "Show signatures".into(),
-        signatures_open,
-        ui_state.clone(),
-        handle.clone(),
-        t,
-    ));
-    if signatures_open {
-        // Compact definitions are bounded at 16 KiB; no pretty-print amplification.
-        let signatures = serde_json::to_string(definition.signatures())
-            .expect("signatures are JSON");
-        row = row.child(code_block(Some("json"), &signatures, t));
-    }
-    if run.is_none() {
-        return row;
-    }
-    row = row.child(mono(format!("Controlled tests · {}", tests.len()), Type::MICRO, t.text_soft))
-        .child(mono("Tests use supplied fake calls and exact module versions; passing is evidence for those inputs, not proof of live behavior.", Type::MICRO, t.dim));
-    for (index, test) in tests.iter().enumerate() {
-        let report = test.result();
-        let key = format!("module-test-{version}-{index}");
-        let expanded = open.contains(&key);
-        row = row.child(disclosure(
-            key,
-            format!(
-                "{} · test {} · {}",
-                if report.passed { "Passed" } else { "Failed" },
-                index + 1,
-                version
-            ),
-            expanded,
-            ui_state.clone(),
-            handle.clone(),
-            t,
-        ));
-        if expanded {
-            row = row
-                .child(code_block(Some("luau"), &formatted(test.code()), t))
-                .child(mono(
-                    format!(
-                        "Fake calls: {}",
-                        compact_json_preview(&test.tools(), 2048)
-                    ),
-                    Type::MICRO,
-                    t.dim,
-                ))
-                .child(mono(
-                    format!(
-                        "Output{}: {}",
-                        if report.output_truncated {
-                            " (truncated)"
-                        } else {
-                            ""
-                        },
-                        preview(&report.output, 2048)
-                    ),
-                    Type::MICRO,
-                    t.muted,
-                ))
-                .child(mono(
-                    format!(
-                        "Calls: {}",
-                        compact_json_preview(&report.calls, 2048)
-                    ),
-                    Type::MICRO,
-                    t.dim,
-                ));
-            if let Some(error) = &report.error {
-                row = row.child(mono(
-                    format!(
-                        "Error{}: {}",
-                        if report.error_truncated {
-                            " (truncated)"
-                        } else {
-                            ""
-                        },
-                        preview(error, 2048)
-                    ),
-                    Type::MICRO,
-                    t.red,
-                ));
-            }
-        }
-    }
-    row
 }
 
 /// Text rendered by the inspector's trace fold. Closed folds expose none
@@ -1562,19 +1345,4 @@ pub fn trace_sections(
         sections.push(("Trace", format!("{} attempt reservations · no terminal trace; final usage unknown.", trace.reservations.len())));
     }
     sections
-}
-
-fn trace_detail(trace: &TraceView<'_>, t: &Theme) -> Div {
-    div().flex().flex_col().gap(sp(2.)).pl(sp(5.)).children(
-        trace_sections(trace, true)
-            .into_iter()
-            .map(|(name, value)| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(1.))
-                    .child(heading(name, t))
-                    .child(code_block(None, &value, t))
-            }),
-    )
 }

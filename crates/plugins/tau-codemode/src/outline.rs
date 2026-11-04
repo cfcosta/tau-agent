@@ -2,17 +2,12 @@
 //! which opens on a click to what the item holds. The items come from
 //! the result's details ([`crate::result::output_details`]), so a
 //! string the script gave stays text and any other value stays JSON.
+//! It is a view tree (ADR 0045): each item a section, whether it is
+//! open the interface's state.
 
-use std::collections::BTreeSet;
-
-use gpui::{App, Div, Hsla, SharedString, div, prelude::*, rems};
 use serde_json::{Map, Value};
-use tau_ui_kit::{
-    assets::Icon,
-    components::{icon, mono},
-    syntax::Kind,
-    theme::{IconSize, Theme, Type, sp},
-};
+use tau_ui_kit::assets::Icon;
+use tau_ui_plugin::tree::{KeyValue, Node, Tone};
 
 use crate::result::preview;
 
@@ -223,235 +218,128 @@ fn compact(value: &Value, max: usize) -> String {
     preview(&value.to_string(), max)
 }
 
-/// Whether the item at `index` of `total` is open: a lone item opens by
-/// itself, and a click turns over what it would be.
-pub fn is_open(open: &BTreeSet<String>, key: &str, total: usize) -> bool {
-    open.contains(key) != (total == 1)
+/// Whether an item starts open, before the person clicks: a lone item
+/// opens by itself.
+pub fn starts_open(total: usize) -> bool {
+    total == 1
 }
 
-/// The key a call's item is opened under.
+/// The id of the section a call's item opens in.
 pub fn key(call_id: &str, index: usize) -> String {
-    format!("output-{call_id}-{index}")
+    format!("codemode-output-{call_id}-{index}")
 }
 
-/// The outline of a call's `items`; a click on a line passes its key to
-/// `toggle`.
-pub fn outline(
-    call_id: &str,
-    items: &[Shown],
-    open: &BTreeSet<String>,
-    toggle: impl Fn(String, &mut App) + Clone + 'static,
-    t: &Theme,
-) -> Div {
-    let mut list = div()
-        .flex()
-        .flex_col()
-        .rounded(tau_ui_kit::theme::radius::BOX)
-        .border_1()
-        .border_color(t.border)
-        .bg(t.card)
-        .overflow_hidden();
-    for (index, item) in items.iter().enumerate() {
-        let key = key(call_id, index);
-        let opens = !matches!(item, Shown::Image { .. });
-        let is_open = opens && is_open(open, &key, items.len());
+/// The outline of a call's `items`: one section per item, which opens
+/// to what it holds; an image, which holds nothing to read, a line.
+pub fn outline(call_id: &str, items: &[Shown]) -> Node {
+    Node::stack(items.iter().enumerate().map(|(index, item)| {
         let line = line(item);
-        let toggle = toggle.clone();
-        let mut row = div()
-            .id(SharedString::from(key.clone()))
-            .flex()
-            .items_center()
-            .gap(sp(2.))
-            .px(sp(3.))
-            .py(sp(1.5))
-            .min_h(rems(2.))
-            .when(index > 0, |row| row.border_t_1().border_color(t.border))
-            .when(is_open, |row| row.bg(t.raised))
-            .child(div().w(rems(0.75)).flex_none().children(opens.then(|| {
-                icon(
-                    if is_open { Icon::Down } else { Icon::Chevron },
-                    IconSize::SMALL,
-                    t.dim,
-                )
-            })))
-            .child(mono(format!("{}", index + 1), Type::MICRO, t.dim))
-            .child(icon(line.icon, IconSize::SMALL, t.dim))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w(rems(0.))
-                    .gap(sp(2.))
-                    .overflow_hidden()
-                    .child(
-                        mono(line.title, Type::CAPTION, t.text_soft)
-                            .flex_none()
-                            .max_w(rems(24.))
-                            .truncate(),
-                    )
-                    .when(!line.rest.is_empty(), |cell| {
-                        cell.child(
-                            mono(line.rest, Type::CAPTION, t.dim)
-                                .flex_1()
-                                .min_w(rems(0.))
-                                .truncate(),
-                        )
-                    }),
-            )
-            .when(!line.meta.is_empty(), |row| {
-                row.child(mono(line.meta, Type::MICRO, t.dim).flex_none())
-            });
-        if opens {
-            let key = key.clone();
-            row = row
-                .cursor_pointer()
-                .on_click(move |_, _, cx| toggle(key.clone(), cx));
+        let mut title = format!("{}  {}", index + 1, line.title);
+        for part in [&line.rest, &line.meta] {
+            if !part.is_empty() {
+                title.push_str(" · ");
+                title.push_str(part);
+            }
         }
-        list = list.child(row);
-        if is_open {
-            list = list.child(
-                div()
-                    .px(sp(3.))
-                    .pl(rems(3.5))
-                    .py(sp(2.))
-                    .border_t_1()
-                    .border_color(t.border)
-                    .child(opened(item, t)),
-            );
+        if matches!(item, Shown::Image { .. }) {
+            return Node::row([
+                Node::Icon {
+                    name: icon_name(line.icon).into(),
+                    tone: Tone::Neutral,
+                },
+                Node::Mono { text: title },
+            ]);
         }
-    }
-    list
+        Node::Section {
+            id: key(call_id, index),
+            title,
+            open: starts_open(items.len()),
+            children: opened(item),
+        }
+    }))
+}
+
+/// An icon's name in a tree: its file's.
+fn icon_name(icon: Icon) -> &'static str {
+    icon.path()
+        .strip_prefix("icons/")
+        .and_then(|file| file.strip_suffix(".svg"))
+        .unwrap_or_default()
 }
 
 /// What an open item holds.
-fn opened(item: &Shown, t: &Theme) -> Div {
+fn opened(item: &Shown) -> Vec<Node> {
     match item {
-        Shown::Text(text) => text_block(text, t),
-        Shown::Json(Value::Object(fields)) => object(fields, t),
+        Shown::Text(text) => text_block(text),
+        Shown::Json(Value::Object(fields)) => object(fields),
         Shown::Json(Value::Array(entries)) => {
             let more = entries.len().saturating_sub(ARRAY_ROWS);
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(0.5))
-                .children(entries.iter().take(ARRAY_ROWS).enumerate().map(
-                    |(index, entry)| {
-                        div()
-                            .flex()
-                            .gap(sp(3.))
-                            .child(
-                                mono(index.to_string(), Type::CAPTION, t.dim)
-                                    .w(rems(2.))
-                                    .flex_none(),
-                            )
-                            .child(
-                                value(entry, t)
-                                    .flex_1()
-                                    .min_w(rems(0.))
-                                    .truncate(),
-                            )
-                    },
-                ))
-                .when(more > 0, |list| {
-                    list.child(mono(
-                        format!("… {more} more"),
-                        Type::MICRO,
-                        t.dim,
-                    ))
-                })
+            let mut nodes = vec![Node::Rows {
+                rows: entries
+                    .iter()
+                    .take(ARRAY_ROWS)
+                    .enumerate()
+                    .map(|(index, entry)| KeyValue {
+                        key: index.to_string(),
+                        value: compact(entry, 200),
+                    })
+                    .collect(),
+            }];
+            if more > 0 {
+                nodes.push(Node::text(format!("… {more} more")));
+            }
+            nodes
         }
-        Shown::Json(other) => div().child(value(other, t)),
-        Shown::Image { .. } => div(),
-        Shown::Cut { head, bytes, .. } => text_block(head, t).child(mono(
-            format!(
+        Shown::Json(other) => vec![Node::Mono {
+            text: compact(other, 200),
+        }],
+        Shown::Image { .. } => Vec::new(),
+        Shown::Cut { head, bytes, .. } => {
+            let mut nodes = text_block(head);
+            nodes.push(Node::text(format!(
                 "The card keeps the first {}; the model read all {}.",
                 size(head.len()),
                 size(*bytes)
-            ),
-            Type::MICRO,
-            t.dim,
-        )),
+            )));
+            nodes
+        }
     }
 }
 
 /// An object's fields: plain ones as rows, long strings as blocks under
 /// them.
-fn object(fields: &Map<String, Value>, t: &Theme) -> Div {
+fn object(fields: &Map<String, Value>) -> Vec<Node> {
     let long = |value: &Value| {
         value.as_str().is_some_and(|text| {
             text.len() > SHORT_STRING || text.contains('\n')
         })
     };
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(0.5))
-        .children(fields.iter().filter(|(_, v)| !long(v)).map(|(key, v)| {
-            div()
-                .flex()
-                .gap(sp(3.))
-                .child(
-                    mono(
-                        key.clone(),
-                        Type::CAPTION,
-                        t.syntax.color(Kind::Property),
-                    )
-                    .w(rems(9.))
-                    .flex_none()
-                    .truncate(),
-                )
-                .child(value(v, t).flex_1().min_w(rems(0.)).truncate())
-        }))
-        .children(fields.iter().filter(|(_, v)| long(v)).map(|(key, v)| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(1.))
-                .pt(sp(2.))
-                .child(mono(
-                    key.clone(),
-                    Type::CAPTION,
-                    t.syntax.color(Kind::Property),
-                ))
-                .child(
-                    div()
-                        .pl(sp(2.5))
-                        .border_l_2()
-                        .border_color(t.border)
-                        .child(text_block(v.as_str().unwrap_or_default(), t)),
-                )
-        }))
+    let mut nodes = vec![Node::Rows {
+        rows: fields
+            .iter()
+            .filter(|(_, value)| !long(value))
+            .map(|(key, value)| KeyValue {
+                key: key.clone(),
+                value: compact(value, 200),
+            })
+            .collect(),
+    }];
+    for (key, value) in fields.iter().filter(|(_, value)| long(value)) {
+        nodes.push(Node::Heading { text: key.clone() });
+        nodes.extend(text_block(value.as_str().unwrap_or_default()));
+    }
+    nodes
 }
 
 /// Up to [`TEXT_LINES`] of `text`, and how many more there are.
-fn text_block(text: &str, t: &Theme) -> Div {
+fn text_block(text: &str) -> Vec<Node> {
     let lines: Vec<&str> = text.lines().collect();
     let more = lines.len().saturating_sub(TEXT_LINES);
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(1.))
-        .child(mono(
-            lines[..lines.len() - more].join("\n"),
-            Type::CAPTION,
-            t.text_soft,
-        ))
-        .when(more > 0, |block| {
-            block.child(mono(
-                format!("… {more} more lines"),
-                Type::MICRO,
-                t.dim,
-            ))
-        })
-}
-
-/// A value on one line, in its kind's color.
-fn value(value: &Value, t: &Theme) -> Div {
-    let color: Hsla = match value {
-        Value::String(_) => t.syntax.color(Kind::String),
-        Value::Number(_) => t.syntax.color(Kind::Number),
-        Value::Bool(_) | Value::Null => t.syntax.color(Kind::Constant),
-        Value::Object(_) | Value::Array(_) => t.dim,
-    };
-    mono(compact(value, 200), Type::CAPTION, color)
+    let mut nodes = vec![Node::Mono {
+        text: lines[..lines.len() - more].join("\n"),
+    }];
+    if more > 0 {
+        nodes.push(Node::text(format!("… {more} more lines")));
+    }
+    nodes
 }

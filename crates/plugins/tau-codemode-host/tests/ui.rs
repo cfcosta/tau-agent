@@ -29,7 +29,7 @@ use tau_codemode::{
     modules::{self, Definition, ModuleTest, TestReport},
     outline::{self, Shown},
     store,
-    ui::{self, Action, CodemodeUi, InspectorUi, Row, State},
+    ui::{self, Action, CodemodeUi, Row, State, Ui},
 };
 use tau_codemode_host::{
     CallStatus,
@@ -349,7 +349,7 @@ fn rejected_selection_requests_a_visible_alert(cx: &mut TestAppContext) {
         }),
     );
     cx.update(|cx| {
-        let ui = cx.new(|cx| InspectorUi::new(handle, cx));
+        let ui = cx.new(|cx| Ui::new(handle, cx));
         ui.update(cx, |ui, cx| {
             CodemodeUi.reply(
                 ui,
@@ -1148,7 +1148,7 @@ fn draw(
     let handle = Handle::new(PLUGIN, Rc::new(|_, _, _: &mut App| {}));
     cx.update(|cx| {
         cx.set_global(tau_ui_kit::theme::Theme::graphite());
-        let ui = cx.new(|cx| InspectorUi::new(handle.clone(), cx));
+        let ui = cx.new(|cx| Ui::new(handle.clone(), cx));
         let mut view = ViewCx::new(
             &CodemodeUi,
             ui,

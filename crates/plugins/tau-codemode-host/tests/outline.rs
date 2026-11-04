@@ -10,7 +10,7 @@
 
 mod common;
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 
 use common::{FakeHost, script};
 use hegel::generators as gs;
@@ -247,20 +247,11 @@ fn a_line_says_what_its_item_is(tc: hegel::TestCase) {
     assert_eq!(line(&shown), expected, "{shown:?}");
 }
 
-/// A lone item opens by itself; a click turns over what it would be,
-/// for any number of items.
+/// A lone item starts open, and more than one start closed; a click
+/// turns it over, as the interface keeps it.
 #[test]
 fn a_lone_item_starts_open() {
-    let key = outline::key("call_1", 0);
     for total in 0..4 {
-        for clicked in [false, true] {
-            let open: BTreeSet<String> =
-                clicked.then(|| key.clone()).into_iter().collect();
-            assert_eq!(
-                outline::is_open(&open, &key, total),
-                (total == 1) != clicked,
-                "{total} items, clicked {clicked}"
-            );
-        }
+        assert_eq!(outline::starts_open(total), total == 1, "{total} items");
     }
 }
