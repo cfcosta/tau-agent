@@ -263,6 +263,33 @@ pub fn output_lines(data: &CallData) -> Vec<String> {
     text.lines().map(str::to_owned).collect()
 }
 
+/// What an ended `exec_command` printed of a test run, as the compare
+/// screen's stat: `12 / 14`, failing when fewer passed than ran. A
+/// summary such as `14 tests run: 12 passed, 2 failed` says it.
+pub fn tests_stat(at: &AtCard) -> Option<PluginStatus> {
+    if at.tool != "exec_command" {
+        return None;
+    }
+    at.data.result.as_ref()?;
+    let lines = output_lines(&at.data);
+    let (total, passed) = lines.iter().rev().find_map(|line| {
+        let (before, after) = line.split_once(" tests run: ")?;
+        let total = before.split_whitespace().last()?;
+        let passed: String =
+            after.chars().take_while(char::is_ascii_digit).collect();
+        Some((total.to_owned(), passed))
+    })?;
+    Some(PluginStatus {
+        name: "tests".into(),
+        tone: if passed == total {
+            Tone::Quiet
+        } else {
+            Tone::Danger
+        },
+        state: format!("{passed} / {total}"),
+    })
+}
+
 /// The last `count` lines of `lines`.
 fn tail(lines: Vec<String>, count: usize) -> Vec<String> {
     let start = lines.len().saturating_sub(count);
@@ -334,6 +361,7 @@ impl UiPlugin for ToolsUi {
                     .collect();
                 Some(inspector(state, &run, &previews))
             })
+            .contribute(points::CARD_STAT, |at: &AtCard, _| tests_stat(at))
             .contribute_at(points::STATUS, -20, |_: &AtRun, _| {
                 Some(PluginStatus {
                     name: NAME.into(),

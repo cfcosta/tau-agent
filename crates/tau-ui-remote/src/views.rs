@@ -460,6 +460,9 @@ impl Workspace {
             p if p == points::CARD_BODY.name => {
                 self.card_outs(points::CARD_BODY, at, layout)
             }
+            p if p == points::CARD_STAT.name => {
+                self.card_outs(points::CARD_STAT, at, layout)
+            }
             // Setup stays on the computer.
             _ => Built::Nothing,
         }

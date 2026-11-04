@@ -22,6 +22,8 @@ tau-reasoning.workspace = true
 tau-memory.workspace = true
 tau-ask = { path = "../plugins/tau-ask", default-features = false }
 tau-luau-plugins.workspace = true
+tau-tools.workspace = true
+tau-goal.workspace = true
 
 [dependencies]
 base64.workspace = true
@@ -31,14 +33,10 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-goal.workspace = true
 tau-agents.workspace = true
 tau-remote.workspace = true
 tau-store.workspace = true
-# `bash` cards draw their output as a terminal
-# (docs/decisions/0010-terminal-rendering.md).
-tau-tools = { workspace = true, features = ["terminal"] }
-# Draws those commands' terminals.
+# Draws the view tree's terminals.
 tau-terminal.workspace = true
 tau-vcs.workspace = true
 tau-ui-kit.workspace = true

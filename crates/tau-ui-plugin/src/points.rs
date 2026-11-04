@@ -276,6 +276,12 @@ pub const CARD: Point<AtCard, CardView> = Point::new("tau.run.card");
 pub const CARD_BADGE: Point<AtCard> = Point::new("tau.run.card.badge");
 /// Under a tool card's body.
 pub const CARD_BODY: Point<AtCard> = Point::new("tau.run.card.body");
+/// What a tool card says of its run, for the compare screen's branch:
+/// the stat's name, its value, and a `Danger` tone when it failed. The
+/// newest card with one says it: a test run's counts, from a command's
+/// output.
+pub const CARD_STAT: Point<AtCard, PluginStatus> =
+    Point::new("tau.run.card.stat");
 /// Above a run's transcript.
 pub const RUN_BANNER: Point<AtRun> = Point::new("tau.run.banner");
 /// A section of the run inspector.

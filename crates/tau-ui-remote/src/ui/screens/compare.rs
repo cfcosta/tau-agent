@@ -15,6 +15,10 @@ use gpui::{
     rems,
 };
 use tau_agent::tool::RunId;
+use tau_ui_plugin::{
+    PluginStatus,
+    points::{self, AtCard},
+};
 
 use crate::{
     assets::Icon,
@@ -30,7 +34,17 @@ use crate::{
         rich,
         status_look,
     },
-    view::{CodeState, FileKind, FileStat, Origin, RunView, tokens, usd},
+    view::{
+        CodeState,
+        FileKind,
+        FileStat,
+        Origin,
+        RunView,
+        ToolCard,
+        Tone,
+        tokens,
+        usd,
+    },
     workspace::Workspace,
 };
 
@@ -354,23 +368,12 @@ fn branch(
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let (stop_color, stop) = status_look(&run.status, t);
-    let tests = run.items.iter().rev().find_map(|item| match item {
-        crate::view::Item::Tool(card) if card.tool == "exec_command" => {
-            card.data.result.as_ref()?;
-            let lines = tau_tools::ui::output_lines(&card.data);
-            lines
-                .iter()
-                .rev()
-                .find(|line| line.contains("tests run"))
-                .and_then(|line| line.split(": ").nth(1))
-                .and_then(|counts| counts.split(" passed").next())
-                .map(|passed| (passed.to_owned(), line_total(&lines)))
-        }
+    // What the newest card with one says of the branch: its tests.
+    let stat = run.items.iter().rev().find_map(|item| match item {
+        crate::view::Item::Tool(card) => card_stat(ws, run, card),
         _ => None,
     });
-    let failing = tests
-        .as_ref()
-        .is_some_and(|(passed, total)| Some(passed) != total.as_ref());
+    let failing = stat.as_ref().filter(|stat| stat.tone == Tone::Danger);
     let id = run.id.clone();
     let keep_id = run.id.clone();
     // A branch on another model than coder's default can make it one.
@@ -421,15 +424,14 @@ fn branch(
                         .font_weight(weight::STRONG)
                         .child(run.title.clone()),
                 )
-                .child(pill(
-                    if failing {
-                        "tests failing".into()
-                    } else {
-                        stop
-                    },
-                    if failing { t.red } else { stop_color },
-                    t.raised,
-                )),
+                .child(match failing {
+                    Some(stat) => pill(
+                        SharedString::from(format!("{} failing", stat.name)),
+                        t.red,
+                        t.raised,
+                    ),
+                    None => pill(stop, stop_color, t.raised),
+                }),
         )
         .child({
             // Which model the branch ran on: what a comparison is about.
@@ -460,13 +462,10 @@ fn branch(
                 .child(ui::stat("turns", run.turn.to_string(), t))
                 .child(ui::stat("tokens", tokens(run.usage.tokens), t))
                 .child(ui::stat("cost", usd(run.usage.cost), t))
-                .child(ui::stat(
-                    "tests",
-                    tests.map_or("—".into(), |(passed, total)| {
-                        format!("{passed} / {}", total.unwrap_or_default())
-                    }),
-                    t,
-                )),
+                .children(
+                    stat.as_ref()
+                        .map(|stat| ui::stat(&stat.name, stat.state.clone(), t)),
+                ),
         )
         .children(run.last_text().map(|text| {
             div()
@@ -533,10 +532,24 @@ fn branch(
         })
 }
 
-/// The total in a `N tests run` summary line.
-fn line_total(lines: &[String]) -> Option<String> {
-    lines.iter().rev().find_map(|line| {
-        let before = line.split(" tests run").next()?;
-        before.split_whitespace().last().map(str::to_owned)
-    })
+/// What a plugin says of `card` for the branch (`CARD_STAT`): the
+/// first to answer.
+fn card_stat(
+    ws: &Workspace,
+    run: &RunView,
+    card: &ToolCard,
+) -> Option<PluginStatus> {
+    let contexts: Vec<(&str, AtCard)> = ws
+        .plugin_names()
+        .into_iter()
+        .map(|name| (name, crate::views::at_card(run, card, name)))
+        .collect();
+    let at = |plugin: &str| {
+        contexts
+            .iter()
+            .find(|(name, _)| *name == plugin)
+            .map(|(_, at)| at)
+    };
+    let (_, stat) = ws.contributions_named(points::CARD_STAT, at).into_iter().next()?;
+    Some(stat)
 }

@@ -1134,11 +1134,7 @@ fn plugin_note(
                     t.dim,
                 ))
         })
-        .child(if note.plugin == tau_goal::NAME {
-            icon(Icon::Target, IconSize::COMPACT, t.tone(note.tone))
-        } else {
-            icon(Icon::Plug, IconSize::COMPACT, ink)
-        })
+        .child(icon(Icon::Plug, IconSize::COMPACT, ink))
         .child(
             div()
                 .flex_shrink_0()

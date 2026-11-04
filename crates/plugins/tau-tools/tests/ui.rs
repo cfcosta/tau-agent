@@ -24,17 +24,21 @@ use tau_tools::{
         output_lines,
         read_body,
         term::TermOutput,
+        tests_stat,
     },
 };
 use tau_ui_kit::diff::{DiffKind, DiffLine};
+use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
     CallData,
     CallResult,
     Fold,
     Handle,
     Request,
+    RunInfo,
     UiPlugin as _,
     ViewCx,
+    points::AtCard,
     testing::FakeRun,
     tree::Node,
 };
@@ -73,6 +77,50 @@ fn only_a_successful_result_with_a_diff_reads_one() {
         None
     );
     assert_eq!(diff_of(&CallData::default()), None);
+}
+
+/// A test run's summary in an ended command's output gives the compare
+/// screen its tests: the counts, failing when fewer passed than ran.
+/// Another tool's card, or a command still going, gives none.
+#[hegel::test(test_cases = 200)]
+fn a_test_summary_gives_the_branch_its_counts(tc: hegel::TestCase) {
+    let total = tc.draw(gs::integers::<u32>().max_value(5_000));
+    let passed = tc.draw(gs::integers::<u32>().max_value(total));
+    let text = format!(
+        "Starting 3 tests\n     Summary [   4.200s] {total} tests run: \
+         {passed} \u{1b}[32mpassed\u{1b}[0m, 0 skipped\n"
+    );
+    let at = |tool: &str, ended: bool| AtCard {
+        run: RunInfo {
+            id: RunId("r".into()),
+            repo: "tau".into(),
+            live: false,
+            title: "t".into(),
+            answer: None,
+            context: 0,
+            window: None,
+        },
+        call_id: "c1".into(),
+        tool: tool.into(),
+        keys: Vec::new(),
+        data: std::sync::Arc::new(CallData {
+            result: ended.then(|| CallResult {
+                text: text.clone(),
+                details: None,
+                error: false,
+            }),
+            partial: Some(text.clone()),
+            ..CallData::default()
+        }),
+        summary: String::new(),
+        cut: None,
+    };
+    let stat = tests_stat(&at("exec_command", true)).expect("a stat");
+    assert_eq!(stat.name, "tests");
+    assert_eq!(stat.state, format!("{passed} / {total}"));
+    assert_eq!(stat.tone == Tone::Danger, passed != total);
+    assert_eq!(tests_stat(&at("exec_command", false)), None);
+    assert_eq!(tests_stat(&at("read", true)), None);
 }
 
 /// A command's lines are its result's once it ends, else what it has
