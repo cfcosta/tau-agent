@@ -1,6 +1,8 @@
 //! Pushing a repository's main chat to GitHub (ADR 0023): trunk's
 //! commits go as they are, through jj-lib's push, which runs `git`.
 
+use tau_ui_plugin::vcs::PushError;
+
 use super::*;
 use crate::push::{PushFailure, Pushed, PushedChange};
 
@@ -39,7 +41,7 @@ impl Host {
         let slot = self
             .slot(repo)
             .ok_or_else(|| failed(anyhow::anyhow!("No repository {repo}")))?;
-        let project = slot.jj_project().await.map_err(failed)?;
+        let repository = slot.repository().await.map_err(failed)?;
         let (url, token) = self.github_remote(repo).await.map_err(failed)?;
         if fetch {
             let main = self.main_of(repo).await.map_err(failed)?;
@@ -49,31 +51,16 @@ impl Host {
                 )));
             }
             self.update_repo(repo).await.map_err(failed)?;
-            let repository = slot.repository().await.map_err(failed)?;
             repository
                 .catch_up(repository.main_workspace())
                 .await
                 .map_err(failed)?;
         }
-        // The push and, when GitHub moved, what main has that it lacks.
-        let (pushed, ahead) = project
-            .run(move |project| {
-                let remote = Remote {
-                    url,
-                    token: Some(token),
-                };
-                let pushed = project.push_trunk(remote);
-                let ahead = matches!(
-                    pushed,
-                    Err(tau_vcs_host::VcsError::PushRejected { .. })
-                )
-                .then(|| {
-                    project.unpushed().map_or(0, |changes| changes.len() as u32)
-                });
-                (pushed, ahead)
-            })
-            .await;
-        match pushed {
+        let remote = Remote {
+            url,
+            token: Some(token),
+        };
+        match repository.push_trunk(remote).await {
             Ok(pushed) => Ok(Pushed {
                 branch: pushed.branch,
                 from: pushed.from,
@@ -87,13 +74,10 @@ impl Host {
                     })
                     .collect(),
             }),
-            Err(tau_vcs_host::VcsError::PushRejected { branch }) => {
-                Err(PushFailure::Moved {
-                    branch,
-                    ahead: ahead.unwrap_or_default(),
-                })
+            Err(PushError::Moved { branch, ahead }) => {
+                Err(PushFailure::Moved { branch, ahead })
             }
-            Err(error) => Err(failed(error.into())),
+            Err(PushError::Failed(error)) => Err(failed(error)),
         }
     }
 }

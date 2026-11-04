@@ -4,6 +4,8 @@
 //! push. GitHub's API opens the pull request, asks for reviews and
 //! reports checks.
 
+use tau_ui_plugin::vcs::After;
+
 use super::*;
 
 /// A pull request opened from a run, as far as tau pushed it.
@@ -16,77 +18,6 @@ pub(super) struct OpenPr {
     /// last commit in it.
     pub(super) head: String,
     pub(super) change: String,
-}
-
-/// A run's commits replayed for its pull request: the commit they went
-/// onto, the run's commits, oldest first, and their copies.
-pub(super) struct Replayed {
-    pub(super) onto: String,
-    pub(super) changes: Vec<StackChange>,
-    pub(super) copies: Vec<String>,
-}
-
-/// The commits on `run`'s stack, oldest first: the model's, and those
-/// its children landed (ADR 0014). Runs in a job on the project.
-pub(super) fn stack(
-    run: &RunId,
-    project: &ProjectRepo,
-) -> anyhow::Result<Vec<StackChange>> {
-    let Some(head) = project.head(&Head::Run(run.clone()))? else {
-        return Ok(Vec::new());
-    };
-    Ok(project.stack(&head)?)
-}
-
-/// `run`'s commits replayed onto GitHub's trunk as the last fetch left
-/// it, so the pull request carries only the run's own work and none of
-/// what the main chat has not pushed. `after` is the pull request's
-/// branch and the change id of the run's last commit in it: only the
-/// commits after that one replay, onto the branch. A replay that would
-/// conflict is refused, naming the files. Runs in a job on the project.
-pub(super) fn replayed(
-    run: &RunId,
-    project: &ProjectRepo,
-    after: Option<(&str, &str)>,
-) -> anyhow::Result<Replayed> {
-    let all = stack(run, project)?;
-    if all.is_empty() {
-        anyhow::bail!("The run has no commits, so there is nothing to propose");
-    }
-    let trunk = project.trunk_name()?;
-    let upstream = || {
-        project.upstream()?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "GitHub has no {trunk} for the pull request to go on"
-            )
-        })
-    };
-    let (onto, changes) = match after {
-        Some((head, pushed)) => {
-            // Changes keep their ids when a landing restacks them.
-            match all.iter().position(|change| change.change_id == pushed) {
-                Some(at) => (head.to_owned(), all[at + 1..].to_vec()),
-                None => (upstream()?, all),
-            }
-        }
-        None => (upstream()?, all),
-    };
-    let ids: Vec<String> = changes
-        .iter()
-        .map(|change| change.commit_id.clone())
-        .collect();
-    let copies = project.replay(&ids, &onto).map_err(|error| match error {
-        tau_vcs_host::VcsError::WouldConflict(paths) => anyhow::anyhow!(
-            "would conflict on origin/{trunk}: {}",
-            paths.join(", ")
-        ),
-        error => error.into(),
-    })?;
-    Ok(Replayed {
-        onto,
-        changes,
-        copies,
-    })
 }
 
 impl Host {
@@ -115,45 +46,32 @@ impl Host {
                 slot.name
             )
         })?;
+        let repository = slot.repository().await?;
         let (url, token) = self.github_remote(&slot.name).await?;
-        let project = slot.jj_project().await?;
-        let job_run = run.clone();
-        let (changed, commits, base) = project
-            .run(move |project| {
-                // What GitHub's default branch is now, for the replay to
-                // go on.
-                let _ = project.update(tau_vcs_host::UpdateFrom::Remote {
-                    url: &url,
-                    token: Some(&token),
-                });
-                let replayed = replayed(&job_run, project, None)?;
-                let last =
-                    replayed.copies.last().expect("a replay of some commits");
-                let changed = project.diff(&replayed.onto, last)?.len();
-                let mut commits = Vec::new();
-                let mut previous = replayed.onto.clone();
-                for (change, copy) in
-                    replayed.changes.iter().zip(&replayed.copies)
-                {
-                    let files = project.diff(&previous, copy)?;
-                    commits.push(PrCommit {
-                        title: change
-                            .description
-                            .lines()
-                            .next()
-                            .unwrap_or_default()
-                            .to_owned(),
-                        added: files.iter().map(|file| file.added as u32).sum(),
-                        removed: files
-                            .iter()
-                            .map(|file| file.removed as u32)
-                            .sum(),
-                    });
-                    previous = copy.clone();
-                }
-                anyhow::Ok((changed, commits, project.trunk_name()?))
+        // What GitHub's default branch is now, for the replay to go on.
+        let remote = Remote {
+            url,
+            token: Some(token),
+        };
+        let _ = repository.update(remote).await;
+        let replayed = repository.replay_run(run, None).await?;
+        let commits = replayed
+            .commits
+            .iter()
+            .map(|commit| PrCommit {
+                title: commit
+                    .change
+                    .description
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
+                added: commit.added,
+                removed: commit.removed,
             })
-            .await?;
+            .collect::<Vec<_>>();
+        let changed = replayed.changed;
+        let base = repository.trunk_name().await?;
         let view = self
             .history()
             .await?
@@ -234,28 +152,21 @@ impl Host {
         reviewers: &[String],
     ) -> anyhow::Result<(github::Opened, String)> {
         let slot = self.slot_of_run(run).await?;
-        let project = slot.jj_project().await?;
+        let repository = slot.repository().await?;
         let (url, token) = self.github_remote(&slot.name).await?;
-        let (job_run, branch, push_token) =
-            (run.clone(), draft.head.clone(), token.clone());
-        let (head, change) = project
-            .run(move |project| {
-                let replayed = replayed(&job_run, project, None)?;
-                let copy = replayed.copies.last().cloned().unwrap_or_default();
-                let change = replayed
-                    .changes
-                    .last()
-                    .map(|change| change.change_id.clone())
-                    .unwrap_or_default();
-                let remote = Remote {
-                    url,
-                    token: Some(push_token),
-                };
-                // Signing on push makes copies of its own: the head is
-                // what went.
-                let head = project.push_branch(remote, &branch, None, &copy)?;
-                anyhow::Ok((head, change))
-            })
+        let replayed = repository.replay_run(run, None).await?;
+        let last = replayed.commits.last();
+        let copy = last.map(|commit| commit.copy.clone()).unwrap_or_default();
+        let change = last
+            .map(|commit| commit.change.change_id.clone())
+            .unwrap_or_default();
+        let remote = Remote {
+            url,
+            token: Some(token.clone()),
+        };
+        // Signing on push makes copies of its own: the head is what went.
+        let head = repository
+            .push_branch(remote, draft.head.clone(), None, copy)
             .await?;
         let opened = self
             .github
@@ -303,37 +214,29 @@ impl Host {
             return Ok(false);
         }
         let slot = self.slot_of_run(run).await?;
-        let project = slot.jj_project().await?;
+        let repository = slot.repository().await?;
         let (url, token) = self.github_remote(&slot.name).await?;
-        let (job_run, pushed) = (run.clone(), open.clone());
-        let last = project
-            .run(move |project| {
-                let replayed = replayed(
-                    &job_run,
-                    project,
-                    Some((&pushed.head, &pushed.change)),
-                )?;
-                let (Some(head), Some(last)) =
-                    (replayed.copies.last(), replayed.changes.last())
-                else {
-                    return anyhow::Ok(None);
-                };
-                let remote = Remote {
-                    url,
-                    token: Some(token),
-                };
-                let head = project.push_branch(
-                    remote,
-                    &pushed.branch,
-                    Some(&pushed.head),
-                    head,
-                )?;
-                Ok(Some((head, last.change_id.clone())))
-            })
-            .await?;
-        let Some((head, change)) = last else {
+        let after = After {
+            head: open.head.clone(),
+            change_id: open.change.clone(),
+        };
+        let replayed = repository.replay_run(run, Some(after)).await?;
+        let Some(last) = replayed.commits.last() else {
             return Ok(false);
         };
+        let remote = Remote {
+            url,
+            token: Some(token),
+        };
+        let head = repository
+            .push_branch(
+                remote,
+                open.branch.clone(),
+                Some(open.head.clone()),
+                last.copy.clone(),
+            )
+            .await?;
+        let change = last.change.change_id.clone();
         if let Some(open) = self.prs.lock().expect("not poisoned").get_mut(run)
         {
             open.head = head;

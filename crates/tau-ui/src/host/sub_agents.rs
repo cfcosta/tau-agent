@@ -4,7 +4,7 @@
 //! the drain reports it, for main to go on from.
 
 use tau_ui_remote::queue::{SubAgentEnd, Waiting};
-use tau_vcs_host::sub_agents::{Ending, Taken, limit_name};
+use tau_vcs_host::sub_agents::{Ending, Taken};
 
 use super::{landing::Reading, lanes::DrainReport, queue::Lane, *};
 
@@ -152,7 +152,7 @@ impl Host {
             // land or report.
             None | Some(Ending::Stopped) => None,
             Some(Ending::Done { limit, .. }) => Some(SubAgentEnd {
-                limit: limit.map(|limit| limit_name(limit).to_owned()),
+                limit: limit.map(|limit| limit.name().to_owned()),
                 unread,
                 ..SubAgentEnd::default()
             }),
@@ -161,7 +161,7 @@ impl Host {
             Some(Ending::Kept { limit, changes, .. }) => {
                 self.record_dropped(child, &main).await?;
                 Some(SubAgentEnd {
-                    limit: limit.map(|limit| limit_name(limit).to_owned()),
+                    limit: limit.map(|limit| limit.name().to_owned()),
                     kept: Some(changes),
                     unread,
                     ..SubAgentEnd::default()
@@ -256,10 +256,12 @@ impl Host {
                 .and_then(|record| record.result)
                 .unwrap_or_default();
             if let Some(kept) = &end.kept {
-                let note = tau_vcs_host::sub_agents::kept_note(
-                    kept,
-                    end.limit.as_deref().and_then(limit_of),
-                );
+                let limit = end.limit.as_deref().and_then(limit_of);
+                let note = self
+                    .vcs
+                    .as_ref()
+                    .map(|vcs| vcs.kept_note(kept, limit))
+                    .unwrap_or_default();
                 sections.push(format!(
                     "Sub-agent `{}` ({}) finished.\n\n{answer}\n\n{note}{unread}",
                     waiting.title, waiting.run
@@ -269,8 +271,9 @@ impl Host {
             let note = landings
                 .iter()
                 .find(|(landed, _)| *landed == run)
-                .map(|(_, landing)| {
-                    tau_vcs_host::sub_agents::landing_note(
+                .zip(self.vcs.as_ref())
+                .map(|((_, landing), vcs)| {
+                    vcs.landing_note(
                         landing,
                         &landing.conflicts,
                         end.limit.as_deref().and_then(limit_of),
@@ -290,15 +293,9 @@ impl Host {
 
 /// A limit from its name in the queue's records.
 fn limit_of(name: &str) -> Option<tau_agent::event::LimitKind> {
-    use tau_agent::event::LimitKind;
-    [
-        LimitKind::Turns,
-        LimitKind::Tokens,
-        LimitKind::Usd,
-        LimitKind::Time,
-    ]
-    .into_iter()
-    .find(|limit| limit_name(*limit) == name)
+    tau_agent::event::LimitKind::ALL
+        .into_iter()
+        .find(|limit| limit.name() == name)
 }
 
 /// What a report adds for the messages the person wrote to a

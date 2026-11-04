@@ -389,10 +389,10 @@ fn rotation_jitter() -> RunView {
 
 /// What landing the `backoff` fork would do:
 /// two changes, and with `conflict`, one of them in conflict.
-pub fn landing_preview(conflict: bool) -> tau_vcs_host::Landing {
+pub fn landing_preview(conflict: bool) -> tau_ui_plugin::vcs::Landing {
     let change =
         |change_id: &str, commit_id: &str, description: &str, conflict| {
-            tau_vcs_host::ChangeInfo {
+            tau_ui_plugin::vcs::ChangeInfo {
                 change_id: change_id.into(),
                 commit_id: commit_id.into(),
                 description: description.into(),
@@ -404,7 +404,7 @@ pub fn landing_preview(conflict: bool) -> tau_vcs_host::Landing {
                 bookmarks: Vec::new(),
             }
         };
-    tau_vcs_host::Landing {
+    tau_ui_plugin::vcs::Landing {
         changes: vec![
             change(
                 "tnrlwzvoqkmxpulsyvrnzotqwmkpxsly",

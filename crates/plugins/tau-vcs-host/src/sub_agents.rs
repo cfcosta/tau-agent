@@ -783,16 +783,6 @@ impl AgentTool for RefusingSpawn {
     }
 }
 
-/// A limit, as the result's details name it.
-pub fn limit_name(limit: LimitKind) -> &'static str {
-    match limit {
-        LimitKind::Turns => "turns",
-        LimitKind::Tokens => "tokens",
-        LimitKind::Usd => "cost",
-        LimitKind::Time => "time",
-    }
-}
-
 /// What the caller reads about a landing, after the sub-agent's answer:
 /// whether a limit cut the sub-agent short, how many changes landed, and
 /// the paths this landing left in conflict (`brought`), not those the

@@ -3,32 +3,54 @@
 
 use std::{
     any::Any,
+    ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use tau_agent::tool::RunId;
+use tau_agent::{event::LimitKind, tool::RunId};
 use tau_ui_plugin::{
     HostCx,
     PluginHost,
     registry::HostFuture,
     vcs::{
         self,
+        After,
         Discard,
         FileDiff,
         Held,
         Land,
         Landing,
         Link,
+        LocalFolder,
         Newest,
         Onto,
         Open,
         Owner,
+        PushError,
+        Pushed,
+        Remote,
+        Replayed,
+        ReplayedCommit,
+        SetupStep,
         StackChange,
+        Updated,
     },
 };
 
-use crate::{Head, Identity, Project, Vcs, error::VcsError, sweep};
+use crate::{
+    Head,
+    Identity,
+    Layout,
+    Project,
+    ProjectRepo,
+    UpdateFrom,
+    Vcs,
+    error::VcsError,
+    local,
+    sub_agents,
+    sweep,
+};
 
 /// Opens projects on jj, with commits by `identity`: tau-vcs's host
 /// state, and what it fills [`vcs::VCS`] with.
@@ -79,6 +101,87 @@ impl vcs::Vcs for JjVcs {
             let repository = JjRepository::new(project, self.identity.clone());
             Ok(Arc::new(repository) as Arc<dyn vcs::Repository>)
         })
+    }
+
+    fn is_project(&self, root: &Path) -> bool {
+        ProjectRepo::exists(root)
+    }
+
+    fn clone_repository<'a>(
+        &'a self,
+        from: Remote,
+        root: &'a Path,
+    ) -> HostFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            Project::clone(from.url, from.token, root, self.identity.clone())
+                .await?;
+            Ok(())
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        folder: &'a Path,
+    ) -> HostFuture<'a, anyhow::Result<LocalFolder>> {
+        Box::pin(async move {
+            let found = local::inspect(folder, self.identity.clone()).await?;
+            Ok(LocalFolder {
+                root: found.root,
+                origin: found.origin.map(|origin| origin.url),
+            })
+        })
+    }
+
+    fn runs_dir_name(&self, runs: &Path, root: &Path) -> String {
+        local::runs_dir_name(runs, root)
+    }
+
+    /// Inspects the folder again: what the setup reads is what it finds
+    /// now.
+    fn setup_local<'a>(
+        &'a self,
+        folder: &'a Path,
+        main_dir: PathBuf,
+        runs_dir: PathBuf,
+        mut progress: Box<dyn FnMut(SetupStep) -> ControlFlow<()> + Send>,
+    ) -> HostFuture<'a, anyhow::Result<Arc<dyn vcs::Repository>>> {
+        Box::pin(async move {
+            let identity = self.identity.clone();
+            let found = local::inspect(folder, identity.clone()).await?;
+            let layout = Layout::local(&found.root, main_dir, runs_dir);
+            let steps = local::Step::ALL;
+            let project =
+                Project::setup_local(found, layout, identity, move |step| {
+                    progress(SetupStep {
+                        at: steps
+                            .iter()
+                            .position(|known| *known == step)
+                            .unwrap_or_default(),
+                        of: steps.len(),
+                        doing: step.to_string(),
+                    })
+                })
+                .await?;
+            let repository = JjRepository::new(project, self.identity.clone());
+            Ok(Arc::new(repository) as Arc<dyn vcs::Repository>)
+        })
+    }
+
+    fn landing_note(
+        &self,
+        landing: &Landing,
+        brought: &[String],
+        limit: Option<LimitKind>,
+    ) -> String {
+        sub_agents::landing_note(landing, brought, limit)
+    }
+
+    fn kept_note(
+        &self,
+        changes: &[String],
+        limit: Option<LimitKind>,
+    ) -> String {
+        sub_agents::kept_note(changes, limit)
     }
 }
 
@@ -172,6 +275,68 @@ impl vcs::Repository for JjRepository {
             let diff =
                 self.project.run(move |project| project.diff(&from, &to));
             Ok(diff.await?)
+        })
+    }
+
+    fn update(&self, from: Remote) -> HostFuture<'_, anyhow::Result<Updated>> {
+        Box::pin(async move {
+            let updated = self.project.run(move |project| {
+                project.update(UpdateFrom::Remote {
+                    url: &from.url,
+                    token: from.token.as_deref(),
+                })
+            });
+            Ok(updated.await?)
+        })
+    }
+
+    /// Counts what trunk has that the remote lacks in the same job as the
+    /// push, so no landing comes between.
+    fn push_trunk(
+        &self,
+        to: Remote,
+    ) -> HostFuture<'_, Result<Pushed, PushError>> {
+        Box::pin(async move {
+            self.project
+                .run(move |project| match project.push_trunk(to) {
+                    Ok(pushed) => Ok(pushed),
+                    Err(VcsError::PushRejected { branch }) => {
+                        let ahead = project
+                            .unpushed()
+                            .map_or(0, |changes| changes.len() as u32);
+                        Err(PushError::Moved { branch, ahead })
+                    }
+                    Err(error) => Err(PushError::Failed(error.into())),
+                })
+                .await
+        })
+    }
+
+    fn replay_run<'a>(
+        &'a self,
+        run: &'a RunId,
+        after: Option<After>,
+    ) -> HostFuture<'a, anyhow::Result<Replayed>> {
+        Box::pin(async move {
+            let head = Head::Run(run.clone());
+            self.project
+                .run(move |project| replay(project, &head, after))
+                .await
+        })
+    }
+
+    fn push_branch(
+        &self,
+        to: Remote,
+        branch: String,
+        expected: Option<String>,
+        head: String,
+    ) -> HostFuture<'_, anyhow::Result<String>> {
+        Box::pin(async move {
+            let pushed = self.project.run(move |project| {
+                project.push_branch(to, &branch, expected.as_deref(), &head)
+            });
+            Ok(pushed.await?)
         })
     }
 
@@ -382,4 +547,74 @@ impl vcs::Repository for JjRepository {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// The commits on `head`'s stack, the model's and those its children
+/// landed (ADR 0014), replayed onto the remote's trunk as the last fetch
+/// left it ([`vcs::Repository::replay_run`]), with what each copy
+/// changes. Runs in a job on the project.
+fn replay(
+    project: &ProjectRepo,
+    head: &Head,
+    after: Option<After>,
+) -> anyhow::Result<Replayed> {
+    let all = match project.head(head)? {
+        Some(head) => project.stack(&head)?,
+        None => Vec::new(),
+    };
+    if all.is_empty() {
+        anyhow::bail!("The run has no commits, so there is nothing to propose");
+    }
+    let trunk = project.trunk_name()?;
+    let upstream = || {
+        project.upstream()?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "The remote has no {trunk} for the pull request to go on"
+            )
+        })
+    };
+    let (onto, changes) = match after {
+        // Changes keep their ids when a landing restacks them.
+        Some(after) => match all
+            .iter()
+            .position(|change| change.change_id == after.change_id)
+        {
+            Some(at) => (after.head, all[at + 1..].to_vec()),
+            None => (upstream()?, all),
+        },
+        None => (upstream()?, all),
+    };
+    let ids: Vec<String> = changes
+        .iter()
+        .map(|change| change.commit_id.clone())
+        .collect();
+    let copies = project.replay(&ids, &onto).map_err(|error| match error {
+        VcsError::WouldConflict(paths) => anyhow::anyhow!(
+            "would conflict on {}/{trunk}: {}",
+            crate::REMOTE,
+            paths.join(", ")
+        ),
+        error => error.into(),
+    })?;
+    let changed = match copies.last() {
+        Some(last) => project.diff(&onto, last)?.len(),
+        None => 0,
+    };
+    let mut commits = Vec::new();
+    let mut previous = onto.clone();
+    for (change, copy) in changes.into_iter().zip(copies) {
+        let files = project.diff(&previous, &copy)?;
+        commits.push(ReplayedCommit {
+            change,
+            added: files.iter().map(|file| file.added as u32).sum(),
+            removed: files.iter().map(|file| file.removed as u32).sum(),
+            copy: copy.clone(),
+        });
+        previous = copy;
+    }
+    Ok(Replayed {
+        onto,
+        commits,
+        changed,
+    })
 }

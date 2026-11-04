@@ -41,6 +41,23 @@ pub enum LimitKind {
     Time,
 }
 
+impl LimitKind {
+    /// Every limit.
+    pub const ALL: [Self; 4] =
+        [Self::Turns, Self::Tokens, Self::Usd, Self::Time];
+
+    /// The limit's name, as the queue's records keep it: `turns`,
+    /// `tokens`, `cost` or `time`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Turns => "turns",
+            Self::Tokens => "tokens",
+            Self::Usd => "cost",
+            Self::Time => "time",
+        }
+    }
+}
+
 impl StopReason {
     /// The run's stop reason for a model response that ended the run.
     pub fn from_message(stop: MessageStop, error: Option<&str>) -> Self {

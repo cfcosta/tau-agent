@@ -38,6 +38,7 @@ use tau_ui::{
     github::{Api, Token},
     host::{Host, HostConfig, NotAdded},
 };
+use tau_ui_plugin::vcs::SetupStep;
 use tau_ui_remote::{Workspace, catalog::Catalog, models::ModelChoice};
 use tau_vcs_host::{
     Identity,
@@ -345,7 +346,7 @@ fn tree(dir: &Path, skip: &[&str]) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
-fn go_on(_: Step) -> ControlFlow<()> {
+fn go_on(_: SetupStep) -> ControlFlow<()> {
     ControlFlow::Continue(())
 }
 
@@ -515,7 +516,7 @@ fn a_failed_add_lists_nothing_and_leaves_the_folder(tc: TestCase) {
         }
         Cut::Stopped(k) => {
             host.block_on(host.add_local(&disk.folder, move |step| {
-                if step == Step::ALL[k] {
+                if step.at == k {
                     ControlFlow::Break(())
                 } else {
                     ControlFlow::Continue(())
@@ -525,7 +526,13 @@ fn a_failed_add_lists_nothing_and_leaves_the_folder(tc: TestCase) {
     };
     match cut {
         Cut::Refused => assert!(
-            matches!(&added, Err(NotAdded::Refused(Refusal::Inside { root })) if *root == disk.folder),
+            matches!(
+                &added,
+                Err(NotAdded::Refused(error)) if matches!(
+                    error.downcast_ref::<Refusal>(),
+                    Some(Refusal::Inside { root }) if *root == disk.folder
+                )
+            ),
             "{added:?}"
         ),
         Cut::Stopped(_) => {

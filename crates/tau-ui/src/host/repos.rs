@@ -119,8 +119,8 @@ impl ProjectSlot {
     }
 }
 
-/// The jj project behind `repository`, for the callers that still reach
-/// it (ADR 0045 steps 4 and 6b).
+/// The jj project behind `repository`, for the run assembly that still
+/// reaches it (ADR 0045 step 4), and tests.
 pub(super) fn jj_project(repository: &dyn Repository) -> Option<Project> {
     let jj = repository.as_any().downcast_ref::<JjRepository>()?;
     Some(jj.project().clone())
@@ -172,7 +172,7 @@ impl RepoSlot {
     }
 
     /// The jj project runs in the repository work in, once imported:
-    /// for the callers that still reach it (ADR 0045 steps 4 and 6b).
+    /// for the run assembly that still reaches it (ADR 0045 step 4).
     pub(super) async fn jj_project(&self) -> anyhow::Result<Project> {
         jj_project(self.repository().await?.as_ref()).ok_or_else(|| {
             anyhow::anyhow!("{}'s project is not a jj project", self.name)
@@ -193,8 +193,9 @@ pub(super) fn no_vcs() -> anyhow::Error {
 /// ([`Host::add_local`]).
 #[derive(Debug)]
 pub enum NotAdded {
-    /// Inspecting the folder refused it, saying what to add instead.
-    Refused(tau_vcs_host::local::Refusal),
+    /// Inspecting the folder refused it, saying what to add instead: the
+    /// VCS plugin's refusal, to downcast.
+    Refused(anyhow::Error),
     /// The folder is listed already, as `name`.
     Listed { folder: PathBuf, name: String },
     /// Setting it up or listing it failed: nothing is listed.
@@ -204,7 +205,7 @@ pub enum NotAdded {
 impl std::fmt::Display for NotAdded {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Refused(refusal) => refusal.fmt(f),
+            Self::Refused(refusal) => write!(f, "{refusal:#}"),
             Self::Listed { folder, name } => {
                 write!(f, "{} is listed already, as {name}", folder.display())
             }
@@ -508,7 +509,9 @@ impl Host {
         })
     }
 
-    /// A listed repository's project, waiting for its import.
+    /// A listed repository's project, waiting for its import: for
+    /// tests.
+    #[doc(hidden)]
     pub async fn project_of(&self, repo: &str) -> Option<Project> {
         jj_project(self.slot(repo)?.project.wait().await?.as_ref())
     }
@@ -579,33 +582,32 @@ impl Host {
                 })
             })
             .ok_or_else(|| anyhow::anyhow!("{full_name} is not owner/name"))?;
+        let vcs = self.vcs.as_ref().ok_or_else(no_vcs)?;
         let dir = self.config.github_dir().join(owner).join(name);
-        if !tau_vcs_host::ProjectRepo::exists(&dir) {
+        if !vcs.is_project(&dir) {
             // What is there without a project is a clone that never
             // finished, and tau's own.
             if tokio::fs::try_exists(&dir).await? {
                 tokio::fs::remove_dir_all(&dir).await?;
             }
-            Project::clone(
-                self.github.clone_url(full_name),
-                Some(token.token),
-                &dir,
-                self.identity(),
-            )
-            .await?;
+            let remote = Remote {
+                url: self.github.clone_url(full_name),
+                token: Some(token.token),
+            };
+            vcs.clone_repository(remote, &dir).await?;
         }
         self.list_clone(&dir, full_name).await
     }
 
     /// Adds the folder `folder` on this computer as a local repository,
-    /// worked in where it is (ADR 0043): inspects it, sets jj up in it
-    /// (`Project::setup_local`, all or nothing), lists it with where its
+    /// worked in where it is (ADR 0043): inspects it, sets it up in place
+    /// (`Vcs::setup_local`, all or nothing), lists it with where its
     /// pushes go, makes its main chat and moves the main chat's
     /// workspace onto trunk. Returns it as the sidebar shows it.
     ///
     /// `progress` hears of each step of the setup before it starts, and
-    /// stops the setup by breaking. It runs while tau holds jj's Git
-    /// import lock on the folder, on a blocking thread: it must be quick,
+    /// stops the setup by breaking. It runs while the VCS plugin holds the
+    /// folder's lock, on a blocking thread: it must be quick,
     /// as sending on a channel is.
     ///
     /// A folder inspecting refuses comes back as [`NotAdded::Refused`],
@@ -616,13 +618,15 @@ impl Host {
     pub async fn add_local(
         &self,
         folder: &Path,
-        progress: impl FnMut(tau_vcs_host::local::Step) -> std::ops::ControlFlow<()>
+        progress: impl FnMut(
+            tau_ui_plugin::vcs::SetupStep,
+        ) -> std::ops::ControlFlow<()>
         + Send
         + 'static,
     ) -> Result<Repo, NotAdded> {
-        let found = tau_vcs_host::local::inspect(folder, self.identity())
-            .await
-            .map_err(NotAdded::Refused)?;
+        let vcs = self.vcs.as_ref().ok_or_else(no_vcs);
+        let vcs = vcs.map_err(NotAdded::Failed)?;
+        let found = vcs.inspect(folder).await.map_err(NotAdded::Refused)?;
         let listed = {
             let list = self.list.lock().expect("not poisoned");
             list.repos
@@ -650,18 +654,19 @@ impl Host {
         let id = new_id();
         let dir = self.config.local_dir(&id);
         let runs = dir.join("runs");
-        let runs_dir =
-            runs.join(tau_vcs_host::local::runs_dir_name(&runs, &found.root));
+        let runs_dir = runs.join(vcs.runs_dir_name(&runs, &found.root));
         let main_dir = dir.join("main");
-        let layout = Layout::local(&found.root, &main_dir, &runs_dir);
         let push = self.push_to(&found).await;
-        let folder = found.root.clone();
-        let project =
-            Project::setup_local(found, layout, self.identity(), progress)
-                .await
-                .map_err(|error| NotAdded::Failed(error.into()))?;
-        let repository: Arc<dyn Repository> =
-            Arc::new(JjRepository::new(project, self.identity()));
+        let folder = found.root;
+        let repository = vcs
+            .setup_local(
+                &folder,
+                main_dir.clone(),
+                runs_dir.clone(),
+                Box::new(progress),
+            )
+            .await
+            .map_err(NotAdded::Failed)?;
         let local = Local {
             folder: folder.clone(),
             main_dir,
@@ -773,11 +778,11 @@ impl Host {
     /// Where a local repository's pushes go, chosen as it is added (ADR
     /// 0043): its `origin`'s GitHub repository, SSH or HTTPS, when tau's
     /// GitHub App can push there with the saved sign-in, else nowhere.
-    async fn push_to(&self, found: &tau_vcs_host::local::Found) -> PushTo {
+    async fn push_to(&self, found: &LocalFolder) -> PushTo {
         let Some((full_name, _)) = found
             .origin
             .as_ref()
-            .and_then(|origin| self.github.https_of(&origin.url))
+            .and_then(|origin| self.github.https_of(origin))
         else {
             return PushTo::Nowhere;
         };
@@ -803,7 +808,7 @@ impl Host {
         let slot = self
             .slot(name)
             .ok_or_else(|| anyhow::anyhow!("No repository {name}"))?;
-        let project = slot.jj_project().await?;
+        let repository = slot.repository().await?;
         if let Some(error) = self.local_has_no_remote(name) {
             return Err(error);
         }
@@ -811,15 +816,11 @@ impl Host {
             anyhow::anyhow!("{name} was not cloned from GitHub")
         })?;
         let token = github::Token::load(&self.config.credentials).await;
-        let url = self.github.clone_url(&full_name);
-        Ok(project
-            .run(move |project| {
-                project.update(tau_vcs_host::UpdateFrom::Remote {
-                    url: &url,
-                    token: token.as_ref().map(|token| token.token.as_str()),
-                })
-            })
-            .await?)
+        let remote = Remote {
+            url: self.github.clone_url(&full_name),
+            token: token.map(|token| token.token),
+        };
+        repository.update(remote).await
     }
 
     /// Lists tau's own plugins repository (ADR 0027), the first time
