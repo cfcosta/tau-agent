@@ -338,10 +338,10 @@ impl Host {
         // The repository's own commands (its MCP servers) start through
         // what the plugins give it, in its main workspace.
         let repo_launcher = self.launcher_of(repo).await.and_then(|launcher| {
-            let project = repo.project.ready()?;
+            let repository = repo.project.ready()?;
             Some(tau_ui_plugin::RepoLauncher {
                 launcher,
-                dir: project.main_dir().to_owned(),
+                dir: repository.workspace_dir(repository.main_workspace()),
             })
         });
         let hosted = Arc::new(hosted);
@@ -578,7 +578,7 @@ fn repo_ctx_of(config: &HostConfig, slot: &RepoSlot) -> RepoCtx {
         // The project's root once imported; until then, where it
         // will be.
         workspaces: match slot.project.ready() {
-            Some(project) => project.root().to_owned(),
+            Some(repository) => repository.root().to_owned(),
             None => config.project_dir_of(&slot.path),
         },
     }

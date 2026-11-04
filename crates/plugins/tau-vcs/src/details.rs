@@ -2,7 +2,13 @@
 //! run does: the shapes the cards read, with or without the host half.
 
 use serde::{Deserialize, Serialize};
-pub use tau_ui_plugin::vcs::{ChangeInfo, Landing, SPAWN};
+pub use tau_ui_plugin::vcs::{
+    ChangeInfo,
+    ChangeKind,
+    FileChange,
+    Landing,
+    SPAWN,
+};
 
 /// The names the model calls the reading tools by.
 pub const STATUS: &str = "vcs_status";
@@ -11,33 +17,6 @@ pub const LOG: &str = "vcs_log";
 pub const SHOW: &str = "vcs_show";
 /// The name the model commits with.
 pub const COMMIT: &str = "vcs_commit";
-
-/// How a path changed between two trees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ChangeKind {
-    Added,
-    Modified,
-    Removed,
-}
-
-impl ChangeKind {
-    /// The one-letter code `jj status` uses.
-    pub fn letter(self) -> char {
-        match self {
-            ChangeKind::Added => 'A',
-            ChangeKind::Modified => 'M',
-            ChangeKind::Removed => 'D',
-        }
-    }
-}
-
-/// One changed path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileChange {
-    pub path: String,
-    pub kind: ChangeKind,
-}
 
 /// A new file the snapshot left out of `@` for its size.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

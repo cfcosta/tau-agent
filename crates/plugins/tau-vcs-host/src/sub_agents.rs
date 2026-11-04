@@ -471,17 +471,18 @@ async fn keep_work(
         workspace.name().to_owned(),
         Head::Run(run.clone()),
     );
-    let kept: Result<Vec<crate::StackChange>, VcsError> = workspace
-        .project()
-        .run(move |p| {
-            let changes = match p.head(&head)? {
-                Some(head) => p.changes_between(&base, &head)?,
-                None => Vec::new(),
-            };
-            p.forget_workspace(&name)?;
-            Ok(changes)
-        })
-        .await;
+    let kept: Result<Vec<tau_ui_plugin::vcs::StackChange>, VcsError> =
+        workspace
+            .project()
+            .run(move |p| {
+                let changes = match p.head(&head)? {
+                    Some(head) => p.changes_between(&base, &head)?,
+                    None => Vec::new(),
+                };
+                p.forget_workspace(&name)?;
+                Ok(changes)
+            })
+            .await;
     match kept {
         Ok(changes) => Ending::Kept {
             text,

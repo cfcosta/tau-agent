@@ -63,7 +63,10 @@ use tau_ui_plugin::{
         Newest,
         Onto,
         Open,
+        Remote,
         Repository,
+        StackChange,
+        Updated,
         WORKSPACE_PLUGIN,
     },
 };
@@ -805,20 +808,13 @@ impl Host {
             // What the main chat would push, for a repository from
             // GitHub (ADR 0023).
             if listed.github.is_some()
-                && let Some(project) = slot.project.ready()
+                && let Some(repository) = slot.project.ready()
             {
-                let (unpushed, trunk) = project
-                    .run(|project| {
-                        (
-                            project
-                                .unpushed()
-                                .map_or(0, |changes| changes.len() as u32),
-                            project.trunk_name().ok(),
-                        )
-                    })
-                    .await;
-                repo.unpushed = unpushed;
-                repo.trunk = trunk;
+                repo.unpushed = repository
+                    .unpushed()
+                    .await
+                    .map_or(0, |changes| changes.len() as u32);
+                repo.trunk = repository.trunk_name().await.ok();
             }
             repo.plugins = self.registered_repo_data(slot).await;
             repo.model = self.conversation_model(slot).await;
@@ -916,7 +912,7 @@ impl Host {
         // rules check what the tools do, tau-goal's hold of a stop comes
         // after theirs, and context compaction goes by the run's model.
         let registered = self.registered(repo).await;
-        let project = repo.project().await?;
+        let project = repo.jj_project().await?;
         // What the plugins give the run's commands: an environment. An
         // agent's commands run only in its sandbox: without one, its runs
         // have no `exec_command` (ADR 0037).
@@ -1642,8 +1638,8 @@ impl Host {
         };
         let workspace = self.session_of(&view.id).workspace;
         let dir = match (repo.project.ready(), &workspace) {
-            (Some(project), Some(name)) => {
-                Some(project.workspace_dir(name).display().to_string())
+            (Some(repository), Some(name)) => {
+                Some(repository.workspace_dir(name).display().to_string())
             }
             _ => None,
         };

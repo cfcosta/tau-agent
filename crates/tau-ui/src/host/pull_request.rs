@@ -22,7 +22,7 @@ pub(super) struct OpenPr {
 /// onto, the run's commits, oldest first, and their copies.
 pub(super) struct Replayed {
     pub(super) onto: String,
-    pub(super) changes: Vec<tau_vcs_host::StackChange>,
+    pub(super) changes: Vec<StackChange>,
     pub(super) copies: Vec<String>,
 }
 
@@ -31,7 +31,7 @@ pub(super) struct Replayed {
 pub(super) fn stack(
     run: &RunId,
     project: &ProjectRepo,
-) -> anyhow::Result<Vec<tau_vcs_host::StackChange>> {
+) -> anyhow::Result<Vec<StackChange>> {
     let Some(head) = project.head(&Head::Run(run.clone()))? else {
         return Ok(Vec::new());
     };
@@ -116,10 +116,7 @@ impl Host {
             )
         })?;
         let (url, token) = self.github_remote(&slot.name).await?;
-        let project =
-            slot.project.wait().await.ok_or_else(|| {
-                anyhow::anyhow!("{} has no project", slot.name)
-            })?;
+        let project = slot.jj_project().await?;
         let job_run = run.clone();
         let (changed, commits, base) = project
             .run(move |project| {
@@ -237,7 +234,7 @@ impl Host {
         reviewers: &[String],
     ) -> anyhow::Result<(github::Opened, String)> {
         let slot = self.slot_of_run(run).await?;
-        let project = slot.project().await?;
+        let project = slot.jj_project().await?;
         let (url, token) = self.github_remote(&slot.name).await?;
         let (job_run, branch, push_token) =
             (run.clone(), draft.head.clone(), token.clone());
@@ -250,9 +247,9 @@ impl Host {
                     .last()
                     .map(|change| change.change_id.clone())
                     .unwrap_or_default();
-                let remote = tau_vcs_host::Remote {
-                    url: &url,
-                    token: Some(&push_token),
+                let remote = Remote {
+                    url,
+                    token: Some(push_token),
                 };
                 // Signing on push makes copies of its own: the head is
                 // what went.
@@ -306,7 +303,7 @@ impl Host {
             return Ok(false);
         }
         let slot = self.slot_of_run(run).await?;
-        let project = slot.project().await?;
+        let project = slot.jj_project().await?;
         let (url, token) = self.github_remote(&slot.name).await?;
         let (job_run, pushed) = (run.clone(), open.clone());
         let last = project
@@ -321,9 +318,9 @@ impl Host {
                 else {
                     return anyhow::Ok(None);
                 };
-                let remote = tau_vcs_host::Remote {
-                    url: &url,
-                    token: Some(&token),
+                let remote = Remote {
+                    url,
+                    token: Some(token),
                 };
                 let head = project.push_branch(
                     remote,

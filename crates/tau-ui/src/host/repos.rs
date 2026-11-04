@@ -97,21 +97,16 @@ impl ProjectSlot {
         self.state.borrow().clone()
     }
 
-    /// The project if it is imported now, without waiting.
-    pub(super) fn ready(&self) -> Option<Project> {
+    /// The repository if it is imported now, without waiting.
+    pub(super) fn ready(&self) -> Option<Arc<dyn Repository>> {
         match &*self.state.borrow() {
-            ProjectState::Ready(repository) => jj_project(repository.as_ref()),
+            ProjectState::Ready(repository) => Some(repository.clone()),
             _ => None,
         }
     }
 
-    /// The project, once the import is over; `None` if it failed.
-    pub(super) async fn wait(&self) -> Option<Project> {
-        jj_project(self.wait_repository().await?.as_ref())
-    }
-
     /// The repository, once the import is over; `None` if it failed.
-    pub(super) async fn wait_repository(&self) -> Option<Arc<dyn Repository>> {
+    pub(super) async fn wait(&self) -> Option<Arc<dyn Repository>> {
         let mut state = self.state.subscribe();
         let state = state
             .wait_for(|state| !matches!(state, ProjectState::Importing))
@@ -162,8 +157,10 @@ impl RepoSlot {
     pub(super) async fn repository(
         &self,
     ) -> anyhow::Result<Arc<dyn Repository>> {
-        self.project.wait_repository().await.ok_or_else(|| {
-            match self.project.peek() {
+        self.project
+            .wait()
+            .await
+            .ok_or_else(|| match self.project.peek() {
                 ProjectState::Failed(why) => {
                     anyhow::anyhow!(
                         "{} could not be imported: {why}",
@@ -171,13 +168,12 @@ impl RepoSlot {
                     )
                 }
                 _ => anyhow::anyhow!("{} has no project", self.name),
-            }
-        })
+            })
     }
 
     /// The jj project runs in the repository work in, once imported:
     /// for the callers that still reach it (ADR 0045 steps 4 and 6b).
-    pub(super) async fn project(&self) -> anyhow::Result<Project> {
+    pub(super) async fn jj_project(&self) -> anyhow::Result<Project> {
         jj_project(self.repository().await?.as_ref()).ok_or_else(|| {
             anyhow::anyhow!("{}'s project is not a jj project", self.name)
         })
@@ -514,7 +510,7 @@ impl Host {
 
     /// A listed repository's project, waiting for its import.
     pub async fn project_of(&self, repo: &str) -> Option<Project> {
-        self.slot(repo)?.project.wait().await
+        jj_project(self.slot(repo)?.project.wait().await?.as_ref())
     }
 
     /// Whether a repository is still being imported.
@@ -803,14 +799,11 @@ impl Host {
 
     /// Brings new commits from GitHub into a repository's project. New
     /// runs start from the new trunk; runs going on keep their code.
-    pub async fn update_repo(
-        &self,
-        name: &str,
-    ) -> anyhow::Result<tau_vcs_host::Updated> {
+    pub async fn update_repo(&self, name: &str) -> anyhow::Result<Updated> {
         let slot = self
             .slot(name)
             .ok_or_else(|| anyhow::anyhow!("No repository {name}"))?;
-        let project = slot.project().await?;
+        let project = slot.jj_project().await?;
         if let Some(error) = self.local_has_no_remote(name) {
             return Err(error);
         }

@@ -25,7 +25,8 @@ use std::path::{Path, PathBuf};
 
 use hegel::{TestCase, generators as gs};
 use tau_testing::{block_on_io as block_on, git::git};
-use tau_vcs_host::{Identity, JjEnv, ProjectRepo, Remote, Vcs, VcsError};
+use tau_ui_plugin::vcs::Remote;
+use tau_vcs_host::{Identity, JjEnv, ProjectRepo, Vcs, VcsError};
 
 const PERSON: &str = "person@example.com";
 const OTHER: &str = "other@example.com";
@@ -99,9 +100,9 @@ impl Origin {
         block_on(Vcs::open(dir, Self::identity_in(&self.root, email))).unwrap()
     }
 
-    fn remote(&self) -> Remote<'_> {
+    fn remote(&self) -> Remote {
         Remote {
-            url: &self.url,
+            url: self.url.clone(),
             token: None,
         }
     }

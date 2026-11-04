@@ -46,8 +46,9 @@ use jj_lib::{
     settings::{SignBehavior, UserSettings},
 };
 use pollster::block_on;
+use tau_ui_plugin::vcs::{Pushed, Remote, StackChange};
 
-use super::{ProjectRepo, StackChange, commit, import_options, range};
+use super::{ProjectRepo, commit, import_options, range};
 use crate::{
     error::VcsError,
     revsets::{ConfigRevsets, remote_heads},
@@ -67,25 +68,6 @@ pub const REMOTE: &str = "origin";
 const HELPER: &str = "!f() { if [ \"$1\" = get ]; then echo \
                       username=x-access-token; echo \
                       \"password=$TAU_GIT_TOKEN\"; fi; }; f";
-
-/// Where to push: the remote's URL, and the token that signs in to it
-/// over HTTPS (GitHub reads it as the password of any user).
-#[derive(Debug, Clone, Copy)]
-pub struct Remote<'a> {
-    pub url: &'a str,
-    pub token: Option<&'a str>,
-}
-
-/// What [`ProjectRepo::push_trunk`] pushed: trunk's branch, the remote's
-/// commit before and after (full hex ids), and the changes it took,
-/// oldest first. Nothing was pushed when `changes` is empty.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Pushed {
-    pub branch: String,
-    pub from: Option<String>,
-    pub to: String,
-    pub changes: Vec<StackChange>,
-}
 
 impl ProjectRepo {
     /// The remote's trunk as the last fetch or push left it: what
@@ -115,7 +97,7 @@ impl ProjectRepo {
     /// since the last fetch: fetching puts trunk's commits on top of the
     /// remote's, and the push can go again. Once pushed, the Git store's
     /// branch names the pushed commit, so nothing is ahead any more.
-    pub fn push_trunk(&self, remote: Remote<'_>) -> Result<Pushed, VcsError> {
+    pub fn push_trunk(&self, remote: Remote) -> Result<Pushed, VcsError> {
         let lock = self.lock()?;
         let repo = self.load()?;
         let (name, local) = self
@@ -161,7 +143,7 @@ impl ProjectRepo {
             changes: range(&repo, &local, before.as_ref())?,
             ..pushed
         };
-        self.push_ref(&repo, remote, &name, before.as_ref(), &local)?;
+        self.push_ref(&repo, &remote, &name, before.as_ref(), &local)?;
         // The remote has trunk now: so does the Git store's
         // remote-tracking branch, as a fetch would leave it, and jj's
         // record of it.
@@ -253,7 +235,7 @@ impl ProjectRepo {
     /// when nothing needed signing.
     pub fn push_branch(
         &self,
-        remote: Remote<'_>,
+        remote: Remote,
         branch: &str,
         expected: Option<&str>,
         head: &str,
@@ -266,7 +248,7 @@ impl ProjectRepo {
         };
         let expected = expected.map(id).transpose()?;
         let head = self.sign_copies(&repo, expected.as_ref(), &id(head)?)?;
-        self.push_ref(&repo, remote, branch, expected.as_ref(), &head)?;
+        self.push_ref(&repo, &remote, branch, expected.as_ref(), &head)?;
         Ok(head.hex())
     }
 
@@ -429,12 +411,12 @@ impl ProjectRepo {
     fn push_ref(
         &self,
         repo: &ReadonlyRepo,
-        remote: Remote<'_>,
+        remote: &Remote,
         branch: &str,
         before: Option<&CommitId>,
         after: &CommitId,
     ) -> Result<(), VcsError> {
-        crate::clone::set_remote(&self.git_dir(), remote.url)
+        crate::clone::set_remote(&self.git_dir(), &remote.url)
             .map_err(|error| VcsError::PushRemote(error.to_string()))?;
         let oid =
             |id: &CommitId| gix::ObjectId::from_bytes_or_panic(id.as_bytes());
@@ -445,7 +427,7 @@ impl ProjectRepo {
         };
         let stats = push_updates(
             repo,
-            git_options(&self.inner.settings, remote.token)?,
+            git_options(&self.inner.settings, remote.token.as_deref())?,
             RemoteName::new(REMOTE),
             &[update],
             &mut Quiet,

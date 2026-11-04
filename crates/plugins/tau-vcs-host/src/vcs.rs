@@ -261,7 +261,9 @@ impl Vcs {
 
     /// The paths the working copy (`@`) changes against its parents,
     /// after snapshotting it.
-    pub async fn changes(&self) -> Result<Vec<crate::FileChange>, VcsError> {
+    pub async fn changes(
+        &self,
+    ) -> Result<Vec<tau_ui_plugin::vcs::FileChange>, VcsError> {
         self.call(crate::ops::changes).await
     }
 

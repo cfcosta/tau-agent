@@ -32,10 +32,10 @@ use jj_lib::{
 use pollster::block_on;
 use serde::Serialize;
 use serde_json::{Value, json};
+use tau_ui_plugin::vcs::FileChange;
 
 use crate::{
     ChangeInfo,
-    FileChange,
     diff,
     error::VcsError,
     heads::{self, Head},

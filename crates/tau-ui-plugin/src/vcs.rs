@@ -84,6 +84,85 @@ pub struct LandingRecord {
     pub kept: bool,
 }
 
+/// How a path changed between two trees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeKind {
+    Added,
+    Modified,
+    Removed,
+}
+
+impl ChangeKind {
+    /// The one-letter code `jj status` uses.
+    pub fn letter(self) -> char {
+        match self {
+            ChangeKind::Added => 'A',
+            ChangeKind::Modified => 'M',
+            ChangeKind::Removed => 'D',
+        }
+    }
+}
+
+/// One changed path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileChange {
+    pub path: String,
+    pub kind: ChangeKind,
+}
+
+/// One file's change between two commits ([`Repository::diff`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FileDiff {
+    pub path: String,
+    pub kind: ChangeKind,
+    pub added: usize,
+    pub removed: usize,
+    /// The file's unified diff, as `git diff` writes it.
+    pub text: String,
+}
+
+/// One change on a run's stack, or on trunk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StackChange {
+    pub commit_id: String,
+    pub change_id: String,
+    pub description: String,
+    pub conflict: bool,
+}
+
+/// Where to push: the remote's URL, and the token that signs in to it
+/// over HTTPS (GitHub reads it as the password of any user).
+#[derive(Debug, Clone)]
+pub struct Remote {
+    pub url: String,
+    pub token: Option<String>,
+}
+
+/// What pushing trunk pushed: trunk's branch, the remote's commit
+/// before and after (full hex ids), and the changes it took, oldest
+/// first. Nothing was pushed when `changes` is empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pushed {
+    pub branch: String,
+    pub from: Option<String>,
+    pub to: String,
+    pub changes: Vec<StackChange>,
+}
+
+/// The trunk before and after an update, as full commit ids in hex.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Updated {
+    pub before: String,
+    pub after: String,
+}
+
+impl Updated {
+    pub fn changed(&self) -> bool {
+        self.before != self.after
+    }
+}
+
 /// The plugin name a run's links are stored under ([`Link`]).
 pub const WORKSPACE_PLUGIN: &str = "tau-vcs";
 
@@ -245,6 +324,38 @@ pub trait Repository: Send + Sync {
 
     /// Where the workspace `name` is, whether or not it exists.
     fn workspace_dir(&self, name: &str) -> PathBuf;
+
+    /// Where the project keeps its repository and runs' workspaces.
+    fn root(&self) -> &Path;
+
+    /// The name of trunk's branch, such as `main`.
+    fn trunk_name(&self) -> HostFuture<'_, anyhow::Result<String>>;
+
+    /// Trunk's commits the remote lacks, as the last fetch or push left
+    /// it, oldest first: the main chat's work waiting to be pushed.
+    fn unpushed(&self) -> HostFuture<'_, anyhow::Result<Vec<StackChange>>>;
+
+    /// The commit `run`'s head names, in hex: none when it has no head,
+    /// or its work was dropped.
+    fn run_head<'a>(
+        &'a self,
+        run: &'a RunId,
+    ) -> HostFuture<'a, anyhow::Result<Option<String>>>;
+
+    /// `links` with each commit moved to where its change is now, as a
+    /// rewrite leaves it. A turn's snapshot stays the commit it is.
+    fn current(
+        &self,
+        links: Vec<Link>,
+    ) -> HostFuture<'_, anyhow::Result<Vec<Link>>>;
+
+    /// How the files differ from commit `from` to commit `to` (full hex
+    /// ids): one entry per changed file, in path order.
+    fn diff<'a>(
+        &'a self,
+        from: &'a str,
+        to: &'a str,
+    ) -> HostFuture<'a, anyhow::Result<Vec<FileDiff>>>;
 
     /// The names of the workspaces runs have ([`Held::workspaces`]).
     fn workspaces(&self) -> HostFuture<'_, anyhow::Result<Vec<String>>>;

@@ -39,13 +39,8 @@ impl Host {
         &self,
         child: &RunId,
     ) -> anyhow::Result<Option<Forecast>> {
-        let project = self.slot_of_run(child).await?.project().await?;
-        let head = Head::Run(child.clone());
-        if project
-            .run(move |project| project.head(&head))
-            .await?
-            .is_none()
-        {
+        let repository = self.slot_of_run(child).await?.repository().await?;
+        if repository.run_head(child).await?.is_none() {
             return Ok(None);
         }
         let landing = self.land_dry(child, Reading::Forecast).await?;

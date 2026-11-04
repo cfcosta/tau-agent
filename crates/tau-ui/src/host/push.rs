@@ -39,7 +39,7 @@ impl Host {
         let slot = self
             .slot(repo)
             .ok_or_else(|| failed(anyhow::anyhow!("No repository {repo}")))?;
-        let project = slot.project().await.map_err(failed)?;
+        let project = slot.jj_project().await.map_err(failed)?;
         let (url, token) = self.github_remote(repo).await.map_err(failed)?;
         if fetch {
             let main = self.main_of(repo).await.map_err(failed)?;
@@ -58,9 +58,9 @@ impl Host {
         // The push and, when GitHub moved, what main has that it lacks.
         let (pushed, ahead) = project
             .run(move |project| {
-                let remote = tau_vcs_host::Remote {
-                    url: &url,
-                    token: Some(&token),
+                let remote = Remote {
+                    url,
+                    token: Some(token),
                 };
                 let pushed = project.push_trunk(remote);
                 let ahead = matches!(

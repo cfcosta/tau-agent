@@ -20,10 +20,9 @@ use tau_agent::{
     },
     tool::{AgentTool, ToolOutput},
 };
+use tau_ui_plugin::vcs::{ChangeKind, FileChange};
 
 use crate::{
-    ChangeKind,
-    FileChange,
     tools::{
         Commit,
         Describe,

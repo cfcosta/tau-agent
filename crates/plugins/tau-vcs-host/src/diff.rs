@@ -18,8 +18,9 @@ use jj_lib::{
     settings::UserSettings,
 };
 use pollster::block_on;
+use tau_ui_plugin::vcs::{ChangeKind, FileChange};
 
-use crate::{ChangeKind, FileChange, error::VcsError};
+use crate::error::VcsError;
 
 /// The most bytes of diff text a tool returns: 50 KiB, as `tau-tools`.
 pub const MAX_DIFF_BYTES: usize = 50 * 1024;

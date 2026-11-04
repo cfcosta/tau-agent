@@ -74,17 +74,12 @@ pub use ops::{
 };
 pub use plugin::VcsPlugin;
 pub use project::{
-    FileDiff,
     Layout,
     MAIN_WORKSPACE,
     Project,
     ProjectRepo,
-    Pushed,
     REMOTE,
-    Remote,
-    StackChange,
     UpdateFrom,
-    Updated,
     main_workspace_name,
 };
 pub use repository::{JjRepository, JjVcs};
@@ -93,14 +88,7 @@ pub use session::MAX_NEW_FILE_SIZE;
 pub use sub_agents::{ONLY_MAIN_SPAWNS, RefusingSpawn, Spawn, SubAgents};
 use tau_vcs::ui;
 // The shapes the tools return, from the interface half.
-pub use tau_vcs::{
-    ChangeInfo,
-    ChangeKind,
-    FileChange,
-    Landing,
-    TooLarge,
-    details,
-};
+pub use tau_vcs::{ChangeInfo, Landing, TooLarge, details};
 pub use vcs::{Identity, Vcs};
 
 /// What every tool returns when the run is cancelled before it starts.

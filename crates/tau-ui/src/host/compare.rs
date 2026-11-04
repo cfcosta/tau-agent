@@ -1,8 +1,7 @@
 //! The compare view's code: what a run and its fork each changed after
-//! the fork point, read from the jj project (ADR 0045 step 6b moves it
-//! behind the `tau.vcs` slot).
+//! the fork point, read from the repository.
 
-use tau_vcs_host::{ChangeKind, FileDiff};
+use tau_ui_plugin::vcs::{ChangeKind, FileDiff};
 
 use super::{landing::last_link, *};
 
@@ -13,7 +12,7 @@ pub(super) async fn branch_code(
     main: RunId,
     fork: RunId,
 ) -> anyhow::Result<BranchCode> {
-    let project = slot?.project().await?;
+    let repository = slot?.repository().await?;
     let record = store
         .run(&fork.0)
         .await?
@@ -37,33 +36,30 @@ pub(super) async fn branch_code(
     };
     let main_head = head(&main).await?;
     let fork_head = head(&fork).await?;
-    project
-        .run(move |project| {
-            // Each at the commit its change has now.
-            let [base, main_head, fork_head]: [Link; 3] = project
-                .current([base, main_head, fork_head])?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Three links went in"))?;
-            let (base, main_head, fork_head) =
-                (base.commit_id, main_head.commit_id, fork_head.commit_id);
-            let stats =
-                |from: &str, to: &str| -> anyhow::Result<Vec<FileStat>> {
-                    Ok(project.diff(from, to)?.iter().map(file_stat).collect())
-                };
-            Ok(BranchCode {
-                main: stats(&base, &main_head)?,
-                fork: stats(&base, &fork_head)?,
-                between: project
-                    .diff(&main_head, &fork_head)?
-                    .iter()
-                    .map(|file| FileChange {
-                        stat: file_stat(file),
-                        lines: tau_ui_kit::diff::parse(&file.text),
-                    })
-                    .collect(),
+    // Each at the commit its change has now.
+    let [base, main_head, fork_head]: [Link; 3] = repository
+        .current(vec![base, main_head, fork_head])
+        .await?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Three links went in"))?;
+    let (base, main_head, fork_head) =
+        (base.commit_id, main_head.commit_id, fork_head.commit_id);
+    let stats = |files: Vec<FileDiff>| -> Vec<FileStat> {
+        files.iter().map(file_stat).collect()
+    };
+    Ok(BranchCode {
+        main: stats(repository.diff(&base, &main_head).await?),
+        fork: stats(repository.diff(&base, &fork_head).await?),
+        between: repository
+            .diff(&main_head, &fork_head)
+            .await?
+            .iter()
+            .map(|file| FileChange {
+                stat: file_stat(file),
+                lines: tau_ui_kit::diff::parse(&file.text),
             })
-        })
-        .await
+            .collect(),
+    })
 }
 
 pub(super) fn file_stat(file: &FileDiff) -> FileStat {

@@ -186,7 +186,9 @@ impl Host {
         // The project must be there, but its artifacts are in tau's
         // directory for the repository: a local one's root is the
         // person's folder.
-        slot.project().await.context("repository is unavailable")?;
+        slot.repository()
+            .await
+            .context("repository is unavailable")?;
         let dir = self.repo_ctx(&slot).dir.join("artifacts");
         let (store, repo) = (self.store.clone(), repo.to_owned());
         let runtime = tokio::runtime::Handle::current();

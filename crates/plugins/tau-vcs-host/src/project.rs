@@ -49,11 +49,9 @@ use jj_lib::{
     workspace::Workspace,
 };
 use pollster::block_on;
-use tau_ui_plugin::vcs::Link;
+use tau_ui_plugin::vcs::{FileChange, FileDiff, Link, StackChange, Updated};
 
 use crate::{
-    ChangeKind,
-    FileChange,
     clone::{CloneError, Head, ORIGIN_HEAD, TRACKING},
     error::VcsError,
     vcs::{Identity, Vcs},
@@ -61,7 +59,7 @@ use crate::{
 
 mod push;
 
-pub use push::{Pushed, REMOTE, Remote};
+pub use push::REMOTE;
 
 /// How many operations back [`ProjectRepo::landed`] looks for a landing.
 pub const LANDING_LOOKBACK: usize = 1000;
@@ -1726,30 +1724,6 @@ pub enum UpdateFrom<'a> {
     },
 }
 
-/// The trunk before and after an update, as full commit ids in hex.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Updated {
-    pub before: String,
-    pub after: String,
-}
-
-impl Updated {
-    pub fn changed(&self) -> bool {
-        self.before != self.after
-    }
-}
-
-/// One file's change between two commits.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct FileDiff {
-    pub path: String,
-    pub kind: ChangeKind,
-    pub added: usize,
-    pub removed: usize,
-    /// The file's unified diff, as `git diff` writes it.
-    pub text: String,
-}
-
 /// Splits a multi-file diff into its files, in the order `changes` lists
 /// them, and counts each file's lines.
 fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
@@ -1904,15 +1878,6 @@ fn visible(
         [id] => Ok(Some(repo.store().get_commit(id)?)),
         _ => Ok(None),
     }
-}
-
-/// One change on a run's stack, for [`ProjectRepo::stack`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct StackChange {
-    pub commit_id: String,
-    pub change_id: String,
-    pub description: String,
-    pub conflict: bool,
 }
 
 /// The changes `head` has that `base` lacks (all of its ancestors when

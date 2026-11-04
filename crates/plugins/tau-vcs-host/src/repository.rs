@@ -12,7 +12,20 @@ use tau_ui_plugin::{
     HostCx,
     PluginHost,
     registry::HostFuture,
-    vcs::{self, Discard, Held, Land, Landing, Newest, Onto, Open, Owner},
+    vcs::{
+        self,
+        Discard,
+        FileDiff,
+        Held,
+        Land,
+        Landing,
+        Link,
+        Newest,
+        Onto,
+        Open,
+        Owner,
+        StackChange,
+    },
 };
 
 use crate::{Head, Identity, Project, Vcs, error::VcsError, sweep};
@@ -109,6 +122,57 @@ impl vcs::Repository for JjRepository {
 
     fn workspace_dir(&self, name: &str) -> PathBuf {
         self.project.workspace_dir(name)
+    }
+
+    fn root(&self) -> &Path {
+        self.project.root()
+    }
+
+    fn trunk_name(&self) -> HostFuture<'_, anyhow::Result<String>> {
+        Box::pin(async move {
+            Ok(self.project.run(|project| project.trunk_name()).await?)
+        })
+    }
+
+    fn unpushed(&self) -> HostFuture<'_, anyhow::Result<Vec<StackChange>>> {
+        Box::pin(async move {
+            Ok(self.project.run(|project| project.unpushed()).await?)
+        })
+    }
+
+    fn run_head<'a>(
+        &'a self,
+        run: &'a RunId,
+    ) -> HostFuture<'a, anyhow::Result<Option<String>>> {
+        Box::pin(async move {
+            let head = Head::Run(run.clone());
+            Ok(self.project.run(move |project| project.head(&head)).await?)
+        })
+    }
+
+    fn current(
+        &self,
+        links: Vec<Link>,
+    ) -> HostFuture<'_, anyhow::Result<Vec<Link>>> {
+        Box::pin(async move {
+            Ok(self
+                .project
+                .run(move |project| project.current(links))
+                .await?)
+        })
+    }
+
+    fn diff<'a>(
+        &'a self,
+        from: &'a str,
+        to: &'a str,
+    ) -> HostFuture<'a, anyhow::Result<Vec<FileDiff>>> {
+        Box::pin(async move {
+            let (from, to) = (from.to_owned(), to.to_owned());
+            let diff =
+                self.project.run(move |project| project.diff(&from, &to));
+            Ok(diff.await?)
+        })
     }
 
     fn workspaces(&self) -> HostFuture<'_, anyhow::Result<Vec<String>>> {
