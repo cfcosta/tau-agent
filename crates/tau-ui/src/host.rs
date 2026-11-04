@@ -245,6 +245,10 @@ pub struct Host {
     /// Runs whose `RunEnd` went by while their outcome is still being
     /// stored: they stop in a moment.
     ending: Arc<Mutex<HashSet<RunId>>>,
+    /// New chats the interface has no view of yet, with their events
+    /// that came before it: [`Host::start`] answers once a chat's message
+    /// is stored, and the chat may have said more by then.
+    unshown: Mutex<HashMap<RunId, Vec<RunEvent>>>,
     /// How long a forecast waits for more changes before it starts.
     forecast_wait: std::time::Duration,
     /// Jobs the host is doing off the interface's thread, until what
@@ -562,6 +566,7 @@ impl Host {
             drafts: Mutex::default(),
             prs: Arc::default(),
             ending: Arc::default(),
+            unshown: Mutex::default(),
             forecast_wait: forecast::SETTLE,
             jobs: Arc::default(),
             plugin_jobs,
@@ -1143,7 +1148,7 @@ impl Host {
     ) -> anyhow::Result<RunView> {
         self.keep_uploads(&prompt.images).await;
         let state = self.repo_state(&repo.name);
-        let _starting = state.starting.lock().await;
+        let starting = state.starting.lock().await;
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();
         // Named after what it was asked, so the workspace says what it is
@@ -1159,7 +1164,21 @@ impl Host {
                 Input::new(&prompt.text).images(prompt.images.clone()),
                 &self.store,
             );
-        let id = self.track(forked, workspace, choice, &repo.name);
+        // The interface holds its events until it has its view, which
+        // comes once the message is stored ([`Host::take_unshown`]).
+        self.unshown
+            .lock()
+            .expect("not poisoned")
+            .insert(forked.id(), Vec::new());
+        let (id, mut started) =
+            self.track(forked, workspace, choice, &repo.name);
+        // It started: a landing may go on while its first turn stores
+        // what it was asked.
+        drop(starting);
+        if let Err(error) = started.stored().await {
+            self.unshown.lock().expect("not poisoned").remove(&id);
+            return Err(error);
+        }
         // What each plugin's state is as the fork inherits it: a goal set
         // in the main chat, which tau-goal goes on checking; then what it
         // says as the fork starts.
@@ -1296,7 +1315,7 @@ impl Host {
         self.stop_compacting(run).await;
         let repo = self.slot_of_run(run).await?;
         let state = self.repo_state(&repo.name);
-        let _starting = state.starting.lock().await;
+        let starting = state.starting.lock().await;
         // The workspace its last turn worked in, which still has its
         // files.
         let known = self.session_of(run).workspace;
@@ -1332,7 +1351,10 @@ impl Host {
         let resumed = agent
             .resume(run)
             .start(Input::new(prompt.text).images(prompt.images), &self.store);
-        self.track(resumed, workspace, choice, &repo.name);
+        let (_, mut started) =
+            self.track(resumed, workspace, choice, &repo.name);
+        drop(starting);
+        started.stored().await?;
         // Nothing lands on a main chat while it works.
         if main {
             self.main_started(run).await;
@@ -1468,14 +1490,15 @@ impl Host {
     }
 
     /// Follows a started run: its control, its workspace, and a task
-    /// that forwards its events.
+    /// that forwards its events. The caller awaits [`Started::stored`]
+    /// before it answers.
     fn track(
         &self,
         mut run: tau_agent::agent::Run,
         workspace: String,
         choice: &ModelChoice,
         repo: &str,
-    ) -> RunId {
+    ) -> (RunId, Started) {
         let id = run.id();
         self.sessions.lock().expect("not poisoned").insert(
             id.clone(),
@@ -1493,11 +1516,20 @@ impl Host {
         let runs = self.runs.clone();
         let ending = self.ending.clone();
         let idle = self.idle.clone();
+        let (stored, on_stored) = tokio::sync::oneshot::channel();
+        let mut stored = Some(stored);
         self.runtime.spawn(async move {
             let id = run.id();
             {
                 let mut stream = run.events();
                 while let Some(event) = stream.next().await {
+                    // A turn starts once the message it reads is stored.
+                    if let RunEvent::TurnStart { run, .. } = &event
+                        && *run == id
+                        && let Some(stored) = stored.take()
+                    {
+                        let _ = stored.send(());
+                    }
                     // Its end goes by before its outcome is stored: it
                     // stops in a moment (`Host::settle`). Marked here, by
                     // the task that unmarks it, so the mark cannot outlive
@@ -1519,6 +1551,9 @@ impl Host {
                     }
                 }
             }
+            // It ended before its first turn stored anything: its caller
+            // hears so.
+            drop(stored.take());
             // The outcome is stored by the run; the events said it all,
             // but what its last request went with.
             if let Ok(outcome) = run.outcome().await {
@@ -1527,7 +1562,7 @@ impl Host {
             runs.lock().expect("not poisoned").remove(&id);
             ending.lock().expect("not poisoned").remove(&id);
         });
-        id
+        (id, Started(Some(on_stored)))
     }
 
     async fn view(
@@ -1692,6 +1727,29 @@ impl Host {
         }
     }
 
+    /// Keeps `event` for the interface until it has the view of the new
+    /// chat it is about ([`Host::take_unshown`]): whether it kept it.
+    pub fn hold_unshown(&self, event: &RunEvent) -> bool {
+        let mut unshown = self.unshown.lock().expect("not poisoned");
+        match unshown.get_mut(event.run()) {
+            Some(held) => {
+                held.push(event.clone());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The interface has the view of the new chat `run`: what it said
+    /// before, in order, and nothing is held for it any more.
+    pub fn take_unshown(&self, run: &RunId) -> Vec<RunEvent> {
+        self.unshown
+            .lock()
+            .expect("not poisoned")
+            .remove(run)
+            .unwrap_or_default()
+    }
+
     /// Stops `run`: one of the host's, or a sub-agent going on.
     pub fn cancel(&self, run: &RunId) {
         if let Some(control) = self.runs.lock().expect("not poisoned").get(run)
@@ -1700,6 +1758,25 @@ impl Host {
             return;
         }
         self.stop_sub_agent(run);
+    }
+}
+
+/// A run [`Host::track`] follows, until it stored what it was asked.
+pub(crate) struct Started(Option<tokio::sync::oneshot::Receiver<()>>);
+
+impl Started {
+    /// Waits for the run to store the message it started on, as its first
+    /// turn starts: the person's message is kept from then on, whatever
+    /// happens to tau. Fails when the run ended before it could.
+    async fn stored(&mut self) -> anyhow::Result<()> {
+        let Some(stored) = self.0.take() else {
+            return Ok(());
+        };
+        stored.await.map_err(|_| {
+            anyhow::anyhow!(
+                "The message could not be stored, so the chat did not take it"
+            )
+        })
     }
 }
 

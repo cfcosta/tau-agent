@@ -1107,9 +1107,9 @@ struct Machine {
     said: Vec<(RunId, String)>,
     /// Each workspace name with the run that worked in it first.
     workspaces: BTreeMap<String, String>,
-    /// Chats tau closed while starting, by id when the host gave one,
+    /// Chats tau closed while starting, before the host answered, by
     /// message and file: found once it starts again, or never made.
-    pending_starts: Vec<(Option<RunId>, String, String)>,
+    pending_starts: Vec<(String, String)>,
     /// Chats tau closed while landing or dropping.
     unsure: BTreeSet<RunId>,
     /// Sub-agents that finished as tau closed, before it took their end:
@@ -1200,12 +1200,15 @@ impl Machine {
         self.said.push((run.clone(), text.to_owned()));
     }
 
-    /// The message `text` went to `run`, and tau may have closed: kept
-    /// if a turn took it.
+    /// The host took the message `text` to `run`, and tau may have closed
+    /// since: the host answers once the message is stored, so it is kept.
     fn sent(&mut self, run: &RunId, text: &str) {
-        if self.life.as_ref().unwrap().took(run) {
-            self.said.push((run.clone(), text.to_owned()));
-        }
+        assert!(
+            self.life.as_ref().unwrap().took(run),
+            "the host answered before {} took {text:?}",
+            run.0
+        );
+        self.said.push((run.clone(), text.to_owned()));
     }
 
     fn start_chat(&mut self) {
@@ -1222,7 +1225,7 @@ impl Machine {
             Ok(view) => view.id,
             Err(_) if self.blown() => {
                 // It may be stored already: found again once tau starts.
-                self.pending_starts.push((None, text, file));
+                self.pending_starts.push((text, file));
                 return;
             }
             Err(error) => panic!("a chat did not start: {error:#}"),
@@ -1237,10 +1240,15 @@ impl Machine {
                 maybe: Vec::new(),
             });
         } else {
-            // The host showed it, but its run may not be stored: see
-            // `a_chat_tau_showed_outlives_tau_closing`.
+            // The host answered once the chat and its message were
+            // stored: it is there, whatever came of its turn.
             self.sent(&id, &text);
-            self.pending_starts.push((Some(id), text, file));
+            self.chats.push(Chat {
+                id,
+                fate: Fate::Open,
+                files: Vec::new(),
+                maybe: vec![file],
+            });
         }
     }
 
@@ -1532,10 +1540,9 @@ impl Machine {
         let life = self.life.as_ref().unwrap();
         // Chats a cut start may have made, by their first message.
         let runs = life.host.block_on(life.raw.retained_runs()).unwrap();
-        for (id, text, file) in std::mem::take(&mut self.pending_starts) {
-            let found = runs.iter().find(|record| match &id {
-                Some(id) => *id.0 == record.id,
-                None => matches!(&record.kind, RunKind::Fork { parent, .. } if *parent == *self.main.0)
+        for (text, file) in std::mem::take(&mut self.pending_starts) {
+            let found = runs.iter().find(|record| {
+                matches!(&record.kind, RunKind::Fork { parent, .. } if *parent == *self.main.0)
                     && life
                         .host
                         .block_on(life.raw.first_prompt(&record.id))
@@ -1965,31 +1972,59 @@ fn a_sub_agent_that_finished_as_tau_closed_lands_at_start() {
     check(&mut machine);
 }
 
-/// The host showed a new chat, and tau closed before its run stored
-/// anything (found by `a_crash_anywhere_loses_nothing`). Started again,
-/// the chat is gone, and the message it started on with it: `Host::start`
-/// and `Host::resume` answer before the run stores the person's message.
+/// The host answers a new chat, or a message to one, only once the
+/// person's message is stored: tau closing before then fails it, and
+/// what it answered outlives tau closing (found by
+/// `a_crash_anywhere_loses_nothing`: the host showed a chat whose run it
+/// never stored, and it was gone at the next start).
 #[test]
-#[ignore = "should Host::start and Host::resume answer only once the \
-            person's message is stored, so that what tau showed outlives \
-            it closing?"]
 fn a_chat_tau_showed_outlives_tau_closing() {
+    // Before anything of the chat is stored, then before its message.
+    for at in ["create_run", "message user"] {
+        let mut machine = Machine::new();
+        let text = "«write c1.txt»";
+        let life = machine.life();
+        life.fuse.arm_at(at, 0);
+        let started = life.host.block_on(life.host.start(
+            text,
+            &ModelChoice::default(),
+            REPO,
+        ));
+        if let Ok(view) = &started {
+            life.wait(&view.id);
+        }
+        assert!(machine.blown());
+        machine.reopen();
+        if let Ok(view) = started {
+            let said = machine.life().said(&view.id);
+            assert!(
+                said.iter().any(|said| said.contains(text)),
+                "tau closed at {at}: the chat tau showed is gone"
+            );
+        }
+    }
+    // A message to a chat, cut off before it is stored.
     let mut machine = Machine::new();
-    let text = "«write c1.txt»";
+    machine.start_chat();
+    let chat = machine.chats[0].id.clone();
+    let text = "«write c9.txt»";
     let life = machine.life();
-    life.fuse.arm_at("create_run", 0);
-    let view = life
-        .host
-        .block_on(life.host.start(text, &ModelChoice::default(), REPO))
-        .expect("the host shows the chat");
-    life.wait(&view.id);
+    life.fuse.arm_at("message user", 0);
+    let resumed = life.host.block_on(life.host.resume(
+        &chat,
+        text,
+        &ModelChoice::default(),
+    ));
+    life.wait(&chat);
     assert!(machine.blown());
     machine.reopen();
-    let life = machine.life();
-    assert!(
-        life.said(&view.id).iter().any(|said| said.contains(text)),
-        "the chat tau showed, and its message, are gone"
-    );
+    if resumed.is_ok() {
+        let said = machine.life().said(&chat);
+        assert!(
+            said.iter().any(|said| said.contains(text)),
+            "the message tau took is gone: {said:?}"
+        );
+    }
 }
 
 /// tau closed as a chat started, before its first turn recorded where

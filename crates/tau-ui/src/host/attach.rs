@@ -816,6 +816,10 @@ fn start_on_host<F>(
         move |ws, view, cx| {
             let run = view.id.clone();
             ws.apply(HostUpdate::Run(Box::new(view)), cx);
+            // What it said before the view came.
+            for event in titler.take_unshown(&run) {
+                ws.apply_streamed(event, cx);
+            }
             let workspace = cx.entity();
             cx.defer(move |cx| {
                 title_in_background(&titler, &run, &prompt, &workspace, cx)
@@ -1644,8 +1648,12 @@ impl Host {
                     }
                     _ => None,
                 };
+                // A new chat's event before its view waits for the view.
+                let held = host.hold_unshown(&event);
                 let applied = workspace.update(cx, |ws, cx| {
-                    ws.apply_streamed(event.clone(), cx);
+                    if !held {
+                        ws.apply_streamed(event.clone(), cx);
+                    }
                     if let Some(pictures) = steered {
                         ws.apply(pictures, cx);
                     }
