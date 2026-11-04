@@ -51,8 +51,10 @@ pub fn editor(
                         editor.sent.drain(..=at);
                         None
                     }
-                    // Changed elsewhere, once its own are all back.
-                    None if editor.sent.is_empty()
+                    // Changed elsewhere, once its own are all back; a
+                    // secret is only ever what this editor holds.
+                    None if !spec.secret
+                        && editor.sent.is_empty()
                         && editor.shown != spec.draft =>
                     {
                         editor.shown = spec.draft.clone();
@@ -88,6 +90,7 @@ fn make(
         placeholder,
         multiline,
         keep,
+        secret,
         on_submit,
     } = spec;
     let input = cx.new(|cx| {
@@ -97,6 +100,9 @@ fn make(
         }
         if keep {
             input = input.keep_on_submit();
+        }
+        if secret {
+            input = input.masked();
         }
         input.set_text(draft.clone(), cx);
         input
@@ -112,6 +118,11 @@ fn make(
                     return;
                 };
                 if editor.shown == text {
+                    return;
+                }
+                // A secret's draft stays in this editor.
+                if secret {
+                    editor.shown = text;
                     return;
                 }
                 editor.shown = text.clone();
@@ -163,8 +174,35 @@ mod tests {
             placeholder: String::new(),
             multiline: false,
             keep: false,
+            secret: false,
             on_submit: None,
         }
+    }
+
+    /// A secret's editor sends nothing as its draft: what is typed in it
+    /// stays in this window, and no draft from elsewhere replaces it.
+    #[gpui::test]
+    fn a_secret_stays_in_its_editor(cx: &mut gpui::TestAppContext) {
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let seen = sent.clone();
+        let handle = Handle::new(
+            "p",
+            Rc::new(move |_, request, _| seen.borrow_mut().push(request)),
+        );
+        let inputs = Rc::new(RefCell::new(TreeInputs::default()));
+        let secret = |draft: &str| InputSpec {
+            secret: true,
+            ..spec(draft)
+        };
+        let input = cx.update(|cx| editor(&inputs, &handle, secret(""), cx));
+        input.update(cx, |input, cx| input.set_text("hunter2", cx));
+        cx.run_until_parked();
+        assert!(sent.borrow().is_empty(), "{:?}", sent.borrow());
+        cx.update(|cx| editor(&inputs, &handle, secret("elsewhere"), cx));
+        assert_eq!(
+            input.read_with(cx, |input, _| input.text().to_owned()),
+            "hunter2"
+        );
     }
 
     /// An editor shows its draft, sends each edit back as the draft,

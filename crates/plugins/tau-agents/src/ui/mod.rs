@@ -323,9 +323,11 @@ pub(crate) fn on_action(
                     }
                 }
             }
+            // Enter in the value: the agent and the name come from the
+            // panel, the value only from the input.
             SAVE_SECRET => {
-                let (Some(agent), Some((name, value))) =
-                    (text("agent"), secret.clone())
+                let (Some((agent, name)), Some(value)) =
+                    (secret.clone(), text("text"))
                 else {
                     return;
                 };
@@ -335,7 +337,6 @@ pub(crate) fn on_action(
                 }
                 handle.act(Act::SetSecret { agent, name, value }, cx);
                 handle.set_ui(draft_key(SECRET_NAME_INPUT), None, cx);
-                handle.set_ui(draft_key(SECRET_VALUE_INPUT), None, cx);
             }
             ANSWER => {
                 let (Some(agent), Some(notice), Some(answer)) =

@@ -251,6 +251,11 @@ pub enum Node {
         /// to send.
         #[serde(default)]
         keep: bool,
+        /// A secret: drawn as dots, and its draft stays in the window that
+        /// edits it, never in the state the interfaces share; only Enter
+        /// gives it to the plugin.
+        #[serde(default)]
+        secret: bool,
     },
     /// A panel over the page, for a choice or a form that stops the rest
     /// until it is done. The tree holds it only while it is open; a
@@ -447,6 +452,7 @@ pub struct InputSpec {
     pub placeholder: String,
     pub multiline: bool,
     pub keep: bool,
+    pub secret: bool,
     pub on_submit: Option<OnSubmit>,
 }
 
@@ -1012,6 +1018,7 @@ impl<'a> Draw<'a> {
                 args,
             } => div()
                 .id(SharedString::from(format!("{path}:switch")))
+                .debug_selector(selector("switch", label))
                 .flex()
                 .items_center()
                 .gap(sp(4.))
@@ -1054,6 +1061,7 @@ impl<'a> Draw<'a> {
                     .unwrap_or(*open);
                 let head = div()
                     .id(SharedString::from(format!("{path}:section")))
+                    .debug_selector(selector("section", title))
                     .flex()
                     .items_center()
                     .gap(sp(2.))
@@ -1106,6 +1114,7 @@ impl<'a> Draw<'a> {
                                 .id(SharedString::from(format!(
                                     "{path}:tab{n}"
                                 )))
+                                .debug_selector(selector("tab", &tab.label))
                                 .px(sp(3.))
                                 .py(sp(1.5))
                                 .rounded(radius::SMALL)
@@ -1147,14 +1156,18 @@ impl<'a> Draw<'a> {
                 multiline,
                 submit,
                 keep,
+                secret,
             } => {
                 let key = self.key(draft_key(id));
-                let draft = self
-                    .ui
-                    .and_then(|ui| ui.get(&key))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned();
+                let draft = if *secret {
+                    String::new()
+                } else {
+                    self.ui
+                        .and_then(|ui| ui.get(&key))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned()
+                };
                 let Some(inputs) = self.inputs else {
                     return field_text(&draft, t);
                 };
@@ -1180,6 +1193,7 @@ impl<'a> Draw<'a> {
                         placeholder: placeholder.clone().unwrap_or_default(),
                         multiline: *multiline,
                         keep: *keep,
+                        secret: *secret,
                         on_submit,
                     },
                     cx,
@@ -1339,6 +1353,10 @@ impl<'a> Draw<'a> {
                 };
                 div()
                     .id(SharedString::from(format!("{path}:button")))
+                    .debug_selector(selector(
+                        "button",
+                        &format!("{glyph:?}").to_lowercase(),
+                    ))
                     .size(rems(1.25))
                     .flex_shrink_0()
                     .flex()
@@ -1368,6 +1386,7 @@ impl<'a> Draw<'a> {
             }) {
                 Some(click) => button(label.clone(), (*kind).into(), t)
                     .id(SharedString::from(format!("{path}:button")))
+                    .debug_selector(selector("button", label))
                     .on_click(click)
                     .into_any_element(),
                 None => badge(label.clone(), t.muted, t.border_strong)
@@ -1377,6 +1396,7 @@ impl<'a> Draw<'a> {
                 match self.click(Act::Navigate(to.clone())) {
                     Some(click) => text_link(label.clone(), Type::SMALL, t)
                         .id(SharedString::from(format!("{path}:link")))
+                        .debug_selector(selector("link", label))
                         .on_click(click)
                         .into_any_element(),
                     None => div()
@@ -1411,6 +1431,14 @@ fn field_text(draft: &str, t: &Theme) -> AnyElement {
         .text_color(t.text_soft)
         .child(draft.to_owned())
         .into_any_element()
+}
+
+/// A clickable piece's name for tests (`debug_bounds`): its kind and
+/// what it says, `button:Save`, `link:Memory`, `switch:Compact idle
+/// chats`, `section:Details`, `tab:Rules`.
+fn selector(kind: &str, label: &str) -> impl Fn() -> String + 'static {
+    let name = format!("{kind}:{label}");
+    move || name.clone()
 }
 
 /// What a piece that does not draw shows instead.
@@ -1571,7 +1599,7 @@ mod tests {
         assert_eq!(Node::read(&setting).value(), setting);
         let modal = json!({ "piece": "modal", "title": "Add server",
             "children": [{ "piece": "input", "id": "name", "placeholder": null,
-                           "multiline": false, "submit": null, "keep": true }],
+                           "multiline": false, "submit": null, "keep": true, "secret": false }],
             "dismiss": "cancel" });
         assert_eq!(Node::read(&modal).value(), modal);
         assert_eq!(
@@ -1585,7 +1613,7 @@ mod tests {
             }
         );
         let input = json!({ "piece": "input", "id": "note", "placeholder": null,
-                            "multiline": true, "submit": "save", "keep": false });
+                            "multiline": true, "submit": "save", "keep": false, "secret": false });
         assert_eq!(Node::read(&input).value(), input);
         assert_eq!(tab_key("views"), "views.tab");
     }

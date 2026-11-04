@@ -82,6 +82,7 @@ fn actions(
                 multiline: false,
                 submit: Some(format!("{ANSWER}:{name}/{key}")),
                 keep: false,
+                secret: false,
             }];
             if !answer.trim().is_empty() {
                 row.push(button(

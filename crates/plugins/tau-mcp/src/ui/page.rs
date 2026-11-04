@@ -438,6 +438,7 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
                 multiline: false,
                 submit: None,
                 keep: false,
+                secret: false,
             },
         },
         Node::Input {
@@ -449,6 +450,7 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
             multiline: true,
             submit: None,
             keep: false,
+            secret: false,
         },
     ];
     if let Some(problem) = &editor.problem {

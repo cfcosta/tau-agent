@@ -315,6 +315,7 @@ fn tabs(imports: &Imports, on: &Tab) -> Node {
             multiline: false,
             submit: None,
             keep: true,
+            secret: false,
         },
     ]);
     Node::row(row)

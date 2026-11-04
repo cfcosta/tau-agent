@@ -163,6 +163,7 @@ pub fn list_tree(
             multiline: false,
             submit: None,
             keep: true,
+            secret: false,
         },
     ];
     bar.extend(kinds.map(|(each, name, count)| {

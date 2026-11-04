@@ -3,7 +3,7 @@
 //! view tree (ADR 0045).
 
 use gpui::AnyElement;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tau_ui_kit::format::usd;
 use tau_ui_plugin::{
     ViewCx,
@@ -106,9 +106,10 @@ pub(super) fn panel(
             .and_then(Value::as_str)
             .map(str::to_owned)
     };
+    // The value is not here: it stays in its input until Enter.
     let secret = (
+        agent.name.clone(),
         draft(&draft_key(SECRET_NAME_INPUT)).unwrap_or_default(),
-        draft(&draft_key(SECRET_VALUE_INPUT)).unwrap_or_default(),
     );
     let tree = panel_tree(&agent, &draft);
     let id = format!("agent-panel-{}", at.run.id.0);
@@ -208,7 +209,7 @@ pub fn panel_tree(
         ));
     }
     panel.push(section("wakes", "What wakes it", wakes));
-    panel.push(section("keys", "Keys", secrets(agent, draft)));
+    panel.push(section("keys", "Keys", secrets(agent)));
     if !agent.versions.is_empty() {
         panel.push(section(
             "versions",
@@ -307,7 +308,7 @@ fn scheduled(agent: &Agent) -> Vec<Node> {
 
 /// The secrets `agent` names, by name, and a way to save one: tau's
 /// secret store holds the values, which never come back here.
-fn secrets(agent: &Agent, draft: &dyn Fn(&str) -> Option<String>) -> Vec<Node> {
+fn secrets(agent: &Agent) -> Vec<Node> {
     let mut rows: Vec<Node> = agent
         .secrets
         .iter()
@@ -348,30 +349,17 @@ fn secrets(agent: &Agent, draft: &dyn Fn(&str) -> Option<String>) -> Vec<Node> {
         multiline: false,
         submit: None,
         keep: true,
+        secret: false,
     });
-    // ADR 0045: not masked yet — needs a masked Input, so the value is
-    // drawn as dots.
+    // Drawn as dots, kept out of the shared UI state; Enter saves it.
     rows.push(Node::Input {
         id: SECRET_VALUE_INPUT.into(),
-        placeholder: Some("its value".into()),
+        placeholder: Some("its value, then Enter".into()),
         multiline: false,
-        submit: None,
-        keep: true,
+        submit: Some(SAVE_SECRET.into()),
+        keep: false,
+        secret: true,
     });
-    let ready = draft(&draft_key(SECRET_NAME_INPUT))
-        .is_some_and(|name| !name.trim().is_empty())
-        && draft(&draft_key(SECRET_VALUE_INPUT))
-            .is_some_and(|value| !value.is_empty());
-    rows.push(Node::row([button(
-        "Save",
-        if ready {
-            Kind::Primary
-        } else {
-            Kind::Secondary
-        },
-        SAVE_SECRET,
-        json!({ "agent": agent.name }),
-    )]));
     rows
 }
 
