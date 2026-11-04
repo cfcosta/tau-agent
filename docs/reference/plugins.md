@@ -453,7 +453,8 @@ A phone draws each plugin view from what the computer builds for it
 without, the computer pushes those whose answer changed, and the phone
 asks again for every view it has after a snapshot and whenever it
 reaches the computer again, since what was pushed while it was away
-reached nobody.
+reached nobody. `tau-ui`'s `tests/plugins_model.rs` checks it, with the
+rest of how plugins compose (see [testing](testing.md#tau-ui)).
 
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,

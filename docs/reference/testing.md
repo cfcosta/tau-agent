@@ -511,6 +511,16 @@ Every string in the error table of [`tools.md`](tools.md#error-strings)
 has an example test. Tests that rely on `chmod` skip themselves when
 running as root, because root ignores file modes.
 
+### `tau-ui`
+
+| Property                                                                                                                                                                                                                                                                                                                                                                                                     | Oracle |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `plugins_model.rs` (state machine): tau's plugins and three probes, a computer and one or two phones over the real feed and outbox. Clicks, sections, drafts, a goal, pages, the repository menu, phones dropping and coming back, and restarts. Each click reaches the plugin that drew it; the slots are filled alike in any registration order; a restart from the stored records and saved UI state changes nothing; each plugin's part of a point is the same alone; the computer builds what it draws, and once everything arrives every phone shows what the computer shows and draws the trees it builds; the probes' buttons lie inside the window at their own width | Model  |
+
+It runs in about 6 s; its nightly twin (`nightly_slow`, 40 steps) in
+about 17 minutes. The layout check reads gpui's debug bounds in the test
+window, so it needs no GPU; the window draws a frame before each read.
+
 ## ScriptedModel
 
 `ScriptedModel` is ported from pi's faux provider
