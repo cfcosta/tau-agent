@@ -1,5 +1,6 @@
 //! Model settings: each agent's default, which models the picker shows,
-//! and the accounts tau reaches them and GitHub with.
+//! the accounts tau reaches them with, and plugins' sections: the
+//! forge's sign-in.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
 
@@ -98,63 +99,6 @@ pub fn render(
 
     let access = &models.access;
     let chatgpt = chatgpt_section(access, t, cx);
-    let github_user = ws.setup.user().map(str::to_owned);
-    let github = div()
-        .flex()
-        .items_center()
-        .gap(sp(2.5))
-        .child(ui::icon(
-            Icon::Repo,
-            IconSize::LARGE,
-            if github_user.is_some() {
-                t.green
-            } else {
-                t.dim
-            },
-        ))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems(0.))
-                .flex()
-                .flex_col()
-                .gap(sp(0.5))
-                .child("GitHub")
-                .child(ui::text(
-                    match &github_user {
-                        Some(user) => {
-                            format!(
-                                "Signed in as @{user} · clones repositories"
-                            )
-                        }
-                        None => {
-                            "Not signed in · for cloning repositories".into()
-                        }
-                    },
-                    Type::CAPTION,
-                    t.muted,
-                )),
-        )
-        .child(
-            div()
-                .id("account-github")
-                .child(ui::button(
-                    if github_user.is_some() {
-                        "Sign out"
-                    } else {
-                        "Sign in"
-                    },
-                    ButtonKind::Secondary,
-                    t,
-                ))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    if ws.setup.user().is_some() {
-                        ws.sign_out_github(cx)
-                    } else {
-                        ws.connect_github(cx)
-                    }
-                })),
-        );
     let jev = div()
         .flex()
         .items_center()
@@ -204,7 +148,6 @@ pub fn render(
         .gap(sp(3.))
         .child(heading("Accounts", t))
         .child(chatgpt)
-        .child(github)
         .child(jev);
 
     let main = div()

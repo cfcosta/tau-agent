@@ -423,7 +423,7 @@ impl Workspace {
         let fill = window.map_or(0., |window| {
             (run.context.used as f32 / window as f32).clamp(0., 1.)
         });
-        // A main chat pushes to GitHub instead (ADR 0023).
+        // A main chat pushes to the forge instead (ADR 0023).
         let done = self.catalog.pull_requests
             && run.status == RunStatus::Finished(StopReason::Stop)
             && !self.is_main(&run.id);
@@ -1024,7 +1024,7 @@ impl Workspace {
         let done = self.catalog.pull_requests
             && run.status == RunStatus::Finished(StopReason::Stop)
             && !self.is_main(&run.id);
-        // A main chat with changes GitHub lacks pushes from here.
+        // A main chat with changes the forge lacks pushes from here.
         let push = self
             .main_repo(&run.id)
             .filter(|repo| self.unpushed(repo).is_some())
@@ -1107,7 +1107,10 @@ impl Workspace {
                                     div()
                                         .id("sheet-push")
                                         .child(ui::big_button(
-                                            "Push to GitHub",
+                                            format!(
+                                                "Push to {}",
+                                                self.catalog.forge_name()
+                                            ),
                                             Some(Icon::Push),
                                             ButtonKind::Primary,
                                             t,

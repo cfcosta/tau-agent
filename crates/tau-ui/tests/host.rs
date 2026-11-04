@@ -14,11 +14,11 @@ use tau_agent::{
     event::{RunEvent, StopReason},
 };
 use tau_constitution::ui::Act;
+use tau_github_host::Token;
 use tau_store::Store;
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
-    github::Token,
     host::{Delivery, Host, HostConfig},
 };
 use tau_ui_plugin::RepoId;

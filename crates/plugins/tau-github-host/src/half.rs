@@ -1,9 +1,10 @@
-//! tau-github's host half (ADR 0030): it fills the `tau.forge` slot.
+//! tau-github's host half (ADR 0030): it fills the `tau.forge` slot,
+//! and signs in as the plugin's UI asks.
 
 use std::sync::Arc;
 
 use tau_agent::plugin::Plugin;
-use tau_github::GitHubUi;
+use tau_github::{Act, GitHubData, GitHubUi};
 use tau_ui_plugin::{
     HostCx,
     HostHalf,
@@ -46,7 +47,25 @@ impl HostHalf for GitHubHost {
         }
     }
 
+    /// How the sign-in stands.
+    async fn data(&self, host: &GitHub, _cx: &HostCx) -> GitHubData {
+        GitHubData {
+            sign_in: host.sign_in_state().await,
+        }
+    }
+
     fn fill(&self, host: &GitHub, fills: &mut Fills) {
         fills.fill(&FORGE, Arc::new(host.clone()) as Arc<dyn Forge>);
+    }
+
+    /// Signs in or out ([`Act`]).
+    async fn act(
+        &self,
+        host: &GitHub,
+        action: serde_json::Value,
+        cx: &HostCx,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        let act: Act = serde_json::from_value(action)?;
+        host.act(act, cx).await
     }
 }

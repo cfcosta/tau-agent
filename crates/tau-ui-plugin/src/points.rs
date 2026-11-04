@@ -83,11 +83,25 @@ pub enum SetupClone {
     Failed(String),
 }
 
+/// Where a plugin's step sits in first-run setup ([`SETUP`]): around
+/// the Repositories step, after the model's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SetupAt {
+    /// Before the person picks repositories: a sign-in the list of
+    /// repositories comes from.
+    BeforeRepositories,
+    /// Once the repositories are picked, before Ready.
+    #[default]
+    AfterRepositories,
+}
+
 /// A plugin's step in first-run setup ([`SETUP`]).
 pub struct SetupView {
     /// The plugin's name for the step, its own among its steps:
     /// `memories`.
     pub step: &'static str,
+    /// Where it sits among setup's steps.
+    pub at: SetupAt,
     /// What the step bar calls it: `Memories`.
     pub title: String,
     /// The screen's headline, and the sentence under it.
@@ -395,8 +409,9 @@ pub const REPO_ACTIONS: Point<AtRepo> = Point::new("tau.repo.actions");
 /// drawn from its data. Every contribution is drawn, in order; the bar
 /// shows while any is. A phone has no status bar.
 pub const ACTIVITY: Point<AtApp> = Point::new("tau.status.activity");
-/// A step of first-run setup, between Repositories and Ready, in the
-/// registry's order: the step bar counts it. A contribution that gives
+/// A step of first-run setup, before Repositories or between them and
+/// Ready as its [`SetupView::at`] says, in the registry's order: the
+/// step bar counts it. A contribution that gives
 /// none for the setup at hand is not a step, and the bar does not count
 /// it. Setup is on the desktop only.
 pub const SETUP: Point<AtSetup, SetupView> = Point::new("tau.setup.step");

@@ -12,11 +12,11 @@ no database driver, so the agent loop and the plugins build without
 waiting for SQLite to compile. `tau_store_sqlite::open` and
 `tau_store_sqlite::memory` return a `Store`.
 
-Credentials are not in the database. tau-ui keeps them in
+Credentials are not in the database. tau keeps them in
 `$XDG_CONFIG_HOME/tau/`, each file readable only by the user: ChatGPT
 sign-ins in `chatgpt/` (see
 [`chatgpt-sign-in.md`](chatgpt-sign-in.md#storage)), GitHub's token in
-`github.json`, TypeSafe's key in `typesafe-key`, and model choices (with
+`github.json` (tau-github-host's), TypeSafe's key in `typesafe-key`, and model choices (with
 whether the plan note was read) in `models.json`. The old `codex.json`
 and `openai-key` are no longer read, and tau does not delete them
 ([0012](../decisions/0012-chatgpt-sign-in-only.md)).

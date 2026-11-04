@@ -17,13 +17,13 @@ use std::{
 };
 
 use tau_agent::{agent::Agent, event::RunEvent, tool::RunId};
+use tau_github_host::Token;
 use tau_testing::{
     git::{self, git},
     scripted::ScriptedModel,
 };
 use tau_ui::{
     accounts::Credentials,
-    github::Token,
     host::{Host, HostConfig},
 };
 use tau_ui_remote::{models::ModelChoice, push::PushFailure};

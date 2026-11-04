@@ -1,5 +1,6 @@
 //! A plugin's step in first-run setup (`points::SETUP`): it comes after
-//! the repositories, the step bar counts it, it ends when the plugin says
+//! the repositories, or before them when it says so, the step bar counts
+//! it, it ends when the plugin says
 //! so or the person skips it, and a step the plugin leaves out is not
 //! there. The host hears once that setup ended, with the repositories
 //! picked. What the plugin says it reads outside repositories shows
@@ -17,7 +18,7 @@ use tau_ui_plugin::{
     PluginValue,
     UiPlugin,
     ViewCx,
-    points::{self, AtSetup, SetupClone, SetupRepo, SetupView},
+    points::{self, AtSetup, SetupAt, SetupClone, SetupRepo, SetupView},
     tree::{Kind, Node},
 };
 use tau_ui_remote::{
@@ -51,6 +52,62 @@ static SEEN: Mutex<Vec<SetupRepo>> = Mutex::new(Vec::new());
 /// A plugin with one setup step, shown while its data says so; its
 /// button ends it.
 struct Stepper;
+
+const BEFORE: &str = "stepper-before";
+
+/// The step of [`Before`].
+const BEFORE_STEP: SetupStep = SetupStep::Plugin {
+    plugin: BEFORE,
+    step: "sign-in",
+};
+
+/// A plugin whose step comes before the repositories, as a sign-in's
+/// does, shown while its data says so; its button ends it.
+struct Before;
+
+impl UiPlugin for Before {
+    type State = ();
+    type Data = bool;
+    type RepoData = ();
+    type Settings = ();
+
+    fn name(&self) -> &'static str {
+        BEFORE
+    }
+
+    fn manifest(&self) -> Manifest<Self> {
+        Manifest::new().contribute(
+            points::SETUP,
+            |_: &AtSetup, view: &mut ViewCx<'_, Self>| {
+                (*view.data).then(|| SetupView {
+                    step: "sign-in",
+                    at: SetupAt::BeforeRepositories,
+                    title: "Sign in".into(),
+                    heading: "Sign in first".into(),
+                    detail: "Where the repositories come from.".into(),
+                    body: Node::Button {
+                        label: "Signed in".into(),
+                        action: "done".into(),
+                        args: serde_json::Value::Null,
+                        kind: Kind::Primary,
+                        icon: None,
+                    },
+                })
+            },
+        )
+    }
+
+    fn on_action(
+        &self,
+        action: &str,
+        _: &serde_json::Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if action == "done" {
+            view.handle.setup_done();
+        }
+    }
+}
 
 impl UiPlugin for Stepper {
     type State = ();
@@ -96,6 +153,7 @@ fn step(at: &AtSetup, view: &mut ViewCx<'_, Stepper>) -> Option<SetupView> {
     };
     Some(SetupView {
         step: "pick",
+        at: SetupAt::AfterRepositories,
         title: "Stepper".into(),
         heading: "Bring what you had".into(),
         detail: "A step of a plugin's own.".into(),
@@ -106,7 +164,9 @@ fn step(at: &AtSetup, view: &mut ViewCx<'_, Stepper>) -> Option<SetupView> {
 /// The app's plugins and the one above: a process has one registry.
 fn install() {
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| plugins::install(tau_plugins::plugins().with(Stepper)));
+    ONCE.call_once(|| {
+        plugins::install(tau_plugins::plugins().with(Stepper).with(Before))
+    });
 }
 
 type Events = Rc<RefCell<Vec<WorkspaceEvent>>>;
@@ -140,8 +200,8 @@ fn open(
     (workspace, cx, events)
 }
 
-/// Onboarding signed in to GitHub and a model, with one repository to
-/// pick, on the repositories' step.
+/// Onboarding signed in to a model, with one repository to pick, on the
+/// repositories' step.
 fn at_repositories(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
     workspace.update(cx, |ws, cx| {
         ws.set_setup(
@@ -199,7 +259,7 @@ fn finished(events: &Events) -> Vec<Vec<SetupRepo>> {
         .collect()
 }
 
-/// The step comes after the repositories, the bar counts five stages,
+/// The step comes after the repositories, the bar counts four stages,
 /// the step sees the picked repository, and its own button ends it: on
 /// to Ready, and the host hears setup ended, once, even after going back
 /// and through the step again.
@@ -211,7 +271,7 @@ fn a_plugin_s_step_follows_the_repositories_and_ends_when_it_says(
     at_repositories(&workspace, &mut cx);
     assert_eq!(
         stage_names(&workspace, &mut cx),
-        ["GitHub", "Model", "Repositories", "Stepper", "Ready"]
+        ["Model", "Repositories", "Stepper", "Ready"]
     );
     workspace.update(&mut cx, |ws, cx| ws.clone_selected(cx));
     assert_eq!(route(&workspace, &mut cx), Route::Setup(STEP));
@@ -271,14 +331,14 @@ fn skipping_a_plugin_s_step_goes_on_to_ready(cx: &mut TestAppContext) {
 }
 
 /// A step the plugin leaves out is not in the bar, which counts tau's
-/// four stages as before, and the repositories lead straight to Ready.
+/// three stages as before, and the repositories lead straight to Ready.
 #[gpui::test]
 fn an_absent_step_is_not_counted_or_shown(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open(false, cx);
     at_repositories(&workspace, &mut cx);
     assert_eq!(
         stage_names(&workspace, &mut cx),
-        ["GitHub", "Model", "Repositories", "Ready"]
+        ["Model", "Repositories", "Ready"]
     );
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| ws.clone_selected(cx));
@@ -286,15 +346,17 @@ fn an_absent_step_is_not_counted_or_shown(cx: &mut TestAppContext) {
     assert_eq!(finished(&events).len(), 1);
 }
 
-/// Skipping GitHub, with no repositories to pick, still reaches the
-/// plugin's step after the model; ending it leaves setup for a new run.
+/// With no repositories to pick, the model leads straight to the
+/// plugin's step; ending it leaves setup for a new run.
 #[gpui::test]
-fn skipping_github_still_reaches_the_plugin_s_step(cx: &mut TestAppContext) {
+fn without_repositories_the_model_leads_to_the_plugin_s_step(
+    cx: &mut TestAppContext,
+) {
     let (workspace, mut cx, events) = open(true, cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.set_setup(Setup::default(), cx);
         ws.start_setup(SetupStep::Welcome, cx);
-        // What "Skip GitHub for now" does.
+        // What "Get started" does.
         ws.navigate(Route::Setup(SetupStep::Model), cx);
         ws.update_setup(
             SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
@@ -306,6 +368,57 @@ fn skipping_github_still_reaches_the_plugin_s_step(cx: &mut TestAppContext) {
     click("button:Bring them", &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::NewRun);
     assert_eq!(finished(&events), [Vec::<SetupRepo>::new()]);
+}
+
+/// A step placed before the repositories comes right after the model,
+/// and the bar counts it there; ending it opens the repositories once
+/// the forge is signed in, which picking repositories from the app also
+/// starts with while it is not.
+#[gpui::test]
+fn a_step_before_the_repositories_follows_the_model(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _events) = open(false, cx);
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.plugin_data.insert(
+            BEFORE.into(),
+            PluginValue::from_json(serde_json::json!(true)),
+        );
+        ws.set_catalog(catalog, cx);
+        ws.set_setup(Setup::default(), cx);
+        ws.start_setup(SetupStep::Model, cx);
+    });
+    assert_eq!(
+        stage_names(&workspace, &mut cx),
+        ["Model", "Sign in", "Repositories", "Ready"]
+    );
+    workspace.update(&mut cx, |ws, cx| {
+        ws.update_setup(
+            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
+            cx,
+        );
+        ws.continue_from_model(cx);
+    });
+    assert_eq!(route(&workspace, &mut cx), Route::Setup(BEFORE_STEP));
+    // Signed in: the forge lists repositories.
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.pull_requests = true;
+        ws.set_catalog(catalog, cx);
+    });
+    click("button:Signed in", &mut cx);
+    assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Repos));
+
+    // From the app, signed out: the sign-in first, then the repositories.
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.pull_requests = false;
+        ws.set_catalog(catalog, cx);
+        ws.finish_setup(cx);
+        ws.pick_repos(cx);
+    });
+    assert_eq!(route(&workspace, &mut cx), Route::Setup(BEFORE_STEP));
+    click("button:Signed in", &mut cx);
+    assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Repos));
 }
 
 /// The plugin's page in the Plugins screen says what it reads outside

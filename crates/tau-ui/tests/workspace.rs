@@ -8,7 +8,9 @@
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use tau_agent::event::StopReason;
+use tau_github::{GitHubData, SignIn};
 use tau_ui::demo;
+use tau_ui_plugin::PluginValue;
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
@@ -16,7 +18,7 @@ use tau_ui_remote::{
     models::{Effort, ModelChoice},
     pull_request::PrState,
     route::Route,
-    setup::{GitHub, ModelAccess, Setup, SetupStep, SetupUpdate},
+    setup::{ModelAccess, Setup, SetupStep, SetupUpdate},
     view::{BranchCode, CodeState, Item, RunStatus},
     workspace::{LandingState, PickerTarget},
 };
@@ -56,51 +58,58 @@ fn open(
     (workspace, visual, events)
 }
 
+/// `ws`'s catalog with tau-github's host half saying how the sign-in
+/// stands, and the forge signed in when it says so.
+fn github_says(
+    ws: &mut Workspace,
+    sign_in: SignIn,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let mut catalog = ws.catalog().clone();
+    catalog.pull_requests = matches!(sign_in, SignIn::SignedIn { .. });
+    catalog.plugin_data.insert(
+        tau_github::NAME.into(),
+        PluginValue::typed(GitHubData { sign_in }),
+    );
+    ws.set_catalog(catalog, cx);
+}
+
+/// Onboarding goes from the welcome to the model, then through
+/// tau-github's sign-in, before the repositories, to the clones.
 #[gpui::test]
 fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.set_setup(demo::setup(SetupStep::Welcome), cx);
         ws.start_setup(SetupStep::Welcome, cx);
-        ws.sign_in_github(cx);
-    });
-    assert_eq!(events.borrow().as_slice(), [WorkspaceEvent::GitHubSignIn]);
-    workspace.update(&mut cx, |ws, cx| {
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::GitHub));
-        // Asking again while a code is showing does not start over.
-        ws.update_setup(SetupUpdate::GitHub(GitHub::SignedOut), cx);
-        ws.update_setup(
-            SetupUpdate::GitHub(GitHub::SignedIn { user: "ada".into() }),
-            cx,
-        );
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
+        github_says(ws, SignIn::SignedOut, cx);
+        // What "Get started" does.
+        ws.navigate(Route::Setup(SetupStep::Model), cx);
         ws.sign_in_chatgpt(None, false, cx);
         ws.update_setup(
             SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
             cx,
         );
         // Signed in: the step stays, to show the account and pick the
-        // default model, until "Continue to repositories".
+        // default model, until "Continue".
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
         ws.continue_from_model(cx);
+        assert_eq!(ws.route(), &Route::Setup(demo::GITHUB_STEP));
+        // Signed in to GitHub: the plugin ends its step.
+        github_says(ws, demo::signed_in(), cx);
+        ws.plugin_setup_step_done(tau_github::NAME, cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Repos));
         ws.clone_selected(cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Ready));
     });
     let events = events.borrow();
-    assert_eq!(
-        events[1],
-        WorkspaceEvent::ChatGptSignIn {
-            account: None,
-            consent: false,
-        }
-    );
-    assert_eq!(
-        events[2],
-        WorkspaceEvent::CloneRepos {
-            repos: vec!["cfcosta/tau-agent".into(), "cfcosta/docbert".into()],
-        }
-    );
+    assert!(events.contains(&WorkspaceEvent::ChatGptSignIn {
+        account: None,
+        consent: false,
+    }));
+    assert!(events.contains(&WorkspaceEvent::CloneRepos {
+        repos: vec!["cfcosta/tau-agent".into(), "cfcosta/docbert".into()],
+    }));
 }
 
 #[gpui::test]
@@ -720,29 +729,18 @@ fn connecting_from_the_models_screen_comes_back_to_it(cx: &mut TestAppContext) {
     assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::SignOut));
 }
 
+/// Picking repositories from the app while GitHub is signed out opens
+/// tau-github's sign-in first; signed in, the repositories, and once
+/// they clone, back to the run.
 #[gpui::test]
-fn github_from_the_app_comes_back_when_done(cx: &mut TestAppContext) {
+fn picking_repositories_from_the_app_signs_in_first(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
-        // Signing in from the Models screen goes back there.
-        ws.navigate(Route::Models, cx);
-        ws.connect_github(cx);
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::GitHub));
-        ws.update_setup(
-            SetupUpdate::GitHub(GitHub::SignedIn {
-                user: "octocat".into(),
-            }),
-            cx,
-        );
-        assert_eq!(ws.route(), &Route::Models);
-        ws.sign_out_github(cx);
-    });
-    assert_eq!(events.borrow().first(), Some(&WorkspaceEvent::GitHubSignIn));
-    assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::GitHubSignOut));
-
-    // Adding from GitHub, signed in: pick, clone, and back to the run.
-    workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(demo::run_id()), cx);
+        github_says(ws, SignIn::SignedOut, cx);
+        ws.pick_repos(cx);
+        assert_eq!(ws.route(), &Route::Setup(demo::GITHUB_STEP));
+        github_says(ws, demo::signed_in(), cx);
         ws.update_setup(
             SetupUpdate::Repos(vec![tau_ui_remote::setup::RepoChoice {
                 name: "octocat/hello".into(),
@@ -754,18 +752,19 @@ fn github_from_the_app_comes_back_when_done(cx: &mut TestAppContext) {
             }]),
             cx,
         );
-        ws.pick_github_repos(cx);
+        ws.plugin_setup_step_done(tau_github::NAME, cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Repos));
         ws.toggle_repo("octocat/hello", cx);
         ws.clone_selected(cx);
         assert_eq!(ws.route(), &Route::Run(demo::run_id()));
+
+        // Signed in, it opens the repositories at once.
+        ws.pick_repos(cx);
+        assert_eq!(ws.route(), &Route::Setup(SetupStep::Repos));
     });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::CloneRepos {
-            repos: vec!["octocat/hello".into()]
-        })
-    );
+    assert!(events.borrow().contains(&WorkspaceEvent::CloneRepos {
+        repos: vec!["octocat/hello".into()]
+    }));
 }
 
 /// Signed in, the model step picks the default model the way the

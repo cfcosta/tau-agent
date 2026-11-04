@@ -261,8 +261,6 @@ pub enum Link {
 pub enum Service {
     /// The welcome: no handshake yet.
     None,
-    GitHub,
-    Token,
     ChatGpt,
     Repos,
     /// A plugin's step.
@@ -307,8 +305,6 @@ pub struct SetupMotion {
     pub composing: Tracked<bool>,
     /// Each clone's progress in thousandths, and whether it is ready.
     pub clones: HashMap<String, Tracked<(u32, bool)>>,
-    /// How many times the device code was copied: each flashes it.
-    pub copies: u64,
     /// Whether the window has the focus: loops pause without it.
     pub active: bool,
     /// Whether motion is reduced: no loops, ripples or comets, and
@@ -327,10 +323,9 @@ impl Default for SetupMotion {
             link: Tracked::new(Link::Idle),
             service: Tracked::new(Service::None),
             scale: Tracked::new(Scale::Big),
-            segments: Tracked::new(vec![Segment::Ahead; 4]),
+            segments: Tracked::new(vec![Segment::Ahead; 3]),
             composing: Tracked::new(false),
             clones: HashMap::new(),
-            copies: 0,
             active: true,
             reduce: false,
         }

@@ -1,6 +1,6 @@
 [package]
 name = "tau-github"
-description = "GitHub as where tau's repositories are hosted, as a plugin: its interface half, which draws nothing yet."
+description = "GitHub as where tau's repositories are hosted, as a plugin: its interface half, which draws the sign-in in first-run setup and on the Models screen."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -8,4 +8,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde.workspace = true
+serde_json.workspace = true
 tau-ui-plugin.workspace = true
+
+[dev-dependencies]
+tau-agent.workspace = true

@@ -20,8 +20,8 @@ take one path.
 | `remote`                         | The phone's side: `remote::connect` pairs with a computer and applies what it sends          |
 | `views`                          | Plugins' views by name (ADR 0046): the computer builds them, a phone draws what comes back   |
 | `attention`                      | Whether a chat needs the person: `Attention::of` over a run's `Facts`                        |
-| `setup`, `pairing`, `phones`     | Onboarding, a phone's pairing, and the computer's list of phones                             |
-| `pull_request`, `push`, `queue`  | Pull requests, pushing main, and the landing queue, as the host reports them                 |
+| `setup`, `pairing`, `phones`     | Onboarding (with plugins' steps), a phone's pairing, and the computer's list of phones       |
+| `pull_request`, `push`, `queue`  | Pull requests, pushing main, and the landing queue, labelled with `Catalog::forge`           |
 | `models`, `picker`, `plan_usage` | Choosing models and effort, and what a ChatGPT plan error says                               |
 | `route`, `search`, `slash`       | The screens, the search palette (Ctrl K), and slash commands in the composer                 |
 | `titles`                         | A run's title, written by a model from its first prompt                                      |
@@ -48,6 +48,13 @@ The wiring goes two ways:
   the catalog, what plugins answered.
 - Out: the workspace emits a `WorkspaceEvent` when the person starts,
   steers, cancels or forks a run. The host subscribes and acts on it.
+
+It names no plugin, and no forge (ADR 0045): signing in where
+repositories are hosted is a plugin's setup step before the repositories
+(`points::SETUP` with `SetupAt::BeforeRepositories`) and its section of
+the Models screen; the repositories to pick come from the host as
+`SetupUpdate::Repos`, and the push and pull request screens say the
+forge's name as the catalog gives it.
 
 ## Usage
 

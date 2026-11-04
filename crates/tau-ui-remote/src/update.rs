@@ -54,7 +54,7 @@ pub enum HostUpdate {
         run: RunId,
         state: PrState,
     },
-    /// What pushing a repository's trunk to GitHub did (ADR 0023).
+    /// What pushing a repository's trunk to the forge did (ADR 0023).
     Pushed {
         repo: String,
         result: Result<Pushed, PushFailure>,

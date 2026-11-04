@@ -215,7 +215,7 @@ fn the_setup_step_is_absent_without_the_tools(cx: &mut TestAppContext) {
     at_repositories(&workspace, &mut cx);
     assert_eq!(
         stage_names(&workspace, &mut cx),
-        ["GitHub", "Model", "Repositories", "Ready"]
+        ["Model", "Repositories", "Ready"]
     );
 }
 
@@ -234,7 +234,7 @@ fn the_setup_step_starts_an_import_of_what_was_ticked(cx: &mut TestAppContext) {
     at_repositories(&workspace, &mut cx);
     assert_eq!(
         stage_names(&workspace, &mut cx),
-        ["GitHub", "Model", "Repositories", "Memories", "Ready"]
+        ["Model", "Repositories", "Memories", "Ready"]
     );
     workspace.update(&mut cx, |ws, cx| ws.clone_selected(cx));
     assert_eq!(

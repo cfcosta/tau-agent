@@ -13,7 +13,6 @@
 
 pub mod accounts;
 pub mod demo;
-pub mod github;
 pub mod host;
 pub mod hosted;
 pub mod interface_runtime;

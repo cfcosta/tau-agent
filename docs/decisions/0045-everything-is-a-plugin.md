@@ -344,8 +344,12 @@ Each step lands on main by itself and leaves tau working.
    land, landed, discard, forget, held, sweep). tau-vcs-host's
    `JjVcs`/`JjRepository` fill it; landing, lanes and the startup sweep
    call only it. A run's workspace, sub-agents, push, pull requests and
-   clone still reach jj directly, through `Repository::as_any`, until
-   steps 4 and 6b.
+   clone went through it in 6b, which also added `tau.forge`
+   (`tau_ui_plugin::forge::Forge`: sign-in state, remotes with their
+   token, the repository list, pull requests and checks), filled by
+   `tau-github-host`; `tau-github` draws sign-in as a setup step placed
+   before Repositories (`SetupAt`) and a Models section. Only run
+   assembly (step 4) still reaches jj through `Repository::as_any`.
 7. **`tau.provider`.** A neutral `Settings` and catalog in `tau-ai`;
    `tau-chatgpt` with sign-in, models and plan usage.
 8. **`tau.compaction`**, with the chain as its default; idle compaction

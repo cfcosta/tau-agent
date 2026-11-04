@@ -33,8 +33,6 @@ use crate::{
     pull_request::{Checks, PrCommit, PrState, PullRequest},
     setup::{
         CloneState,
-        DeviceCode,
-        GitHub,
         ModelAccess,
         RepoChoice,
         RepoClone,
@@ -612,8 +610,8 @@ pub fn resume_script(run: &RunView, prompt: &str) -> Vec<Step> {
 
 const DEVICE_CODE: &str = "WDJB-MJHT";
 
-fn device_code() -> DeviceCode {
-    DeviceCode {
+pub(crate) fn device_code() -> tau_github::DeviceCode {
+    tau_github::DeviceCode {
         code: DEVICE_CODE.into(),
         url: "github.com/login/device".into(),
         expires: "15 minutes".into(),
@@ -664,7 +662,8 @@ fn repos() -> Vec<RepoChoice> {
         description: description.into(),
         branch: "main".into(),
         selected,
-        // Listed as GitHub orders them: the most recently pushed first.
+        // Listed as the forge orders them: the most recently pushed
+        // first.
         pushed_at: format!("2026-10-{:02}T12:00:00Z", 22 - n.min(21)),
         remote: Some(format!("https://github.com/{name}.git")),
     })
@@ -770,28 +769,22 @@ pub fn setup(step: SetupStep) -> Setup {
         repos: repos(),
         ..Setup::default()
     };
-    // tau's own stages; a plugin's step comes after the clones start.
-    let stage = match step {
-        SetupStep::Plugin { .. } => 3,
-        step => step
-            .stage(&crate::setup::Stage::all([]))
-            .unwrap_or_default(),
-    };
-    setup.github = if step == SetupStep::Welcome {
-        GitHub::SignedOut
-    } else if stage == 0 {
-        GitHub::Waiting(device_code())
-    } else {
-        GitHub::SignedIn {
-            user: "cfcosta".into(),
+    // The model comes first; tau-github's step before the repositories,
+    // other plugins' steps after the clones start.
+    let (model, clones) = match step {
+        SetupStep::Welcome | SetupStep::Model => (false, false),
+        SetupStep::Plugin { plugin, .. } if plugin == tau_github::NAME => {
+            (true, false)
         }
+        SetupStep::Repos => (true, false),
+        SetupStep::Plugin { .. } | SetupStep::Ready => (true, true),
     };
-    if stage >= 2 {
+    if model {
         setup.model = ModelAccess::Connected {
             label: "gpt-6.1-sol · ChatGPT plan".into(),
         };
     }
-    if stage >= 3 {
+    if clones {
         setup.clones = vec![
             RepoClone {
                 name: "cfcosta/tau-agent".into(),
@@ -812,6 +805,44 @@ pub fn setup(step: SetupStep) -> Setup {
 }
 
 /// The pull request the finished demo run would open.
+/// tau-github's step of first-run setup.
+pub const GITHUB_STEP: SetupStep = SetupStep::Plugin {
+    plugin: tau_github::NAME,
+    step: tau_github::STEP,
+};
+
+/// Shows tau-github's sign-in as `sign_in` from now on, in place of what
+/// its host half says: the demo reaches no GitHub.
+pub fn github_sign_in(
+    ws: &mut Workspace,
+    host: &DemoHost,
+    sign_in: tau_github::SignIn,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let mut catalog = ws.catalog().clone();
+    let data =
+        tau_ui_plugin::PluginValue::typed(tau_github::GitHubData { sign_in });
+    catalog
+        .plugin_data
+        .insert(tau_github::NAME.into(), data.clone());
+    if let Some(info) = catalog
+        .plugins
+        .iter()
+        .find(|plugin| plugin.name == tau_github::NAME)
+        .cloned()
+    {
+        host.pin(info, data);
+    }
+    ws.set_catalog(catalog, cx);
+}
+
+/// The demo's GitHub account, signed in.
+pub fn signed_in() -> tau_github::SignIn {
+    tau_github::SignIn::SignedIn {
+        user: "cfcosta".into(),
+    }
+}
+
 /// What the demo's main chat pushed to GitHub: three changes.
 pub fn pushed() -> crate::push::Pushed {
     use crate::push::{Pushed, PushedChange};
@@ -896,6 +927,8 @@ pub fn start(workspace: &Entity<Workspace>, cx: &mut App) -> Arc<DemoHost> {
     workspace.update(cx, |ws, cx| {
         let catalog = host.catalog(ws.catalog().clone());
         ws.apply(HostUpdate::catalog(catalog), cx);
+        // Signed in to GitHub, as the demo's catalog says.
+        github_sign_in(ws, &host, signed_in(), cx);
     });
     respond(workspace, host.clone(), cx);
     host
@@ -935,7 +968,7 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
     cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
         // Each answer comes after its pause, in milliseconds.
         let later = |steps: Vec<(u64, Answer)>, cx: &mut App| {
-            let workspace = workspace.downgrade();
+            let (workspace, host) = (workspace.downgrade(), host.clone());
             cx.spawn(async move |cx| {
                 for (wait, answer) in steps {
                     cx.background_executor()
@@ -944,6 +977,9 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                     let done = workspace.update(cx, |ws, cx| match answer {
                         Answer::Host(update) => ws.apply(update, cx),
                         Answer::Pair(update) => ws.update_pairing(update, cx),
+                        Answer::GitHub(sign_in) => {
+                            github_sign_in(ws, &host, sign_in, cx)
+                        }
                     });
                     if done.is_err() {
                         return;
@@ -961,11 +997,6 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
             });
         };
         let setup = |update| Answer::Host(HostUpdate::Setup(update));
-        let signed_in = || {
-            setup(SetupUpdate::GitHub(GitHub::SignedIn {
-                user: "cfcosta".into(),
-            }))
-        };
         let computer = computer();
         // Pairing is the phone's own: the computer it reaches answers.
         let progress =
@@ -1006,22 +1037,41 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 vec![(1200, Answer::Pair(PairingUpdate::Connected(computer)))],
                 cx,
             ),
-            WorkspaceEvent::GitHubSignIn => later(
-                vec![
-                    (
-                        400,
-                        setup(SetupUpdate::GitHub(GitHub::Waiting(
-                            device_code(),
-                        ))),
-                    ),
-                    (0, setup(SetupUpdate::Repos(repos()))),
-                    (5000, signed_in()),
-                ],
-                cx,
-            ),
-            WorkspaceEvent::GitHubCheck
-            | WorkspaceEvent::GitHubToken { .. } => {
-                later(vec![(600, signed_in())], cx)
+            // The demo reaches no GitHub: tau-github's sign-in shows a
+            // code, then signs in, and a check or a token at once.
+            WorkspaceEvent::PluginAct {
+                plugin,
+                action,
+                asker,
+            } if plugin == tau_github::NAME => {
+                use tau_github::{Act, SignIn};
+                let signed = Answer::Host(HostUpdate::PluginReply {
+                    plugin: plugin.clone(),
+                    reply: json!({ "user": "cfcosta" }),
+                    asker: *asker,
+                });
+                let steps = match serde_json::from_value(action.clone()) {
+                    Ok(Act::SignIn) => vec![
+                        (
+                            400,
+                            Answer::GitHub(SignIn::Waiting {
+                                code: device_code(),
+                            }),
+                        ),
+                        (0, setup(SetupUpdate::Repos(repos()))),
+                        (5000, Answer::GitHub(signed_in())),
+                    ],
+                    Ok(Act::Check | Act::Token { .. }) => vec![
+                        (600, Answer::GitHub(signed_in())),
+                        (0, setup(SetupUpdate::Repos(repos()))),
+                        (0, signed),
+                    ],
+                    Ok(Act::SignOut) => {
+                        vec![(0, Answer::GitHub(SignIn::SignedOut))]
+                    }
+                    Err(_) => Vec::new(),
+                };
+                later(steps, cx)
             }
             // The browser never opens in the demo: the page waits, and a
             // pasted redirect finishes it.
@@ -1312,6 +1362,8 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
 enum Answer {
     Host(HostUpdate),
     Pair(PairingUpdate),
+    /// tau-github's sign-in, as its host half would say it.
+    GitHub(tau_github::SignIn),
 }
 
 /// The code of `retry-after`, tau-agent's main chat, and its `backoff`
@@ -1439,6 +1491,7 @@ pub fn catalog() -> Catalog {
             sample_query: "select agent, sum(cost_usd) from runs where created_at > date('now', '-7 days') group by agent".into(),
         },
         pull_requests: true,
+        forge: Some("GitHub".into()),
         project: Default::default(),
         update: None,
         models: models(),

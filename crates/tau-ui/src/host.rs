@@ -869,6 +869,7 @@ impl Host {
                 Some(forge) => forge.signed_in().await.is_some(),
                 None => false,
             },
+            forge: self.forge.as_ref().map(|forge| forge.name().to_owned()),
             project,
             update: self.last_update.lock().expect("not poisoned").clone(),
             models: self.models(),

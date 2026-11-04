@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use tau_ui_plugin::{
     ViewCx,
-    points::{AtSetup, SetupRepo, SetupView},
+    points::{AtSetup, SetupAt, SetupRepo, SetupView},
     tree::{Kind, Node},
 };
 
@@ -72,6 +72,7 @@ pub fn step(
     let body = tree(&imports.found, &at.repos, choice);
     Some(SetupView {
         step: STEP,
+        at: SetupAt::AfterRepositories,
         title: "Memories".into(),
         heading: "Bring what your other agents learned".into(),
         detail: format!(

@@ -1,7 +1,7 @@
 # tau-ui
 
 tau on the computer: the host that runs coding agents in repositories
-cloned from GitHub, drives `tau-ui-remote`'s interface, and serves the
+cloned from the forge (tau-github fills its slot), drives `tau-ui-remote`'s interface, and serves the
 phones paired with it. The interface itself (the workspace, its screens,
 the plugins' views) lives in `tau-ui-remote`; this crate is everything
 behind it that runs agents, signs in, clones, lands, pushes and notifies.
@@ -15,7 +15,6 @@ It is a library: the `tau` app (`crates/tau`) is the binary.
 | `host::queue`       | A main chat's landing queue: `Lane` decides, the host acts                                        |
 | `hosted`            | The plugins' host halves: `halves` gives them to `tau-ui-remote`'s plugins, `install` once        |
 | `accounts`          | Sign in with ChatGPT: `Credentials` (where sign-ins are kept) and `SignIns`                       |
-| `github`            | Signing in to GitHub from the setup and Models screens, through `tau-github-host`'s `Api`         |
 | `phone_server`      | The computer's side of phones: `serve`, once "Allow phones" is on                                 |
 | `notify`            | Desktop notifications over D-Bus while the window is not focused: `Notifier`, `Desktop`           |
 | `metered`           | Jev requests counted for the Plugins screen: `Metered`                                            |
@@ -43,8 +42,11 @@ Where it keeps its files (`HostConfig`):
 | `~/.agents/skills`                    | The person's skills (tau-skills)                      |
 
 `$XDG_DATA_HOME` falls back to `~/.local/share`. ChatGPT sign-ins sit in
-`$XDG_CONFIG_HOME/tau/chatgpt`, and the GitHub token in `github.json` beside
-them.
+`$XDG_CONFIG_HOME/tau/chatgpt`, and tau-github-host keeps the GitHub token
+in `github.json` beside them. Signing in to GitHub is tau-github's: a setup
+step before the repositories and a section of the Models screen; the host
+lists the forge's repositories for setup whenever the catalog says the forge
+is newly signed in.
 
 ## How it fits
 

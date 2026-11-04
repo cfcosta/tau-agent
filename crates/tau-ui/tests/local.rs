@@ -32,10 +32,10 @@ use gpui::{TestAppContext, VisualTestContext};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::{event::RunEvent, tool::RunId};
+use tau_github_host::Token;
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
-    github::Token,
     host::{Host, HostConfig, NotAdded},
 };
 use tau_ui_plugin::vcs::SetupStep;

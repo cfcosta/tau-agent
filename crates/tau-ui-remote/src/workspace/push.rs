@@ -1,4 +1,4 @@
-//! Pushing a repository's main chat to GitHub (ADR 0023).
+//! Pushing a repository's main chat to the forge (ADR 0023).
 
 use super::*;
 use crate::push::{PushFailure, Pushed};
@@ -13,8 +13,8 @@ impl Workspace {
             .map(|repo| repo.name.as_str())
     }
 
-    /// How many of `repo`'s trunk changes GitHub lacks, and trunk's
-    /// branch; `None` when there is nothing to push or no GitHub sign-in
+    /// How many of `repo`'s trunk changes the forge lacks, and trunk's
+    /// branch; `None` when there is nothing to push or no forge sign-in
     /// to push with.
     pub fn unpushed(&self, repo: &str) -> Option<(u32, &str)> {
         let repo = self.catalog.repo(repo)?;
@@ -26,7 +26,7 @@ impl Workspace {
         self.pushes.get(repo)
     }
 
-    /// Pushes `repo`'s trunk to GitHub; fetching first when `fetch`.
+    /// Pushes `repo`'s trunk to the forge; fetching first when `fetch`.
     pub fn push(&mut self, repo: &str, fetch: bool, cx: &mut Context<Self>) {
         if matches!(self.pushes.get(repo), Some(PushState::Pushing { .. })) {
             return;
@@ -42,7 +42,7 @@ impl Workspace {
     }
 
     /// What a push of `repo` came to: a card in its main chat for a
-    /// push that went or one GitHub's moved branch refused; a dialog
+    /// push that went or one the forge's moved branch refused; a dialog
     /// for anything else.
     pub fn pushed(
         &mut self,

@@ -52,7 +52,6 @@ use crate::{
     route::{self, Route},
     setup::{
         CloneState,
-        GitHub,
         ModelAccess,
         RepoClone,
         Setup,
@@ -382,18 +381,6 @@ pub enum WorkspaceEvent {
     /// computer's own, never sent up.
     #[serde(skip)]
     Phones(PhonesRequest),
-    /// Start GitHub's device sign-in; answer with a
-    /// [`GitHub::Waiting`] code, then [`GitHub::SignedIn`].
-    GitHubSignIn,
-    /// The user says they approved the sign-in: check now rather than at
-    /// the next poll.
-    GitHubCheck,
-    /// Check a fine-grained personal access token.
-    GitHubToken {
-        token: String,
-    },
-    /// Forget the GitHub sign-in.
-    GitHubSignOut,
     /// Go on with a run tau closing cut off, in its workspace, with
     /// tau's message saying so. The host answers with a
     /// [`HostUpdate::TauTurn`], or [`Workspace::resume_failed`].
@@ -441,9 +428,9 @@ pub enum WorkspaceEvent {
         main: RunId,
         fork: RunId,
     },
-    /// Push the repository's trunk, the main chat's commits, to GitHub
-    /// (ADR 0023); fetch first when `fetch`, which puts them on top of
-    /// GitHub's new commits. Answer with [`HostUpdate::Pushed`].
+    /// Push the repository's trunk, the main chat's commits, to the
+    /// forge (ADR 0023); fetch first when `fetch`, which puts them on top
+    /// of the forge's new commits. Answer with [`HostUpdate::Pushed`].
     Push {
         repo: String,
         fetch: bool,
@@ -480,9 +467,7 @@ fn inherited_items(run: &RunView, turn: u32) -> Vec<crate::view::Item> {
 pub enum SetupGoal {
     /// Sign in to ChatGPT.
     Model,
-    /// Sign in to GitHub.
-    GitHub,
-    /// Clone repositories from GitHub.
+    /// Clone repositories from where they are hosted.
     Repos,
 }
 
@@ -605,7 +590,7 @@ pub struct Workspace {
     pub(crate) kept_branch: Option<RunId>,
     /// Child runs on their way to landing, by run.
     landings: HashMap<RunId, LandingState>,
-    /// Where each repository's push to GitHub stands, by repository.
+    /// Where each repository's push stands, by repository.
     pushes: HashMap<String, PushState>,
     /// Runs that proposed their landing with `vcs_land` and have not
     /// stopped yet.
@@ -623,7 +608,6 @@ pub struct Workspace {
     pub(crate) pull_requests: HashMap<RunId, PullRequest>,
     /// The code of each comparison opened, by (run, fork).
     pub(crate) branch_code: HashMap<(RunId, RunId), CodeState>,
-    pub(crate) github_token: Entity<TextInput>,
     /// Where the ChatGPT sign-in's redirect URL can be pasted.
     pub(crate) chatgpt_callback: Entity<TextInput>,
     /// What a run that stopped on the ChatGPT plan asks of the user.
@@ -787,9 +771,6 @@ impl Workspace {
         let model_search = cx.new(|cx| TextInput::new("Search models", cx));
         // Fields whose Enter submits through `take_field`, which reads
         // and clears them: they keep their text through Enter.
-        let github_token = cx.new(|cx| {
-            TextInput::new("github_pat_…", cx).masked().keep_on_submit()
-        });
         let chatgpt_callback = cx.new(|cx| {
             TextInput::new("http://127.0.0.1:1455/auth/callback?code=…", cx)
                 .masked()
@@ -861,9 +842,6 @@ impl Workspace {
             }),
             cx.subscribe(&jev_key, |ws, _, _: &InputEvent, cx| {
                 ws.submit_jev_key(cx)
-            }),
-            cx.subscribe(&github_token, |ws, _, _: &InputEvent, cx| {
-                ws.submit_token(cx)
             }),
             cx.subscribe(&chatgpt_callback, |ws, _, _: &InputEvent, cx| {
                 ws.submit_chatgpt_callback(cx)
@@ -941,7 +919,6 @@ impl Workspace {
             phone_name,
             pull_requests: HashMap::new(),
             branch_code: HashMap::new(),
-            github_token,
             chatgpt_callback,
             plan_alert: None,
             repo_filter,

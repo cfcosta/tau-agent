@@ -966,10 +966,7 @@ fn git_status(person: &Person, root: &Path) -> Vec<String> {
 }
 
 /// What inspecting `target` should give, from git's own view of it.
-fn expected(
-    person: &Person,
-    target: &Path,
-) -> Result<Found, Refusal> {
+fn expected(person: &Person, target: &Path) -> Result<Found, Refusal> {
     if !target.exists() {
         return Err(Refusal::Missing(target.to_owned()));
     }

@@ -1,5 +1,5 @@
-//! Onboarding and accounts: GitHub, the ChatGPT sign-in and plan, the
-//! TypeSafe key, and the first run.
+//! Onboarding and accounts: the ChatGPT sign-in and plan, plugins'
+//! steps around the repositories, the TypeSafe key, and the first run.
 
 use super::*;
 
@@ -28,26 +28,11 @@ impl Workspace {
         update: SetupUpdate,
         cx: &mut Context<Self>,
     ) {
-        let signed_in =
-            matches!(update, SetupUpdate::GitHub(GitHub::SignedIn { .. }));
         let connected =
             matches!(update, SetupUpdate::Model(ModelAccess::Connected { .. }));
         self.setup.update(update);
         let goal = self.setup_goal;
         match self.route {
-            Route::Setup(SetupStep::GitHub | SetupStep::Token)
-                if signed_in && goal == Some(SetupGoal::GitHub) =>
-            {
-                self.leave_setup(cx)
-            }
-            Route::Setup(SetupStep::GitHub | SetupStep::Token)
-                if signed_in && goal == Some(SetupGoal::Repos) =>
-            {
-                self.navigate(Route::Setup(SetupStep::Repos), cx)
-            }
-            Route::Setup(SetupStep::GitHub | SetupStep::Token) if signed_in => {
-                self.navigate(Route::Setup(SetupStep::Model), cx)
-            }
             Route::Setup(SetupStep::Model)
                 if connected && goal == Some(SetupGoal::Model) =>
             {
@@ -64,15 +49,13 @@ impl Workspace {
         &self.setup_motion
     }
 
-    /// Leaves the model step once signed in: on to the repositories, or,
-    /// when there are none to pick, through plugins' steps to a new run.
+    /// Leaves the model step once signed in: on through plugins' steps
+    /// and the repositories to a new run.
     pub fn continue_from_model(&mut self, cx: &mut Context<Self>) {
         if self.setup_goal == Some(SetupGoal::Model) {
             self.leave_setup(cx);
-        } else if self.setup.repos.is_empty() {
-            self.setup_next(SetupStep::Repos, cx);
         } else {
-            self.navigate(Route::Setup(SetupStep::Repos), cx);
+            self.setup_next(SetupStep::Model, cx);
         }
     }
 
@@ -96,33 +79,67 @@ impl Workspace {
             .collect()
     }
 
-    /// The step bar's stages: tau's, with plugins' steps between the
-    /// repositories and Ready.
+    /// The step bar's stages: tau's, with plugins' steps around the
+    /// repositories.
     pub fn setup_stages(&self) -> Vec<Stage> {
         Stage::all(
             self.plugin_setup_steps()
                 .into_iter()
-                .map(|(step, view)| (step, view.title)),
+                .map(|(step, view)| (step, view.title, view.at)),
         )
     }
 
-    /// Goes on from `from`, the repositories or a plugin's step: to the
-    /// next plugin's step, else to the end of setup.
-    fn setup_next(&mut self, from: SetupStep, cx: &mut Context<Self>) {
-        let steps: Vec<SetupStep> = self
-            .plugin_setup_steps()
+    /// Setup's steps after the model, in order: plugins' before the
+    /// repositories, the repositories, plugins' after them.
+    fn setup_sequence(&self) -> Vec<SetupStep> {
+        self.setup_stages()
             .into_iter()
-            .map(|(step, _)| step)
-            .collect();
-        let next = match from {
-            SetupStep::Plugin { .. } => steps
+            .map(|stage| stage.step)
+            .filter(|step| !matches!(step, SetupStep::Model | SetupStep::Ready))
+            .collect()
+    }
+
+    /// Whether the repositories' step has something to pick: repositories
+    /// listed, a forge signed in to list them, or the person asked for it.
+    fn repos_to_pick(&self) -> bool {
+        !self.setup.repos.is_empty()
+            || self.catalog.pull_requests
+            || self.setup_goal == Some(SetupGoal::Repos)
+    }
+
+    /// Whether leaving the model step reaches another step before the
+    /// end of setup: a plugin's, or repositories to pick.
+    pub fn setup_has_steps_after_model(&self) -> bool {
+        let repos_to_pick = self.repos_to_pick();
+        self.setup_sequence()
+            .iter()
+            .any(|step| *step != SetupStep::Repos || repos_to_pick)
+    }
+
+    /// Goes on from `from`, the model, the repositories or a plugin's
+    /// step: to the next step, skipping the repositories when there are
+    /// none to pick, else to the end of setup. A plugin's step that is
+    /// gone goes on from after the repositories.
+    fn setup_next(&mut self, from: SetupStep, cx: &mut Context<Self>) {
+        let sequence = self.setup_sequence();
+        let after_repos = sequence
+            .iter()
+            .position(|step| *step == SetupStep::Repos)
+            .map_or(0, |n| n + 1);
+        let start = match from {
+            SetupStep::Model | SetupStep::Welcome => 0,
+            _ => sequence
                 .iter()
                 .position(|step| *step == from)
-                .map_or(steps.len(), |n| n + 1),
-            _ => 0,
+                .map_or(after_repos, |n| n + 1),
         };
-        match steps.get(next) {
-            Some(step) => self.navigate(Route::Setup(*step), cx),
+        let repos_to_pick = self.repos_to_pick();
+        let next = sequence
+            .into_iter()
+            .skip(start)
+            .find(|step| *step != SetupStep::Repos || repos_to_pick);
+        match next {
+            Some(step) => self.navigate(Route::Setup(step), cx),
             None => self.end_setup_steps(cx),
         }
     }
@@ -196,25 +213,21 @@ impl Workspace {
         self.entered(cx);
     }
 
-    /// Opens GitHub's sign-in from the app, coming back once signed in.
-    pub fn connect_github(&mut self, cx: &mut Context<Self>) {
-        self.sign_in_github(cx);
-        self.setup_goal = Some(SetupGoal::GitHub);
-    }
-
-    pub fn sign_out_github(&mut self, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::GitHubSignOut);
-    }
-
-    /// Picks repositories to clone from GitHub, signing in first if
-    /// needed, then comes back.
-    pub fn pick_github_repos(&mut self, cx: &mut Context<Self>) {
-        if self.setup.user().is_some() {
-            self.navigate(Route::Setup(SetupStep::Repos), cx);
-        } else {
-            self.sign_in_github(cx);
-        }
+    /// Picks repositories to clone from the forge, through plugins' steps
+    /// before the repositories (its sign-in) while the forge is not
+    /// signed in, then comes back.
+    pub fn pick_repos(&mut self, cx: &mut Context<Self>) {
+        let first = self.setup_sequence().into_iter().next();
+        let step = match first {
+            Some(step @ SetupStep::Plugin { .. })
+                if !self.catalog.pull_requests =>
+            {
+                step
+            }
+            _ => SetupStep::Repos,
+        };
         self.setup_goal = Some(SetupGoal::Repos);
+        self.navigate(Route::Setup(step), cx);
     }
 
     /// Leaves onboarding for a new run.
@@ -226,14 +239,6 @@ impl Workspace {
             Route::Home
         };
         self.entered(cx);
-    }
-
-    pub fn sign_in_github(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.setup.github, GitHub::Waiting(_)) {
-            self.setup.github = GitHub::SignedOut;
-            cx.emit(WorkspaceEvent::GitHubSignIn);
-        }
-        self.navigate(Route::Setup(SetupStep::GitHub), cx);
     }
 
     /// What `field` holds, trimmed, taken out of it; none when it is
@@ -248,16 +253,6 @@ impl Workspace {
         }
         field.update(cx, |input, cx| input.clear(cx));
         Some(text)
-    }
-
-    /// Checks the GitHub token typed in onboarding.
-    pub(crate) fn submit_token(&mut self, cx: &mut Context<Self>) {
-        let Some(token) = Self::take_field(&self.github_token, cx) else {
-            return;
-        };
-        self.setup.github = GitHub::Checking;
-        cx.emit(WorkspaceEvent::GitHubToken { token });
-        cx.notify();
     }
 
     /// Opens the model step of onboarding from the Models screen, to

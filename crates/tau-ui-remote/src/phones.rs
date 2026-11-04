@@ -74,10 +74,6 @@ impl WorkspaceEvent {
                 | Self::Phones(_)
                 | Self::OpenRepos(_)
                 | Self::JevKey { .. }
-                | Self::GitHubSignIn
-                | Self::GitHubCheck
-                | Self::GitHubToken { .. }
-                | Self::GitHubSignOut
                 | Self::ChatGptSignIn { .. }
                 | Self::ChatGptCallback { .. }
                 | Self::SwitchChatGpt { .. }
@@ -282,12 +278,6 @@ mod tests {
             WorkspaceEvent::JevKey {
                 key: Some("ts-x".into()),
             },
-            WorkspaceEvent::GitHubSignIn,
-            WorkspaceEvent::GitHubCheck,
-            WorkspaceEvent::GitHubToken {
-                token: "github_pat_x".into(),
-            },
-            WorkspaceEvent::GitHubSignOut,
             WorkspaceEvent::ChatGptSignIn {
                 account: None,
                 consent: false,

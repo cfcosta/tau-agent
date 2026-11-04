@@ -126,12 +126,6 @@ fn main() {
         }
     });
     let onboarding = host.is_none() && !args.demo;
-    // Read before the interface runs: whether GitHub is signed in already.
-    let github_signed_in = onboarding
-        && tau_ui::interface_runtime::block_at_entry(
-            tau_ui::github::Token::load(&credentials.dir),
-        )
-        .is_some();
 
     gpui_platform::application().with_assets(Assets).run(
         move |cx: &mut App| {
@@ -210,13 +204,9 @@ fn main() {
                 }
                 // No model yet: set one up, then start the host.
                 None if onboarding => {
-                    // GitHub first, unless a saved sign-in makes it done.
-                    let step = if github_signed_in {
-                        SetupStep::Model
-                    } else {
-                        SetupStep::Welcome
-                    };
-                    workspace.update(cx, |ws, cx| ws.start_setup(step, cx));
+                    workspace.update(cx, |ws, cx| {
+                        ws.start_setup(SetupStep::Welcome, cx)
+                    });
                     let entity = workspace.clone();
                     host::onboard(
                         &workspace,

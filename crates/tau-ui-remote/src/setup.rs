@@ -1,23 +1,21 @@
-//! What onboarding shows: the GitHub sign-in, the model, the
-//! repositories to clone and how their clones are going.
+//! What onboarding shows: the model, the repositories to clone from the
+//! forge and how their clones are going. Plugins add their own steps
+//! (`points::SETUP`): the forge's sign-in before the repositories.
 //!
 //! The host fills it in as sign-ins and clones progress, through
 //! [`Workspace::update_setup`](crate::Workspace::update_setup).
 
 use serde::{Deserialize, Serialize};
-use tau_ui_plugin::points::{SetupClone, SetupRepo};
+use tau_ui_plugin::points::{SetupAt, SetupClone, SetupRepo};
 
 /// The screens of onboarding, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupStep {
     Welcome,
-    GitHub,
-    /// A personal access token instead of the device flow.
-    Token,
     Model,
     Repos,
-    /// A plugin's step (`points::SETUP`), between the repositories and
-    /// the first run: `step` is the plugin's name for it.
+    /// A plugin's step (`points::SETUP`), before the repositories or
+    /// after them as it says: `step` is the plugin's name for it.
     Plugin {
         plugin: &'static str,
         step: &'static str,
@@ -27,7 +25,7 @@ pub enum SetupStep {
 }
 
 /// A stage of onboarding's step bar: its name, and the step it stands
-/// for (GitHub's stands for the token too).
+/// for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stage {
     pub name: String,
@@ -35,23 +33,27 @@ pub struct Stage {
 }
 
 impl Stage {
-    /// tau's stages around the plugins' `steps`, each a step and what the
-    /// bar calls it, in the order given: GitHub, Model, Repositories,
-    /// the plugins', then Ready.
+    /// tau's stages around the plugins' `steps`, each a step, what the
+    /// bar calls it and where it sits: Model, the plugins' before the
+    /// repositories, Repositories, the plugins' after them, then Ready;
+    /// plugins' in the order given.
     pub fn all(
-        steps: impl IntoIterator<Item = (SetupStep, String)>,
+        steps: impl IntoIterator<Item = (SetupStep, String, SetupAt)>,
     ) -> Vec<Self> {
         let stage = |name: &str, step| Self {
             name: name.to_owned(),
             step,
         };
-        let mut stages = vec![
-            stage("GitHub", SetupStep::GitHub),
-            stage("Model", SetupStep::Model),
-            stage("Repositories", SetupStep::Repos),
-        ];
-        stages
-            .extend(steps.into_iter().map(|(step, name)| Self { name, step }));
+        let (before, after): (Vec<_>, Vec<_>) = steps
+            .into_iter()
+            .partition(|(_, _, at)| *at == SetupAt::BeforeRepositories);
+        let plugins = |steps: Vec<(SetupStep, String, SetupAt)>| {
+            steps.into_iter().map(|(step, name, _)| Self { name, step })
+        };
+        let mut stages = vec![stage("Model", SetupStep::Model)];
+        stages.extend(plugins(before));
+        stages.push(stage("Repositories", SetupStep::Repos));
+        stages.extend(plugins(after));
         stages.push(stage("Ready", SetupStep::Ready));
         stages
     }
@@ -66,7 +68,6 @@ impl SetupStep {
             |step: Self| stages.iter().position(|stage| stage.step == step);
         match self {
             Self::Welcome => None,
-            Self::GitHub | Self::Token => of(Self::GitHub),
             Self::Plugin { .. } => of(self).or_else(|| of(Self::Repos)),
             step => of(step),
         }
@@ -77,38 +78,12 @@ impl SetupStep {
     pub fn title(self) -> &'static str {
         match self {
             Self::Welcome => "Welcome",
-            Self::GitHub => "Sign in with GitHub",
-            Self::Token => "Personal access token",
             Self::Model => "Connect a model",
             Self::Repos => "Pick repositories",
             Self::Plugin { .. } => "Set up",
             Self::Ready => "First run",
         }
     }
-}
-
-/// A code to enter on another page, for a device sign-in.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeviceCode {
-    pub code: String,
-    /// Where to enter it, without the scheme: `github.com/login/device`.
-    pub url: String,
-    /// How long it stays valid, in words.
-    pub expires: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GitHub {
-    #[default]
-    SignedOut,
-    /// Waiting for the user to enter the code and approve.
-    Waiting(DeviceCode),
-    /// A token is being checked.
-    Checking,
-    SignedIn {
-        user: String,
-    },
-    Failed(String),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,19 +116,19 @@ pub enum ModelAccess {
     Failed(String),
 }
 
-/// A repository the user can pick.
+/// A repository on the forge the user can pick.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoChoice {
-    /// `owner/name`.
+    /// Its full name on the forge: `owner/name`.
     pub name: String,
     pub description: String,
     pub branch: String,
     pub selected: bool,
-    /// When it was last pushed to, as GitHub writes it
+    /// When it was last pushed to, as the forge writes it
     /// (`2026-10-04T21:13:07Z`): the list shows the newest first.
     #[serde(default)]
     pub pushed_at: String,
-    /// The URL tau clones it from, as GitHub gives it.
+    /// The URL tau clones it from, as the forge gives it.
     #[serde(default)]
     pub remote: Option<String>,
 }
@@ -183,7 +158,6 @@ pub struct RepoClone {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Setup {
-    pub github: GitHub,
     pub model: ModelAccess,
     pub repos: Vec<RepoChoice>,
     pub clones: Vec<RepoClone>,
@@ -196,7 +170,6 @@ pub struct Setup {
 impl Default for Setup {
     fn default() -> Self {
         Self {
-            github: GitHub::default(),
             model: ModelAccess::default(),
             repos: Vec::new(),
             clones: Vec::new(),
@@ -209,9 +182,8 @@ impl Default for Setup {
 /// What the host learned while the user set up.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SetupUpdate {
-    GitHub(GitHub),
     Model(ModelAccess),
-    /// The repositories the user can pick from.
+    /// The repositories on the forge the user can pick from.
     Repos(Vec<RepoChoice>),
     Clone(RepoClone),
 }
@@ -219,7 +191,6 @@ pub enum SetupUpdate {
 impl Setup {
     pub fn update(&mut self, update: SetupUpdate) {
         match update {
-            SetupUpdate::GitHub(github) => self.github = github,
             SetupUpdate::Model(model) => self.model = model,
             SetupUpdate::Repos(repos) => self.repos = repos,
             SetupUpdate::Clone(clone) => {
@@ -228,13 +199,6 @@ impl Setup {
                     None => self.clones.push(clone),
                 }
             }
-        }
-    }
-
-    pub fn user(&self) -> Option<&str> {
-        match &self.github {
-            GitHub::SignedIn { user } => Some(user),
-            _ => None,
         }
     }
 
@@ -337,14 +301,6 @@ impl Setup {
     }
 }
 
-/// The GitHub App tau signs in through, by its name in GitHub's URLs.
-pub const APP_SLUG: &str = "ascend-repository-cfcosta";
-
-/// Where to give the app access to more repositories.
-pub fn install_url() -> String {
-    format!("https://github.com/apps/{APP_SLUG}/installations/new")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,29 +385,32 @@ mod tests {
         );
     }
 
-    /// Plugins' steps sit between the repositories and Ready, in the
-    /// order given; each step marks its own stage, the token GitHub's,
-    /// and the welcome none.
+    /// Plugins' steps sit before the repositories or between them and
+    /// Ready, as each says, in the order given; each step marks its own
+    /// stage, and the welcome none.
     #[test]
-    fn plugins_steps_come_between_repositories_and_ready() {
-        let step = SetupStep::Plugin {
-            plugin: "p",
-            step: "one",
-        };
-        let stages = Stage::all([(step, "One".to_owned())]);
+    fn plugins_steps_sit_around_the_repositories() {
+        let step = |step| SetupStep::Plugin { plugin: "p", step };
+        let (sign_in, one, two) = (step("sign-in"), step("one"), step("two"));
+        let stages = Stage::all([
+            (one, "One".to_owned(), SetupAt::AfterRepositories),
+            (sign_in, "Sign in".to_owned(), SetupAt::BeforeRepositories),
+            (two, "Two".to_owned(), SetupAt::AfterRepositories),
+        ]);
         let names: Vec<&str> =
             stages.iter().map(|stage| stage.name.as_str()).collect();
-        assert_eq!(names, ["GitHub", "Model", "Repositories", "One", "Ready"]);
-        assert_eq!(step.stage(&stages), Some(3));
-        assert_eq!(SetupStep::Ready.stage(&stages), Some(4));
-        assert_eq!(SetupStep::Token.stage(&stages), Some(0));
+        assert_eq!(
+            names,
+            ["Model", "Sign in", "Repositories", "One", "Two", "Ready"]
+        );
+        assert_eq!(sign_in.stage(&stages), Some(1));
+        assert_eq!(one.stage(&stages), Some(3));
+        assert_eq!(SetupStep::Ready.stage(&stages), Some(5));
+        assert_eq!(SetupStep::Model.stage(&stages), Some(0));
         assert_eq!(SetupStep::Welcome.stage(&stages), None);
-        let gone = SetupStep::Plugin {
-            plugin: "p",
-            step: "two",
-        };
+        let gone = step("gone");
         assert_eq!(gone.stage(&stages), Some(2), "where it would follow");
-        assert_eq!(Stage::all([]).len(), 4);
+        assert_eq!(Stage::all([]).len(), 3);
     }
 
     /// What plugins' steps see: the picked repositories with their

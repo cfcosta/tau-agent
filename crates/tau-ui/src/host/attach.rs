@@ -54,21 +54,84 @@ fn show_catalogs(
     cx: &mut App,
 ) {
     let mut catalogs = host.follow_catalog();
-    let workspace = workspace.downgrade();
+    let entity = workspace.downgrade();
+    let host = Arc::downgrade(host);
     cx.spawn(async move |cx| {
+        // Whether the forge was signed in, as the last catalog said.
+        let mut signed_in = None;
         while catalogs.changed().await.is_ok() {
             let Some(catalog) = catalogs.borrow_and_update().clone() else {
                 continue;
             };
-            let shown = workspace.update(cx, |ws, cx| {
-                ws.apply(HostUpdate::catalog(catalog), cx)
+            let signing = catalog.pull_requests;
+            let shown = entity.update(cx, |ws, cx| {
+                ws.apply(HostUpdate::catalog(catalog), cx);
+                // A sign-in or a sign-out on the forge changes what setup
+                // can pick from.
+                if signed_in == Some(signing) {
+                    return;
+                }
+                match host.upgrade() {
+                    Some(host) if signing => {
+                        let workspace = cx.entity();
+                        list_forge_repos(&host, &workspace, cx);
+                    }
+                    _ => {
+                        let none = SetupUpdate::Repos(Vec::new());
+                        ws.apply(HostUpdate::Setup(none), cx);
+                    }
+                }
             });
             if shown.is_err() {
                 return;
             }
+            signed_in = Some(signing);
         }
     })
     .detach();
+}
+
+/// Lists the forge's repositories for setup to pick from, on the host's
+/// runtime.
+fn list_forge_repos(
+    host: &Arc<Host>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let listed = host.spawn(async move |host| host.forge_repos().await);
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let repos = match listed.await {
+            Ok(Ok(repos)) => repos,
+            Ok(Err(error)) => {
+                eprintln!("tau-ui: cannot list the forge's repos: {error:#}");
+                return;
+            }
+            Err(error) => {
+                eprintln!("tau-ui: cannot list the forge's repos: {error}");
+                return;
+            }
+        };
+        let choices: Vec<_> = repos.into_iter().map(repo_choice).collect();
+        let _ = workspace.update(cx, |ws, cx| {
+            ws.apply(HostUpdate::Setup(SetupUpdate::Repos(choices)), cx)
+        });
+    })
+    .detach();
+}
+
+/// A repository on setup's list, not picked yet.
+fn repo_choice(
+    repo: tau_ui_plugin::forge::ForgeRepo,
+) -> crate::setup::RepoChoice {
+    crate::setup::RepoChoice {
+        name: repo.name,
+        description: repo.description,
+        branch: repo.branch,
+        selected: false,
+        pushed_at: repo.pushed_at,
+        remote: repo.remote,
+    }
 }
 
 /// Messages a run never read, as the one it goes on with: their texts,
@@ -810,15 +873,6 @@ impl Host {
         // change: the host pushes its catalog then.
         let slots = host.repos.lock().expect("not poisoned").clone();
         recover_in_background(&host, slots, workspace, cx);
-        // Signing in to GitHub is still the interface's, beside the
-        // forge's plugin, which reads the sign-in it saves.
-        let sign_in = crate::github::Api::default();
-        crate::github::restore(
-            workspace,
-            &host.config.credentials,
-            &sign_in,
-            cx,
-        );
         let handler = host.clone();
         // A sign-in, a switch of account or a sign-out from the Models
         // screen changes what new runs use.
@@ -854,12 +908,6 @@ impl Host {
                     &handler.config.credentials,
                     handler.config.model.as_deref(),
                     &connected,
-                    cx,
-                ) || crate::github::handle(
-                    event,
-                    &workspace,
-                    &handler.config.credentials,
-                    &sign_in,
                     cx,
                 ) {
                     return;

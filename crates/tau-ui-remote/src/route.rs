@@ -20,7 +20,7 @@ pub enum Route {
     Plugins,
     /// What each plugin's `start` decided for a run.
     Plan(RunId),
-    /// Onboarding: GitHub, a model, repositories, the first run.
+    /// Onboarding: a model, plugins' steps, repositories, the first run.
     Setup(SetupStep),
     /// A phone pairing with the tau on a computer, or failing to reach
     /// it.

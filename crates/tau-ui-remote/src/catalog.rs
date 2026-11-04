@@ -25,8 +25,13 @@ pub struct Catalog {
     /// does not.
     pub closed_runs: Vec<tau_agent::tool::RunId>,
     pub store: StoreInfo,
-    /// Whether the host can open pull requests from runs.
+    /// Whether the host can open pull requests from runs: the forge is
+    /// signed in.
     pub pull_requests: bool,
+    /// What the forge is called, for labels: `GitHub`. `None` when no
+    /// plugin fills the forge's slot.
+    #[serde(default)]
+    pub forge: Option<String>,
     /// Where runs work.
     pub project: ProjectStatus,
     /// What the latest update of a repository found, for the status bar:
@@ -76,6 +81,12 @@ impl Catalog {
 }
 
 impl Catalog {
+    /// What labels call the forge: its name, or `the forge` when no
+    /// plugin fills its slot.
+    pub fn forge_name(&self) -> &str {
+        self.forge.as_deref().unwrap_or("the forge")
+    }
+
     pub fn repo(&self, name: &str) -> Option<&Repo> {
         self.repos.iter().find(|repo| repo.name == name)
     }
@@ -170,12 +181,12 @@ pub struct Repo {
     /// (`UiPlugin::repo_data`).
     #[serde(default)]
     pub plugins: std::collections::BTreeMap<String, PluginValue>,
-    /// How many of trunk's changes GitHub does not have yet: what the
+    /// How many of trunk's changes the forge does not have yet: what the
     /// main chat would push (ADR 0023). Zero for a repository that did
-    /// not come from GitHub.
+    /// not come from the forge.
     #[serde(default)]
     pub unpushed: u32,
-    /// Trunk's branch, which `origin/<trunk>` names on GitHub.
+    /// Trunk's branch, which `origin/<trunk>` names on the forge.
     #[serde(default)]
     pub trunk: Option<String>,
     /// tau's own, like its plugins repository (ADR 0027) or an agent's
@@ -235,7 +246,7 @@ pub enum ProjectStatus {
     Unknown,
     /// The clone named this is being made a project.
     Importing(String),
-    /// The repository named this is taking in new commits from GitHub.
+    /// The repository named this is taking in new commits from the forge.
     Updating(String),
     /// The clone named this could not be made a project; runs cannot
     /// start in it.

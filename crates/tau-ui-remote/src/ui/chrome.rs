@@ -114,7 +114,7 @@ pub fn sidebar(
         .cursor_pointer()
         .hover(|style| style.bg(t.selected))
         .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
-        .on_click(cx.listener(|ws, _, _, cx| ws.pick_github_repos(cx)));
+        .on_click(cx.listener(|ws, _, _, cx| ws.pick_repos(cx)));
 
     let phones = match ws.phones.paired.len() {
         0 => String::new(),
@@ -1499,9 +1499,8 @@ pub fn phone_header(
         })
         .when(matches!(ws.route, Route::Home), |bar| {
             bar.child(
-                icon_button("phone-add-repo", Icon::Folder, 44., t).on_click(
-                    cx.listener(|ws, _, _, cx| ws.pick_github_repos(cx)),
-                ),
+                icon_button("phone-add-repo", Icon::Folder, 44., t)
+                    .on_click(cx.listener(|ws, _, _, cx| ws.pick_repos(cx))),
             )
         })
 }

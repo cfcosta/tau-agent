@@ -135,7 +135,6 @@ impl Workspace {
             pair_address: _,
             pair_code: _,
             phone_name: _,
-            github_token: _,
             chatgpt_callback: _,
             repo_filter: _,
             repos_expanded: _,

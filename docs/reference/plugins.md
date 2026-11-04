@@ -642,22 +642,32 @@ settings)` gives what commands in a repository start through: a
   status bar and shows neither, as it shows no import news today.
 - **First-run setup**
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
-  `points::SETUP` (`Point<AtSetup, SetupView>`) adds a step between
-  Repositories and Ready. `AtSetup::repos` are the repositories picked so
+  `points::SETUP` (`Point<AtSetup, SetupView>`) adds a step around the
+  Repositories step. `AtSetup::repos` are the repositories picked so
   far (`SetupRepo`: the name picked, `owner/name`; tau's `id` once its
-  clone is listed; the `remote` GitHub gave; the `folder`, `None` for a
-  clone; and the clone's state, `SetupClone`). A contribution gives a
-  `SetupView`: its `step` (the plugin's name for it, `&'static str`), the
+  clone is listed; the `remote` the forge gave; the `folder`, `None` for
+  a clone; and the clone's state, `SetupClone`). A contribution gives a
+  `SetupView`: its `step` (the plugin's name for it, `&'static str`), its
+  place `at` (`SetupAt::BeforeRepositories`, as a sign-in the repository
+  list comes from, or `SetupAt::AfterRepositories`, the default), the
   step bar's `title`, the screen's `heading` and `detail`, and its
   `body`. A contribution that gives none, from its catalog data, is no
   step: it is not drawn or counted. The step is
   `SetupStep::Plugin { plugin, step }`, a route like tau's own, so back
   and forward work. The step bar's stages are computed (`Stage::all`):
-  GitHub, Model, Repositories, the steps in the order contributions come
-  (their `order`, then the registry's), then Ready; the counter reads
-  "n / total", "/ 4" with none. Picking repositories (`clone_selected`)
-  and leaving the model step with none to pick (skipping GitHub) both go
-  through the steps. A step ends with `Handle::setup_done`
+  Model, the steps placed before the repositories, Repositories, the
+  steps placed after them, each in the order contributions come (their
+  `order`, then the registry's), then Ready; the counter reads "n /
+  total", "/ 3" with none. Leaving the model step (`continue_from_model`)
+  and picking repositories (`clone_selected`) go through the steps; the
+  Repositories step is skipped while there is nothing to pick (no
+  repositories listed and the forge not signed in,
+  `Catalog::pull_requests`). Adding repositories from the app
+  (`pick_repos`) opens the first step before the repositories while the
+  forge is not signed in, then the Repositories step. The repository
+  list comes from the forge: the host lists `Forge::repos` whenever the
+  catalog says the forge is newly signed in, as `SetupUpdate::Repos`,
+  and empties it on sign-out. A step ends with `Handle::setup_done`
   (`Request::SetupDone`), or when the person clicks the "Skip for now"
   tau draws under it; either goes to the next step, or past the last to
   Ready (with clones) or a new run (without). As setup passes its last
@@ -667,6 +677,21 @@ settings)` gives what commands in a repository start through: a
   what its step chose, such as a job, which reads the repositories as
   their clones land (`JobCx::repos`). Setup stays on the desktop: a phone
   drops `HostUpdate::Setup`, and draws no step.
+- **Signing in to the forge.** tau-github's step comes before the
+  repositories: the device code to enter on GitHub (with "Copy code and
+  open GitHub" and "I have approved it"), or a fine-grained personal
+  access token typed into a secret input, then who is signed in and
+  Continue. The same sign-in is a section of the Models screen
+  (`points::MODELS`), with Sign out. Its trees draw from its catalog data
+  (`GitHubData`: the sign-in as `SignIn`, `Unknown` until a host says,
+  which draws nothing), and its buttons send its host half an `Act`
+  (`sign_in`, `check`, `token`, `sign_out`). The host half,
+  tau-github-host, polls the device code in the background, saves the
+  token as `github.json` in tau's config directory, and asks for the
+  catalog again at each change (`HostCx::refresh`); a saved sign-in
+  answers `Signed { user }`, whose reply ends the setup step. The kernel
+  names no forge: the push and pull request screens label it with
+  `Catalog::forge`, the forge's `Forge::name`.
 
 - **Declared reach**
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).

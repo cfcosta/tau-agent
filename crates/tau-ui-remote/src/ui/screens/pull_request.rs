@@ -496,7 +496,7 @@ fn phone_draft(
 }
 
 fn opened(
-    _ws: &Workspace,
+    ws: &Workspace,
     run: &RunId,
     pr: &PullRequest,
     compact: bool,
@@ -511,15 +511,24 @@ fn opened(
     else {
         return div().into_any_element();
     };
+    let forge = ws.catalog.forge_name().to_owned();
     let (glyph, checks_text, checks_color) = match checks {
-        Checks::Running => {
-            (Icon::Spinner, "Checks are running on GitHub", t.accent)
+        Checks::Running => (
+            Icon::Spinner,
+            format!("Checks are running on {forge}"),
+            t.accent,
+        ),
+        Checks::Passed => {
+            (Icon::Check, format!("Checks passed on {forge}"), t.green)
         }
-        Checks::Passed => (Icon::Check, "Checks passed on GitHub", t.green),
-        Checks::Failed => (Icon::Warning, "Checks failed on GitHub", t.red),
-        Checks::None => {
-            (Icon::Info, "No checks run on this repository", t.muted)
+        Checks::Failed => {
+            (Icon::Warning, format!("Checks failed on {forge}"), t.red)
         }
+        Checks::None => (
+            Icon::Info,
+            "No checks run on this repository".to_owned(),
+            t.muted,
+        ),
     };
     let url = url.clone();
     let back = run.clone();
@@ -602,7 +611,7 @@ fn opened(
                 .child(
                     div()
                         .id("view-pr")
-                        .child(big_button("View on GitHub", Some(Icon::Arrow), ButtonKind::Primary, t))
+                        .child(big_button(format!("View on {forge}"), Some(Icon::Arrow), ButtonKind::Primary, t))
                         .on_click(move |_, _, cx| cx.open_url(&url)),
                 )
                 .child(

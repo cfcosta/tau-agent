@@ -1,7 +1,8 @@
-//! Pushing a repository's main chat to GitHub (ADR 0023): the header's
-//! ahead count and Push button, the sidebar row's line and button, and
-//! the cards at the end of the main chat for a push that went and one
-//! that GitHub's moved branch refused.
+//! Pushing a repository's main chat to the forge (ADR 0023): the
+//! header's ahead count and Push button, the sidebar row's line and
+//! button, and the cards at the end of the main chat for a push that
+//! went and one that the forge's moved branch refused. Labels name the
+//! forge as the catalog does.
 
 use gpui::{Context, SharedString, div, prelude::*, rems};
 
@@ -23,8 +24,8 @@ fn changes(n: usize) -> String {
     }
 }
 
-/// The main chat's header: how far ahead of GitHub trunk is, and Push
-/// to GitHub. Nothing when trunk has nothing to push, and for any other
+/// The main chat's header: how far ahead of the forge trunk is, and
+/// Push. Nothing when trunk has nothing to push, and for any other
 /// chat.
 pub fn header(
     ws: &Workspace,
@@ -55,7 +56,7 @@ pub fn header(
     )
 }
 
-/// The sidebar's main row: `n changes not on GitHub`, and a small Push
+/// The sidebar's main row: `n changes not on <forge>`, and a small Push
 /// button, when trunk has something to push.
 pub fn row(
     ws: &Workspace,
@@ -67,7 +68,11 @@ pub fn row(
     let (ahead, _) = ws.unpushed(&repo)?;
     let pushing =
         matches!(ws.push_state(&repo), Some(PushState::Pushing { .. }));
-    let line = format!("{} not on GitHub", changes(ahead as usize));
+    let line = format!(
+        "{} not on {}",
+        changes(ahead as usize),
+        ws.catalog.forge_name()
+    );
     let button = div()
         .id(SharedString::from(format!("push-{repo}")))
         .flex_shrink_0()
@@ -92,7 +97,7 @@ pub fn row(
 }
 
 /// The card at the end of the main chat for its repository's last push:
-/// the changes it took, or why GitHub refused it, with Fetch and push.
+/// the changes it took, or why the forge refused it, with Fetch and push.
 pub fn card(
     ws: &Workspace,
     run: &RunView,
@@ -104,7 +109,8 @@ pub fn card(
         PushState::Pushing { .. } => None,
         PushState::Pushed(pushed) => Some(pushed_card(pushed, t)),
         PushState::Moved { branch, ahead } => {
-            Some(moved_card(&repo, branch, *ahead, t, cx))
+            let forge = ws.catalog.forge_name().to_owned();
+            Some(moved_card(&repo, &forge, branch, *ahead, t, cx))
         }
     }
 }
@@ -184,6 +190,7 @@ fn pushed_card(pushed: &Pushed, t: &Theme) -> gpui::Div {
 
 fn moved_card(
     repo: &str,
+    forge: &str,
     branch: &str,
     ahead: u32,
     t: &Theme,
@@ -191,7 +198,7 @@ fn moved_card(
 ) -> gpui::Div {
     let (card, head) = frame(
         t.red,
-        format!("GitHub's {branch} moved since the last fetch"),
+        format!("{forge}'s {branch} moved since the last fetch"),
         None,
     );
     let repo = repo.to_owned();

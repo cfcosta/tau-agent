@@ -9752,6 +9752,9 @@ dependencies = [
 name = "tau-github"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "tau-agent",
  "tau-ui-plugin",
 ]
 
@@ -9768,6 +9771,7 @@ dependencies = [
  "tau-agent",
  "tau-ai",
  "tau-github",
+ "tau-store-sqlite",
  "tau-testing",
  "tau-ui-plugin",
  "tempfile",
@@ -10298,6 +10302,7 @@ dependencies = [
  "tau-constitution-host",
  "tau-direnv",
  "tau-fast-compaction",
+ "tau-github",
  "tau-github-host",
  "tau-goal",
  "tau-jev",

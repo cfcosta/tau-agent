@@ -1,9 +1,9 @@
-//! Pushing a repository's main chat to GitHub (ADR 0023): what the
+//! Pushing a repository's main chat to the forge (ADR 0023): what the
 //! host reports, and where a push stands in the interface.
 
 use serde::{Deserialize, Serialize};
 
-/// A change a push took to GitHub: its change id and its description's
+/// A change a push took to the forge: its change id and its description's
 /// first line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushedChange {
@@ -11,7 +11,7 @@ pub struct PushedChange {
     pub title: String,
 }
 
-/// What a push did: the branch, GitHub's commit before and after (full
+/// What a push did: the branch, the forge's commit before and after (full
 /// ids), and the changes it took, oldest first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pushed {
@@ -24,7 +24,7 @@ pub struct Pushed {
 /// Why a push did not go.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PushFailure {
-    /// GitHub's `branch` moved since the last fetch: nothing was pushed,
+    /// The forge's `branch` moved since the last fetch: nothing was pushed,
     /// and `ahead` changes still wait. Fetching puts them on top, and
     /// the push can go again.
     Moved { branch: String, ahead: u32 },

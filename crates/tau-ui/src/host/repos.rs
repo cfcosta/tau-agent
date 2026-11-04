@@ -583,6 +583,15 @@ impl Host {
         Ok(repo)
     }
 
+    /// The repositories the forge's sign-in reaches, for setup to pick
+    /// from: the most recently pushed first.
+    pub async fn forge_repos(
+        &self,
+    ) -> anyhow::Result<Vec<tau_ui_plugin::forge::ForgeRepo>> {
+        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        forge.repos().await
+    }
+
     /// Clones `full_name` (`owner/name`) from the forge with its
     /// sign-in, unless it was cloned before, and lists it. Waits for the
     /// clone; the import goes on in the background.

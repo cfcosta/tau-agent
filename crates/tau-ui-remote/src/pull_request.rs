@@ -1,5 +1,5 @@
 //! A pull request made from a run: the draft the host writes from the
-//! run's commits, and what GitHub says once it is open.
+//! run's commits, and what the forge says once it is open.
 
 use serde::{Deserialize, Serialize};
 

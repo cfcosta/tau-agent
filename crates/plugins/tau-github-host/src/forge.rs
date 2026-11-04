@@ -1,7 +1,10 @@
 //! GitHub as the `tau.forge` slot's filler: the sign-in saved in tau's
 //! config directory, and GitHub's API with it.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use tau_ui_plugin::{
     HostCx,
@@ -11,7 +14,7 @@ use tau_ui_plugin::{
     vcs::Remote,
 };
 
-use crate::{Api, Endpoints, Token};
+use crate::{Api, Endpoints, Token, sign_in::Flow};
 
 /// GitHub, signed in with the token saved in tau's config directory.
 #[derive(Clone)]
@@ -19,6 +22,8 @@ pub struct GitHub {
     api: Api,
     /// tau's config directory, which keeps the sign-in.
     dir: PathBuf,
+    /// The sign-in going on, shared by every clone.
+    pub(crate) flow: Arc<Flow>,
 }
 
 impl GitHub {
@@ -27,6 +32,7 @@ impl GitHub {
         Self {
             api: Api::of(endpoints),
             dir: dir.into(),
+            flow: Arc::default(),
         }
     }
 

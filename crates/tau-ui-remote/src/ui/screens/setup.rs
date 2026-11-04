@@ -1,7 +1,7 @@
 //! Onboarding, in the handshake style: tau's tile and the service it
 //! connects to, joined by a line whose look says how the connection
-//! stands, under a bar with the stages: tau's four, and plugins' steps
-//! before Ready. Faint rings and a glow sit
+//! stands, under a bar with the stages: tau's three, and plugins' steps
+//! around the repositories. Faint rings and a glow sit
 //! behind the handshake, amber while acting, green once connected and
 //! red when blocked. On a phone the same screens stack, with smaller
 //! tiles and full-width buttons.
@@ -20,7 +20,6 @@ use gpui::{
     AnyElement,
     App,
     BoxShadow,
-    ClipboardItem,
     Context,
     Div,
     Focusable as _,
@@ -62,10 +61,10 @@ use crate::{
         stagger,
     },
     route::Route,
-    setup::{CloneState, DeviceCode, GitHub, ModelAccess, SetupStep, Stage},
+    setup::{CloneState, ModelAccess, SetupStep, Stage},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
     ui::{Material as _, bar, icon, icon_button, link, mono, text_link},
-    workspace::{Workspace, WorkspaceEvent},
+    workspace::Workspace,
 };
 
 /// Where ChatGPT explains plan use and who can share it.
@@ -138,29 +137,10 @@ const WELCOME_CENTER: f32 = TOP_BAR + 196.;
 /// The handshake's other side, the line and the rings for `step`, as
 /// onboarding stands, with the step bar's `stages`.
 fn frame(ws: &Workspace, step: SetupStep, stages: &[Stage]) -> Frame {
-    let signed_in = ws.setup.user().is_some();
     let (state, mood, link, service, scale) = match step {
         SetupStep::Welcome => {
             (0, Mood::Acting, Link::Idle, Service::None, Scale::Big)
         }
-        SetupStep::GitHub => match &ws.setup.github {
-            GitHub::SignedIn { .. } => {
-                (1, Mood::Done, Link::Connected, Service::GitHub, Scale::Big)
-            }
-            GitHub::Failed(_) => {
-                (2, Mood::Refused, Link::Blocked, Service::GitHub, Scale::Big)
-            }
-            _ => (0, Mood::Acting, Link::Waiting, Service::GitHub, Scale::Big),
-        },
-        SetupStep::Token => match &ws.setup.github {
-            GitHub::Failed(_) => {
-                (2, Mood::Refused, Link::Blocked, Service::Token, Scale::Big)
-            }
-            GitHub::Checking => {
-                (1, Mood::Acting, Link::Waiting, Service::Token, Scale::Big)
-            }
-            _ => (0, Mood::Acting, Link::Idle, Service::Token, Scale::Big),
-        },
         SetupStep::Model => {
             let (state, mood, link) = match &ws.setup.model {
                 ModelAccess::None => (0, Mood::Acting, Link::Idle),
@@ -205,8 +185,7 @@ fn frame(ws: &Workspace, step: SetupStep, stages: &[Stage]) -> Frame {
     let stage = step.stage(stages);
     let segments = (0..stages.len())
         .map(|n| match stage {
-            // GitHub can be skipped: then it is not done.
-            Some(stage) if n < stage && (n > 0 || signed_in) => Segment::Done,
+            Some(stage) if n < stage => Segment::Done,
             Some(stage) if n == stage => Segment::Current,
             _ => Segment::Ahead,
         })
@@ -303,8 +282,6 @@ pub fn render(
     let stages = ws.setup_stages();
     let body = match step {
         SetupStep::Welcome => welcome(ws, compact, t, cx),
-        SetupStep::GitHub => github(ws, compact, t, cx),
-        SetupStep::Token => token(ws, compact, t, cx),
         SetupStep::Model => model(ws, compact, t, cx),
         SetupStep::Repos => repos(ws, compact, t, cx),
         SetupStep::Plugin { plugin, step } => {
@@ -722,13 +699,9 @@ fn service_icon(
             .into_any_element()
     };
     match service {
-        Service::GitHub => {
-            brand_mark(Brand::GitHub, tile * 0.57 * scale, t.text, turn, t)
-        }
         Service::ChatGpt | Service::None => {
             brand_mark(Brand::ChatGpt, tile * 0.57 * scale, t.text, turn, t)
         }
-        Service::Token => glyph(Icon::Key, 0.41),
         Service::Repos => glyph(Icon::Repo, 0.42),
         Service::Plugin => glyph(Icon::Plug, 0.42),
         Service::FirstRun => glyph(Icon::Runs, 0.42),
@@ -1461,33 +1434,6 @@ fn account_chip(
         )
 }
 
-/// From onboarding, a way past GitHub to the model; from the app, the
-/// way back.
-fn skip_or_back(
-    ws: &Workspace,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> impl IntoElement {
-    let from_app = ws.setup_goal.is_some();
-    div()
-        .id("skip-github")
-        .child(text_button(
-            if from_app {
-                "Back"
-            } else {
-                "Skip GitHub for now"
-            },
-            t,
-        ))
-        .on_click(cx.listener(move |ws, _, _, cx| {
-            if from_app {
-                ws.leave_setup(cx)
-            } else {
-                ws.navigate(Route::Setup(SetupStep::Model), cx)
-            }
-        }))
-}
-
 // The screens.
 
 fn welcome(
@@ -1498,11 +1444,11 @@ fn welcome(
 ) -> Div {
     let motion = &ws.setup_motion;
     let steps = [
-        (
-            "Sign in with GitHub",
-            "Clone what you pick, open pull requests.",
-        ),
         ("Connect ChatGPT", "Runs use your ChatGPT plan."),
+        (
+            "Sign in where your code is",
+            "Plugins ask what they need, such as a sign-in to clone from.",
+        ),
         (
             "Pick repositories",
             "Cloned into tau's storage, versioned with jj.",
@@ -1582,29 +1528,21 @@ fn welcome(
                     motion,
                     "actions",
                     120,
-                    actions(compact)
-                        .child(
-                            div()
-                                .id("continue-github")
-                                .when(compact, |button| button.w_full())
-                                .child(light_button(
-                                    "Continue with GitHub",
-                                    Some(brand_mark(
-                                        Brand::GitHub,
-                                        18.,
-                                        t.setup.on_light,
-                                        0.,
-                                        t,
-                                    )),
-                                    true,
-                                    compact,
-                                    t,
-                                ))
-                                .on_click(cx.listener(|ws, _, _, cx| {
-                                    ws.sign_in_github(cx)
-                                })),
-                        )
-                        .child(skip_or_back(ws, t, cx)),
+                    actions(compact).child(
+                        div()
+                            .id("get-started")
+                            .when(compact, |button| button.w_full())
+                            .child(light_button(
+                                "Get started",
+                                None,
+                                true,
+                                compact,
+                                t,
+                            ))
+                            .on_click(cx.listener(|ws, _, _, cx| {
+                                ws.navigate(Route::Setup(SetupStep::Model), cx)
+                            })),
+                    ),
                 ))
                 .child(rise(
                     motion,
@@ -1695,8 +1633,8 @@ fn orbit(t: &Theme) -> Div {
         .child(sat(
             cx - R,
             cy,
-            brand_mark(Brand::GitHub, 40., t.text, 0., t),
-            "01 · GitHub",
+            icon(Icon::Plug, IconSize(32.), t.text_soft).into_any_element(),
+            "02 · plugins",
         ))
         .child(sat(
             cx,
@@ -1708,7 +1646,7 @@ fn orbit(t: &Theme) -> Div {
             cx + R,
             cy,
             brand_mark(Brand::ChatGpt, 40., t.text, 0., t),
-            "02 · your plan",
+            "01 · your plan",
         ))
         .child(
             div()
@@ -1716,408 +1654,6 @@ fn orbit(t: &Theme) -> Div {
                 .left(rems((cx - 60.) / 16.))
                 .top(rems((cy - 60.) / 16.))
                 .child(tau_tile(120., t)),
-        )
-}
-
-/// The code to enter, or what stands in for it while there is none.
-fn code_or_status(github: &GitHub) -> Result<&DeviceCode, &'static str> {
-    match github {
-        GitHub::Waiting(code) => Ok(code),
-        GitHub::SignedIn { .. } => Err("Signed in"),
-        _ => Err("Asking GitHub for a code…"),
-    }
-}
-
-fn open_device_page(code: &DeviceCode, cx: &mut App) {
-    cx.write_to_clipboard(ClipboardItem::new_string(code.code.clone()));
-    cx.open_url(&format!("https://{}", code.url));
-}
-
-/// The code, a character to a cell. The characters rise in turn as the
-/// code arrives, and flash once each time it is copied.
-fn code_cells(
-    code: &str,
-    motion: &SetupMotion,
-    compact: bool,
-    t: &Theme,
-) -> Div {
-    let (w, h, style) = if compact {
-        (30., 42., Type::HEADLINE.mono())
-    } else {
-        (50., 64., Type::CODE_CELL)
-    };
-    let (top, surface, border, flash) =
-        (t.setup.surface_top, t.setup.surface, t.border, t.accent);
-    let copies = motion.copies;
-    let reduce = motion.reduce;
-    div()
-        .flex()
-        .items_center()
-        .gap(sp(if compact { 1. } else { 2. }))
-        .children(code.chars().enumerate().map(|(n, ch)| {
-            let cell = if ch == '-' {
-                div()
-                    .w(rems((if compact { 10. } else { 16. }) / 16.))
-                    .h(rems(0.125))
-                    .bg(t.border_strong)
-                    .into_any_element()
-            } else {
-                let cell = div()
-                    .w(rems((w) / 16.))
-                    .h(rems((h) / 16.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(radius::CARD)
-                    .bevel(top, surface, t)
-                    .border_1()
-                    .border_color(border)
-                    .child(mono(ch.to_string(), style, t.setup.light));
-                if copies > 0 {
-                    cell.with_animation(
-                        SharedString::from(format!("flash-{copies}-{n}")),
-                        after(stagger(0, 25, n), 600, curve::ease_in_out()),
-                        move |cell, e| {
-                            // Back to its bevel once the flash is over.
-                            if e >= 1. {
-                                return cell;
-                            }
-                            cell.bg(mix(flash.opacity(0.35), surface, e))
-                                .border_color(mix(flash, border, e))
-                        },
-                    )
-                    .into_any_element()
-                } else {
-                    cell.into_any_element()
-                }
-            };
-            div().child(cell).with_animation(
-                SharedString::from(format!("code-{code}-{n}")),
-                entrance(stagger(0, 40, n), reduce),
-                move |slot, e| {
-                    let slot = slot.opacity(e.clamp(0., 1.));
-                    if reduce {
-                        slot
-                    } else {
-                        slot.relative().top(rems((12. * (1. - e)) / 16.))
-                    }
-                },
-            )
-        }))
-}
-
-const PERMISSIONS: [(&str, &str, &str); 3] = [
-    ("Contents", "read & write", "Read and write"),
-    ("Pull requests", "read & write", "Read and write"),
-    ("Metadata", "read", "Read-only"),
-];
-
-fn github(
-    ws: &Workspace,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let motion = &ws.setup_motion;
-    let code = code_or_status(&ws.setup.github).ok().cloned();
-    let below = match &ws.setup.github {
-        GitHub::SignedIn { .. } => "signed in",
-        GitHub::Failed(_) => "failed",
-        _ => "waiting for approval",
-    };
-    let shown = match (&code, code_or_status(&ws.setup.github)) {
-        (Some(code), _) => div()
-            .id("copy-code")
-            .cursor_pointer()
-            .child(code_cells(&code.code, motion, compact, t))
-            .on_click({
-                let code = code.code.clone();
-                cx.listener(move |ws, _, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(
-                        code.clone(),
-                    ));
-                    ws.setup_motion.copies += 1;
-                    cx.notify();
-                })
-            })
-            .into_any_element(),
-        (None, Err(status)) => div()
-            .typeset(Type::HEADING)
-            .text_color(t.muted)
-            .child(status)
-            .into_any_element(),
-        (None, Ok(_)) => div().into_any_element(),
-    };
-    let open = code.clone();
-    let status = match &ws.setup.github {
-        GitHub::Failed(error) => Some(
-            div()
-                .max_w(rems(35.))
-                .text_center()
-                .typeset(Type::SMALL)
-                .text_color(t.red)
-                .child(error.clone()),
-        ),
-        GitHub::SignedIn { user } => Some(
-            div()
-                .typeset(Type::SMALL)
-                .text_color(t.green)
-                .child(format!("Signed in as @{user}")),
-        ),
-        _ => None,
-    };
-    let permissions = div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .justify_center()
-        .gap_x(sp(4.5))
-        .gap_y(sp(1.5))
-        .typeset(Type::SMALL)
-        .children(PERMISSIONS.iter().map(|(name, level, _)| {
-            div()
-                .flex()
-                .gap(sp(1.))
-                .child(div().text_color(t.text_soft).child(*name))
-                .child(div().text_color(t.dim).child(format!("· {level}")))
-        }))
-        .when(!compact, |row| {
-            row.child(div().text_color(t.border_strong).child("|"))
-        })
-        .child(
-            div()
-                .id("use-token")
-                .child(text_link("Use a personal access token", Type::SMALL, t))
-                .on_click(cx.listener(|ws, _, _, cx| {
-                    ws.navigate(Route::Setup(SetupStep::Token), cx)
-                })),
-        );
-    div()
-        .child(handshake(
-            ws,
-            (Some("device sign-in"), Some(below)),
-            compact,
-            t,
-        ))
-        .child(
-            headline(
-                motion,
-                0,
-                (
-                    "Enter this code on GitHub",
-                    "Open GitHub, type the code, and approve the tau app. \
-                     This screen moves on by itself.",
-                ),
-                Type::HERO_MEDIUM,
-                560.,
-                compact,
-                t,
-            )
-            .mt(sp(if compact { 8. } else { 15. })),
-        )
-        .child(
-            div()
-                .mt(sp(if compact { 6. } else { 7. }))
-                .w_full()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(sp(6.))
-                .child(shown)
-                .child(rise(
-                    motion,
-                    "actions",
-                    80,
-                    actions(compact)
-                        .child(
-                            div()
-                                .id("open-github")
-                                .when(compact, |button| button.w_full())
-                                .child(light_button(
-                                    "Copy code and open GitHub",
-                                    None,
-                                    true,
-                                    compact,
-                                    t,
-                                ))
-                                .on_click(cx.listener(move |ws, _, _, cx| {
-                                    if let Some(code) = &open {
-                                        open_device_page(code, cx);
-                                        ws.setup_motion.copies += 1;
-                                        cx.notify();
-                                    }
-                                })),
-                        )
-                        .child(
-                            div()
-                                .id("approved")
-                                .when(compact, |button| button.w_full())
-                                .child(ghost_button(
-                                    "I have approved it",
-                                    None,
-                                    compact,
-                                    t,
-                                ))
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.emit(WorkspaceEvent::GitHubCheck)
-                                })),
-                        ),
-                ))
-                .children(status)
-                .child(rise(motion, "permissions", 120, permissions))
-                .children(code.as_ref().map(|code| {
-                    rise(
-                        motion,
-                        "where",
-                        160,
-                        mono(
-                            format!(
-                                "{} · code expires in {} · only on the \
-                                 repositories you pick next",
-                                code.url, code.expires
-                            ),
-                            Type::CAPTION,
-                            t.setup.faint,
-                        )
-                        .text_center(),
-                    )
-                }))
-                .child(skip_or_back(ws, t, cx)),
-        )
-}
-
-fn token(
-    ws: &Workspace,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let motion = &ws.setup_motion;
-    let look = &t.setup;
-    let checking = ws.setup.github == GitHub::Checking;
-    let failed = match &ws.setup.github {
-        GitHub::Failed(error) => Some(error.clone()),
-        _ => None,
-    };
-    let rows = PERMISSIONS.iter().enumerate().map(|(n, (name, _, level))| {
-        div()
-            .flex()
-            .justify_between()
-            .py(sp(2.5))
-            .when(n > 0, |row| row.border_t_1().border_color(look.divider))
-            .child(
-                div()
-                    .typeset(Type::SMALL)
-                    .text_color(t.text_soft)
-                    .child(*name),
-            )
-            .child(mono(*level, Type::CAPTION, t.dim))
-    });
-    let form = div()
-        .w_full()
-        .max_w(rems(35.))
-        .flex()
-        .flex_col()
-        .gap(sp(3.5))
-        .child(mono("FINE-GRAINED TOKEN", Type::MICRO, t.dim))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .h(rems(3.125))
-                .px(sp(4.))
-                .rounded(radius::CARD)
-                .border_1()
-                .border_color(t.border_strong)
-                .bg(look.surface)
-                .shadow(vec![
-                    BoxShadow::new(px(0.), px(0.), t.accent.opacity(0.10))
-                        .spread_radius(px(4.)),
-                ])
-                .typeset(Type::BODY.mono())
-                .child(ws.github_token.clone()),
-        )
-        .child(
-            glass(t)
-                .rounded(radius::CARD)
-                .px(sp(4.))
-                .py(sp(1.))
-                .children(rows),
-        )
-        .when_some(failed, |form, error| {
-            form.child(
-                div().typeset(Type::SMALL).text_color(t.red).child(error),
-            )
-        });
-    div()
-        .child(handshake(
-            ws,
-            (Some("personal access token"), None),
-            compact,
-            t,
-        ))
-        .child(
-            headline(
-                motion,
-                0,
-                (
-                    "Use a personal access token",
-                    "A fine-grained token works in place of the GitHub App. \
-                     Give it these repository permissions, then paste it \
-                     here.",
-                ),
-                Type::HERO_MEDIUM,
-                560.,
-                compact,
-                t,
-            )
-            .mt(sp(if compact { 8. } else { 15. })),
-        )
-        .child(
-            div()
-                .mt(sp(if compact { 6. } else { 7. }))
-                .w_full()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(sp(5.))
-                .child(rise(motion, "form", 80, form))
-                .child(rise(
-                    motion,
-                    "actions",
-                    120,
-                    actions(compact)
-                        .child(
-                            div()
-                                .id("check-token")
-                                .when(compact, |button| button.w_full())
-                                .child(light_button(
-                                    if checking {
-                                        "Checking…"
-                                    } else {
-                                        "Check the token"
-                                    },
-                                    None,
-                                    false,
-                                    compact,
-                                    t,
-                                ))
-                                .on_click(cx.listener(|ws, _, _, cx| {
-                                    ws.submit_token(cx)
-                                })),
-                        )
-                        .child(
-                            div()
-                                .id("token-back")
-                                .child(text_button("Back to GitHub sign-in", t))
-                                .on_click(cx.listener(|ws, _, _, cx| {
-                                    ws.navigate(
-                                        Route::Setup(SetupStep::GitHub),
-                                        cx,
-                                    )
-                                })),
-                        ),
-                )),
         )
 }
 
@@ -2478,10 +2014,10 @@ fn model_signed_in(
     };
     let next = if ws.setup_goal.is_some() {
         "Done"
-    } else if ws.setup.repos.is_empty() {
-        "Start your first run"
+    } else if ws.setup_has_steps_after_model() {
+        "Continue"
     } else {
-        "Continue to repositories"
+        "Start your first run"
     };
     div()
         .gap(sp(6.5))
@@ -2853,50 +2389,30 @@ fn repos(
                     motion,
                     "actions",
                     800,
-                    actions(compact)
-                        .gap(sp(4.))
-                        .child(
-                            div()
-                                .id("clone")
-                                .when(compact, |button| button.w_full())
-                                .child(
-                                    light_button(
-                                        match count {
-                                            0 => "Pick a repository".to_owned(),
-                                            1 => {
-                                                "Clone 1 repository".to_owned()
-                                            }
-                                            n => format!(
-                                                "Clone {n} repositories"
-                                            ),
-                                        },
-                                        None,
-                                        count > 0,
-                                        compact,
-                                        t,
-                                    )
-                                    .when(count == 0, |button| {
-                                        button.opacity(0.5)
-                                    }),
-                                )
-                                .on_click(cx.listener(move |ws, _, _, cx| {
-                                    if count > 0 {
-                                        ws.clone_selected(cx)
-                                    }
-                                })),
-                        )
-                        .child(
-                            div()
-                                .id("install-app")
-                                .child(text_link(
-                                    "Missing one? Give tau's GitHub App access",
-                                    Type::SMALL,
+                    actions(compact).gap(sp(4.)).child(
+                        div()
+                            .id("clone")
+                            .when(compact, |button| button.w_full())
+                            .child(
+                                light_button(
+                                    match count {
+                                        0 => "Pick a repository".to_owned(),
+                                        1 => "Clone 1 repository".to_owned(),
+                                        n => format!("Clone {n} repositories"),
+                                    },
+                                    None,
+                                    count > 0,
+                                    compact,
                                     t,
-                                ))
-                                .on_click(|_, _, cx| {
-                                    cx.open_url(&crate::setup::install_url())
-                                }),
-                        ),
+                                )
+                                .when(count == 0, |button| button.opacity(0.5)),
+                            )
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                if count > 0 {
+                                    ws.clone_selected(cx)
+                                }
+                            })),
+                    ),
                 ))
                 .child(footnote(
                     format!(

@@ -5,10 +5,7 @@ use super::*;
 /// Carries out onboarding when no model is configured: Sign in with
 /// ChatGPT. Once a sign-in with plan use is saved, `ready` gets its
 /// account to build a [`Host`] from, and the host handles sign-ins from
-/// then on.
-///
-/// GitHub sign-ins work before a model is connected, so onboarding can
-/// start with them.
+/// then on, and plugins' setup steps with its plugins.
 pub fn onboard(
     workspace: &Entity<Workspace>,
     model: Option<String>,
@@ -28,25 +25,17 @@ pub fn onboard(
         })
     };
     let sign_ins = accounts::SignIns::default();
-    let api = crate::github::Api::default();
-    crate::github::restore(workspace, &credentials, &api, cx);
     cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
         // Once a host runs, it answers.
         if done.get() {
             return;
         }
-        let _ = sign_ins.handle(
+        sign_ins.handle(
             event,
             &workspace,
             &credentials,
             model.as_deref(),
             &connected,
-            cx,
-        ) || crate::github::handle(
-            event,
-            &workspace,
-            &credentials,
-            &api,
             cx,
         );
     })

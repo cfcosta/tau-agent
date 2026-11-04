@@ -141,8 +141,18 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // Onboarding's steps.
     ("welcome", |ws, _, cx| setup_at(ws, SetupStep::Welcome, cx)),
     ("setup", |ws, _, cx| setup_at(ws, SetupStep::Welcome, cx)),
-    ("github", |ws, _, cx| setup_at(ws, SetupStep::GitHub, cx)),
-    ("token", |ws, _, cx| setup_at(ws, SetupStep::Token, cx)),
+    // tau-github's step before the repositories: the device code, the
+    // token form, and signed in.
+    ("github", |ws, host, cx| {
+        let code = device_code();
+        github_step(ws, host, tau_github::SignIn::Waiting { code }, false, cx)
+    }),
+    ("token", |ws, host, cx| {
+        github_step(ws, host, tau_github::SignIn::SignedOut, true, cx)
+    }),
+    ("github-signed-in", |ws, host, cx| {
+        github_step(ws, host, signed_in(), false, cx)
+    }),
     ("model", |ws, _, cx| setup_at(ws, SetupStep::Model, cx)),
     ("repos", |ws, _, cx| setup_at(ws, SetupStep::Repos, cx)),
     ("ready", |ws, _, cx| setup_at(ws, SetupStep::Ready, cx)),
@@ -1546,6 +1556,25 @@ fn setup_at(
 ) {
     workspace.set_setup(setup(step), cx);
     workspace.navigate(Route::Setup(step), cx);
+}
+
+/// tau-github's setup step with its sign-in as `sign_in`, and its token
+/// form open when `token`.
+fn github_step(
+    workspace: &mut Workspace,
+    host: &DemoHost,
+    sign_in: tau_github::SignIn,
+    token: bool,
+    cx: &mut Context<Workspace>,
+) {
+    github_sign_in(workspace, host, sign_in, cx);
+    workspace.set_plugin_ui(
+        tau_github::NAME,
+        tau_github::TOKEN_FORM,
+        token.then_some(serde_json::Value::Bool(true)),
+        cx,
+    );
+    setup_at(workspace, GITHUB_STEP, cx);
 }
 
 /// Onboarding's model step with the model reached as `model`.
