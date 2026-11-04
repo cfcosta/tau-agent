@@ -89,6 +89,9 @@ leaves conflicts. A detached sub-agent can use that queue.
   before.
 - One that finished and waits in the queue is stored there. It lands,
   and is reported, when the next start drains main.
+- One that finished as tau closed, before tau took its end, joins
+  main's queue at the next start, as if tau had not closed: it lands,
+  and is reported, as the start drains main.
 
 ### Below main
 

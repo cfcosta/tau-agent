@@ -4,8 +4,13 @@
 use std::collections::BTreeSet;
 
 use tau_ui_plugin::vcs::{Held, Keep, Owner, Standing};
+use tau_ui_remote::queue::{SubAgentEnd, Waiting};
 
-use super::*;
+use super::{
+    landing::Reading,
+    queue::{Lane, Record},
+    *,
+};
 
 /// What the store says of every run, for deciding what a sweep keeps.
 struct Runs {
@@ -113,11 +118,72 @@ impl Host {
     /// trunk.
     ///
     /// Landings cut off are finished first, then the sweep takes what
-    /// no open run owns. Returns the landings finished, for their cards.
+    /// no open run owns, and the sub-agents that finished unheard join
+    /// their main chat's queue. Returns the landings finished, for their
+    /// cards.
     pub async fn recover(&self) -> anyhow::Result<Vec<LandingRecord>> {
         let finished = self.finish_landings().await?;
         self.sweep().await?;
+        self.queue_unheard_sub_agents().await?;
         Ok(finished)
+    }
+
+    /// Puts in each main chat's queue the sub-agents that finished before
+    /// tau closed but whose end it never took (ADR 0026): as if tau had
+    /// not closed, they land as the queue drains, and tau's turn on main
+    /// reports them. One the queue ever held, one that landed or was
+    /// dropped, and one this session follows are left alone.
+    pub(super) async fn queue_unheard_sub_agents(&self) -> anyhow::Result<()> {
+        for main in self.mains() {
+            let main = RunId(main.as_str().into());
+            let state = self.repo_state_of(&main).await?;
+            let _draining = state.draining.lock().await;
+            let heard: HashSet<String> =
+                self.store
+                    .plugin_entries(&main.0, QUEUE_PLUGIN)
+                    .await?
+                    .iter()
+                    .filter_map(|(_, body)| serde_json::from_str(body).ok())
+                    .filter_map(|record: Record| match record {
+                        Record::Queued(waiting) => Some(waiting.run),
+                        Record::Previewed { run, .. }
+                        | Record::Left { run } => Some(run),
+                        _ => None,
+                    })
+                    .collect();
+            for record in self.store.subagents(&main.0).await? {
+                let child = RunId(record.id.as_str().into());
+                let finished =
+                    matches!(record.status, Status::Done | Status::Limit);
+                if !finished
+                    || heard.contains(&record.id)
+                    || self.is_sub_agent(&child)
+                    || self.ending_of(&child).await?.is_some()
+                {
+                    continue;
+                }
+                let title = self.title_of(&child).await?;
+                let (changes, conflicts) = self
+                    .land_dry(&child, Reading::Forecast)
+                    .await
+                    .map(|landing| (landing.changes.len(), landing.conflicts))
+                    .unwrap_or_default();
+                let actions = self
+                    .with_lane(&main, |lane: &mut Lane| {
+                        lane.queue(Waiting {
+                            run: child.0.to_string(),
+                            title,
+                            changes,
+                            conflicts,
+                            confirmed: Vec::new(),
+                            sub_agent: Some(SubAgentEnd::default()),
+                        })
+                    })
+                    .await?;
+                self.perform(&main, actions).await?;
+            }
+        }
+        Ok(())
     }
 
     /// Sweeps every listed repository's project of the workspaces and

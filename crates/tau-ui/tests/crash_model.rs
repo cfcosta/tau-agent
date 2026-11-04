@@ -27,9 +27,6 @@
 //! - the queue is what its records give, and a second start finds
 //!   nothing to finish and shows the same;
 //! - every chat open takes a message again, its tools working.
-//!
-//! Two gaps are pinned by ignored tests, each a question: a chat the host
-//! showed but never stored, and a sub-agent that finished as tau closed.
 
 #![allow(
     clippy::disallowed_methods,
@@ -1112,11 +1109,6 @@ struct Machine {
     pending_starts: Vec<(String, String)>,
     /// Chats tau closed while landing or dropping.
     unsure: BTreeSet<RunId>,
-    /// Sub-agents that finished as tau closed, before it took their end:
-    /// left where they are, as tau does now.
-    stranded: BTreeSet<RunId>,
-    /// Holds a stranded sub-agent to landing too.
-    strict: bool,
     /// A turn of main's tau's closing cut off may have left files in its
     /// working copy.
     main_dirty: bool,
@@ -1141,8 +1133,6 @@ impl Machine {
             workspaces: BTreeMap::new(),
             pending_starts: Vec::new(),
             unsure: BTreeSet::new(),
-            stranded: BTreeSet::new(),
-            strict: false,
             main_dirty: false,
             next: 0,
         }
@@ -1596,21 +1586,6 @@ impl Machine {
                 self.maybe_on_trunk.insert(file.to_owned());
             }
         }
-        // A sub-agent that finished before tau closed, but whose end
-        // tau never took, nobody lands or reports: see
-        // `a_sub_agent_that_finished_as_tau_closed_lands_at_start`.
-        let queued = queued(life, &self.main);
-        for sub in &self.sub_agents {
-            let landed =
-                committed(life.project.blocking(), &self.disk.base, &sub.file);
-            if !self.strict
-                && !landed
-                && life.status(&sub.id) == Some(Status::Done)
-                && !queued.contains(&sub.id.0.to_string())
-            {
-                self.stranded.insert(sub.id.clone());
-            }
-        }
         // What a cut step brought to trunk is there for good, or never.
         let maybe = std::mem::take(&mut self.maybe_on_trunk);
         for file in maybe {
@@ -1924,7 +1899,6 @@ fn check(machine: &mut Machine) {
         if life.status(&sub.id) == Some(Status::Done)
             && !queued.contains(&sub.id.0.to_string())
             && !machine.maybe_on_trunk.contains(&sub.file)
-            && !machine.stranded.contains(&sub.id)
         {
             assert!(on_trunk(&sub.file), "sub-agent {} is stranded", sub.id.0);
         }
@@ -1953,16 +1927,11 @@ fn a_crash_anywhere_loses_nothing_nightly(tc: TestCase) {
 
 /// A sub-agent finished, and tau closed as main's turn ended, before it
 /// took the sub-agent's end (found by `a_crash_anywhere_loses_nothing`).
-/// Started again, tau knows nothing of it: it never joins main's queue,
-/// so its work never lands and main is never told; the start's sweep
-/// keeps its workspace, as one that finished.
+/// Started again, tau puts it in main's queue as if it had never closed,
+/// and it lands.
 #[test]
-#[ignore = "should a sub-agent that finished before tau took its end land \
-            on main at the next start, as one that just ended, or be \
-            dropped and reported, as one cut off?"]
 fn a_sub_agent_that_finished_as_tau_closed_lands_at_start() {
     let mut machine = Machine::new();
-    machine.strict = true;
     // Main's turn catches up as it starts, then again as it ends.
     machine.life().fuse.arm_at("catch_up", 1);
     machine.spawn();
