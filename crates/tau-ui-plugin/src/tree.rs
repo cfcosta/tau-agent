@@ -310,6 +310,15 @@ pub enum Node {
         #[serde(default)]
         height: Option<f32>,
     },
+    /// A tree the interface fetches and keeps (ADR 0045), as a picture:
+    /// `key` names it, and changes when what it shows does; `fetch` is the
+    /// plugin's own action that asks its host half for it, answered with
+    /// `{ "tree": node }` or `{ "error": why }`. Its actions are the
+    /// plugin's, as the rest of the tree's.
+    Fetched {
+        key: String,
+        fetch: Value,
+    },
     /// A unified diff, its lines colored as `path`'s language when known.
     Diff {
         text: String,
@@ -633,8 +642,11 @@ pub enum Act {
 /// Carries out what a click asks.
 pub type OnAct = Rc<dyn Fn(Act, &mut App)>;
 
-/// Draws a bound settings piece, given as JSON.
-pub type DrawSetting<'a> = &'a dyn Fn(&Value, &Theme) -> AnyElement;
+/// What the interface has of a fetched tree: given its key and the
+/// action that asks for it, the answer once there is one, and why it
+/// failed when it did. The interface asks for it the first time.
+pub type Fetches<'a> =
+    &'a dyn Fn(&str, &Value, &mut App) -> Option<Result<Value, String>>;
 
 /// What a tree is drawn with.
 pub struct Draw<'a> {
@@ -643,9 +655,6 @@ pub struct Draw<'a> {
     pub id: SharedString,
     /// What clicks do; without it buttons and links draw but do nothing.
     pub on_act: Option<OnAct>,
-    /// How bound settings pieces draw; without it they say they belong
-    /// on a settings page.
-    pub setting: Option<DrawSetting<'a>>,
     /// The plugin's UI state, which sections and tabs read; without it
     /// each shows as it starts.
     pub ui: Option<&'a std::collections::BTreeMap<String, Value>>,
@@ -658,6 +667,9 @@ pub struct Draw<'a> {
     /// Where widgets' views come from (terminals, tickers); without it a
     /// widget shows that it is drawn where one is kept.
     pub widgets: Option<Widgets<'a>>,
+    /// Where fetched trees come from; without one a fetched tree shows
+    /// that it is drawn where they are kept.
+    pub fetches: Option<Fetches<'a>>,
     /// The width the tree is laid out in, in pixels.
     pub width: f32,
     /// The window's size, in pixels, where a modal lays its backdrop.
@@ -670,11 +682,11 @@ impl<'a> Draw<'a> {
             theme,
             id: id.into(),
             on_act: None,
-            setting: None,
             ui: None,
             prefix: None,
             inputs: None,
             widgets: None,
+            fetches: None,
             width: 960.,
             window: (960., 720.),
         }
@@ -693,8 +705,8 @@ impl<'a> Draw<'a> {
         self
     }
 
-    pub fn setting(mut self, setting: DrawSetting<'a>) -> Self {
-        self.setting = Some(setting);
+    pub fn fetches(mut self, fetches: Fetches<'a>) -> Self {
+        self.fetches = Some(fetches);
         self
     }
 
@@ -1330,6 +1342,21 @@ impl<'a> Draw<'a> {
                     invalid("an image, drawn where the interface keeps one", t)
                 }
             },
+            Node::Fetched { key, fetch } => match self.fetches {
+                Some(fetches) => match fetches(key, fetch, cx) {
+                    Some(Ok(answer)) => {
+                        let tree = Node::read(&answer["tree"]);
+                        self.at(&tree, depth + 1, &format!("{path}.0"), cx)
+                    }
+                    Some(Err(why)) => invalid(&why, t),
+                    None => div()
+                        .typeset(Type::SMALL)
+                        .text_color(t.dim)
+                        .child("Drawing…")
+                        .into_any_element(),
+                },
+                None => invalid("a fetched tree, drawn where one is kept", t),
+            },
             Node::Diff { text, path } => tau_ui_kit::diff::view(
                 &tau_ui_kit::diff::parse(text),
                 path.as_deref().and_then(tau_ui_kit::syntax::Lang::of_path),
@@ -1615,12 +1642,7 @@ impl<'a> Draw<'a> {
                 }
             }
             Node::Toggle { .. } | Node::Choice { .. } | Node::Field { .. } => {
-                match self.setting {
-                    Some(setting) => setting(&node.value(), t),
-                    None => {
-                        invalid("a setting, drawn on a settings page only", t)
-                    }
-                }
+                invalid("a setting, drawn on a settings page only", t)
             }
             Node::Invalid { why } => invalid(why, t),
         }

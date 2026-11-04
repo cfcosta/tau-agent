@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use gpui::{AnyElement, AnyEntity, App, AppContext as _};
+use gpui::{AnyElement, App};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
 
@@ -16,7 +16,6 @@ use crate::{
     HostHalf,
     PluginHost,
     PluginInfo,
-    PluginUi,
     PluginValue,
     RecordOf,
     SettingsOf,
@@ -30,8 +29,6 @@ use crate::{
 /// What the interface hands a plugin's UI as it draws: the plugin's
 /// values.
 pub struct Env<'a> {
-    /// The plugin's window state, made by [`ErasedPlugin::new_ui`].
-    pub ui: AnyEntity,
     /// The plugin's state in the run drawn, when there is one.
     pub state: Option<&'a PluginValue>,
     pub data: &'a PluginValue,
@@ -57,6 +54,8 @@ pub struct Env<'a> {
     pub inputs: crate::tree::Inputs<'a>,
     /// Where its trees' widgets are kept (ADR 0045).
     pub widgets: crate::tree::Widgets<'a>,
+    /// Where its fetched trees are kept (ADR 0045).
+    pub fetches: crate::tree::Fetches<'a>,
     /// The window's size, in pixels: where a modal lays its backdrop.
     pub window: (f32, f32),
     pub cx: &'a mut App,
@@ -178,8 +177,7 @@ pub trait ErasedPlugin: Send + Sync {
     /// rewrite, [`crate::REWRITE`]), into its state in a run.
     fn apply(&self, state: &mut PluginValue, body: &Value, run: &mut dyn RunCx);
 
-    fn new_ui(&self, handle: Handle, cx: &mut App) -> AnyEntity;
-    fn reply(&self, ui: AnyEntity, reply: Value, cx: &mut App);
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App);
     fn declared(&self) -> Vec<&'static str>;
     fn contributes_to(&self) -> Vec<&'static str>;
     /// What the plugin contributes at `point`, given its context, with
@@ -288,10 +286,8 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
         env: Env<'_>,
         f: impl for<'b> FnOnce(&mut ViewCx<'b, P>) -> R,
     ) -> Option<R> {
-        let ui = env.ui.downcast::<P::Ui>().ok()?;
         let mut view = ViewCx::new(
             &self.plugin,
-            ui,
             env.state.map(PluginValue::get::<P::State>),
             env.data.get::<P::Data>(),
             env.settings.get::<P::Settings>(),
@@ -310,6 +306,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
         .with_ui_state(env.ui_state)
         .with_inputs(env.inputs)
         .with_widgets(env.widgets)
+        .with_fetches(env.fetches)
         .with_window(env.window);
         Some(f(&mut view))
     }
@@ -489,17 +486,8 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         }
     }
 
-    fn new_ui(&self, handle: Handle, cx: &mut App) -> AnyEntity {
-        cx.new(|cx| <P::Ui as PluginUi>::new(handle, cx)).into_any()
-    }
-
-    fn reply(&self, ui: AnyEntity, reply: Value, cx: &mut App) {
-        if let Ok(ui) = ui.downcast::<P::Ui>() {
-            ui.update(cx, |ui, cx| {
-                self.plugin.reply(ui, reply, cx);
-                cx.notify();
-            });
-        }
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
+        self.plugin.reply(reply, handle, cx);
     }
 
     fn declared(&self) -> Vec<&'static str> {
@@ -815,7 +803,6 @@ mod tests {
         type Data = ();
         type RepoData = ();
         type Settings = ();
-        type Ui = ();
 
         fn name(&self) -> &'static str {
             "counter"
@@ -892,7 +879,6 @@ mod tests {
         type Data = ();
         type RepoData = ();
         type Settings = ();
-        type Ui = ();
 
         fn name(&self) -> &'static str {
             "other"

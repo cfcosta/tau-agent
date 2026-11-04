@@ -8,6 +8,8 @@
 //! - A ticker: the tree carries when it started and stopped, or when it
 //!   is due; the window draws what it reads now, and keeps a timer that
 //!   draws it again each second while it still changes and is shown.
+//! - A picture or a fetched tree: asked of the plugin's host half the
+//!   first time it is drawn, and kept by its key.
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -44,6 +46,8 @@ pub struct TreeWidgets {
     screens: HashMap<String, Screen>,
     tickers: HashMap<String, Ticking>,
     pictures: HashMap<String, Picture>,
+    /// Each fetched tree: when it was asked for, until its answer comes.
+    trees: HashMap<String, Fetching>,
     /// Each area that takes the keys: its focus, and the focus number it
     /// last took them for.
     areas: HashMap<String, (gpui::FocusHandle, Option<u64>)>,
@@ -55,6 +59,14 @@ enum Picture {
     /// Asked for at an instant; its type, to decode it with.
     Waiting(String, std::time::Instant),
     Ready(std::sync::Arc<gpui::Image>),
+    Failed(String),
+}
+
+/// A fetched tree, as far as the window has it.
+#[derive(Clone)]
+enum Fetching {
+    Waiting(std::time::Instant),
+    Ready(serde_json::Value),
     Failed(String),
 }
 
@@ -76,9 +88,10 @@ fn format_of(mime: &str) -> Option<gpui::ImageFormat> {
 }
 
 impl TreeWidgets {
-    /// Keeps what `plugin`'s host half answered for its picture `key`:
-    /// `{ "data": base64 }`, or `{ "error": why }`. An answer nothing
-    /// waits for is dropped.
+    /// Keeps what `plugin`'s host half answered for its picture `key`,
+    /// `{ "data": base64 }`, or for its fetched tree `key`,
+    /// `{ "tree": node }`; or `{ "error": why }`. An answer nothing waits
+    /// for is dropped.
     pub fn fetched(
         &mut self,
         plugin: &str,
@@ -88,6 +101,14 @@ impl TreeWidgets {
         use base64::Engine as _;
 
         let id = format!("{plugin}\u{0}{key}");
+        if let Some(Fetching::Waiting(_)) = self.trees.get(&id) {
+            let fetched = match reply.get("error").and_then(|e| e.as_str()) {
+                Some(why) => Fetching::Failed(why.to_owned()),
+                None => Fetching::Ready(reply.clone()),
+            };
+            self.trees.insert(id, fetched);
+            return;
+        }
         let Some(Picture::Waiting(mime, _)) = self.pictures.get(&id).cloned()
         else {
             return;
@@ -112,6 +133,31 @@ impl TreeWidgets {
             ),
         };
         self.pictures.insert(id, picture);
+    }
+}
+
+/// The fetched tree `key` of `handle`'s plugin, as the window has it:
+/// asked of the host with `fetch` the first time, and again while no
+/// answer came for a while.
+pub fn tree(
+    widgets: &Rc<RefCell<TreeWidgets>>,
+    handle: &Handle,
+    key: &str,
+    fetch: &serde_json::Value,
+    cx: &mut App,
+) -> Option<Result<serde_json::Value, String>> {
+    let id = format!("{}\u{0}{key}", handle.plugin());
+    let kept = widgets.borrow().trees.get(&id).cloned();
+    match kept {
+        Some(Fetching::Ready(answer)) => Some(Ok(answer)),
+        Some(Fetching::Failed(why)) => Some(Err(why)),
+        Some(Fetching::Waiting(at)) if at.elapsed() < RETRY => None,
+        _ => {
+            let waiting = Fetching::Waiting(std::time::Instant::now());
+            widgets.borrow_mut().trees.insert(id, waiting);
+            handle.fetch(key.to_owned(), fetch.clone(), cx);
+            None
+        }
     }
 }
 
@@ -482,6 +528,48 @@ mod tests {
         let read = cx.update(|cx| tick(&widgets, &handle, spec(stopped), cx));
         assert_eq!(read, "1:23");
         assert!(widgets.borrow().tickers.is_empty());
+    }
+
+    /// A fetched tree is asked of the host once, however often it draws,
+    /// and drawn from its answer once that comes; an answer for another
+    /// key is dropped.
+    #[gpui::test]
+    fn a_fetched_tree_is_asked_for_once(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        use tau_ui_plugin::Request;
+
+        let widgets = Rc::new(RefCell::new(TreeWidgets::default()));
+        let asked: Rc<RefCell<Vec<Request>>> = Rc::default();
+        let sink = asked.clone();
+        let handle = Handle::new(
+            "p",
+            Rc::new(move |_, request, _| sink.borrow_mut().push(request)),
+        );
+        let fetch = json!({ "draw": "page" });
+        let drawn =
+            |cx: &mut gpui::TestAppContext| -> Option<Result<serde_json::Value, String>> {
+                cx.update(|cx| tree(&widgets, &handle, "page/1", &fetch, cx))
+            };
+        assert_eq!(drawn(cx), None);
+        assert_eq!(drawn(cx), None);
+        assert_eq!(
+            *asked.borrow(),
+            [Request::Fetch {
+                key: "page/1".into(),
+                action: fetch.clone(),
+            }]
+        );
+        let answer = json!({ "tree": { "piece": "text", "text": "hi" } });
+        widgets.borrow_mut().fetched("p", "page/2", &answer);
+        assert_eq!(drawn(cx), None);
+        widgets.borrow_mut().fetched("p", "page/1", &answer);
+        assert_eq!(drawn(cx), Some(Ok(answer)));
+        widgets.borrow_mut().fetched(
+            "p",
+            "page/1",
+            &json!({ "error": "late" }),
+        );
+        assert_eq!(asked.borrow().len(), 1, "a kept tree is not asked again");
     }
 
     /// A terminal is fed what it gained while it runs, frozen when it

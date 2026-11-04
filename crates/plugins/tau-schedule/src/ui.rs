@@ -24,7 +24,6 @@ impl UiPlugin for ScheduleUi {
     type Data = Overview;
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

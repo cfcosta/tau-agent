@@ -299,10 +299,8 @@ impl Workspace {
         reply: Value,
         cx: &mut Context<Self>,
     ) {
-        if let (Some(erased), Some(ui)) =
-            (registry().get(plugin), self.plugin_ui.get(plugin))
-        {
-            erased.reply(ui.clone(), reply, cx);
+        if let Some(erased) = registry().get(plugin) {
+            erased.reply(reply, &self.plugin_handle(erased.name()), cx);
         }
         cx.notify();
     }
@@ -318,7 +316,6 @@ impl Workspace {
         f: impl FnOnce(&dyn ErasedPlugin, Env<'_>) -> R,
     ) -> Option<R> {
         let name = plugin.name();
-        let ui = self.plugin_ui.get(name)?.clone();
         let info = run.map(RunView::info);
         // Each value the plugin has not got yet is unset, and typed apart
         // once read.
@@ -378,8 +375,18 @@ impl Workspace {
                             cx: &mut App| {
             crate::tree_widgets::widget(&tree_widgets, &widget_handle, spec, cx)
         };
+        let (fetched_trees, fetch_handle) =
+            (self.tree_widgets.clone(), self.plugin_handle(name));
+        let fetches = move |key: &str, fetch: &Value, cx: &mut App| {
+            crate::tree_widgets::tree(
+                &fetched_trees,
+                &fetch_handle,
+                key,
+                fetch,
+                cx,
+            )
+        };
         let env = Env {
-            ui,
             state: state.or(run.map(|_| &no_state)),
             data,
             settings,
@@ -396,6 +403,7 @@ impl Workspace {
             ui_state: self.ui_state.of(name),
             inputs: &inputs,
             widgets: &widgets,
+            fetches: &fetches,
             window: (f32::from(self.width), f32::from(self.height)),
             cx,
         };

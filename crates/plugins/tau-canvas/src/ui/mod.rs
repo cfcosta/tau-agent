@@ -138,7 +138,6 @@ impl UiPlugin for CanvasUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

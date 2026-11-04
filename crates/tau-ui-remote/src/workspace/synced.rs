@@ -177,7 +177,6 @@ impl Workspace {
             weak: _,
             // Plugins keep what interfaces share in their records, which
             // are folded into the runs.
-            plugin_ui: _,
             plugin_requests: _,
             plugin_focus: _,
             // Editors of drafts kept in `ui_state`, each window's own.

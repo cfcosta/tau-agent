@@ -35,7 +35,6 @@ impl UiPlugin for DirenvUi {
     type Data = ();
     type RepoData = RepoData;
     type Settings = Settings;
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

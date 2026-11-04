@@ -89,7 +89,6 @@ impl UiPlugin for TreeCompactionUi {
     type Data = ();
     type RepoData = ();
     type Settings = Settings;
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

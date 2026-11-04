@@ -42,7 +42,7 @@ pub mod ui_state;
 pub mod value;
 pub mod view;
 
-use gpui::Context;
+use gpui::App;
 pub use host::{
     By,
     ConfigDir,
@@ -183,19 +183,6 @@ pub trait PluginHost: Send + Sync + Sized + 'static {
 impl<T: Default + Send + Sync + 'static> PluginHost for T {
     fn new(_: &HostCx) -> impl Future<Output = anyhow::Result<Self>> + Send {
         std::future::ready(Ok(Self::default()))
-    }
-}
-
-/// What a plugin keeps per window, made in its own entity's context so
-/// it can subscribe to what it makes (a field's Enter); `handle` is its
-/// way back to that window. Any `Default` type is made by its default.
-pub trait PluginUi: Sized + 'static {
-    fn new(handle: Handle, cx: &mut Context<Self>) -> Self;
-}
-
-impl<T: Default + 'static> PluginUi for T {
-    fn new(_: Handle, _: &mut Context<Self>) -> Self {
-        Self::default()
     }
 }
 
@@ -375,20 +362,11 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
         + Send
         + Sync
         + 'static;
-    /// What it keeps per window: drafts, open tabs, a pending answer.
-    type Ui: PluginUi;
-
     fn name(&self) -> &'static str;
 
-    /// What [`HostHalf::act`] answered, in the window's UI state, which
-    /// may ask the interface for more through its [`Handle`].
-    fn reply(
-        &self,
-        _ui: &mut Self::Ui,
-        _reply: Value,
-        _cx: &mut Context<Self::Ui>,
-    ) {
-    }
+    /// What [`HostHalf::act`] answered, which the plugin keeps in its UI
+    /// state or acts on through `handle`.
+    fn reply(&self, _reply: Value, _handle: &Handle, _cx: &mut App) {}
 
     /// Whether its context rewrites keep the transcript, marking what
     /// they drop ([`RunCx::dropped`]), rather than replace it with

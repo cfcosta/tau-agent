@@ -52,7 +52,6 @@ impl UiPlugin for Resumer {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

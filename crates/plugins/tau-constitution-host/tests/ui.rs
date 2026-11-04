@@ -4,7 +4,7 @@
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
-use gpui::{App, AppContext as _, Entity, TestAppContext};
+use gpui::{App, TestAppContext};
 use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_agent::tool::RunId;
@@ -16,7 +16,7 @@ use tau_constitution::ui::{
     Rules,
     State,
     Stats,
-    page::{self, Do, Draft, HandledKind, Mark, Preset, Snapshot, Trying, Ui},
+    page::{self, Do, Draft, HandledKind, Mark, Preset, Snapshot, Trying},
     stats::{FlaggedAnswer, RulesStats},
 };
 use tau_constitution_host::{NAME, Record};
@@ -24,7 +24,6 @@ use tau_ui_plugin::{
     CardInfo,
     CardMark,
     Handle,
-    PluginUi,
     PluginValue,
     Request,
     RunInfo,
@@ -524,16 +523,15 @@ fn enter_saves_what_was_typed() {
     );
 }
 
-/// The page's state in a window, with what it asks kept.
-fn ui(cx: &mut TestAppContext) -> (Entity<Ui>, Rc<RefCell<Vec<Request>>>) {
+/// The plugin's way back to a window, with what it asks kept.
+fn ui() -> (Handle, Rc<RefCell<Vec<Request>>>) {
     let asked: Rc<RefCell<Vec<Request>>> = Rc::default();
     let sink = asked.clone();
     let handle = Handle::new(
         NAME,
         Rc::new(move |_, request, _: &mut App| sink.borrow_mut().push(request)),
     );
-    let ui = cx.update(|cx| cx.new(|cx| <Ui as PluginUi>::new(handle, cx)));
-    (ui, asked)
+    (handle, asked)
 }
 
 #[gpui::test]
@@ -576,9 +574,9 @@ fn a_rule_is_tried_and_says_what_it_would_do(cx: &mut TestAppContext) {
         )
     );
     // What the host answers goes back to the editor.
-    let (ui, asked) = ui(cx);
+    let (ui, asked) = ui();
     let reply = json!({ "Ok": [[{ "tool": "exec_command", "shown": "psql prod", "score": 0.9 }], 0.001] });
-    ui.update(cx, |ui, cx| ConstitutionUi.reply(ui, reply, cx));
+    cx.update(|cx| ConstitutionUi.reply(reply, &ui, cx));
     for request in asked.borrow_mut().drain(..) {
         page.take(request);
     }
@@ -635,7 +633,6 @@ fn rules_are_reset_only_once_confirmed() {
 /// and the UI state `ui_state`.
 fn with_view<R>(
     cx: &mut TestAppContext,
-    ui: &Entity<Ui>,
     runs: &[(RunInfo, State)],
     data: &Data,
     ui_state: &BTreeMap<String, Value>,
@@ -655,7 +652,6 @@ fn with_view<R>(
     cx.update(|cx| {
         let mut view = ViewCx::new(
             &ConstitutionUi,
-            ui.clone(),
             None,
             data,
             &(),
@@ -691,7 +687,6 @@ fn info(id: &str, repo: &str) -> RunInfo {
 /// handled; so does a flagged answer; a blocked call needs no one.
 #[gpui::test]
 fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
-    let (ui, _) = ui(cx);
     let mut run = FakeRun {
         cards: vec![
             card("c1", "exec_command", "rm -rf /"),
@@ -717,7 +712,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
     ];
     let data = Data::default();
     let mut page = Page::default();
-    let (keys, stats) = with_view(cx, &ui, &runs, &data, &page.ui, |view| {
+    let (keys, stats) = with_view(cx, &runs, &data, &page.ui, |view| {
         let keys: Vec<String> = page::review_items(view, "tau-agent")
             .into_iter()
             .map(|item| item.flag.key)
@@ -743,7 +738,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
             key: "answer-0".into()
         }]
     );
-    let (keys, fine) = with_view(cx, &ui, &runs, &data, &page.ui, |view| {
+    let (keys, fine) = with_view(cx, &runs, &data, &page.ui, |view| {
         let keys: Vec<String> = page::review_items(view, "tau-agent")
             .into_iter()
             .map(|item| item.flag.key)
@@ -761,7 +756,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
     let data = Data {
         reviewed: vec![("a".into(), "c2".into())],
     };
-    let waiting = with_view(cx, &ui, &runs, &data, &page.ui, |view| {
+    let waiting = with_view(cx, &runs, &data, &page.ui, |view| {
         page::review_items(view, "tau-agent").len()
     });
     assert_eq!(waiting, 0);

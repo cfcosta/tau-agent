@@ -205,7 +205,6 @@ impl UiPlugin for VcsUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

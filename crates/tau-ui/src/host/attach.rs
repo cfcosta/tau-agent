@@ -1052,7 +1052,7 @@ impl Host {
                     // pictures, not to the plugin's UI.
                     let (job_plugin, plugin, key, action) =
                         (plugin.clone(), plugin.clone(), key.clone(), action.clone());
-                    let failed = alert(format!("{plugin} could not fetch a picture"));
+                    let failed = alert(format!("{plugin} could not fetch what it shows"));
                     on_host(
                         &handler,
                         &workspace,

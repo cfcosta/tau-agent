@@ -15,12 +15,14 @@ pub mod term_card;
 
 use std::collections::BTreeMap;
 
+use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_ui_kit::{diff, syntax, theme::Tone};
 use tau_ui_plugin::{
     CallData,
     Fold,
+    Handle,
     Manifest,
     PluginStatus,
     RunCx,
@@ -40,12 +42,9 @@ pub const NAME: &str = "tau-tools";
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ToolsUi;
 
-/// What the host half answered in one window: each artifact's last
-/// preview, by its id.
-#[derive(Default)]
-pub struct Ui {
-    pub previews: BTreeMap<String, Value>,
-}
+/// What the UI state keys of the artifacts' last previews start with,
+/// before each one's id: the range the host half read, or why not.
+pub const PREVIEW: &str = "preview/";
 
 /// Serializable grant fold shared by live and reloaded runs, including phones.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -307,24 +306,16 @@ impl UiPlugin for ToolsUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
     }
 
-    fn reply(
-        &self,
-        ui: &mut Self::Ui,
-        reply: Value,
-        cx: &mut gpui::Context<Self::Ui>,
-    ) {
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
         if let Ok(reply) = serde_json::from_value::<ActionReply>(reply) {
-            ui.previews.insert(
-                reply.id,
-                reply.range.unwrap_or_else(|| json!({"error": reply.error})),
-            );
-            cx.notify();
+            let preview =
+                reply.range.unwrap_or_else(|| json!({"error": reply.error}));
+            handle.set_ui(format!("{PREVIEW}{}", reply.id), Some(preview), cx);
         }
     }
 
@@ -334,7 +325,14 @@ impl UiPlugin for ToolsUi {
             .contribute(points::INSPECTOR, |_: &AtRun, view| {
                 let state = view.state?;
                 let run = view.run?.id.clone();
-                let previews = view.ui.read(view.cx).previews.clone();
+                let previews: BTreeMap<String, Value> = view
+                    .ui_state()
+                    .iter()
+                    .filter_map(|(key, preview)| {
+                        let id = key.strip_prefix(PREVIEW)?;
+                        Some((id.to_owned(), preview.clone()))
+                    })
+                    .collect();
                 let tree = inspector(state, &run, &previews);
                 let handle = view.handle.clone();
                 Some(view.tree(

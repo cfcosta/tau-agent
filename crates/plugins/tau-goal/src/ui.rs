@@ -271,7 +271,6 @@ impl UiPlugin for GoalUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

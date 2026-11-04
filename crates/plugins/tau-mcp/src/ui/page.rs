@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use gpui::{AnyElement, App, Context};
+use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_ui_plugin::{
@@ -66,29 +66,17 @@ pub struct Editor {
     pub problem: Option<String>,
 }
 
-/// The page's state in one window: the handle the host's answers go
-/// through. What the page shows is in the UI state.
-pub struct Ui {
-    handle: Handle,
-}
-
-impl Ui {
-    pub(super) fn new(handle: Handle) -> Self {
-        Self { handle }
-    }
-
-    /// What the host answered a prompt: its messages fill the composer;
-    /// a failure says why and puts the command back to fix.
-    pub(super) fn answered(&self, reply: Reply, cx: &mut Context<Self>) {
-        match reply {
-            Reply::Prompt { text } => self.handle.composer(text, cx),
-            Reply::PromptFailed { error, command } => {
-                self.handle.alert("The prompt could not be had", error, cx);
-                self.handle.composer(command, cx);
-            }
-            // The browser signs in; the host waits for it to come back.
-            Reply::SignIn { url, .. } => cx.open_url(&url),
+/// What the host answered a prompt: its messages fill the composer; a
+/// failure says why and puts the command back to fix.
+pub(super) fn answered(handle: &Handle, reply: Reply, cx: &mut App) {
+    match reply {
+        Reply::Prompt { text } => handle.composer(text, cx),
+        Reply::PromptFailed { error, command } => {
+            handle.alert("The prompt could not be had", error, cx);
+            handle.composer(command, cx);
         }
+        // The browser signs in; the host waits for it to come back.
+        Reply::SignIn { url, .. } => cx.open_url(&url),
     }
 }
 

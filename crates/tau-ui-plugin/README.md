@@ -12,10 +12,10 @@ only through the registry.
 
 | Item                                    | What it is                                                                                                            |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `UiPlugin`                              | The UI half: its `State`, `Data`, `RepoData`, `Settings` and `Ui` types, and its `manifest`                           |
+| `UiPlugin`                              | The UI half: its `State`, `Data`, `RepoData` and `Settings` types, and its `manifest`                                 |
 | `HostHalf`                              | The host half: `agent_plugins` per run, `catalog`, `data`, `repo_data`, `act`, `launcher`, `resume`, `setup_finished` |
 | `Fold`                                  | A plugin's state in a run, folded from its records with `apply`, live and from history                                |
-| `PluginHost`, `PluginUi`                | What a plugin keeps on the host, and per window; any `Default` type is both                                           |
+| `PluginHost`                            | What a plugin keeps on the host; any `Default` type is one                                                            |
 | `Manifest`, `Page`, `Point`             | Where the UI goes: pages, points a plugin declares, and contributions to points                                       |
 | `SlashCommand`                          | A composer command a plugin adds                                                                                      |
 | `Manifest::key`, `KeyAt`                | A key a plugin binds in the workspace, run in the repository the person is in                                         |
@@ -66,7 +66,6 @@ impl UiPlugin for CompactionUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         "tau-compaction"

@@ -221,9 +221,14 @@ pub enum Act {
     /// Lets `plugin`'s waiting version reach what it asks, and activates
     /// it.
     Allow { plugin: String },
-    /// Draws `plugin`'s settings page (`settings.view`) of `settings`;
-    /// the answer is a [`SettingsPage`].
-    SettingsView { plugin: String, settings: Value },
+    /// Draws `plugin`'s settings page (`settings.view`) of `settings`,
+    /// its inputs' ids starting with `fields`; the answer is a fetched
+    /// tree ([`pane::settings_view`]).
+    SettingsView {
+        plugin: String,
+        settings: Value,
+        fields: String,
+    },
     /// Carries out `plugin`'s `actions[action]` with `args`, on the state
     /// it has in `run`, under the person's `settings` for it; the answer
     /// is an [`ActionDone`], which the interface records with the run.

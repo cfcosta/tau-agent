@@ -39,11 +39,9 @@ use crate::{
     NAME,
     Overview,
     Record,
-    SettingsPage,
     Standing,
     TestResult,
     Uses,
-    pane::SettingsUi,
 };
 
 /// The page of the person's own plugins, and, with an entry, of one.
@@ -434,29 +432,19 @@ impl UiPlugin for LuauPluginsUi {
     type Data = Overview;
     type RepoData = ();
     type Settings = LuauSettings;
-    type Ui = SettingsUi;
 
     fn name(&self) -> &'static str {
         NAME
     }
 
-    /// A settings page the host drew, or what an action left.
-    fn reply(
-        &self,
-        ui: &mut SettingsUi,
-        reply: Value,
-        cx: &mut gpui::Context<SettingsUi>,
-    ) {
+    /// What an action left.
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
         if let Ok(done) = serde_json::from_value::<ActionDone>(reply.clone()) {
             // What an action left, with the run it was carried out on.
             let run = RunId(done.run.as_str().into());
             for record in done.records() {
-                ui.handle().record(&run, record, cx);
+                handle.record(&run, record, cx);
             }
-            return;
-        }
-        if let Ok(page) = serde_json::from_value::<SettingsPage>(reply) {
-            ui.take_page(page, cx);
         }
     }
 

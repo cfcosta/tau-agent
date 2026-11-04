@@ -70,7 +70,6 @@ impl UiPlugin for Stepper {
     type Data = bool;
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

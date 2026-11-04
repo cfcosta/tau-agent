@@ -6,7 +6,7 @@ pub mod card;
 pub mod draft;
 pub mod panel;
 
-use gpui::Context;
+use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ui_kit::theme::Tone;
@@ -15,7 +15,6 @@ use tau_ui_plugin::{
     Handle,
     Manifest,
     PluginStatus,
-    PluginUi,
     RunCx,
     UiPlugin,
     points::{self, AtRun},
@@ -156,17 +155,11 @@ impl Focus {
     }
 }
 
-/// The way back to the interface, for the host's answers.
-pub struct Ui {
-    handle: Handle,
-}
-
 impl UiPlugin for AskUi {
     type State = State;
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
@@ -174,11 +167,11 @@ impl UiPlugin for AskUi {
 
     /// The host refused the answers: they did not go, and the panel says
     /// why.
-    fn reply(&self, ui: &mut Ui, reply: Value, cx: &mut Context<Ui>) {
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
         if let Ok(refused) = serde_json::from_value::<Refused>(reply) {
             let key = (refused.run, refused.call);
-            ui.handle.set_ui(sent_key(&key), None, cx);
-            ui.handle.set_ui(
+            handle.set_ui(sent_key(&key), None, cx);
+            handle.set_ui(
                 refused_key(&key),
                 Some(Value::String(refused.message)),
                 cx,
@@ -209,11 +202,5 @@ impl UiPlugin for AskUi {
                 let waiting = view.state?.waiting().filter(|_| at.run.live)?;
                 Some(waiting.ask.questions.first()?.question.clone())
             })
-    }
-}
-
-impl PluginUi for Ui {
-    fn new(handle: Handle, _cx: &mut Context<Self>) -> Self {
-        Ui { handle }
     }
 }

@@ -314,7 +314,6 @@ impl UiPlugin for FastCompactionUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

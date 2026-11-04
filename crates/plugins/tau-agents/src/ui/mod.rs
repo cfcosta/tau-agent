@@ -15,7 +15,7 @@ mod run;
 
 use std::sync::Arc;
 
-use gpui::{App, Context, Div, ParentElement, Styled, div, rems};
+use gpui::{App, Div, ParentElement, Styled, div, rems};
 use serde_json::{Value, json};
 use tau_agent::tool::RunId;
 use tau_ui_kit::{
@@ -29,7 +29,6 @@ use tau_ui_plugin::{
     Manifest,
     Page,
     PluginStatus,
-    PluginUi,
     SlashCommand,
     UiPlugin,
     ViewCx,
@@ -66,13 +65,6 @@ pub fn mcp_servers(data: Option<&Value>) -> Vec<String> {
 /// tau-agents' interface half.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AgentsUi;
-
-/// What a window keeps of tau-agents: the handle the host's answers go
-/// through. The New agent form, the secret and answer fields are its
-/// trees' inputs, in the UI state.
-pub struct Ui {
-    handle: Handle,
-}
 
 /// The New agent form's inputs, by id: their drafts are its name and
 /// what it should do.
@@ -367,30 +359,23 @@ pub(crate) fn on_action(
     }
 }
 
-impl PluginUi for Ui {
-    fn new(handle: Handle, _: &mut Context<Self>) -> Self {
-        Self { handle }
-    }
-}
-
 impl UiPlugin for AgentsUi {
     type State = ();
     type Data = Overview;
     type RepoData = ();
     type Settings = Settings;
-    type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
     }
 
     /// The host made the agent, or says why not.
-    fn reply(&self, ui: &mut Ui, reply: Value, cx: &mut Context<Ui>) {
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
         if let Some(repo) = reply.get("repo").and_then(Value::as_str) {
-            ui.handle.set_ui(MAKING, Some(json!(repo)), cx);
+            handle.set_ui(MAKING, Some(json!(repo)), cx);
         } else if let Some(error) = reply.get("error").and_then(Value::as_str) {
-            ui.handle.set_ui(MAKING, None, cx);
-            ui.handle.set_ui(ERROR, Some(json!(error)), cx);
+            handle.set_ui(MAKING, None, cx);
+            handle.set_ui(ERROR, Some(json!(error)), cx);
         }
     }
 

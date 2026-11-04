@@ -4,15 +4,13 @@
 //! `choice`, `field`) change a key of the plugin's settings, saved in
 //! the scope the pane shows once the schema accepts the new value. The
 //! pane binds them as the shared tree's switches, buttons and inputs
-//! (ADR 0045).
+//! (ADR 0045). The host draws the plugin's own page, bound, and the
+//! interface fetches it as a tree of the pane's.
 
-use std::collections::{HashMap, HashSet};
-
-use gpui::{AnyElement, App, Context, Entity};
+use gpui::{AnyElement, App};
 use serde_json::{Value, json};
 use tau_ui_plugin::{
     Handle,
-    PluginUi,
     ViewCx,
     tree::{Kind, Node, Tone},
 };
@@ -21,49 +19,13 @@ use crate::{
     Act,
     Declaration,
     LuauSettings,
-    SettingsPage,
     settings::{self, FieldKind},
     ui::{LuauPluginsUi, rewrite},
 };
 
-/// What the window keeps for the settings panes: the pages the host
-/// sends back, which [`UiPlugin::reply`](tau_ui_plugin::UiPlugin::reply)
-/// hands it.
-pub struct SettingsUi {
-    handle: Handle,
-    /// The pages the host drew, by plugin and the settings they show.
-    pages: HashMap<(String, String), Result<Value, String>>,
-    /// The pages asked for and not drawn yet.
-    asked: HashSet<(String, String)>,
-    /// Why the last change did not hold, by plugin.
-    rejected: HashMap<String, String>,
-}
-
-impl PluginUi for SettingsUi {
-    fn new(handle: Handle, _cx: &mut Context<Self>) -> Self {
-        Self {
-            handle,
-            pages: HashMap::new(),
-            asked: HashSet::new(),
-            rejected: HashMap::new(),
-        }
-    }
-}
-
-impl SettingsUi {
-    /// The way back to the interface.
-    pub fn handle(&self) -> &Handle {
-        &self.handle
-    }
-
-    /// Keeps a page the host drew, and draws the pane again.
-    pub fn take_page(&mut self, page: SettingsPage, cx: &mut App) {
-        let key = (page.plugin, page.settings.to_string());
-        self.asked.remove(&key);
-        self.pages.insert(key, page.page);
-        self.handle.refresh(cx);
-    }
-}
+/// What the UI state keys of why a plugin's last change did not hold
+/// start with, before the plugin's name.
+const REJECTED: &str = "rejected/";
 
 /// A toggle's or a choice's action: sets `args.key` to `args.value`.
 const SET: &str = "setting/set";
@@ -78,7 +40,6 @@ const NUMBER: &str = "setting/number:";
 /// settings in the scope shown.
 #[derive(Clone)]
 pub struct Saver {
-    ui: Entity<SettingsUi>,
     handle: Handle,
     entry: String,
     scope: Option<String>,
@@ -120,8 +81,8 @@ impl Saver {
             Ok(()) => {
                 let mut all = self.all.clone();
                 all.plugins.insert(self.entry.clone(), next);
-                let entry = self.entry.clone();
-                self.ui.update(cx, |ui, _| ui.rejected.remove(&entry));
+                let rejected = format!("{REJECTED}{}", self.entry);
+                self.handle.set_ui(rejected, None, cx);
                 self.handle
                     .save_settings_in(self.scope.as_deref(), &all, cx);
             }
@@ -131,9 +92,8 @@ impl Saver {
 
     /// Says why a change did not hold.
     fn reject(&self, why: String, cx: &mut App) {
-        let entry = self.entry.clone();
-        self.ui.update(cx, |ui, _| ui.rejected.insert(entry, why));
-        self.handle.refresh(cx);
+        let rejected = format!("{REJECTED}{}", self.entry);
+        self.handle.set_ui(rejected, Some(Value::String(why)), cx);
     }
 }
 
@@ -295,45 +255,27 @@ pub fn pane(view: &mut ViewCx<'_, LuauPluginsUi>) -> (Node, Option<Saver>) {
     let (current, fallback) =
         settings::effective(&declaration, all.plugins.get(&entry));
 
-    // The tree: the plugin's own page, else the form.
-    let tree = if declaration.hooks.settings_view {
-        let key = (entry.clone(), current.to_string());
-        let (page, ask) = view.ui.update(view.cx, |ui, _| {
-            let page = ui.pages.get(&key).cloned();
-            let ask = page.is_none() && ui.asked.insert(key.clone());
-            (page, ask)
-        });
-        if ask {
-            view.handle.act(
-                Act::SettingsView {
-                    plugin: entry.clone(),
-                    settings: current.clone(),
-                },
-                view.cx,
-            );
-        }
-        page
-    } else {
-        Some(Ok(form(&declaration)))
-    };
-
+    // The tree: the plugin's own page, which the host draws of the
+    // settings shown, else the form.
     let fields = field_id(&entry, scope.as_deref(), "");
-    let body = match tree {
-        Some(Ok(tree)) => rewrite(Node::read(&tree), &mut |node| {
-            if node.is_setting() {
-                bound(&node.value(), &current, &fields)
-            } else {
-                node
-            }
-        }),
-        Some(Err(error)) => Node::Status {
-            text: format!("Its settings page failed: {error}"),
-            detail: None,
-            tone: Tone::Bad,
-        },
-        None => Node::text("Drawing its settings page…"),
+    let body = if declaration.hooks.settings_view {
+        Node::Fetched {
+            key: format!("settings-view/{fields}/{current}"),
+            fetch: json!(Act::SettingsView {
+                plugin: entry.clone(),
+                settings: current.clone(),
+                fields: fields.clone(),
+            }),
+        }
+    } else {
+        Node::read(
+            &settings_view(Ok(form(&declaration)), &current, &fields)["tree"],
+        )
     };
-    let rejected = view.ui.read(view.cx).rejected.get(&entry).cloned();
+    let rejected = view
+        .ui_value(&format!("{REJECTED}{entry}"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let mut children = vec![body];
     children.extend(rejected.into_iter().chain(fallback).map(|why| {
         Node::Status {
@@ -343,7 +285,6 @@ pub fn pane(view: &mut ViewCx<'_, LuauPluginsUi>) -> (Node, Option<Saver>) {
         }
     }));
     let saver = Saver {
-        ui: view.ui.clone(),
         handle: view.handle.clone(),
         entry,
         scope,
@@ -352,6 +293,31 @@ pub fn pane(view: &mut ViewCx<'_, LuauPluginsUi>) -> (Node, Option<Saver>) {
         schema: settings::schema_of(&declaration),
     };
     (Node::Card { children }, Some(saver))
+}
+
+/// The answer to an [`Act::SettingsView`]: the plugin's settings page
+/// `page`, its bound pieces as the pane's of `current` with their inputs'
+/// ids starting with `fields`, or why it failed; as a fetched tree.
+pub fn settings_view(
+    page: Result<Value, String>,
+    current: &Value,
+    fields: &str,
+) -> Value {
+    let tree = match page {
+        Ok(tree) => rewrite(Node::read(&tree), &mut |node| {
+            if node.is_setting() {
+                bound(&node.value(), current, fields)
+            } else {
+                node
+            }
+        }),
+        Err(error) => Node::Status {
+            text: format!("Its settings page failed: {error}"),
+            detail: None,
+            tone: Tone::Bad,
+        },
+    };
+    json!({ "tree": tree.value() })
 }
 
 /// The pane of the Luau plugin `entry`.
@@ -363,4 +329,47 @@ pub fn render(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
             saver.act(action, args, cx);
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// The host's page comes back with its bound pieces as the pane's,
+    /// of the settings it was drawn of: a toggle a switch that flips its
+    /// key, a field an input under the pane's ids; a failure says why.
+    #[test]
+    fn a_settings_page_comes_back_bound() {
+        let page = json!({ "piece": "stack", "children": [
+            { "piece": "toggle", "key": "loud", "label": "Loud" },
+            { "piece": "field", "key": "name", "kind": "text" },
+        ] });
+        let current = json!({ "loud": true, "name": "Ada" });
+        let answer = settings_view(Ok(page), &current, "fields/");
+        let Node::Stack { children, .. } = Node::read(&answer["tree"]) else {
+            panic!("not a stack: {answer}");
+        };
+        assert!(matches!(
+            &children[0],
+            Node::Switch { on: true, args, .. } if args == &json!({ "key": "loud", "value": false })
+        ));
+        let Node::Stack {
+            children: field, ..
+        } = &children[1]
+        else {
+            panic!("not a field: {:?}", children[1]);
+        };
+        assert!(matches!(
+            &field[0],
+            Node::Input { id, placeholder: Some(text), .. }
+                if id == "fields/name" && text == "Ada"
+        ));
+        let failed = settings_view(Err("it threw".into()), &current, "fields/");
+        assert!(matches!(
+            Node::read(&failed["tree"]),
+            Node::Status { text, .. } if text == "Its settings page failed: it threw"
+        ));
+    }
 }

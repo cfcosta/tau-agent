@@ -47,7 +47,6 @@ impl UiPlugin for Worker {
     type Data = String;
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

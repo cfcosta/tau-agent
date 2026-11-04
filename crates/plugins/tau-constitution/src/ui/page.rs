@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{AnyElement, App, Context};
+use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
@@ -491,21 +491,9 @@ pub fn apply(now: &Snapshot, doing: Do) -> Vec<Request> {
     }
 }
 
-/// The page's state in one window: only what its host half answers,
-/// which goes to the UI state as what trying a rule gave.
-pub struct Ui {
-    handle: Handle,
-}
-
-impl Ui {
-    pub(super) fn new(handle: Handle) -> Self {
-        Self { handle }
-    }
-
-    /// What trying the rule gave.
-    pub fn tried(&mut self, result: TrialResult, cx: &mut Context<Self>) {
-        self.handle.set_ui(TRYING, value(&Trying::from(result)), cx);
-    }
+/// Keeps what trying the rule gave, in the UI state.
+pub fn tried(handle: &Handle, result: TrialResult, cx: &mut App) {
+    handle.set_ui(TRYING, value(&Trying::from(result)), cx);
 }
 
 /// How many answers may go back after a step of `delta` from `holds`:

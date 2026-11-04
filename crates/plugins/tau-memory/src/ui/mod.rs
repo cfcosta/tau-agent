@@ -20,7 +20,7 @@ pub mod setup;
 
 use std::collections::BTreeMap;
 
-use gpui::{App, Context};
+use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ui_kit::assets::Icon;
@@ -224,22 +224,15 @@ impl UiPlugin for MemoryUi {
     type Data = MemoryData;
     type RepoData = Notebook;
     type Settings = settings::Settings;
-    type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
     }
 
     /// What keeping proposals did, for the review page to say.
-    fn reply(
-        &self,
-        ui: &mut Ui,
-        reply: serde_json::Value,
-        cx: &mut Context<Ui>,
-    ) {
-        if let Ok(kept) = serde_json::from_value(reply) {
-            ui.kept = Some(kept);
-            cx.notify();
+    fn reply(&self, reply: serde_json::Value, handle: &Handle, cx: &mut App) {
+        if serde_json::from_value::<Kept>(reply.clone()).is_ok() {
+            handle.set_ui(KEPT, Some(reply), cx);
         }
     }
 
@@ -282,16 +275,12 @@ impl UiPlugin for MemoryUi {
     }
 }
 
-/// The plugin's state in one window: what keeping proposals last did,
-/// as the host half answered. Drafts and the setup step's choice are UI
-/// state ([`SEARCH`], [`REVIEW_SEARCH`], [`setup::CHOICE`]).
-#[derive(Debug, Default)]
-pub struct Ui {
-    pub(crate) kept: Option<Kept>,
-}
-
 /// The notes page's search input.
 pub const SEARCH: &str = "search";
+
+/// The UI state key of what keeping proposals last did, as the host half
+/// answered ([`Kept`]).
+pub const KEPT: &str = "kept";
 
 /// The review page's search input.
 pub const REVIEW_SEARCH: &str = "review-search";

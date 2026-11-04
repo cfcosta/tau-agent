@@ -18,7 +18,6 @@ impl UiPlugin for WatcherUi {
     type Data = ();
     type RepoData = ();
     type Settings = settings::Settings;
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

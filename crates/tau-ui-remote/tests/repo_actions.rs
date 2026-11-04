@@ -38,7 +38,6 @@ impl UiPlugin for Tidy {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         "tidy"

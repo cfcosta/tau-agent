@@ -14,7 +14,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use gpui::{App, AppContext as _, TestAppContext};
+use gpui::{App, TestAppContext};
 use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_agent::tool::{RunId, ToolOutput};
@@ -29,7 +29,7 @@ use tau_codemode::{
     modules::{self, Definition, ModuleTest, TestReport},
     outline::{self, Shown},
     store,
-    ui::{self, Action, CodemodeUi, Row, State, Ui},
+    ui::{self, Action, CodemodeUi, Row, State},
 };
 use tau_codemode_host::{
     CallStatus,
@@ -57,7 +57,6 @@ use tau_ui_plugin::{
     Handle,
     HostCx,
     HostHalf as _,
-    PluginUi as _,
     Request as UiRequest,
     RunInfo,
     Services,
@@ -349,14 +348,11 @@ fn rejected_selection_requests_a_visible_alert(cx: &mut TestAppContext) {
         }),
     );
     cx.update(|cx| {
-        let ui = cx.new(|cx| Ui::new(handle, cx));
-        ui.update(cx, |ui, cx| {
-            CodemodeUi.reply(
-                ui,
-                json!({"error": "That module version is missing"}),
-                cx,
-            )
-        });
+        CodemodeUi.reply(
+            json!({"error": "That module version is missing"}),
+            &handle,
+            cx,
+        )
     });
     assert_eq!(
         *requests.borrow(),
@@ -1148,10 +1144,8 @@ fn draw(
     let handle = Handle::new(PLUGIN, Rc::new(|_, _, _: &mut App| {}));
     cx.update(|cx| {
         cx.set_global(tau_ui_kit::theme::Theme::graphite());
-        let ui = cx.new(|cx| Ui::new(handle.clone(), cx));
         let mut view = ViewCx::new(
             &CodemodeUi,
-            ui,
             None,
             &(),
             &(),

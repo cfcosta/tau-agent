@@ -3,7 +3,7 @@
 
 use std::{collections::BTreeMap, rc::Rc};
 
-use gpui::{App, Entity};
+use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
@@ -431,9 +431,6 @@ pub const ENTRY: &str = "entry";
 /// What a contribution, a page or a command reaches as it runs.
 pub struct ViewCx<'a, P: UiPlugin> {
     pub plugin: &'a P,
-    /// The plugin's state for this window: drafts, open tabs. Update it
-    /// in a handler, then [`Handle::refresh`].
-    pub ui: Entity<P::Ui>,
     /// The plugin's state in the run drawn, when there is one.
     pub state: Option<&'a P::State>,
     pub data: &'a P::Data,
@@ -462,6 +459,8 @@ pub struct ViewCx<'a, P: UiPlugin> {
     inputs: Option<crate::tree::Inputs<'a>>,
     /// Where its trees' widgets are kept: see [`Self::widgets`].
     widgets: Option<crate::tree::Widgets<'a>>,
+    /// Where its fetched trees are kept: see [`Self::with_fetches`].
+    fetches: Option<crate::tree::Fetches<'a>>,
     /// The window's size, in pixels: see [`Self::with_window`].
     window: (f32, f32),
     pub cx: &'a mut App,
@@ -476,7 +475,6 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         plugin: &'a P,
-        ui: Entity<P::Ui>,
         state: Option<&'a P::State>,
         data: &'a P::Data,
         settings: &'a P::Settings,
@@ -493,7 +491,6 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     ) -> Self {
         Self {
             plugin,
-            ui,
             state,
             data,
             settings,
@@ -510,6 +507,7 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             ui_state: &NO_UI_STATE,
             inputs: None,
             widgets: None,
+            fetches: None,
             window: (960., 720.),
             cx,
         }
@@ -551,6 +549,12 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     /// The same view, drawing its trees' widgets with `widgets`.
     pub fn with_widgets(mut self, widgets: crate::tree::Widgets<'a>) -> Self {
         self.widgets = Some(widgets);
+        self
+    }
+
+    /// The same view, drawing its trees' fetched trees from `fetches`.
+    pub fn with_fetches(mut self, fetches: crate::tree::Fetches<'a>) -> Self {
+        self.fetches = Some(fetches);
         self
     }
 
@@ -596,6 +600,9 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         }
         if let Some(widgets) = self.widgets {
             draw = draw.widgets(widgets);
+        }
+        if let Some(fetches) = self.fetches {
+            draw = draw.fetches(fetches);
         }
         draw.draw(node, self.cx)
     }
@@ -674,10 +681,5 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     /// The theme.
     pub fn theme(&self) -> &tau_ui_kit::theme::Theme {
         tau_ui_kit::theme::theme(self.cx)
-    }
-
-    /// Reads the plugin's window state.
-    pub fn read_ui(&self) -> &P::Ui {
-        self.ui.read(self.cx)
     }
 }

@@ -178,7 +178,9 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
         .ui_value(&draft_key(REVIEW_SEARCH))
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let kept = view.read_ui().kept.clone();
+    let kept: Option<Kept> = view
+        .ui_value(super::KEPT)
+        .and_then(|kept| serde_json::from_value(kept.clone()).ok());
     let tree = tree(&view.data.imports, &tab, query, kept.as_ref());
     let handle = view.handle.clone();
     view.tree("memory-review", &tree, on_do(handle, None))

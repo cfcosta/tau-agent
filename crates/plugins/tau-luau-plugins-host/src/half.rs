@@ -180,9 +180,16 @@ impl HostHalf for LuauPluginsHost {
         let action: Act = serde_json::from_value(action)?;
         match action {
             Act::Allow { plugin } => host.allow(&plugin).await?,
-            Act::SettingsView { plugin, settings } => {
-                let page = host.settings_page(&plugin, settings).await;
-                return Ok(Some(serde_json::to_value(page)?));
+            Act::SettingsView {
+                plugin,
+                settings,
+                fields,
+            } => {
+                let page = host.settings_page(&plugin, settings.clone()).await;
+                let tree = tau_luau_plugins::pane::settings_view(
+                    page.page, &settings, &fields,
+                );
+                return Ok(Some(tree));
             }
             Act::Action {
                 plugin,

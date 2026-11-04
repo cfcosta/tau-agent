@@ -22,9 +22,7 @@ use std::{
 
 use gpui::{
     App,
-    AppContext as _,
     Context,
-    Entity,
     IntoElement,
     ParentElement as _,
     Render,
@@ -69,7 +67,7 @@ use tau_mcp::{
         Servers,
         ToolRow,
         card,
-        page::{self, Ui},
+        page,
     },
 };
 use tau_mcp_host::{Host, McpHost, NAME};
@@ -955,13 +953,9 @@ fn handle_into(asked: &Asked) -> Handle {
     )
 }
 
-fn window_ui(cx: &mut TestAppContext) -> (Entity<Ui>, Asked) {
+fn window_ui() -> (Handle, Asked) {
     let asked: Asked = Rc::default();
-    let handle = handle_into(&asked);
-    let ui = cx.update(|cx| {
-        cx.new(|cx| <Ui as tau_ui_plugin::PluginUi>::new(handle, cx))
-    });
-    (ui, asked)
+    (handle_into(&asked), asked)
 }
 
 /// The button or switch labelled `label` in the tree `node`: its action
@@ -1288,7 +1282,6 @@ fn servers() -> Servers {
 /// Runs `f` with the page's view of `repos`, at `params`.
 fn with_view<R>(
     cx: &mut TestAppContext,
-    ui: &Entity<Ui>,
     repos: &BTreeMap<String, Servers>,
     params: &BTreeMap<String, String>,
     run: Option<&RunInfo>,
@@ -1296,14 +1289,13 @@ fn with_view<R>(
     f: impl FnOnce(&mut ViewCx<'_, McpUi>) -> R,
 ) -> R {
     let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
-    with_view_handle(cx, ui, repos, params, run, compact, handle, f)
+    with_view_handle(cx, repos, params, run, compact, handle, f)
 }
 
 /// [`with_view`] with the handle the view asks through.
 #[allow(clippy::too_many_arguments)]
 fn with_view_handle<R>(
     cx: &mut TestAppContext,
-    ui: &Entity<Ui>,
     repos: &BTreeMap<String, Servers>,
     params: &BTreeMap<String, String>,
     run: Option<&RunInfo>,
@@ -1320,21 +1312,8 @@ fn with_view_handle<R>(
     cx.update(|cx| {
         cx.set_global(tau_ui_kit::theme::Theme::graphite());
         let mut view = ViewCx::new(
-            &McpUi,
-            ui.clone(),
-            None,
-            &data,
-            &settings,
-            &repos,
-            run,
-            params,
-            compact,
-            false,
-            1400.,
-            handle,
-            &list,
-            &cards,
-            cx,
+            &McpUi, None, &data, &settings, &repos, run, params, compact,
+            false, 1400., handle, &list, &cards, cx,
         );
         f(&mut view)
     })
@@ -1342,7 +1321,6 @@ fn with_view_handle<R>(
 
 /// The page, drawn in a window as tau-ui draws it.
 struct PageView {
-    ui: Entity<Ui>,
     repos: BTreeMap<String, Servers>,
     params: BTreeMap<String, String>,
     compact: bool,
@@ -1365,7 +1343,6 @@ impl Render for PageView {
         let repos = repos.refs();
         let mut view = ViewCx::new(
             &McpUi,
-            self.ui.clone(),
             None,
             &data,
             &settings,
@@ -1389,7 +1366,6 @@ impl Render for PageView {
 /// with the UI state `ui_state`.
 fn draw_page_in(
     cx: &mut TestAppContext,
-    ui: &Entity<Ui>,
     repos: &BTreeMap<String, Servers>,
     params: BTreeMap<String, String>,
     compact: bool,
@@ -1397,9 +1373,8 @@ fn draw_page_in(
 ) {
     cx.update(|cx| cx.set_global(tau_ui_kit::theme::Theme::graphite()));
     let window = cx.add_window({
-        let (ui, repos) = (ui.clone(), repos.clone());
+        let repos = repos.clone();
         move |_, _| PageView {
-            ui,
             repos,
             params,
             compact,
@@ -1415,12 +1390,11 @@ fn draw_page_in(
 /// Draws the page at `params` in a window, on a computer or a phone.
 fn draw_page(
     cx: &mut TestAppContext,
-    ui: &Entity<Ui>,
     repos: &BTreeMap<String, Servers>,
     params: BTreeMap<String, String>,
     compact: bool,
 ) {
-    draw_page_in(cx, ui, repos, params, compact, BTreeMap::new());
+    draw_page_in(cx, repos, params, compact, BTreeMap::new());
 }
 
 /// The page draws a repository's servers on a computer and a phone, the
@@ -1428,16 +1402,15 @@ fn draw_page(
 /// waits; the run's line sums them up.
 #[gpui::test]
 fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
-    let (ui, _) = window_ui(cx);
     let repos = BTreeMap::from([("r".to_owned(), servers())]);
     let at_repo = BTreeMap::from([("repo".to_owned(), "r".to_owned())]);
-    with_view(cx, &ui, &repos, &at_repo, None, false, |view| {
+    with_view(cx, &repos, &at_repo, None, false, |view| {
         let (repo, shown) = page::servers_of(view);
         assert_eq!(repo.as_deref(), Some("r"));
         assert_eq!(shown.servers.len(), 2);
     });
     for compact in [false, true] {
-        draw_page(cx, &ui, &repos, at_repo.clone(), compact);
+        draw_page(cx, &repos, at_repo.clone(), compact);
     }
     // Servers turned off, by their entry and for every repository: the
     // repository's page cannot turn them on, the user's can turn on the
@@ -1457,11 +1430,11 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
     assert_eq!(page::locked(&servers().servers[0], true), None);
     let off_repos = BTreeMap::from([("r".to_owned(), off)]);
     for compact in [false, true] {
-        draw_page(cx, &ui, &off_repos, at_repo.clone(), compact);
+        draw_page(cx, &off_repos, at_repo.clone(), compact);
     }
     // Without a repository, the user's servers alone; the editor, open,
     // draws over the page.
-    with_view(cx, &ui, &repos, &BTreeMap::new(), None, false, |view| {
+    with_view(cx, &repos, &BTreeMap::new(), None, false, |view| {
         let (repo, shown) = page::servers_of(view);
         assert_eq!((repo, shown.servers.len()), (None, 0));
     });
@@ -1469,41 +1442,29 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
     window.click(cx, None, &repos["r"], "Add a server");
     window.click(cx, None, &repos["r"], "Save");
     assert!(window.held().editor.unwrap().problem.is_some());
-    draw_page_in(cx, &ui, &repos, BTreeMap::new(), false, window.ui);
-    let entry =
-        with_view(cx, &ui, &repos, &BTreeMap::new(), None, false, |view| {
-            ui::sidebar(&AtRepo { repo: "r".into() }, view)
-        })
-        .unwrap();
+    draw_page_in(cx, &repos, BTreeMap::new(), false, window.ui);
+    let entry = with_view(cx, &repos, &BTreeMap::new(), None, false, |view| {
+        ui::sidebar(&AtRepo { repo: "r".into() }, view)
+    })
+    .unwrap();
     assert_eq!(entry.label, "MCP");
     assert_eq!(entry.detail.as_deref(), Some("2 servers"));
     assert_eq!(entry.badge.as_ref().map(|(n, _)| n.as_str()), Some("1"));
     assert_eq!(entry.to.params["repo"], "r");
     let run = info("r");
-    let status = with_view(
-        cx,
-        &ui,
-        &repos,
-        &BTreeMap::new(),
-        Some(&run),
-        false,
-        |view| ui::status(&AtRun { run: run.clone() }, view),
-    )
-    .unwrap();
+    let status =
+        with_view(cx, &repos, &BTreeMap::new(), Some(&run), false, |view| {
+            ui::status(&AtRun { run: run.clone() }, view)
+        })
+        .unwrap();
     assert_eq!(status.state, "2 servers · 1 connected · 1 needs approval");
     // A repository without servers says nothing in the run's list.
     let quiet = info("elsewhere");
     let repos = BTreeMap::from([("elsewhere".to_owned(), Servers::default())]);
     assert!(
-        with_view(
-            cx,
-            &ui,
-            &repos,
-            &BTreeMap::new(),
-            Some(&quiet),
-            false,
-            |view| { ui::status(&AtRun { run: quiet.clone() }, view) }
-        )
+        with_view(cx, &repos, &BTreeMap::new(), Some(&quiet), false, |view| {
+            ui::status(&AtRun { run: quiet.clone() }, view)
+        })
         .is_none()
     );
 }
@@ -1514,7 +1475,7 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
 /// server that waits.
 #[gpui::test]
 fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
-    let (ui, asked) = window_ui(cx);
+    let (ui, asked) = window_ui();
     let mut servers = servers();
     servers.pending.clear();
     servers.servers[1].state = Some(ui::NEEDS_AUTH.into());
@@ -1549,33 +1510,28 @@ fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
     let repos = BTreeMap::from([("r".to_owned(), servers)]);
     let at_repo = BTreeMap::from([("repo".to_owned(), "r".to_owned())]);
     for compact in [false, true] {
-        draw_page(cx, &ui, &repos, at_repo.clone(), compact);
+        draw_page(cx, &repos, at_repo.clone(), compact);
     }
     let run = info("r");
-    let status = with_view(
-        cx,
-        &ui,
-        &repos,
-        &BTreeMap::new(),
-        Some(&run),
-        false,
-        |view| ui::status(&AtRun { run: run.clone() }, view),
-    )
-    .unwrap();
+    let status =
+        with_view(cx, &repos, &BTreeMap::new(), Some(&run), false, |view| {
+            ui::status(&AtRun { run: run.clone() }, view)
+        })
+        .unwrap();
     assert_eq!(status.state, "2 servers · 1 connected · 1 needs sign-in");
     assert_eq!(status.tone, tau_ui_kit::theme::Tone::Warn);
 
     let mut window = Window_::default();
     window.click(cx, Some("r"), &repos["r"], "Sign in");
     window.click(cx, None, &repos["r"], "Sign out");
-    ui.update(cx, |ui, cx| {
+    cx.update(|cx| {
         McpUi.reply(
-            ui,
             serde_json::to_value(Reply::SignIn {
                 server: "db".into(),
                 url: "https://auth.dev/authorize?state=s".into(),
             })
             .unwrap(),
+            &ui,
             cx,
         );
     });
@@ -1617,10 +1573,9 @@ fn at_card(tool: &str, data: CallData) -> AtCard {
 /// text, and goes red when the call failed.
 #[gpui::test]
 fn the_card_shows_the_server_and_the_result(cx: &mut TestAppContext) {
-    let (ui, _) = window_ui(cx);
     let repos = BTreeMap::from([("r".to_owned(), servers())]);
     let draw = |cx: &mut TestAppContext, at: AtCard| {
-        with_view(cx, &ui, &repos, &BTreeMap::new(), None, false, |view| {
+        with_view(cx, &repos, &BTreeMap::new(), None, false, |view| {
             card::card(&at, view)
                 .map(|card| (card.failed, card.folds, card.edge.is_some()))
         })
@@ -1723,7 +1678,7 @@ fn prompts_are_commands_that_fill_the_composer(cx: &mut TestAppContext) {
             .is_empty()
     );
 
-    let (ui, asked) = window_ui(cx);
+    let (ui, asked) = window_ui();
     let repos = BTreeMap::from([("r".to_owned(), servers())]);
     let handle = {
         let sink = asked.clone();
@@ -1735,7 +1690,7 @@ fn prompts_are_commands_that_fill_the_composer(cx: &mut TestAppContext) {
         )
     };
     let params = BTreeMap::new();
-    with_view_handle(cx, &ui, &repos, &params, None, false, handle, |view| {
+    with_view_handle(cx, &repos, &params, None, false, handle, |view| {
         ui::run_prompt(
             "mcp__git__commit_message",
             "style=short",
@@ -1774,20 +1729,20 @@ fn prompts_are_commands_that_fill_the_composer(cx: &mut TestAppContext) {
     );
 
     let reply = |reply: Reply| serde_json::to_value(reply).unwrap();
-    ui.update(cx, |ui, cx| {
+    cx.update(|cx| {
         McpUi.reply(
-            ui,
             reply(Reply::Prompt {
                 text: "Fix it.".into(),
             }),
+            &ui,
             cx,
         );
         McpUi.reply(
-            ui,
             reply(Reply::PromptFailed {
                 error: "the server failed".into(),
                 command: "/mcp__git__commit_message changes=x".into(),
             }),
+            &ui,
             cx,
         );
     });

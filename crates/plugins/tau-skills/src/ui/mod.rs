@@ -28,7 +28,6 @@ impl UiPlugin for SkillsUi {
     type Data = Skills;
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME

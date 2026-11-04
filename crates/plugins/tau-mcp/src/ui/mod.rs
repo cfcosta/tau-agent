@@ -12,7 +12,7 @@ pub mod page;
 
 use std::collections::BTreeSet;
 
-use gpui::Context;
+use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_ui_kit::{assets::Icon, theme::Tone};
@@ -24,7 +24,6 @@ use tau_ui_plugin::{
     NavEntry,
     Page,
     PluginStatus,
-    PluginUi,
     UiPlugin,
     ViewCx,
     points::{self, AtRepo, AtRun},
@@ -417,7 +416,6 @@ impl UiPlugin for McpUi {
     type Data = Servers;
     type RepoData = Servers;
     type Settings = Settings;
-    type Ui = page::Ui;
 
     fn name(&self) -> &'static str {
         NAME
@@ -425,14 +423,9 @@ impl UiPlugin for McpUi {
 
     /// A prompt goes to the composer; one that failed says why and puts
     /// the command back.
-    fn reply(
-        &self,
-        ui: &mut page::Ui,
-        reply: Value,
-        cx: &mut Context<page::Ui>,
-    ) {
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
         if let Ok(reply) = serde_json::from_value::<Reply>(reply) {
-            ui.answered(reply, cx);
+            page::answered(handle, reply, cx);
         }
     }
 
@@ -450,13 +443,6 @@ impl UiPlugin for McpUi {
             .listed_commands(commands, run_prompt)
     }
 }
-
-impl PluginUi for page::Ui {
-    fn new(handle: Handle, _: &mut Context<Self>) -> Self {
-        page::Ui::new(handle)
-    }
-}
-
 /// The prompts of the servers where the composer is, as commands: the
 /// repository's, or the user's alone outside one.
 pub fn commands(data: &Servers, repo: Option<&Servers>) -> Vec<ListedCommand> {

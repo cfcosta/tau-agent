@@ -27,7 +27,6 @@ impl UiPlugin for Keys {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         "keys"

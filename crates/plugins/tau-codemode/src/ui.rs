@@ -21,7 +21,7 @@
 
 use std::{collections::BTreeMap, io::Write};
 
-use gpui::{AnyElement, App, Context};
+use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
@@ -34,7 +34,6 @@ use tau_ui_plugin::{
     Manifest,
     NestedMark,
     PluginStatus,
-    PluginUi,
     RunCx,
     UiPlugin,
     ViewCx,
@@ -58,19 +57,6 @@ use crate::{
 /// tau-codemode with its UI.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CodemodeUi;
-
-/// What the plugin keeps per window: its way back to the window, to say
-/// why an action failed. Which sections are open is the interface's
-/// state, under their ids (ADR 0045).
-pub struct Ui {
-    handle: Handle,
-}
-
-impl PluginUi for Ui {
-    fn new(handle: Handle, _: &mut Context<Self>) -> Self {
-        Self { handle }
-    }
-}
 
 /// A user request to select an already persisted immutable version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -543,25 +529,19 @@ impl UiPlugin for CodemodeUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = Ui;
 
     fn name(&self) -> &'static str {
         PLUGIN
     }
 
-    fn reply(
-        &self,
-        ui: &mut Self::Ui,
-        reply: Value,
-        cx: &mut Context<Self::Ui>,
-    ) {
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
         if let Ok(reply) = serde_json::from_value::<ActionReply>(reply) {
             let title = if reply.error.starts_with("Promotion:") {
                 "Module promotion failed"
             } else {
                 "Module selection failed"
             };
-            ui.handle.alert(title, reply.error, cx);
+            handle.alert(title, reply.error, cx);
         }
     }
 

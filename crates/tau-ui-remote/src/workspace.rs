@@ -695,8 +695,6 @@ pub struct Workspace {
     _subscriptions: Vec<Subscription>,
     /// The workspace itself, for plugins' handles.
     pub(crate) weak: gpui::WeakEntity<Workspace>,
-    /// Each plugin's window state, by plugin (ADR 0017).
-    pub(crate) plugin_ui: HashMap<String, gpui::AnyEntity>,
     /// What plugins' handles asked, to carry out after the event.
     pub(crate) plugin_requests: crate::plugins::Requests,
     /// What a plugin asked to give the keys to, as the window draws.
@@ -936,20 +934,6 @@ impl Workspace {
             setup_motion: Default::default(),
             reduce_motion: false,
             weak: cx.weak_entity(),
-            plugin_ui: {
-                let weak = cx.weak_entity();
-                crate::plugins::registry()
-                    .plugins()
-                    .map(|plugin| {
-                        let handle = crate::plugins::handle_for(
-                            plugin.name(),
-                            plugin_requests.clone(),
-                            weak.clone(),
-                        );
-                        (plugin.name().to_owned(), plugin.new_ui(handle, cx))
-                    })
-                    .collect()
-            },
             plugin_requests,
             plugin_focus: None,
             composer_note: None,
@@ -1014,11 +998,6 @@ impl Workspace {
 
     pub fn route(&self) -> &Route {
         &self.route
-    }
-
-    /// `plugin`'s state in this window, as its own type.
-    pub fn plugin_ui<T: 'static>(&self, plugin: &str) -> Option<Entity<T>> {
-        self.plugin_ui.get(plugin)?.clone().downcast().ok()
     }
 
     pub fn catalog(&self) -> &Catalog {

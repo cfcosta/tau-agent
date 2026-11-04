@@ -10,7 +10,7 @@ pub mod stats;
 
 use std::collections::BTreeMap;
 
-use gpui::Context;
+use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ui_kit::{assets::Icon, theme::Tone};
@@ -23,7 +23,6 @@ use tau_ui_plugin::{
     NO_KEY,
     NavEntry,
     Page,
-    PluginUi,
     RunCx,
     UiPlugin,
     points::{self, AtRepo},
@@ -374,20 +373,14 @@ impl UiPlugin for ConstitutionUi {
     type Data = Data;
     type RepoData = Rules;
     type Settings = ();
-    type Ui = page::Ui;
 
     fn name(&self) -> &'static str {
         NAME
     }
 
-    fn reply(
-        &self,
-        ui: &mut page::Ui,
-        reply: Value,
-        cx: &mut Context<page::Ui>,
-    ) {
+    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
         if let Ok(result) = serde_json::from_value::<TrialResult>(reply) {
-            ui.tried(result, cx);
+            page::tried(handle, result, cx);
         }
     }
 
@@ -406,13 +399,6 @@ impl UiPlugin for ConstitutionUi {
             .contribute(points::INSPECTOR, run::inspector)
     }
 }
-
-impl PluginUi for page::Ui {
-    fn new(handle: Handle, _: &mut Context<Self>) -> Self {
-        page::Ui::new(handle)
-    }
-}
-
 /// The repository's rules in the sidebar: how many, and what waits for
 /// a person.
 fn sidebar(

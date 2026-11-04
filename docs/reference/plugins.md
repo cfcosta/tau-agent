@@ -460,8 +460,11 @@ registry ([0030](../decisions/0030-host-halves-are-crates.md)).
   decodes each body; one that does not decode is skipped, and said
   once per plugin. `()` folds nothing.
 - **Host and window state.** `HostHalf::Host: PluginHost` is made once
-  with `new(cx: &HostCx)`, and `UiPlugin::Ui: PluginUi` once per window
-  with `new(handle, cx)`. Any `Default` type is both.
+  with `new(cx: &HostCx)`; any `Default` type is one. What a window
+  keeps of a plugin (drafts, open sections, what an action answered) is
+  its UI state, as data (ADR 0045): `ViewCx::ui_value` reads it and
+  `Handle::set_ui` writes it, and `UiPlugin::reply` gets the plugin's
+  `Handle` to keep an answer there.
 - **Values.** The interface keeps a plugin's state, data and settings
   as `PluginValue`: its own type once read, JSON only on the wire.
 - **Agent commands' environment.** `HostHalf::launcher(host, repo,

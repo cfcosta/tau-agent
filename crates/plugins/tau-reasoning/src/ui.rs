@@ -252,7 +252,6 @@ impl UiPlugin for ReasoningPlugin {
     type Data = ();
     type RepoData = ();
     type Settings = Settings;
-    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME
