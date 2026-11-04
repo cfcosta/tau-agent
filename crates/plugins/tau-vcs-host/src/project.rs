@@ -1066,7 +1066,9 @@ impl ProjectRepo {
                 Some(_) => then = up(&then)?,
                 None => {
                     let parent = up(&then)?;
-                    if is_wc(&parent)? {
+                    if is_wc(&parent)?
+                        || unsafe_to_stand(repo.as_ref(), &then, &working_copies)?
+                    {
                         then = parent;
                     } else {
                         break then.clone();
@@ -1822,6 +1824,42 @@ fn take_upstream(
             tx.repo_mut()
                 .set_local_bookmark_target(ref_name, now.clone());
         }
+    }
+}
+
+/// Whether a fork must not stand on the hidden `commit`. A commit made
+/// visible brings its hidden ancestors with it, up to the first visible
+/// one, and a fork there would:
+/// - give a working copy (an undo's restored `@`) a divergent twin, when
+///   one of those hidden commits is an older version of it;
+/// - stand on another workspace's working copy, when that first visible
+///   ancestor is one: its next snapshot would rebase the fork with it.
+fn unsafe_to_stand(
+    repo: &ReadonlyRepo,
+    commit: &Commit,
+    working_copies: &[&CommitId],
+) -> Result<bool, VcsError> {
+    let mut at = commit.clone();
+    loop {
+        let visible: Vec<CommitId> =
+            match block_on(repo.resolve_change_id(at.change_id()))? {
+                Some(targets) => targets
+                    .visible_with_offsets()
+                    .map(|(_, id)| id.clone())
+                    .collect(),
+                None => Vec::new(),
+            };
+        if visible.contains(at.id()) {
+            // The first visible ancestor: what the hidden ones stand on.
+            return Ok(working_copies.contains(&at.id()));
+        }
+        if visible.iter().any(|id| working_copies.contains(&id)) {
+            return Ok(true);
+        }
+        let Some(parent) = at.parent_ids().first() else {
+            return Ok(false);
+        };
+        at = repo.store().get_commit(parent)?;
     }
 }
 
