@@ -9415,6 +9415,7 @@ dependencies = [
  "tau-agents-host",
  "tau-codemode-host",
  "tau-luau-plugins-host",
+ "tau-plugins",
  "tau-ui",
  "tau-ui-plugin",
  "tau-ui-remote",
@@ -9981,6 +9982,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-plugins"
+version = "0.1.0"
+dependencies = [
+ "tau-agents",
+ "tau-ask",
+ "tau-canvas",
+ "tau-codemode",
+ "tau-compaction",
+ "tau-constitution",
+ "tau-direnv",
+ "tau-fast-compaction",
+ "tau-goal",
+ "tau-luau-plugins",
+ "tau-mcp",
+ "tau-memory",
+ "tau-reasoning",
+ "tau-schedule",
+ "tau-skills",
+ "tau-tools",
+ "tau-tree-compaction",
+ "tau-ui-plugin",
+ "tau-vcs",
+ "tau-watcher",
+]
+
+[[package]]
 name = "tau-reasoning"
 version = "0.1.0"
 dependencies = [
@@ -10252,6 +10279,7 @@ dependencies = [
  "tau-mcp-host",
  "tau-memory",
  "tau-memory-host",
+ "tau-plugins",
  "tau-reasoning",
  "tau-remote",
  "tau-schedule",
@@ -10335,28 +10363,22 @@ dependencies = [
  "tau-agents",
  "tau-ai",
  "tau-ask",
- "tau-canvas",
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",
- "tau-direnv",
  "tau-fast-compaction",
  "tau-goal",
  "tau-luau-plugins",
- "tau-mcp",
  "tau-memory",
+ "tau-plugins",
  "tau-reasoning",
  "tau-remote",
- "tau-schedule",
- "tau-skills",
  "tau-store",
  "tau-terminal",
  "tau-tools",
- "tau-tree-compaction",
  "tau-ui-kit",
  "tau-ui-plugin",
  "tau-vcs",
- "tau-watcher",
  "tempfile",
  "tokio",
 ]

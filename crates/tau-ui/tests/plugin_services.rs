@@ -117,7 +117,7 @@ fn install() {
     ONCE.call_once(|| {
         tau_ui_remote::plugins::install(
             tau_ui::hosted::halves(
-                tau_ui_remote::plugins::plugins().with(Resumer),
+                tau_plugins::plugins().with(Resumer),
             )
             .host(ResumerHost),
         )

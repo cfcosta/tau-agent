@@ -63,7 +63,7 @@ fn activity(_: &points::AtApp, view: &mut ViewCx<'_, Worker>) -> Option<Node> {
 /// The app's plugins and the one above: a process has one registry.
 fn install() {
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| plugins::install(plugins::plugins().with(Worker)));
+    ONCE.call_once(|| plugins::install(tau_plugins::plugins().with(Worker)));
 }
 
 fn job(name: &str, page: Option<Link>) -> JobInfo {

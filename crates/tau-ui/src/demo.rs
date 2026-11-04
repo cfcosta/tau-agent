@@ -3053,6 +3053,7 @@ mod tests {
 
     #[test]
     fn the_script_plays_to_a_finished_run() {
+        crate::hosted::install();
         let mut view = retry_after();
         for (_, update) in script() {
             view.update(update);

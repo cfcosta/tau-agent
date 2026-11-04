@@ -8,9 +8,9 @@ use std::sync::Once;
 use tau_ui_plugin::Registry;
 use tau_ui_remote::plugins;
 
-/// Every plugin tau-ui-remote lists, each with its host half.
+/// Every plugin tau-plugins lists, each with its host half.
 pub fn plugins() -> Registry {
-    tau_ui::hosted::halves(plugins::plugins())
+    tau_ui::hosted::halves(tau_plugins::plugins())
         .host(tau_luau_plugins_host::LuauPluginsHost)
         .host(tau_codemode_host::CodemodeHost)
         .host(tau_agents_host::AgentsHost)

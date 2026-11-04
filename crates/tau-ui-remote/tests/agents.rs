@@ -124,6 +124,7 @@ type Events = Rc<RefCell<Vec<WorkspaceEvent>>>;
 fn open(
     cx: &mut TestAppContext,
 ) -> (Entity<Workspace>, VisualTestContext, Events) {
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         Workspace::new("tau", runs(), catalog(), window, cx)
@@ -299,5 +300,13 @@ fn a_tapped_notice_opens_its_agent_once_the_window_knows_it(
         assert_eq!(ws.route(), &Route::Run(id("main")));
         assert!(ws.open_agent_once_known(AGENT, cx));
         assert_eq!(ws.route(), &Route::Run(id("agent-main")));
+    });
+}
+
+/// Gives this process every plugin tau comes with, once.
+fn install_plugins() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tau_ui_remote::plugins::install(tau_plugins::plugins())
     });
 }

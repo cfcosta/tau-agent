@@ -88,6 +88,7 @@ fn rows(ws: &Workspace) -> Vec<(String, Attention)> {
 
 #[gpui::test]
 fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         Workspace::new("tau", runs(), catalog(), window, cx)
@@ -245,6 +246,7 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
 /// sidebar; one that ended for good stays, as history loads it.
 #[gpui::test]
 fn closed_chats_leave_the_sidebar_unless_they_ended(cx: &mut TestAppContext) {
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let mut landed = chat("landed", Some(StopReason::Stop));
     landed.ending = Some(Ending::Landed {
@@ -293,6 +295,7 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
         attention::Queued,
         queue::{MainConflicts, Waiting},
     };
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let main = runs().remove(0);
     let runs = vec![
@@ -428,6 +431,7 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
 /// is in main's tray, for the round.
 #[gpui::test]
 fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let mut runs = runs();
     let mut sub = RunView::new(id("sub"), "sub", "coder", "gpt-5.5")
@@ -475,6 +479,7 @@ fn the_crew_is_this_rounds_sub_agents(cx: &mut TestAppContext) {
     use tau_agent::{event::RunEvent, tool::ToolOutput};
     use tau_ui_remote::crew::Standing;
 
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let mut main =
         RunView::new(id("main"), "main", "coder", "gpt-5.5").in_repo(REPO);
@@ -656,6 +661,7 @@ fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
     use gpui::{Modifiers, size};
     use tau_ui_remote::{route::Route, workspace::WorkspaceEvent};
 
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         Workspace::new("tau", runs(), catalog(), window, cx)
@@ -701,4 +707,12 @@ fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
         events.borrow().as_slice(),
         [WorkspaceEvent::UpdateRepo { repo: REPO.into() }]
     );
+}
+
+/// Gives this process every plugin tau comes with, once.
+fn install_plugins() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tau_ui_remote::plugins::install(tau_plugins::plugins())
+    });
 }

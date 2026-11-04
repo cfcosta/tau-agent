@@ -27,6 +27,7 @@ fn open_with(
     cx: &mut TestAppContext,
     runs: Vec<tau_ui_remote::view::RunView>,
 ) -> (Entity<Workspace>, VisualTestContext, Events) {
+    tau_ui::hosted::install();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         let catalog = Catalog {

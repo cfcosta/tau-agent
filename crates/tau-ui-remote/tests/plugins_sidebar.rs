@@ -101,6 +101,7 @@ fn runs() -> Vec<RunView> {
 fn open(
     cx: &mut TestAppContext,
 ) -> (gpui::Entity<Workspace>, VisualTestContext) {
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         Workspace::new("tau", runs(), catalog(), window, cx)
@@ -182,5 +183,13 @@ fn writing_a_plugin_starts_on_a_new_run_s_composer(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         assert_eq!(ws.route(), &Route::NewRun);
         assert_eq!(ws.composer_text(cx), "/plugin block deploys");
+    });
+}
+
+/// Gives this process every plugin tau comes with, once.
+fn install_plugins() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tau_ui_remote::plugins::install(tau_plugins::plugins())
     });
 }

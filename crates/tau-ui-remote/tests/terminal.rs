@@ -50,6 +50,7 @@ fn result_details(bytes: &[u8], code: Option<i32>, status: &str) -> Value {
 }
 
 fn started() -> RunView {
+    install_plugins();
     let mut view = RunView::new(run(), "t", "coder", "m");
     view.apply(&RunEvent::ToolStart {
         run: run(),
@@ -271,6 +272,7 @@ fn the_model_text_marks_what_was_left_out() {
 /// and live chunks reach its screen.
 #[gpui::test]
 fn the_workspace_draws_and_copies_a_terminal(cx: &mut TestAppContext) {
+    install_plugins();
     cx.update(tau_ui_remote::init);
     let mut view = started();
     view.apply(&chunk(0, b"\x1b[1;32m   Compiling\x1b[0m tau\r\n"));
@@ -315,5 +317,13 @@ fn the_workspace_draws_and_copies_a_terminal(cx: &mut TestAppContext) {
     );
     workspace.read_with(&cx, |ws, _| {
         assert!(term(ws.run(&run()).unwrap()).is_some());
+    });
+}
+
+/// Gives this process every plugin tau comes with, once.
+fn install_plugins() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tau_ui_remote::plugins::install(tau_plugins::plugins())
     });
 }

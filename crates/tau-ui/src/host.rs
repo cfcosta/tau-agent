@@ -2007,6 +2007,7 @@ mod tests {
     #[hegel::test(test_cases = 300)]
     fn branch_slugs_are_the_first_four_words(tc: hegel::TestCase) {
         use hegel::generators as gs;
+        crate::hosted::install();
         let words: Vec<String> = tc.draw(
             gs::vecs(gs::text().alphabet("aZq09éÅ").min_size(1).max_size(6))
                 .max_size(7),

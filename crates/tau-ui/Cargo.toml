@@ -59,6 +59,8 @@ tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 # The interface it drives.
 tau-ui-remote.workspace = true
+# The plugins tau comes with.
+tau-plugins.workspace = true
 futures-util.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "time"] }
 # A sub-agent's stop, as its plugins get it.

@@ -17,6 +17,7 @@ use tau_watcher::{
 };
 
 fn open(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
+    tau_ui::hosted::install();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         let repo = Repo {

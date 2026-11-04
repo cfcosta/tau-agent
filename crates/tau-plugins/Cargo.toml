@@ -1,0 +1,36 @@
+[package]
+name = "tau-plugins"
+description = "The plugins tau comes with, each with its UI and in the order a run's agent gets them: the one place they are listed (ADR 0045)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The plugins come without their host halves: those are crates of
+# their own (`tau-*-host`, ADR 0030), or the `host` feature of the
+# plugins that keep theirs in the same crate. Cargo cannot turn a
+# workspace dependency's defaults off, so those name their paths.
+[dependencies]
+tau-ui-plugin.workspace = true
+tau-codemode.workspace = true
+tau-compaction.workspace = true
+tau-constitution.workspace = true
+tau-ask = { path = "../plugins/tau-ask", default-features = false }
+tau-canvas = { path = "../plugins/tau-canvas", default-features = false }
+tau-direnv = { path = "../plugins/tau-direnv", default-features = false }
+tau-goal.workspace = true
+tau-schedule = { path = "../plugins/tau-schedule", default-features = false }
+tau-watcher.workspace = true
+tau-luau-plugins.workspace = true
+tau-agents.workspace = true
+tau-skills = { path = "../plugins/tau-skills", default-features = false }
+tau-mcp.workspace = true
+tau-memory.workspace = true
+tau-reasoning.workspace = true
+tau-fast-compaction.workspace = true
+tau-tree-compaction.workspace = true
+# `exec_command` cards draw their output as a terminal
+# (docs/decisions/0010-terminal-rendering.md).
+tau-tools = { workspace = true, features = ["terminal"] }
+tau-vcs.workspace = true

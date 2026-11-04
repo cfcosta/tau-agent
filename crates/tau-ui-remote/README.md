@@ -16,7 +16,7 @@ take one path.
 | `update::HostUpdate`             | What a host tells the interface; `Workspace::apply` takes each one                           |
 | `view::RunView`                  | A run as the interface shows it, built from `RunEvent`s with no window                       |
 | `catalog::Catalog`               | What the workspace shows beyond runs: plugins, repositories, the store, plugins' jobs        |
-| `plugins`                        | The plugins in order (`plugins::plugins`), UI halves only, and `install` for a host's        |
+| `plugins`                        | The installed plugins (`registry`, none on a phone), `install` for a host's, and their views|
 | `remote`                         | The phone's side: `remote::connect` pairs with a computer and applies what it sends          |
 | `views`                          | Plugins' views by name (ADR 0046): the computer builds them, a phone draws what comes back   |
 | `attention`                      | Whether a chat needs the person: `Attention::of` over a run's `Facts`                        |

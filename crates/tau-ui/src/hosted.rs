@@ -21,7 +21,7 @@ use tau_ui_remote::{
     plugins::{self, registry},
 };
 
-/// The plugins tau-ui-remote lists, each given the host half tau-ui has
+/// The plugins tau-plugins lists, each given the host half tau-ui has
 /// for it: every one but the Luau ones (tau-codemode, tau-luau-plugins),
 /// which only the `tau` app links, so tau-ui builds while Luau's C++
 /// does (ADR 0030).
@@ -52,7 +52,7 @@ pub fn install() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
         if !plugins::installed() {
-            plugins::install(halves(plugins::plugins()));
+            plugins::install(halves(tau_plugins::plugins()));
         }
     });
 }

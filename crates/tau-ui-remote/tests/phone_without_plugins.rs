@@ -2,7 +2,7 @@
 //! computer's from its catalog, draws their views as the computer sends
 //! them, sends their clicks to the computer, carries out what comes back
 //! for it, and folds none of their records. A process of its own, as a
-//! phone is: its registry is empty.
+//! phone is: it installs no plugins, so it has none.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -63,7 +63,6 @@ type Events = Rc<RefCell<Vec<WorkspaceEvent>>>;
 fn open(
     cx: &mut TestAppContext,
 ) -> (Entity<Workspace>, VisualTestContext, Events) {
-    plugins::install_none();
     cx.update(tau_ui_remote::init);
     let run = RunView::new(run_id(), "main", "coder", "gpt-5.5").in_repo(REPO);
     let window = cx.add_window(|window, cx| {

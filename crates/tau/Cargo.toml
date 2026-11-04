@@ -16,6 +16,8 @@ tau-agents-host.workspace = true
 tau-ui.workspace = true
 tau-ui-plugin.workspace = true
 tau-ui-remote.workspace = true
+# The plugins tau comes with.
+tau-plugins.workspace = true
 
 # The desktop's windows. A phone build brings its own platform
 # (gpui-pre-mobile), and this crate has none for Android.

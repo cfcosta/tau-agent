@@ -51,7 +51,7 @@ impl UiPlugin for Keys {
 /// The app's plugins and the one above: a process has one registry.
 fn install() {
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| plugins::install(plugins::plugins().with(Keys)));
+    ONCE.call_once(|| plugins::install(tau_plugins::plugins().with(Keys)));
 }
 
 #[gpui::test]

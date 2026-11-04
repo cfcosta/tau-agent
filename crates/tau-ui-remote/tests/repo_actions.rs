@@ -67,7 +67,7 @@ fn action(at: &points::AtRepo, _: &mut ViewCx<'_, Tidy>) -> Option<Node> {
 /// The app's plugins and the one above: a process has one registry.
 fn install() {
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| plugins::install(plugins::plugins().with(Tidy)));
+    ONCE.call_once(|| plugins::install(tau_plugins::plugins().with(Tidy)));
 }
 
 #[gpui::test]

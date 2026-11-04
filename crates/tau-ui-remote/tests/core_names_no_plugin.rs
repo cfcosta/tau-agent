@@ -1,5 +1,6 @@
-//! The interface never names the memory plugin but to list it (ADR
-//! 0006, ADR 0044): what memory adds, it adds through the points.
+//! The interface never names the memory plugin (ADR 0006, ADR 0044):
+//! what memory adds, it adds through the points, and tau-plugins lists
+//! it.
 
 use std::path::Path;
 
@@ -17,7 +18,7 @@ fn sources(dir: &Path, out: &mut Vec<(String, String)>) {
 }
 
 #[test]
-fn only_the_plugin_list_names_memory() {
+fn no_source_names_memory() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     sources(&src, &mut files);
@@ -27,6 +28,5 @@ fn only_the_plugin_list_names_memory() {
         .filter(|(_, text)| text.contains("tau_memory"))
         .map(|(path, _)| path.as_str())
         .collect();
-    let list = src.join("plugins.rs").display().to_string();
-    assert_eq!(naming, [list.as_str()]);
+    assert_eq!(naming, Vec::<&str>::new());
 }

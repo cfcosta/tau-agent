@@ -107,7 +107,7 @@ fn data(imports: Imports) -> PluginValue {
 
 fn install() {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| plugins::install(plugins::plugins()));
+    ONCE.call_once(|| plugins::install(tau_plugins::plugins()));
 }
 
 /// A desktop window whose catalog holds `imports` as memory's data, and

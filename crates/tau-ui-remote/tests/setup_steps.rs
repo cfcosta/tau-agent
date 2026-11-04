@@ -106,7 +106,7 @@ fn step(at: &AtSetup, view: &mut ViewCx<'_, Stepper>) -> Option<SetupView> {
 /// The app's plugins and the one above: a process has one registry.
 fn install() {
     static ONCE: Once = Once::new();
-    ONCE.call_once(|| plugins::install(plugins::plugins().with(Stepper)));
+    ONCE.call_once(|| plugins::install(tau_plugins::plugins().with(Stepper)));
 }
 
 type Events = Rc<RefCell<Vec<WorkspaceEvent>>>;
