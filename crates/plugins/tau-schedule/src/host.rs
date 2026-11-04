@@ -6,7 +6,9 @@
 //! it is going: then they wait for it to end. A chat that landed or was
 //! dropped takes no turn, and what it had waiting goes. A wake-up leaves
 //! the file once its turn started, so tau closed before then wakes the
-//! chat when it starts again.
+//! chat when it starts again: wake-ups are at least once. tau closed
+//! after the turn started but before the file was written wakes the
+//! chat once more, on the same note.
 
 use std::{
     collections::BTreeMap,

@@ -1169,6 +1169,10 @@ Built: `crates/plugins/tau-schedule`, with its host half behind its
   wakes each such chat through `Conversations::wake` with one message
   of tau's holding every note due. A chat with a turn going waits for
   it; one that landed or was dropped loses what it had waiting.
+- **At least once:** a wake-up leaves `wakes.json` once its chat's turn
+  started. tau closed before that wakes the chat as it starts again, so
+  no wake-up is missed; tau closed after the turn started and before the
+  file was written wakes it once more, on the same note.
 - **State:** `wakes.json` in its plugin directory, by chat, written
   whole on each change; nothing in the run's records. The interface
   reads it as the plugin's data: the inspector's Scheduled section, and

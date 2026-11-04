@@ -5,8 +5,10 @@
 //!
 //! The model is what each chat has waiting, and how often each wake-up
 //! woke its chat: the turns the conversations started are what outlives
-//! tau, as a chat's stored messages do. A wake-up wakes its chat once,
-//! whatever tau closed in the middle of.
+//! tau, as a chat's stored messages do. A wake-up wakes its chat at
+//! least once (ADR 0039): never missed, once when tau stays up, and at
+//! most once more for each time tau closed after its turn started and
+//! before it kept that the wake-up went.
 
 #![allow(
     clippy::disallowed_methods,
@@ -147,11 +149,8 @@ struct Machine {
     waiting: BTreeMap<(String, String), Waiting>,
     states: BTreeMap<String, Chat>,
     /// The wake-ups that woke their chat as tau closed, and how many
-    /// times each: tau wakes them again as it starts, see
-    /// `a_wake_up_whose_turn_started_as_tau_closed_does_not_wake_again`.
+    /// times each: tau wakes them again as it starts.
     again: BTreeMap<String, usize>,
-    /// Holds those to waking once too.
-    strict: bool,
     next: usize,
 }
 
@@ -172,7 +171,6 @@ impl Machine {
                 .map(|chat| ((*chat).to_owned(), Chat::Idle))
                 .collect(),
             again: BTreeMap::new(),
-            strict: false,
             next: 0,
         }
     }
@@ -196,18 +194,15 @@ impl Machine {
             fired.get(note).copied().unwrap_or(0)
                 != before.get(note).copied().unwrap_or(0)
         };
-        if self.strict {
-            self.waiting.retain(|_, wake| !woke(&wake.note));
-        } else {
-            for wake in self.waiting.values().filter(|wake| woke(&wake.note)) {
-                *self.again.entry(wake.note.clone()).or_default() += 1;
-            }
+        // Still waiting: the next start wakes the chat again.
+        for wake in self.waiting.values().filter(|wake| woke(&wake.note)) {
+            *self.again.entry(wake.note.clone()).or_default() += 1;
         }
         self.reopen();
     }
 
-    /// Each wake-up woke its chat once at most, and what waits is the
-    /// model's.
+    /// Each wake-up woke its chat once, and once more at most for each
+    /// time tau closed in its turn; what waits is the model's.
     fn check(&self) {
         for (note, times) in self.fired() {
             let most = 1 + self.again.get(&note).copied().unwrap_or(0);
@@ -377,38 +372,44 @@ fn run_machine(tc: TestCase, steps: i64) {
 }
 
 #[hegel::test(test_cases = 200)]
-fn a_wake_up_wakes_its_chat_once_whatever_tau_closed_in(tc: TestCase) {
+fn a_wake_up_wakes_its_chat_at_least_once_whatever_tau_closed_in(tc: TestCase) {
     run_machine(tc, 30);
 }
 
 #[ignore = "nightly"]
 #[hegel::test(profile = "nightly")]
-fn a_wake_up_wakes_its_chat_once_whatever_tau_closed_in_nightly(tc: TestCase) {
+fn a_wake_up_wakes_its_chat_at_least_once_whatever_tau_closed_in_nightly(
+    tc: TestCase,
+) {
     run_machine(tc, 60);
 }
 
-/// tau closed after a wake-up's turn started, before it kept that the
-/// wake-up went (found by
-/// `a_wake_up_wakes_its_chat_once_whatever_tau_closed_in`). Started
-/// again, tau still has it waiting, and wakes the chat a second time on
-/// the same note: the file is written once the host answers that the
-/// turn started, and nothing tells the next start it did.
+/// tau closed while it woke a chat (found by
+/// `a_wake_up_wakes_its_chat_at_least_once_whatever_tau_closed_in`):
+/// before the chat's turn started, the next start wakes it once; after,
+/// but before tau kept that the wake-up went, the next start wakes it
+/// once more, on the same note, and then it is gone. Wake-ups are at
+/// least once (ADR 0039).
 #[test]
-#[ignore = "should a wake-up whose turn may have started as tau closed \
-            wake its chat again (at least once), or never (at most \
-            once), and should Conversations say whether a chat took it?"]
-fn a_wake_up_whose_turn_started_as_tau_closed_does_not_wake_again() {
-    let mut machine = Machine::new();
-    machine.strict = true;
-    let plan: Plan = serde_json::from_value(serde_json::json!({
-        "name": "recheck",
-        "note": "note 1",
-        "in": "1m",
-    }))
-    .unwrap();
-    block_on_io(machine.schedules.schedule("chat-a", plan)).unwrap();
-    machine.clock.advance(60);
-    machine.close_in_tick(Cut::After);
-    block_on_io(machine.schedules.tick());
-    machine.check();
+fn a_wake_up_cut_off_by_tau_closing_wakes_its_chat_again() {
+    for (cut, times) in [(Cut::Before, 1), (Cut::After, 2)] {
+        let mut machine = Machine::new();
+        let plan: Plan = serde_json::from_value(serde_json::json!({
+            "name": "recheck",
+            "note": "note 1",
+            "in": "1m",
+        }))
+        .unwrap();
+        block_on_io(machine.schedules.schedule("chat-a", plan)).unwrap();
+        machine.clock.advance(60);
+        machine.close_in_tick(cut);
+        block_on_io(machine.schedules.tick());
+        assert_eq!(machine.fired().get("note 1"), Some(&times), "{cut:?}");
+        assert!(
+            block_on_io(machine.schedules.overview()).wakes.is_empty(),
+            "{cut:?}: it went once its chat woke"
+        );
+        block_on_io(machine.schedules.tick());
+        assert_eq!(machine.fired().get("note 1"), Some(&times), "{cut:?}");
+    }
 }

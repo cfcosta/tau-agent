@@ -4,7 +4,9 @@
 //! A chat's `schedule` tool leaves it a note for a time to come; when
 //! that time comes, the chat takes a turn of tau's on the note. Once
 //! only: repeating is for agents (ADR 0037), whose own `schedule` takes
-//! this one's place in their runs.
+//! this one's place in their runs. Waking is at least once: tau closing
+//! as a chat's turn starts may wake it once more on the same note, and
+//! never leaves one unwoken.
 //!
 //! - [`Wake`], [`Overview`]: what chats have waiting, for every
 //!   interface.

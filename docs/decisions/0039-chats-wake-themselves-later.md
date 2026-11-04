@@ -53,6 +53,9 @@ make one safe to leave running.
 - **Kept on the host**, in the plugin's directory, one file for all
   chats, written whole on each change. tau closed when one came due
   wakes the chat once it starts again; there is no daemon (0037).
+  Waking is at least once: a wake-up leaves the file once its turn
+  started, so tau closing between the two wakes the chat once more on
+  the same note, and none is ever missed.
 - **Shown in the chat's inspector**, under Scheduled: each with its
   name, when, and note, and a way for the person to cancel it.
 
