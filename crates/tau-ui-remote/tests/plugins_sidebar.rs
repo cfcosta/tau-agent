@@ -33,6 +33,8 @@ fn plugin(name: &str, group: Group) -> PluginInfo {
         note: None,
         entries: Vec::new(),
         settings: false,
+        ui: true,
+        rewrites_keep_transcript: false,
     }
 }
 

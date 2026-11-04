@@ -3,9 +3,7 @@
 
 use std::{any::Any, marker::PhantomData};
 
-use crate::tree::Node;
-
-use crate::{UiPlugin, view::ViewCx};
+use crate::{UiPlugin, tree::Node, view::ViewCx};
 
 /// An extension point: a named place UI can go. `Cx` is what each
 /// contribution gets, `Out` what it gives back.
@@ -73,8 +71,7 @@ pub(crate) struct Contribution<P: UiPlugin> {
     pub contribute: Contribute<P>,
 }
 
-type Draw<P> =
-    Box<dyn for<'a> Fn(&mut ViewCx<'a, P>) -> Node + Send + Sync>;
+type Draw<P> = Box<dyn for<'a> Fn(&mut ViewCx<'a, P>) -> Node + Send + Sync>;
 type Title<P> = Box<dyn for<'a> Fn(&mut ViewCx<'a, P>) -> String + Send + Sync>;
 
 /// A page: a place of the plugin's own, opened by a
@@ -90,10 +87,7 @@ pub struct Page<P: UiPlugin> {
 impl<P: UiPlugin> Page<P> {
     pub fn new(
         name: &'static str,
-        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> Node
-        + Send
-        + Sync
-        + 'static,
+        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> Node + Send + Sync + 'static,
     ) -> Self {
         Self {
             name,
@@ -320,10 +314,7 @@ impl<P: UiPlugin> Manifest<P> {
     /// (`PluginInfo::entries`) has its name as the `entry` parameter.
     pub fn settings(
         mut self,
-        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> Node
-        + Send
-        + Sync
-        + 'static,
+        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> Node + Send + Sync + 'static,
     ) -> Self {
         self.settings = Some(Box::new(draw));
         self

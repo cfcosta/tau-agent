@@ -59,6 +59,17 @@ pub fn install(registry: Registry) {
     }
 }
 
+/// Gives this process no plugins: a phone's, which draws the computer's
+/// plugins as the computer builds them and runs none of their code (ADR
+/// 0046). Called before [`crate::init`].
+///
+/// # Panics
+///
+/// When a registry was installed already.
+pub fn install_none() {
+    install(Registry::new());
+}
+
 /// Every plugin, in the order the host adds them to a run's agent, with
 /// its UI and without its host half (ADR 0030).
 pub fn plugins() -> Registry {
@@ -118,6 +129,68 @@ pub fn read_prompt(prompt: &str) -> Option<String> {
     registry()
         .plugins()
         .find_map(|plugin| plugin.read_prompt(prompt))
+}
+
+/// The plugins a phone knows from the computer's catalog, having none of
+/// its own (ADR 0046): each one's name, and whether its rewrites keep the
+/// transcript.
+static KNOWN: std::sync::Mutex<Vec<(&'static str, bool)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// `name`, kept for the process: a plugin's name as the registry has
+/// it, or as a phone learned it from the computer.
+pub fn intern(name: &str) -> &'static str {
+    use std::{collections::BTreeSet, sync::Mutex};
+
+    static NAMES: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
+    if let Some(plugin) = registry().get(name) {
+        return plugin.name();
+    }
+    let mut names = NAMES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(known) = names.get(name) {
+        return known;
+    }
+    let kept: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.insert(kept);
+    kept
+}
+
+/// Learns the plugins the computer has, from its catalog.
+pub(crate) fn know(plugins: &[crate::catalog::PluginInfo]) {
+    let known = plugins
+        .iter()
+        .filter(|plugin| plugin.ui)
+        .map(|plugin| (intern(&plugin.name), plugin.rewrites_keep_transcript))
+        .collect();
+    *KNOWN
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = known;
+}
+
+/// What a phone knows of `plugin` from the computer, if anything.
+fn known(plugin: &str) -> Option<bool> {
+    KNOWN
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .find(|(name, _)| *name == plugin)
+        .map(|(_, keeps)| *keeps)
+}
+
+/// Whether `plugin` has its UI, here or on the computer: what it
+/// publishes says what it does.
+pub fn has_ui(plugin: &str) -> bool {
+    registry().get(plugin).is_some() || known(plugin).is_some()
+}
+
+/// Whether `plugin`'s context rewrites keep the transcript.
+pub fn keeps_transcript(plugin: &str) -> bool {
+    match registry().get(plugin) {
+        Some(plugin) => plugin.rewrites_keep_transcript(),
+        None => known(plugin).unwrap_or(false),
+    }
 }
 
 /// The points tau-ui declares.
@@ -251,6 +324,62 @@ impl Origin {
 }
 
 impl Workspace {
+    /// The plugins this window draws: the registry's, or on a phone the
+    /// computer's, from its catalog (ADR 0046).
+    pub fn plugin_names(&self) -> Vec<&'static str> {
+        if self.draws_remote_views() {
+            return self
+                .catalog
+                .plugins
+                .iter()
+                .filter(|plugin| plugin.ui)
+                .map(|plugin| intern(&plugin.name))
+                .collect();
+        }
+        registry().plugins().map(|plugin| plugin.name()).collect()
+    }
+
+    /// `plugin`'s name, if this window draws it.
+    pub(crate) fn plugin_named(&self, plugin: &str) -> Option<&'static str> {
+        if self.draws_remote_views() {
+            return self
+                .plugin_names()
+                .into_iter()
+                .find(|name| *name == plugin);
+        }
+        registry().get(plugin).map(|plugin| plugin.name())
+    }
+
+    /// Each plugin's commands where the composer is, by plugin: on a
+    /// phone, as the computer lists them.
+    pub(crate) fn plugin_command_list(
+        &self,
+    ) -> Vec<(&'static str, tau_ui_plugin::registry::CommandInfo)> {
+        if self.draws_remote_views() {
+            let view = View::Commands {
+                repo: self.command_repo(),
+            };
+            let Some(Some(Built::Commands { commands })) =
+                self.remote_view(view)
+            else {
+                return Vec::new();
+            };
+            return commands
+                .into_iter()
+                .map(|(plugin, command)| (intern(&plugin), command))
+                .collect();
+        }
+        registry()
+            .plugins()
+            .flat_map(|plugin| {
+                let name = plugin.name();
+                self.plugin_commands(plugin.as_ref())
+                    .into_iter()
+                    .map(move |command| (name, command))
+            })
+            .collect()
+    }
+
     /// The handle `plugin`'s UI asks the workspace through.
     pub fn plugin_handle(&self, plugin: &'static str) -> Handle {
         handle_for(plugin, self.plugin_requests.clone())
@@ -566,11 +695,9 @@ impl Workspace {
         if !self.calls.remove(&id) {
             return;
         }
-        let Some(erased) = registry().get(plugin) else {
-            return;
-        };
+        let plugin = intern(plugin);
         for request in requests {
-            self.plugin_request(erased.name(), request, cx);
+            self.plugin_request(plugin, request, cx);
         }
     }
 
@@ -927,8 +1054,7 @@ impl Workspace {
             return None;
         }
         // Every plugin's context names the same place.
-        let place =
-            registry().plugins().find_map(|plugin| at(plugin.name()))?;
+        let place = self.plugin_names().into_iter().find_map(at)?;
         let Some(place) = place.wire() else {
             return Some(Vec::new());
         };
@@ -943,8 +1069,7 @@ impl Workspace {
             .into_iter()
             .filter(|out| at(&out.plugin).is_some())
             .filter_map(|out| {
-                let plugin = registry().get(&out.plugin)?.name();
-                Some((plugin, Out::from_wire(out.out)?))
+                Some((intern(&out.plugin), Out::from_wire(out.out)?))
             })
             .collect();
         Some(outs)
@@ -967,12 +1092,12 @@ impl Workspace {
         };
         use tau_ui_kit::theme::sp;
 
-        let erased = registry().get(plugin)?;
+        let name = self.plugin_named(plugin)?;
         let run = params.get("run").and_then(|id| {
             self.runs.iter().find(|run| &*run.id.0 == id.as_str())
         });
         let remote = self.remote_view(View::Page {
-            plugin: erased.name().to_owned(),
+            plugin: name.to_owned(),
             page: page.to_owned(),
             params: params.clone(),
         });
@@ -980,17 +1105,20 @@ impl Workspace {
             Some(Some(Built::Page { tree, framed })) => (tree, framed),
             Some(_) => return None,
             None => self
-                .with_plugin(erased.as_ref(), run, params, |plugin, env| {
-                    plugin.draw_page(page, env)
-                })
+                .with_plugin(
+                    registry().get(name)?.as_ref(),
+                    run,
+                    params,
+                    |plugin, env| plugin.draw_page(page, env),
+                )
                 .flatten()?,
         };
         let origin = Origin {
             run: run.map(|run| run.id.clone()),
             params: params.clone(),
         };
-        let id = format!("{}-page-{page}", erased.name());
-        let drawn = self.plugin_tree(erased.name(), &id, &tree, origin, cx);
+        let id = format!("{}-page-{page}", name);
+        let drawn = self.plugin_tree(name, &id, &tree, origin, cx);
         if !framed {
             return Some(drawn);
         }
@@ -1025,7 +1153,7 @@ impl Workspace {
         entry: Option<&str>,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let erased = registry().get(plugin)?;
+        let name = self.plugin_named(plugin)?;
         let mut params = BTreeMap::new();
         if let Some(scope) = scope {
             params.insert(tau_ui_plugin::SCOPE.to_owned(), scope.to_owned());
@@ -1034,7 +1162,7 @@ impl Workspace {
             params.insert(tau_ui_plugin::ENTRY.to_owned(), entry.to_owned());
         }
         let remote = self.remote_view(View::Settings {
-            plugin: erased.name().to_owned(),
+            plugin: name.to_owned(),
             scope: scope.map(str::to_owned),
             entry: entry.map(str::to_owned),
         });
@@ -1042,19 +1170,22 @@ impl Workspace {
             Some(Some(Built::Tree { tree })) => tree,
             Some(_) => return None,
             None => self
-                .with_plugin(erased.as_ref(), None, &params, |plugin, env| {
-                    plugin.draw_settings(env)
-                })
+                .with_plugin(
+                    registry().get(name)?.as_ref(),
+                    None,
+                    &params,
+                    |plugin, env| plugin.draw_settings(env),
+                )
                 .flatten()?,
         };
         let id = format!(
             "{}-settings-{}-{}",
-            erased.name(),
+            name,
             scope.unwrap_or_default(),
             entry.unwrap_or_default()
         );
         let origin = Origin { run: None, params };
-        Some(self.plugin_tree(erased.name(), &id, &tree, origin, cx))
+        Some(self.plugin_tree(name, &id, &tree, origin, cx))
     }
 
     /// The title of `plugin`'s page `page`.
@@ -1064,9 +1195,9 @@ impl Workspace {
         page: &str,
         params: &BTreeMap<String, String>,
     ) -> Option<String> {
-        let erased = registry().get(plugin)?;
+        let name = self.plugin_named(plugin)?;
         let remote = self.remote_view(View::Title {
-            plugin: erased.name().to_owned(),
+            plugin: name.to_owned(),
             page: page.to_owned(),
             params: params.clone(),
         });
@@ -1079,9 +1210,12 @@ impl Workspace {
         let run = params.get("run").and_then(|id| {
             self.runs.iter().find(|run| &*run.id.0 == id.as_str())
         });
-        self.with_plugin(erased.as_ref(), run, params, |plugin, env| {
-            plugin.page_title(page, env)
-        })
+        self.with_plugin(
+            registry().get(name)?.as_ref(),
+            run,
+            params,
+            |plugin, env| plugin.page_title(page, env),
+        )
         .flatten()
     }
 
@@ -1191,11 +1325,12 @@ impl Workspace {
         };
         let (name, args) =
             rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-        let Some(plugin) = registry().plugins().find(|plugin| {
-            self.plugin_commands(plugin.as_ref())
-                .iter()
-                .any(|command| command.name == name)
-        }) else {
+        let Some(plugin) = self
+            .plugin_command_list()
+            .into_iter()
+            .find(|(_, command)| command.name == name)
+            .map(|(plugin, _)| plugin)
+        else {
             return false;
         };
         let run = self
@@ -1213,9 +1348,12 @@ impl Workspace {
                 args: args.trim().to_owned(),
                 repo,
             };
-            self.call_computer(plugin.name(), origin, call, cx);
+            self.call_computer(plugin, origin, call, cx);
             return true;
         }
+        let Some(plugin) = registry().get(plugin) else {
+            return false;
+        };
         let params = BTreeMap::new();
         let ran = self
             .with_plugin(
@@ -1240,9 +1378,6 @@ impl Workspace {
         key: &str,
         cx: &mut Context<Self>,
     ) {
-        let Some(erased) = registry().get(plugin) else {
-            return;
-        };
         let at = tau_ui_plugin::KeyAt {
             repo: self.selected_repo().map(str::to_owned),
         };
@@ -1251,9 +1386,12 @@ impl Workspace {
                 key: key.to_owned(),
                 repo: at.repo,
             };
-            self.call_computer(erased.name(), Origin::default(), call, cx);
+            self.call_computer(plugin, Origin::default(), call, cx);
             return;
         }
+        let Some(erased) = registry().get(plugin) else {
+            return;
+        };
         self.with_plugin(
             erased.as_ref(),
             None,
@@ -1273,10 +1411,10 @@ impl Workspace {
         args: &str,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let erased = registry().get(plugin)?;
+        let name = self.plugin_named(plugin)?;
         let run = self.current().filter(|_| self.route != Route::NewRun);
         let remote = self.remote_view(View::Popover {
-            plugin: erased.name().to_owned(),
+            plugin: name.to_owned(),
             command: command.to_owned(),
             args: args.to_owned(),
             run: run.map(|run| run.id.clone()),
@@ -1286,7 +1424,7 @@ impl Workspace {
             Some(_) => return None,
             None => self
                 .with_plugin(
-                    erased.as_ref(),
+                    registry().get(name)?.as_ref(),
                     run,
                     &BTreeMap::new(),
                     |plugin, env| plugin.command_popover(command, args, env),
@@ -1297,7 +1435,7 @@ impl Workspace {
             run: run.map(|run| run.id.clone()),
             params: BTreeMap::new(),
         };
-        let id = format!("{}-popover-{command}", erased.name());
-        Some(self.plugin_tree(erased.name(), &id, &tree, origin, cx))
+        let id = format!("{}-popover-{command}", name);
+        Some(self.plugin_tree(name, &id, &tree, origin, cx))
     }
 }

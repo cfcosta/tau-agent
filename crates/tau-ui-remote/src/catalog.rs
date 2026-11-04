@@ -255,6 +255,13 @@ pub struct PluginInfo {
     /// Whether it draws a settings pane.
     #[serde(default)]
     pub settings: bool,
+    /// Whether it has its UI, which a phone draws as the computer builds
+    /// it (ADR 0046).
+    #[serde(default)]
+    pub ui: bool,
+    /// Whether its context rewrites keep the transcript.
+    #[serde(default)]
+    pub rewrites_keep_transcript: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

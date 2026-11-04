@@ -135,6 +135,8 @@ pub async fn catalog(
             note: info.note,
             entries: info.entries,
             settings: info.settings,
+            ui: true,
+            rewrites_keep_transcript: info.rewrites_keep_transcript,
         });
         data.insert(name.clone(), hosted.plugin.data(&hosted.state, cx).await);
         saved.insert(name, settings);

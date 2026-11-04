@@ -332,6 +332,11 @@ pub struct PluginInfo {
     pub entries: Vec<CatalogEntry>,
     /// Whether it draws a settings pane; the registry sets it.
     pub settings: bool,
+    /// Whether its context rewrites keep the transcript
+    /// ([`UiPlugin::rewrites_keep_transcript`]); the registry sets it,
+    /// for a phone that has no plugins of its own (ADR 0046).
+    #[serde(default)]
+    pub rewrites_keep_transcript: bool,
 }
 
 /// A plugin's UI half: what it draws, wherever a run is shown.

@@ -21,8 +21,8 @@ use crate::{
     UiPlugin,
     host::{HostCx, RepoCtx, RunCtx},
     manifest::Manifest,
-    tree::Node,
     run::RunCx,
+    tree::Node,
     view::{Handle, RunInfo, ViewCx},
 };
 
@@ -372,6 +372,9 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
             PluginInfo {
                 name: self.plugin.name().to_owned(),
                 settings: self.manifest.settings.is_some(),
+                rewrites_keep_transcript: self
+                    .plugin
+                    .rewrites_keep_transcript(),
                 ..self
                     .half
                     .catalog(self.host_of(host), cx, settings.get())

@@ -1043,6 +1043,7 @@ impl Workspace {
                 .update(cx, |input, cx| input.set_text(sample, cx));
         }
         self.closed.extend(catalog.closed_runs.iter().cloned());
+        crate::plugins::know(&catalog.plugins);
         self.catalog = catalog;
         self.restore_repos();
         if !self.next_model_picked {
@@ -1688,10 +1689,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let command = self.catalog.yours().and_then(|yours| {
-            let plugin = crate::plugins::registry().get(&yours.name)?;
-            self.plugin_commands(plugin.as_ref())
+            self.plugin_command_list()
                 .into_iter()
-                .find(|command| !command.args.is_empty())
+                .find(|(plugin, command)| {
+                    *plugin == yours.name && !command.args.is_empty()
+                })
+                .map(|(_, command)| command)
         });
         self.start_new_run(window, cx);
         if let Some(command) = command {

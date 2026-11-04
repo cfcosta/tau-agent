@@ -546,9 +546,7 @@ impl ContextParts {
             .iter()
             .rposition(|item| {
                 matches!(item, Item::Rewrite { plugin, .. }
-                    if !crate::plugins::registry()
-                        .get(plugin)
-                        .is_some_and(|plugin| plugin.rewrites_keep_transcript()))
+                    if !crate::plugins::keeps_transcript(plugin))
             })
             .map_or(0, |at| at + 1);
         let tokens = |chars: usize| chars.div_ceil(4) as u64;
@@ -1549,7 +1547,7 @@ impl RunView {
             RunEvent::Steered { text, .. } => self.push_user(text.clone()),
             // A plugin with its UI says it in what it publishes.
             RunEvent::Continued { plugin, .. }
-                if crate::plugins::registry().get(plugin).is_some() => {}
+                if crate::plugins::has_ui(plugin) => {}
             RunEvent::PluginReport { plugin, body, .. } => {
                 self.report(plugin, body)
             }

@@ -50,6 +50,9 @@ fn android_main(app: android_activity::AndroidApp) {
     Application::with_platform(platform.into_rc())
         .with_assets(Assets)
         .run(move |cx: &mut App| {
+            // The computer has the plugins; the phone draws what it
+            // builds (ADR 0046).
+            tau_ui_remote::plugins::install_none();
             tau_ui_remote::init(cx);
             // The system gives the window its size.
             let options = WindowOptions {

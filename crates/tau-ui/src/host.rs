@@ -742,6 +742,8 @@ impl Host {
             note: None,
             entries: Vec::new(),
             settings: false,
+            ui: false,
+            rewrites_keep_transcript: false,
         }];
         let source = self.access_label();
         let slots = self.repos.lock().expect("not poisoned").clone();

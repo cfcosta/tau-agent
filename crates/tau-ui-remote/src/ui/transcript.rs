@@ -575,10 +575,8 @@ fn tool(
     let dropped = card.dropped.is_some();
     // What plugins draw on the card, each given its own anchors on it.
     let at_card = |plugin: &str| crate::views::at_card(run, card, plugin);
-    let names: Vec<String> = crate::plugins::registry()
-        .plugins()
-        .map(|plugin| plugin.name().to_owned())
-        .collect();
+    let names: Vec<String> =
+        ws.plugin_names().into_iter().map(str::to_owned).collect();
     let contexts: Vec<(String, tau_ui_plugin::points::AtCard)> = names
         .into_iter()
         .map(|name| {

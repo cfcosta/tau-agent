@@ -106,10 +106,10 @@ impl Workspace {
         let in_run = run.is_some();
         // Only a main chat can be forked.
         let forks = run.is_some_and(|run| self.can_fork(run));
-        let plugins = crate::plugins::registry().plugins().flat_map(|plugin| {
-            let name = plugin.name();
-            self.plugin_commands(plugin.as_ref()).into_iter().map(
-                move |command| Command {
+        let plugins =
+            self.plugin_command_list()
+                .into_iter()
+                .map(|(name, command)| Command {
                     name: format!("/{}", command.name),
                     args: command.args,
                     about: command.hint,
@@ -117,9 +117,7 @@ impl Workspace {
                     needs_run: false,
                     plugin: Some(name),
                     popover: command.popover,
-                },
-            )
-        });
+                });
         plugins
             .chain(builtin())
             .filter(|command| in_run || !command.needs_run)
@@ -129,21 +127,18 @@ impl Workspace {
 
     /// What `text` in the composer asks for.
     pub fn slash(&self, text: &str) -> Slash {
-        for plugin in crate::plugins::registry().plugins() {
-            for command in self
-                .plugin_commands(plugin.as_ref())
-                .into_iter()
-                .filter(|c| c.popover)
+        for (plugin, command) in self.plugin_command_list() {
+            if !command.popover {
+                continue;
+            }
+            if let Some(rest) =
+                text.strip_prefix(&format!("/{} ", command.name))
             {
-                if let Some(rest) =
-                    text.strip_prefix(&format!("/{} ", command.name))
-                {
-                    return Slash::Writing {
-                        plugin: plugin.name(),
-                        command: command.name,
-                        args: rest.trim_start().to_owned(),
-                    };
-                }
+                return Slash::Writing {
+                    plugin,
+                    command: command.name,
+                    args: rest.trim_start().to_owned(),
+                };
             }
         }
         if !text.starts_with('/') || text.contains(char::is_whitespace) {

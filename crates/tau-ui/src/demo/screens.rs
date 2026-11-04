@@ -994,6 +994,8 @@ fn yours(
         note: None,
         entries,
         settings: true,
+        ui: true,
+        rewrites_keep_transcript: false,
     };
     let data = PluginValue::typed(overview);
     catalog.plugins.retain(|plugin| plugin.name != info.name);
@@ -1326,6 +1328,8 @@ fn agents(
         note: None,
         entries: Vec::new(),
         settings: true,
+        ui: true,
+        rewrites_keep_transcript: false,
     };
     let data = PluginValue::typed(overview.clone());
     catalog.plugins.retain(|plugin| plugin.name != info.name);
@@ -2348,6 +2352,8 @@ fn scheduled(ws: &mut Workspace, host: &DemoHost, cx: &mut Context<Workspace>) {
         note: None,
         entries: Vec::new(),
         settings: false,
+        ui: true,
+        rewrites_keep_transcript: false,
     };
     let data = PluginValue::typed(overview);
     catalog.plugins.retain(|plugin| plugin.name != info.name);

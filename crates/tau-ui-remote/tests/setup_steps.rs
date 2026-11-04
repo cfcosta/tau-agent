@@ -325,6 +325,8 @@ fn a_plugin_s_page_says_what_it_reads(cx: &mut TestAppContext) {
             note: None,
             entries: Vec::new(),
             settings: false,
+            ui: true,
+            rewrites_keep_transcript: false,
         });
         ws.set_catalog(catalog, cx);
         ws.navigate(Route::Plugins, cx);

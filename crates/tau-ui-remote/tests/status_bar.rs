@@ -99,6 +99,8 @@ fn open(
                 note: None,
                 entries: Vec::new(),
                 settings: false,
+                ui: true,
+                rewrites_keep_transcript: false,
             }],
             jobs,
             ..Default::default()
