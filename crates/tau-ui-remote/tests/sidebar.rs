@@ -680,7 +680,7 @@ fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
         assert!(cx.debug_bounds(id).is_none(), "the menu closed");
     };
 
-    click(&mut cx, "menu-memory");
+    click(&mut cx, "link:Memory");
     workspace.update(&mut cx, |ws, _| {
         assert_eq!(ws.selected_repo(), Some(REPO), "its repository's");
         assert!(

@@ -38,6 +38,12 @@ const MEMORY: &str = tau_memory::NAME;
 
 type Events = Rc<RefCell<Vec<WorkspaceEvent>>>;
 
+/// Memory's way into an import, on its pages and in a repository's menu.
+const IMPORT: &str = "button:Import from Claude Code or Codex…";
+
+/// The banner's button that puts it off, drawn only with the banner.
+const BANNER_LATER: &str = "button:Not now";
+
 /// What Claude Code and Codex have, as memory's host half would say.
 fn found() -> Vec<ToolFound> {
     let hello = Place {
@@ -243,9 +249,13 @@ fn the_setup_step_starts_an_import_of_what_was_ticked(cx: &mut TestAppContext) {
         cx.debug_bounds("setup-reach").is_some(),
         "it says what it reads"
     );
-    click("memory-setup-codex-chats", &mut cx);
-    click("memory-setup-others", &mut cx);
-    click("memory-setup-start", &mut cx);
+    click("switch:Its chats · 4 sessions", &mut cx);
+    click(
+        "switch:Also bring folders tau does not have yet, to use when you \
+         add them",
+        &mut cx,
+    );
+    click("button:Read and show me the notes", &mut cx);
     assert_eq!(
         acts(&events),
         [Act::Import(Request {
@@ -332,17 +342,14 @@ fn review(
 fn the_review_page_keeps_what_is_ticked(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open(proposed(), cx);
     review(&workspace, &[], &mut cx);
-    for tick in [
-        "memory-review-tick-p-1",
-        "memory-review-tick-p-2",
-        "memory-review-tick-p-3",
-    ] {
+    for tick in ["switch:Note p-1", "switch:Note p-2", "switch:Note p-3"] {
         assert!(cx.debug_bounds(tick).is_some(), "{tick}");
     }
-    assert!(cx.debug_bounds("memory-review-progress").is_some());
-    click("memory-review-tick-p-3", &mut cx);
-    click("memory-review-keep", &mut cx);
-    click("memory-review-stop", &mut cx);
+    // Stop shows only with an import going on.
+    assert!(cx.debug_bounds("button:Stop").is_some());
+    click("switch:Note p-3", &mut cx);
+    click("button:Keep 2 notes", &mut cx);
+    click("button:Stop", &mut cx);
     assert_eq!(
         acts(&events),
         [
@@ -358,10 +365,10 @@ fn the_review_page_keeps_what_is_ticked(cx: &mut TestAppContext) {
     );
 
     // A repository's tab holds its own; Keep none drops them.
-    click("memory-review-tab-repo-hello", &mut cx);
-    assert!(cx.debug_bounds("memory-review-tick-p-1").is_none());
-    assert!(cx.debug_bounds("memory-review-tick-p-2").is_some());
-    click("memory-review-none", &mut cx);
+    click("link:hello 2", &mut cx);
+    assert!(cx.debug_bounds("switch:Note p-1").is_none());
+    assert!(cx.debug_bounds("switch:Note p-2").is_some());
+    click("button:Keep none", &mut cx);
     assert_eq!(
         acts(&events).last(),
         Some(&Act::Drop {
@@ -375,11 +382,11 @@ fn the_review_page_keeps_what_is_ticked(cx: &mut TestAppContext) {
 fn the_review_page_tabs_filter(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(proposed(), cx);
     review(&workspace, &[("look", "1")], &mut cx);
-    assert!(cx.debug_bounds("memory-review-tick-p-3").is_some());
-    assert!(cx.debug_bounds("memory-review-tick-p-2").is_none());
+    assert!(cx.debug_bounds("switch:Note p-3").is_some());
+    assert!(cx.debug_bounds("switch:Note p-2").is_none());
     review(&workspace, &[("repo", "you")], &mut cx);
-    assert!(cx.debug_bounds("memory-review-tick-p-1").is_some());
-    assert!(cx.debug_bounds("memory-review-tick-p-3").is_none());
+    assert!(cx.debug_bounds("switch:Note p-1").is_some());
+    assert!(cx.debug_bounds("switch:Note p-3").is_none());
 }
 
 /// On a phone the page draws from the same data, and acts the same.
@@ -388,7 +395,7 @@ fn the_review_page_works_on_a_phone(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open(proposed(), cx);
     cx.simulate_resize(size(gpui::px(390.), gpui::px(1400.)));
     review(&workspace, &[], &mut cx);
-    click("memory-review-keep", &mut cx);
+    click("button:Keep 2 notes", &mut cx);
     assert_eq!(
         acts(&events),
         [Act::Keep {
@@ -408,7 +415,7 @@ fn an_empty_review_page_offers_an_import(cx: &mut TestAppContext) {
         cx,
     );
     review(&workspace, &[], &mut cx);
-    click("memory-review-import", &mut cx);
+    click(IMPORT, &mut cx);
     assert_eq!(acts(&events), [Act::Import(Request::default())]);
 }
 
@@ -460,9 +467,9 @@ fn the_memory_tab_banner_leads_to_the_repository_s_proposals(
 ) {
     let (workspace, mut cx, events) = open(known(), cx);
     notes_of(&workspace, "hello", &mut cx);
-    assert!(cx.debug_bounds("memory-banner").is_some());
-    click("memory-banner-chats", &mut cx);
-    click("memory-banner-later", &mut cx);
+    assert!(cx.debug_bounds(BANNER_LATER).is_some());
+    click("button:Read its 6 chats too", &mut cx);
+    click(BANNER_LATER, &mut cx);
     assert_eq!(
         acts(&events),
         [
@@ -475,7 +482,7 @@ fn the_memory_tab_banner_leads_to_the_repository_s_proposals(
             },
         ]
     );
-    click("memory-banner-review", &mut cx);
+    click("button:Review 2 notes", &mut cx);
     assert_eq!(
         route(&workspace, &mut cx),
         Route::Plugin {
@@ -486,7 +493,7 @@ fn the_memory_tab_banner_leads_to_the_repository_s_proposals(
     );
     // The person's notes have no banner; another repository's neither.
     notes_of(&workspace, "you", &mut cx);
-    assert!(cx.debug_bounds("memory-banner").is_none());
+    assert!(cx.debug_bounds(BANNER_LATER).is_none());
 }
 
 /// The notes page and the repository's menu offer an import, which
@@ -495,14 +502,16 @@ fn the_memory_tab_banner_leads_to_the_repository_s_proposals(
 fn the_memory_tab_offers_an_import(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open(known(), cx);
     notes_of(&workspace, "hello", &mut cx);
-    click("memory-import", &mut cx);
+    click(IMPORT, &mut cx);
     assert_eq!(acts(&events), [Act::Import(Request::default())]);
     assert!(matches!(
         route(&workspace, &mut cx),
         Route::Plugin { page, .. } if page == "import"
     ));
+    // The review page has the same button; the menu, drawn over it,
+    // holds the one clicked.
     workspace.update(&mut cx, |ws, cx| ws.toggle_repo_menu("hello", cx));
-    click("menu-memory-import", &mut cx);
+    click(IMPORT, &mut cx);
     assert_eq!(acts(&events).len(), 2);
 }
 
@@ -511,9 +520,9 @@ fn the_memory_tab_offers_an_import(cx: &mut TestAppContext) {
 fn without_the_tools_the_memory_tab_offers_none(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(Imports::default(), cx);
     notes_of(&workspace, "hello", &mut cx);
-    assert!(cx.debug_bounds("memory-import").is_none());
+    assert!(cx.debug_bounds(IMPORT).is_none());
     workspace.update(&mut cx, |ws, cx| ws.toggle_repo_menu("hello", cx));
     cx.run_until_parked();
-    assert!(cx.debug_bounds("menu-memory").is_some());
-    assert!(cx.debug_bounds("menu-memory-import").is_none());
+    assert!(cx.debug_bounds("link:Memory").is_some(), "the menu is drawn");
+    assert!(cx.debug_bounds(IMPORT).is_none());
 }
