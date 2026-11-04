@@ -62,6 +62,7 @@ pub struct LandedCard {
     pub kept: bool,
 }
 
+// ADR 0045: core draws this; moves with the landing cards.
 /// What a landing brought: its changes as they sit on the stack, and
 /// the files left with conflict markers.
 pub fn landed_body(card: &LandedCard, t: &Theme, compact: bool) -> Div {

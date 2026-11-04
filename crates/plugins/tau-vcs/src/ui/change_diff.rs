@@ -45,6 +45,28 @@ pub struct FileDiff {
     pub binary: bool,
 }
 
+impl FileDiff {
+    /// Its hunks as unified diff text again, each under its `@@` line:
+    /// what the tree's diff piece draws.
+    pub fn unified(&self) -> String {
+        let mut text = String::new();
+        for hunk in &self.hunks {
+            text.push_str(&hunk.header);
+            text.push('\n');
+            for line in &hunk.lines {
+                text.push(match line.kind {
+                    DiffKind::Added => '+',
+                    DiffKind::Removed => '-',
+                    DiffKind::Context => ' ',
+                });
+                text.push_str(&line.text);
+                text.push('\n');
+            }
+        }
+        text
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Hunk {
     /// `@@ -38,7 +38,12 @@`.
@@ -308,6 +330,25 @@ Binary files a/logo.png and b/logo.png differ
         assert_eq!((added[0].old, added[0].new), (None, Some(1)));
         let removed = &files[2].hunks[0].lines;
         assert_eq!((removed[0].old, removed[0].new), (Some(1), None));
+    }
+
+    /// A file's hunks as text read back as the same lines, so the tree's
+    /// diff piece draws what the card parsed.
+    #[test]
+    fn a_files_unified_text_reads_back_as_its_lines() {
+        for file in parse_files(DIFF) {
+            let lines: Vec<_> = file
+                .hunks
+                .iter()
+                .flat_map(|hunk| &hunk.lines)
+                .map(|line| (line.kind, line.text.clone()))
+                .collect();
+            let read: Vec<_> = tau_ui_kit::diff::parse(&file.unified())
+                .into_iter()
+                .map(|line| (line.kind, line.text))
+                .collect();
+            assert_eq!(read, lines, "{}", file.path);
+        }
     }
 
     fn info(id: &str, description: &str) -> Value {

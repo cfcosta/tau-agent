@@ -1,56 +1,90 @@
-//! tau-vcs's UI: the state its cards keep in a window, and that it keeps
-//! to the design language.
+//! tau-vcs's UI: the picks its log cards keep as UI state, and the
+//! trees its diff cards draw files with.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use hegel::generators as gs;
+use serde_json::json;
 use tau_agent::tool::RunId;
-use tau_vcs::ui::Ui;
+use tau_ui_plugin::tree::Node;
+use tau_vcs::ui::{Card, change_diff::ChangeDiff, diff_card, pick, pick_key};
 
-/// Opening and closing files, and picking changes, over any clicks: a
-/// file is open after an odd number of clicks on it in its card, and a
-/// log's pick is the last change clicked unless clicked again.
+/// Picking changes over any clicks: a log's pick is the last change
+/// clicked unless clicked again, and each card keeps its own under its
+/// own key.
 #[hegel::test(test_cases = 200)]
-fn cards_keep_what_was_clicked(tc: hegel::TestCase) {
-    // (file click?, card, which)
-    let clicks: Vec<(bool, u8, u8)> = tc.draw(gs::vecs(hegel::tuples!(
-        gs::booleans(),
+fn a_log_keeps_the_change_last_clicked(tc: hegel::TestCase) {
+    // (card, which)
+    let clicks: Vec<(u8, u8)> = tc.draw(gs::vecs(hegel::tuples!(
         gs::integers::<u8>().max_value(2),
         gs::integers::<u8>().max_value(3),
     )));
     let run = RunId("r".into());
-    let mut ui = Ui::default();
-    let mut open: BTreeSet<(String, String)> = BTreeSet::new();
-    let mut picked: BTreeMap<String, String> = BTreeMap::new();
-    for (file, card, which) in &clicks {
+    let mut state: BTreeMap<String, String> = BTreeMap::new();
+    let mut model: BTreeMap<String, String> = BTreeMap::new();
+    for (card, which) in &clicks {
         let (card, which) = (format!("c{card}"), format!("x{which}"));
-        if *file {
-            ui.toggle_file(&run, &card, &which);
-            let key = (card.clone(), which.clone());
-            if !open.remove(&key) {
-                open.insert(key);
-            }
+        let key = pick_key(&run, &card);
+        match pick(state.get(&key).map(String::as_str), &which) {
+            Some(change) => state.insert(key, change),
+            None => state.remove(&key),
+        };
+        if model.get(&card) == Some(&which) {
+            model.remove(&card);
         } else {
-            ui.pick(&run, &card, &which);
-            if picked.get(&card) == Some(&which) {
-                picked.remove(&card);
-            } else {
-                picked.insert(card.clone(), which.clone());
-            }
+            model.insert(card.clone(), which.clone());
         }
     }
     for card in 0..3 {
         let card = format!("c{card}");
-        assert_eq!(
-            ui.picked(&run, &card),
-            picked.get(&card).map(String::as_str)
-        );
-        for which in 0..4 {
-            let which = format!("x{which}");
-            assert_eq!(
-                ui.file_open(&run, &card, &which),
-                open.contains(&(card.clone(), which.clone()))
-            );
-        }
+        assert_eq!(state.get(&pick_key(&run, &card)), model.get(&card));
     }
+}
+
+/// A diff card's files are sections, closed until opened, each under
+/// its own id and holding its hunks as a diff in its path's language.
+#[test]
+fn a_diffs_files_are_sections_of_their_hunks() {
+    let diff = ChangeDiff::parse(&json!({
+        "change": {
+            "change_id": "onvkmqwo", "commit_id": "abc", "description": "",
+            "empty": false, "conflict": false, "immutable": false,
+            "working_copy": false, "divergent": false, "bookmarks": [],
+        },
+        "files": [
+            { "path": "src/a.rs", "kind": "modified" },
+            { "path": "run.sh", "kind": "modified" },
+        ],
+        "diff": "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n",
+        "truncated": false,
+    }))
+    .expect("a diff");
+    let card = Card {
+        run: RunId("r".into()),
+        call_id: "c".into(),
+        compact: false,
+    };
+    let Node::Stack { children } = diff_card::files_body(&card, &diff) else {
+        panic!("a stack of files");
+    };
+    let sections: Vec<_> = children
+        .iter()
+        .map(|node| match node {
+            Node::Section {
+                id, open, children, ..
+            } => (id.clone(), *open, children[0].clone()),
+            other => panic!("a file's section: {other:?}"),
+        })
+        .collect();
+    assert_eq!(sections.len(), 2);
+    assert_eq!(sections[0].0, card.file_id("src/a.rs"));
+    assert_ne!(sections[0].0, sections[1].0);
+    assert!(sections.iter().all(|(_, open, _)| !open));
+    let Node::Diff { text, path } = &sections[0].2 else {
+        panic!("the hunks as a diff: {:?}", sections[0].2);
+    };
+    assert_eq!(path.as_deref(), Some("src/a.rs"));
+    assert_eq!(text, "@@ -1,2 +1,2 @@\n keep\n-old\n+new\n");
+    // A file with no hunks says so in place of a diff.
+    assert_eq!(sections[1].2, Node::text("No lines changed."));
 }
