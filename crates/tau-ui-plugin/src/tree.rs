@@ -1063,7 +1063,15 @@ impl<'a> Draw<'a> {
                         IconSize::TINY,
                         t.dim,
                     ))
-                    .child(heading(title, t))
+                    // Plain small text, not a heading: a title is often
+                    // data, which capitals make hard to read.
+                    .child(
+                        div()
+                            .min_w(rems(0.))
+                            .typeset(Type::SMALL)
+                            .text_color(t.text_soft)
+                            .child(title.clone()),
+                    )
                     .when_some(
                         self.click(Act::Ui {
                             key,
