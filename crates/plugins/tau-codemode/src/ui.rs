@@ -631,10 +631,10 @@ fn heading(text: impl Into<String>) -> Node {
     Node::Heading { text: text.into() }
 }
 
-fn code(lang: &str, text: impl Into<String>) -> Node {
+fn code(lang: &str, text: impl AsRef<str>) -> Node {
     Node::Code {
         lang: Some(lang.into()),
-        text: text.into(),
+        text: text.as_ref().to_owned(),
     }
 }
 

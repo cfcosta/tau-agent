@@ -2057,13 +2057,12 @@ fn codemode(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         cx,
     );
     workspace.toggle_card(&run, &call, cx);
-    if let Some(ui) = workspace
-        .plugin_ui::<tau_codemode::ui::InspectorUi>(tau_codemode::PLUGIN)
-    {
-        ui.update(cx, |ui, _| {
-            ui.toggle(tau_codemode::outline::key(&call, 0));
-        });
-    }
+    // Its first output open, in tau-codemode's UI state (ADR 0045).
+    workspace.plugin_handle(tau_codemode::PLUGIN).set_ui(
+        tau_ui_plugin::tree::open_key(&tau_codemode::outline::key(&call, 0)),
+        Some(json!(true)),
+        cx,
+    );
 }
 
 /// tau-agent's main chat with its model asked and no answer yet: what it
