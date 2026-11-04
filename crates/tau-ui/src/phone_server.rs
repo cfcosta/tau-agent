@@ -573,6 +573,10 @@ fn on_event(
             }
             None => {}
         },
+        // Its views are built for it no more.
+        ServerEvent::Left { device } => {
+            workspace.update(cx, |ws, _| ws.forget_phone(&device));
+        }
         ServerEvent::DevicesChanged(paired) => {
             let mut state = bridge.borrow_mut();
             // A phone that just paired used the code.

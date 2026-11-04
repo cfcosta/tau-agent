@@ -71,6 +71,9 @@ pub enum ServerEvent {
     },
     /// A phone paired, connected, was renamed or revoked.
     DevicesChanged(Vec<Device>),
+    /// The phone `device` (its id) has no connection left: it closed, or
+    /// was revoked. What the app keeps for it while it is there can go.
+    Left { device: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -292,14 +295,20 @@ impl State {
                 Command::Snapshot(conn, bodies) => self.snapshot(conn, bodies),
                 Command::Revoked(id) => {
                     let feed = &mut self.feed;
+                    let mut cut = false;
                     self.conns.retain(|conn_id, conn| {
                         let keep = conn.device != id;
                         if !keep {
                             let _ = conn.out.send(Out::Close);
                             feed.leave(*conn_id);
+                            cut = true;
                         }
                         keep
                     });
+                    if cut {
+                        let _ =
+                            self.events.send(ServerEvent::Left { device: id });
+                    }
                 }
                 Command::Stop => break,
                 Command::Hello { conn, hello, out } => {
@@ -307,8 +316,21 @@ impl State {
                 }
                 Command::Up { conn, id, body } => self.up(conn, id, body).await,
                 Command::Closed(conn) => {
-                    self.conns.remove(&conn);
                     self.feed.leave(conn);
+                    let Some(closed) = self.conns.remove(&conn) else {
+                        continue;
+                    };
+                    // A phone that came back on a new connection before
+                    // its old one closed is still there.
+                    if !self
+                        .conns
+                        .values()
+                        .any(|other| other.device == closed.device)
+                    {
+                        let _ = self.events.send(ServerEvent::Left {
+                            device: closed.device,
+                        });
+                    }
                 }
             }
         }

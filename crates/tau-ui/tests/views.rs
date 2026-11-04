@@ -686,3 +686,32 @@ fn a_view_is_built_while_a_phone_draws_it(cx: &mut TestAppContext) {
         assert!(ws.asked_views().is_empty());
     });
 }
+
+/// A phone that left has no view built for it: what only it drew goes,
+/// and what another phone draws stays for that one.
+#[gpui::test]
+fn a_phone_that_left_has_no_view_built(cx: &mut TestAppContext) {
+    let (computer, mut ccx, _host) = open(cx);
+    let key = |point: &str| ViewKey {
+        view: View::Point {
+            point: point.to_owned(),
+            at: tau_ui_plugin::wire::AtKey::Run {
+                run: demo::run_id(),
+            },
+        },
+        layout: Layout::of(true, 400.),
+    };
+    let (shared, own) =
+        (key(points::STATUS.name), key(points::RUN_BANNER.name));
+    computer.update(&mut ccx, |ws, _| {
+        ws.ask_views("one", vec![shared.clone(), own.clone()]);
+        ws.ask_views("two", vec![shared.clone()]);
+        ws.forget_phone("one");
+        assert_eq!(
+            ws.asked_views(),
+            [(shared.clone(), ["two".to_owned()].into())].into()
+        );
+        ws.forget_phone("two");
+        assert!(ws.asked_views().is_empty());
+    });
+}

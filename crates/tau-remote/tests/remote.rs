@@ -54,18 +54,32 @@ async fn host() -> Host {
 }
 
 impl Host {
-    /// The next event that is not a change to the list of phones.
+    /// The next event that is not a change to the list of phones, nor a
+    /// phone leaving.
     async fn event(&mut self) -> ServerEvent {
         loop {
-            let event = tokio::time::timeout(
-                Duration::from_secs(5),
-                self.events.recv(),
-            )
+            let event = self.any_event().await;
+            if !matches!(
+                event,
+                ServerEvent::DevicesChanged(_) | ServerEvent::Left { .. }
+            ) {
+                return event;
+            }
+        }
+    }
+
+    async fn any_event(&mut self) -> ServerEvent {
+        tokio::time::timeout(Duration::from_secs(5), self.events.recv())
             .await
             .expect("an event in time")
-            .expect("the server runs");
-            if !matches!(event, ServerEvent::DevicesChanged(_)) {
-                return event;
+            .expect("the server runs")
+    }
+
+    /// The next phone that left.
+    async fn left(&mut self) -> String {
+        loop {
+            if let ServerEvent::Left { device } = self.any_event().await {
+                return device;
             }
         }
     }
@@ -210,6 +224,25 @@ async fn a_phone_away_too_long_gets_a_snapshot() {
     };
     assert_eq!(seq, last + REPLAY as u64 + 1);
     assert_eq!(bodies, [json!("again")]);
+}
+
+/// A phone whose connection closes has left, and says which; the app
+/// drops what it kept for it (ADR 0046). A revoked one has left too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_that_goes_has_left() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    recv(&mut phone).await;
+    drop(phone);
+    assert_eq!(host.left().await, credentials.device);
+    let mut phone = client::resume(&credentials, None).await.unwrap();
+    let ServerEvent::NeedSnapshot { conn, .. } = host.event().await else {
+        panic!("no snapshot asked for");
+    };
+    host.handle.snapshot(conn, vec![json!("again")]);
+    recv(&mut phone).await;
+    assert!(host.handle.revoke(&credentials.device).await.unwrap());
+    assert_eq!(host.left().await, credentials.device);
 }
 
 #[tokio::test(flavor = "multi_thread")]

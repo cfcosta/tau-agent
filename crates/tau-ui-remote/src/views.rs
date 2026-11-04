@@ -229,6 +229,15 @@ impl Workspace {
         }
     }
 
+    /// The phone `device` left: no view is built for it any more (ADR
+    /// 0046). It asks again for what it draws when it comes back.
+    pub fn forget_phone(&mut self, device: &str) {
+        self.phone_views.retain(|_, asked| {
+            asked.by.remove(device);
+            !asked.by.is_empty()
+        });
+    }
+
     /// Builds again every view phones asked for, and gives those whose
     /// answer changed, if any did.
     pub fn refresh_views(&mut self) -> Option<HostUpdate> {

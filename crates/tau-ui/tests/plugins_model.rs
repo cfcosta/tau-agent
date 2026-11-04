@@ -1483,7 +1483,14 @@ impl Tau {
             tc.draw(gs::integers::<usize>().max_value(self.phones.len() - 1));
         if !self.wire.borrow_mut().drop_phone(phone) {
             tc.event("the phone was not connected");
+            return;
         }
+        // Its only connection closed: the server says it left, and the
+        // phone server drops what the computer built for it.
+        let computer = &mut self.computer;
+        computer.workspace.update(&mut computer.cx, |ws, _| {
+            ws.forget_phone(&format!("phone-{phone}"))
+        });
     }
 
     /// A phone that dropped connects again, from the last message it
@@ -1558,6 +1565,23 @@ impl Tau {
     /// The computer shows the UI state the host saved, and what the host
     /// stored and saved is what it shows: a restart now would change
     /// nothing.
+    /// The computer builds views only for the phones connected now.
+    #[invariant(always_run)]
+    fn views_are_built_for_phones_there(&mut self, _tc: TestCase) {
+        let there: Vec<String> = (0..self.phones.len())
+            .filter(|phone| self.wire.borrow().links[*phone].conn.is_some())
+            .map(|phone| format!("phone-{phone}"))
+            .collect();
+        for (key, by) in self.computer.read(Workspace::asked_views) {
+            for device in by {
+                assert!(
+                    there.contains(&device),
+                    "{device} is gone, and {key:?} is still built for it"
+                );
+            }
+        }
+    }
+
     #[invariant(always_run)]
     fn a_restart_changes_nothing(&mut self, _tc: TestCase) {
         let shown = self.computer.synced();
