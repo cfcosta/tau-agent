@@ -496,7 +496,7 @@ impl Host {
 /// Holds a resolving turn's stop once while conflicts remain on main:
 /// "Conflicts remain in a.rs, b.rs. Resolve them and commit."
 pub(super) struct ResolveHold {
-    pub(super) vcs: tau_vcs_host::Vcs,
+    pub(super) workspace: Arc<dyn RunWorkspace>,
 }
 
 #[async_trait]
@@ -511,14 +511,14 @@ impl Plugin for ResolveHold {
         _ctx: &PluginCtx,
     ) -> Result<Box<dyn PluginRun>, PluginError> {
         Ok(Box::new(HoldOnce {
-            vcs: self.vcs.clone(),
+            workspace: self.workspace.clone(),
             held: false,
         }))
     }
 }
 
 struct HoldOnce {
-    vcs: tau_vcs_host::Vcs,
+    workspace: Arc<dyn RunWorkspace>,
     held: bool,
 }
 
@@ -534,10 +534,10 @@ impl PluginRun for HoldOnce {
             return Ok(StopDecision::Stop);
         }
         let files = self
-            .vcs
+            .workspace
             .conflicts()
             .await
-            .map_err(|error| PluginError::from(error.to_string()))?;
+            .map_err(|error| PluginError::from(format!("{error:#}")))?;
         if files.is_empty() {
             return Ok(StopDecision::Stop);
         }

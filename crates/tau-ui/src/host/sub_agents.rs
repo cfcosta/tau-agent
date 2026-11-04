@@ -3,8 +3,8 @@
 //! Each one that ends joins main's landing queue, and tau's turn after
 //! the drain reports it, for main to go on from.
 
+use tau_ui_plugin::sub_agents::{Ending, Taken};
 use tau_ui_remote::queue::{SubAgentEnd, Waiting};
-use tau_vcs_host::sub_agents::{Ending, Taken};
 
 use super::{landing::Reading, lanes::DrainReport, queue::Lane, *};
 
@@ -61,19 +61,17 @@ const REPORT_END: &str = "This message is from tau, not the person: \
 
 impl Host {
     /// The sub-agents of `repo`'s main chat, made the first time.
-    pub(super) fn sub_agents_of(&self, repo: &str) -> tau_vcs_host::SubAgents {
+    pub(super) fn sub_agents_of(&self, repo: &str) -> SubAgents {
         self.sub_agents
             .lock()
             .expect("not poisoned")
             .entry(repo.to_owned())
-            .or_insert_with(|| {
-                tau_vcs_host::SubAgents::new(Some(self.events.clone()), None)
-            })
+            .or_insert_with(|| SubAgents::new(Some(self.events.clone()), None))
             .clone()
     }
 
     /// Every main chat's sub-agents.
-    fn all_sub_agents(&self) -> Vec<tau_vcs_host::SubAgents> {
+    fn all_sub_agents(&self) -> Vec<SubAgents> {
         let agents = self.sub_agents.lock().expect("not poisoned");
         agents.values().cloned().collect()
     }

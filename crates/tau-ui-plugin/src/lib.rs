@@ -37,6 +37,7 @@ pub mod registry;
 pub mod run;
 pub mod services;
 pub mod slots;
+pub mod sub_agents;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod tree;

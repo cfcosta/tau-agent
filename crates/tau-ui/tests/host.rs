@@ -3187,7 +3187,7 @@ fn only_the_main_chat_spawns() {
         refused.content.iter().any(|block| matches!(
             block,
             tau_ai::message::InputBlock::Text(text)
-                if text.text.contains(tau_vcs_host::ONLY_MAIN_SPAWNS)
+                if text.text.contains(tau_ui_plugin::sub_agents::ONLY_MAIN_SPAWNS)
         )),
         "{:?}",
         refused.content

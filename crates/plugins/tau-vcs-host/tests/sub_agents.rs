@@ -17,7 +17,15 @@ use std::{
 };
 
 use async_trait::async_trait;
-use common::{coder, heard_sub_agents, project_with};
+use common::{
+    Workspace,
+    caller_in,
+    coder_in,
+    heard_sub_agents,
+    notes,
+    project_with,
+    ready_child,
+};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
@@ -29,16 +37,11 @@ use tau_ai::{
     responses::request::ReasoningEffort,
 };
 use tau_testing::scripted::{ScriptedModel, TurnBuilder};
-use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
-use tau_vcs_host::{
-    Head,
-    Identity,
-    ProjectRepo,
-    RunWorkspace,
-    Spawn,
-    SubAgents,
-    sub_agents::{ChildModel, Ending, MAX_RUNNING, Taken},
+use tau_ui_plugin::{
+    sub_agents::{ChildModel, Ending, MAX_RUNNING, Spawn, SubAgents, Taken},
+    vcs::{Link, WORKSPACE_PLUGIN},
 };
+use tau_vcs_host::{Head, ProjectRepo};
 
 fn commit(message: &str) -> serde_json::Value {
     json!({ "message": message })
@@ -52,14 +55,14 @@ fn write(path: &str) -> serde_json::Value {
 /// built by `child`.
 fn spawning(
     llm: ScriptedModel,
-    workspace: &RunWorkspace,
+    workspace: &Workspace,
     agents: &SubAgents,
-    child: impl Fn(RunWorkspace) -> Result<Agent, ToolError> + Send + Sync + 'static,
+    child: impl Fn(Workspace) -> Result<Agent, ToolError> + Send + Sync + 'static,
 ) -> Agent {
-    coder(llm, workspace, true).tool(Spawn::new(
+    coder_in(llm, workspace.as_ref()).tool(Spawn::new(
         workspace.clone(),
-        Identity::default(),
         agents.clone(),
+        &notes(),
         &[],
         ready_child(move |workspace, _: &ChildModel| child(workspace)),
     ))
@@ -79,9 +82,8 @@ fn runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
-fn caller(project: &ProjectRepo) -> RunWorkspace {
-    RunWorkspace::new(project.clone().into(), "parent", Identity::default())
-        .unwrap()
+fn caller(project: &ProjectRepo) -> Workspace {
+    caller_in(project, "parent")
 }
 
 /// The workspace `run` worked in, as its last link names it.
@@ -139,7 +141,7 @@ fn a_sub_agent_works_on_the_callers_code() {
         let script = child_llm.clone();
         let outcome =
             spawning(llm.clone(), &parent, &agents, move |workspace| {
-                Ok(coder(script.clone(), &workspace, true))
+                Ok(coder_in(script.clone(), workspace.as_ref()))
             })
             .run("write parent.txt, then hand child.txt over", &store)
             .await
@@ -319,7 +321,8 @@ fn at_most_max_running_sub_agents_run_at_once() {
                 let script = ScriptedModel::new()
                     .turn(|t| t.tool_call("gauge", json!({})))
                     .turn(|t| t.text("waited"));
-                Ok(coder(script, &workspace, true).tool(child_gauge.clone()))
+                Ok(coder_in(script, workspace.as_ref())
+                    .tool(child_gauge.clone()))
             })
             .run("fan out", &store)
             .await
@@ -368,15 +371,15 @@ fn a_call_can_pick_its_model_and_effort() {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let seen = asked.clone();
         let (agents, mut ends) = heard_sub_agents();
-        let agent = coder(llm.clone(), &parent, true).tool(Spawn::new(
+        let agent = coder_in(llm.clone(), parent.as_ref()).tool(Spawn::new(
             parent.clone(),
-            Identity::default(),
             agents,
+            &notes(),
             &["gpt-5.5".to_owned(), "gpt-5.5-mini".to_owned()],
             ready_child(move |workspace, model: &ChildModel| {
                 seen.lock().unwrap().push(model.clone());
                 let script = ScriptedModel::new().turn(|t| t.text("ok"));
-                Ok(coder(script, &workspace, true))
+                Ok(coder_in(script, workspace.as_ref()))
             }),
         ));
         let outcome = agent.run("pick", &store).await.unwrap();
@@ -411,13 +414,13 @@ fn a_sub_agent_outlives_its_callers_turn() {
         // The sub-agent holds until the caller's run has ended.
         let gate = Arc::new(tokio::sync::Notify::new());
         let child_gate = gate.clone();
-        let child = move |workspace: RunWorkspace| {
+        let child = move |workspace: Workspace| {
             let script = ScriptedModel::new()
                 .turn(|t| t.tool_call("hold", json!({})))
                 .turn(|t| t.tool_call("write", write("child.txt")))
                 .turn(|t| t.tool_call("vcs_commit", commit("feat: child")))
                 .turn(|t| t.text("child.txt is written"));
-            Ok(coder(script, &workspace, true)
+            Ok(coder_in(script, workspace.as_ref())
                 .tool(Hold(child_gate.clone())))
         };
         let first = ScriptedModel::new()
@@ -458,12 +461,12 @@ fn a_sub_agent_that_ended_cannot_be_steered() {
         let parent = caller(&project);
         let (sink, mut events) = tokio::sync::mpsc::unbounded_channel();
         let agents = SubAgents::new(Some(sink), None);
-        let child = |workspace: RunWorkspace| {
+        let child = |workspace: Workspace| {
             let script = ScriptedModel::new()
                 .turn(|t| t.tool_call("write", write("child.txt")))
                 .turn(|t| t.tool_call("vcs_commit", commit("feat: child")))
                 .turn(|t| t.text("child.txt is written"));
-            Ok(coder(script, &workspace, true))
+            Ok(coder_in(script, workspace.as_ref()))
         };
         let first = ScriptedModel::new()
             .turn(|t| {
@@ -520,29 +523,6 @@ impl AgentTool for Hold {
     }
 }
 
-/// A sub-agent factory that builds its agent at once, as `Spawn` takes
-/// one: a future that is ready.
-fn ready_child(
-    child: impl Fn(
-        tau_vcs_host::RunWorkspace,
-        &tau_vcs_host::sub_agents::ChildModel,
-    )
-        -> Result<tau_agent::agent::Agent, tau_agent::error::ToolError>
-    + Send
-    + Sync
-    + 'static,
-) -> impl Fn(
-    tau_vcs_host::RunWorkspace,
-    &tau_vcs_host::sub_agents::ChildModel,
-) -> tau_vcs_host::sub_agents::ChildFuture
-+ Send
-+ Sync
-+ 'static {
-    move |workspace, model| {
-        Box::pin(std::future::ready(child(workspace, model)))
-    }
-}
-
 /// A fresh sub-agent starts from its task alone: none of the caller's
 /// conversation, nor the note that it runs one of the caller's calls.
 /// Spawned not to land, one that commits nothing, as a reviewer, ends
@@ -567,7 +547,7 @@ fn a_fresh_sub_agent_sees_only_its_task() {
         let (agents, mut ends) = heard_sub_agents();
         let script = child_llm.clone();
         spawning(llm.clone(), &parent, &agents, move |workspace| {
-            Ok(coder(script.clone(), &workspace, true))
+            Ok(coder_in(script.clone(), workspace.as_ref()))
         })
         .run(
             "the caller's own plan, which a reviewer must not see",
@@ -621,7 +601,7 @@ fn a_sub_agent_not_to_land_keeps_its_work_beside_the_callers() {
         let script = child_llm.clone();
         let outcome =
             spawning(llm.clone(), &parent, &agents, move |workspace| {
-                Ok(coder(script.clone(), &workspace, true))
+                Ok(coder_in(script.clone(), workspace.as_ref()))
             })
             .run("try child.txt", &store)
             .await
@@ -667,7 +647,7 @@ fn a_sub_agent_not_to_land_keeps_its_work_beside_the_callers() {
                 )
             })
             .turn(|t| t.text("took it"));
-        coder(taker, &parent, true)
+        coder_in(taker, parent.as_ref())
             .run("take child.txt", &store)
             .await
             .unwrap();

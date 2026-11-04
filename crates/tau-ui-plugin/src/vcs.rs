@@ -12,9 +12,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tau_agent::{event::LimitKind, tool::RunId};
+use tau_agent::{event::LimitKind, plugin::Plugin, tool::RunId};
 
-use crate::{CallData, registry::HostFuture, slots::Slot};
+use crate::{CallData, RunKind, TurnHooks, registry::HostFuture, slots::Slot};
 
 /// The tool a run proposes its landing with (ADR 0014).
 pub const LAND: &str = "vcs_land";
@@ -358,6 +358,88 @@ pub trait Vcs: Send + Sync {
     /// answer: whether `limit` cut it short, and its `changes`.
     fn kept_note(&self, changes: &[String], limit: Option<LimitKind>)
     -> String;
+
+    /// The VCS's words in the description of the kernel's `spawn` tool.
+    fn spawn_notes(&self) -> SpawnNotes;
+}
+
+/// What the description of `spawn` says in the VCS's words
+/// ([`Vcs::spawn_notes`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnNotes {
+    /// What the caller does before it spawns, such as "commit your work
+    /// with `vcs_commit` first".
+    pub commit_first: String,
+    /// What the caller does with the commits of a sub-agent spawned not
+    /// to land, and when they go.
+    pub kept: String,
+}
+
+/// A run to make a workspace for ([`Repository::run_workspace`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunSpec {
+    /// The workspace's name, which no other run's workspace has.
+    pub name: String,
+    pub kind: RunKind,
+}
+
+/// A sub-agent's workspace ([`RunWorkspace::fork_child`]), and the
+/// commit it starts on, in hex.
+#[derive(Clone)]
+pub struct ChildWorkspace {
+    pub workspace: Arc<dyn RunWorkspace>,
+    pub base: String,
+}
+
+/// A run's own workspace in a repository: where its files are, the
+/// VCS's parts of its agent, and what becomes of its work as it ends.
+pub trait RunWorkspace: Send + Sync {
+    /// The workspace's name.
+    fn name(&self) -> &str;
+
+    /// Where the run's files are, once it has started.
+    fn dir(&self) -> PathBuf;
+
+    /// The run's turn hooks, which hear each turn's commit: the same the
+    /// run's services hold.
+    fn turns(&self) -> TurnHooks;
+
+    /// The VCS's parts of the run's agent, in the order they go on it:
+    /// its tools, with the landing tool the run's kind calls for, then
+    /// the plugin that makes the workspace as the run starts, snapshots
+    /// it each turn and commits what is left at the end.
+    fn agent_plugins(&self) -> Vec<Box<dyn Plugin>>;
+
+    /// The paths the workspace's working copy holds in conflict.
+    fn conflicts(&self) -> HostFuture<'_, anyhow::Result<Vec<String>>>;
+
+    /// A workspace named `name` for a sub-agent of this run, on this
+    /// run's newest commit; or why the run cannot spawn now, in the
+    /// VCS's words.
+    fn fork_child(
+        &self,
+        name: String,
+    ) -> HostFuture<'_, Result<ChildWorkspace, String>>;
+
+    /// Why the run's work cannot land, if it cannot: its end did not
+    /// commit everything.
+    fn unlandable(&self) -> HostFuture<'_, Option<String>>;
+
+    /// Keeps `run`'s commits since `base` under its head and closes the
+    /// workspace. Returns its changes, oldest first, by change id.
+    fn keep_work<'a>(
+        &'a self,
+        run: &'a RunId,
+        base: &'a str,
+    ) -> HostFuture<'a, anyhow::Result<Vec<String>>>;
+
+    /// Drops `run`'s own changes since `base`, and closes it: its
+    /// workspace and head go.
+    fn drop_work<'a>(
+        &'a self,
+        run: &'a RunId,
+        base: &'a str,
+    ) -> HostFuture<'a, anyhow::Result<()>>;
 }
 
 /// What a run's commits land on.
@@ -535,6 +617,12 @@ pub trait Repository: Send + Sync {
         workspace: &'a str,
     ) -> HostFuture<'a, anyhow::Result<()>>;
 
+    /// A new run's workspace, ready for its agent.
+    fn run_workspace(
+        &self,
+        spec: RunSpec,
+    ) -> HostFuture<'_, anyhow::Result<Arc<dyn RunWorkspace>>>;
+
     /// The paths `workspace`'s working copy holds in conflict.
     fn conflicts<'a>(
         &'a self,
@@ -595,7 +683,6 @@ pub trait Repository: Send + Sync {
         held: Held,
     ) -> HostFuture<'_, anyhow::Result<()>>;
 
-    /// Itself, for the run assembly that still reaches the jj project
-    /// behind it (ADR 0045 step 4), and tests; it goes, and this with it.
+    /// Itself, for tests that reach the project behind it.
     fn as_any(&self) -> &dyn Any;
 }

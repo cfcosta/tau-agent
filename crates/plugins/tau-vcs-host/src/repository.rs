@@ -12,6 +12,7 @@ use tau_agent::{event::LimitKind, tool::RunId};
 use tau_ui_plugin::{
     HostCx,
     PluginHost,
+    RunKind,
     registry::HostFuture,
     vcs::{
         self,
@@ -32,7 +33,9 @@ use tau_ui_plugin::{
         Remote,
         Replayed,
         ReplayedCommit,
+        RunSpec,
         SetupStep,
+        SpawnNotes,
         StackChange,
         Updated,
     },
@@ -41,6 +44,7 @@ use tau_ui_plugin::{
 use crate::{
     Head,
     Identity,
+    JjRunWorkspace,
     Layout,
     Project,
     ProjectRepo,
@@ -182,6 +186,10 @@ impl vcs::Vcs for JjVcs {
         limit: Option<LimitKind>,
     ) -> String {
         sub_agents::kept_note(changes, limit)
+    }
+
+    fn spawn_notes(&self) -> SpawnNotes {
+        sub_agents::spawn_notes()
     }
 }
 
@@ -372,6 +380,30 @@ impl vcs::Repository for JjRepository {
                 .move_onto(trunk, Head::Branch(trunk_name), true)
                 .await?;
             Ok(())
+        })
+    }
+
+    /// A main chat's commits move trunk's branch: a failure to read
+    /// trunk fails the run.
+    fn run_workspace(
+        &self,
+        spec: RunSpec,
+    ) -> HostFuture<'_, anyhow::Result<Arc<dyn vcs::RunWorkspace>>> {
+        Box::pin(async move {
+            let RunSpec { name, kind } = spec;
+            let workspace = JjRunWorkspace::new(
+                self.project.clone(),
+                name,
+                kind,
+                self.identity.clone(),
+            )?;
+            let workspace = match kind {
+                RunKind::Main => workspace.commits_to(
+                    self.project.run(|project| project.trunk_name()).await?,
+                ),
+                RunKind::Chat | RunKind::SubAgent => workspace,
+            };
+            Ok(Arc::new(workspace) as Arc<dyn vcs::RunWorkspace>)
         })
     }
 

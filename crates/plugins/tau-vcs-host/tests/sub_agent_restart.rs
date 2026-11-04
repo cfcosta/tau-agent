@@ -9,15 +9,17 @@
 
 mod common;
 
-use common::{coder, heard_sub_agents, project_with};
+use common::{
+    caller_in,
+    coder_in,
+    heard_sub_agents,
+    notes,
+    project_with,
+    ready_child,
+};
 use serde_json::json;
 use tau_testing::scripted::ScriptedModel;
-use tau_vcs_host::{
-    Identity,
-    RunWorkspace,
-    Spawn,
-    sub_agents::{ChildModel, Ending},
-};
+use tau_ui_plugin::sub_agents::{ChildModel, Ending, Spawn};
 
 /// A sub-agent workspace left behind by an earlier process, as a crash
 /// in the middle of a sub-agent leaves it, stays apart from the next
@@ -58,16 +60,14 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
             })
             .turn(|t| t.tool_call("spawn", json!({ "task": "child" })))
             .turn(|t| t.text("done"));
-        let parent =
-            RunWorkspace::new(project.clone().into(), "parent", Identity::default())
-                .unwrap();
+        let parent = caller_in(&project, "parent");
         let named = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = named.clone();
         let (agents, mut ends) = heard_sub_agents();
-        let agent = coder(llm, &parent, true).tool(Spawn::new(
+        let agent = coder_in(llm, parent.as_ref()).tool(Spawn::new(
             parent.clone(),
-            Identity::default(),
             agents,
+            &notes(),
             &[],
             ready_child(move |workspace, _: &ChildModel| {
                 seen.lock().unwrap().push(workspace.name().to_owned());
@@ -83,7 +83,7 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
                         )
                     })
                     .turn(|t| t.text("written"));
-                Ok(coder(script, &workspace, true))
+                Ok(coder_in(script, workspace.as_ref()))
             }),
         ));
         let outcome = agent.run("work, then hand over", &store).await.unwrap();
@@ -103,29 +103,6 @@ fn a_sub_agent_starts_on_its_caller_after_a_restart() {
             "the earlier process's commit is in the sub-agent's work"
         );
     });
-}
-
-/// A sub-agent factory that builds its agent at once, as `Spawn` takes
-/// one: a future that is ready.
-fn ready_child(
-    child: impl Fn(
-        tau_vcs_host::RunWorkspace,
-        &tau_vcs_host::sub_agents::ChildModel,
-    )
-        -> Result<tau_agent::agent::Agent, tau_agent::error::ToolError>
-    + Send
-    + Sync
-    + 'static,
-) -> impl Fn(
-    tau_vcs_host::RunWorkspace,
-    &tau_vcs_host::sub_agents::ChildModel,
-) -> tau_vcs_host::sub_agents::ChildFuture
-+ Send
-+ Sync
-+ 'static {
-    move |workspace, model| {
-        Box::pin(std::future::ready(child(workspace, model)))
-    }
 }
 
 /// The head of run `run` (`Head::Run`).

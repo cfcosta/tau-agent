@@ -10,14 +10,17 @@ publish.workspace = true
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 anyhow.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-store.workspace = true
 tau-ui-kit.workspace = true
-tokio = { workspace = true, features = ["rt", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 tokio-util.workspace = true
+uuid.workspace = true
 
 [features]
 # Fakes for testing a plugin's UI half: `tau_ui_plugin::testing`.

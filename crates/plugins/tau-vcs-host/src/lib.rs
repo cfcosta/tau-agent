@@ -16,7 +16,8 @@
 //! A [`ProjectRepo`] is a repository tau owns, cloned from the user's, with
 //! a workspace per run; [`RunWorkspace`] makes a run's workspace when
 //! the run starts and snapshots it after each turn, so forks start from
-//! a turn's code. The model makes the commits, with `vcs_commit`
+//! a turn's code, and [`JjRunWorkspace`] is that workspace as the
+//! kernel asks it. The model makes the commits, with `vcs_commit`
 //! ([ADR 0014](../../../docs/decisions/0014-the-model-commits-and-runs-land-as-stacked-diffs.md)).
 //! The host reaches a project through the `tau.vcs` slot, which
 //! [`JjVcs`] fills: each project it opens is a [`JjRepository`].
@@ -51,7 +52,7 @@ mod revsets;
 pub mod run_workspace;
 mod session;
 mod snapshot_config;
-pub mod sub_agents;
+mod sub_agents;
 pub mod sweep;
 pub mod tools;
 mod vcs;
@@ -83,9 +84,13 @@ pub use project::{
     main_workspace_name,
 };
 pub use repository::{JjRepository, JjVcs};
-pub use run_workspace::RunWorkspace;
+pub use run_workspace::{
+    JjRunWorkspace,
+    MAIN_DOES_NOT_LAND,
+    RunWorkspace,
+    SUB_AGENTS_DO_NOT_LAND,
+};
 pub use session::MAX_NEW_FILE_SIZE;
-pub use sub_agents::{ONLY_MAIN_SPAWNS, RefusingSpawn, Spawn, SubAgents};
 use tau_vcs::ui;
 // The shapes the tools return, from the interface half.
 pub use tau_vcs::{ChangeInfo, Landing, TooLarge, details};

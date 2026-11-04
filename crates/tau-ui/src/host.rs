@@ -9,8 +9,8 @@
 //! Repositories are cloned from the forge (`tau.forge`'s plugin), or
 //! added from the person's folders: the host makes each a [`Project`]
 //! under `$XDG_DATA_HOME/tau/repos`, and
-//! each run gets a jj workspace there ([`RunWorkspace`]) with a commit
-//! per turn, so a fork starts from a turn's conversation and code. The
+//! each run gets a workspace there from the VCS ([`RunWorkspace`]) with
+//! a commit per turn, so a fork starts from a turn's conversation and code. The
 //! repositories tau lists, and which the sidebar shows open, are kept in
 //! `repos.json`; each run records its repository ([`RunTag`]), so past
 //! runs come back from the store under theirs.
@@ -54,8 +54,7 @@ use tau_ui_plugin::{
     HostRecord,
     RepoId,
     Services,
-    TurnCommit,
-    TurnHooks,
+    sub_agents::{ChildModel, RefusingSpawn, Spawn, SubAgents},
     vcs::{
         Discard,
         Land,
@@ -67,20 +66,13 @@ use tau_ui_plugin::{
         Open,
         Remote,
         Repository,
+        RunSpec,
+        RunWorkspace,
         Updated,
         WORKSPACE_PLUGIN,
     },
 };
-use tau_vcs_host::{
-    Identity,
-    JjRepository,
-    Project,
-    RefusingSpawn,
-    RunWorkspace,
-    Spawn,
-    VcsPlugin,
-    sub_agents::ChildModel,
-};
+use tau_vcs_host::{Identity, JjRepository, Project};
 use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
@@ -253,7 +245,7 @@ pub struct Host {
     runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
     /// Each repository's main chat's sub-agents, which run beside it
     /// and outlive its turns (ADR 0026), by repository.
-    sub_agents: Mutex<HashMap<String, tau_vcs_host::SubAgents>>,
+    sub_agents: Mutex<HashMap<String, SubAgents>>,
     /// The commands each workspace's runs started and left running
     /// (`exec_command`), by directory: they outlive a turn, and a
     /// workspace that closes ends them.
@@ -414,16 +406,6 @@ const INSTRUCTIONS: &str = "You are tau, a coding agent working in the \
     reviewer would want a boundary, each with a Conventional Commits \
     message, and commit everything before you finish. Be concise, and say \
     which tests you ran.";
-
-/// What `vcs_land` answers on a main chat, which commits on trunk.
-const MAIN_DOES_NOT_LAND: &str = "The main chat commits straight to \
-    trunk, so it has nothing to land: commit with `vcs_commit` and you \
-    are done.";
-
-/// What `vcs_land` answers on a sub-agent, which lands as it ends.
-const SUB_AGENTS_DO_NOT_LAND: &str = "A sub-agent's commits land on its \
-    caller when it ends, so it has nothing to propose: commit with \
-    `vcs_commit`, then answer.";
 
 impl Host {
     /// Who the host's commits are by, under the person's jj config when
@@ -906,7 +888,7 @@ impl Host {
                 access: Some(self.access_label().to_owned()),
                 ..HostRecord::default()
             };
-            move |choice: &ModelChoice, workspace: &RunWorkspace| {
+            move |choice: &ModelChoice, workspace: &dyn RunWorkspace| {
                 let start = HostRecord {
                     workspace: Some(workspace.dir().display().to_string()),
                     ..start.clone()
@@ -918,7 +900,8 @@ impl Host {
         // rules check what the tools do, tau-goal's hold of a stop comes
         // after theirs, and context compaction goes by the run's model.
         let registered = self.registered(repo).await;
-        let project = repo.jj_project().await?;
+        let repository = repo.repository().await?;
+        let notes = self.vcs.as_ref().ok_or_else(no_vcs)?.spawn_notes();
         // What the plugins give the run's commands: an environment. An
         // agent's commands run only in its sandbox: without one, its runs
         // have no `exec_command` (ADR 0037).
@@ -942,34 +925,18 @@ impl Host {
         let processes = self.processes.clone();
         let wakes = self.wakes.clone();
         // A run and its sub-agents work the same way, each in its own
-        // workspace: tools, then what plugins add, which hear each turn's
-        // commit. Every run declares the same tools, in the same order,
-        // so each reads the others' prompt cache (ADR 0022): only the
-        // main chat can spawn sub-agents, so sub-agents do not nest, and the
-        // others' `spawn` and `wait` refuse.
-        // `refusal`: `None` when the run proposes its own landing with
-        // `vcs_land` (ADR 0014); else why it does not, which its
-        // `vcs_land` answers.
+        // workspace: tools, then the VCS's parts, then what plugins add,
+        // which hear each turn's commit. Every run declares the same
+        // tools, in the same order, so each reads the others' prompt
+        // cache (ADR 0022): only the main chat can spawn sub-agents, so
+        // sub-agents do not nest, and the others' `spawn` refuses, as
+        // `vcs_land` does on the runs that do not propose their landing
+        // (ADR 0014).
         let on_workspace =
             move |agent: Agent,
-                  workspace: RunWorkspace,
-                  refusal: Option<&'static str>,
+                  workspace: &dyn RunWorkspace,
                   wake: Option<String>| {
-                let hooks = TurnHooks::default();
-                let workspace = {
-                    let hooks = hooks.clone();
-                    workspace.on_turn(move |turn| {
-                        hooks.turned(&TurnCommit {
-                            change_id: turn.change_id.clone(),
-                            paths: turn.paths.clone(),
-                        })
-                    })
-                };
-                let vcs = VcsPlugin::new(workspace.vcs().clone());
-                let vcs = match refusal {
-                    None => vcs.landing(),
-                    Some(refusal) => vcs.refusing_landing(refusal),
-                };
+                let hooks = workspace.turns();
                 let dir = workspace.dir();
                 // The commands it leaves running stay for its next turn.
                 let running = processes
@@ -1012,37 +979,40 @@ impl Host {
                     .with(tau_ui_plugin::WorkspaceDir(dir.clone()));
                 // The repository's instructions come after the workspace,
                 // which makes the directory as the run starts.
-                let agent = agent
-                    .plugin(tools)
-                    .plugin(vcs)
-                    .plugin(workspace)
+                let agent = workspace
+                    .agent_plugins()
+                    .into_iter()
+                    .fold(agent.plugin(tools), Agent::boxed_plugin)
                     .plugin(RepoInstructions { dir });
                 (agent, services)
             };
-        let workspace =
-            RunWorkspace::new(project.clone(), &name, self.identity())?;
-        // A main chat commits on trunk: it has nothing to land.
-        let workspace = if main {
-            workspace
-                .commits_to(project.run(|project| project.trunk_name()).await?)
+        let kind = if main {
+            tau_ui_plugin::RunKind::Main
         } else {
-            workspace
+            tau_ui_plugin::RunKind::Chat
         };
-        let agent = for_model(choice, &workspace);
+        let workspace = repository
+            .run_workspace(RunSpec {
+                name: name.clone(),
+                kind,
+            })
+            .await?;
+        let agent = for_model(choice, workspace.as_ref());
         let models: Vec<String> =
             plan_models().into_iter().map(|model| model.id).collect();
-        // Main's sub-agents, and every other run's refusing tools, in
+        // Main's sub-agents, and every other run's refusing `spawn`, in
         // the same place, so all declare the same tools (ADR 0022).
-        let (agent, refusal) = if main {
+        let agent = if main {
             let agents = self.sub_agents_of(&repo.name);
             let child_on_workspace = on_workspace.clone();
             let registered = registered.clone();
             let caller = choice.clone();
             let refused = models.clone();
+            let child_notes = notes.clone();
             let spawn = Spawn::new(
                 workspace.clone(),
-                self.identity(),
                 agents,
+                &notes,
                 &models,
                 move |child, asked| {
                     let choice = match child_choice(&caller, asked) {
@@ -1051,14 +1021,10 @@ impl Host {
                             return Box::pin(std::future::ready(Err(error)));
                         }
                     };
-                    let agent = for_model(&choice, &child)
-                        .tool(RefusingSpawn::new(&refused));
-                    let (agent, services) = child_on_workspace(
-                        agent,
-                        child,
-                        Some(SUB_AGENTS_DO_NOT_LAND),
-                        None,
-                    );
+                    let agent = for_model(&choice, child.as_ref())
+                        .tool(RefusingSpawn::new(&child_notes, &refused));
+                    let (agent, services) =
+                        child_on_workspace(agent, child.as_ref(), None);
                     let built = registered(
                         agent,
                         tau_ui_plugin::RunKind::SubAgent,
@@ -1070,17 +1036,17 @@ impl Host {
                     })
                 },
             );
-            (agent.tool(spawn), Some(MAIN_DOES_NOT_LAND))
+            agent.tool(spawn)
         } else {
-            (agent.tool(RefusingSpawn::new(&models)), None)
+            agent.tool(RefusingSpawn::new(&notes, &models))
         };
         // tau's turn resolving a landing's conflicts on main stops only
         // once they are resolved, or after one more try (ADR 0024).
         let hold = (main && resolving).then(|| lanes::ResolveHold {
-            vcs: workspace.vcs().clone(),
+            workspace: workspace.clone(),
         });
         let (agent, services) =
-            on_workspace(agent, workspace, refusal, Some(name.clone()));
+            on_workspace(agent, workspace.as_ref(), Some(name.clone()));
         let agent = match hold {
             Some(hold) => agent.plugin(hold),
             None => agent,
@@ -1091,11 +1057,6 @@ impl Host {
             agent.plugin(sub_agents::Orchestrate)
         } else {
             agent
-        };
-        let kind = if main {
-            tau_ui_plugin::RunKind::Main
-        } else {
-            tau_ui_plugin::RunKind::Chat
         };
         let agent = registered(agent, kind, choice, services).await?;
         Ok((agent, name))

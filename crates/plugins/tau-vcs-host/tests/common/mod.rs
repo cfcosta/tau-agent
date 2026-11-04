@@ -15,19 +15,31 @@ pub mod ops;
 
 use std::{path::Path, sync::Arc};
 
-use tau_agent::{agent::Agent, tool::RunId};
+use tau_agent::{
+    agent::Agent,
+    error::ToolError,
+    plugin::{Plugin, PluginCtx, PluginError, PluginRun, RunPlan},
+    tool::RunId,
+};
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_tools_host::{path::Root, plugin::CodingTools};
-use tau_ui_plugin::vcs::Link;
+use tau_ui_plugin::{
+    RunKind,
+    sub_agents::{ChildFuture, ChildModel, Ending, SubAgents},
+    vcs::{self, Link, SpawnNotes, Vcs as _},
+};
 use tau_vcs_host::{
     Identity,
+    JjRunWorkspace,
+    JjVcs,
     ProjectRepo,
     RunWorkspace,
-    SubAgents,
     VcsPlugin,
-    sub_agents::Ending,
 };
 use tokio::sync::mpsc;
+
+/// A run's workspace as the kernel holds it.
+pub type Workspace = Arc<dyn vcs::RunWorkspace>;
 
 /// A project imported from a git repository whose one commit,
 /// `first`, holds `files`.
@@ -113,6 +125,95 @@ pub fn coder(llm: ScriptedModel, workspace: &RunWorkspace, vcs: bool) -> Agent {
         agent
     };
     agent.plugin(workspace.clone())
+}
+
+/// A chat's workspace `name` in `project`, as the kernel asks it: what
+/// a test's caller of `spawn` works in.
+pub fn caller_in(project: &ProjectRepo, name: &str) -> Workspace {
+    let workspace = JjRunWorkspace::new(
+        project.clone().into(),
+        name,
+        RunKind::Chat,
+        Identity::default(),
+    )
+    .unwrap();
+    Arc::new(workspace)
+}
+
+/// The coding agent on `workspace`, with the VCS's parts after the
+/// coding tools, as the host builds a run.
+pub fn coder_in(
+    llm: ScriptedModel,
+    workspace: &dyn vcs::RunWorkspace,
+) -> Agent {
+    let agent = Agent::new(llm)
+        .name("coder")
+        .plugin(CodingTools::new(Root::new(workspace.dir())));
+    workspace
+        .agent_plugins()
+        .into_iter()
+        .fold(agent, Agent::boxed_plugin)
+}
+
+/// What jj says in `spawn`'s description.
+pub fn notes() -> SpawnNotes {
+    JjVcs {
+        identity: Identity::default(),
+    }
+    .spawn_notes()
+}
+
+/// A sub-agent factory that builds its agent at once, as `Spawn` takes
+/// one: a future that is ready.
+pub fn ready_child(
+    child: impl Fn(Workspace, &ChildModel) -> Result<Agent, ToolError>
+    + Send
+    + Sync
+    + 'static,
+) -> impl Fn(Workspace, &ChildModel) -> ChildFuture + Send + Sync + 'static {
+    move |workspace, model| {
+        Box::pin(std::future::ready(child(workspace, model)))
+    }
+}
+
+/// Keeps the id of the run it starts in: what a test knows a
+/// sub-agent's run by.
+#[derive(Clone, Default)]
+pub struct RunOf(Arc<std::sync::Mutex<Option<RunId>>>);
+
+impl RunOf {
+    /// The run it started in, once it has.
+    pub fn run(&self) -> Option<RunId> {
+        self.0.lock().unwrap().clone()
+    }
+
+    /// The run it started in, waiting for it to start: within ten
+    /// seconds, or the test fails.
+    pub async fn started(&self) -> RunId {
+        for _ in 0..1000 {
+            if let Some(run) = self.run() {
+                return run;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("the sub-agent never started")
+    }
+}
+
+#[async_trait::async_trait]
+impl Plugin for RunOf {
+    fn name(&self) -> &str {
+        "test-run-of"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        *self.0.lock().unwrap() = Some(ctx.run.clone());
+        Ok(Box::new(()))
+    }
 }
 
 /// Sub-agents whose endings come out of the receiver as they end, once

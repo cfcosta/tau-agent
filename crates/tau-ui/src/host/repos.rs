@@ -119,9 +119,8 @@ impl ProjectSlot {
     }
 }
 
-/// The jj project behind `repository`, for the run assembly that still
-/// reaches it (ADR 0045 step 4), and tests.
-pub(super) fn jj_project(repository: &dyn Repository) -> Option<Project> {
+/// The jj project behind `repository`: for tests ([`Host::project_of`]).
+fn jj_project(repository: &dyn Repository) -> Option<Project> {
     let jj = repository.as_any().downcast_ref::<JjRepository>()?;
     Some(jj.project().clone())
 }
@@ -169,14 +168,6 @@ impl RepoSlot {
                 }
                 _ => anyhow::anyhow!("{} has no project", self.name),
             })
-    }
-
-    /// The jj project runs in the repository work in, once imported:
-    /// for the run assembly that still reaches it (ADR 0045 step 4).
-    pub(super) async fn jj_project(&self) -> anyhow::Result<Project> {
-        jj_project(self.repository().await?.as_ref()).ok_or_else(|| {
-            anyhow::anyhow!("{}'s project is not a jj project", self.name)
-        })
     }
 }
 

@@ -35,7 +35,16 @@ use std::{
 };
 
 use async_trait::async_trait;
-use common::{coder, heard_sub_agents, merge::*, project};
+use common::{
+    RunOf,
+    Workspace,
+    coder_in,
+    heard_sub_agents,
+    merge::*,
+    notes,
+    project,
+    ready_child,
+};
 use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
@@ -46,16 +55,12 @@ use tau_agent::{
 use tau_ai::message::{InputBlock, Message, UserContent};
 use tau_store::Entry;
 use tau_testing::scripted::ScriptedModel;
-use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
-use tau_vcs_host::{
-    Head,
-    Identity,
-    MAIN_WORKSPACE,
-    RunWorkspace,
-    Spawn,
-    SubAgents,
-    sub_agents::{ChildModel, Ending, MAX_RUNNING},
+use tau_ui_plugin::{
+    RunKind,
+    sub_agents::{ChildModel, Ending, MAX_RUNNING, Spawn, SubAgents},
+    vcs::{Link, WORKSPACE_PLUGIN},
 };
+use tau_vcs_host::{Head, Identity, JjRunWorkspace, MAIN_WORKSPACE};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
@@ -421,22 +426,29 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
         let trunk = project.trunk().unwrap();
         let caller = if main_chat {
             tc.event("the caller is the main chat");
-            RunWorkspace::new(
+            JjRunWorkspace::new(
                 project.clone().into(),
                 MAIN_WORKSPACE,
+                RunKind::Main,
                 Identity::default(),
             )
             .unwrap()
             .commits_to(project.trunk_name().unwrap())
         } else {
-            RunWorkspace::new(project.clone().into(), "caller", Identity::default())
-                .unwrap()
+            JjRunWorkspace::new(
+                project.clone().into(),
+                "caller",
+                RunKind::Chat,
+                Identity::default(),
+            )
+            .unwrap()
         };
 
         // The host brings the main chat up to trunk before its turns:
         // jj's own workspace starts on the root commit.
         if main_chat {
             caller
+                .workspace()
                 .vcs()
                 .move_onto(trunk.clone(), project.trunk_name().unwrap(), true)
                 .await
@@ -487,7 +499,7 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
             .map(|(i, (sub, (_, dirty)))| sub_script(i, sub, *dirty))
             .collect();
         let gates = Gates::default();
-        let workspaces: Arc<Mutex<HashMap<usize, RunWorkspace>>> =
+        let workspaces: Arc<Mutex<HashMap<usize, (Workspace, RunOf)>>> =
             Arc::default();
         let models: Vec<String> = (0..calls).map(|i| format!("m{i}")).collect();
         let (agents, mut ends) = heard_sub_agents();
@@ -497,16 +509,22 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
             let gates = gates.clone();
             let workspaces = workspaces.clone();
             Spawn::new(
-                caller.clone(),
-                Identity::default(),
+                Arc::new(caller.clone()),
                 agents.clone(),
+                &notes(),
                 &models,
                 ready_child(move |workspace, model: &ChildModel| {
                     let i: usize = model.model.as_deref().unwrap()[1..]
                         .parse()
                         .unwrap();
-                    workspaces.lock().unwrap().insert(i, workspace.clone());
-                    let agent = coder(scripts[i].clone(), &workspace, true).tool(gates.clone());
+                    let run_of = RunOf::default();
+                    workspaces
+                        .lock()
+                        .unwrap()
+                        .insert(i, (workspace.clone(), run_of.clone()));
+                    let agent = coder_in(scripts[i].clone(), workspace.as_ref())
+                        .plugin(run_of)
+                        .tool(gates.clone());
                     if !subs[i].limit {
                         return Ok(agent);
                     }
@@ -518,21 +536,21 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
                 }),
             )
         };
-        let outcome = coder(llm.clone(), &caller, true)
+        let outcome = coder_in(llm.clone(), &caller)
             .tool(spawn)
             .run("split the work", &store)
             .await
             .unwrap();
         llm.assert_exhausted();
         // The caller's turn ended with its sub-agents at work.
-        let started: HashMap<usize, RunWorkspace> = workspaces.lock().unwrap().clone();
-        let runs: HashMap<usize, RunId> = started
-            .iter()
-            .map(|(i, workspace)| {
-                // A sub-agent's run is known once it started.
-                (*i, workspace.run().unwrap())
-            })
-            .collect();
+        let started: HashMap<usize, (Workspace, RunOf)> =
+            workspaces.lock().unwrap().clone();
+        let mut runs: HashMap<usize, RunId> = HashMap::new();
+        for (i, (_, run_of)) in &started {
+            // A sub-agent's run is known once it started, which it does
+            // on a task of its own.
+            runs.insert(*i, run_of.started().await);
+        }
         let ended = if dirty {
             Vec::new()
         } else {
@@ -565,7 +583,7 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
             })
             .collect();
         assert_eq!(spawned.len(), calls);
-        let caller_head_of = caller.head_of(&outcome.run);
+        let caller_head_of = caller.workspace().head_of(&outcome.run);
         let caller_head = project.head(&caller_head_of).unwrap().unwrap();
 
         // What each sub-agent left, as it ended.
@@ -588,7 +606,7 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
             let i = *i;
             let (commits, held) = &planned[i];
             let run = &runs[&i];
-            let name = started[&i].name().to_owned();
+            let name = started[&i].0.name().to_owned();
             let sub_head = Head::Run(run.clone());
             if stop_after.is_some_and(|after| ended.iter().position(|(j, _)| *j == i).unwrap() >= after) {
                 assert_eq!(*ending, Ending::Stopped, "sub-agent {i}");
@@ -712,27 +730,4 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
         );
         common::ops::assert_all_taus(&mut log, "the sub-agents");
     });
-}
-
-/// A sub-agent factory that builds its agent at once, as `Spawn` takes
-/// one: a future that is ready.
-fn ready_child(
-    child: impl Fn(
-        tau_vcs_host::RunWorkspace,
-        &tau_vcs_host::sub_agents::ChildModel,
-    )
-        -> Result<tau_agent::agent::Agent, tau_agent::error::ToolError>
-    + Send
-    + Sync
-    + 'static,
-) -> impl Fn(
-    tau_vcs_host::RunWorkspace,
-    &tau_vcs_host::sub_agents::ChildModel,
-) -> tau_vcs_host::sub_agents::ChildFuture
-+ Send
-+ Sync
-+ 'static {
-    move |workspace, model| {
-        Box::pin(std::future::ready(child(workspace, model)))
-    }
 }

@@ -11,7 +11,14 @@ mod common;
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use common::{coder, heard_sub_agents, project_with};
+use common::{
+    caller_in,
+    coder_in,
+    heard_sub_agents,
+    notes,
+    project_with,
+    ready_child,
+};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::{
@@ -20,15 +27,11 @@ use tau_agent::{
     tool::RunId,
 };
 use tau_testing::scripted::ScriptedModel;
-use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
-use tau_vcs_host::{
-    Head,
-    Identity,
-    RunWorkspace,
-    Spawn,
-    Vcs,
-    sub_agents::Ending,
+use tau_ui_plugin::{
+    sub_agents::{Ending, Spawn},
+    vcs::{Link, WORKSPACE_PLUGIN},
 };
+use tau_vcs_host::{Head, Identity, Vcs};
 
 /// A real jj-lib refusal, not a mocked commit result: tag the already
 /// snapshotted working copy immediately before the workspace finishes.
@@ -125,12 +128,7 @@ fn finalization_commits_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
             .unwrap();
         runtime.block_on(async {
             let store = tau_store_sqlite::memory().await.unwrap();
-            let parent = RunWorkspace::new(
-                project.clone().into(),
-                "parent",
-                Identity::default(),
-            )
-            .unwrap();
+            let parent = caller_in(&project, "parent");
             let llm = ScriptedModel::new()
                 .turn(|t| {
                     t.tool_call(
@@ -192,36 +190,47 @@ fn finalization_commits_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
             };
             let child_script = child.clone();
             let (agents, mut ends) = heard_sub_agents();
-            let agent = coder(llm.clone(), &parent, true).tool(Spawn::new(
-                parent.clone(),
-                Identity::default(),
-                agents,
-                &[],
-                ready_child(move |workspace, _| {
-                    let agent = if mode == 4 {
-                        tau_agent::agent::Agent::new(child_script.clone())
-                            .plugin(TagOnFinish(workspace.vcs().clone()))
-                            .plugin(tau_tools_host::plugin::CodingTools::new(
-                                tau_tools_host::path::Root::new(
-                                    workspace.dir(),
+            let agent =
+                coder_in(llm.clone(), parent.as_ref()).tool(Spawn::new(
+                    parent.clone(),
+                    agents,
+                    &notes(),
+                    &[],
+                    ready_child(move |workspace, _| {
+                        let agent = if mode == 4 {
+                            // Tags before the workspace commits at the end.
+                            let tag = TagOnFinish(Vcs::lazy(
+                                workspace.dir(),
+                                Identity::default(),
+                            ));
+                            let agent = tau_agent::agent::Agent::new(
+                                child_script.clone(),
+                            )
+                            .plugin(tag)
+                            .plugin(
+                                tau_tools_host::plugin::CodingTools::new(
+                                    tau_tools_host::path::Root::new(
+                                        workspace.dir(),
+                                    ),
                                 ),
-                            ))
-                            .plugin(tau_vcs_host::VcsPlugin::new(
-                                workspace.vcs().clone(),
-                            ))
-                            .plugin(workspace)
-                    } else {
-                        coder(child_script.clone(), &workspace, true)
-                    };
-                    Ok(if limited {
-                        agent.limits(
-                            Limits::default().max_turns(committed as u32 + 1),
-                        )
-                    } else {
-                        agent
-                    })
-                }),
-            ));
+                            );
+                            workspace.agent_plugins().into_iter().fold(
+                                agent,
+                                tau_agent::agent::Agent::boxed_plugin,
+                            )
+                        } else {
+                            coder_in(child_script.clone(), workspace.as_ref())
+                        };
+                        Ok(if limited {
+                            agent.limits(
+                                Limits::default()
+                                    .max_turns(committed as u32 + 1),
+                            )
+                        } else {
+                            agent
+                        })
+                    }),
+                ));
             let outcome =
                 agent.run("hand the writes over", &store).await.unwrap();
             let (_, ending) = ends.recv().await.unwrap();
@@ -313,12 +322,7 @@ fn oversized_untracked_child_files_are_not_discarded() {
             .unwrap();
         runtime.block_on(async {
             let store = tau_store_sqlite::memory().await.unwrap();
-            let parent = RunWorkspace::new(
-                project.clone().into(),
-                "parent",
-                Identity::default(),
-            )
-            .unwrap();
+            let parent = caller_in(&project, "parent");
             let llm = ScriptedModel::new()
                 .turn(|t| {
                     t.tool_call(
@@ -337,16 +341,17 @@ fn oversized_untracked_child_files_are_not_discarded() {
             });
             let script = child.clone();
             let (agents, mut ends) = heard_sub_agents();
-            let agent = coder(llm.clone(), &parent, true).tool(Spawn::new(
-                parent.clone(),
-                Identity::default(),
-                agents,
-                &[],
-                ready_child(move |workspace, _| {
-                    Ok(coder(script.clone(), &workspace, true)
-                        .limits(Limits::default().max_turns(1)))
-                }),
-            ));
+            let agent =
+                coder_in(llm.clone(), parent.as_ref()).tool(Spawn::new(
+                    parent.clone(),
+                    agents,
+                    &notes(),
+                    &[],
+                    ready_child(move |workspace, _| {
+                        Ok(coder_in(script.clone(), workspace.as_ref())
+                            .limits(Limits::default().max_turns(1)))
+                    }),
+                ));
             let outcome = agent.run("delegate", &store).await.unwrap();
             let (_, ending) = ends.recv().await.unwrap();
             let Ending::Retained { workspace: dir, .. } = ending else {
@@ -367,28 +372,5 @@ fn oversized_untracked_child_files_are_not_discarded() {
             child.assert_exhausted();
             llm.assert_exhausted();
         });
-    }
-}
-
-/// A sub-agent factory that builds its agent at once, as `Spawn` takes
-/// one: a future that is ready.
-fn ready_child(
-    child: impl Fn(
-        tau_vcs_host::RunWorkspace,
-        &tau_vcs_host::sub_agents::ChildModel,
-    )
-        -> Result<tau_agent::agent::Agent, tau_agent::error::ToolError>
-    + Send
-    + Sync
-    + 'static,
-) -> impl Fn(
-    tau_vcs_host::RunWorkspace,
-    &tau_vcs_host::sub_agents::ChildModel,
-) -> tau_vcs_host::sub_agents::ChildFuture
-+ Send
-+ Sync
-+ 'static {
-    move |workspace, model| {
-        Box::pin(std::future::ready(child(workspace, model)))
     }
 }

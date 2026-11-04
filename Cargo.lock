@@ -10366,6 +10366,8 @@ name = "tau-ui-plugin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "futures-util",
  "gpui-pre",
  "hegeltest",
  "serde",
@@ -10377,6 +10379,7 @@ dependencies = [
  "tau-ui-kit",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]

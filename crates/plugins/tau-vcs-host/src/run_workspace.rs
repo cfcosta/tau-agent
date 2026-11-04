@@ -12,6 +12,10 @@
 //! message the run's model writes from the diff. Whoever else cares what
 //! a turn changed, such as memory marking notes about those files stale,
 //! hears of each turn through [`RunWorkspace::on_turn`].
+//!
+//! [`JjRunWorkspace`] is a run's workspace as the kernel asks it
+//! ([`kernel::RunWorkspace`]): the plugin, the tools beside it, and what
+//! becomes of a sub-agent's work as it ends.
 
 use std::{
     fmt,
@@ -37,12 +41,19 @@ use tau_ai::{
     message::{AssistantMessage, Message, UserContent, UserMessage},
     responses::request::Settings,
 };
-use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
+use tau_ui_plugin::{
+    RunKind,
+    TurnCommit,
+    TurnHooks,
+    registry::HostFuture,
+    vcs::{self as kernel, ChildWorkspace, Link, WORKSPACE_PLUGIN},
+};
 
 use crate::{
     TurnSnapshot,
     error::VcsError,
     heads::Head,
+    plugin::VcsPlugin,
     project::Project,
     vcs::{Identity, Vcs},
 };
@@ -385,5 +396,236 @@ impl PluginRun for Turns {
                 }))
                 .await;
         }
+    }
+}
+
+/// What `vcs_land` answers on a main chat, which commits on trunk.
+pub const MAIN_DOES_NOT_LAND: &str = "The main chat commits straight to \
+    trunk, so it has nothing to land: commit with `vcs_commit` and you \
+    are done.";
+
+/// What `vcs_land` answers on a sub-agent, which lands as it ends.
+pub const SUB_AGENTS_DO_NOT_LAND: &str = "A sub-agent's commits land on its \
+    caller when it ends, so it has nothing to propose: commit with \
+    `vcs_commit`, then answer.";
+
+/// A run's workspace as the kernel asks it ([`kernel::RunWorkspace`]):
+/// its [`RunWorkspace`], for a run of its kind, whose turns its
+/// [`TurnHooks`] hear. Clones share what they learn of the run.
+#[derive(Clone)]
+pub struct JjRunWorkspace {
+    workspace: RunWorkspace,
+    kind: RunKind,
+    identity: Identity,
+    turns: TurnHooks,
+}
+
+impl fmt::Debug for JjRunWorkspace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JjRunWorkspace")
+            .field("workspace", &self.workspace)
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
+}
+
+impl JjRunWorkspace {
+    /// The workspace `name` in `project`, for a run of `kind`, with
+    /// commits by `identity`.
+    pub fn new(
+        project: Project,
+        name: impl Into<String>,
+        kind: RunKind,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let turns = TurnHooks::default();
+        let workspace = {
+            let turns = turns.clone();
+            RunWorkspace::new(project, name, identity.clone())?.on_turn(
+                move |turn| {
+                    turns.turned(&TurnCommit {
+                        change_id: turn.change_id.clone(),
+                        paths: turn.paths.clone(),
+                    })
+                },
+            )
+        };
+        Ok(Self {
+            workspace,
+            kind,
+            identity,
+            turns,
+        })
+    }
+
+    /// Moves `head` with the run's commits ([`RunWorkspace::commits_to`]).
+    pub fn commits_to(mut self, head: impl Into<Head>) -> Self {
+        self.workspace = self.workspace.commits_to(head);
+        self
+    }
+
+    /// Starts the run on `commit` ([`RunWorkspace::with_base`]).
+    pub fn with_base(mut self, commit: impl Into<String>) -> Self {
+        self.workspace = self.workspace.with_base(commit);
+        self
+    }
+
+    /// The workspace's plugin.
+    pub fn workspace(&self) -> &RunWorkspace {
+        &self.workspace
+    }
+}
+
+impl kernel::RunWorkspace for JjRunWorkspace {
+    fn name(&self) -> &str {
+        self.workspace.name()
+    }
+
+    fn dir(&self) -> PathBuf {
+        self.workspace.dir()
+    }
+
+    fn turns(&self) -> TurnHooks {
+        self.turns.clone()
+    }
+
+    /// A chat proposes its landing with `vcs_land`; a main chat and a
+    /// sub-agent declare it all the same, refusing, so every run's tools
+    /// match and read each other's prompt cache (ADR 0022).
+    fn agent_plugins(&self) -> Vec<Box<dyn Plugin>> {
+        let tools = VcsPlugin::new(self.workspace.vcs().clone());
+        let tools = match self.kind {
+            RunKind::Chat => tools.landing(),
+            RunKind::Main => tools.refusing_landing(MAIN_DOES_NOT_LAND),
+            RunKind::SubAgent => tools.refusing_landing(SUB_AGENTS_DO_NOT_LAND),
+        };
+        vec![Box::new(tools), Box::new(self.workspace.clone())]
+    }
+
+    fn conflicts(&self) -> HostFuture<'_, anyhow::Result<Vec<String>>> {
+        Box::pin(async move { Ok(self.workspace.vcs().conflicts().await?) })
+    }
+
+    /// Refuses while `@` holds changes, or new files too large to keep:
+    /// the sub-agent could not see them.
+    fn fork_child(
+        &self,
+        name: String,
+    ) -> HostFuture<'_, Result<ChildWorkspace, String>> {
+        Box::pin(async move {
+            let working_copy = self
+                .workspace
+                .vcs()
+                .working_copy()
+                .await
+                .map_err(|error| error.to_string())?;
+            if !working_copy.too_large.is_empty() {
+                return Err(VcsError::UntrackedLarge(
+                    working_copy
+                        .too_large
+                        .iter()
+                        .map(|file| file.path.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )
+                .to_string());
+            }
+            if !working_copy.paths.is_empty() {
+                return Err(VcsError::Uncommitted(
+                    working_copy.paths.join(", "),
+                )
+                .to_string());
+            }
+            let base = working_copy.head;
+            let child = Self::new(
+                self.workspace.project().clone(),
+                name,
+                RunKind::SubAgent,
+                self.identity.clone(),
+            )
+            .map_err(|error| error.to_string())?
+            .with_base(base.clone());
+            Ok(ChildWorkspace {
+                workspace: Arc::new(child),
+                base,
+            })
+        })
+    }
+
+    /// A normal or limited outcome does not prove the finish hook
+    /// committed everything, so it is checked through jj-lib before any
+    /// landing, abandonment or workspace deletion.
+    fn unlandable(&self) -> HostFuture<'_, Option<String>> {
+        Box::pin(async move {
+            if let Some(error) = self.workspace.finalization_error() {
+                return Some(error);
+            }
+            match self.workspace.vcs().working_copy().await {
+                Ok(copy) if copy.is_committed() => None,
+                Ok(copy) => Some(format!(
+                    "uncommitted paths: {}; oversized untracked paths: {}",
+                    copy.paths.join(", "),
+                    copy.too_large
+                        .iter()
+                        .map(|file| file.path.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )),
+                Err(error) => Some(error.to_string()),
+            }
+        })
+    }
+
+    fn keep_work<'a>(
+        &'a self,
+        run: &'a RunId,
+        base: &'a str,
+    ) -> HostFuture<'a, anyhow::Result<Vec<String>>> {
+        Box::pin(async move {
+            let (base, name, head) = (
+                base.to_owned(),
+                self.workspace.name().to_owned(),
+                Head::Run(run.clone()),
+            );
+            let changes = self
+                .workspace
+                .project()
+                .run(move |p| {
+                    let changes = match p.head(&head)? {
+                        Some(head) => p.changes_between(&base, &head)?,
+                        None => Vec::new(),
+                    };
+                    p.forget_workspace(&name)?;
+                    Ok::<_, VcsError>(changes)
+                })
+                .await?;
+            Ok(changes.into_iter().map(|c| c.change_id).collect())
+        })
+    }
+
+    fn drop_work<'a>(
+        &'a self,
+        run: &'a RunId,
+        base: &'a str,
+    ) -> HostFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            let (base, name, head) = (
+                base.to_owned(),
+                self.workspace.name().to_owned(),
+                Head::Run(run.clone()),
+            );
+            self.workspace
+                .project()
+                .run(move |p| {
+                    if let Some(wc) = p.workspace_head(&name)? {
+                        p.abandon_between(&base, &wc)?;
+                    }
+                    p.forget_workspace(&name)?;
+                    p.remove_head(&head)?;
+                    Ok::<_, VcsError>(())
+                })
+                .await?;
+            Ok(())
+        })
     }
 }
