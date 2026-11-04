@@ -3,6 +3,8 @@
 //!
 //! The pane shows the item revised last, at its latest revision, until
 //! the person picks another; whatever comes next takes its place again.
+//! What was picked is UI state, under [`pick_key`]; the pane and the
+//! cards are view trees (ADR 0045), but for the images in them.
 //! Images are not in the records: the pane fetches each from the host
 //! half once per window, by its blob. The answer reaches phones only if
 //! they are there as it comes, so one still waiting after [`RETRY`] is
@@ -14,12 +16,13 @@ mod pane;
 use std::{collections::HashMap, sync::Arc};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-use gpui::Context;
+use gpui::{App, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
 use tau_ui_plugin::{
     Fold,
+    Handle,
     Manifest,
     RunCx,
     UiPlugin,
@@ -58,18 +61,15 @@ pub struct Fetched {
     pub error: Option<String>,
 }
 
-/// What a window keeps of the canvas.
+/// What a window keeps of the canvas: the images fetched, or being
+/// fetched, by blob.
 #[derive(Default)]
 pub struct Ui {
-    /// What the person picked on each run's canvas, while nothing newer
-    /// came.
-    picked: HashMap<RunId, Pick>,
-    /// The images fetched, or being fetched, by blob.
     images: HashMap<String, Loaded>,
 }
 
 /// A revision the person picked to look at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pick {
     pub item: u32,
     /// Its place among the item's revisions.
@@ -90,10 +90,39 @@ pub enum Loaded {
     Failed(String),
 }
 
-impl Ui {
-    /// Picks `revision` of `item` on the canvas of `run`.
-    pub fn pick(&mut self, run: &RunId, pick: Pick) {
-        self.picked.insert(run.clone(), pick);
+/// The UI state key under which the canvas of `run` keeps its
+/// [`Pick`].
+pub fn pick_key(run: &RunId) -> String {
+    format!("pick.{run}")
+}
+
+/// What the person picked on the canvas of `run`, if anything.
+fn picked(view: &ViewCx<'_, CanvasUi>, run: &RunId) -> Option<Pick> {
+    let value = view.ui_value(&pick_key(run))?;
+    serde_json::from_value(value.clone()).ok()
+}
+
+/// The trees' actions: show the [`Pick`] in the arguments, and with
+/// [`OPEN`], open the pane too.
+const PICK: &str = "pick";
+const OPEN: &str = "open";
+
+/// Carries out a tree's action on the canvas of `run`.
+fn on_action(
+    handle: Handle,
+    run: RunId,
+) -> impl Fn(&str, &Value, &mut App) + 'static {
+    move |action, args, cx| {
+        if action != PICK && action != OPEN {
+            return;
+        }
+        if serde_json::from_value::<Pick>(args.clone()).is_err() {
+            return;
+        }
+        handle.set_ui(pick_key(&run), Some(args.clone()), cx);
+        if action == OPEN {
+            handle.open_pane(cx);
+        }
     }
 }
 
