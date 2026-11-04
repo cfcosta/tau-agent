@@ -504,11 +504,39 @@ impl Host {
     ) -> anyhow::Result<RepoSlot> {
         let name = match self.session_of(run).repo {
             Some(name) => Some(name),
-            None => stored_repo(&self.store, &run.0).await,
+            None => match stored_repo(&self.store, &run.0).await {
+                Some(name) => Some(name),
+                None => self.repo_of_parent(run).await,
+            },
         };
         name.and_then(|name| self.slot(&name)).ok_or_else(|| {
             anyhow::anyhow!("{} works in no listed repository", run.0)
         })
+    }
+
+    /// The repository of the run `run` was forked from or called by, for
+    /// a run tau closed under before its first turn recorded where it
+    /// works: a chat works in its main chat's repository, as a sub-agent
+    /// does.
+    async fn repo_of_parent(&self, run: &RunId) -> Option<String> {
+        let record = self.store.run(&run.0).await.ok()??;
+        let (RunKind::Fork { parent, .. } | RunKind::Subagent { parent, .. }) =
+            record.kind
+        else {
+            return None;
+        };
+        let listed = self
+            .list
+            .lock()
+            .expect("not poisoned")
+            .repos
+            .iter()
+            .find(|listed| listed.main.as_deref() == Some(parent.as_str()))
+            .map(|listed| listed.name.clone());
+        match listed {
+            Some(name) => Some(name),
+            None => stored_repo(&self.store, &parent).await,
+        }
     }
 
     /// Whether a repository is still being imported.
