@@ -2,15 +2,8 @@
 //! the stack over trunk, each in runs of one commit scope. A change
 //! picked in it shows its whole description and ids; which is picked is
 //! the plugin's UI state, under [`super::pick_key`].
-//!
-//! [`stack_rows`] is gpui still: core's landing cards draw with it.
 
-use gpui::{Div, Hsla, div, prelude::*, rems};
 use serde_json::json;
-use tau_ui_kit::{
-    components::mono,
-    theme::{Design as _, Theme, Type, radius, sp},
-};
 use tau_ui_plugin::tree::{KeyValue, Kind, Node, Tone};
 
 use super::{
@@ -186,79 +179,12 @@ pub fn detail(change: &Change) -> Node {
     }
 }
 
-/// A conventional commit type's badge colors: text, then ground.
-fn kind_colors(kind: Option<&str>, t: &Theme) -> (Hsla, Hsla) {
-    match kind {
-        Some("feat") => (t.blue, t.blue.opacity(0.1)),
-        Some("fix") => (t.red, t.red.opacity(0.1)),
-        _ => (t.muted, t.raised),
-    }
-}
-
-/// The change's short id, in the change color.
-fn short_id(change: &Change, t: &Theme) -> Div {
-    mono(change.short_id().to_owned(), Type::CAPTION, t.change).flex_shrink_0()
-}
-
-// ADR 0045: core draws this; moves with the landing cards.
 /// Changes as they sit on a stack, newest first, without picking: a
 /// landing's preview and its card in the parent's chat.
-pub fn stack_rows(changes: &[Change], t: &Theme, compact: bool) -> Vec<Div> {
-    changes
-        .iter()
-        .map(|change| {
-            let color =
-                change.scope.as_deref().map_or(t.dim, |scope| t.mark(scope));
-            let (kind_color, kind_bg) = kind_colors(change.kind.as_deref(), t);
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .h(rems(1.625))
-                .pl(sp(3.75))
-                .pr(sp(3.))
-                .child(
-                    div()
-                        .w(rems(0.125))
-                        .h_full()
-                        .mr(sp(2.75))
-                        .flex_shrink_0()
-                        .bg(color.opacity(0.35)),
-                )
-                .when(!compact, |row| {
-                    row.child(
-                        mono(
-                            change.kind.clone().unwrap_or_else(|| "—".into()),
-                            Type::MICRO,
-                            kind_color,
-                        )
-                        .w(rems(2.5))
-                        .flex_shrink_0()
-                        .flex()
-                        .justify_center()
-                        .rounded(radius::SMALL)
-                        .bg(kind_bg),
-                    )
-                })
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .truncate()
-                        .typeset(Type::SMALL)
-                        .text_color(t.text_soft)
-                        .child(if change.subject.is_empty() {
-                            "(no description set)".to_owned()
-                        } else {
-                            change.subject.clone()
-                        }),
-                )
-                .when(change.info.conflict, |row| {
-                    row.child(
-                        mono("conflict", Type::MICRO, t.red).flex_shrink_0(),
-                    )
-                })
-                .child(short_id(change, t))
-        })
-        .collect()
+pub fn stack(changes: &[Change], compact: bool) -> Node {
+    Node::stack(
+        changes
+            .iter()
+            .map(|change| Node::row(change_row(change, compact))),
+    )
 }

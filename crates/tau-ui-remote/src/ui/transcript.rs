@@ -856,7 +856,22 @@ fn landed(
                 )
                 .child(mono(count, Type::CAPTION, t.dim).flex_shrink_0()),
         )
-        .child(tau_vcs::ui::landed::landed_body(card, t, compact))
+        .when(
+            !card.changes.is_empty() || !card.conflicts.is_empty(),
+            |card_box| {
+                let body = tau_vcs::ui::landed::landed_body(card, compact);
+                let newest = card
+                    .changes
+                    .first()
+                    .map_or("", |change| change.info.commit_id.as_str());
+                let id = format!("landed-body-{}-{newest}", card.from.0);
+                card_box.child(
+                    div().p(sp(3.)).border_t_1().border_color(t.border).child(
+                        tau_ui_plugin::tree::Draw::new(t, id).draw(&body, cx),
+                    ),
+                )
+            },
+        )
 }
 
 /// A finished fork, waiting in its parent's chat: what it is, and Land

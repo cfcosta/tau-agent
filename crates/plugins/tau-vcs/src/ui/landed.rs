@@ -1,12 +1,11 @@
 //! A child run's landing on its parent (ADR 0009): what it brought, in
 //! the parent's chat.
 
-use gpui::{Div, div, prelude::*};
 use serde::{Deserialize, Serialize};
 use tau_agent::tool::RunId;
-use tau_ui_kit::theme::{Design as _, Theme, Type, sp};
+use tau_ui_plugin::tree::{Node, Tone};
 
-use super::{change_log::Change, log_card::stack_rows};
+use super::{change_log::Change, log_card::stack};
 
 /// The record a landing leaves in its parent:
 /// enough to draw its card again when the parent comes back from
@@ -62,35 +61,23 @@ pub struct LandedCard {
     pub kept: bool,
 }
 
-// ADR 0045: core draws this; moves with the landing cards.
 /// What a landing brought: its changes as they sit on the stack, and
-/// the files left with conflict markers.
-pub fn landed_body(card: &LandedCard, t: &Theme, compact: bool) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .when(!card.changes.is_empty(), |column| {
-            column.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .py(sp(1.5))
-                    .border_t_1()
-                    .border_color(t.border)
-                    .children(stack_rows(&card.changes, t, compact)),
-            )
-        })
-        .when(!card.conflicts.is_empty(), |column| {
-            column.child(
-                div()
-                    .px(sp(3.))
-                    .pb(sp(2.))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.red)
-                    .child(format!(
-                        "Conflicts in {}: the next turn resolves them.",
-                        card.conflicts.join(", ")
-                    )),
-            )
-        })
+/// the files left with conflict markers. Core draws it in the parent's
+/// chat.
+pub fn landed_body(card: &LandedCard, compact: bool) -> Node {
+    let mut column = Vec::new();
+    if !card.changes.is_empty() {
+        column.push(stack(&card.changes, compact));
+    }
+    if !card.conflicts.is_empty() {
+        column.push(Node::Toned {
+            text: format!(
+                "Conflicts in {}: the next turn resolves them.",
+                card.conflicts.join(", ")
+            ),
+            tone: Tone::Bad,
+            mono: false,
+        });
+    }
+    Node::stack(column)
 }

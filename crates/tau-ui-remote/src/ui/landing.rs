@@ -4,6 +4,7 @@
 //! chat share.
 
 use gpui::{Context, SharedString, div, prelude::*, rems};
+use tau_ui_plugin::tree::Draw;
 use tau_vcs::ui::{change_log::Change, log_card};
 
 use crate::{
@@ -217,9 +218,10 @@ pub fn controls(
                 .gap(sp(2.))
                 .child(caption(summary, t.text_soft))
                 .child(
-                    ui::card(t)
-                        .py(sp(1.5))
-                        .children(log_card::stack_rows(&changes, t, compact)),
+                    ui::card(t).p(sp(3.)).child(
+                        Draw::new(t, format!("landing-{}", run.id.0))
+                            .draw(&log_card::stack(&changes, compact), cx),
+                    ),
                 )
                 .when(waits, |column| {
                     column.child(caption(
