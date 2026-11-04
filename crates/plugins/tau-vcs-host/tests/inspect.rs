@@ -20,9 +20,7 @@
 //!   trunk `jj log -r 'trunk()'` names when `origin/HEAD` names none;
 //!   a repository jj says is not colocated is refused with jj's hint;
 //!   another workspace is refused for `jj workspace root --name
-//!   default`, a subfolder for `jj workspace root`; and nothing changes;
-//! - an `origin` URL names a GitHub repository exactly when it is one of
-//!   the forms Git and GitHub take for one.
+//!   default`, a subfolder for `jj workspace root`; and nothing changes.
 //!
 //! Each world lives in a temporary directory and reads no real config.
 
@@ -44,7 +42,7 @@ use hegel::{TestCase, generators as gs};
 use tau_vcs_host::{
     Identity,
     JjEnv,
-    local::{self, Found, GitHub, Kind, Origin, Refusal, Trunk, TrunkFrom},
+    local::{self, Found, Kind, Origin, Refusal, Trunk, TrunkFrom},
 };
 
 /// Files the worlds commit and change, some of whose names `git status`
@@ -138,11 +136,10 @@ enum OriginHead {
     Dangling,
 }
 
-/// A URL, and the GitHub repository it names, when it names one.
+/// An `origin` URL.
 #[derive(Debug, Clone, hegel::PrettyPrintable)]
 struct Url {
     url: String,
-    github: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, hegel::PrettyPrintable)]
@@ -289,7 +286,7 @@ fn repo_name(tc: &TestCase) -> String {
 }
 
 /// A URL on GitHub in one of the forms Git takes, or one that is not on
-/// GitHub, with what it names.
+/// GitHub.
 #[hegel::composite]
 fn url(tc: &TestCase) -> Url {
     let owner = tc.draw(owner());
@@ -301,11 +298,8 @@ fn url(tc: &TestCase) -> Url {
         "GitHub.com",
         "www.github.com",
     ]));
-    let on_github = |url: String| Url {
-        url,
-        github: Some((owner.clone(), name.clone())),
-    };
-    let elsewhere = |url: String| Url { url, github: None };
+    let on_github = |url: String| Url { url };
+    let elsewhere = |url: String| Url { url };
     match case(tc, 12) {
         0 => {
             let slash = if tc.draw(gs::booleans()) { "/" } else { "" };
@@ -974,7 +968,6 @@ fn git_status(person: &Person, root: &Path) -> Vec<String> {
 /// What inspecting `target` should give, from git's own view of it.
 fn expected(
     person: &Person,
-    world: &World,
     target: &Path,
 ) -> Result<Found, Refusal> {
     if !target.exists() {
@@ -1055,14 +1048,7 @@ fn expected(
     };
     let origin = person
         .try_git(&root, &["config", "--get", "remote.origin.url"])
-        .map(|url| Origin {
-            github: world
-                .origin
-                .as_ref()
-                .and_then(|origin| origin.url.github.clone())
-                .map(|(owner, name)| GitHub { owner, name }),
-            url,
-        });
+        .map(|url| Origin { url });
     let commits = person
         .try_git(&root, &["rev-list", "--count", "HEAD"])
         .map_or(0, |count| count.parse().unwrap());
@@ -1205,7 +1191,7 @@ fn check_git(world: &World) {
     let built = build(&person, base.path(), world);
     for target in &built.targets {
         let found = local::inspect_blocking(target, &person.identity());
-        let expected = expected(&person, world, target);
+        let expected = expected(&person, target);
         assert_eq!(without_lfs_place(found), expected, "{}", target.display());
     }
 }
@@ -1228,19 +1214,6 @@ fn inspection_changes_nothing(tc: TestCase) {
         tc.note(&format!("{}: {found:?}", target.display()));
     }
     assert!(before == files(base.path()), "inspecting wrote");
-}
-
-/// An `origin` URL names a GitHub repository exactly when it is one of
-/// the forms Git takes for one: HTTPS, HTTP, `git://`, SSH and
-/// `user@host:owner/name`, on `github.com`, with or without `.git`.
-#[hegel::test(test_cases = 500)]
-fn origin_names_a_github_repository_in_any_form(tc: TestCase) {
-    let url = tc.draw(url());
-    let expected = url
-        .github
-        .clone()
-        .map(|(owner, name)| GitHub { owner, name });
-    assert_eq!(local::github(&url.url), expected, "{}", url.url);
 }
 
 /// What a `trunk()` alias names.
@@ -1516,12 +1489,8 @@ fn expected_jj(
         });
     }
     assert!(status.contains("is currently colocated"), "{status}");
-    let mut found = expected(person, &World::default(), target)?;
+    let mut found = expected(person, target)?;
     found.kind = Kind::Jj;
-    found.origin = found.origin.map(|origin| Origin {
-        github: None,
-        ..origin
-    });
     if found
         .trunk
         .as_ref()

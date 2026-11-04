@@ -95,15 +95,6 @@ pub struct Found {
 pub struct Origin {
     /// Its URL, as `remote.origin.url` holds it.
     pub url: String,
-    /// The GitHub repository it names, when it is on GitHub.
-    pub github: Option<GitHub>,
-}
-
-/// A repository on GitHub: `owner/name`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitHub {
-    pub owner: String,
-    pub name: String,
 }
 
 /// The branch tau would take as trunk, and where it came from.
@@ -334,12 +325,8 @@ pub fn inspect_blocking(
     let origin =
         repo.config_snapshot()
             .string("remote.origin.url")
-            .map(|url| {
-                let url = url.to_str_lossy().into_owned();
-                Origin {
-                    github: github(&url),
-                    url,
-                }
+            .map(|url| Origin {
+                url: url.to_str_lossy().into_owned(),
             });
     let commits = match head.commit {
         Some(commit) => commit
@@ -533,46 +520,6 @@ fn origin_head(repo: &gix::Repository) -> Result<Option<String>, gix::Error> {
         return Ok(None);
     }
     Ok(Some(branch.to_str_lossy().into_owned()))
-}
-
-/// The GitHub repository `url` names: an HTTPS, HTTP, `git://` or SSH
-/// URL, or Git's `git@github.com:owner/name` form, on `github.com`
-/// (`www.` and `ssh.` too), with or without `.git` and a closing `/`.
-pub fn github(url: &str) -> Option<GitHub> {
-    let parsed = gix::url::parse(BStr::new(url)).ok()?;
-    use gix::url::Scheme;
-    if !matches!(
-        parsed.scheme,
-        Scheme::Https | Scheme::Http | Scheme::Ssh | Scheme::Git
-    ) {
-        return None;
-    }
-    let host = parsed.host()?.to_ascii_lowercase();
-    if !matches!(
-        host.as_str(),
-        "github.com" | "www.github.com" | "ssh.github.com"
-    ) {
-        return None;
-    }
-    let path = parsed.path.to_str().ok()?;
-    let path = path.strip_prefix('/').unwrap_or(path);
-    let path = path.strip_suffix('/').unwrap_or(path);
-    let (owner, name) = path.split_once('/')?;
-    let name = name.strip_suffix(".git").unwrap_or(name);
-    let owner_ok = !owner.is_empty()
-        && owner.len() <= 39
-        && !owner.starts_with('-')
-        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
-    let name_ok = !name.is_empty()
-        && name != "."
-        && name != ".."
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
-    (owner_ok && name_ok).then(|| GitHub {
-        owner: owner.to_owned(),
-        name: name.to_owned(),
-    })
 }
 
 /// What `HEAD` holds: its commit, none before the first, and its tree's

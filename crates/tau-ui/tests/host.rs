@@ -18,7 +18,7 @@ use tau_store::Store;
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
-    github::{Api, Token},
+    github::Token,
     host::{Delivery, Host, HostConfig},
 };
 use tau_ui_plugin::RepoId;
@@ -1801,6 +1801,18 @@ fn served(remote: &Path, full_name: &str) -> std::path::PathBuf {
     src
 }
 
+/// `host`, reaching GitHub's web at `web` and its API nowhere.
+fn with_github_at(host: Host, web: &str) -> Host {
+    let forge = tau_github_host::GitHub::new(
+        &host.credentials().dir,
+        &tau_github_host::Endpoints {
+            web: web.to_owned(),
+            api: "http://127.0.0.1:9".into(),
+        },
+    );
+    host.with_forge(std::sync::Arc::new(forge))
+}
+
 /// `host`, signed in to GitHub and reaching it at `remote`.
 fn on_github(host: Host, remote: &Path) -> Host {
     let token = Token {
@@ -1808,9 +1820,9 @@ fn on_github(host: Host, remote: &Path) -> Host {
         user: "cfcosta".into(),
         expires_at: None,
     };
-    tau_testing::block_on_io(token.save(&host_credentials(&host))).unwrap();
+    tau_testing::block_on_io(token.save(&host_credentials(&host).dir)).unwrap();
     let web = format!("file://{}", remote.display());
-    host.with_github(Api::at(&web, "http://127.0.0.1:9"))
+    with_github_at(host, &web)
 }
 
 #[test]
@@ -1839,19 +1851,19 @@ fn repositories_are_listed_and_remembered() {
     );
     // Two repositories with one name get two names.
     assert_eq!(
-        host.block_on(host.clone_github("a/proj")).unwrap().name,
+        host.block_on(host.clone_from_forge("a/proj")).unwrap().name,
         "proj"
     );
     assert_eq!(
-        host.block_on(host.clone_github("b/proj")).unwrap().name,
+        host.block_on(host.clone_from_forge("b/proj")).unwrap().name,
         "proj-2"
     );
     // Cloning one again keeps its name.
     assert_eq!(
-        host.block_on(host.clone_github("a/proj")).unwrap().name,
+        host.block_on(host.clone_from_forge("a/proj")).unwrap().name,
         "proj"
     );
-    assert!(host.block_on(host.clone_github("c/missing")).is_err());
+    assert!(host.block_on(host.clone_from_forge("c/missing")).is_err());
     host.block_on(host.set_open_repos(vec!["proj-2".into()]))
         .unwrap();
     assert_eq!(names(&host), ["tau-plugins", "proj", "proj-2"]);
@@ -1897,7 +1909,7 @@ fn repositories_are_listed_and_remembered() {
     assert_eq!(reviewed.reviewed, [("a".to_owned(), "call-1".to_owned())]);
     // Cloning a removed one lists it again, under its name.
     assert_eq!(
-        host.block_on(host.clone_github("a/proj")).unwrap().name,
+        host.block_on(host.clone_from_forge("a/proj")).unwrap().name,
         "proj"
     );
     assert_eq!(names(&host), ["tau-plugins", "proj", "proj-2"]);
@@ -1923,8 +1935,8 @@ fn a_listed_repository_keeps_its_id() {
 
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
     let host = on_github(host, remote.path());
-    let a = host.block_on(host.clone_github("a/proj")).unwrap();
-    let b = host.block_on(host.clone_github("b/proj")).unwrap();
+    let a = host.block_on(host.clone_from_forge("a/proj")).unwrap();
+    let b = host.block_on(host.clone_from_forge("b/proj")).unwrap();
     assert_ne!(a.id, b.id, "two repositories, two ids");
     assert!(!a.id.0.is_empty());
     let listed = ids(&host);
@@ -1948,7 +1960,7 @@ fn a_listed_repository_keeps_its_id() {
     assert_eq!(host.repo("proj-2").unwrap().id, b.id);
     assert!(host.repo("proj-2").unwrap().remote.is_some());
     host.block_on(host.hide_repo("proj")).unwrap();
-    let again = host.block_on(host.clone_github("a/proj")).unwrap();
+    let again = host.block_on(host.clone_from_forge("a/proj")).unwrap();
     assert_eq!(again.id, a.id, "listed again under its id");
 }
 
@@ -2085,9 +2097,9 @@ fn github_repositories_clone_into_tau() {
     let credentials = config.credentials.clone();
     let (host, _events) = Host::new(config).unwrap();
     let web = format!("file://{}", remote.path().display());
-    let host = host.with_github(Api::at(&web, "http://127.0.0.1:9"));
+    let host = with_github_at(host, &web);
     let error = host
-        .block_on(host.clone_github("cfcosta/hello"))
+        .block_on(host.clone_from_forge("cfcosta/hello"))
         .unwrap_err();
     assert!(error.to_string().contains("Sign in to GitHub"), "{error}");
 
@@ -2096,10 +2108,12 @@ fn github_repositories_clone_into_tau() {
         user: "cfcosta".into(),
         expires_at: None,
     };
-    tau_testing::block_on_io(token.save(&credentials)).unwrap();
-    assert!(host.block_on(host.clone_github("../escape")).is_err());
-    assert!(host.block_on(host.clone_github("cfcosta/..")).is_err());
-    let repo = host.block_on(host.clone_github("cfcosta/hello")).unwrap();
+    tau_testing::block_on_io(token.save(&credentials.dir)).unwrap();
+    assert!(host.block_on(host.clone_from_forge("../escape")).is_err());
+    assert!(host.block_on(host.clone_from_forge("cfcosta/..")).is_err());
+    let repo = host
+        .block_on(host.clone_from_forge("cfcosta/hello"))
+        .unwrap();
     assert_eq!(repo.name, "hello");
     assert!(
         host.block_on(host.catalog())
@@ -2120,7 +2134,7 @@ fn github_repositories_clone_into_tau() {
     );
     // Cloning it again lists the same repository, without fetching.
     assert_eq!(
-        host.block_on(host.clone_github("cfcosta/hello"))
+        host.block_on(host.clone_from_forge("cfcosta/hello"))
             .unwrap()
             .name,
         "hello"

@@ -9749,6 +9749,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-github"
+version = "0.1.0"
+dependencies = [
+ "tau-ui-plugin",
+]
+
+[[package]]
+name = "tau-github-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gix",
+ "hegeltest",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-github",
+ "tau-testing",
+ "tau-ui-plugin",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "tau-goal"
 version = "0.1.0"
 dependencies = [
@@ -9993,6 +10019,7 @@ dependencies = [
  "tau-constitution",
  "tau-direnv",
  "tau-fast-compaction",
+ "tau-github",
  "tau-goal",
  "tau-luau-plugins",
  "tau-mcp",
@@ -10256,7 +10283,6 @@ dependencies = [
  "image",
  "libc",
  "notify-rust",
- "reqwest 0.13.5",
  "serde",
  "serde_json",
  "tau",
@@ -10272,6 +10298,7 @@ dependencies = [
  "tau-constitution-host",
  "tau-direnv",
  "tau-fast-compaction",
+ "tau-github-host",
  "tau-goal",
  "tau-jev",
  "tau-luau-plugins",

@@ -35,7 +35,7 @@ use tau_agent::{event::RunEvent, tool::RunId};
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
-    github::{Api, Token},
+    github::Token,
     host::{Host, HostConfig, NotAdded},
 };
 use tau_ui_plugin::vcs::SetupStep;
@@ -133,7 +133,7 @@ impl World {
     /// Where pushes must go.
     fn push(&self) -> serde_json::Value {
         match self.origin {
-            Origin::GitHub { push: true } => json!({ "github": ON_GITHUB }),
+            Origin::GitHub { push: true } => json!({ "forge": ON_GITHUB }),
             _ => json!("nowhere"),
         }
     }
@@ -214,7 +214,7 @@ impl Disk {
                 user: "octo".into(),
                 expires_at: None,
             }
-            .save(&disk.credentials()),
+            .save(&disk.credentials().dir),
         )
         .unwrap();
         disk
@@ -257,7 +257,13 @@ impl Disk {
                 tau_memory::NAME,
                 json!({ "after_each_run": false }),
             )
-            .with_github(Api::at(&self.github, &self.github))
+            .with_forge(std::sync::Arc::new(tau_github_host::GitHub::new(
+                self.credentials().dir,
+                &tau_github_host::Endpoints {
+                    web: self.github.clone(),
+                    api: self.github.clone(),
+                },
+            )))
             .with_listed_repos()
             .unwrap();
         (host, events)

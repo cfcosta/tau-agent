@@ -34,3 +34,4 @@ tau-tree-compaction.workspace = true
 # (docs/decisions/0010-terminal-rendering.md).
 tau-tools = { workspace = true, features = ["terminal"] }
 tau-vcs.workspace = true
+tau-github.workspace = true

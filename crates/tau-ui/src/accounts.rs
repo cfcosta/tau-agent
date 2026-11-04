@@ -73,10 +73,6 @@ impl Credentials {
         dir.is_dir().then(|| Store::open(dir).ok()).flatten()
     }
 
-    pub fn github(&self) -> PathBuf {
-        self.dir.join("github.json")
-    }
-
     /// Where the TypeSafe key for Jev is kept.
     pub fn jev(&self) -> PathBuf {
         self.dir.join("typesafe-key")

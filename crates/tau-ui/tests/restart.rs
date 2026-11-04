@@ -72,7 +72,7 @@ impl Disk {
             let mut saved: serde_json::Value =
                 serde_json::from_str(&text).unwrap();
             for repo in saved["repos"].as_array_mut().into_iter().flatten() {
-                repo["github"] = serde_json::json!("owner/repo");
+                repo["forge"] = serde_json::json!("owner/repo");
             }
             std::fs::write(&list, saved.to_string()).unwrap();
         }

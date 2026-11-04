@@ -1,5 +1,5 @@
-//! Pushing a repository's main chat to GitHub (ADR 0023): trunk's
-//! commits go as they are, through jj-lib's push, which runs `git`.
+//! Pushing a repository's main chat to the forge (ADR 0023): trunk's
+//! commits go as they are, through the VCS plugin's push.
 
 use tau_ui_plugin::vcs::PushError;
 
@@ -7,30 +7,28 @@ use super::*;
 use crate::push::{PushFailure, Pushed, PushedChange};
 
 impl Host {
-    /// Where `repo` pushes: its GitHub repository's URL, and the token
-    /// of the GitHub sign-in.
-    pub(super) async fn github_remote(
+    /// Where `repo` pushes: its repository on the forge, with the
+    /// forge's sign-in.
+    pub(super) async fn forge_remote(
         &self,
         repo: &str,
-    ) -> anyhow::Result<(String, String)> {
+    ) -> anyhow::Result<Remote> {
         if let Some(error) = self.local_has_no_remote(repo) {
             return Err(error);
         }
-        let full_name = self.github_of(repo).ok_or_else(|| {
-            anyhow::anyhow!("{repo} was not cloned from GitHub")
+        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let full_name = self.forge_of(repo).ok_or_else(|| {
+            anyhow::anyhow!("{repo} was not cloned from {}", forge.name())
         })?;
-        let token = github::Token::load(&self.config.credentials)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
-        Ok((self.github.clone_url(&full_name), token.token))
+        forge.remote(&full_name).await
     }
 
-    /// Pushes `repo`'s trunk, its main chat's commits, to GitHub's
+    /// Pushes `repo`'s trunk, its main chat's commits, to the forge's
     /// branch of the same name. With `fetch`, it first brings in what
-    /// GitHub has (`update_repo`) and catches the main chat up, which
-    /// puts its commits on top of GitHub's new ones; the main chat must
-    /// not be running then. A push that finds GitHub's branch moved
-    /// since the last fetch is [`PushFailure::Moved`].
+    /// the forge has (`update_repo`) and catches the main chat up, which
+    /// puts its commits on top of the forge's new ones; the main chat
+    /// must not be running then. A push that finds the forge's branch
+    /// moved since the last fetch is [`PushFailure::Moved`].
     pub async fn push_main(
         &self,
         repo: &str,
@@ -42,7 +40,7 @@ impl Host {
             .slot(repo)
             .ok_or_else(|| failed(anyhow::anyhow!("No repository {repo}")))?;
         let repository = slot.repository().await.map_err(failed)?;
-        let (url, token) = self.github_remote(repo).await.map_err(failed)?;
+        let remote = self.forge_remote(repo).await.map_err(failed)?;
         if fetch {
             let main = self.main_of(repo).await.map_err(failed)?;
             if self.is_running(&main) {
@@ -56,10 +54,6 @@ impl Host {
                 .await
                 .map_err(failed)?;
         }
-        let remote = Remote {
-            url,
-            token: Some(token),
-        };
         match repository.push_trunk(remote).await {
             Ok(pushed) => Ok(Pushed {
                 branch: pushed.branch,

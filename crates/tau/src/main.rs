@@ -129,7 +129,7 @@ fn main() {
     // Read before the interface runs: whether GitHub is signed in already.
     let github_signed_in = onboarding
         && tau_ui::interface_runtime::block_at_entry(
-            tau_ui::github::Token::load(&credentials),
+            tau_ui::github::Token::load(&credentials.dir),
         )
         .is_some();
 

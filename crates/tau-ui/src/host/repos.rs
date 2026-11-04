@@ -143,7 +143,7 @@ pub(super) struct RepoState {
 pub(super) struct RepoSlot {
     pub(super) id: RepoId,
     pub(super) name: String,
-    /// Where it is fetched from: GitHub's URL for a clone from there,
+    /// Where it is fetched from: the forge's URL for a clone from there,
     /// and for a local repository whose pushes go there.
     pub(super) remote: Option<String>,
     pub(super) path: PathBuf,
@@ -189,6 +189,16 @@ pub(super) fn no_vcs() -> anyhow::Error {
     )
 }
 
+/// Why nothing can be cloned, pushed or opened a pull request on: no
+/// plugin fills the `tau.forge` slot.
+pub(super) fn no_forge() -> anyhow::Error {
+    anyhow::anyhow!(
+        "No plugin fills {}: tau has nowhere to clone from, push to or \
+         open pull requests on",
+        tau_ui_plugin::forge::FORGE.name()
+    )
+}
+
 /// Why a folder was not added as a local repository
 /// ([`Host::add_local`]).
 #[derive(Debug)]
@@ -225,8 +235,9 @@ pub(super) fn workspace_name(slug: &str) -> String {
     format!("{slug}-{millis:x}")
 }
 
-/// Clones a GitHub repository on the host's runtime, reporting how it
-/// goes to onboarding's list, and adds it to the sidebar once done.
+/// Clones a repository from the forge on the host's runtime, reporting
+/// how it goes to onboarding's list, and adds it to the sidebar once
+/// done.
 pub(super) fn clone_into_tau(
     host: &Arc<Host>,
     name: &str,
@@ -240,11 +251,15 @@ pub(super) fn clone_into_tau(
             id: None,
         })
     };
+    let detail = match &host.forge {
+        Some(forge) => format!("fetching from {}", forge.name()),
+        None => "fetching".into(),
+    };
     workspace.update(cx, |ws, cx| {
         ws.apply(
             HostUpdate::Setup(report(CloneState::Cloning {
                 share: 0.3,
-                detail: "fetching from GitHub".into(),
+                detail,
             })),
             cx,
         )
@@ -252,7 +267,7 @@ pub(super) fn clone_into_tau(
     let job = {
         let name = name.to_owned();
         host.spawn(async move |cloner| {
-            let repo = cloner.clone_github(&name).await?;
+            let repo = cloner.clone_from_forge(&name).await?;
             let main = cloner.main_view(&repo).await?;
             anyhow::Ok((repo, main))
         })
@@ -337,7 +352,7 @@ impl Host {
 
     /// Lists `project` as the repository `name`, in place of any listed
     /// under that name, for a host built elsewhere: runs in it get a
-    /// workspace each there, as in a clone from GitHub.
+    /// workspace each there, as in a clone from the forge.
     pub fn with_repo(self, name: &str, project: Project) -> Self {
         let path = project.root().to_owned();
         let repository: Arc<dyn Repository> =
@@ -353,7 +368,7 @@ impl Host {
                 name: name.to_owned(),
                 path: path.clone(),
                 hidden: false,
-                github: None,
+                forge: None,
                 main,
                 own: None,
                 local: None,
@@ -541,7 +556,7 @@ impl Host {
             if let Some(listed) =
                 list.repos.iter_mut().find(|listed| listed.name == name)
             {
-                listed.github = Some(full_name.to_owned());
+                listed.forge = Some(full_name.to_owned());
             }
             let id = list.id_of(&name);
             (name, id)
@@ -551,7 +566,10 @@ impl Host {
             let slot = RepoSlot {
                 id: id.clone(),
                 name: name.clone(),
-                remote: Some(self.github.clone_url(full_name)),
+                remote: self
+                    .forge
+                    .as_ref()
+                    .map(|forge| forge.clone_url(full_name)),
                 path: dir.clone(),
                 local: None,
                 project: ProjectSlot::new(ProjectState::Importing),
@@ -565,13 +583,15 @@ impl Host {
         Ok(repo)
     }
 
-    /// Clones `full_name` (`owner/name`) from GitHub with the saved
+    /// Clones `full_name` (`owner/name`) from the forge with its
     /// sign-in, unless it was cloned before, and lists it. Waits for the
     /// clone; the import goes on in the background.
-    pub async fn clone_github(&self, full_name: &str) -> anyhow::Result<Repo> {
-        let token = github::Token::load(&self.config.credentials)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Sign in to GitHub first"))?;
+    pub async fn clone_from_forge(
+        &self,
+        full_name: &str,
+    ) -> anyhow::Result<Repo> {
+        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let remote = forge.remote(full_name).await?;
         let (owner, name) = full_name
             .split_once('/')
             .filter(|(owner, name)| {
@@ -583,17 +603,13 @@ impl Host {
             })
             .ok_or_else(|| anyhow::anyhow!("{full_name} is not owner/name"))?;
         let vcs = self.vcs.as_ref().ok_or_else(no_vcs)?;
-        let dir = self.config.github_dir().join(owner).join(name);
+        let dir = self.config.forge_dir(forge.id()).join(owner).join(name);
         if !vcs.is_project(&dir) {
             // What is there without a project is a clone that never
             // finished, and tau's own.
             if tokio::fs::try_exists(&dir).await? {
                 tokio::fs::remove_dir_all(&dir).await?;
             }
-            let remote = Remote {
-                url: self.github.clone_url(full_name),
-                token: Some(token.token),
-            };
             vcs.clone_repository(remote, &dir).await?;
         }
         self.list_clone(&dir, full_name).await
@@ -776,34 +792,35 @@ impl Host {
     }
 
     /// Where a local repository's pushes go, chosen as it is added (ADR
-    /// 0043): its `origin`'s GitHub repository, SSH or HTTPS, when tau's
-    /// GitHub App can push there with the saved sign-in, else nowhere.
+    /// 0043): its `origin`'s repository on the forge, SSH or HTTPS, when
+    /// the forge's sign-in can push there, else nowhere.
     async fn push_to(&self, found: &LocalFolder) -> PushTo {
-        let Some((full_name, _)) = found
+        let Some(forge) = &self.forge else {
+            return PushTo::Nowhere;
+        };
+        let Some(full_name) = found
             .origin
             .as_ref()
-            .and_then(|origin| self.github.https_of(origin))
+            .and_then(|origin| forge.repository_of(origin))
         else {
             return PushTo::Nowhere;
         };
-        let Some(token) = github::Token::load(&self.config.credentials).await
-        else {
-            return PushTo::Nowhere;
-        };
-        match self.github.can_push(&token.token, &full_name).await {
-            Ok(true) => PushTo::GitHub(full_name),
+        match forge.can_push(&full_name).await {
+            Ok(true) => PushTo::Forge(full_name),
             Ok(false) => PushTo::Nowhere,
             Err(error) => {
                 eprintln!(
-                    "tau-ui: cannot ask GitHub about {full_name}: {error}"
+                    "tau-ui: cannot ask {} about {full_name}: {error:#}",
+                    forge.name()
                 );
                 PushTo::Nowhere
             }
         }
     }
 
-    /// Brings new commits from GitHub into a repository's project. New
-    /// runs start from the new trunk; runs going on keep their code.
+    /// Brings new commits from the forge into a repository's project.
+    /// New runs start from the new trunk; runs going on keep their code.
+    /// Signed out, it fetches without a token.
     pub async fn update_repo(&self, name: &str) -> anyhow::Result<Updated> {
         let slot = self
             .slot(name)
@@ -812,14 +829,15 @@ impl Host {
         if let Some(error) = self.local_has_no_remote(name) {
             return Err(error);
         }
-        let full_name = self.github_of(name).ok_or_else(|| {
-            anyhow::anyhow!("{name} was not cloned from GitHub")
+        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let full_name = self.forge_of(name).ok_or_else(|| {
+            anyhow::anyhow!("{name} was not cloned from {}", forge.name())
         })?;
-        let token = github::Token::load(&self.config.credentials).await;
-        let remote = Remote {
-            url: self.github.clone_url(&full_name),
-            token: token.map(|token| token.token),
-        };
+        let remote =
+            forge.remote(&full_name).await.unwrap_or_else(|_| Remote {
+                url: forge.clone_url(&full_name),
+                token: None,
+            });
         repository.update(remote).await
     }
 
@@ -839,7 +857,7 @@ impl Host {
                 name: tau_luau_plugins::REPO.to_owned(),
                 path,
                 hidden: false,
-                github: None,
+                forge: None,
                 main: None,
                 own: Some(Own::Plugins),
                 local: None,
@@ -922,20 +940,21 @@ impl Host {
         Ok(repo)
     }
 
-    /// Where the listed repository `listed` is fetched from: GitHub's URL
-    /// for a clone from there, and for a local repository whose pushes go
-    /// there.
+    /// Where the listed repository `listed` is fetched from: the forge's
+    /// URL for a clone from there, and for a local repository whose
+    /// pushes go there.
     pub(super) fn remote_of(&self, listed: &Listed) -> Option<String> {
+        let forge = self.forge.as_ref()?;
         let pushed =
             listed.local.as_ref().and_then(|local| match &local.push {
-                PushTo::GitHub(full_name) => Some(full_name),
+                PushTo::Forge(full_name) => Some(full_name),
                 PushTo::Nowhere => None,
             });
         listed
-            .github
+            .forge
             .as_ref()
             .or(pushed)
-            .map(|full_name| self.github.clone_url(full_name))
+            .map(|full_name| forge.clone_url(full_name))
     }
 
     /// Whether the listed repository `name` is a local one, worked in
@@ -952,8 +971,8 @@ impl Host {
     }
 
     /// Why `repo` cannot be pushed, fetched or opened pull requests on
-    /// from GitHub, when it is a local repository: one whose pushes go
-    /// nowhere has no remote; one whose pushes go to GitHub waits for
+    /// from the forge, when it is a local repository: one whose pushes go
+    /// nowhere has no remote; one whose pushes go to the forge waits for
     /// pushing and fetching without touching the person's `origin`
     /// (ADR 0043), which clones' paths would rewrite.
     pub(super) fn local_has_no_remote(
@@ -965,23 +984,23 @@ impl Host {
                 "{repo} has no remote: its pushes go nowhere, so there is \
                  nothing to push to, fetch from or open a pull request on"
             ),
-            PushTo::GitHub(full_name) => anyhow::anyhow!(
+            PushTo::Forge(full_name) => anyhow::anyhow!(
                 "{repo} is a local repository: tau does not push it to \
                  {full_name}, fetch it or open pull requests from it yet"
             ),
         })
     }
 
-    /// The `owner/name` a repository was cloned from, if it came from
-    /// GitHub.
-    pub(super) fn github_of(&self, name: &str) -> Option<String> {
+    /// The full name (`owner/name`) a repository was cloned from, if it
+    /// came from the forge.
+    pub(super) fn forge_of(&self, name: &str) -> Option<String> {
         self.list
             .lock()
             .expect("not poisoned")
             .repos
             .iter()
             .find(|listed| listed.name == name)
-            .and_then(|listed| listed.github.clone())
+            .and_then(|listed| listed.forge.clone())
     }
 
     /// Stops listing a repository. Its project and runs stay.

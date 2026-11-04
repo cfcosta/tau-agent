@@ -23,7 +23,7 @@ use tau_testing::{
 };
 use tau_ui::{
     accounts::Credentials,
-    github::{Api, Token},
+    github::Token,
     host::{Host, HostConfig},
 };
 use tau_ui_remote::{models::ModelChoice, push::PushFailure};
@@ -123,7 +123,7 @@ fn host(
         user: "cfcosta".into(),
         expires_at: None,
     };
-    tau_testing::block_on_io(token.save(&config.credentials)).unwrap();
+    tau_testing::block_on_io(token.save(&config.credentials.dir)).unwrap();
     let agent = Agent::new(llm).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     // Memory's pass after each run asks the model once more: these
@@ -132,7 +132,14 @@ fn host(
         tau_memory::NAME,
         serde_json::json!({ "after_each_run": false }),
     );
-    (host.with_github(Api::at(&github.web(), api)), events)
+    let forge = tau_github_host::GitHub::new(
+        &host.credentials().dir,
+        &tau_github_host::Endpoints {
+            web: github.web(),
+            api: api.to_owned(),
+        },
+    );
+    (host.with_forge(std::sync::Arc::new(forge)), events)
 }
 
 fn until_end(events: &mut UnboundedReceiver<RunEvent>) {
@@ -200,7 +207,7 @@ fn main_pushes_and_a_moved_main_fetches_first() {
         .turn(|t| t.text("done"));
     let (host, mut events) =
         host(llm, &github, "http://127.0.0.1:9", data.path());
-    let repo = host.block_on(host.clone_github(FULL_NAME)).unwrap();
+    let repo = host.block_on(host.clone_from_forge(FULL_NAME)).unwrap();
     let project = host.block_on(host.project_of(&repo.name)).unwrap();
     let main = host.block_on(host.main_of(&repo.name)).unwrap();
     assert_eq!(listed(&host, &repo.name).unpushed, 0);
@@ -293,7 +300,7 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: add d")))
         .turn(|t| t.text("Added d.txt."));
     let (host, mut events) = host(llm, &github, &api, data.path());
-    let repo = host.block_on(host.clone_github(FULL_NAME)).unwrap();
+    let repo = host.block_on(host.clone_from_forge(FULL_NAME)).unwrap();
     let project = host.block_on(host.project_of(&repo.name)).unwrap();
     let main = host.block_on(host.main_of(&repo.name)).unwrap();
     go_on(&host, &mut events, &main, "write m");
@@ -402,7 +409,7 @@ fn a_chat_on_mains_unpushed_file_would_conflict() {
         .turn(|t| t.text("done"));
     let (host, mut events) =
         host(llm, &github, "http://127.0.0.1:9", data.path());
-    let repo = host.block_on(host.clone_github(FULL_NAME)).unwrap();
+    let repo = host.block_on(host.clone_from_forge(FULL_NAME)).unwrap();
     let main = host.block_on(host.main_of(&repo.name)).unwrap();
     go_on(&host, &mut events, &main, "write m");
     let chat = host

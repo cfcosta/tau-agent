@@ -6,8 +6,9 @@
 //! the workspace drains on the UI thread. Steering and cancelling go the
 //! other way through each run's [`RunControl`].
 //!
-//! Repositories come from GitHub alone: the host clones each one and
-//! makes it a [`Project`] under `$XDG_DATA_HOME/tau/repos`, and
+//! Repositories are cloned from the forge (`tau.forge`'s plugin), or
+//! added from the person's folders: the host makes each a [`Project`]
+//! under `$XDG_DATA_HOME/tau/repos`, and
 //! each run gets a jj workspace there ([`RunWorkspace`]) with a commit
 //! per turn, so a fork starts from a turn's conversation and code. The
 //! repositories tau lists, and which the sidebar shows open, are kept in
@@ -85,7 +86,6 @@ use tokio::{runtime::Runtime, sync::mpsc};
 use crate::{
     accounts::{self, Credentials},
     catalog::{Catalog, Own, PluginInfo, ProjectStatus, Repo, Seam, StoreInfo},
-    github,
     models::{
         AccessInfo,
         DEFAULT_MODEL,
@@ -214,7 +214,6 @@ pub struct Host {
     /// (`Recovery::Restricted`): the status, code and request id. `None`
     /// otherwise.
     not_eligible: Arc<Mutex<Option<String>>>,
-    github: github::Api,
     /// Jev for plugins that ask it, in place of TypeSafe's with the
     /// saved key: for tests.
     jev: Option<Arc<dyn tau_jev::Jev>>,
@@ -281,6 +280,10 @@ pub struct Host {
     /// What fills the `tau.vcs` slot, once the plugins are hosted:
     /// what opens the repositories' projects.
     vcs: Option<Arc<dyn tau_ui_plugin::vcs::Vcs>>,
+    /// What fills the `tau.forge` slot, once the plugins are hosted:
+    /// where repositories are cloned from, pushed to and opened pull
+    /// requests on.
+    forge: Option<Arc<dyn tau_ui_plugin::forge::Forge>>,
     /// Held while a run starts, and while a sweep reads what the
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
@@ -571,7 +574,6 @@ impl Host {
             account: Arc::new(Mutex::new(Some(config.account.clone()))),
             client: Arc::default(),
             not_eligible: Arc::default(),
-            github: github::Api::default(),
             jev: None,
             jev_meter: Arc::default(),
             memory_search: tau_memory_host::Search::Keywords,
@@ -600,6 +602,7 @@ impl Host {
             events,
             hosted: Vec::new(),
             vcs: None,
+            forge: None,
             jev_key: Mutex::new(jev_key),
             list_saving: Saving::default(),
             settings_saving: Saving::default(),
@@ -641,9 +644,13 @@ impl Host {
         self
     }
 
-    /// Reaches GitHub at `api`, for tests.
-    pub fn with_github(mut self, api: github::Api) -> Self {
-        self.github = api;
+    /// Reaches repositories' forge through `forge`, in place of the
+    /// plugin's that fills `tau.forge`: for tests.
+    pub fn with_forge(
+        mut self,
+        forge: Arc<dyn tau_ui_plugin::forge::Forge>,
+    ) -> Self {
+        self.forge = Some(forge);
         self
     }
 
@@ -802,9 +809,9 @@ impl Host {
             repo.id = listed.id.clone();
             repo.main = listed.main.as_deref().map(|main| RunId(main.into()));
             repo.own = listed.own;
-            // What the main chat would push, for a repository from
-            // GitHub (ADR 0023).
-            if listed.github.is_some()
+            // What the main chat would push, for a repository from the
+            // forge (ADR 0023).
+            if listed.forge.is_some()
                 && let Some(repository) = slot.project.ready()
             {
                 repo.unpushed = repository
@@ -858,9 +865,10 @@ impl Host {
                     "select agent, sum(cost_usd) from runs group by agent"
                         .into(),
             },
-            pull_requests: github::Token::load(&self.config.credentials)
-                .await
-                .is_some(),
+            pull_requests: match &self.forge {
+                Some(forge) => forge.signed_in().await.is_some(),
+                None => false,
+            },
             project,
             update: self.last_update.lock().expect("not poisoned").clone(),
             models: self.models(),
@@ -1842,21 +1850,21 @@ fn ended_note(ended: &tau_tools_host::exec::Ended) -> String {
 mod tests {
     use super::*;
 
-    /// A saved list keeps only repositories from GitHub, and tau's own,
+    /// A saved list keeps only repositories from the forge, and tau's own,
     /// and opens only those it keeps: a local checkout listed before is
     /// dropped, the plugins repository (ADR 0027) and agents (ADR 0037)
     /// stay.
     #[test]
-    fn a_saved_list_keeps_only_repositories_from_github_and_taus_own() {
+    fn a_saved_list_keeps_only_repositories_from_the_forge_and_taus_own() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("repos.json");
         let listed =
-            |name: &str, github: Option<&str>, own: Option<Own>| Listed {
+            |name: &str, forge: Option<&str>, own: Option<Own>| Listed {
                 id: new_id(),
                 name: name.to_owned(),
                 path: dir.path().join(name),
                 hidden: false,
-                github: github.map(str::to_owned),
+                forge: forge.map(str::to_owned),
                 main: None,
                 own,
                 local: None,
@@ -1927,9 +1935,9 @@ mod tests {
         assert_eq!(reloaded, ids);
     }
 
-    /// A listed repository, any kind: from GitHub, tau's own, local
+    /// A listed repository, any kind: from the forge, tau's own, local
     /// (ADR 0043), or a checkout copied before repositories came from
-    /// GitHub alone.
+    /// the forge alone.
     #[hegel::composite]
     fn listed(tc: &hegel::TestCase) -> Listed {
         use hegel::generators as gs;
@@ -1950,7 +1958,7 @@ mod tests {
                 "tau-main-2".to_owned(),
             ])),
             push: if tc.draw(gs::booleans()) {
-                PushTo::GitHub(format!(
+                PushTo::Forge(format!(
                     "{}/{}",
                     tc.draw(text()),
                     tc.draw(text())
@@ -1969,7 +1977,7 @@ mod tests {
             name,
             path,
             hidden: tc.draw(gs::booleans()),
-            github: (kind == 0).then(|| format!("o/{n}")),
+            forge: (kind == 0).then(|| format!("o/{n}")),
             main: tc.draw(gs::optional(text())),
             own: (kind == 1).then_some(Own::Agent),
             local,
@@ -2002,7 +2010,7 @@ mod tests {
 
     /// `repos.json` keeps what it is given: a list saved and loaded is
     /// the list, but for the checkouts copied before repositories came
-    /// from GitHub alone, which loading leaves out, open or not; local
+    /// from the forge alone, which loading leaves out, open or not; local
     /// repositories stay, with what opens them again.
     #[hegel::test(test_cases = 200)]
     fn a_saved_list_loads_as_it_was(tc: hegel::TestCase) {
@@ -2019,7 +2027,7 @@ mod tests {
             .repos
             .iter()
             .filter(|listed| {
-                listed.github.is_some()
+                listed.forge.is_some()
                     || listed.own.is_some()
                     || listed.local.is_some()
             })
@@ -2063,7 +2071,7 @@ mod tests {
         let mut kept: Vec<Listed> = list
             .repos
             .into_iter()
-            .filter(|listed| listed.github.is_some() || listed.own.is_some())
+            .filter(|listed| listed.forge.is_some() || listed.own.is_some())
             .collect();
         assert_eq!(loaded.repos.len(), kept.len());
         for (listed, given) in kept.iter_mut().zip(&loaded.repos) {
@@ -2086,8 +2094,8 @@ mod tests {
         let file = dir.path().join("repos.json");
         let saved = serde_json::json!({
             "repos": [
-                { "name": "a", "path": "/a", "github": "o/a" },
-                { "name": "b", "path": "/b", "github": "o/b" },
+                { "name": "a", "path": "/a", "forge": "o/a" },
+                { "name": "b", "path": "/b", "forge": "o/b" },
             ],
         });
         std::fs::write(&file, saved.to_string()).unwrap();

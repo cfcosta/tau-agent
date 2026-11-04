@@ -15,7 +15,7 @@ It is a library: the `tau` app (`crates/tau`) is the binary.
 | `host::queue`       | A main chat's landing queue: `Lane` decides, the host acts                                        |
 | `hosted`            | The plugins' host halves: `halves` gives them to `tau-ui-remote`'s plugins, `install` once        |
 | `accounts`          | Sign in with ChatGPT: `Credentials` (where sign-ins are kept) and `SignIns`                       |
-| `github`            | GitHub through tau's GitHub App: device sign-in or a token, the account, the repositories (`Api`) |
+| `github`            | Signing in to GitHub from the setup and Models screens, through `tau-github-host`'s `Api`         |
 | `phone_server`      | The computer's side of phones: `serve`, once "Allow phones" is on                                 |
 | `notify`            | Desktop notifications over D-Bus while the window is not focused: `Notifier`, `Desktop`           |
 | `metered`           | Jev requests counted for the Plugins screen: `Metered`                                            |
@@ -97,7 +97,6 @@ scripted models, so they need no sign-in and no network:
   directories.
 - `tests/push.rs`: pushing and pull requests, against a bare repository
   through a `file://` URL and a fake GitHub API. It runs `git`.
-- `tests/github.rs`: GitHub sign-in against a fake GitHub.
 - `tests/direnv.rs`: tau-direnv with a fake `direnv` first on `PATH`; it
   sets `PATH` and the XDG directories once for the whole binary.
 - `tests/phones.rs` and `tests/sync_model.rs`: a computer and phones in one

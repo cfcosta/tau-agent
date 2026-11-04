@@ -28,8 +28,8 @@ pub fn onboard(
         })
     };
     let sign_ins = accounts::SignIns::default();
-    let api = github::Api::default();
-    github::restore(workspace, &credentials, &api, cx);
+    let api = crate::github::Api::default();
+    crate::github::restore(workspace, &credentials, &api, cx);
     cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
         // Once a host runs, it answers.
         if done.get() {
@@ -42,7 +42,13 @@ pub fn onboard(
             model.as_deref(),
             &connected,
             cx,
-        ) || github::handle(event, &workspace, &credentials, &api, cx);
+        ) || crate::github::handle(
+            event,
+            &workspace,
+            &credentials,
+            &api,
+            cx,
+        );
     })
     .detach();
 }

@@ -116,10 +116,10 @@ impl HostConfig {
         path.parent() == Some(self.agents_dir().as_path())
     }
 
-    /// Where clones from GitHub live, each a project of its own, under
-    /// `<owner>/<name>`.
-    pub fn github_dir(&self) -> PathBuf {
-        self.repos.join("github")
+    /// Where clones from the forge `id` (`Forge::id`) live, each a
+    /// project of its own, under its full name, such as `<owner>/<name>`.
+    pub fn forge_dir(&self, id: &str) -> PathBuf {
+        self.repos.join(id)
     }
 
     /// tau's own directory for the local repository `id` (ADR 0043), out
@@ -137,13 +137,14 @@ impl HostConfig {
 
     /// The project directory for the clone at `path`: its name and a
     /// hash of its full path, so two clones with one name get two
-    /// projects. A repository of tau's own, and a clone from GitHub, is
-    /// its project.
+    /// projects. A repository of tau's own, and a clone tau made among
+    /// the projects (from the forge, [`Self::forge_dir`]), is its
+    /// project.
     pub fn project_dir_of(&self, path: &Path) -> PathBuf {
         if path == self.plugins_repo()
             || self.is_agent_path(path)
-            || path.starts_with(self.github_dir())
-            || path.starts_with(canonical(&self.github_dir()))
+            || path.starts_with(&self.repos)
+            || path.starts_with(canonical(&self.repos))
         {
             return path.to_owned();
         }
@@ -189,15 +190,16 @@ pub(super) struct Listed {
     /// Removed from tau: not listed, but its runs keep its name.
     #[serde(default)]
     pub(super) hidden: bool,
-    /// Cloned from GitHub, as `owner/name`: updates fetch from there.
+    /// Cloned from the forge, as its full name (`owner/name`): updates
+    /// fetch from there.
     #[serde(default)]
-    pub(super) github: Option<String>,
+    pub(super) forge: Option<String>,
     /// The id of its main chat, once made; see [`Host::main_of`].
     #[serde(default)]
     pub(super) main: Option<String>,
     /// A repository of tau's own, the plugins repository (ADR 0027) or an
     /// agent's (ADR 0037): made here, not cloned, and listed though it is
-    /// not from GitHub.
+    /// not from the forge.
     #[serde(default)]
     pub(super) own: Option<Own>,
     /// A local repository, worked in the person's folder (ADR 0043), at
@@ -227,21 +229,21 @@ pub(super) struct Local {
     pub(super) links: Vec<PathBuf>,
 }
 
-/// Where a local repository's pushes go (ADR 0043): to GitHub when its
-/// `origin` is there and tau's GitHub App could push to it as it was
-/// added, else nowhere, which hides Push and pull requests.
+/// Where a local repository's pushes go (ADR 0043): to the forge when
+/// its `origin` is there and the forge's sign-in could push to it as it
+/// was added, else nowhere, which hides Push and pull requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum PushTo {
     Nowhere,
-    /// `owner/name`, reached over HTTPS with the sign-in's token.
-    #[serde(rename = "github")]
-    GitHub(String),
+    /// The forge's repository, by its full name (`owner/name`), reached
+    /// with the sign-in's token.
+    Forge(String),
 }
 
 impl RepoList {
     /// The list `path` keeps, without the local checkouts listed before
-    /// repositories came from GitHub alone: they stay out, open or not.
+    /// repositories came from the forge alone: they stay out, open or not.
     /// tau's own repositories and local repositories worked in place
     /// stay.
     pub(super) async fn load(path: &Path) -> Self {
@@ -254,11 +256,11 @@ impl RepoList {
     }
 
     /// The list without the checkouts tau copied before repositories came
-    /// from GitHub alone: those from GitHub, tau's own and local
+    /// from the forge alone: those from the forge, tau's own and local
     /// repositories stay, and only the listed ones are open.
     pub(super) fn without_old_checkouts(mut self) -> Self {
         self.repos.retain(|listed| {
-            listed.github.is_some()
+            listed.forge.is_some()
                 || listed.own.is_some()
                 || listed.local.is_some()
         });
@@ -315,7 +317,7 @@ impl RepoList {
             name: name.clone(),
             path,
             hidden: false,
-            github: None,
+            forge: None,
             main: None,
             own,
             local: None,
@@ -349,7 +351,7 @@ impl RepoList {
             name: name.clone(),
             path: local.folder.clone(),
             hidden: false,
-            github: None,
+            forge: None,
             main: None,
             own: None,
             local: Some(local),

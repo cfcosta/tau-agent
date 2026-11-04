@@ -28,7 +28,9 @@ impl Host {
     pub(super) fn host_plugins(&mut self) {
         let cx = self.host_cx();
         self.hosted = self.setting_up(hosted::host_all(&cx));
-        self.vcs = hosted::fills(&self.hosted).get(&tau_ui_plugin::vcs::VCS);
+        let fills = hosted::fills(&self.hosted);
+        self.vcs = fills.get(&tau_ui_plugin::vcs::VCS);
+        self.forge = fills.get(&tau_ui_plugin::forge::FORGE);
         self.setting_up(hosted::resume(&self.hosted, &cx));
     }
 

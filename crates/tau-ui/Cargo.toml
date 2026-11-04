@@ -55,6 +55,9 @@ tau-tools-host.workspace = true
 tau-artifacts.workspace = true
 tau-vcs.workspace = true
 tau-vcs-host.workspace = true
+# GitHub: the forge slot's plugin, and the sign-in the setup screens
+# still drive.
+tau-github-host.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 # The interface it drives.
@@ -65,7 +68,6 @@ futures-util.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "time"] }
 # A sub-agent's stop, as its plugins get it.
 tokio-util.workspace = true
-reqwest.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
 if-addrs.workspace = true

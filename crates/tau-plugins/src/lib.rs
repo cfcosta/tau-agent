@@ -12,6 +12,9 @@ pub fn plugins() -> Registry {
         // each run's workspace.
         .with(tau_tools::ui::ToolsUi)
         .with(tau_vcs::ui::VcsUi)
+        // Where repositories are hosted: clones, pushes and pull
+        // requests.
+        .with(tau_github::GitHubUi)
         .with(tau_reasoning::ReasoningPlugin)
         // Pruning first: it is cheaper than a summary, and summarizing
         // follows when pruning cannot help. The tree, when switched on,

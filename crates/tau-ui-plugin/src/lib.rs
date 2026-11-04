@@ -27,6 +27,7 @@
 //!   its pages, the points it declares, and its contributions to points,
 //!   `tau-ui`'s ([`points`]) or other plugins'.
 
+pub mod forge;
 pub mod host;
 pub mod jobs;
 pub mod manifest;

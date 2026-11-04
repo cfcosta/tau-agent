@@ -1,6 +1,6 @@
 //! tau on the computer: the host that runs agents in the repositories
-//! cloned from GitHub and drives tau-ui-remote's interface, and serves
-//! the phones paired with it.
+//! cloned from the forge or added in place, drives tau-ui-remote's
+//! interface, and serves the phones paired with it.
 //!
 //! [`host::Host`] is the wiring for a real coding agent: a tokio runtime
 //! beside GPUI, every plugin through the registry with its host half

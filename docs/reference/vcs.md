@@ -748,10 +748,10 @@ Otherwise it returns `Found`:
   rev-parse --show-toplevel` prints it.
 - `branch`: the checked-out branch, one with no commits yet included;
   none when `HEAD` is detached, as it is in a colocated jj repository.
-- `origin`: `remote.origin.url`, and the GitHub repository it names
-  (`owner/name`) when it is an HTTPS, HTTP, `git://` or SSH URL, or
-  `user@host:owner/name`, on `github.com` (`www.` and `ssh.` too), with
-  or without `.git`.
+- `origin`: `remote.origin.url`. The forge's plugin says which of its
+  repositories it names (`Forge::repository_of`): tau-github takes an
+  HTTPS, HTTP, `git://` or SSH URL, or `user@host:owner/name`, on
+  `github.com` (`www.` and `ssh.` too), with or without `.git`.
 - `commits`: how many commits `HEAD` reaches.
 - `uncommitted`: the paths `git status --porcelain` lists, renames off:
   changed and staged files, and untracked ones, an untracked folder

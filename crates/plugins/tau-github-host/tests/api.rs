@@ -17,7 +17,7 @@ use std::sync::{
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use support::fake;
-use tau_ui::github::{Api, Poll};
+use tau_github_host::{Api, Poll, url::repository_of};
 use tokio::sync::Notify;
 
 fn runtime() -> tokio::runtime::Runtime {
@@ -59,13 +59,14 @@ fn a_device_sign_in_polls_until_approved() {
     // "I have approved it" checks right away, twice.
     wake.notify_one();
     let token = runtime()
-        .block_on(
-            api.sign_in(|code| *shown.lock().unwrap() = Some(code), &wake),
-        )
+        .block_on(api.sign_in(
+            |start| *shown.lock().unwrap() = Some(start.clone()),
+            &wake,
+        ))
         .unwrap();
     let code = shown.into_inner().unwrap().unwrap();
-    assert_eq!(code.code, "ABCD-1234");
-    assert_eq!(code.url, "github.com/login/device");
+    assert_eq!(code.user_code, "ABCD-1234");
+    assert_eq!(code.address(), "github.com/login/device");
     assert_eq!(token.token, "ghu_token");
     assert_eq!(token.user, "octocat");
     assert!(token.expires_at.is_some());
@@ -345,8 +346,8 @@ impl Written {
 
 /// An `origin` written any way Git takes for a GitHub repository maps to
 /// that repository's HTTPS URL, which names it again; the GitHub
-/// repository is the one inspecting a folder finds
-/// (`tau_vcs_host::local::github`); one on another host maps to none.
+/// repository is the one the URL names ([`repository_of`]); one on
+/// another host maps to none.
 #[hegel::test(test_cases = 300)]
 fn an_origin_on_github_maps_to_its_https_url(tc: TestCase) {
     let written = tc.draw(written());
@@ -354,8 +355,7 @@ fn an_origin_on_github_maps_to_its_https_url(tc: TestCase) {
     tc.note(&url);
     let api = Api::default();
     let mapped = api.https_of(&url);
-    let found = tau_vcs_host::local::github(&url)
-        .map(|found| format!("{}/{}", found.owner, found.name));
+    let found = repository_of(&url).map(|found| found.full_name());
     assert_eq!(mapped.as_ref().map(|(name, _)| name), found.as_ref());
     if written.host == "gitlab.com" {
         assert_eq!(mapped, None);

@@ -235,7 +235,7 @@ pub(super) fn show_drain(
             cx,
         );
     });
-    // Landing on a main chat moves trunk: what it would push to GitHub
+    // Landing on a main chat moves trunk: what it would push to the forge
     // changes too.
     if has_landed {
         host.catalog_changed();
@@ -810,7 +810,15 @@ impl Host {
         // change: the host pushes its catalog then.
         let slots = host.repos.lock().expect("not poisoned").clone();
         recover_in_background(&host, slots, workspace, cx);
-        github::restore(workspace, &host.config.credentials, &host.github, cx);
+        // Signing in to GitHub is still the interface's, beside the
+        // forge's plugin, which reads the sign-in it saves.
+        let sign_in = crate::github::Api::default();
+        crate::github::restore(
+            workspace,
+            &host.config.credentials,
+            &sign_in,
+            cx,
+        );
         let handler = host.clone();
         // A sign-in, a switch of account or a sign-out from the Models
         // screen changes what new runs use.
@@ -847,11 +855,11 @@ impl Host {
                     handler.config.model.as_deref(),
                     &connected,
                     cx,
-                ) || github::handle(
+                ) || crate::github::handle(
                     event,
                     &workspace,
                     &handler.config.credentials,
-                    &handler.github,
+                    &sign_in,
                     cx,
                 ) {
                     return;
@@ -972,7 +980,7 @@ impl Host {
                     let (job_repo, fetch) = (repo.clone(), *fetch);
                     let job = handler.spawn(async move |host| {
                         let result = host.push_main(&job_repo, fetch).await;
-                        // The count ahead of GitHub, and trunk after a
+                        // The count ahead of the forge, and trunk after a
                         // fetch, change with it.
                         host.catalog_changed();
                         result
