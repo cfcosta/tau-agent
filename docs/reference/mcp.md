@@ -909,6 +909,21 @@ From the design above, as first written:
   test binary run as a stdio server: a call, and closing ends the
   server and a process it started. A local HTTP server answering 503
   gets three tries; one answering 404, one.
+- **The lifecycle, as a state machine** (`tests/lifecycle_model.rs`):
+  against a model of the in-process server, over a duplex stream on the
+  paused clock and over streamable HTTP (rmcp's server under hyper, on a
+  loopback port), on both protocols: tau connects, the server drops,
+  restarts (over HTTP forgetting its sessions, then answering 404 or the
+  TypeScript SDK's 400), tau starts the session again, the server
+  changes its tools and resources, calls run side by side with progress,
+  and resources are watched, unwatched and watched again at once. After
+  each step: a waiter that sees `Connected` reads the new tool list
+  through the plugin; tau's lists are the server's; the resources tau
+  subscribes are the server's; every call returns once, its progress all
+  before its result, in order; and the connection's watchers saw every
+  change. Ignored cases record what it found over HTTP: tau does not
+  hear of a restart, so the server's later list changes and the watches
+  taken before it are lost.
 - **Resources and prompts** (`tests/resources.rs`, `tests/prompts.rs`):
   as properties, the resource tools' exposure is the widest among the
   servers that offer resources, for any servers in any order; MCP apps

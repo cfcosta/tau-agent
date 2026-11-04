@@ -26,12 +26,14 @@
 //! [`State::set_status`] last set, and tells its subscribers.
 #![allow(dead_code)]
 
+pub mod http;
+
 use std::{
     borrow::Cow,
     sync::{
         Arc,
         Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -97,8 +99,8 @@ pub struct State {
     pub prompts: Mutex<Vec<Value>>,
     /// Every `resources/read`, by URI.
     pub reads: Mutex<Vec<String>>,
-    /// Says when a resource changes.
-    pub subscribable: bool,
+    /// Says when a resource changes, from the next connect on.
+    pub subscribable: AtomicBool,
     /// What `file:///status` reads.
     pub status: Mutex<String>,
     /// The `resources/subscribe`s that are on, by URI, with their peer.
@@ -112,6 +114,8 @@ pub struct State {
     sinks: Mutex<Vec<SubscriptionSink>>,
     /// Stops the current connection's server.
     stop: Mutex<CancellationToken>,
+    /// Stops each connection's server, the current one's last.
+    stops: Mutex<Vec<CancellationToken>>,
     /// Dials wait while this is false.
     gate: watch::Sender<bool>,
 }
@@ -216,7 +220,7 @@ impl State {
             templates: Mutex::new(default_templates()),
             prompts: Mutex::new(default_prompts()),
             reads: Mutex::default(),
-            subscribable: false,
+            subscribable: AtomicBool::new(false),
             status: Mutex::new("green".into()),
             subscribed: Mutex::default(),
             unsubscribed: Mutex::default(),
@@ -224,6 +228,7 @@ impl State {
             peers: Mutex::default(),
             sinks: Mutex::default(),
             stop: Mutex::new(CancellationToken::new()),
+            stops: Mutex::default(),
             gate: watch::channel(true).0,
         })
     }
@@ -231,9 +236,38 @@ impl State {
     /// A server that offers resources and says when one changes.
     pub fn subscribable(legacy: bool) -> Arc<Self> {
         let state = Self::with_features(legacy);
-        let mut state = Arc::try_unwrap(state).ok().expect("not shared");
-        state.subscribable = true;
-        Arc::new(state)
+        state.set_subscribable(true);
+        state
+    }
+
+    /// Says when a resource changes from the next connect on, or not:
+    /// a server that restarted with other capabilities.
+    pub fn set_subscribable(&self, subscribable: bool) {
+        self.subscribable.store(subscribable, Ordering::SeqCst);
+    }
+
+    fn capabilities(&self) -> ServerCapabilities {
+        capabilities(self.features, self.subscribable.load(Ordering::SeqCst))
+    }
+
+    /// The resources a live client is subscribed to now: by
+    /// `resources/subscribe` on a connection that is still open, or by
+    /// an open `subscriptions/listen`.
+    pub fn subscribed_uris(&self) -> std::collections::BTreeSet<String> {
+        let mut uris: std::collections::BTreeSet<String> = self
+            .subscribed
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, peer)| !peer.is_transport_closed())
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        for sink in self.sinks.lock().unwrap().iter() {
+            if let Some(subscribed) = &sink.accepted().resource_subscriptions {
+                uris.extend(subscribed.iter().cloned());
+            }
+        }
+        uris
     }
 
     /// Sets what `file:///status` reads, and tells its subscribers.
@@ -322,6 +356,7 @@ impl State {
                 let (client, server) = tokio::io::duplex(1 << 16);
                 let stop = CancellationToken::new();
                 *state.stop.lock().unwrap() = stop.clone();
+                state.stops.lock().unwrap().push(stop.clone());
                 tokio::spawn(async move {
                     if let Ok(service) =
                         Server(state).serve_with_ct(server, stop).await
@@ -374,6 +409,22 @@ impl State {
         }
     }
 
+    /// Removes the resource `uri` and tells every client.
+    pub async fn remove_resource(&self, uri: &str) {
+        self.resources
+            .lock()
+            .unwrap()
+            .retain(|resource| resource["uri"] != uri);
+        let peers = self.peers.lock().unwrap().clone();
+        for peer in peers {
+            let _ = peer.notify_resource_list_changed().await;
+        }
+        let sinks = self.sinks.lock().unwrap().clone();
+        for sink in sinks {
+            let _ = sink.notify_resource_list_changed().await;
+        }
+    }
+
     /// Adds a prompt and tells every client.
     pub async fn add_prompt(&self, prompt: Value) {
         self.prompts.lock().unwrap().push(prompt);
@@ -399,6 +450,19 @@ impl State {
     /// Drops the current connection.
     pub fn crash(&self) {
         self.stop.lock().unwrap().cancel();
+    }
+
+    /// Ends every connection's server but the current one's. A client
+    /// that closes its session leaves its end of the duplex stream
+    /// open, so the server would never hear it went: a stdio server is
+    /// killed instead, and an HTTP one gets a `DELETE`.
+    pub fn end_stale(&self) {
+        let mut stops = self.stops.lock().unwrap();
+        let current = stops.pop();
+        for stop in stops.drain(..) {
+            stop.cancel();
+        }
+        stops.extend(current);
     }
 }
 
@@ -454,11 +518,8 @@ fn page<T: serde::de::DeserializeOwned>(
 
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerConfig {
-        let config = ServerConfig::new(capabilities(
-            self.0.features,
-            self.0.subscribable,
-        ))
-        .with_server_info(Implementation::new("test-server", "1.0.0"));
+        let config = ServerConfig::new(self.0.capabilities())
+            .with_server_info(Implementation::new("test-server", "1.0.0"));
         match &self.0.instructions {
             Some(text) => config.with_instructions(text.clone()),
             None => config,
@@ -481,12 +542,7 @@ impl ServerHandler for Server {
         &self,
         requested: &SubscriptionFilter,
     ) -> Option<SubscriptionFilter> {
-        Some(
-            requested.supported_by(&capabilities(
-                self.0.features,
-                self.0.subscribable,
-            )),
-        )
+        Some(requested.supported_by(&self.0.capabilities()))
     }
 
     async fn listen(
@@ -495,12 +551,24 @@ impl ServerHandler for Server {
     ) -> Result<(), rmcp::ErrorData> {
         let sink = context.sink().clone();
         self.0.sinks.lock().unwrap().push(sink.clone());
-        context.cancelled().await;
+        // rmcp does not end a listen whose client went away: it ends here
+        // once the connection has.
+        let peer = context.request_context().peer.clone();
+        let gone = async {
+            while !peer.is_transport_closed() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        tokio::select! {
+            () = context.cancelled() => {}
+            () = gone => {}
+        }
         self.0
             .sinks
             .lock()
             .unwrap()
-            .retain(|open| open.id() != sink.id());
+            // Not by id: each connection numbers its requests from 0.
+            .retain(|open| !std::ptr::eq(open.accepted(), sink.accepted()));
         Ok(())
     }
 
@@ -510,11 +578,13 @@ impl ServerHandler for Server {
         request: SubscribeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), rmcp::ErrorData> {
-        self.0
-            .subscribed
-            .lock()
-            .unwrap()
-            .push((request.uri, context.peer));
+        // A set, as a server keeps it: subscribing again changes nothing.
+        let mut subscribed = self.0.subscribed.lock().unwrap();
+        subscribed.retain(|(_, peer)| !peer.is_transport_closed());
+        if !subscribed.iter().any(|(uri, _)| *uri == request.uri) {
+            subscribed.push((request.uri, context.peer));
+        }
+        drop(subscribed);
         self.0.order.lock().unwrap().push("subscribe");
         Ok(())
     }
@@ -526,6 +596,8 @@ impl ServerHandler for Server {
         _context: RequestContext<RoleServer>,
     ) -> Result<(), rmcp::ErrorData> {
         let mut subscribed = self.0.subscribed.lock().unwrap();
+        // A connection that ended took its subscriptions with it.
+        subscribed.retain(|(_, peer)| !peer.is_transport_closed());
         if let Some(at) =
             subscribed.iter().position(|(uri, _)| *uri == request.uri)
         {

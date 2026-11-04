@@ -50,6 +50,10 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 url = "2.5.8"
 
 [dev-dependencies]
+# An in-process MCP server over streamable HTTP (`tests/common/http.rs`).
+http-body-util = "0.1.5"
+hyper = { version = "1.11.1", features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 tau-ui-kit.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 hegeltest.workspace = true
@@ -60,6 +64,7 @@ rmcp = { version = "3.5.0", default-features = false, features = [
   "macros",
   "server",
   "transport-io",
+  "transport-streamable-http-server",
 ] }
 tau-codemode-host.workspace = true
 tau-store.workspace = true
