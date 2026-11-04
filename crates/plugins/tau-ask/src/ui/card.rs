@@ -36,7 +36,7 @@ fn shown(data: &CallData) -> Shown {
 }
 
 /// The card of a call to `ask`.
-pub fn card(at: &AtCard, view: &mut ViewCx<'_, AskUi>) -> Option<CardView> {
+pub fn card(at: &AtCard, _view: &mut ViewCx<'_, AskUi>) -> Option<CardView> {
     if at.tool != TOOL {
         return None;
     }
@@ -49,22 +49,19 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, AskUi>) -> Option<CardView> {
         (None, None) if at.run.live => "waiting for you".to_owned(),
         (None, None) => "not answered".to_owned(),
     };
-    let ignore = |_: &str, _: &serde_json::Value, _: &mut gpui::App| {};
-    let id = format!("ask-card-{}-{}", at.run.id.0, at.call_id);
     let head = shown.ask.as_ref().map(|ask| {
         let headers: Vec<&str> =
             ask.questions.iter().map(|q| q.header.as_str()).collect();
-        let head = Node::Mono {
+        Node::Mono {
             text: format!("ask · {}", headers.join(" · ")),
-        };
-        view.tree(&format!("{id}-head"), &head, ignore)
+        }
     });
     let waiting =
         shown.reply.is_none() && shown.failed.is_none() && at.run.live;
-    let body = shown.ask.as_ref().map(|ask| {
-        let tree = body(ask, shown.reply.as_ref(), waiting);
-        view.tree(&format!("{id}-body"), &tree, ignore)
-    });
+    let body = shown
+        .ask
+        .as_ref()
+        .map(|ask| body(ask, shown.reply.as_ref(), waiting));
     Some(CardView {
         head,
         label: Some(label),

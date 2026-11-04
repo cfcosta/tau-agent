@@ -13,13 +13,11 @@
 mod card;
 mod pane;
 
-use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
 use tau_ui_plugin::{
     Fold,
-    Handle,
     Manifest,
     RunCx,
     UiPlugin,
@@ -86,25 +84,6 @@ fn picked(view: &ViewCx<'_, CanvasUi>, run: &RunId) -> Option<Pick> {
 const PICK: &str = "pick";
 const OPEN: &str = "open";
 
-/// Carries out a tree's action on the canvas of `run`.
-fn on_action(
-    handle: Handle,
-    run: RunId,
-) -> impl Fn(&str, &Value, &mut App) + 'static {
-    move |action, args, cx| {
-        if action != PICK && action != OPEN {
-            return;
-        }
-        if serde_json::from_value::<Pick>(args.clone()).is_err() {
-            return;
-        }
-        handle.set_ui(pick_key(&run), Some(args.clone()), cx);
-        if action == OPEN {
-            handle.open_pane(cx);
-        }
-    }
-}
-
 /// The revision the pane shows: the one picked, while nothing newer
 /// came, or the latest of the item revised last.
 pub fn shown(canvas: &Canvas, pick: Option<Pick>) -> Option<(&Item, usize)> {
@@ -158,5 +137,28 @@ impl UiPlugin for CanvasUi {
                     tone: tau_ui_kit::theme::Tone::Quiet,
                 })
             })
+    }
+
+    /// A tree's action on the canvas of the run drawn: show the
+    /// [`Pick`] in `args`, and with [`OPEN`], open the pane too.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if action != PICK && action != OPEN {
+            return;
+        }
+        let Some(run) = view.run else {
+            return;
+        };
+        if serde_json::from_value::<Pick>(args.clone()).is_err() {
+            return;
+        }
+        view.handle.set_ui(pick_key(&run.id), Some(args.clone()));
+        if action == OPEN {
+            view.handle.open_pane();
+        }
     }
 }

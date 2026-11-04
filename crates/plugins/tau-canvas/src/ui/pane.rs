@@ -9,7 +9,7 @@ use tau_ui_plugin::{
     tree::{Kind, Node, Tone},
 };
 
-use super::{CanvasUi, PICK, Pick, image, on_action, picked, shown};
+use super::{CanvasUi, PICK, Pick, image, picked, shown};
 use crate::{Canvas, Content, Item, Kind as ItemKind};
 
 /// How tall a document scrolls, at most, in rems: the pane clips it
@@ -31,7 +31,6 @@ pub fn pane(at: &AtRun, view: &mut ViewCx<'_, CanvasUi>) -> Option<PaneView> {
     if item.revisions.len() > 1 {
         bars.push(revisions(canvas, item, revision));
     }
-    let id = format!("canvas-{}-{}-{revision}", run.0, item.id);
     let content = match &item.revisions[revision].content {
         Content::Image {
             image: shown,
@@ -58,12 +57,10 @@ pub fn pane(at: &AtRun, view: &mut ViewCx<'_, CanvasUi>) -> Option<PaneView> {
         },
     };
     bars.push(content);
-    let handle = view.handle.clone();
-    let body = view.tree(&id, &Node::stack(bars), on_action(handle, run));
     Some(PaneView {
         title: "Canvas".into(),
         fresh: canvas.fresh,
-        body,
+        body: Node::stack(bars),
     })
 }
 

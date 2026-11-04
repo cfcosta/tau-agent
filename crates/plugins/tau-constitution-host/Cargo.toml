@@ -14,7 +14,6 @@ demo = []
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-gpui = { package = "gpui-pre", version = "=0.3.7" }
 serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
@@ -28,7 +27,6 @@ tau-ui-plugin.workspace = true
 [dev-dependencies]
 serde.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
-gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 tau-store-sqlite.workspace = true
 futures-util.workspace = true
 hegeltest.workspace = true

@@ -290,7 +290,6 @@ impl Workspace {
             .contributions(
                 tau_ui_plugin::points::PICKER_AUTO,
                 &tau_ui_plugin::points::AtApp,
-                cx,
             )
             .into_iter()
             .next()

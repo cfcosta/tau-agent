@@ -3,7 +3,7 @@
 
 use std::{any::Any, marker::PhantomData};
 
-use gpui::AnyElement;
+use crate::tree::Node;
 
 use crate::{UiPlugin, view::ViewCx};
 
@@ -13,7 +13,7 @@ use crate::{UiPlugin, view::ViewCx};
 /// Whoever owns a surface declares its points: `tau-ui` declares its
 /// own ([`crate::points`]), and a plugin declares points on its pages
 /// with [`Manifest::point`]. A point is its owner's public API.
-pub struct Point<Cx: 'static, Out: 'static = AnyElement> {
+pub struct Point<Cx: 'static, Out: 'static = Node> {
     pub name: &'static str,
     marker: PhantomData<fn(&Cx) -> Out>,
 }
@@ -42,10 +42,16 @@ impl<Cx, Out> std::fmt::Debug for Point<Cx, Out> {
 }
 
 /// What a contribution gets besides its point's context: whether the
-/// context is about a run, so the plugin's state in it comes along.
+/// context is about a run, so the plugin's state in it comes along, and
+/// what names the place apart from others like it on screen (a run, a
+/// call), for the trees drawn there.
 pub trait PointCx: 'static {
     fn run(&self) -> Option<&crate::view::RunInfo> {
         None
+    }
+
+    fn key(&self) -> String {
+        String::new()
     }
 }
 
@@ -62,7 +68,7 @@ pub(crate) struct Contribution<P: UiPlugin> {
 }
 
 type Draw<P> =
-    Box<dyn for<'a> Fn(&mut ViewCx<'a, P>) -> AnyElement + Send + Sync>;
+    Box<dyn for<'a> Fn(&mut ViewCx<'a, P>) -> Node + Send + Sync>;
 type Title<P> = Box<dyn for<'a> Fn(&mut ViewCx<'a, P>) -> String + Send + Sync>;
 
 /// A page: a place of the plugin's own, opened by a
@@ -78,7 +84,7 @@ pub struct Page<P: UiPlugin> {
 impl<P: UiPlugin> Page<P> {
     pub fn new(
         name: &'static str,
-        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> AnyElement
+        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> Node
         + Send
         + Sync
         + 'static,
@@ -108,34 +114,9 @@ impl<P: UiPlugin> Page<P> {
         self
     }
 
-    pub(crate) fn draw(&self, cx: &mut ViewCx<'_, P>) -> AnyElement {
-        let drawn = (self.draw)(cx);
-        if !self.framed {
-            return drawn;
-        }
-        use gpui::{
-            InteractiveElement as _,
-            IntoElement as _,
-            ParentElement as _,
-            StatefulInteractiveElement as _,
-            Styled as _,
-        };
-        use tau_ui_kit::theme::sp;
-        gpui::div()
-            .id(gpui::SharedString::from(format!("page-{}", self.name)))
-            .flex_1()
-            .min_h(gpui::rems(0.))
-            .overflow_y_scroll()
-            .child(
-                gpui::div()
-                    .flex()
-                    .flex_col()
-                    .gap(sp(4.5))
-                    .px(sp(if cx.compact { 4. } else { 8. }))
-                    .py(sp(if cx.compact { 4. } else { 6. }))
-                    .child(drawn),
-            )
-            .into_any_element()
+    /// The page's tree, and whether the interface frames it.
+    pub(crate) fn draw(&self, cx: &mut ViewCx<'_, P>) -> (Node, bool) {
+        ((self.draw)(cx), self.framed)
     }
 
     pub(crate) fn title_of(&self, cx: &mut ViewCx<'_, P>) -> String {
@@ -156,7 +137,7 @@ type RunListed<P> = Box<
     dyn for<'a> Fn(&str, &str, Option<&str>, &mut ViewCx<'a, P>) + Send + Sync,
 >;
 type Popover<P> =
-    Box<dyn for<'a> Fn(&str, &mut ViewCx<'a, P>) -> AnyElement + Send + Sync>;
+    Box<dyn for<'a> Fn(&str, &mut ViewCx<'a, P>) -> Node + Send + Sync>;
 
 /// A command typed in the composer: `/goal the tests pass`.
 pub struct SlashCommand<P: UiPlugin> {
@@ -205,7 +186,7 @@ impl<P: UiPlugin> SlashCommand<P> {
     /// given what follows its name so far.
     pub fn popover(
         mut self,
-        popover: impl for<'a> Fn(&str, &mut ViewCx<'a, P>) -> AnyElement
+        popover: impl for<'a> Fn(&str, &mut ViewCx<'a, P>) -> Node
         + Send
         + Sync
         + 'static,
@@ -222,7 +203,7 @@ impl<P: UiPlugin> SlashCommand<P> {
         &self,
         args: &str,
         cx: &mut ViewCx<'_, P>,
-    ) -> Option<AnyElement> {
+    ) -> Option<Node> {
         self.popover.as_ref().map(|popover| popover(args, cx))
     }
 
@@ -333,7 +314,7 @@ impl<P: UiPlugin> Manifest<P> {
     /// (`PluginInfo::entries`) has its name as the `entry` parameter.
     pub fn settings(
         mut self,
-        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> AnyElement
+        draw: impl for<'a> Fn(&mut ViewCx<'a, P>) -> Node
         + Send
         + Sync
         + 'static,

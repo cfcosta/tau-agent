@@ -37,8 +37,8 @@ these records and re-exports `Outcome`, `CallRow` and the other shapes
 its API returns.
 
 It builds on `tau-agent` (with `serde`), `tau-ai`, `tau-ui-plugin` and
-`tau-ui-kit`, and draws with gpui. `stylua` formats scripts for the
-cards.
+`tau-ui-kit`; its views are trees the interface draws (ADR 0045).
+`stylua` formats scripts for the cards.
 
 Used by:
 

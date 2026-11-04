@@ -71,7 +71,7 @@ fn runs() -> Vec<RunView> {
 }
 
 /// What each listed row of the repository says, in the sidebar's order.
-fn rows(ws: &Workspace, cx: &mut gpui::App) -> Vec<(String, Attention)> {
+fn rows(ws: &Workspace) -> Vec<(String, Attention)> {
     let all = ws.repo_rows("");
     let tree: Vec<RunView> = all
         .iter()
@@ -82,7 +82,7 @@ fn rows(ws: &Workspace, cx: &mut gpui::App) -> Vec<(String, Attention)> {
         })
         .collect();
     tree.iter()
-        .map(|run| (run.title.clone(), ws.attention(run, cx)))
+        .map(|run| (run.title.clone(), ws.attention(run)))
         .collect()
 }
 
@@ -100,8 +100,8 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
     let phone = phone.root(cx).unwrap();
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.run_until_parked();
-    let order_before = workspace.update(&mut cx, |ws, cx| {
-        rows(ws, cx)
+    let order_before = workspace.update(&mut cx, |ws, _| {
+        rows(ws)
             .into_iter()
             .map(|(title, _)| title)
             .collect::<Vec<_>>()
@@ -148,7 +148,7 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    let said = workspace.update(&mut cx, |ws, cx| rows(ws, cx));
+    let said = workspace.update(&mut cx, |ws, _| rows(ws));
     let said_of = |title: &str| {
         said.iter()
             .find(|(row, _)| row == title)
@@ -176,16 +176,16 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
         said.iter().map(|(title, _)| title.clone()).collect();
     assert_eq!(order, order_before);
     // Asking, ready to land and would conflict need the person.
-    let need_you = workspace.update(&mut cx, |ws, cx| ws.need_you(REPO, cx));
+    let need_you = workspace.update(&mut cx, |ws, _| ws.need_you(REPO));
     assert_eq!(need_you, 3);
 
     // A phone takes the computer's snapshot and says the same.
     let snapshot = workspace.read_with(&cx, |ws, _| ws.snapshot());
     phone.update(&mut cx, |ws, cx| ws.apply(snapshot, cx));
     cx.run_until_parked();
-    let on_phone = phone.update(&mut cx, |ws, cx| {
-        let need_you = ws.need_you(REPO, cx);
-        (rows(ws, cx), need_you)
+    let on_phone = phone.update(&mut cx, |ws, _| {
+        let need_you = ws.need_you(REPO);
+        (rows(ws), need_you)
     });
     assert_eq!(on_phone, (said, 3));
 
@@ -205,7 +205,7 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
             cx,
         );
         let view = ws.run(&id("asks")).unwrap().clone();
-        assert_eq!(ws.attention(&view, cx), Attention::Working { turn: 7 });
+        assert_eq!(ws.attention(&view), Attention::Working { turn: 7 });
         let landing = tau_vcs::Landing {
             changes: Vec::new(),
             conflicts: Vec::new(),
@@ -226,8 +226,8 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
             cx,
         );
         assert!(ws.is_closed(&id("ready")) && ws.is_closed(&id("conflict")));
-        assert_eq!(ws.need_you(REPO, cx), 0);
-        let said = rows(ws, cx);
+        assert_eq!(ws.need_you(REPO), 0);
+        let said = rows(ws);
         let order: Vec<&str> =
             said.iter().map(|(title, _)| title.as_str()).collect();
         assert_eq!(order, order_before);
@@ -272,7 +272,7 @@ fn closed_chats_leave_the_sidebar_unless_they_ended(cx: &mut TestAppContext) {
             ..catalog()
         };
         ws.set_catalog(closed, cx);
-        let said = rows(ws, cx);
+        let said = rows(ws);
         let said_of = |title: &str| {
             said.iter()
                 .find(|(row, _)| row == title)
@@ -338,7 +338,7 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
             },
             cx,
         );
-        rows(ws, cx)
+        rows(ws)
     });
     let said_of = |title: &str| {
         said.iter()
@@ -369,13 +369,13 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
     assert_eq!(said_of("idle"), Attention::Idle);
     // Main's conflicts and the chat waiting for a confirmation need the
     // person; the clean one waits on main alone.
-    let need_you = workspace.update(&mut cx, |ws, cx| ws.need_you(REPO, cx));
+    let need_you = workspace.update(&mut cx, |ws, _| ws.need_you(REPO));
     assert_eq!(need_you, 2);
 
     let snapshot = workspace.read_with(&cx, |ws, _| ws.snapshot());
     phone.update(&mut cx, |ws, cx| ws.apply(snapshot, cx));
     cx.run_until_parked();
-    let on_phone = phone.update(&mut cx, |ws, cx| rows(ws, cx));
+    let on_phone = phone.update(&mut cx, |ws, _| rows(ws));
     assert_eq!(on_phone, said);
 
     // Put away, the card goes and the mark stays; resolved, main is
@@ -391,7 +391,7 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
         );
         let view = ws.run(&id("main")).unwrap().clone();
         assert_eq!(
-            ws.attention(&view, cx),
+            ws.attention(&view),
             Attention::ConflictsOnMain {
                 files: files.clone()
             }
@@ -404,7 +404,7 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
             },
             cx,
         );
-        let said = rows(ws, cx);
+        let said = rows(ws);
         let said_of = |title: &str| {
             said.iter()
                 .find(|(row, _)| row == title)
@@ -419,7 +419,7 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
                 needs_confirmation: false
             }))
         );
-        assert_eq!(ws.need_you(REPO, cx), 0);
+        assert_eq!(ws.need_you(REPO), 0);
     });
 }
 

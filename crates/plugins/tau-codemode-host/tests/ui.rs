@@ -14,7 +14,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use gpui::{App, TestAppContext};
 use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_agent::tool::{RunId, ToolOutput};
@@ -302,28 +301,23 @@ fn selection_validation_rejects_missing_mismatched_and_corrupt_versions() {
 /// The selection and promotion buttons each send one action, in the
 /// wire shape the host half reads: the run and the exact version or
 /// request, and nothing else.
-#[gpui::test]
-fn the_buttons_send_exactly_their_actions(cx: &mut TestAppContext) {
+#[test]
+fn the_buttons_send_exactly_their_actions() {
     let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
     let received = requests.clone();
     let handle = Handle::new(
         PLUGIN,
-        Rc::new(move |_, request, _: &mut App| {
-            received.borrow_mut().push(request)
-        }),
+        Rc::new(move |_, request| received.borrow_mut().push(request)),
     );
     let run = RunId("run-7".into());
     let version = "a".repeat(64);
-    cx.update(|cx| {
-        ui::select_version(&run, "alpha", &version, &handle, cx);
-        ui::decide_promotion(
-            &run,
-            "opaque-id",
-            tau_codemode::promotion::Decision::Approved,
-            &handle,
-            cx,
-        );
-    });
+    ui::select_version(&run, "alpha", &version, &handle);
+    ui::decide_promotion(
+        &run,
+        "opaque-id",
+        tau_codemode::promotion::Decision::Approved,
+        &handle,
+    );
     assert_eq!(
         *requests.borrow(),
         vec![
@@ -337,23 +331,54 @@ fn the_buttons_send_exactly_their_actions(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-fn rejected_selection_requests_a_visible_alert(cx: &mut TestAppContext) {
+/// A tree's button carries its [`Action`] as its arguments, and the
+/// plugin sends that action, and only that, when it is clicked.
+#[test]
+fn a_button_sends_the_action_it_carries() {
     let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
     let received = requests.clone();
     let handle = Handle::new(
         PLUGIN,
-        Rc::new(move |_, request, _: &mut App| {
-            received.borrow_mut().push(request)
-        }),
+        Rc::new(move |_, request| received.borrow_mut().push(request)),
     );
-    cx.update(|cx| {
-        CodemodeUi.reply(
-            json!({"error": "That module version is missing"}),
-            &handle,
-            cx,
-        )
-    });
+    let params = BTreeMap::new();
+    let repos = BTreeMap::new();
+    let list = Vec::new;
+    let cards = |_: &RunId| Vec::new();
+    let run = info();
+    let mut view = ViewCx::new(
+        &CodemodeUi,
+        None,
+        &(),
+        &(),
+        &repos,
+        Some(&run),
+        &params,
+        false,
+        false,
+        1400.,
+        handle,
+        &list,
+        &cards,
+    );
+    let action =
+        json!({"action":"select","run":"r","name":"alpha","version":"v"});
+    CodemodeUi.on_action("act", &action, &mut view);
+    CodemodeUi.on_action("act", &json!({"action":"unknown"}), &mut view);
+    CodemodeUi.on_action("other", &action, &mut view);
+    assert_eq!(*requests.borrow(), vec![UiRequest::Act(action)]);
+}
+
+#[test]
+fn rejected_selection_requests_a_visible_alert() {
+    let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+    let received = requests.clone();
+    let handle = Handle::new(
+        PLUGIN,
+        Rc::new(move |_, request| received.borrow_mut().push(request)),
+    );
+    CodemodeUi
+        .reply(json!({"error": "That module version is missing"}), &handle);
     assert_eq!(
         *requests.borrow(),
         vec![UiRequest::Alert {
@@ -1132,52 +1157,44 @@ fn at_card(tool: &str, data: CallData) -> AtCard {
     }
 }
 
-/// Draws the card for `at` in a test window, and reads what it says.
-fn draw(
-    cx: &mut TestAppContext,
-    at: &AtCard,
-) -> Option<(Option<String>, Option<String>, bool, bool)> {
+/// Builds the card for `at`, and reads what it says.
+fn draw(at: &AtCard) -> Option<(Option<String>, Option<String>, bool, bool)> {
     let params = BTreeMap::new();
     let repos = BTreeMap::new();
     let list = Vec::new;
     let cards = |_: &RunId| Vec::new();
-    let handle = Handle::new(PLUGIN, Rc::new(|_, _, _: &mut App| {}));
-    cx.update(|cx| {
-        cx.set_global(tau_ui_kit::theme::Theme::graphite());
-        let mut view = ViewCx::new(
-            &CodemodeUi,
-            None,
-            &(),
-            &(),
-            &repos,
-            Some(&at.run),
-            &params,
-            false,
-            false,
-            1400.,
-            handle,
-            &list,
-            &cards,
-            cx,
-        );
-        ui::card(at, &mut view).map(|card| {
-            (card.label, card.failed, card.folds, card.body.is_some())
-        })
-    })
+    let handle = Handle::new(PLUGIN, Rc::new(|_, _| {}));
+    let mut view = ViewCx::new(
+        &CodemodeUi,
+        None,
+        &(),
+        &(),
+        &repos,
+        Some(&at.run),
+        &params,
+        false,
+        false,
+        1400.,
+        handle,
+        &list,
+        &cards,
+    );
+    ui::card(at, &mut view)
+        .map(|card| (card.label, card.failed, card.folds, card.body.is_some()))
 }
 
 /// The card is codemode's only: open with its calls while the script
 /// runs, folded to its header once it ended, and red when it failed.
-#[gpui::test]
-fn the_card_shows_the_script_as_it_goes(cx: &mut TestAppContext) {
-    assert!(draw(cx, &at_card("exec_command", CallData::default())).is_none());
+#[test]
+fn the_card_shows_the_script_as_it_goes() {
+    assert!(draw(&at_card("exec_command", CallData::default())).is_none());
     let mut data = CallData {
         args: json!({ "code": "-- @options: {}\nreturn tools.read({ path = 'a' })" }),
         ..CallData::default()
     };
     data.nested_start("call_1/1", CALL, "read", &json!({ "path": "a" }));
     let (label, failed, folds, body) =
-        draw(cx, &at_card("codemode", data.clone())).unwrap();
+        draw(&at_card("codemode", data.clone())).unwrap();
     assert_eq!(label.as_deref(), Some("1 call"));
     assert_eq!(failed, None);
     assert!(!folds && body);
@@ -1192,8 +1209,7 @@ fn the_card_shows_the_script_as_it_goes(cx: &mut TestAppContext) {
         error: true,
     });
     data.end();
-    let (label, failed, folds, _) =
-        draw(cx, &at_card("codemode", data)).unwrap();
+    let (label, failed, folds, _) = draw(&at_card("codemode", data)).unwrap();
     assert_eq!(label.as_deref(), Some("0 calls · 1.5 s · $0.0004"));
     assert_eq!(failed.as_deref(), Some("codemode:2: boom"));
     assert!(folds);

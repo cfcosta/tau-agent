@@ -2,13 +2,12 @@
 //! stands, a panel in the inspector, and its events as cards. Each is a
 //! view tree (ADR 0045).
 
-use gpui::AnyElement;
 use serde_json::Value;
 use tau_ui_kit::format::usd;
 use tau_ui_plugin::{
     ViewCx,
     points::{AtMessage, AtRun},
-    tree::{Kind, Node, Tone, draft_key},
+    tree::{Kind, Node, Tone},
 };
 
 use super::{
@@ -19,7 +18,6 @@ use super::{
     SECRET_VALUE_INPUT,
     act_button,
     button,
-    on_action,
     status_pill,
     tree_tone,
 };
@@ -30,15 +28,11 @@ use crate::{Act, Agent, Status, event::Message};
 pub(super) fn banner(
     at: &AtRun,
     view: &mut ViewCx<'_, AgentsUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let agent = view
         .data
-        .agent_of_main(&at.run.repo, &at.run.id.to_string())?
-        .clone();
-    let tree = banner_tree(&agent, view.compact);
-    let id = format!("agent-banner-{}", at.run.id.0);
-    let actions = on_action(view.handle.clone(), None, None);
-    Some(view.tree(&id, &tree, actions))
+        .agent_of_main(&at.run.repo, &at.run.id.to_string())?;
+    Some(banner_tree(agent, view.compact))
 }
 
 /// The banner's tree. On a phone the panel is in the run's sheet: what
@@ -96,25 +90,16 @@ pub fn banner_tree(agent: &Agent, compact: bool) -> Node {
 pub(super) fn panel(
     at: &AtRun,
     view: &mut ViewCx<'_, AgentsUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let agent = view
         .data
-        .agent_of_main(&at.run.repo, &at.run.id.to_string())?
-        .clone();
+        .agent_of_main(&at.run.repo, &at.run.id.to_string())?;
     let draft = |key: &str| {
         view.ui_value(key)
             .and_then(Value::as_str)
             .map(str::to_owned)
     };
-    // The value is not here: it stays in its input until Enter.
-    let secret = (
-        agent.name.clone(),
-        draft(&draft_key(SECRET_NAME_INPUT)).unwrap_or_default(),
-    );
-    let tree = panel_tree(&agent, &draft);
-    let id = format!("agent-panel-{}", at.run.id.0);
-    let actions = on_action(view.handle.clone(), None, Some(secret));
-    Some(view.tree(&id, &tree, actions))
+    Some(panel_tree(agent, &draft))
 }
 
 /// The panel's tree, its fields' drafts read with `draft`.
@@ -357,7 +342,7 @@ fn secrets(agent: &Agent) -> Vec<Node> {
         id: SECRET_VALUE_INPUT.into(),
         placeholder: Some("its value, then Enter".into()),
         multiline: false,
-        submit: Some(SAVE_SECRET.into()),
+        submit: Some(format!("{SAVE_SECRET}:{}", agent.name)),
         keep: false,
         secret: true,
         focus: None,
@@ -398,12 +383,9 @@ fn version_row(version: &crate::Version) -> Node {
 /// then a line each with its data under it.
 pub(super) fn event_card(
     at: &AtMessage,
-    view: &mut ViewCx<'_, AgentsUi>,
-) -> Option<AnyElement> {
-    let message = Message::parse(&at.text)?;
-    let tree = event_tree(&message);
-    let id = format!("agent-events-{}-{}", at.run.id.0, at.index);
-    Some(view.tree(&id, &tree, |_, _, _| {}))
+    _view: &mut ViewCx<'_, AgentsUi>,
+) -> Option<Node> {
+    Some(event_tree(&Message::parse(&at.text)?))
 }
 
 /// The event card's tree.

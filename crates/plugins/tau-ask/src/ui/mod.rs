@@ -6,7 +6,6 @@ pub mod card;
 pub mod draft;
 pub mod panel;
 
-use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ui_kit::theme::Tone;
@@ -17,6 +16,7 @@ use tau_ui_plugin::{
     PluginStatus,
     RunCx,
     UiPlugin,
+    ViewCx,
     points::{self, AtRun},
 };
 
@@ -167,16 +167,25 @@ impl UiPlugin for AskUi {
 
     /// The host refused the answers: they did not go, and the panel says
     /// why.
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
+    fn reply(&self, reply: Value, handle: &Handle) {
         if let Ok(refused) = serde_json::from_value::<Refused>(reply) {
             let key = (refused.run, refused.call);
-            handle.set_ui(sent_key(&key), None, cx);
+            handle.set_ui(sent_key(&key), None);
             handle.set_ui(
                 refused_key(&key),
                 Some(Value::String(refused.message)),
-                cx,
             );
         }
+    }
+
+    /// The panel's keys and clicks: every action it has is the panel's.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        panel::act(action, args, view);
     }
 
     fn manifest(&self) -> Manifest<Self> {

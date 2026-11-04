@@ -25,18 +25,13 @@ struct RepoTab {
 
 /// The repository's tabs: its runs, then each page a plugin lists for
 /// it.
-fn tabs(
-    ws: &Workspace,
-    repo: &str,
-    cx: &mut Context<Workspace>,
-) -> Vec<RepoTab> {
+fn tabs(ws: &Workspace, repo: &str) -> Vec<RepoTab> {
     let runs = ws.runs.iter().filter(|run| ws.repo_of(run) == repo).count();
     let entries = ws.contributions(
         tau_ui_plugin::points::SIDEBAR_REPO,
         &tau_ui_plugin::points::AtRepo {
             repo: repo.to_owned(),
         },
-        cx,
     );
     std::iter::once(RepoTab {
         label: "Runs".into(),
@@ -57,16 +52,12 @@ fn tabs(
 
 /// The repository whose page `route` is a tab of, if any: its Runs
 /// tab, or a page a plugin lists for it.
-pub fn owner(
-    ws: &Workspace,
-    route: &Route,
-    cx: &mut Context<Workspace>,
-) -> Option<String> {
+pub fn owner(ws: &Workspace, route: &Route) -> Option<String> {
     if let Route::Repo(repo) = route {
         return Some(repo.clone());
     }
     let repo = route.repo()?.to_owned();
-    tabs(ws, &repo, cx)
+    tabs(ws, &repo)
         .iter()
         .any(|tab| &tab.route == route)
         .then_some(repo)
@@ -102,7 +93,7 @@ pub fn framed(
         .and_then(|known| known.trunk.clone())
         .unwrap_or_else(|| "main".to_owned());
     let new_in = repo.to_owned();
-    let actions = ws.contributions(
+    let actions = ws.drawn(
         tau_ui_plugin::points::REPO_ACTIONS,
         &tau_ui_plugin::points::AtRepo {
             repo: repo.to_owned(),
@@ -167,36 +158,34 @@ pub fn framed(
         .pt(sp(4.5))
         .border_b_1()
         .border_color(t.border)
-        .children(tabs(ws, repo, cx).into_iter().enumerate().map(
-            |(n, tab)| {
-                let on = tab.route == ws.route;
-                let route = tab.route.clone();
-                div()
-                    .id(SharedString::from(format!("repo-tab-{n}")))
-                    .flex()
-                    .gap(sp(1.5))
-                    .pb(sp(2.5))
-                    .cursor_pointer()
-                    .text_color(if on { t.text } else { t.text_soft })
-                    .when(on, |tab| {
-                        tab.font_weight(weight::EMPHASIS)
-                            .border_b_2()
-                            .border_color(t.roles.primary)
-                    })
-                    .child(tab.label)
-                    .children(tab.detail.map(|detail| {
-                        let ink = tab
-                            .plugin
-                            .as_deref()
-                            .and_then(|plugin| t.roles.plugin(plugin))
-                            .unwrap_or(t.dim);
-                        div().text_color(ink).child(detail)
-                    }))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.navigate(route.clone(), cx)
-                    }))
-            },
-        ));
+        .children(tabs(ws, repo).into_iter().enumerate().map(|(n, tab)| {
+            let on = tab.route == ws.route;
+            let route = tab.route.clone();
+            div()
+                .id(SharedString::from(format!("repo-tab-{n}")))
+                .flex()
+                .gap(sp(1.5))
+                .pb(sp(2.5))
+                .cursor_pointer()
+                .text_color(if on { t.text } else { t.text_soft })
+                .when(on, |tab| {
+                    tab.font_weight(weight::EMPHASIS)
+                        .border_b_2()
+                        .border_color(t.roles.primary)
+                })
+                .child(tab.label)
+                .children(tab.detail.map(|detail| {
+                    let ink = tab
+                        .plugin
+                        .as_deref()
+                        .and_then(|plugin| t.roles.plugin(plugin))
+                        .unwrap_or(t.dim);
+                    div().text_color(ink).child(detail)
+                }))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.navigate(route.clone(), cx)
+                }))
+        }));
     div()
         .flex_1()
         .min_h(rems(0.))
@@ -301,7 +290,7 @@ pub fn render(
         .runs
         .iter()
         .filter(|run| ws.repo_of(run) == repo)
-        .map(|run| (run, ws.attention(run, cx)))
+        .map(|run| (run, ws.attention(run)))
         .collect();
     runs.reverse();
     let count = |filter: RunsFilter| {

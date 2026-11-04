@@ -3,18 +3,22 @@
 //! banner on a repository's notes when the tools know it: proposals
 //! wait for it, or there is what they kept that no import read.
 
-use gpui::AnyElement;
 use tau_ui_plugin::{
     ViewCx,
     points::AtRepo,
     tree::{Kind, Node, Tone},
 };
 
-use super::{Do, MemoryUi, button, icon, on_do, review_link};
+use super::{BANNER, Do, MemoryUi, icon, review_link};
 use crate::import::{Act, Banner, Imports, Request, Tool};
 
 /// What the way into an import says.
 pub const IMPORT: &str = "Import from Claude Code or Codex…";
+
+/// A button of the banner's, or of a way into an import.
+fn button(label: impl Into<String>, kind: Kind, what: &Do) -> Node {
+    super::button(BANNER, label, kind, what)
+}
 
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -39,10 +43,8 @@ pub fn import_button(imports: &Imports) -> Option<Node> {
 pub fn menu_entry(
     _at: &AtRepo,
     view: &mut ViewCx<'_, MemoryUi>,
-) -> Option<AnyElement> {
-    let tree = menu_tree(&view.data.imports)?;
-    let handle = view.handle.clone();
-    Some(view.tree("menu-memory-import", &tree, on_do(handle, None)))
+) -> Option<Node> {
+    menu_tree(&view.data.imports)
 }
 
 /// The menu entry's tree.

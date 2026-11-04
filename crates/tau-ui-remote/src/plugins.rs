@@ -127,33 +127,144 @@ pub const DECLARED: [&str; points::ALL.len()] = points::ALL;
 /// update.
 pub(crate) type Requests = Rc<std::cell::RefCell<Vec<(&'static str, Request)>>>;
 
-/// A handle for `plugin` that asks `workspace`, through `queue`.
-pub(crate) fn handle_for(
-    plugin: &'static str,
-    queue: Requests,
-    workspace: gpui::WeakEntity<Workspace>,
-) -> Handle {
+/// A handle for `plugin` that asks through `queue`: what it asks is
+/// carried out once the plugin's handler returns
+/// ([`Workspace::drain_plugin_requests`]).
+pub(crate) fn handle_for(plugin: &'static str, queue: Requests) -> Handle {
     Handle::new(
         plugin,
-        Rc::new(move |plugin, request, cx: &mut App| {
-            queue.borrow_mut().push((plugin, request));
-            let workspace = workspace.clone();
-            cx.defer(move |cx| {
-                let _ =
-                    workspace.update(cx, |ws, cx| ws.drain_plugin_requests(cx));
-            });
+        Rc::new(move |plugin, request| {
+            queue.borrow_mut().push((plugin, request))
         }),
     )
+}
+
+/// What the window's own parts of a plugin's tree (an input, a widget)
+/// ask for it, as they draw or take an event: what its handle asks, or
+/// the keys for an element of theirs.
+pub enum Ask {
+    Plugin(Request),
+    /// Gives the keys to an element as the window draws next: a panel
+    /// that takes the composer's place. Not while the person is writing
+    /// in the composer.
+    Focus(gpui::FocusHandle),
+}
+
+/// Where an [`Asker`]'s asks go: the workspace, which carries out what
+/// `plugin`'s tree asked.
+pub type AskSink = Rc<dyn Fn(&'static str, Ask, &mut App)>;
+
+/// The way back to the workspace for the window's own parts of a
+/// plugin's tree: what they ask is carried out after the event that
+/// asked.
+#[derive(Clone)]
+pub struct Asker {
+    plugin: &'static str,
+    ask: AskSink,
+}
+
+impl Asker {
+    pub fn new(plugin: &'static str, ask: AskSink) -> Self {
+        Self { plugin, ask }
+    }
+
+    /// The plugin it asks for.
+    pub fn plugin(&self) -> &'static str {
+        self.plugin
+    }
+
+    pub fn request(&self, request: Request, cx: &mut App) {
+        (self.ask)(self.plugin, Ask::Plugin(request), cx);
+    }
+
+    /// Asks the plugin's host half for the picture or tree `key`.
+    pub fn fetch(&self, key: String, action: Value, cx: &mut App) {
+        self.request(Request::Fetch { key, action }, cx);
+    }
+
+    /// Sets `key` of the plugin's UI state, or forgets it.
+    pub fn set_ui(&self, key: String, value: Option<Value>, cx: &mut App) {
+        self.request(Request::Ui { key, value }, cx);
+    }
+
+    /// Draws the window again.
+    pub fn refresh(&self, cx: &mut App) {
+        self.request(Request::Refresh, cx);
+    }
+
+    /// Gives the keys to `focus` as the window draws next.
+    pub fn focus(&self, focus: &gpui::FocusHandle, cx: &mut App) {
+        (self.ask)(self.plugin, Ask::Focus(focus.clone()), cx);
+    }
+}
+
+/// Where a plugin's tree was drawn: the run and the page's parameters
+/// its actions are carried out with ([`Workspace::plugin_action`]).
+#[derive(Debug, Clone, Default)]
+pub struct Origin {
+    pub run: Option<tau_agent::tool::RunId>,
+    pub params: BTreeMap<String, String>,
+}
+
+impl Origin {
+    /// Where a contribution at `at` is drawn.
+    pub fn at(at: &impl PointCx) -> Self {
+        Self {
+            run: at.run().map(|run| run.id.clone()),
+            params: BTreeMap::new(),
+        }
+    }
 }
 
 impl Workspace {
     /// The handle `plugin`'s UI asks the workspace through.
     pub fn plugin_handle(&self, plugin: &'static str) -> Handle {
-        handle_for(plugin, self.plugin_requests.clone(), self.weak.clone())
+        handle_for(plugin, self.plugin_requests.clone())
+    }
+
+    /// The asker the window's own parts of `plugin`'s trees ask through.
+    pub(crate) fn plugin_asker(&self, plugin: &'static str) -> Asker {
+        let (queue, workspace) =
+            (self.plugin_requests.clone(), self.weak.clone());
+        Asker::new(
+            plugin,
+            Rc::new(move |plugin, ask, cx: &mut App| {
+                let workspace = workspace.clone();
+                match ask {
+                    Ask::Plugin(request) => {
+                        queue.borrow_mut().push((plugin, request));
+                        cx.defer(move |cx| {
+                            let _ = workspace.update(cx, |ws, cx| {
+                                ws.drain_plugin_requests(cx)
+                            });
+                        });
+                    }
+                    Ask::Focus(focus) => cx.defer(move |cx| {
+                        let _ = workspace.update(cx, |ws, cx| {
+                            ws.plugin_focus = Some(focus);
+                            cx.notify();
+                        });
+                    }),
+                }
+            }),
+        )
+    }
+
+    /// Sets `key` of `plugin`'s UI state, as its trees do: where the
+    /// demo and tests put a window.
+    pub fn set_plugin_ui(
+        &mut self,
+        plugin: &'static str,
+        key: impl Into<String>,
+        value: Option<Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = key.into();
+        self.plugin_request(plugin, Request::Ui { key, value }, cx);
     }
 
     /// Carries out what plugins' handles asked.
-    pub(crate) fn drain_plugin_requests(&mut self, cx: &mut Context<Self>) {
+    pub fn drain_plugin_requests(&mut self, cx: &mut Context<Self>) {
         let requests: Vec<_> =
             self.plugin_requests.borrow_mut().drain(..).collect();
         for (plugin, request) in requests {
@@ -263,9 +374,11 @@ impl Workspace {
             Request::Refresh => {}
             Request::OpenRun(run) => self.navigate(Route::Run(run), cx),
             Request::AskJevKey => self.ask_for_jev_key_later(cx),
-            Request::Focus(handle) => {
-                self.plugin_focus = Some(handle);
-                cx.notify();
+            Request::OpenUrl(url) => cx.open_url(&url),
+            Request::Reveal(path) => cx.reveal_path(&path),
+            Request::Open(path) => cx.open_with_system(&path),
+            Request::Copy(text) => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))
             }
             Request::Cancel(run) => cx.emit(WorkspaceEvent::Cancel { run }),
             Request::Note(text) => self.show_composer_note(text, cx),
@@ -300,8 +413,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         if let Some(erased) = registry().get(plugin) {
-            erased.reply(reply, &self.plugin_handle(erased.name()), cx);
+            erased.reply(reply, &self.plugin_handle(erased.name()));
         }
+        self.drain_plugin_requests(cx);
         cx.notify();
     }
 
@@ -312,7 +426,6 @@ impl Workspace {
         plugin: &dyn ErasedPlugin,
         run: Option<&RunView>,
         params: &BTreeMap<String, String>,
-        cx: &mut App,
         f: impl FnOnce(&dyn ErasedPlugin, Env<'_>) -> R,
     ) -> Option<R> {
         let name = plugin.name();
@@ -363,29 +476,6 @@ impl Workspace {
                     .map(RunView::cards)
                     .unwrap_or_default()
             };
-        let (tree_inputs, handle) =
-            (self.tree_inputs.clone(), self.plugin_handle(name));
-        let inputs = move |spec: tau_ui_plugin::tree::InputSpec,
-                           cx: &mut App| {
-            crate::tree_inputs::editor(&tree_inputs, &handle, spec, cx)
-        };
-        let (tree_widgets, widget_handle) =
-            (self.tree_widgets.clone(), self.plugin_handle(name));
-        let widgets = move |spec: tau_ui_plugin::tree::WidgetSpec,
-                            cx: &mut App| {
-            crate::tree_widgets::widget(&tree_widgets, &widget_handle, spec, cx)
-        };
-        let (fetched_trees, fetch_handle) =
-            (self.tree_widgets.clone(), self.plugin_handle(name));
-        let fetches = move |key: &str, fetch: &Value, cx: &mut App| {
-            crate::tree_widgets::tree(
-                &fetched_trees,
-                &fetch_handle,
-                key,
-                fetch,
-                cx,
-            )
-        };
         let env = Env {
             state: state.or(run.map(|_| &no_state)),
             data,
@@ -401,13 +491,144 @@ impl Workspace {
             cards: &cards,
             others: &self.catalog.plugin_data,
             ui_state: self.ui_state.of(name),
-            inputs: &inputs,
-            widgets: &widgets,
-            fetches: &fetches,
-            window: (f32::from(self.width), f32::from(self.height)),
-            cx,
         };
         Some(f(plugin, env))
+    }
+
+    /// Draws `node`, a tree `plugin` gave, named `id` apart from other
+    /// trees on screen (ADR 0045): with the plugin's UI state, the
+    /// window's inputs, widgets and fetched trees, and its clicks carried
+    /// out. A link opens its page, a section or a tab changes the UI
+    /// state, and the plugin's own actions go to its `on_action` with
+    /// the run and parameters of `origin`.
+    pub fn plugin_tree(
+        &self,
+        plugin: &'static str,
+        id: &str,
+        node: &tau_ui_plugin::tree::Node,
+        origin: Origin,
+        cx: &mut App,
+    ) -> AnyElement {
+        use tau_ui_plugin::tree::{Act, Draw};
+
+        let asker = self.plugin_asker(plugin);
+        let tree_inputs = self.tree_inputs.clone();
+        let inputs = {
+            let asker = asker.clone();
+            move |spec: tau_ui_plugin::tree::InputSpec, cx: &mut App| {
+                crate::tree_inputs::editor(&tree_inputs, &asker, spec, cx)
+            }
+        };
+        let tree_widgets = self.tree_widgets.clone();
+        let widgets = {
+            let (tree_widgets, asker) = (tree_widgets.clone(), asker.clone());
+            move |spec: tau_ui_plugin::tree::WidgetSpec, cx: &mut App| {
+                crate::tree_widgets::widget(&tree_widgets, &asker, spec, cx)
+            }
+        };
+        let fetches = move |key: &str, fetch: &Value, cx: &mut App| {
+            crate::tree_widgets::tree(&tree_widgets, &asker, key, fetch, cx)
+        };
+        let workspace = self.weak.clone();
+        let on_act = Rc::new(move |act: Act, cx: &mut App| {
+            let (workspace, origin) = (workspace.clone(), origin.clone());
+            cx.defer(move |cx| {
+                let _ = workspace.update(cx, |ws, cx| match act {
+                    Act::Navigate(link) => {
+                        ws.plugin_request(plugin, Request::Navigate(link), cx)
+                    }
+                    Act::Ui { key, value } => ws.plugin_request(
+                        plugin,
+                        Request::Ui { key, value },
+                        cx,
+                    ),
+                    Act::Plugin { action, args } => {
+                        ws.plugin_action(plugin, &action, &args, &origin, cx)
+                    }
+                });
+            });
+        });
+        let t = tau_ui_kit::theme::theme(cx).clone();
+        Draw::new(&t, id.to_owned())
+            .width(f32::from(self.screen_width()))
+            .window((f32::from(self.width), f32::from(self.height)))
+            .ui(self.ui_state.of(plugin))
+            .on_act(on_act)
+            .inputs(&inputs)
+            .widgets(&widgets)
+            .fetches(&fetches)
+            .draw(node, cx)
+    }
+
+    /// Carries out `plugin`'s own `action` from one of its trees, drawn
+    /// at `origin`: the plugin reads its values again, and what it asks
+    /// is carried out after.
+    pub fn plugin_action(
+        &mut self,
+        plugin: &str,
+        action: &str,
+        args: &Value,
+        origin: &Origin,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(erased) = registry().get(plugin) else {
+            return;
+        };
+        let run = origin
+            .run
+            .as_ref()
+            .and_then(|id| self.runs.iter().find(|run| &run.id == id))
+            .cloned();
+        self.with_plugin(
+            erased.as_ref(),
+            run.as_ref(),
+            &origin.params,
+            |plugin, env| plugin.on_action(action, args, env),
+        );
+        self.drain_plugin_requests(cx);
+        cx.notify();
+    }
+
+    /// What plugins contribute at `point`, drawn: each tree in order, by
+    /// each contribution's order, then the registry's.
+    pub fn drawn<Cx: PointCx>(
+        &self,
+        point: Point<Cx, tau_ui_plugin::tree::Node>,
+        at: &Cx,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        self.drawn_with(point, |_| Some(at), cx)
+    }
+
+    /// What `plugin` alone contributes at `point`, drawn.
+    pub fn drawn_of<Cx: PointCx>(
+        &self,
+        plugin: &str,
+        point: Point<Cx, tau_ui_plugin::tree::Node>,
+        at: &Cx,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        self.drawn_with(point, |name| (name == plugin).then_some(at), cx)
+    }
+
+    /// What plugins contribute at `point`, each with the context `at`
+    /// gives it, drawn in order.
+    pub fn drawn_with<'c, Cx: PointCx>(
+        &self,
+        point: Point<Cx, tau_ui_plugin::tree::Node>,
+        at: impl Fn(&str) -> Option<&'c Cx>,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        let found = self.contributions_named(point, &at);
+        found
+            .into_iter()
+            .enumerate()
+            .filter_map(|(n, (plugin, node))| {
+                let at = at(plugin)?;
+                let id = format!("{plugin}-{}-{}-{n}", point.name, at.key());
+                Some(self.plugin_tree(plugin, &id, &node, Origin::at(at), cx))
+            })
+            .collect()
     }
 
     /// What plugins contribute at `point`, in order: by each
@@ -416,9 +637,8 @@ impl Workspace {
         &self,
         point: Point<Cx, Out>,
         at: &Cx,
-        cx: &mut App,
     ) -> Vec<Out> {
-        self.contributions_with(point, |_| Some(at), cx)
+        self.contributions_with(point, |_| Some(at))
     }
 
     /// What `plugin` alone contributes at `point`: at one of its anchors.
@@ -427,13 +647,8 @@ impl Workspace {
         plugin: &str,
         point: Point<Cx, Out>,
         at: &Cx,
-        cx: &mut App,
     ) -> Vec<Out> {
-        self.contributions_with(
-            point,
-            |name| (name == plugin).then_some(at),
-            cx,
-        )
+        self.contributions_with(point, |name| (name == plugin).then_some(at))
     }
 
     /// What plugins contribute at `point`, each with the context `at`
@@ -442,9 +657,8 @@ impl Workspace {
         &self,
         point: Point<Cx, Out>,
         at: impl Fn(&str) -> Option<&'c Cx>,
-        cx: &mut App,
     ) -> Vec<Out> {
-        self.contributions_named(point, at, cx)
+        self.contributions_named(point, at)
             .into_iter()
             .map(|(_, out)| out)
             .collect()
@@ -456,16 +670,16 @@ impl Workspace {
         &self,
         point: Point<Cx, Out>,
         at: &Cx,
-        cx: &mut App,
     ) -> Vec<(&'static str, Out)> {
-        self.contributions_named(point, |_| Some(at), cx)
+        self.contributions_named(point, |_| Some(at))
     }
 
-    fn contributions_named<'c, Cx: PointCx, Out: 'static>(
+    /// What plugins contribute at `point`, in order, each with the plugin
+    /// that gave it and the context `at` gave it.
+    pub(crate) fn contributions_named<'c, Cx: PointCx, Out: 'static>(
         &self,
         point: Point<Cx, Out>,
         at: impl Fn(&str) -> Option<&'c Cx>,
-        cx: &mut App,
     ) -> Vec<(&'static str, Out)> {
         let empty = BTreeMap::new();
         let mut found: Vec<(i32, usize, &'static str, Out)> = Vec::new();
@@ -477,7 +691,7 @@ impl Workspace {
                 self.runs.iter().find(|run| run.id == info.id)
             });
             let outs = self
-                .with_plugin(plugin.as_ref(), run, &empty, cx, |plugin, env| {
+                .with_plugin(plugin.as_ref(), run, &empty, |plugin, env| {
                     plugin.contribute(point.name, at, env)
                 })
                 .unwrap_or_default();
@@ -510,14 +724,53 @@ impl Workspace {
         params: &BTreeMap<String, String>,
         cx: &mut App,
     ) -> Option<AnyElement> {
+        use gpui::{
+            InteractiveElement as _,
+            IntoElement as _,
+            ParentElement as _,
+            StatefulInteractiveElement as _,
+            Styled as _,
+        };
+        use tau_ui_kit::theme::sp;
+
         let erased = registry().get(plugin)?;
         let run = params.get("run").and_then(|id| {
             self.runs.iter().find(|run| &*run.id.0 == id.as_str())
         });
-        self.with_plugin(erased.as_ref(), run, params, cx, |plugin, env| {
-            plugin.draw_page(page, env)
-        })
-        .flatten()
+        let (tree, framed) = self
+            .with_plugin(erased.as_ref(), run, params, |plugin, env| {
+                plugin.draw_page(page, env)
+            })
+            .flatten()?;
+        let origin = Origin {
+            run: run.map(|run| run.id.clone()),
+            params: params.clone(),
+        };
+        let id = format!("{}-page-{page}", erased.name());
+        let drawn = self.plugin_tree(erased.name(), &id, &tree, origin, cx);
+        if !framed {
+            return Some(drawn);
+        }
+        // The interface frames the page: it scrolls, with a page's
+        // margins on the computer and the phone.
+        let compact = self.compact();
+        Some(
+            gpui::div()
+                .id(gpui::SharedString::from(format!("page-{page}")))
+                .flex_1()
+                .min_h(gpui::rems(0.))
+                .overflow_y_scroll()
+                .child(
+                    gpui::div()
+                        .flex()
+                        .flex_col()
+                        .gap(sp(4.5))
+                        .px(sp(if compact { 4. } else { 8. }))
+                        .py(sp(if compact { 4. } else { 6. }))
+                        .child(drawn),
+                )
+                .into_any_element(),
+        )
     }
 
     /// `plugin`'s settings pane, for `scope` (a repository, or none for
@@ -537,10 +790,19 @@ impl Workspace {
         if let Some(entry) = entry {
             params.insert(tau_ui_plugin::ENTRY.to_owned(), entry.to_owned());
         }
-        self.with_plugin(erased.as_ref(), None, &params, cx, |plugin, env| {
-            plugin.draw_settings(env)
-        })
-        .flatten()
+        let tree = self
+            .with_plugin(erased.as_ref(), None, &params, |plugin, env| {
+                plugin.draw_settings(env)
+            })
+            .flatten()?;
+        let id = format!(
+            "{}-settings-{}-{}",
+            erased.name(),
+            scope.unwrap_or_default(),
+            entry.unwrap_or_default()
+        );
+        let origin = Origin { run: None, params };
+        Some(self.plugin_tree(erased.name(), &id, &tree, origin, cx))
     }
 
     /// The title of `plugin`'s page `page`.
@@ -549,13 +811,12 @@ impl Workspace {
         plugin: &str,
         page: &str,
         params: &BTreeMap<String, String>,
-        cx: &mut App,
     ) -> Option<String> {
         let erased = registry().get(plugin)?;
         let run = params.get("run").and_then(|id| {
             self.runs.iter().find(|run| &*run.id.0 == id.as_str())
         });
-        self.with_plugin(erased.as_ref(), run, params, cx, |plugin, env| {
+        self.with_plugin(erased.as_ref(), run, params, |plugin, env| {
             plugin.page_title(page, env)
         })
         .flatten()
@@ -566,13 +827,9 @@ impl Workspace {
     pub fn run_statuses(
         &self,
         run: &RunView,
-        cx: &mut App,
     ) -> Vec<crate::view::PluginStatus> {
-        let from = self.contributions(
-            points::STATUS,
-            &points::AtRun { run: run.info() },
-            cx,
-        );
+        let from = self
+            .contributions(points::STATUS, &points::AtRun { run: run.info() });
         run.plugins
             .iter()
             .filter(|line| !from.iter().any(|status| status.name == line.name))
@@ -583,16 +840,9 @@ impl Workspace {
 
     /// `run`'s plan: the host's fields, with what plugins set (`PLAN`)
     /// in place of a field of the same name.
-    pub fn run_plan(
-        &self,
-        run: &RunView,
-        cx: &mut App,
-    ) -> Vec<crate::view::PlanField> {
-        let from = self.contributions(
-            points::PLAN,
-            &points::AtRun { run: run.info() },
-            cx,
-        );
+    pub fn run_plan(&self, run: &RunView) -> Vec<crate::view::PlanField> {
+        let from = self
+            .contributions(points::PLAN, &points::AtRun { run: run.info() });
         let mut plan = run.plan.clone();
         for field in from {
             match plan.iter_mut().find(|own| own.name == field.name) {
@@ -605,26 +855,17 @@ impl Workspace {
 
     /// Where the first context plugin steps in, as a share of `run`'s
     /// window.
-    pub fn context_trigger(&self, run: &RunView, cx: &mut App) -> Option<f32> {
+    pub fn context_trigger(&self, run: &RunView) -> Option<f32> {
         let from = self.contributions(
             points::CONTEXT_TRIGGER,
             &points::AtRun { run: run.info() },
-            cx,
         );
         from.into_iter().min_by(|a, b| a.total_cmp(b))
     }
 
     /// What plugins add to `run`'s row in the sidebar.
-    pub fn run_rows(
-        &self,
-        run: &RunView,
-        cx: &mut App,
-    ) -> Vec<tau_ui_plugin::RowNote> {
-        self.contributions(
-            points::RUN_ROW,
-            &points::AtRun { run: run.info() },
-            cx,
-        )
+    pub fn run_rows(&self, run: &RunView) -> Vec<tau_ui_plugin::RowNote> {
+        self.contributions(points::RUN_ROW, &points::AtRun { run: run.info() })
     }
 
     /// The repository the composer is in: the open run's, else the one
@@ -684,12 +925,12 @@ impl Workspace {
                 plugin.as_ref(),
                 run.as_ref(),
                 &params,
-                cx,
                 |plugin, env| {
                     plugin.run_command(name, args.trim(), repo.as_deref(), env)
                 },
             )
             .unwrap_or(false);
+        self.drain_plugin_requests(cx);
         cx.notify();
         ran
     }
@@ -712,9 +953,9 @@ impl Workspace {
             erased.as_ref(),
             None,
             &BTreeMap::new(),
-            cx,
             |plugin, env| plugin.press_key(key, &at, env),
         );
+        self.drain_plugin_requests(cx);
         cx.notify();
     }
 
@@ -729,13 +970,19 @@ impl Workspace {
     ) -> Option<AnyElement> {
         let erased = registry().get(plugin)?;
         let run = self.current().filter(|_| self.route != Route::NewRun);
-        self.with_plugin(
-            erased.as_ref(),
-            run,
-            &BTreeMap::new(),
-            cx,
-            |plugin, env| plugin.command_popover(command, args, env),
-        )
-        .flatten()
+        let tree = self
+            .with_plugin(
+                erased.as_ref(),
+                run,
+                &BTreeMap::new(),
+                |plugin, env| plugin.command_popover(command, args, env),
+            )
+            .flatten()?;
+        let origin = Origin {
+            run: run.map(|run| run.id.clone()),
+            params: BTreeMap::new(),
+        };
+        let id = format!("{}-popover-{command}", erased.name());
+        Some(self.plugin_tree(erased.name(), &id, &tree, origin, cx))
     }
 }

@@ -1060,15 +1060,15 @@ impl Tau {
         let run = pick(&tc, &runs);
         let goal = self.prompt();
         let device = self.device(who);
-        let handle = device
-            .workspace
-            .read_with(&device.cx, |ws, _| ws.plugin_handle(tau_goal::NAME));
         let record = tau_goal::Record::Set {
             goal,
             continuations: 1,
             budget: 1.0,
         };
-        device.cx.update(|_, cx| handle.record(&run, record, cx));
+        device.workspace.update(&mut device.cx, |ws, cx| {
+            ws.plugin_handle(tau_goal::NAME).record(&run, record);
+            ws.drain_plugin_requests(cx);
+        });
         device.cx.run_until_parked();
         self.after_action(who);
     }

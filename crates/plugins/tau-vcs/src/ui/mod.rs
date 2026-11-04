@@ -18,12 +18,10 @@ pub mod landed;
 pub mod log_card;
 pub mod status_card;
 
-use gpui::App;
 use serde_json::{Value, json};
 use tau_agent::tool::RunId;
 use tau_ui_plugin::{
     CallData,
-    Handle,
     Manifest,
     UiPlugin,
     ViewCx,
@@ -86,11 +84,6 @@ impl Card {
     pub fn pick_key(&self) -> String {
         pick_key(&self.run, &self.call_id)
     }
-
-    /// The tree ids of the card's parts, apart from other cards'.
-    fn id(&self, part: &str) -> String {
-        format!("vcs-{}-{}-{part}", self.run.0, self.call_id)
-    }
 }
 
 /// What a tool returned, when it returned and did not fail.
@@ -113,25 +106,6 @@ pub fn open_child(child: &RunId) -> Node {
         args: json!({ "run": &*child.0 }),
         kind: Kind::Secondary,
         icon: Some("sub-agent".into()),
-    }
-}
-
-/// What a card's buttons ask.
-fn on_action(handle: Handle) -> impl Fn(&str, &Value, &mut App) + 'static {
-    move |action, args, cx| match action {
-        SET => {
-            let Some(key) = args.get("key").and_then(Value::as_str) else {
-                return;
-            };
-            let value = args.get("value").filter(|value| !value.is_null());
-            handle.set_ui(key, value.cloned(), cx);
-        }
-        OPEN_RUN => {
-            if let Some(run) = args.get("run").and_then(Value::as_str) {
-                handle.open_run(&RunId(run.into()), cx);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -213,6 +187,30 @@ impl UiPlugin for VcsUi {
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new().contribute(points::CARD, card)
     }
+
+    /// What a card's buttons ask: a log's pick, or a sub-agent's chat.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        match action {
+            SET => {
+                let Some(key) = args.get("key").and_then(Value::as_str) else {
+                    return;
+                };
+                let value = args.get("value").filter(|value| !value.is_null());
+                view.handle.set_ui(key, value.cloned());
+            }
+            OPEN_RUN => {
+                if let Some(run) = args.get("run").and_then(Value::as_str) {
+                    view.handle.open_run(&RunId(run.into()));
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// A card of one of its tools.
@@ -227,25 +225,21 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
         .ui_value(&card.pick_key())
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let handle = view.handle.clone();
-    let mut draw = |part: &str, node: &Node| {
-        view.tree(&card.id(part), node, on_action(handle.clone()))
-    };
     match at.tool.as_str() {
         details::SPAWN => {
             let child = spawned(data)?;
             Some(CardView {
                 label: Some("started".into()),
-                body: Some(draw("body", &open_child(&child))),
+                body: Some(open_child(&child)),
                 ..CardView::default()
             })
         }
         details::COMMIT => {
             let commit = details(data).and_then(commit_card::Commit::parse)?;
             Some(CardView {
-                head: Some(draw("head", &commit_card::summary(&commit))),
+                head: Some(commit_card::summary(&commit)),
                 label: Some(commit.label()),
-                body: Some(draw("body", &commit_card::body(&card, &commit))),
+                body: Some(commit_card::body(&card, &commit)),
                 folds: true,
                 ..CardView::default()
             })
@@ -253,13 +247,10 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
         change_status::TOOL => {
             let status = details(data).and_then(ChangeStatus::parse)?;
             Some(CardView {
-                head: Some(draw(
-                    "head",
-                    &status_card::summary(&status, card.compact),
-                )),
+                head: Some(status_card::summary(&status, card.compact)),
                 label: Some(status.summary()),
                 edge: status_card::edge(&status),
-                body: Some(draw("body", &status_card::body(&card, &status))),
+                body: Some(status_card::body(&card, &status)),
                 folds: true,
                 ..CardView::default()
             })
@@ -278,9 +269,9 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
                 )
             };
             Some(CardView {
-                head: Some(draw("head", &head)),
+                head: Some(head),
                 label: Some(diff.stat()),
-                body: Some(draw("body", &body)),
+                body: Some(body),
                 folds: true,
                 ..CardView::default()
             })
@@ -290,7 +281,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
             let body = log_card::body(&card, &log, picked.as_deref());
             Some(CardView {
                 label: Some(log.summary()),
-                body: Some(draw("body", &body)),
+                body: Some(body),
                 folds: true,
                 ..CardView::default()
             })

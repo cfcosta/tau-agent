@@ -28,15 +28,10 @@ use crate::{
 
 /// The run's state in a line: its status and turn, and the model with
 /// its reasoning effort. Heads the panel.
-pub fn header(
-    ws: &Workspace,
-    run: &RunView,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
+pub fn header(ws: &Workspace, run: &RunView, t: &Theme) -> Div {
     let (color, label) = status_look(&run.status, t);
     let effort = ws
-        .run_plan(run, cx)
+        .run_plan(run)
         .into_iter()
         .find(|field| field.name == "reasoning")
         .map(|field| field.value.clone());
@@ -78,7 +73,7 @@ pub fn content(
     let body = div().flex().flex_col().gap(sp(5.5));
     let body = body.child(context(ws, run, t, cx));
     // What plugins add to the inspector.
-    let body = body.children(ws.contributions(
+    let body = body.children(ws.drawn(
         tau_ui_plugin::points::INSPECTOR,
         &tau_ui_plugin::points::AtRun { run: run.info() },
         cx,
@@ -95,9 +90,9 @@ fn context(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let trigger = ws.context_trigger(run, cx);
+    let trigger = ws.context_trigger(run);
     let context = &run.context;
-    let extras = ws.contributions(
+    let extras = ws.drawn(
         tau_ui_plugin::points::CONTEXT,
         &tau_ui_plugin::points::AtRun { run: run.info() },
         cx,
@@ -337,7 +332,7 @@ fn run_details(
         }
         _ => body,
     };
-    let fields = ws.run_plan(run, cx);
+    let fields = ws.run_plan(run);
     let shown = !fields.is_empty();
     let plan = fields.into_iter().map(|field| {
         let value = div()
@@ -426,7 +421,7 @@ fn plugins_section(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let statuses = ws.run_statuses(run, cx);
+    let statuses = ws.run_statuses(run);
     if statuses.is_empty() {
         return body;
     }

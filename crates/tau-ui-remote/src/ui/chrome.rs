@@ -476,7 +476,7 @@ fn agents_section(
             .when(active, |row| row.bg(t.raised))
             .when(!active, |row| row.hover(|style| style.bg(t.card)))
             .child(fold)
-            .child(tau_agents::ui::mark(&name, 18., t))
+            .child(agent_mark(&name, 18., t))
             .child(
                 div()
                     .flex_1()
@@ -654,8 +654,8 @@ fn repo_group(
     let name = rows.repo.name.clone();
     let menu = ws.repo_menu.as_deref() == Some(name.as_str());
     let hovered = menu || ws.hovered_repo.as_deref() == Some(name.as_str());
-    let need_you = ws.need_you(&name, cx);
-    let on_page = super::screens::repo::owner(ws, &ws.route, cx).as_deref()
+    let need_you = ws.need_you(&name);
+    let on_page = super::screens::repo::owner(ws, &ws.route).as_deref()
         == Some(name.as_str());
     let action = |id: &'static str, glyph: Option<Icon>, t: &Theme| {
         div()
@@ -923,10 +923,10 @@ fn run_row(
     let unread = ws.unread(run);
     let (hover_id, close_id, fold_id) =
         (run.id.clone(), run.id.clone(), run.id.clone());
-    let attention = ws.attention(run, cx);
+    let attention = ws.attention(run);
     let ended = matches!(attention, Attention::Landed | Attention::Dropped)
         || ws.has_ended(run);
-    let note = ws.run_rows(run, cx).into_iter().next();
+    let note = ws.run_rows(run).into_iter().next();
     let is_main = ws.is_main(&run.id);
     let unpushed = is_main
         .then(|| ws.main_repo(&run.id))
@@ -1155,7 +1155,7 @@ fn repo_menu(
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     // What plugins keep per repository: their entries, after tau's.
-    let plugins = ws.contributions(
+    let plugins = ws.drawn(
         tau_ui_plugin::points::REPO_MENU,
         &tau_ui_plugin::points::AtRepo {
             repo: name.to_owned(),
@@ -1260,7 +1260,7 @@ pub fn status_bar(
     cx: &mut Context<Workspace>,
 ) -> Option<Div> {
     let busy = !matches!(ws.catalog.project, ProjectStatus::Unknown);
-    let activity = ws.contributions(
+    let activity = ws.drawn(
         tau_ui_plugin::points::ACTIVITY,
         &tau_ui_plugin::points::AtApp,
         cx,
@@ -1462,7 +1462,7 @@ pub fn phone_header(
 ) -> Div {
     let title = match &ws.route {
         Route::Home => "Runs".to_owned(),
-        _ => ws.route_title(cx),
+        _ => ws.route_title(),
     };
     div()
         .h(rems(3.5))
@@ -1574,7 +1574,7 @@ fn phone_agents(
             .px(sp(4.))
             .chrome(Edge::Top, t)
             .cursor_pointer()
-            .child(tau_agents::ui::mark(&name, 26., t))
+            .child(agent_mark(&name, 26., t))
             .child(
                 div()
                     .flex_1()
@@ -1611,7 +1611,7 @@ fn phone_group(
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let name = rows.repo.name.clone();
-    let need_you = ws.need_you(&name, cx);
+    let need_you = ws.need_you(&name);
     let head = div()
         .id(SharedString::from(format!("phone-repo-{name}")))
         .flex()
@@ -1681,7 +1681,6 @@ fn phone_group(
     let entries = ws.contributions(
         tau_ui_plugin::points::SIDEBAR_REPO,
         &tau_ui_plugin::points::AtRepo { repo: name.clone() },
-        cx,
     );
     let mut chips = chips;
     for (n, entry) in entries.into_iter().enumerate() {
@@ -1756,7 +1755,7 @@ fn phone_run_row(
     let (color, label) = status_look(&run.status, t);
     let route = Route::Run(run.id.clone());
     let unread = ws.unread(run);
-    let attention = ws.attention(run, cx);
+    let attention = ws.attention(run);
     let meta = if run.status.is_live() {
         format!("{label} · turn {}", run.turn)
     } else {
@@ -1764,7 +1763,7 @@ fn phone_run_row(
     };
     // What plugins add to the row: where a goal stands, under the
     // title, and its count at the end.
-    let note = ws.run_rows(run, cx).into_iter().next();
+    let note = ws.run_rows(run).into_iter().next();
     let (meta, color) = match note
         .as_ref()
         .and_then(|note| Some((note.phone_line.clone()?, note.tone)))
@@ -1891,4 +1890,28 @@ pub fn phone_tab_bar(
                     cx.listener(move |ws, _, _, cx| ws.switch_tab(tab, cx)),
                 )
         }))
+}
+
+/// An agent's mark: its letter in a ring of its color, round where a
+/// repository's is square.
+fn agent_mark(name: &str, size: f32, t: &Theme) -> Div {
+    let letter = name
+        .chars()
+        .find(|c| c.is_alphanumeric())
+        .map_or("?".into(), |c| c.to_lowercase().to_string());
+    let color = t.mark(name);
+    div()
+        .size(rems(size / 16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(radius::FULL)
+        .border_1()
+        .border_color(color.opacity(0.7))
+        .bg(color.opacity(0.12))
+        .text_color(color)
+        .typeset(Type::MICRO.sized(size * 0.55))
+        .font_weight(weight::STRONG)
+        .child(letter)
 }

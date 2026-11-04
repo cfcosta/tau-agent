@@ -14,7 +14,7 @@ use super::SkillsUi;
 use crate::{Loaded, TOOL};
 
 /// The card of a call to `skill`.
-pub fn card(at: &AtCard, view: &mut ViewCx<'_, SkillsUi>) -> Option<CardView> {
+pub fn card(at: &AtCard, _view: &mut ViewCx<'_, SkillsUi>) -> Option<CardView> {
     if at.tool != TOOL {
         return None;
     }
@@ -54,12 +54,8 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, SkillsUi>) -> Option<CardView> {
             .chain(instructions.map(Node::text)),
         )
     });
-    let id = format!("skill-{}", at.call_id);
-    let head = view.tree(&format!("{id}-head"), &Node::row(head), |_, _, _| {});
-    let body =
-        body.map(|body| view.tree(&format!("{id}-body"), &body, |_, _, _| {}));
     Some(CardView {
-        head: Some(head),
+        head: Some(Node::row(head)),
         label: None,
         edge: failed.as_ref().map(|_| Edge::Danger),
         failed,

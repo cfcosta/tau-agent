@@ -229,7 +229,7 @@ pub fn observe(
     window: &Window,
     cx: &mut App,
 ) {
-    let stages = ws.setup_stages(cx);
+    let stages = ws.setup_stages();
     let frame = frame(ws, step, &stages);
     let composing = ws.first_task.read(cx).focus_handle(cx).is_focused(window);
     let clones: Vec<(String, u32, bool)> = ws
@@ -300,7 +300,7 @@ pub fn render(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let motion = &ws.setup_motion;
-    let stages = ws.setup_stages(cx);
+    let stages = ws.setup_stages();
     let body = match step {
         SetupStep::Welcome => welcome(ws, compact, t, cx),
         SetupStep::GitHub => github(ws, compact, t, cx),
@@ -2925,7 +2925,7 @@ fn plugin_step(
     let motion = &ws.setup_motion;
     let this = SetupStep::Plugin { plugin, step };
     let view = ws
-        .plugin_setup_steps(cx)
+        .plugin_setup_steps()
         .into_iter()
         .find_map(|(found, view)| (found == this).then_some(view));
     let skip = div()
@@ -3001,7 +3001,15 @@ fn plugin_step(
                     motion,
                     &format!("{plugin}-{step}"),
                     400,
-                    div().w_full().max_w(rems(STEP_WIDTH)).child(view.body),
+                    div().w_full().max_w(rems(STEP_WIDTH)).child(
+                        ws.plugin_tree(
+                            plugin,
+                            &format!("{plugin}-setup-{step}"),
+                            &view.body,
+                            crate::plugins::Origin::default(),
+                            cx,
+                        ),
+                    ),
                 ))
                 .children(reach.map(|reach| rise(motion, "reach", 600, reach)))
                 .child(rise(motion, "skip", 800, skip)),

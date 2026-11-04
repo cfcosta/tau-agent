@@ -9,7 +9,6 @@
 
 use std::collections::BTreeSet;
 
-use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_ui_plugin::{
@@ -68,15 +67,15 @@ pub struct Editor {
 
 /// What the host answered a prompt: its messages fill the composer; a
 /// failure says why and puts the command back to fix.
-pub(super) fn answered(handle: &Handle, reply: Reply, cx: &mut App) {
+pub(super) fn answered(handle: &Handle, reply: Reply) {
     match reply {
-        Reply::Prompt { text } => handle.composer(text, cx),
+        Reply::Prompt { text } => handle.composer(text),
         Reply::PromptFailed { error, command } => {
-            handle.alert("The prompt could not be had", error, cx);
-            handle.composer(command, cx);
+            handle.alert("The prompt could not be had", error);
+            handle.composer(command);
         }
         // The browser signs in; the host waits for it to come back.
-        Reply::SignIn { url, .. } => cx.open_url(&url),
+        Reply::SignIn { url, .. } => handle.open_url(url),
     }
 }
 
@@ -138,87 +137,76 @@ pub fn checked(
     })
 }
 
-/// What the page's buttons and switches do, through `handle`;
-/// `user_names` are the names a new server may not take.
-pub fn on_action(
-    handle: Handle,
-    user_names: BTreeSet<String>,
-) -> impl Fn(&str, &Value, &mut App) + 'static {
-    move |action, args, cx| {
-        let text = |key: &str| {
-            args.get(key).and_then(Value::as_str).map(str::to_owned)
-        };
-        match action {
-            ACT => {
-                if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
-                    handle.act(act, cx);
-                }
+/// What the page's buttons and switches do, in `view`: a new server
+/// may not take a name of the user's file, as the page shows them now.
+pub fn on_action(action: &str, args: &Value, view: &mut ViewCx<'_, McpUi>) {
+    let handle = &view.handle;
+    let text =
+        |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
+    match action {
+        ACT => {
+            if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
+                handle.act(act);
             }
-            ADD => open(&handle, Editor::default(), String::new(), cx),
-            EDIT => {
-                let entry = args.get("entry").unwrap_or(&Value::Null);
-                let entry =
-                    serde_json::to_string_pretty(entry).unwrap_or_default();
-                let editor = Editor {
-                    editing: text("name"),
-                    problem: None,
-                };
-                open(&handle, editor, entry, cx);
-            }
-            CANCEL => {
-                handle.set_ui(EDITOR, None, cx);
-                handle.set_ui(REMOVING, None, cx);
-            }
-            SAVE => {
-                let editing = text("editing");
-                match checked(
-                    editing.as_deref(),
-                    &text("name").unwrap_or_default(),
-                    &text("entry").unwrap_or_default(),
-                    &user_names,
-                ) {
-                    Ok(act) => {
-                        handle.act(act, cx);
-                        handle.set_ui(EDITOR, None, cx);
-                    }
-                    Err(problem) => {
-                        let editor = Editor {
-                            editing,
-                            problem: Some(problem),
-                        };
-                        handle.set_ui(
-                            EDITOR,
-                            serde_json::to_value(editor).ok(),
-                            cx,
-                        );
-                    }
-                }
-            }
-            REMOVE => {
-                let Some(name) = text("name") else {
-                    return;
-                };
-                if args.get("confirmed").and_then(Value::as_bool) == Some(true)
-                {
-                    handle.set_ui(REMOVING, None, cx);
-                    handle.act(Act::Remove { name }, cx);
-                } else {
-                    handle.set_ui(REMOVING, Some(Value::String(name)), cx);
-                }
-            }
-            _ => {}
         }
+        ADD => open(handle, Editor::default(), String::new()),
+        EDIT => {
+            let entry = args.get("entry").unwrap_or(&Value::Null);
+            let entry = serde_json::to_string_pretty(entry).unwrap_or_default();
+            let editor = Editor {
+                editing: text("name"),
+                problem: None,
+            };
+            open(handle, editor, entry);
+        }
+        CANCEL => {
+            handle.set_ui(EDITOR, None);
+            handle.set_ui(REMOVING, None);
+        }
+        SAVE => {
+            let editing = text("editing");
+            let (_, servers) = servers_of(view);
+            match checked(
+                editing.as_deref(),
+                &text("name").unwrap_or_default(),
+                &text("entry").unwrap_or_default(),
+                &servers.user_names,
+            ) {
+                Ok(act) => {
+                    handle.act(act);
+                    handle.set_ui(EDITOR, None);
+                }
+                Err(problem) => {
+                    let editor = Editor {
+                        editing,
+                        problem: Some(problem),
+                    };
+                    handle.set_ui(EDITOR, serde_json::to_value(editor).ok());
+                }
+            }
+        }
+        REMOVE => {
+            let Some(name) = text("name") else {
+                return;
+            };
+            if args.get("confirmed").and_then(Value::as_bool) == Some(true) {
+                handle.set_ui(REMOVING, None);
+                handle.act(Act::Remove { name });
+            } else {
+                handle.set_ui(REMOVING, Some(Value::String(name)));
+            }
+        }
+        _ => {}
     }
 }
 
 /// Opens `editor`, its name empty and its entry `entry`.
-fn open(handle: &Handle, editor: Editor, entry: String, cx: &mut App) {
-    handle.set_ui(EDITOR, serde_json::to_value(editor).ok(), cx);
-    handle.set_ui(draft_key(NAME_INPUT), None, cx);
+fn open(handle: &Handle, editor: Editor, entry: String) {
+    handle.set_ui(EDITOR, serde_json::to_value(editor).ok());
+    handle.set_ui(draft_key(NAME_INPUT), None);
     handle.set_ui(
         draft_key(ENTRY_INPUT),
         (!entry.is_empty()).then_some(Value::String(entry)),
-        cx,
     );
 }
 
@@ -246,25 +234,19 @@ pub const CHIPS: usize = 12;
 /// The page: what the servers are and what waits on the user, the
 /// editor while open, the repository servers waiting for approval,
 /// entries that were skipped, and each server with its tools.
-pub fn render(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
-    draw(view, "mcp-servers")
+pub fn render(view: &mut ViewCx<'_, McpUi>) -> Node {
+    draw(view)
 }
 
 /// Its settings pane: the servers, everywhere or in the repository in
 /// scope, as the page has them, inside the host's pane.
-pub fn settings_pane(view: &mut ViewCx<'_, McpUi>) -> AnyElement {
-    draw(view, "mcp-settings")
+pub fn settings_pane(view: &mut ViewCx<'_, McpUi>) -> Node {
+    draw(view)
 }
 
-fn draw(view: &mut ViewCx<'_, McpUi>, id: &str) -> AnyElement {
-    let (repo, servers) = {
-        let (repo, servers) = servers_of(view);
-        (repo, servers.clone())
-    };
-    let held = Held::of(view);
-    let tree = tree(repo.as_deref(), &servers, &held, view.compact);
-    let on = on_action(view.handle.clone(), servers.user_names.clone());
-    view.tree(id, &tree, on)
+fn draw(view: &ViewCx<'_, McpUi>) -> Node {
+    let (repo, servers) = servers_of(view);
+    tree(repo.as_deref(), servers, &Held::of(view), view.compact)
 }
 
 /// The page's tree, for `repo`'s servers or the user's alone, on a

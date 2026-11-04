@@ -17,7 +17,6 @@ host = ["dep:anyhow", "dep:async-trait", "dep:libc", "dep:tau-agents", "dep:toki
 [dependencies]
 anyhow = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
-gpui = { package = "gpui-pre", version = "=0.3.7" }
 # The host's offset from UTC, for times in its local time.
 libc = { workspace = true, optional = true }
 serde.workspace = true

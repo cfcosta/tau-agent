@@ -1438,17 +1438,17 @@ impl Workspace {
 
     /// The current screen's name, for the title bar and the phone's
     /// header: a plugin's page names itself.
-    pub(crate) fn route_title(&self, cx: &mut App) -> String {
+    pub(crate) fn route_title(&self) -> String {
         match &self.route {
             Route::Plugin {
                 plugin,
                 page,
                 params,
             } => self
-                .plugin_page_title(plugin, page, params, cx)
+                .plugin_page_title(plugin, page, params)
                 .unwrap_or_else(|| page.clone()),
             Route::Setup(step @ SetupStep::Plugin { .. }) => self
-                .plugin_setup_steps(cx)
+                .plugin_setup_steps()
                 .into_iter()
                 .find(|(found, _)| found == step)
                 .map_or_else(
@@ -1842,35 +1842,38 @@ impl Workspace {
         cx.notify();
     }
 
-    /// What a plugin shows in the current run's pane, when one does. The
-    /// pane opens when it has something new since the run was last
-    /// drawn; a run drawn for the first time with something there keeps
-    /// it closed.
+    /// What a plugin shows in the current run's pane, when one does,
+    /// drawn. The pane opens when it has something new since the run was
+    /// last drawn; a run drawn for the first time with something there
+    /// keeps it closed.
     pub(super) fn run_pane(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> Option<tau_ui_plugin::points::PaneView> {
+    ) -> Option<DrawnPane> {
         let run = self
             .current()
             .filter(|_| matches!(self.route, Route::Home | Route::Run(_)))?;
         let id = run.id.clone();
+        let at = tau_ui_plugin::points::AtRun { run: run.info() };
         let pane = self
-            .contributions(
-                tau_ui_plugin::points::PANE,
-                &tau_ui_plugin::points::AtRun { run: run.info() },
-                cx,
-            )
+            .contributions_by(tau_ui_plugin::points::PANE, &at)
             .into_iter()
             .next();
-        let fresh = pane.as_ref().map_or(0, |pane| pane.fresh);
+        let fresh = pane.as_ref().map_or(0, |(_, pane)| pane.fresh);
         if self
             .pane_seen
             .insert(id.clone(), fresh)
             .is_some_and(|seen| fresh > seen)
         {
-            self.pane_open.insert(id);
+            self.pane_open.insert(id.clone());
         }
-        pane
+        let (plugin, pane) = pane?;
+        let tree = format!("{plugin}-pane-{}", id.0);
+        let origin = crate::plugins::Origin::at(&at);
+        Some(DrawnPane {
+            title: pane.title,
+            body: self.plugin_tree(plugin, &tree, &pane.body, origin, cx),
+        })
     }
 
     /// Whether `run` can be forked at all. Runs nest one level (ADR
@@ -2418,4 +2421,11 @@ pub enum LandingState {
     ConfirmDrop,
     /// Dropping now.
     Dropping,
+}
+
+/// A plugin's pane of the run in view, drawn: what its bar calls it, and
+/// what it shows.
+pub(crate) struct DrawnPane {
+    pub title: String,
+    pub body: gpui::AnyElement,
 }

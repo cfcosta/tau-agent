@@ -1,7 +1,6 @@
 //! tau-watcher's settings (ADR 0029): whether it is on, and the model
 //! its side requests go to.
 
-use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ai::model::{PLAN_FAMILIES, family_version, plan_models};
@@ -50,10 +49,8 @@ impl Settings {
 }
 
 /// Its settings pane: the switch, and the model.
-pub fn pane(view: &mut ViewCx<'_, WatcherUi>) -> AnyElement {
+pub fn pane(view: &mut ViewCx<'_, WatcherUi>) -> Node {
     let settings = view.settings.clone();
-    let scope = view.scope().map(str::to_owned);
-    let handle = view.handle.clone();
     let models = std::iter::once((None, "Chat's"))
         .chain(PLAN_FAMILIES.iter().map(|f| (Some(*f), *f)))
         .map(|(family, label)| Node::Button {
@@ -67,7 +64,7 @@ pub fn pane(view: &mut ViewCx<'_, WatcherUi>) -> AnyElement {
             },
             icon: None,
         });
-    let pane = Node::stack([
+    Node::stack([
         Node::Card {
             children: vec![
                 Node::Switch {
@@ -96,24 +93,28 @@ pub fn pane(view: &mut ViewCx<'_, WatcherUi>) -> AnyElement {
         Node::Mono {
             text: settings.runs_as(),
         },
-    ]);
-    view.tree("watcher-settings", &pane, move |action, args, cx| {
-        let next = match action {
-            ENABLED => Settings {
-                enabled: !settings.enabled,
-                ..settings.clone()
-            },
-            MODEL => Settings {
-                family: args.as_str().map(str::to_owned),
-                ..settings.clone()
-            },
-            _ => return,
-        };
-        handle.save_settings_in(scope.as_deref(), &next, cx);
-    })
+    ])
+}
+
+/// The pane's switch and model buttons, in the scope it shows: the
+/// settings are read again when clicked.
+pub fn on_action(action: &str, args: &Value, view: &mut ViewCx<'_, WatcherUi>) {
+    let settings = view.settings.clone();
+    let next = match action {
+        ENABLED => Settings {
+            enabled: !settings.enabled,
+            ..settings
+        },
+        MODEL => Settings {
+            family: args.as_str().map(str::to_owned),
+            ..settings
+        },
+        _ => return,
+    };
+    view.save_settings(&next);
 }
 
 /// The pane's actions: switch the watcher, and pick the family its
 /// arguments name (none for the chat's own model).
-const ENABLED: &str = "enabled";
-const MODEL: &str = "model";
+pub const ENABLED: &str = "enabled";
+pub const MODEL: &str = "model";

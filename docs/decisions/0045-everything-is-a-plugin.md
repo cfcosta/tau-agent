@@ -191,8 +191,11 @@ not every plugin).
 - **Actions.** A button, a link, a submit or a key names an action:
   either a kernel request (`navigate`, `send`, `steer`, `composer`,
   `alert`, `open_run`, `cancel`, `focus`, `record`) or the plugin's own
-  (`act`, answered by `reply`). On the phone an action travels to the
-  host.
+  (`act`, answered by `reply`). The kernel hands a plugin's own action
+  to `UiPlugin::on_action`, with its arguments and the plugin's view
+  read again where the tree was drawn, and carries out what it asks
+  through its handle after it returns. On the phone an action travels
+  to the host.
 - **UI state is the kernel's, and it is data.** Which section is open,
   the chosen tab, a draft in a text input, a selection, and the page
   open are kept by the kernel as JSON, keyed by the plugin, the point

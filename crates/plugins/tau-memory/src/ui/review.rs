@@ -7,7 +7,6 @@
 //! data and asks its host half, so it works on a phone too. A view tree
 //! (ADR 0045), in the frame the interface gives a page.
 
-use gpui::AnyElement;
 use serde_json::Value;
 use tau_ui_plugin::{
     Link,
@@ -18,11 +17,10 @@ use tau_ui_plugin::{
 use super::{
     Do,
     MemoryUi,
+    REVIEW,
     REVIEW_SEARCH,
     USER,
-    button,
     icon,
-    on_do,
     page::kind_tone,
     review_link,
 };
@@ -81,6 +79,11 @@ impl Tab {
 /// The page's title.
 pub fn title(_view: &mut ViewCx<'_, MemoryUi>) -> String {
     "Notes to keep".to_owned()
+}
+
+/// A button of the page's.
+fn button(label: impl Into<String>, kind: Kind, what: &Do) -> Node {
+    super::button(REVIEW, label, kind, what)
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {
@@ -172,7 +175,7 @@ pub fn summary(imports: &Imports) -> Option<String> {
 }
 
 /// The page.
-pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
+pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> Node {
     let tab = Tab::of(view);
     let query = view
         .ui_value(&draft_key(REVIEW_SEARCH))
@@ -181,9 +184,7 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
     let kept: Option<Kept> = view
         .ui_value(super::KEPT)
         .and_then(|kept| serde_json::from_value(kept.clone()).ok());
-    let tree = tree(&view.data.imports, &tab, query, kept.as_ref());
-    let handle = view.handle.clone();
-    view.tree("memory-review", &tree, on_do(handle, None))
+    tree(&view.data.imports, &tab, query, kept.as_ref())
 }
 
 /// The page's tree: the proposals of `tab` that match `query`, and what
@@ -430,7 +431,7 @@ fn row(pending: &Pending) -> Vec<Node> {
             label: pending.title.clone(),
             detail: Some(detail),
             on: pending.keep,
-            action: super::DO.into(),
+            action: REVIEW.into(),
             args: Do::Act {
                 act: Act::Tick {
                     id: pending.id.clone(),
@@ -475,7 +476,7 @@ fn foot(shown: &[&Pending]) -> Node {
     row.push(if ticked.is_empty() {
         Node::Button {
             label,
-            action: super::DO.into(),
+            action: REVIEW.into(),
             args: Value::Null,
             kind: Kind::Secondary,
             icon: None,

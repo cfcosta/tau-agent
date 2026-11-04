@@ -36,10 +36,8 @@ impl UiPlugin for Keys {
         let press = |key: &'static str| {
             move |at: &tau_ui_plugin::KeyAt,
                   view: &mut tau_ui_plugin::ViewCx<'_, Keys>| {
-                view.handle.act(
-                    serde_json::json!({ "key": key, "repo": at.repo }),
-                    view.cx,
-                );
+                view.handle
+                    .act(serde_json::json!({ "key": key, "repo": at.repo }));
             }
         };
         Manifest::new()

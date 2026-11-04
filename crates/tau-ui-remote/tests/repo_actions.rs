@@ -5,20 +5,14 @@
 
 use std::{cell::RefCell, rc::Rc, sync::Once};
 
-use gpui::{
-    AnyElement,
-    InteractiveElement as _,
-    IntoElement as _,
-    Modifiers,
-    ParentElement as _,
-    StatefulInteractiveElement as _,
-    TestAppContext,
-    VisualTestContext,
-    div,
-    size,
+use gpui::{Modifiers, TestAppContext, VisualTestContext, size};
+use tau_ui_plugin::{
+    Manifest,
+    UiPlugin,
+    ViewCx,
+    points,
+    tree::{Kind, Node},
 };
-use tau_ui_kit::components::{ButtonKind, button};
-use tau_ui_plugin::{Manifest, UiPlugin, ViewCx, points};
 use tau_ui_remote::{
     Workspace,
     catalog::{Catalog, Repo},
@@ -46,23 +40,28 @@ impl UiPlugin for Tidy {
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new().contribute(points::REPO_ACTIONS, action)
     }
+
+    /// Tidy asks the host to tidy the repository the page is about.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &serde_json::Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if action == "tidy" {
+            view.handle.act(args.clone());
+        }
+    }
 }
 
-fn action(
-    at: &points::AtRepo,
-    view: &mut ViewCx<'_, Tidy>,
-) -> Option<AnyElement> {
-    let (handle, repo) = (view.handle.clone(), at.repo.clone());
-    Some(
-        div()
-            .id("tidy-action")
-            .debug_selector(|| "tidy-action".to_owned())
-            .child(button("Tidy", ButtonKind::Secondary, view.theme()))
-            .on_click(move |_, _, cx| {
-                handle.act(serde_json::json!({ "tidy": repo }), cx)
-            })
-            .into_any_element(),
-    )
+fn action(at: &points::AtRepo, _: &mut ViewCx<'_, Tidy>) -> Option<Node> {
+    Some(Node::Button {
+        label: "Tidy".into(),
+        action: "tidy".into(),
+        args: serde_json::json!({ "tidy": at.repo }),
+        kind: Kind::Secondary,
+        icon: None,
+    })
 }
 
 /// The app's plugins and the one above: a process has one registry.
@@ -96,12 +95,12 @@ fn a_plugin_s_action_is_drawn_on_the_repository_page_and_does_its_work(
     });
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.simulate_resize(size(gpui::px(1200.), gpui::px(800.)));
-    assert!(cx.debug_bounds("tidy-action").is_none(), "not on Home");
+    assert!(cx.debug_bounds("button:Tidy").is_none(), "not on Home");
 
     workspace
         .update(&mut cx, |ws, cx| ws.navigate(Route::Repo(REPO.into()), cx));
     cx.run_until_parked();
-    let action = cx.debug_bounds("tidy-action").expect("in the header");
+    let action = cx.debug_bounds("button:Tidy").expect("in the header");
     cx.simulate_click(action.center(), Modifiers::none());
     cx.run_until_parked();
     assert!(

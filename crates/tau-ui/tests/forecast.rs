@@ -163,12 +163,9 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
             conflicts: Vec::new()
         })
     );
-    workspace.update(&mut cx, |ws, cx| {
+    workspace.update(&mut cx, |ws, _| {
         let view = ws.run(&one).unwrap().clone();
-        assert_eq!(
-            ws.attention(&view, cx),
-            Attention::ReadyToLand { changes: 1 }
-        );
+        assert_eq!(ws.attention(&view), Attention::ReadyToLand { changes: 1 });
     });
 
     // The second changes the same line, and lands first: main moves,
@@ -196,16 +193,16 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
             conflicts: vec!["README.md".into()]
         })
     );
-    workspace.update(&mut cx, |ws, cx| {
+    workspace.update(&mut cx, |ws, _| {
         let view = ws.run(&one).unwrap().clone();
         assert_eq!(
-            ws.attention(&view, cx),
+            ws.attention(&view),
             Attention::WouldConflict {
                 files: vec!["README.md".into()]
             }
         );
         // The repository counts the one chat that needs the person.
-        assert_eq!(ws.need_you("hello", cx), 1);
+        assert_eq!(ws.need_you("hello"), 1);
     });
     // Forecasting changed nothing: main has the second chat's line.
     let trunk = project.blocking().trunk().unwrap();

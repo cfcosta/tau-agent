@@ -222,7 +222,7 @@ pub fn render(
         .child(heading("Defaults", t))
         .child(ui::card(t).children(defaults))
         // What plugins add to the screen: their settings.
-        .children(ws.contributions(
+        .children(ws.drawn(
             tau_ui_plugin::points::MODELS,
             &tau_ui_plugin::points::AtApp,
             cx,

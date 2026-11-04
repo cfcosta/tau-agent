@@ -3,7 +3,6 @@
 //! Plugins screen, and its line in a run's plugin list. Its rewrites
 //! show as the run's, with what they saved.
 
-use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
@@ -106,14 +105,25 @@ impl UiPlugin for TreeCompactionUi {
             })
             .settings(settings_pane)
     }
+
+    /// The pane's switch turns the tree on or off, in the scope it shows.
+    fn on_action(
+        &self,
+        action: &str,
+        _args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if action == ON {
+            let on = !view.settings.on;
+            view.save_settings(&Settings { on });
+        }
+    }
 }
 
 /// Its settings pane (ADR 0029): the switch.
-fn settings_pane(view: &mut ViewCx<'_, TreeCompactionUi>) -> AnyElement {
+fn settings_pane(view: &mut ViewCx<'_, TreeCompactionUi>) -> Node {
     let settings = *view.settings;
-    let scope = view.scope().map(str::to_owned);
-    let handle = view.handle.clone();
-    let pane = Node::Card {
+    Node::Card {
         children: vec![Node::Switch {
             label: "Compact into a tree".into(),
             detail: Some(
@@ -126,13 +136,7 @@ fn settings_pane(view: &mut ViewCx<'_, TreeCompactionUi>) -> AnyElement {
             action: ON.into(),
             args: Value::Null,
         }],
-    };
-    view.tree("tree-compaction-settings", &pane, move |action, _, cx| {
-        if action == ON {
-            let on = !settings.on;
-            handle.save_settings_in(scope.as_deref(), &Settings { on }, cx);
-        }
-    })
+    }
 }
 
 /// The pane's one action: switch the tree on or off.

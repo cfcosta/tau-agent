@@ -11,26 +11,14 @@ use std::{
     sync::{Mutex, Once},
 };
 
-use gpui::{
-    AnyElement,
-    Entity,
-    InteractiveElement as _,
-    IntoElement as _,
-    Modifiers,
-    ParentElement as _,
-    StatefulInteractiveElement as _,
-    TestAppContext,
-    VisualTestContext,
-    div,
-    size,
-};
-use tau_ui_kit::components::{ButtonKind, button};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, size};
 use tau_ui_plugin::{
     Manifest,
     PluginValue,
     UiPlugin,
     ViewCx,
     points::{self, AtSetup, SetupClone, SetupRepo, SetupView},
+    tree::{Kind, Node},
 };
 use tau_ui_remote::{
     Workspace,
@@ -80,6 +68,18 @@ impl UiPlugin for Stepper {
             .contribute(points::SETUP, step)
             .reads(&["~/.stepper"])
     }
+
+    /// Its one button ends the step.
+    fn on_action(
+        &self,
+        action: &str,
+        _: &serde_json::Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if action == "done" {
+            view.handle.setup_done();
+        }
+    }
 }
 
 fn step(at: &AtSetup, view: &mut ViewCx<'_, Stepper>) -> Option<SetupView> {
@@ -87,13 +87,13 @@ fn step(at: &AtSetup, view: &mut ViewCx<'_, Stepper>) -> Option<SetupView> {
         return None;
     }
     *SEEN.lock().unwrap() = at.repos.clone();
-    let handle = view.handle.clone();
-    let body: AnyElement = div()
-        .id("stepper-done")
-        .debug_selector(|| "stepper-done".to_owned())
-        .child(button("Bring them", ButtonKind::Primary, view.theme()))
-        .on_click(move |_, _, cx| handle.setup_done(cx))
-        .into_any_element();
+    let body = Node::Button {
+        label: "Bring them".into(),
+        action: "done".into(),
+        args: serde_json::Value::Null,
+        kind: Kind::Primary,
+        icon: None,
+    };
     Some(SetupView {
         step: "pick",
         title: "Stepper".into(),
@@ -167,8 +167,8 @@ fn stage_names(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Vec<String> {
-    workspace.update(cx, |ws, cx| {
-        ws.setup_stages(cx)
+    workspace.update(cx, |ws, _| {
+        ws.setup_stages()
             .into_iter()
             .map(|stage| stage.name)
             .collect()
@@ -231,7 +231,7 @@ fn a_plugin_s_step_follows_the_repositories_and_ends_when_it_says(
     cx.run_until_parked();
     assert!(cx.debug_bounds("setup-reach").is_some());
 
-    click("stepper-done", &mut cx);
+    click("button:Bring them", &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Ready));
     assert_eq!(finished(&events), [picked]);
 
@@ -248,7 +248,7 @@ fn a_plugin_s_step_follows_the_repositories_and_ends_when_it_says(
             cx,
         )
     });
-    click("stepper-done", &mut cx);
+    click("button:Bring them", &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Ready));
     assert_eq!(finished(&events).len(), 1, "said once");
     assert_eq!(
@@ -303,7 +303,7 @@ fn skipping_github_still_reaches_the_plugin_s_step(cx: &mut TestAppContext) {
         ws.continue_from_model(cx);
     });
     assert_eq!(route(&workspace, &mut cx), Route::Setup(STEP));
-    click("stepper-done", &mut cx);
+    click("button:Bring them", &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::NewRun);
     assert_eq!(finished(&events), [Vec::<SetupRepo>::new()]);
 }

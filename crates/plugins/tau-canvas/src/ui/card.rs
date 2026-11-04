@@ -10,7 +10,7 @@ use tau_ui_plugin::{
     tree::{Kind, Node},
 };
 
-use super::{CanvasUi, OPEN, Pick, image, on_action};
+use super::{CanvasUi, OPEN, Pick, image};
 use crate::{Content, READ, TOOLS, words};
 
 /// How tall an image's thumbnail is.
@@ -29,20 +29,14 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, CanvasUi>) -> Option<CardView> {
         result.text.lines().next().unwrap_or_default().to_owned()
     });
     let item_arg = at.data.args.get("item").and_then(|item| item.as_u64());
-    let head_id = format!("canvas-card-head-{}", at.call_id);
-    let head = |view: &mut ViewCx<'_, CanvasUi>, text: String| {
-        Some(view.tree(&head_id, &Node::Mono { text }, |_, _, _| {}))
-    };
+    let head = |text: String| Some(Node::Mono { text });
     // A read makes no revision: its card says what it read.
     if at.tool == READ {
         return Some(CardView {
-            head: head(
-                view,
-                match item_arg {
-                    Some(item) => format!("canvas · read item {item}"),
-                    None => "canvas · read".to_owned(),
-                },
-            ),
+            head: head(match item_arg {
+                Some(item) => format!("canvas · read item {item}"),
+                None => "canvas · read".to_owned(),
+            }),
             edge: failed.as_ref().map(|_| Tone::Danger),
             failed,
             ..CardView::default()
@@ -61,17 +55,19 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, CanvasUi>) -> Option<CardView> {
             .and_then(|title| title.as_str())
             .unwrap_or_default();
         return Some(CardView {
-            head: head(view, format!("canvas · {title}")),
+            head: head(format!("canvas · {title}")),
             edge: failed.as_ref().map(|_| Tone::Danger),
             failed,
             ..CardView::default()
         });
     };
     let content = &item.revisions[revision].content;
-    let head = head(
-        view,
-        format!("{} {} · {}", item.kind().label(), item.id, item.title),
-    );
+    let head = head(format!(
+        "{} {} · {}",
+        item.kind().label(),
+        item.id,
+        item.title
+    ));
     let label = match content {
         Content::Image { image, .. } => image.describe(),
         Content::Document { text } => format!(
@@ -92,18 +88,11 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, CanvasUi>) -> Option<CardView> {
         kind: Kind::Secondary,
         icon: None,
     };
-    let handle = view.handle.clone();
-    let act = on_action(handle, at.run.id.clone());
-    let id = format!("canvas-card-{}", at.call_id);
     let body = match content {
-        Content::Image { image: shown, .. } => view.tree(
-            &id,
-            &Node::stack([image(&at.run.repo, shown, THUMBNAIL), open]),
-            act,
-        ),
-        Content::Document { text } => {
-            view.tree(&id, &Node::stack([excerpt(text), open]), act)
+        Content::Image { image: shown, .. } => {
+            Node::stack([image(&at.run.repo, shown, THUMBNAIL), open])
         }
+        Content::Document { text } => Node::stack([excerpt(text), open]),
     };
     Some(CardView {
         head,

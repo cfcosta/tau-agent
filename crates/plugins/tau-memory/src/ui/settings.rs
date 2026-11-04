@@ -4,7 +4,6 @@
 //! reasons. Search runs locally and needs none. Its pane is a view
 //! tree (ADR 0045).
 
-use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use tau_ai::{
     model::{PLAN_FAMILIES, family_version, plan_models},
@@ -15,7 +14,7 @@ use tau_ui_plugin::{
     tree::{Kind, Node},
 };
 
-use super::{DO, Do, MemoryUi, button, on_do};
+use super::{Do, MemoryUi, SETTINGS, button};
 
 /// The family memory writes with unless the user picks another: the
 /// newest of it on the plan.
@@ -95,12 +94,10 @@ impl Settings {
 }
 
 /// Its settings pane: the family, the effort, and the switch to write
-/// with the chat's model instead.
-pub fn pane(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
-    let tree = pane_tree(view.settings);
-    let handle = view.handle.clone();
-    let scope = view.scope().map(str::to_owned);
-    view.tree("memory-settings", &tree, on_do(handle, scope))
+/// with the chat's model instead. Its choices are saved in the scope the
+/// pane shows.
+pub fn pane(view: &mut ViewCx<'_, MemoryUi>) -> Node {
+    pane_tree(view.settings)
 }
 
 /// The pane's tree for `settings`: each control saves the settings it
@@ -112,12 +109,13 @@ pub fn pane_tree(settings: &Settings) -> Node {
             label: label.into(),
             detail: Some(detail.into()),
             on,
-            action: DO.into(),
+            action: SETTINGS.into(),
             args: save(next).args(),
         };
     // One choice of a row of them: primary when it is the setting.
     let choice = |label: &str, on: bool, next: Settings| {
         button(
+            SETTINGS,
             label,
             if on { Kind::Primary } else { Kind::Secondary },
             &save(next),

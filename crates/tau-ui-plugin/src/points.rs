@@ -7,6 +7,7 @@ use tau_ui_kit::theme::Tone;
 use crate::{
     host::RepoId,
     manifest::{Point, PointCx},
+    tree::Node,
     view::{NavEntry, PlanField, PluginStatus, RowNote, RunInfo},
 };
 
@@ -22,7 +23,11 @@ pub struct AtRepo {
     pub repo: String,
 }
 
-impl PointCx for AtRepo {}
+impl PointCx for AtRepo {
+    fn key(&self) -> String {
+        self.repo.clone()
+    }
+}
 
 /// First-run setup, as far as the person has come: the repositories
 /// picked so far.
@@ -71,7 +76,7 @@ pub struct SetupView {
     pub detail: String,
     /// Under the headline: what the person chooses. It ends the step
     /// with [`crate::Handle::setup_done`]; tau draws a way to skip it.
-    pub body: gpui::AnyElement,
+    pub body: Node,
 }
 
 /// A run.
@@ -83,6 +88,10 @@ pub struct AtRun {
 impl PointCx for AtRun {
     fn run(&self) -> Option<&RunInfo> {
         Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        self.run.id.0.to_string()
     }
 }
 
@@ -99,6 +108,10 @@ impl PointCx for AtMessage {
     fn run(&self) -> Option<&RunInfo> {
         Some(&self.run)
     }
+
+    fn key(&self) -> String {
+        format!("{}-{}", self.run.id.0, self.index)
+    }
 }
 
 /// One of the plugin's anchors in a run's transcript.
@@ -113,6 +126,10 @@ pub struct AtAnchor {
 impl PointCx for AtAnchor {
     fn run(&self) -> Option<&RunInfo> {
         Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        format!("{}-{}", self.run.id.0, self.key)
     }
 }
 
@@ -131,6 +148,10 @@ pub struct AtRewrite {
 impl PointCx for AtRewrite {
     fn run(&self) -> Option<&RunInfo> {
         Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        format!("{}-{}", self.run.id.0, self.key)
     }
 }
 
@@ -154,7 +175,7 @@ pub struct AtCard {
 #[derive(Default)]
 pub struct CardView {
     /// In place of the summary of its arguments.
-    pub head: Option<gpui::AnyElement>,
+    pub head: Option<Node>,
     /// The result's line at the header's end: `+12 −3`, `3 matches`.
     pub label: Option<String>,
     /// The call failed, as its result tells, though the tool returned.
@@ -162,9 +183,9 @@ pub struct CardView {
     /// The card's edge, when its result wants attention.
     pub edge: Option<Tone>,
     /// A small drawing of the result, before the fold's chevron.
-    pub shape: Option<gpui::AnyElement>,
+    pub shape: Option<Node>,
     /// Under the header.
-    pub body: Option<gpui::AnyElement>,
+    pub body: Option<Node>,
     /// Whether the body folds, closed until its header is clicked.
     pub folds: bool,
     /// Whether the body sits inset under the header and says itself what
@@ -180,12 +201,16 @@ pub struct PaneView {
     /// interface opens the pane when it grew since the run was last
     /// drawn.
     pub fresh: u64,
-    pub body: gpui::AnyElement,
+    pub body: Node,
 }
 
 impl PointCx for AtCard {
     fn run(&self) -> Option<&RunInfo> {
         Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        format!("{}-{}", self.run.id.0, self.call_id)
     }
 }
 

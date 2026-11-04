@@ -144,7 +144,7 @@ fn item_view(
     match item {
         // A plugin that reads the message as its own draws it.
         Item::User(text) => ws
-            .contributions(
+            .drawn(
                 tau_ui_plugin::points::USER_MESSAGE,
                 &tau_ui_plugin::points::AtMessage {
                     run: run.info(),
@@ -198,7 +198,7 @@ fn item_view(
                 .flex()
                 .flex_col()
                 .gap(sp(2.))
-                .children(ws.contributions_of(
+                .children(ws.drawn_of(
                     plugin,
                     tau_ui_plugin::points::TRANSCRIPT,
                     &at,
@@ -220,7 +220,7 @@ fn item_view(
         // tau's own message, unless a plugin reads it as its own (an
         // agent's events).
         Item::Tau(text) => ws
-            .contributions(
+            .drawn(
                 tau_ui_plugin::points::USER_MESSAGE,
                 &tau_ui_plugin::points::AtMessage {
                     run: run.info(),
@@ -241,7 +241,7 @@ fn item_view(
         } => key
             .as_ref()
             .and_then(|key| {
-                ws.contributions_of(
+                ws.drawn_of(
                     plugin,
                     tau_ui_plugin::points::REWRITE,
                     &tau_ui_plugin::points::AtRewrite {
@@ -607,19 +607,31 @@ fn tool(
     };
     // The tool's own plugin draws the card; a call a rewrite dropped
     // shows only its arguments.
-    let view = ws
-        .contributions_with(tau_ui_plugin::points::CARD, context_of, cx)
+    let (drew, view) = ws
+        .contributions_named(tau_ui_plugin::points::CARD, context_of)
         .into_iter()
         .next()
         .filter(|_| !dropped)
-        .unwrap_or_default();
-    let badges = ws.contributions_with(
-        tau_ui_plugin::points::CARD_BADGE,
-        context_of,
-        cx,
+        .map_or((None, Default::default()), |(plugin, view)| {
+            (Some(plugin), view)
+        });
+    // The card's trees, drawn with the plugin that gave them.
+    let mut part = |name: &str, node: Option<tau_ui_plugin::tree::Node>| {
+        let (plugin, node) = (drew?, node?);
+        let at = context_of(plugin)?;
+        let id = format!("{plugin}-card-{}-{name}", card.call_id);
+        let origin = crate::plugins::Origin::at(at);
+        Some(ws.plugin_tree(plugin, &id, &node, origin, cx))
+    };
+    let (head, shape, card_body) = (
+        part("head", view.head),
+        part("shape", view.shape),
+        part("body", view.body),
     );
+    let badges =
+        ws.drawn_with(tau_ui_plugin::points::CARD_BADGE, context_of, cx);
     let extras =
-        ws.contributions_with(tau_ui_plugin::points::CARD_BODY, context_of, cx);
+        ws.drawn_with(tau_ui_plugin::points::CARD_BODY, context_of, cx);
 
     let failed =
         view.failed.is_some() || matches!(card.state, ToolState::Failed(_));
@@ -651,7 +663,7 @@ fn tool(
     };
     // Only a card that wants attention has an edge.
     let edged = border != t.border;
-    let summary = match view.head {
+    let summary = match head {
         Some(head) => head,
         None => mono(card.summary.clone(), Type::CAPTION, t.text_soft)
             .flex_1()
@@ -663,7 +675,7 @@ fn tool(
             .into_any_element(),
     };
     // A body that folds starts closed; its header opens it.
-    let folds = view.folds && view.body.is_some();
+    let folds = view.folds && card_body.is_some();
     let open = !folds || ws.card_open(&run.id, &card.call_id);
     let label = match &view.failed {
         Some(failure) => label(failure.clone(), t.red),
@@ -718,7 +730,7 @@ fn tool(
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.toggle_card(&run_id, &call_id, cx)
                 }))
-                .when(!compact, |row| row.children(view.shape))
+                .when(!compact, |row| row.children(shape))
                 .child(icon(
                     if open { Icon::Down } else { Icon::Chevron },
                     IconSize::SMALL,
@@ -731,7 +743,7 @@ fn tool(
             blocked_body(card, plugin, reason, t, compact).into_any_element(),
         ),
         ToolState::Flagged { .. } => None,
-        _ => view.body.filter(|_| open),
+        _ => card_body.filter(|_| open),
     };
 
     // What a plugin cut from the result, and the file that holds the

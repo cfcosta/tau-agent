@@ -5,6 +5,7 @@
 pub mod card;
 pub mod page;
 
+use serde_json::Value;
 use tau_ui_kit::{assets::Icon, theme::Tone};
 use tau_ui_plugin::{
     Link,
@@ -43,6 +44,16 @@ impl UiPlugin for SkillsUi {
             .contribute_at(points::SIDEBAR, 20, sidebar)
             .contribute(points::CARD, card::card)
             .listed_commands(commands, run_command)
+    }
+
+    /// The Skills screen's actions.
+    fn on_action(
+        &self,
+        action: &str,
+        _args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        page::on_action(action, view);
     }
 }
 
@@ -102,5 +113,5 @@ fn run_command(
         format!("/{name} {args}")
     };
     let run = view.run.map(|run| run.id.clone());
-    view.handle.send(run.as_ref(), text, view.cx);
+    view.handle.send(run.as_ref(), text);
 }

@@ -7,7 +7,6 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::plugin::Plugin;
@@ -281,8 +280,7 @@ impl UiPlugin for ReasoningPlugin {
             })
             .contribute(points::PLAN_STEPS, |_: &AtRun, view| {
                 let choice = view.state?.starting_choice()?;
-                let tree = step(choice, view.compact);
-                Some(view.tree("reasoning-plan-step", &tree, |_, _, _| {}))
+                Some(step(choice, view.compact))
             })
             .settings(settings_pane)
             .contribute(points::PICKER_AUTO, |_: &AtApp, view| {
@@ -292,6 +290,36 @@ impl UiPlugin for ReasoningPlugin {
                     "Auto leaves the effort to the model: tau-reasoning needs a TypeSafe key (Models).".into()
                 })
             })
+    }
+
+    /// The settings pane's actions, on the settings as they are at the
+    /// click, saved in the scope the pane shows.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        let settings = *view.settings;
+        let settings = match action {
+            REDECIDE => Settings {
+                redecide: !settings.redecide,
+                ..settings
+            },
+            THRESHOLD => {
+                let Some(threshold) =
+                    args.get("threshold").and_then(Value::as_f64)
+                else {
+                    return;
+                };
+                Settings {
+                    threshold,
+                    ..settings
+                }
+            }
+            _ => return,
+        };
+        view.save_settings(&settings);
     }
 }
 
@@ -374,10 +402,9 @@ fn plug(tone: tree::Tone) -> Node {
 fn transcript_note(
     at: &AtAnchor,
     view: &mut ViewCx<'_, ReasoningPlugin>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let state = view.state?;
     let note = state.notes.get(&at.key)?;
-    let id = format!("reasoning-{}-{}", at.run.id.0, at.key);
     let details = Link::page("choices").param("run", at.run.id.0.to_string());
     let tree = match note {
         Note::Failed { message, detail } => Node::Card {
@@ -436,11 +463,11 @@ fn transcript_note(
             }
         }
     };
-    Some(view.tree(&id, &tree, |_, _, _| {}))
+    Some(tree)
 }
 
 /// The page with every choice in a run, newest last.
-fn choices_page(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
+fn choices_page(view: &mut ViewCx<'_, ReasoningPlugin>) -> Node {
     let compact = view.compact;
     let choices = view
         .state
@@ -461,7 +488,7 @@ fn choices_page(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
         });
     }
     page.extend(choices.iter().map(|choice| step(choice, compact)));
-    view.tree("reasoning-choices", &Node::stack(page), |_, _, _| {})
+    Node::stack(page)
 }
 
 /// One choice at full size: what it was for, then its chart.
@@ -577,9 +604,8 @@ const THRESHOLD: &str = "threshold";
 
 /// Its settings pane (ADR 0029): whether to decide again between steps,
 /// and how sure Jev must be, saved in the scope the pane shows.
-fn settings_pane(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
+fn settings_pane(view: &mut ViewCx<'_, ReasoningPlugin>) -> Node {
     let settings = *view.settings;
-    let scope = view.scope().map(str::to_owned);
     let mut card = Vec::new();
     if !view.jev {
         card.push(Node::Status {
@@ -622,30 +648,5 @@ fn settings_pane(view: &mut ViewCx<'_, ReasoningPlugin>) -> AnyElement {
             }
         })),
     ]));
-    let handle = view.handle.clone();
-    view.tree(
-        "reasoning-settings",
-        &Node::Card { children: card },
-        move |action, args, cx| {
-            let settings = match action {
-                REDECIDE => Settings {
-                    redecide: !settings.redecide,
-                    ..settings
-                },
-                THRESHOLD => {
-                    let Some(threshold) =
-                        args.get("threshold").and_then(Value::as_f64)
-                    else {
-                        return;
-                    };
-                    Settings {
-                        threshold,
-                        ..settings
-                    }
-                }
-                _ => return,
-            };
-            handle.save_settings_in(scope.as_deref(), &settings, cx);
-        },
-    )
+    Node::Card { children: card }
 }

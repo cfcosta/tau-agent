@@ -3,7 +3,6 @@
 //! chats (ADR 0029). Its rewrites show as the run's, with what they
 //! saved.
 
-use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
@@ -65,14 +64,25 @@ impl UiPlugin for CompactionUi {
             })
             .settings(settings_pane)
     }
+
+    /// The pane's switch flips idle compaction, in the scope it shows.
+    fn on_action(
+        &self,
+        action: &str,
+        _args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if action == IDLE {
+            let idle = !view.settings.idle;
+            view.save_settings(&Settings { idle });
+        }
+    }
 }
 
 /// Its settings pane (ADR 0029): the switch for idle chats.
-fn settings_pane(view: &mut ViewCx<'_, CompactionUi>) -> AnyElement {
+fn settings_pane(view: &mut ViewCx<'_, CompactionUi>) -> Node {
     let settings = *view.settings;
-    let scope = view.scope().map(str::to_owned);
-    let handle = view.handle.clone();
-    let pane = Node::Card {
+    Node::Card {
         children: vec![Node::Switch {
             label: "Compact idle chats".into(),
             detail: Some(
@@ -86,13 +96,7 @@ fn settings_pane(view: &mut ViewCx<'_, CompactionUi>) -> AnyElement {
             action: IDLE.into(),
             args: Value::Null,
         }],
-    };
-    view.tree("compaction-settings", &pane, move |action, _, cx| {
-        if action == IDLE {
-            let idle = !settings.idle;
-            handle.save_settings_in(scope.as_deref(), &Settings { idle }, cx);
-        }
-    })
+    }
 }
 
 /// The pane's one action: switch compacting idle chats.

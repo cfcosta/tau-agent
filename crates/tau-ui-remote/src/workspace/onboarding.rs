@@ -80,12 +80,11 @@ impl Workspace {
     /// (`points::SETUP`), in order, each with what it draws.
     pub fn plugin_setup_steps(
         &self,
-        cx: &mut App,
     ) -> Vec<(SetupStep, tau_ui_plugin::points::SetupView)> {
         let at = tau_ui_plugin::points::AtSetup {
             repos: self.setup.picked(),
         };
-        self.contributions_by(tau_ui_plugin::points::SETUP, &at, cx)
+        self.contributions_by(tau_ui_plugin::points::SETUP, &at)
             .into_iter()
             .map(|(plugin, view)| {
                 let step = SetupStep::Plugin {
@@ -99,9 +98,9 @@ impl Workspace {
 
     /// The step bar's stages: tau's, with plugins' steps between the
     /// repositories and Ready.
-    pub fn setup_stages(&self, cx: &mut App) -> Vec<Stage> {
+    pub fn setup_stages(&self) -> Vec<Stage> {
         Stage::all(
-            self.plugin_setup_steps(cx)
+            self.plugin_setup_steps()
                 .into_iter()
                 .map(|(step, view)| (step, view.title)),
         )
@@ -111,7 +110,7 @@ impl Workspace {
     /// next plugin's step, else to the end of setup.
     fn setup_next(&mut self, from: SetupStep, cx: &mut Context<Self>) {
         let steps: Vec<SetupStep> = self
-            .plugin_setup_steps(cx)
+            .plugin_setup_steps()
             .into_iter()
             .map(|(step, _)| step)
             .collect();

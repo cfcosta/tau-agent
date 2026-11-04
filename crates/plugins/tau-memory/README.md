@@ -69,7 +69,7 @@ This is the interface half (decisions 0006, 0017 and 0030). Its partner,
 and builds the `tau_agent::plugin::Plugin` each run gets. The host half
 re-exports `NAME`, `note` and `record` from here.
 
-It builds on `tau-ui-plugin` and `tau-ui-kit` for its UI, and on gpui.
+It builds on `tau-ui-plugin` and `tau-ui-kit` for its UI, as view trees.
 It does not depend on `tau-agent`, so it stays light.
 
 Used by:

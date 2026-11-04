@@ -83,7 +83,8 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // Its editor, open over the page as a modal (ADR 0045).
     ("mcp-add", |ws, _, cx| {
         plugin_page(ws, tau_mcp_host::NAME, "servers", "repo", cx);
-        ws.plugin_handle(tau_mcp_host::NAME).set_ui(
+        ws.set_plugin_ui(
+            tau_mcp_host::NAME,
             tau_mcp::ui::page::EDITOR,
             Some(json!({ "editing": null, "problem": null })),
             cx,
@@ -453,7 +454,8 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.navigate(Route::Run(run.clone()), cx);
         ws.toggle_card(&run, LOG_CALL, cx);
         // The change picked is tau-vcs's UI state (ADR 0045).
-        ws.plugin_handle(tau_vcs::ui::NAME).set_ui(
+        ws.set_plugin_ui(
+            tau_vcs::ui::NAME,
             tau_vcs::ui::pick_key(&run, LOG_CALL),
             Some(json!(LOG_PICKED)),
             cx,
@@ -529,11 +531,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("note-open", |ws, _, cx| {
         ws.toggle_note(&run_id(), 1, cx);
         let open = format!("note-{}-n0.open", run_id().0);
-        ws.plugin_handle(tau_reasoning::NAME).set_ui(
-            open,
-            Some(json!(true)),
-            cx,
-        );
+        ws.set_plugin_ui(tau_reasoning::NAME, open, Some(json!(true)), cx);
     }),
     // tau-reasoning keeping a long conversation's effort over Jev's
     // pick: its note, then its choices page.
@@ -1599,7 +1597,8 @@ fn vcs_card(
     workspace.navigate(Route::Run(run.clone()), cx);
     workspace.toggle_card(&run, call, cx);
     // The file open is tau-vcs's UI state (ADR 0045).
-    workspace.plugin_handle(tau_vcs::ui::NAME).set_ui(
+    workspace.set_plugin_ui(
+        tau_vcs::ui::NAME,
         tau_ui_plugin::tree::open_key(&tau_vcs::ui::file_id(&run, call, file)),
         Some(json!(true)),
         cx,
@@ -1624,7 +1623,8 @@ fn rules_at(
         .filter(|card| card.tool == "exec_command")
         .map(|card| (card.tool, card.args))
         .collect();
-    tau_constitution_host::demo::open(name, &handle, "tau-agent", calls, cx);
+    tau_constitution_host::demo::open(name, &handle, "tau-agent", calls);
+    workspace.drain_plugin_requests(cx);
 }
 
 /// The demo run working on [`GOAL`], with the records tau-goal
@@ -1729,7 +1729,8 @@ fn canvas(
             revision,
             fresh,
         };
-        workspace.plugin_handle(tau_canvas::NAME).set_ui(
+        workspace.set_plugin_ui(
+            tau_canvas::NAME,
             tau_canvas::ui::pick_key(&run),
             serde_json::to_value(picked).ok(),
             cx,
@@ -1839,7 +1840,8 @@ fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
     if open == "ask-note" {
         draft.note_open = true;
         // Its field shows the note.
-        workspace.plugin_handle(tau_ask::NAME).set_ui(
+        workspace.set_plugin_ui(
+            tau_ask::NAME,
             tau_ui_plugin::tree::draft_key(&tau_ask::ui::panel::note_input(
                 &key, 1,
             )),
@@ -1850,7 +1852,8 @@ fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
         draft.key(&ask, Key::Right);
         draft.key(&ask, Key::Digit(2));
     }
-    workspace.plugin_handle(tau_ask::NAME).set_ui(
+    workspace.set_plugin_ui(
+        tau_ask::NAME,
         tau_ask::ui::draft_key(&key),
         serde_json::to_value(&draft).ok(),
         cx,
@@ -2070,7 +2073,8 @@ fn codemode(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     );
     workspace.toggle_card(&run, &call, cx);
     // Its first output open, in tau-codemode's UI state (ADR 0045).
-    workspace.plugin_handle(tau_codemode::PLUGIN).set_ui(
+    workspace.set_plugin_ui(
+        tau_codemode::PLUGIN,
         tau_ui_plugin::tree::open_key(&tau_codemode::outline::key(&call, 0)),
         Some(json!(true)),
         cx,

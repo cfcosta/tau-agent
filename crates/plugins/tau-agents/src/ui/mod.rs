@@ -15,13 +15,9 @@ mod run;
 
 use std::sync::Arc;
 
-use gpui::{App, Div, ParentElement, Styled, div, rems};
 use serde_json::{Value, json};
 use tau_agent::tool::RunId;
-use tau_ui_kit::{
-    assets::Icon,
-    theme::{Design as _, Theme, Tone, Type, radius, weight},
-};
+use tau_ui_kit::{assets::Icon, theme::Tone};
 use tau_ui_plugin::{
     Handle,
     Link,
@@ -98,7 +94,8 @@ pub(crate) const DETAILS: &str = "details";
 pub(crate) const SET: &str = "set";
 /// Asks the host to make the agent the form describes.
 pub(crate) const START: &str = "start";
-/// Saves the secret the panel's fields hold: `{ "agent" }`.
+/// Saves the secret the panel's fields hold: Enter in its value sends
+/// `save-secret:<agent>`, the name coming from its field's draft.
 pub(crate) const SAVE_SECRET: &str = "save-secret";
 /// Saves the settings its arguments hold.
 pub(crate) const SETTINGS: &str = "settings";
@@ -235,7 +232,7 @@ impl Form {
 }
 
 /// Clears the form once its agent's conversation opened.
-pub(crate) fn reset(handle: &Handle, cx: &mut App) {
+pub(crate) fn reset(handle: &Handle) {
     for key in [
         draft_key(NAME_INPUT),
         draft_key(PURPOSE_INPUT),
@@ -246,116 +243,111 @@ pub(crate) fn reset(handle: &Handle, cx: &mut App) {
         MAKING.into(),
         ERROR.into(),
     ] {
-        handle.set_ui(key, None, cx);
+        handle.set_ui(key, None);
     }
 }
 
-/// What the trees' buttons and inputs do, through `handle`: `form` and
-/// `secret` are the form and the panel's secret fields as drawn.
+/// What the trees' buttons and inputs do: the form and the panel's
+/// secret name are read again from `view`'s UI state.
 pub(crate) fn on_action(
-    handle: Handle,
-    form: Option<Form>,
-    secret: Option<(String, String)>,
-) -> impl Fn(&str, &Value, &mut App) + 'static {
-    move |action, args, cx| {
-        let text = |key: &str| {
-            args.get(key).and_then(Value::as_str).map(str::to_owned)
-        };
-        if let Some(at) = action.strip_prefix(&format!("{ANSWER}:")) {
-            // Enter in a question's field: `<agent>/<notice>`, a name
-            // having no slash.
-            let answer = text("text").unwrap_or_default().trim().to_owned();
-            if let Some((agent, notice)) = at.split_once('/')
-                && !answer.is_empty()
-            {
-                handle.act(
-                    Act::Answer {
-                        agent: agent.to_owned(),
-                        notice: notice.to_owned(),
-                        answer,
-                    },
-                    cx,
-                );
-            }
+    action: &str,
+    args: &Value,
+    view: &mut ViewCx<'_, AgentsUi>,
+) {
+    let handle = &view.handle;
+    let text =
+        |key: &str| args.get(key).and_then(Value::as_str).map(str::to_owned);
+    if let Some(at) = action.strip_prefix(&format!("{ANSWER}:")) {
+        // Enter in a question's field: `<agent>/<notice>`, a name having
+        // no slash.
+        let answer = text("text").unwrap_or_default().trim().to_owned();
+        if let Some((agent, notice)) = at.split_once('/')
+            && !answer.is_empty()
+        {
+            handle.act(Act::Answer {
+                agent: agent.to_owned(),
+                notice: notice.to_owned(),
+                answer,
+            });
+        }
+        return;
+    }
+    // Enter in the secret's value: the agent comes with the action, the
+    // name from its field, the value only from the input.
+    if let Some(agent) = action.strip_prefix(&format!("{SAVE_SECRET}:")) {
+        let name = view
+            .ui_value(&draft_key(SECRET_NAME_INPUT))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        let Some(value) = text("text") else { return };
+        if name.is_empty() || value.is_empty() {
             return;
         }
-        match action {
-            ACT => {
-                if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
-                    handle.act(act, cx);
-                }
+        handle.act(Act::SetSecret {
+            agent: agent.to_owned(),
+            name,
+            value,
+        });
+        handle.set_ui(draft_key(SECRET_NAME_INPUT), None);
+        return;
+    }
+    match action {
+        ACT => {
+            if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
+                handle.act(act);
             }
-            GO => {
-                if let Some(page) = text("page") {
-                    handle.navigate(Link::page(page), cx);
-                }
-            }
-            OPEN => {
-                if let Some(run) = text("run") {
-                    handle.open_run(&RunId(Arc::from(run.as_str())), cx);
-                }
-            }
-            DETAILS => handle.run_details(cx),
-            SET => {
-                if let Some(key) = text("key") {
-                    let value =
-                        args.get("value").filter(|value| !value.is_null());
-                    handle.set_ui(key, value.cloned(), cx);
-                }
-            }
-            START => {
-                let Some(form) = &form else { return };
-                match form.act() {
-                    Ok(act) => {
-                        handle.set_ui(ERROR, None, cx);
-                        handle.act(act, cx);
-                    }
-                    Err(error) => {
-                        handle.set_ui(ERROR, Some(Value::String(error)), cx)
-                    }
-                }
-            }
-            // Enter in the value: the agent and the name come from the
-            // panel, the value only from the input.
-            SAVE_SECRET => {
-                let (Some((agent, name)), Some(value)) =
-                    (secret.clone(), text("text"))
-                else {
-                    return;
-                };
-                let name = name.trim().to_owned();
-                if name.is_empty() || value.is_empty() {
-                    return;
-                }
-                handle.act(Act::SetSecret { agent, name, value }, cx);
-                handle.set_ui(draft_key(SECRET_NAME_INPUT), None, cx);
-            }
-            ANSWER => {
-                let (Some(agent), Some(notice), Some(answer)) =
-                    (text("agent"), text("notice"), text("answer"))
-                else {
-                    return;
-                };
-                let answer = answer.trim().to_owned();
-                if answer.is_empty() {
-                    return;
-                }
-                handle.set_ui(
-                    draft_key(&answer_input(&agent, &notice)),
-                    None,
-                    cx,
-                );
-                handle.act(
-                    Act::Answer {
-                        agent,
-                        notice,
-                        answer,
-                    },
-                    cx,
-                );
-            }
-            _ => {}
         }
+        GO => {
+            if let Some(page) = text("page") {
+                handle.navigate(Link::page(page));
+            }
+        }
+        OPEN => {
+            if let Some(run) = text("run") {
+                handle.open_run(&RunId(Arc::from(run.as_str())));
+            }
+        }
+        DETAILS => handle.run_details(),
+        SET => {
+            if let Some(key) = text("key") {
+                let value = args.get("value").filter(|value| !value.is_null());
+                handle.set_ui(key, value.cloned());
+            }
+        }
+        START => match Form::of(view).act() {
+            Ok(act) => {
+                view.handle.set_ui(ERROR, None);
+                view.handle.act(act);
+            }
+            Err(error) => view.handle.set_ui(ERROR, Some(Value::String(error))),
+        },
+        SETTINGS => {
+            if let Ok(settings) =
+                serde_json::from_value::<Settings>(args.clone())
+            {
+                view.save_settings(&settings);
+            }
+        }
+        ANSWER => {
+            let (Some(agent), Some(notice), Some(answer)) =
+                (text("agent"), text("notice"), text("answer"))
+            else {
+                return;
+            };
+            let answer = answer.trim().to_owned();
+            if answer.is_empty() {
+                return;
+            }
+            handle.set_ui(draft_key(&answer_input(&agent, &notice)), None);
+            handle.act(Act::Answer {
+                agent,
+                notice,
+                answer,
+            });
+        }
+        _ => {}
     }
 }
 
@@ -370,13 +362,23 @@ impl UiPlugin for AgentsUi {
     }
 
     /// The host made the agent, or says why not.
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
+    fn reply(&self, reply: Value, handle: &Handle) {
         if let Some(repo) = reply.get("repo").and_then(Value::as_str) {
-            handle.set_ui(MAKING, Some(json!(repo)), cx);
+            handle.set_ui(MAKING, Some(json!(repo)));
         } else if let Some(error) = reply.get("error").and_then(Value::as_str) {
-            handle.set_ui(MAKING, None, cx);
-            handle.set_ui(ERROR, Some(json!(error)), cx);
+            handle.set_ui(MAKING, None);
+            handle.set_ui(ERROR, Some(json!(error)));
         }
+    }
+
+    /// Every button, switch and input of its trees.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        on_action(action, args, view);
     }
 
     fn read_prompt(&self, prompt: &str) -> Option<String> {
@@ -427,13 +429,12 @@ impl UiPlugin for AgentsUi {
 /// `/agent <purpose>`: the New agent form, filled in from what follows.
 fn new_agent(args: &str, view: &mut ViewCx<'_, AgentsUi>) {
     let purpose = args.trim().to_owned();
-    view.handle.set_ui(ERROR, None, view.cx);
+    view.handle.set_ui(ERROR, None);
     view.handle.set_ui(
         draft_key(PURPOSE_INPUT),
         (!purpose.is_empty()).then(|| json!(purpose)),
-        view.cx,
     );
-    view.handle.navigate(Link::page(NEW), view.cx);
+    view.handle.navigate(Link::page(NEW));
 }
 
 /// Every agent's command triggers, as composer commands.
@@ -475,8 +476,8 @@ fn fire(
         from: view.run.map(|run| run.id.to_string()),
     };
     let sent = format!("/{command} sent to {}", agent.name);
-    view.handle.act(act, view.cx);
-    view.handle.note(sent, view.cx);
+    view.handle.act(act);
+    view.handle.note(sent);
 }
 
 /// Opens `agent`'s conversation: its main chat, or, before the host
@@ -488,7 +489,7 @@ pub(crate) fn open(agent: &Agent, view: &mut ViewCx<'_, AgentsUi>) {
         .map(|main| RunId(Arc::from(main)))
         .or_else(|| conversation_of(&agent.name, view));
     if let Some(run) = run {
-        view.handle.open_run(&run, view.cx);
+        view.handle.open_run(&run);
     }
 }
 
@@ -531,29 +532,4 @@ pub(crate) fn status_pill(status: &Status) -> tree::Node {
         text: status.label().to_owned(),
         tone: tree_tone(status),
     }
-}
-
-/// An agent's mark: its letter in a ring of its color, round where a
-/// repository's is square. The sidebar draws it; the plugin's trees
-/// show the agent's icon.
-pub fn mark(name: &str, size: f32, t: &Theme) -> Div {
-    let letter = name
-        .chars()
-        .find(|c| c.is_alphanumeric())
-        .map_or("?".into(), |c| c.to_lowercase().to_string());
-    let color = t.mark(name);
-    div()
-        .size(rems(size / 16.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(radius::FULL)
-        .border_1()
-        .border_color(color.opacity(0.7))
-        .bg(color.opacity(0.12))
-        .text_color(color)
-        .typeset(Type::MICRO.sized(size * 0.55))
-        .font_weight(weight::STRONG)
-        .child(letter)
 }

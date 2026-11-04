@@ -214,7 +214,7 @@ impl Notifier {
 }
 
 /// The chats of `ws` as the notifier sees them: every open one.
-pub fn sightings(ws: &Workspace, cx: &mut App) -> Vec<Sighting> {
+pub fn sightings(ws: &Workspace) -> Vec<Sighting> {
     ws.runs()
         .iter()
         .filter(|run| !ws.is_closed(&run.id))
@@ -224,7 +224,7 @@ pub fn sightings(ws: &Workspace, cx: &mut App) -> Vec<Sighting> {
             repo: ws.repo_of(run).to_owned(),
             target: tau_ui_remote::ui::landing::target(ws, run)
                 .unwrap_or_else(|| "main".to_owned()),
-            attention: ws.attention(run, cx),
+            attention: ws.attention(run),
         })
         .collect()
 }
@@ -311,7 +311,7 @@ pub fn follow(
         settings,
     });
     cx.observe(workspace, |workspace, cx| {
-        let sightings = workspace.update(cx, |ws, cx| sightings(ws, cx));
+        let sightings = workspace.update(cx, |ws, _| sightings(ws));
         let agents = workspace.read(cx).agents().cloned().unwrap_or_default();
         cx.update_global::<Notifications, _>(|notifications, cx| {
             let quiet = notifications.focused(cx) || !notifications.on();

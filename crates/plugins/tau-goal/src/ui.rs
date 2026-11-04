@@ -11,7 +11,6 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
@@ -285,9 +284,7 @@ impl UiPlugin for GoalUi {
             .contribute(points::RUN_BANNER, banner)
             .contribute_at(points::INSPECTOR, -100, |at: &AtRun, view| {
                 let goal = view.state?.goal.clone()?;
-                let tree = section(&goal, at.run.live);
-                let id = format!("goal-inspector-{}", at.run.id.0);
-                Some(view.tree(&id, &tree, |_, _, _| {}))
+                Some(section(&goal, at.run.live))
             })
             .status(State::status)
             .contribute(points::RUN_ROW, |_: &AtRun, view| {
@@ -309,9 +306,7 @@ impl UiPlugin for GoalUi {
             })
             .contribute(points::TRANSCRIPT, |at: &AtAnchor, view| {
                 let note = view.state?.notes.get(&at.key)?;
-                let tree = note_tree(note.tone, &note.text, &note.detail);
-                let id = format!("goal-{}-{}", at.run.id.0, at.key);
-                Some(view.tree(&id, &tree, |_, _, _| {}))
+                Some(note_tree(note.tone, &note.text, &note.detail))
             })
             .contribute(points::USER_MESSAGE, user_message)
             .command(
@@ -322,8 +317,36 @@ impl UiPlugin for GoalUi {
                 )
                 .args("<condition>")
                 .icon(Icon::Target)
-                .popover(|_, view| popover(view)),
+                .popover(|_, view| popover_tree(view.jev, view.compact)),
             )
+    }
+
+    /// The banner's buttons and the popover's limits; the goal, the run
+    /// and the key are read again when clicked.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        match action {
+            DETAILS => view.handle.run_details(),
+            ACT => {
+                let Ok(what) = serde_json::from_value::<Act>(args.clone())
+                else {
+                    return;
+                };
+                let goal = view.state.and_then(|state| state.goal.as_ref());
+                if let (Some(run), Some(goal)) = (view.run, goal) {
+                    act(what, run, goal, view.jev, &view.handle);
+                }
+            }
+            _ => {
+                if let Some(id) = action.strip_prefix(SUBMIT) {
+                    submit(id, args, &view.handle);
+                }
+            }
+        }
     }
 }
 
@@ -407,13 +430,8 @@ fn note_tree(tone: tree::Tone, text: &str, detail: &str) -> Node {
 /// A person's message, when tau-goal reads it as its own: a `/goal`
 /// shows as the goal it set, and a continuation as tau-goal's note,
 /// unless the check that sent it says it already.
-fn user_message(
-    at: &AtMessage,
-    view: &mut ViewCx<'_, GoalUi>,
-) -> Option<AnyElement> {
-    let id = format!("goal-said-{}-{}", at.run.id.0, at.index);
-    let tree = message_tree(&at.text, view.state)?;
-    Some(view.tree(&id, &tree, |_, _, _| {}))
+fn user_message(at: &AtMessage, view: &mut ViewCx<'_, GoalUi>) -> Option<Node> {
+    message_tree(&at.text, view.state)
 }
 
 /// The tree a person's message `text` draws as, when tau-goal reads it
@@ -475,24 +493,17 @@ pub enum Act {
 }
 
 /// Carries out a goal button's `act` on `run`.
-pub fn act(
-    act: Act,
-    run: &RunInfo,
-    goal: &Goal,
-    jev: bool,
-    handle: &Handle,
-    cx: &mut App,
-) {
+pub fn act(act: Act, run: &RunInfo, goal: &Goal, jev: bool, handle: &Handle) {
     match act {
-        Act::Pause => handle.record(&run.id, Record::Paused, cx),
-        Act::Clear => handle.record(&run.id, Record::Cleared, cx),
+        Act::Pause => handle.record(&run.id, Record::Paused),
+        Act::Clear => handle.record(&run.id, Record::Cleared),
         Act::Edit => {
             let condition = if goal.status == Status::Met {
                 ""
             } else {
                 &goal.condition
             };
-            handle.composer(format!("/goal {condition}"), cx);
+            handle.composer(format!("/goal {condition}"));
         }
         // Resume, or Keep going: the goal is active again (a stopped one
         // with more continuations), and a finished conversation goes on.
@@ -503,23 +514,21 @@ pub fn act(
                     "Goals need Jev",
                     "tau-goal checks goals with Jev. Add a TypeSafe key on the Models \
                      screen, then go on.",
-                    cx,
                 );
                 return;
             }
             match goal.status {
-                Status::Paused => handle.record(&run.id, Record::Resumed, cx),
+                Status::Paused => handle.record(&run.id, Record::Resumed),
                 Status::Stopped(_) => handle.record(
                     &run.id,
                     Record::Extended {
                         by: DEFAULT_CONTINUATIONS,
                     },
-                    cx,
                 ),
                 _ => {}
             }
             if !run.live {
-                handle.send(Some(&run.id), KEEP_GOING, cx);
+                handle.send(Some(&run.id), KEEP_GOING);
             }
         }
     }
@@ -534,22 +543,11 @@ const DETAILS: &str = "details";
 
 /// Above the transcript while the conversation has a goal; on a phone, a
 /// bar that opens the run's details.
-fn banner(at: &AtRun, view: &mut ViewCx<'_, GoalUi>) -> Option<AnyElement> {
+fn banner(at: &AtRun, view: &mut ViewCx<'_, GoalUi>) -> Option<Node> {
     let state = view.state?;
-    let goal = state.goal.clone()?;
-    let why = unchecked(&goal, view.jev, at.run.live, state.checks);
-    let tree = banner_tree(&goal, why, view.compact);
-    let (run, jev, handle) = (at.run.clone(), view.jev, view.handle.clone());
-    let id = format!("goal-banner-{}", at.run.id.0);
-    Some(view.tree(&id, &tree, move |action, args, cx| match action {
-        DETAILS => handle.run_details(cx),
-        ACT => {
-            if let Ok(what) = serde_json::from_value::<Act>(args.clone()) {
-                act(what, &run, &goal, jev, &handle, cx);
-            }
-        }
-        _ => {}
-    }))
+    let goal = state.goal.as_ref()?;
+    let why = unchecked(goal, view.jev, at.run.live, state.checks);
+    Some(banner_tree(goal, why, view.compact))
 }
 
 /// The banner's tree: the goal, where it stands, why nothing checks it
@@ -796,7 +794,7 @@ fn run_command(args: &str, view: &mut ViewCx<'_, GoalUi>) {
     let text = format!("/goal {args}");
     let Some(command) = Command::parse(&text) else {
         // `/goal` alone is not a goal yet: it stays, to be written.
-        view.handle.composer("/goal ", view.cx);
+        view.handle.composer("/goal ");
         return;
     };
     let run = view.run.cloned();
@@ -807,7 +805,7 @@ fn run_command(args: &str, view: &mut ViewCx<'_, GoalUi>) {
     } = command
     else {
         if let Some(run) = run {
-            view.handle.record(&run.id, Record::Cleared, view.cx);
+            view.handle.record(&run.id, Record::Cleared);
         }
         return;
     };
@@ -816,9 +814,8 @@ fn run_command(args: &str, view: &mut ViewCx<'_, GoalUi>) {
             "Goals need Jev",
             "tau-goal checks goals with Jev. Add a TypeSafe key on the Models screen, then \
              set the goal again.",
-            view.cx,
         );
-        view.handle.composer(format!("/goal {condition}"), view.cx);
+        view.handle.composer(format!("/goal {condition}"));
         return;
     }
     // Limits typed with the command win over the popover's.
@@ -839,24 +836,22 @@ fn run_command(args: &str, view: &mut ViewCx<'_, GoalUi>) {
         // sub-agent: the goal is kept for when it goes on, and nothing
         // tells the model it is checked now.
         Some(run) if run.live && !checks => {
-            view.handle.record(&run.id, set, view.cx);
+            view.handle.record(&run.id, set);
             view.handle.alert(
                 "The goal is checked from the next message",
                 "This run started without tau-goal, so nothing checks the goal while it \
                  goes on. It is kept, and checked once the conversation goes on.",
-                view.cx,
             );
         }
         // A run going on takes it at its next stop, and the model is told.
         Some(run) if run.live => {
-            view.handle.record(&run.id, set, view.cx);
-            view.handle.steer(&run.id, set_input(&condition), view.cx);
+            view.handle.record(&run.id, set);
+            view.handle.steer(&run.id, set_input(&condition));
         }
         // A finished conversation goes on with it; a new run starts.
         _ => view.handle.send(
             run.as_ref().map(|run| &run.id),
             format!("/goal --continuations {continuations} --budget {budget:.2} {condition}"),
-            view.cx,
         ),
     }
 }
@@ -865,20 +860,14 @@ fn run_command(args: &str, view: &mut ViewCx<'_, GoalUi>) {
 /// as Enter in the composer would.
 const SUBMIT: &str = "submit-";
 
-/// The `/goal` popover: what a goal does, and its limits.
-fn popover(view: &mut ViewCx<'_, GoalUi>) -> AnyElement {
-    let tree = popover_tree(view.jev, view.compact);
-    let handle = view.handle.clone();
-    view.tree("goal-popover", &tree, move |action, args, cx| {
-        let Some(id) = action.strip_prefix(SUBMIT) else {
-            return;
-        };
-        // Enter clears an input's draft; a limit keeps what it says.
-        let text = args.get("text").and_then(Value::as_str).unwrap_or("");
-        let value = (!text.is_empty()).then(|| Value::from(text));
-        handle.set_ui(draft_key(id), value, cx);
-        handle.request(Request::Submit, cx);
-    })
+/// Enter in the popover's limit `id`: send the goal, as Enter in the
+/// composer would. Enter clears an input's draft; a limit keeps what it
+/// says.
+fn submit(id: &str, args: &Value, handle: &Handle) {
+    let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+    let value = (!text.is_empty()).then(|| Value::from(text));
+    handle.set_ui(draft_key(id), value);
+    handle.request(Request::Submit);
 }
 
 /// The popover's tree: the command, what it does or what it needs, and

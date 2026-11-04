@@ -62,15 +62,9 @@ fn drawn(
             index: 0,
         };
         (
-            ws.contributions_of(
-                NAME,
-                points::COMPOSER_BAND,
-                &AtRun { run },
-                cx,
-            )
-            .len(),
-            ws.contributions_of(NAME, points::TRANSCRIPT, &anchor, cx)
+            ws.drawn_of(NAME, points::COMPOSER_BAND, &AtRun { run }, cx)
                 .len(),
+            ws.drawn_of(NAME, points::TRANSCRIPT, &anchor, cx).len(),
         )
     })
 }

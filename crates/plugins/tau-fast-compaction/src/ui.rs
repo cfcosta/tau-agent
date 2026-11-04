@@ -5,7 +5,6 @@
 
 use std::{collections::BTreeMap, os::unix::fs::DirBuilderExt as _, sync::Arc};
 
-use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
@@ -415,10 +414,7 @@ fn plug() -> Node {
 }
 
 /// What the last pass made of a call, on its card: what it changed.
-fn badge(
-    at: &AtCard,
-    view: &mut ViewCx<'_, FastCompactionUi>,
-) -> Option<AnyElement> {
+fn badge(at: &AtCard, view: &mut ViewCx<'_, FastCompactionUi>) -> Option<Node> {
     let call_id = at.keys.first()?;
     let entry = view.state?.entry(call_id)?;
     // A result kept as it was needs no word: only what the pass changed
@@ -426,42 +422,33 @@ fn badge(
     if matches!(entry.decision, Decision::Pinned | Decision::Keep) {
         return None;
     }
-    let tree = Node::Badge {
+    Some(Node::Badge {
         text: entry.decision.card_label().into(),
         tone: Tone::Neutral,
-    };
-    Some(view.tree(
-        &format!("fast-compaction-badge-{call_id}"),
-        &tree,
-        |_, _, _| {},
-    ))
+    })
 }
 
 /// Under the inspector's context meter: what the last pass kept, and
 /// its ledger.
-fn context(
-    _: &AtRun,
-    view: &mut ViewCx<'_, FastCompactionUi>,
-) -> Option<AnyElement> {
+fn context(_: &AtRun, view: &mut ViewCx<'_, FastCompactionUi>) -> Option<Node> {
     let state = view.state?;
     state.last_pass()?;
     let kept = state.count(Decision::Keep) + state.count(Decision::Pinned);
-    let tree = Node::row([
+    Some(Node::row([
         Node::text(format!("{kept} kept by {NAME}.")),
         Node::Spacer,
         Node::Link {
             label: "Ledger".into(),
             to: ledger_link(),
         },
-    ]);
-    Some(view.tree("fast-compaction-context", &tree, |_, _, _| {}))
+    ]))
 }
 
 /// One of its passes in the transcript: what it saved, and its ledger.
 fn rewrite(
     at: &AtRewrite,
     view: &mut ViewCx<'_, FastCompactionUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let pass = view.state?.passes.get(&at.key)?;
     let (before, after) = at.tokens.unwrap_or((pass.before, pass.after));
     let compact = view.compact;
@@ -493,19 +480,13 @@ fn rewrite(
         "The next request resends the pruned transcript once, then turns \
          are deltas again.",
     ));
-    let tree = Node::Card { children: card };
-    Some(view.tree(
-        &format!("fast-compaction-rewrite-{}", at.index),
-        &tree,
-        |_, _, _| {},
-    ))
+    Some(Node::Card { children: card })
 }
 
 /// A run's context before and after the last pass, and what the pass
 /// decided for each tool call.
-fn ledger_page(view: &mut ViewCx<'_, FastCompactionUi>) -> AnyElement {
-    let tree = ledger(view.run, view.state, view.compact);
-    view.tree("fast-compaction-ledger", &tree, |_, _, _| {})
+fn ledger_page(view: &mut ViewCx<'_, FastCompactionUi>) -> Node {
+    ledger(view.run, view.state, view.compact)
 }
 
 /// The ledger page's tree.

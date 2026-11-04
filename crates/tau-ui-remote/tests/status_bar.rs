@@ -5,18 +5,7 @@
 
 use std::sync::Once;
 
-use gpui::{
-    AnyElement,
-    Entity,
-    InteractiveElement as _,
-    IntoElement as _,
-    Modifiers,
-    ParentElement as _,
-    TestAppContext,
-    VisualTestContext,
-    div,
-    size,
-};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, size};
 use tau_ui_plugin::{
     JobInfo,
     Link,
@@ -26,6 +15,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points,
+    tree::Node,
 };
 use tau_ui_remote::{
     Workspace,
@@ -54,25 +44,20 @@ impl UiPlugin for Worker {
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
-            .page(Page::new("review", |_| div().into_any_element()))
-            .page(Page::new("main", |_| div().into_any_element()))
+            .page(Page::new("review", |_| Node::stack([])))
+            .page(Page::new("main", |_| Node::stack([])))
             .contribute(points::ACTIVITY, activity)
     }
 }
 
-fn activity(
-    _: &points::AtApp,
-    view: &mut ViewCx<'_, Worker>,
-) -> Option<AnyElement> {
+fn activity(_: &points::AtApp, view: &mut ViewCx<'_, Worker>) -> Option<Node> {
     if view.data.is_empty() {
         return None;
     }
-    Some(
-        div()
-            .debug_selector(|| "worker-activity".to_owned())
-            .child(view.data.clone())
-            .into_any_element(),
-    )
+    Some(Node::Link {
+        label: view.data.clone(),
+        to: Link::page("review"),
+    })
 }
 
 /// The app's plugins and the one above: a process has one registry.
@@ -193,8 +178,8 @@ fn several_jobs_collapse_to_a_count(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_plugin_s_activity_shows_from_its_data(cx: &mut TestAppContext) {
     let (_, mut cx) = open(Vec::new(), "3 notes to review", cx);
-    assert!(cx.debug_bounds("worker-activity").is_some());
+    assert!(cx.debug_bounds("link:3 notes to review").is_some());
 
     let (_, mut cx) = open(Vec::new(), "", &mut cx);
-    assert!(cx.debug_bounds("worker-activity").is_none());
+    assert!(cx.debug_bounds("link:3 notes to review").is_none());
 }

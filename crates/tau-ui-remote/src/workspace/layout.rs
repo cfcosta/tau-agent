@@ -629,9 +629,7 @@ impl Workspace {
                     .px(sp(4.))
                     .border_b_1()
                     .border_color(t.border)
-                    .children(
-                        run.map(|run| inspector::header(self, run, t, cx)),
-                    ),
+                    .children(run.map(|run| inspector::header(self, run, t))),
             )
             .child(
                 div()
@@ -666,7 +664,7 @@ impl Workspace {
                 let banners = self
                     .current()
                     .map(|run| {
-                        self.contributions(
+                        self.drawn(
                             tau_ui_plugin::points::RUN_BANNER,
                             &tau_ui_plugin::points::AtRun { run: run.info() },
                             cx,
@@ -697,7 +695,7 @@ impl Workspace {
                 self.current()
                     .filter(|_| self.route != Route::NewRun)
                     .map(|run| {
-                        self.contributions(
+                        self.drawn(
                             tau_ui_plugin::points::COMPOSER_BAND,
                             &tau_ui_plugin::points::AtRun { run: run.info() },
                             cx,
@@ -729,13 +727,9 @@ impl Workspace {
                     .and_then(|run| {
                         let at =
                             tau_ui_plugin::points::AtRun { run: run.info() };
-                        self.contributions(
-                            tau_ui_plugin::points::COMPOSER,
-                            &at,
-                            cx,
-                        )
-                        .into_iter()
-                        .next()
+                        self.drawn(tau_ui_plugin::points::COMPOSER, &at, cx)
+                            .into_iter()
+                            .next()
                     });
                 if self.composer_replaced.replace(instead.is_some())
                     && instead.is_none()
@@ -810,7 +804,7 @@ impl Workspace {
                         .into_any_element()
                     });
                 // A page a repository lists is one of its tabs.
-                match screens::repo::owner(self, &self.route, cx) {
+                match screens::repo::owner(self, &self.route) {
                     Some(repo) => {
                         screens::repo::framed(self, &repo, page, compact, t, cx)
                     }
@@ -825,7 +819,7 @@ impl Workspace {
     /// the run.
     pub(super) fn pane(
         &self,
-        pane: tau_ui_plugin::points::PaneView,
+        pane: super::DrawnPane,
         compact: bool,
         t: &Theme,
         cx: &mut Context<Self>,
@@ -880,7 +874,7 @@ impl Workspace {
     pub(super) fn desktop(
         &self,
         wide: bool,
-        pane: Option<tau_ui_plugin::points::PaneView>,
+        pane: Option<super::DrawnPane>,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -961,7 +955,7 @@ impl Workspace {
 
     pub(super) fn phone(
         &self,
-        pane: Option<tau_ui_plugin::points::PaneView>,
+        pane: Option<super::DrawnPane>,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1064,7 +1058,7 @@ impl Workspace {
                                 .bg(t.border_strong),
                         ),
                     )
-                    .child(inspector::header(self, run, t, cx))
+                    .child(inspector::header(self, run, t))
                     .child(
                         div()
                             .id("sheet-body")

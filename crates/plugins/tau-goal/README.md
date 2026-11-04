@@ -40,7 +40,7 @@ controls a goal by storing a record with the run.
 tau-goal is a single crate: the interface half and the host half live
 together, since neither pulls in anything heavy (decision 0030 keeps
 only heavy host halves in crates of their own). It builds on `tau-agent`,
-`tau-ai`, `tau-jev`, `tau-ui-plugin` and `tau-ui-kit`, and on gpui.
+`tau-ai`, `tau-jev`, `tau-ui-plugin` and `tau-ui-kit`.
 
 `tau-ui` registers `GoalHost`, which adds the plugin to a run only when
 its services hold a Jev (a TypeSafe key is saved), and never to a

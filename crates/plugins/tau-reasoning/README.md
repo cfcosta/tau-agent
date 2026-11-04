@@ -47,8 +47,8 @@ on.
 It is a single crate: the plugin, its `UiPlugin` and its `HostHalf` live
 here. It builds on `tau-agent` (the `start`, `before_request`,
 `rewritten` and `finish` seams), `tau-ai` (the efforts a model takes)
-and `tau-jev`, the shared Jev client. Its UI uses `tau-ui-kit`,
-`tau-ui-plugin` and gpui.
+and `tau-jev`, the shared Jev client. Its UI uses `tau-ui-kit` and
+`tau-ui-plugin`.
 
 `tau-ui` registers `ReasoningHost`, which adds the plugin to a run only
 when the host has a Jev (a saved TypeSafe key) and the run's effort is

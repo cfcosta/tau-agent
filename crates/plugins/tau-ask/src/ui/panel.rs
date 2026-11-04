@@ -10,7 +10,6 @@
 //! of the question in view. In a field, Esc goes back to the panel;
 //! Enter leaves the note, or takes the person's own answer.
 
-use gpui::{AnyElement, App};
 use serde_json::{Value, json};
 use tau_agent::tool::RunId;
 use tau_ui_plugin::{
@@ -27,6 +26,7 @@ use super::{
     Draft,
     Focus,
     Key,
+    State,
     Then,
     draft_key,
     focus_key,
@@ -115,135 +115,127 @@ impl Held {
 
 /// The panel for the run's waiting call, in the composer's place; none
 /// when no call waits or the run has ended.
-pub fn panel(at: &AtRun, view: &mut ViewCx<'_, AskUi>) -> Option<AnyElement> {
+pub fn panel(at: &AtRun, view: &mut ViewCx<'_, AskUi>) -> Option<Node> {
     if !at.run.live {
         return None;
     }
     let call = view.state?.waiting()?.clone();
     let key: CallKey = (at.run.id.0.to_string(), call.call.clone());
     let held = Held::of(view, &key, &call.ask);
-    let tree = tree(&key, &call.ask, &held, view.compact);
-    let act = on_action(view.handle.clone(), key.clone(), call.ask, held);
-    Some(view.tree(&format!("ask-{}-{}", key.0, key.1), &tree, act))
+    Some(tree(&key, &call.ask, &held, view.compact))
 }
 
-/// What the panel's keys and clicks do: change the draft and keep it,
-/// give the keys to a field or the panel, send the answers.
-fn on_action(
-    handle: Handle,
-    key: CallKey,
-    ask: Ask,
-    held: Held,
-) -> impl Fn(&str, &Value, &mut App) + 'static {
-    move |action, args, cx| {
-        let mut draft = held.draft.clone();
-        let mut focus = held.focus;
-        let text = || args.get("text").and_then(Value::as_str).unwrap_or("");
-        let row = |name: &str| {
-            args.get(name)
-                .and_then(Value::as_u64)
-                .map_or(0, |n| n as usize)
-        };
-        let then = match action {
-            // Nothing changes once the answers went, but cancelling.
-            CANCEL => {
-                handle.cancel(&RunId(key.0.as_str().into()), cx);
-                return;
-            }
-            _ if held.sent => return,
-            KEY => {
-                let name =
-                    args.get("key").and_then(Value::as_str).unwrap_or("");
-                let in_field =
-                    args.get("field").and_then(Value::as_bool).unwrap_or(false);
-                if in_field || name == "escape" {
-                    // Esc in a field: back to the panel.
-                    draft.note_open = false;
-                    focus.panel += 1;
-                    Then::Stay
-                } else {
-                    match Key::of(name) {
-                        Some(key) => draft.key(&ask, key),
-                        None => return,
-                    }
-                }
-            }
-            GO => {
-                draft.go(&ask, row("to"));
-                Then::Stay
-            }
-            CHOOSE => draft.choose(&ask, row("row"), false),
-            OTHER_DONE => {
-                draft.write_other(&ask, text());
-                draft.other_done(&ask);
-                focus.panel += 1;
-                Then::Stay
-            }
-            NOTE_DONE => {
-                draft.write_note(&ask, text());
+/// What the panel's keys and clicks do, on the call the run the view is
+/// of waits on, as the interface holds its draft now: change the draft
+/// and keep it, give the keys to a field or the panel, send the answers.
+pub fn act(action: &str, args: &Value, view: &ViewCx<'_, AskUi>) {
+    let Some(run) = view.run else {
+        return;
+    };
+    let Some(call) = view.state.and_then(State::waiting) else {
+        return;
+    };
+    let key: CallKey = (run.id.0.to_string(), call.call.clone());
+    let ask = &call.ask;
+    let held = Held::of(view, &key, ask);
+    let handle = &view.handle;
+    let mut draft = held.draft.clone();
+    let mut focus = held.focus;
+    let text = || args.get("text").and_then(Value::as_str).unwrap_or("");
+    let row = |name: &str| {
+        args.get(name)
+            .and_then(Value::as_u64)
+            .map_or(0, |n| n as usize)
+    };
+    let then = match action {
+        // Nothing changes once the answers went, but cancelling.
+        CANCEL => {
+            handle.cancel(&RunId(key.0.as_str().into()));
+            return;
+        }
+        _ if held.sent => return,
+        KEY => {
+            let name = args.get("key").and_then(Value::as_str).unwrap_or("");
+            let in_field =
+                args.get("field").and_then(Value::as_bool).unwrap_or(false);
+            if in_field || name == "escape" {
+                // Esc in a field: back to the panel.
                 draft.note_open = false;
                 focus.panel += 1;
                 Then::Stay
-            }
-            NOTE_OPEN => {
-                draft.note_open = true;
-                Then::WriteNote
-            }
-            NEXT => {
-                draft.go(&ask, draft.tab + 1);
-                Then::Stay
-            }
-            SEND => Then::Send,
-            DECLINE => {
-                send(&handle, &key, Reply::Declined, cx);
-                return;
-            }
-            _ => return,
-        };
-        match then {
-            Then::Stay => {}
-            Then::WriteOther => focus.other += 1,
-            Then::WriteNote => {
-                // The field shows the note as it stands.
-                let note =
-                    draft.notes.get(draft.tab).cloned().unwrap_or_default();
-                handle.set_ui(
-                    input_key(&note_input(&key, draft.tab)),
-                    (!note.is_empty()).then(|| Value::String(note)),
-                    cx,
-                );
-                focus.note += 1;
-            }
-            Then::Send => {
-                if let Some(reply) = draft.reply(&ask) {
-                    send(&handle, &key, reply, cx);
+            } else {
+                match Key::of(name) {
+                    Some(key) => draft.key(ask, key),
+                    None => return,
                 }
             }
         }
-        handle.set_ui(draft_key(&key), serde_json::to_value(&draft).ok(), cx);
-        if focus != held.focus {
-            handle.set_ui(
-                focus_key(&key),
-                serde_json::to_value(focus).ok(),
-                cx,
-            );
+        GO => {
+            draft.go(ask, row("to"));
+            Then::Stay
         }
+        CHOOSE => draft.choose(ask, row("row"), false),
+        OTHER_DONE => {
+            draft.write_other(ask, text());
+            draft.other_done(ask);
+            focus.panel += 1;
+            Then::Stay
+        }
+        NOTE_DONE => {
+            draft.write_note(ask, text());
+            draft.note_open = false;
+            focus.panel += 1;
+            Then::Stay
+        }
+        NOTE_OPEN => {
+            draft.note_open = true;
+            Then::WriteNote
+        }
+        NEXT => {
+            draft.go(ask, draft.tab + 1);
+            Then::Stay
+        }
+        SEND => Then::Send,
+        DECLINE => {
+            send(handle, &key, Reply::Declined);
+            return;
+        }
+        _ => return,
+    };
+    match then {
+        Then::Stay => {}
+        Then::WriteOther => focus.other += 1,
+        Then::WriteNote => {
+            // The field shows the note as it stands.
+            let note = draft.notes.get(draft.tab).cloned().unwrap_or_default();
+            handle.set_ui(
+                input_key(&note_input(&key, draft.tab)),
+                (!note.is_empty()).then(|| Value::String(note)),
+            );
+            focus.note += 1;
+        }
+        Then::Send => {
+            if let Some(reply) = draft.reply(ask) {
+                send(handle, &key, reply);
+            }
+        }
+    }
+    handle.set_ui(draft_key(&key), serde_json::to_value(&draft).ok());
+    if focus != held.focus {
+        handle.set_ui(focus_key(&key), serde_json::to_value(focus).ok());
     }
 }
 
 /// Sends the reply: until the call ends or the host refuses it, the
 /// panel shows it going.
-fn send(handle: &Handle, key: &CallKey, reply: Reply, cx: &mut App) {
-    handle.set_ui(refused_key(key), None, cx);
-    handle.set_ui(sent_key(key), Some(Value::Bool(true)), cx);
-    handle.act(
-        Act {
-            run: key.0.clone(),
-            call: key.1.clone(),
-            reply,
-        },
-        cx,
-    );
+fn send(handle: &Handle, key: &CallKey, reply: Reply) {
+    handle.set_ui(refused_key(key), None);
+    handle.set_ui(sent_key(key), Some(Value::Bool(true)));
+    handle.act(Act {
+        run: key.0.clone(),
+        call: key.1.clone(),
+        reply,
+    });
 }
 
 /// The panel's tree: an area that takes the keys, holding the tabs, the

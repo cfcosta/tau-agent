@@ -173,7 +173,8 @@ fn writing_a_plugin_starts_on_a_new_run_s_composer(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(ws.yours_route(None).unwrap(), cx);
         ws.plugin_handle(tau_luau_plugins::NAME)
-            .composer("/plugin block deploys", cx);
+            .composer("/plugin block deploys");
+        ws.drain_plugin_requests(cx);
     });
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {

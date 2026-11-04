@@ -7,7 +7,6 @@
 //! (ADR 0045). The host draws the plugin's own page, bound, and the
 //! interface fetches it as a tree of the pane's.
 
-use gpui::{AnyElement, App};
 use serde_json::{Value, json};
 use tau_ui_plugin::{
     Handle,
@@ -50,24 +49,22 @@ pub struct Saver {
 
 impl Saver {
     /// Carries out `action` when it is one of the pane's: whether it was.
-    pub fn act(&self, action: &str, args: &Value, cx: &mut App) -> bool {
+    pub fn act(&self, action: &str, args: &Value) -> bool {
         if action == SET {
             if let Some(key) = args["key"].as_str() {
-                self.save(key, args["value"].clone(), cx);
+                self.save(key, args["value"].clone());
             }
             return true;
         }
         let text = args["text"].as_str().unwrap_or_default();
         if let Some(key) = action.strip_prefix(TEXT) {
-            self.save(key, Value::String(text.to_owned()), cx);
+            self.save(key, Value::String(text.to_owned()));
             return true;
         }
         if let Some(key) = action.strip_prefix(NUMBER) {
             match text.trim().parse::<serde_json::Number>() {
-                Ok(number) => self.save(key, Value::Number(number), cx),
-                Err(_) => {
-                    self.reject(format!("`{key}` should be a number"), cx)
-                }
+                Ok(number) => self.save(key, Value::Number(number)),
+                Err(_) => self.reject(format!("`{key}` should be a number")),
             }
             return true;
         }
@@ -75,25 +72,24 @@ impl Saver {
     }
 
     /// Saves `key` as `new`, when the schema takes it.
-    fn save(&self, key: &str, new: Value, cx: &mut App) {
+    fn save(&self, key: &str, new: Value) {
         let next = settings::set_key(&self.current, key, new);
         match settings::check(&self.schema, &next) {
             Ok(()) => {
                 let mut all = self.all.clone();
                 all.plugins.insert(self.entry.clone(), next);
                 let rejected = format!("{REJECTED}{}", self.entry);
-                self.handle.set_ui(rejected, None, cx);
-                self.handle
-                    .save_settings_in(self.scope.as_deref(), &all, cx);
+                self.handle.set_ui(rejected, None);
+                self.handle.save_settings_in(self.scope.as_deref(), &all);
             }
-            Err(why) => self.reject(why, cx),
+            Err(why) => self.reject(why),
         }
     }
 
     /// Says why a change did not hold.
-    fn reject(&self, why: String, cx: &mut App) {
+    fn reject(&self, why: String) {
         let rejected = format!("{REJECTED}{}", self.entry);
-        self.handle.set_ui(rejected, Some(Value::String(why)), cx);
+        self.handle.set_ui(rejected, Some(Value::String(why)));
     }
 }
 
@@ -321,14 +317,18 @@ pub fn settings_view(
 }
 
 /// The pane of the Luau plugin `entry`.
-pub fn render(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
-    let (tree, saver) = pane(view);
-    let id = format!("luau-settings-{}", view.entry().unwrap_or_default());
-    view.tree(&id, &tree, move |action, args, cx| {
-        if let Some(saver) = &saver {
-            saver.act(action, args, cx);
-        }
-    })
+pub fn render(view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
+    pane(view).0
+}
+
+/// Carries out `action` when it is one of the pane's, as the pane the
+/// view is of saves: whether it was.
+pub fn act(
+    action: &str,
+    args: &Value,
+    view: &mut ViewCx<'_, LuauPluginsUi>,
+) -> bool {
+    pane(view).1.is_some_and(|saver| saver.act(action, args))
 }
 
 #[cfg(test)]

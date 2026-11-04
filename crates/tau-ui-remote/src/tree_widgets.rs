@@ -28,10 +28,9 @@ use tau_ui_kit::{
     theme::{MONO, Theme, Type, theme},
     ticker::now,
 };
-use tau_ui_plugin::{
-    Handle,
-    tree::{TerminalSpec, TickerSpec, WidgetSpec},
-};
+use tau_ui_plugin::tree::{TerminalSpec, TickerSpec, WidgetSpec};
+
+use crate::plugins::Asker;
 
 /// One terminal's screen, and what it was fed.
 struct Screen {
@@ -141,7 +140,7 @@ impl TreeWidgets {
 /// answer came for a while.
 pub fn tree(
     widgets: &Rc<RefCell<TreeWidgets>>,
-    handle: &Handle,
+    handle: &Asker,
     key: &str,
     fetch: &serde_json::Value,
     cx: &mut App,
@@ -166,7 +165,7 @@ pub fn tree(
 /// outside its fields gives it the keys, and so does a new focus number.
 fn area(
     widgets: &Rc<RefCell<TreeWidgets>>,
-    handle: &Handle,
+    handle: &Asker,
     spec: tau_ui_plugin::tree::KeysSpec,
     cx: &mut App,
 ) -> AnyElement {
@@ -234,7 +233,7 @@ fn area(
 /// the first time, and again while no answer came for a while.
 fn picture(
     widgets: &Rc<RefCell<TreeWidgets>>,
-    handle: &Handle,
+    handle: &Asker,
     spec: tau_ui_plugin::tree::ImageSpec,
     cx: &mut App,
 ) -> AnyElement {
@@ -305,7 +304,7 @@ const SHOWN_FOR: std::time::Duration = std::time::Duration::from_secs(2);
 /// `spec`'s widget for `plugin`, drawn; `handle` draws the window again.
 pub fn widget(
     widgets: &Rc<RefCell<TreeWidgets>>,
-    handle: &Handle,
+    handle: &Asker,
     spec: WidgetSpec,
     cx: &mut App,
 ) -> AnyElement {
@@ -326,7 +325,7 @@ pub fn widget(
 /// again each second while it still changes; none once it stops.
 fn tick(
     widgets: &Rc<RefCell<TreeWidgets>>,
-    handle: &Handle,
+    handle: &Asker,
     spec: TickerSpec,
     cx: &mut App,
 ) -> String {
@@ -489,6 +488,7 @@ fn view(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::Ask;
 
     fn spec(bytes: &str, live: bool) -> TerminalSpec {
         TerminalSpec {
@@ -508,7 +508,7 @@ mod tests {
         use tau_ui_kit::ticker::Count;
 
         let widgets = Rc::new(RefCell::new(TreeWidgets::default()));
-        let handle = Handle::new("p", Rc::new(|_, _, _| {}));
+        let handle = Asker::new("p", Rc::new(|_, _, _: &mut App| {}));
         let spec = |count| TickerSpec {
             key: "load.ticker".into(),
             count,
@@ -541,9 +541,13 @@ mod tests {
         let widgets = Rc::new(RefCell::new(TreeWidgets::default()));
         let asked: Rc<RefCell<Vec<Request>>> = Rc::default();
         let sink = asked.clone();
-        let handle = Handle::new(
+        let handle = Asker::new(
             "p",
-            Rc::new(move |_, request, _| sink.borrow_mut().push(request)),
+            Rc::new(move |_, ask, _: &mut App| {
+                if let Ask::Plugin(request) = ask {
+                    sink.borrow_mut().push(request)
+                }
+            }),
         );
         let fetch = json!({ "draw": "page" });
         let drawn =

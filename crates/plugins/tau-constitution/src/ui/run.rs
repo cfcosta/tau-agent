@@ -2,7 +2,6 @@
 //! notes, what it decided on each card, and its inspector section. Each
 //! is a view tree (ADR 0045).
 
-use gpui::AnyElement;
 use tau_ui_kit::{format::usd, theme};
 use tau_ui_plugin::{
     Link,
@@ -33,9 +32,6 @@ fn tone(tone: theme::Tone) -> Tone {
     }
 }
 
-/// Trees on a run draw nothing of their own to click.
-fn no_actions(_: &str, _: &serde_json::Value, _: &mut gpui::App) {}
-
 pub fn status(
     _: &AtRun,
     view: &mut ViewCx<'_, ConstitutionUi>,
@@ -53,11 +49,9 @@ pub fn status(
 pub fn note(
     at: &AtAnchor,
     view: &mut ViewCx<'_, ConstitutionUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let note = view.state?.notes.get(&at.key)?.clone();
-    let tree = note_tree(&note.text, &note.detail, tone(note.tone));
-    let id = format!("rules-{}-{}", at.run.id.0, at.key);
-    Some(view.tree(&id, &tree, no_actions))
+    Some(note_tree(&note.text, &note.detail, tone(note.tone)))
 }
 
 /// A note's tree: the plugin, what it says and where.
@@ -83,16 +77,14 @@ pub fn note_tree(text: &str, detail: &str, tone: Tone) -> Node {
 pub fn badge(
     at: &AtCard,
     view: &mut ViewCx<'_, ConstitutionUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let call = view.state?.calls.get(at.keys.first()?)?.clone();
-    let tree = badge_tree(
+    badge_tree(
         &at.run.repo,
         call.verdict.as_ref(),
         &call.scores,
         view.compact,
-    )?;
-    let id = format!("rules-badge-{}", at.call_id);
-    Some(view.tree(&id, &tree, no_actions))
+    )
 }
 
 /// The badge's tree, for a call's verdict and scores in `repo`.
@@ -133,7 +125,7 @@ pub fn badge_tree(
 pub fn blocked(
     at: &AtCard,
     view: &mut ViewCx<'_, ConstitutionUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let call = view.state?.calls.get(at.keys.first()?)?.clone();
     let verdict = call
         .verdict
@@ -142,9 +134,7 @@ pub fn blocked(
         .repo(&at.run.repo)
         .and_then(|rules| rules.rule(&verdict.rule))
         .map(|rule| (rule.review, rule.block));
-    let tree = blocked_tree(&at.run.repo, &verdict, marks);
-    let id = format!("rules-blocked-{}", at.call_id);
-    Some(view.tree(&id, &tree, no_actions))
+    Some(blocked_tree(&at.run.repo, &verdict, marks))
 }
 
 /// The blocked call's tree: the rule, and Jev's score against its
@@ -181,11 +171,9 @@ pub fn blocked_tree(
 pub fn inspector(
     at: &AtRun,
     view: &mut ViewCx<'_, ConstitutionUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let stats = view.state?.stats.clone();
-    let tree = inspector_tree(&stats, &at.run.repo, at.run.live)?;
-    let id = format!("rules-inspector-{}", at.run.id.0);
-    Some(view.tree(&id, &tree, no_actions))
+    inspector_tree(&stats, &at.run.repo, at.run.live)
 }
 
 /// The inspector's tree for a run's `stats`, in `repo`; nothing before

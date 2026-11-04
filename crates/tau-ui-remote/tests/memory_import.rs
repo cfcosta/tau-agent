@@ -196,8 +196,8 @@ fn stage_names(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Vec<String> {
-    workspace.update(cx, |ws, cx| {
-        ws.setup_stages(cx)
+    workspace.update(cx, |ws, _| {
+        ws.setup_stages()
             .into_iter()
             .map(|stage| stage.name)
             .collect()

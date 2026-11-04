@@ -1,12 +1,9 @@
 //! The note as the transcript draws it, and as the line above the
 //! composer: both are view trees (ADR 0045).
 
-use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ui_plugin::{
-    Handle,
-    RunInfo,
     ViewCx,
     points::{AtAnchor, AtRun},
     tree::{Node, Tone},
@@ -20,7 +17,7 @@ use crate::{
 };
 
 /// The buttons' action: answer the note its arguments name.
-const ANSWER: &str = "answer";
+pub const ANSWER: &str = "answer";
 
 /// What a button's answer carries: the note's key, the answer, and the
 /// note's line, for the composer when the answer is a chat.
@@ -36,7 +33,7 @@ struct Answered {
 pub fn annotation(
     at: &AtAnchor,
     view: &mut ViewCx<'_, WatcherUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let note = view
         .state?
         .notes
@@ -65,42 +62,39 @@ pub fn annotation(
     if !actions.is_empty() {
         children.push(Node::row(actions));
     }
-    let tree = Node::Card { children };
-    let id = format!("watcher-{}-{}", at.run.id.0, at.key);
-    Some(draw(view, &id, &tree, &at.run))
+    Some(Node::Card { children })
 }
 
 /// The newest note as one line above the composer, while it is new.
-pub fn band(
-    at: &AtRun,
-    view: &mut ViewCx<'_, WatcherUi>,
-) -> Option<AnyElement> {
+pub fn band(_at: &AtRun, view: &mut ViewCx<'_, WatcherUi>) -> Option<Node> {
     let note = view.state?.band()?.clone();
-    let tree = Node::row(
+    Some(Node::row(
         [tag(&note, false), Node::text(&note.line), Node::Spacer]
             .into_iter()
             .chain(actions(&note)),
-    );
-    let id = format!("watcher-band-{}", at.run.id.0);
-    Some(draw(view, &id, &tree, &at.run))
+    ))
 }
 
-/// Draws a note's tree, its buttons answering it in `run`.
-fn draw(
-    view: &mut ViewCx<'_, WatcherUi>,
-    id: &str,
-    tree: &Node,
-    run: &RunInfo,
-) -> AnyElement {
-    let (handle, run) = (view.handle.clone(), run.clone());
-    view.tree(id, tree, move |action, args, cx| {
-        if action != ANSWER {
-            return;
-        }
-        if let Ok(answered) = serde_json::from_value::<Answered>(args.clone()) {
-            act(&handle, &run, answered, cx);
-        }
-    })
+/// A note's button, in the run its tree was drawn in: stores the
+/// person's answer, which folds into the state as any record does, and
+/// for a chat puts the note in the composer.
+pub fn on_action(args: &Value, view: &mut ViewCx<'_, WatcherUi>) {
+    let Some(run) = view.run else {
+        return;
+    };
+    let Ok(answered) = serde_json::from_value::<Answered>(args.clone()) else {
+        return;
+    };
+    if answered.answer == Answer::Chatted {
+        view.handle.composer(chat_text(&answered.line));
+    }
+    view.handle.record(
+        &run.id,
+        Record::Answered {
+            key: answered.key,
+            answer: answered.answer,
+        },
+    );
 }
 
 /// The note's tag, in amber (grey once answered), ahead of its line.
@@ -142,20 +136,4 @@ fn actions(note: &Note) -> Vec<Node> {
             }
         })
         .collect()
-}
-
-/// Stores the person's answer, which folds into the state as any record
-/// does, and for a chat puts the note in the composer.
-fn act(handle: &Handle, run: &RunInfo, answered: Answered, cx: &mut gpui::App) {
-    if answered.answer == Answer::Chatted {
-        handle.composer(chat_text(&answered.line), cx);
-    }
-    handle.record(
-        &run.id,
-        Record::Answered {
-            key: answered.key,
-            answer: answered.answer,
-        },
-        cx,
-    );
 }

@@ -50,7 +50,7 @@ pub struct Hit {
 impl Workspace {
     /// What `query` matches, best first: conversations, then
     /// repositories, then things to do. Every word must match.
-    pub fn search_hits(&self, query: &str, cx: &mut gpui::App) -> Vec<Hit> {
+    pub fn search_hits(&self, query: &str) -> Vec<Hit> {
         let query = query.trim().to_lowercase();
         let words: Vec<&str> = query.split_whitespace().collect();
         let matches = |text: &str| {
@@ -118,7 +118,6 @@ impl Workspace {
                 &tau_ui_plugin::points::AtRepo {
                     repo: repo.name.clone(),
                 },
-                cx,
             );
             actions.extend(entries.into_iter().filter_map(|entry| {
                 Some(Hit {
@@ -157,7 +156,7 @@ impl Workspace {
         ]
         .into_iter()
         .flat_map(|point| {
-            self.contributions(point, &tau_ui_plugin::points::AtApp, cx)
+            self.contributions(point, &tau_ui_plugin::points::AtApp)
         })
         .collect::<Vec<_>>();
         actions.extend(everywhere.into_iter().filter_map(|entry| {
@@ -244,7 +243,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let query = self.search.read(cx).text().to_owned();
-        if let Some(hit) = self.search_hits(&query, cx).into_iter().next() {
+        if let Some(hit) = self.search_hits(&query).into_iter().next() {
             self.pick(hit.pick, window, cx);
         }
     }
@@ -256,7 +255,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let query = self.search.read(cx).text().to_owned();
-        let hits = self.search_hits(&query, cx);
+        let hits = self.search_hits(&query);
         let rows: Vec<AnyElement> = hits
             .into_iter()
             .enumerate()

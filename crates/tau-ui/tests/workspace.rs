@@ -450,13 +450,11 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         ws.navigate(Route::Plugins, cx);
         ws.pick_plugin(tau_reasoning::NAME, None, cx);
         let reasoning = ws.plugin_handle(tau_reasoning::NAME);
-        reasoning.save_settings(
-            &tau_reasoning::ui::Settings {
-                redecide: true,
-                threshold: 0.9,
-            },
-            cx,
-        );
+        reasoning.save_settings(&tau_reasoning::ui::Settings {
+            redecide: true,
+            threshold: 0.9,
+        });
+        ws.drain_plugin_requests(cx);
         ws.set_plugin_scope(Some("tau-agent".into()), cx);
         reasoning.save_settings_in(
             Some("tau-agent"),
@@ -464,8 +462,8 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
                 redecide: false,
                 threshold: 0.5,
             },
-            cx,
         );
+        ws.drain_plugin_requests(cx);
     });
     // Drawn with them.
     cx.run_until_parked();
@@ -536,11 +534,11 @@ fn reasoning_draws_its_own_ui(cx: &mut TestAppContext) {
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
         let view = ws.run(&run).unwrap().clone();
-        let plan = ws.run_plan(&view, cx);
+        let plan = ws.run_plan(&view);
         assert!(plan.iter().any(|field| field.name == "reasoning"
             && field.value == "high"
             && field.set_by.as_deref() == Some(tau_reasoning::NAME)));
-        let statuses = ws.run_statuses(&view, cx);
+        let statuses = ws.run_statuses(&view);
         assert!(
             statuses
                 .iter()
@@ -1159,14 +1157,14 @@ fn history_runs_the_query_typed_and_shows_the_answer(cx: &mut TestAppContext) {
 #[gpui::test]
 fn search_finds_runs_repositories_and_actions(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
+    workspace.update(&mut cx, |ws, _| {
         use tau_ui_remote::search::Pick;
-        let hits = ws.search_hits("rerank", cx);
+        let hits = ws.search_hits("rerank");
         assert_eq!(hits[0].label, "rerank-latency");
         assert_eq!(hits[0].detail, "chat in docbert");
         // Every word must match.
-        assert!(ws.search_hits("rerank homelab", cx).is_empty());
-        let hits = ws.search_hits("homelab", cx);
+        assert!(ws.search_hits("rerank homelab").is_empty());
+        let hits = ws.search_hits("homelab");
         assert!(
             hits.iter()
                 .any(|hit| hit.pick == Pick::Repo("homelab.nix".into()))
@@ -1175,10 +1173,10 @@ fn search_finds_runs_repositories_and_actions(cx: &mut TestAppContext) {
             hits.iter()
                 .any(|hit| hit.pick == Pick::NewRunIn("homelab.nix".into()))
         );
-        let hits = ws.search_hits("history", cx);
+        let hits = ws.search_hits("history");
         assert_eq!(hits[0].pick, Pick::Screen(Route::History));
         // Nothing typed: repositories and things to do.
-        assert!(!ws.search_hits("", cx).is_empty());
+        assert!(!ws.search_hits("").is_empty());
     });
     // Ctrl K, a query, Enter: the conversation opens.
     cx.simulate_keystrokes("ctrl-k");
@@ -1624,7 +1622,8 @@ fn goal_act(
         let info = ws.run(run).unwrap().info();
         let jev = ws.catalog().models.access.jev;
         let handle = ws.plugin_handle(tau_goal::NAME);
-        tau_goal::ui::act(act, &info, &goal, jev, &handle, cx);
+        tau_goal::ui::act(act, &info, &goal, jev, &handle);
+        ws.drain_plugin_requests(cx);
     });
     cx.run_until_parked();
 }
@@ -1849,7 +1848,8 @@ fn notes_cards_and_picks_follow_the_clicks(cx: &mut TestAppContext) {
                         let now = picked(ws, &runs[r], KEYS[k]);
                         let next =
                             tau_vcs::ui::pick(now.as_deref(), CHANGES[c]);
-                        ws.plugin_handle(tau_vcs::ui::NAME).set_ui(
+                        ws.set_plugin_ui(
+                            tau_vcs::ui::NAME,
                             tau_vcs::ui::pick_key(&runs[r], KEYS[k]),
                             next.map(serde_json::Value::from),
                             cx,
@@ -3563,7 +3563,8 @@ fn a_plugins_ui_state_set_on_a_phone_reaches_the_computer(
     });
 
     phone.update(&mut phone_cx, |ws, cx| {
-        ws.plugin_handle(tau_goal::NAME).set_ui(
+        ws.set_plugin_ui(
+            tau_goal::NAME,
             "open",
             Some(serde_json::json!(true)),
             cx,

@@ -3,7 +3,6 @@
 //! links and the links themselves under it. Both are view trees (ADR
 //! 0045), in the frame the interface gives a page.
 
-use gpui::AnyElement;
 use serde_json::Value;
 use tau_ui_plugin::{
     Link,
@@ -21,7 +20,6 @@ use super::{
     USER,
     icon,
     notes_link,
-    on_do,
 };
 use crate::{
     import::Imports,
@@ -93,8 +91,8 @@ pub fn title(view: &mut ViewCx<'_, MemoryUi>) -> String {
 
 /// The page: the notes of the `repo` parameter, those of the `kind`
 /// parameter alone when it is set, or the `note` parameter's note open.
-pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
-    let tree = match view.param("repo").map(str::to_owned) {
+pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> Node {
+    match view.param("repo").map(str::to_owned) {
         None => Node::Empty {
             text: "Pick a repository to see its notes.".into(),
         },
@@ -112,9 +110,7 @@ pub fn render(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
                 }
             }
         }
-    };
-    let handle = view.handle.clone();
-    view.tree("memory-notes", &tree, on_do(handle, None))
+    }
 }
 
 /// Whether `note` matches `query`, already lowercase.
@@ -379,11 +375,9 @@ fn recalled_link(repo: &str, id: &str) -> Link {
 /// The repository menu's entry: the repository's notes.
 pub fn menu_entry(
     at: &AtRepo,
-    view: &mut ViewCx<'_, MemoryUi>,
-) -> Option<AnyElement> {
-    let tree = menu_tree(&at.repo);
-    let handle = view.handle.clone();
-    Some(view.tree("menu-memory", &tree, on_do(handle, None)))
+    _view: &mut ViewCx<'_, MemoryUi>,
+) -> Option<Node> {
+    Some(menu_tree(&at.repo))
 }
 
 /// The menu entry's tree.
@@ -399,15 +393,9 @@ pub fn menu_tree(repo: &str) -> Node {
 
 /// One of memory's notes in a transcript: the notes a run started with,
 /// each opening its page; what it saved; what failed.
-pub fn mark(
-    at: &AtAnchor,
-    view: &mut ViewCx<'_, MemoryUi>,
-) -> Option<AnyElement> {
+pub fn mark(at: &AtAnchor, view: &mut ViewCx<'_, MemoryUi>) -> Option<Node> {
     let mark = view.state?.marks.get(&at.key)?;
-    let tree = mark_tree(mark, &at.run.repo);
-    let handle = view.handle.clone();
-    let id = format!("memory-{}-{}", at.run.id.0, at.key);
-    Some(view.tree(&id, &tree, on_do(handle, None)))
+    Some(mark_tree(mark, &at.run.repo))
 }
 
 /// A transcript note's tree, for a run in `repo`.

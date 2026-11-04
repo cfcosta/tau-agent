@@ -1,7 +1,6 @@
 //! The Agents page and the New agent form, each a view tree (ADR 0045)
 //! in the frame the interface gives a page.
 
-use gpui::AnyElement;
 use serde_json::{Value, json};
 use tau_ui_kit::format::usd;
 use tau_ui_plugin::{
@@ -27,7 +26,6 @@ use super::{
     WINDOW,
     act_button,
     button,
-    on_action,
     open,
     status_pill,
     tree_tone,
@@ -38,7 +36,7 @@ use crate::{Act, Agent, COMMAND, Overview, Status};
 const MORE: f64 = 1.0;
 
 /// Every agent: those that need the person first, then a card each.
-pub(super) fn overview(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
+pub(super) fn overview(view: &mut ViewCx<'_, AgentsUi>) -> Node {
     let overview = view.data.clone();
     // A card opens its agent's conversation: its main chat, or the first
     // run the window knows in its repository.
@@ -57,9 +55,7 @@ pub(super) fn overview(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
             .and_then(Value::as_str)
             .map(str::to_owned)
     };
-    let tree = overview_tree(&overview, &runs, &draft);
-    let actions = on_action(view.handle.clone(), None, None);
-    view.tree("agents-overview", &tree, actions)
+    overview_tree(&overview, &runs, &draft)
 }
 
 /// The Agents page's tree: `runs` are what each agent's card opens, in
@@ -303,7 +299,7 @@ fn trigger_icon(kind: &str) -> &'static str {
 
 /// The New agent form: a name, what it should do, its model, cap and
 /// window. Once the host made it, its conversation opens.
-pub(super) fn new_agent(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
+pub(super) fn new_agent(view: &mut ViewCx<'_, AgentsUi>) -> Node {
     let form = Form::of(view);
     // The host made it: open its conversation as soon as the window
     // knows it.
@@ -316,11 +312,11 @@ pub(super) fn new_agent(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
                 Some(agent) => open(&agent, view),
                 None => {
                     if let Some(run) = super::conversation_of(name, view) {
-                        view.handle.open_run(&run, view.cx);
+                        view.handle.open_run(&run);
                     }
                 }
             }
-            super::reset(&view.handle, view.cx);
+            super::reset(&view.handle);
         }
     }
     let servers = super::mcp_servers(view.data_of(MCP));
@@ -329,9 +325,7 @@ pub(super) fn new_agent(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
         view.data.agent(&name).is_some()
             && form.making.as_deref() != Some(name.as_str())
     };
-    let tree = new_agent_tree(&form, &servers, taken);
-    let actions = on_action(view.handle.clone(), Some(form), None);
-    view.tree("agents-new", &tree, actions)
+    new_agent_tree(&form, &servers, taken)
 }
 
 /// The form's tree: `servers` are the person's MCP servers, and `taken`

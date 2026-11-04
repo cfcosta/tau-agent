@@ -4,7 +4,6 @@
 
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
-use gpui::{App, TestAppContext};
 use hegel::generators as gs;
 use serde_json::{Value, json};
 use tau_agent::tool::RunId;
@@ -362,9 +361,16 @@ impl Page {
         }
     }
 
-    /// A click that asks `doing`.
+    /// A click that asks `doing`: the page's `do` action, carried out
+    /// by the plugin on a view of the page as it is now.
     fn click(&mut self, doing: Do) {
-        for request in page::apply(&self.now(), doing) {
+        let args = serde_json::to_value(&doing).unwrap();
+        let (handle, asked) = ui();
+        let data = Data::default();
+        with_handle(&[], &data, &self.ui, handle, |view| {
+            ConstitutionUi.on_action("do", &args, view);
+        });
+        for request in asked.take() {
             self.take(request);
         }
     }
@@ -529,13 +535,13 @@ fn ui() -> (Handle, Rc<RefCell<Vec<Request>>>) {
     let sink = asked.clone();
     let handle = Handle::new(
         NAME,
-        Rc::new(move |_, request, _: &mut App| sink.borrow_mut().push(request)),
+        Rc::new(move |_, request| sink.borrow_mut().push(request)),
     );
     (handle, asked)
 }
 
-#[gpui::test]
-fn a_rule_is_tried_and_says_what_it_would_do(cx: &mut TestAppContext) {
+#[test]
+fn a_rule_is_tried_and_says_what_it_would_do() {
     let mut page = Page::default();
     let calls =
         vec![("exec_command".to_owned(), json!({ "cmd": "psql prod" }))];
@@ -576,7 +582,7 @@ fn a_rule_is_tried_and_says_what_it_would_do(cx: &mut TestAppContext) {
     // What the host answers goes back to the editor.
     let (ui, asked) = ui();
     let reply = json!({ "Ok": [[{ "tool": "exec_command", "shown": "psql prod", "score": 0.9 }], 0.001] });
-    cx.update(|cx| ConstitutionUi.reply(reply, &ui, cx));
+    ConstitutionUi.reply(reply, &ui);
     for request in asked.borrow_mut().drain(..) {
         page.take(request);
     }
@@ -632,10 +638,21 @@ fn rules_are_reset_only_once_confirmed() {
 /// The page over a repository's runs, each with what the checks did,
 /// and the UI state `ui_state`.
 fn with_view<R>(
-    cx: &mut TestAppContext,
     runs: &[(RunInfo, State)],
     data: &Data,
     ui_state: &BTreeMap<String, Value>,
+    f: impl FnOnce(&mut ViewCx<'_, ConstitutionUi>) -> R,
+) -> R {
+    let handle = Handle::new(NAME, Rc::new(|_, _| {}));
+    with_handle(runs, data, ui_state, handle, f)
+}
+
+/// The same, with what the view asks going to `handle`.
+fn with_handle<R>(
+    runs: &[(RunInfo, State)],
+    data: &Data,
+    ui_state: &BTreeMap<String, Value>,
+    handle: Handle,
     f: impl FnOnce(&mut ViewCx<'_, ConstitutionUi>) -> R,
 ) -> R {
     let runs: Vec<(RunInfo, PluginValue)> = runs
@@ -645,30 +662,26 @@ fn with_view<R>(
     let list = move || runs.clone();
     let cards = |_: &RunId| Vec::new();
     let params = BTreeMap::new();
-    let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
     let repos: BTreeMap<String, Rules> = BTreeMap::new();
     let repos = tau_ui_plugin::testing::RepoValues::new(&repos);
     let repos = repos.refs();
-    cx.update(|cx| {
-        let mut view = ViewCx::new(
-            &ConstitutionUi,
-            None,
-            data,
-            &(),
-            &repos,
-            None,
-            &params,
-            false,
-            true,
-            1400.,
-            handle,
-            &list,
-            &cards,
-            cx,
-        )
-        .with_ui_state(ui_state);
-        f(&mut view)
-    })
+    let mut view = ViewCx::new(
+        &ConstitutionUi,
+        None,
+        data,
+        &(),
+        &repos,
+        None,
+        &params,
+        false,
+        true,
+        1400.,
+        handle,
+        &list,
+        &cards,
+    )
+    .with_ui_state(ui_state);
+    f(&mut view)
 }
 
 fn info(id: &str, repo: &str) -> RunInfo {
@@ -685,8 +698,8 @@ fn info(id: &str, repo: &str) -> RunInfo {
 
 /// A flagged call waits for a person until marked fine, then shows as
 /// handled; so does a flagged answer; a blocked call needs no one.
-#[gpui::test]
-fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
+#[test]
+fn what_waits_for_a_person_and_what_was_handled() {
     let mut run = FakeRun {
         cards: vec![
             card("c1", "exec_command", "rm -rf /"),
@@ -712,7 +725,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
     ];
     let data = Data::default();
     let mut page = Page::default();
-    let (keys, stats) = with_view(cx, &runs, &data, &page.ui, |view| {
+    let (keys, stats) = with_view(&runs, &data, &page.ui, |view| {
         let keys: Vec<String> = page::review_items(view, "tau-agent")
             .into_iter()
             .map(|item| item.flag.key)
@@ -738,7 +751,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
             key: "answer-0".into()
         }]
     );
-    let (keys, fine) = with_view(cx, &runs, &data, &page.ui, |view| {
+    let (keys, fine) = with_view(&runs, &data, &page.ui, |view| {
         let keys: Vec<String> = page::review_items(view, "tau-agent")
             .into_iter()
             .map(|item| item.flag.key)
@@ -756,7 +769,7 @@ fn what_waits_for_a_person_and_what_was_handled(cx: &mut TestAppContext) {
     let data = Data {
         reviewed: vec![("a".into(), "c2".into())],
     };
-    let waiting = with_view(cx, &runs, &data, &page.ui, |view| {
+    let waiting = with_view(&runs, &data, &page.ui, |view| {
         page::review_items(view, "tau-agent").len()
     });
     assert_eq!(waiting, 0);

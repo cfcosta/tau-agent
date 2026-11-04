@@ -562,6 +562,7 @@ holds for every input:
   not, the rows folded from its nested calls' events and its updates
   as tau-ui folds them, merged in any order that keeps each channel's
   own, equal the rows its details list; the output and failure read back from the result; the store
-  state equals the plugin's fold; the card in gpui's test app. tau-ui's
+  state equals the plugin's fold; the card's tree, and the action its
+  button carries to `on_action`. tau-ui's
   view tests check that nested events make no cards, whatever their
   depth.

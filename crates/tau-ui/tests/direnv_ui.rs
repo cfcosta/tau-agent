@@ -58,8 +58,8 @@ fn drawn(
             run: ws.run(&demo::run_id()).unwrap().info(),
         };
         (
-            ws.contributions_of(NAME, points::COMPOSER, &at, cx).len(),
-            ws.contributions_of(NAME, points::RUN_BANNER, &at, cx).len(),
+            ws.drawn_of(NAME, points::COMPOSER, &at, cx).len(),
+            ws.drawn_of(NAME, points::RUN_BANNER, &at, cx).len(),
         )
     })
 }
@@ -138,7 +138,7 @@ fn the_menu_has_the_toggle_for_a_repository_with_an_envrc(
     ] {
         let (workspace, mut cx) = open(cx, data.clone());
         let drawn = workspace.update(&mut cx, |ws, cx| {
-            ws.contributions_of(
+            ws.drawn_of(
                 NAME,
                 points::REPO_MENU,
                 &AtRepo {

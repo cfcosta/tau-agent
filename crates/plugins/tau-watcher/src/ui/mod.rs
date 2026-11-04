@@ -5,7 +5,8 @@
 pub mod settings;
 pub mod view;
 
-use tau_ui_plugin::{Manifest, UiPlugin, points};
+use serde_json::Value;
+use tau_ui_plugin::{Manifest, UiPlugin, ViewCx, points};
 
 use crate::{record::NAME, state::State};
 
@@ -29,5 +30,18 @@ impl UiPlugin for WatcherUi {
             .contribute(points::COMPOSER_BAND, view::band)
             .status(State::status)
             .settings(settings::pane)
+    }
+
+    /// A note's answer buttons, or its settings pane's controls.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        match action {
+            view::ANSWER => view::on_action(args, view),
+            _ => settings::on_action(action, args, view),
+        }
     }
 }

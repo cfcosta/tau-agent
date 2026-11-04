@@ -7,7 +7,8 @@
 pub mod view;
 
 use serde::{Deserialize, Serialize};
-use tau_ui_plugin::{Fold, Manifest, RunCx, UiPlugin, points};
+use serde_json::Value;
+use tau_ui_plugin::{Fold, Manifest, RunCx, UiPlugin, ViewCx, points};
 
 use crate::{NAME, Record, RepoData, Settings};
 
@@ -46,5 +47,15 @@ impl UiPlugin for DirenvUi {
             .contribute(points::RUN_BANNER, view::card)
             .contribute(points::REPO_MENU, view::menu_entry)
             .settings(view::settings_pane)
+    }
+
+    /// Every tree's buttons and switches carry the act they ask for.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        view::on_action(action, args, view);
     }
 }

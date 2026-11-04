@@ -8,10 +8,9 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use gpui::{App, AppContext as _, Entity};
 use serde_json::Value;
 use tau_ui_kit::input::{InputEvent, TextInput};
-use tau_ui_plugin::{
-    Handle,
-    tree::{InputSpec, OnSubmit},
-};
+use tau_ui_plugin::tree::{InputSpec, OnSubmit};
+
+use crate::plugins::Asker;
 
 /// One input's editor, and what it knows of its draft.
 struct Editor {
@@ -37,7 +36,7 @@ pub struct TreeInputs {
 /// its draft.
 pub fn editor(
     inputs: &Rc<RefCell<TreeInputs>>,
-    handle: &Handle,
+    handle: &Asker,
     spec: InputSpec,
     cx: &mut App,
 ) -> Entity<TextInput> {
@@ -92,7 +91,7 @@ pub fn editor(
 /// as the draft and carries out its Enter.
 fn make(
     inputs: &Rc<RefCell<TreeInputs>>,
-    handle: &Handle,
+    handle: &Asker,
     id: &str,
     spec: InputSpec,
     cx: &mut App,
@@ -181,6 +180,7 @@ mod tests {
     use tau_ui_plugin::Request;
 
     use super::*;
+    use crate::plugins::Ask;
 
     fn spec(draft: &str) -> InputSpec {
         InputSpec {
@@ -201,9 +201,13 @@ mod tests {
     fn a_secret_stays_in_its_editor(cx: &mut gpui::TestAppContext) {
         let sent = Rc::new(RefCell::new(Vec::new()));
         let seen = sent.clone();
-        let handle = Handle::new(
+        let handle = Asker::new(
             "p",
-            Rc::new(move |_, request, _| seen.borrow_mut().push(request)),
+            Rc::new(move |_, ask, _: &mut App| {
+                if let Ask::Plugin(request) = ask {
+                    seen.borrow_mut().push(request)
+                }
+            }),
         );
         let inputs = Rc::new(RefCell::new(TreeInputs::default()));
         let secret = |draft: &str| InputSpec {
@@ -229,9 +233,13 @@ mod tests {
     fn an_editor_follows_its_draft(cx: &mut gpui::TestAppContext) {
         let sent = Rc::new(RefCell::new(Vec::new()));
         let seen = sent.clone();
-        let handle = Handle::new(
+        let handle = Asker::new(
             "p",
-            Rc::new(move |_, request, _| seen.borrow_mut().push(request)),
+            Rc::new(move |_, ask, _: &mut App| {
+                if let Ask::Plugin(request) = ask {
+                    seen.borrow_mut().push(request)
+                }
+            }),
         );
         let inputs = Rc::new(RefCell::new(TreeInputs::default()));
         let text = |input: &Entity<TextInput>,

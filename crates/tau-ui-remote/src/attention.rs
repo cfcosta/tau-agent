@@ -12,7 +12,6 @@
 //! turn left on it ([`RunView::main_conflicts`]). All of them travel in a snapshot, so a
 //! phone shows the same states.
 
-use gpui::App;
 use serde::{Deserialize, Serialize};
 use tau_agent::event::StopReason;
 use tau_ui_plugin::points;
@@ -255,14 +254,14 @@ pub fn count(n: usize, what: &str) -> String {
 
 impl Workspace {
     /// What `run`'s row says about whether it needs the person.
-    pub fn attention(&self, run: &RunView, cx: &mut App) -> Attention {
-        Attention::of(&self.facts(run, cx))
+    pub fn attention(&self, run: &RunView) -> Attention {
+        Attention::of(&self.facts(run))
     }
 
     /// What [`Attention::of`] reads of `run`.
-    pub fn facts(&self, run: &RunView, cx: &mut App) -> Facts {
+    pub fn facts(&self, run: &RunView) -> Facts {
         let asks = self
-            .contributions(points::ASKS, &points::AtRun { run: run.info() }, cx)
+            .contributions(points::ASKS, &points::AtRun { run: run.info() })
             .into_iter()
             .next();
         Facts {
@@ -284,11 +283,11 @@ impl Workspace {
 
     /// How many of `repo`'s open chats need the person
     /// ([`Attention::needs_you`]).
-    pub fn need_you(&self, repo: &str, cx: &mut App) -> usize {
+    pub fn need_you(&self, repo: &str) -> usize {
         self.runs
             .iter()
             .filter(|run| self.repo_of(run) == repo && !self.is_closed(&run.id))
-            .filter(|run| self.attention(run, cx).needs_you())
+            .filter(|run| self.attention(run).needs_you())
             .count()
     }
 }

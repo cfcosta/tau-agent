@@ -3,7 +3,6 @@
 //! agent keeps them as its repository's copy, in tau's data, where the
 //! agent cannot change them. A view tree (ADR 0045).
 
-use gpui::AnyElement;
 use serde_json::Value;
 use tau_ui_plugin::{
     ViewCx,
@@ -23,18 +22,9 @@ const CAPS: [f64; 5] = [0.5, 1.0, 2.0, 5.0, 10.0];
 const WINDOWS: [(u64, &str); 4] =
     [(10, "10 s"), (30, "30 s"), (60, "1 min"), (300, "5 min")];
 
-pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> AnyElement {
-    let tree = pane(view.settings);
-    let scope = view.scope().map(str::to_owned);
-    let handle = view.handle.clone();
-    view.tree("agents-settings", &tree, move |action, args, cx| {
-        if action != SETTINGS {
-            return;
-        }
-        if let Ok(settings) = serde_json::from_value::<Settings>(args.clone()) {
-            handle.save_settings_in(scope.as_deref(), &settings, cx);
-        }
-    })
+/// The pane; a choice saves the settings it holds, in the scope shown.
+pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> Node {
+    pane(view.settings)
 }
 
 /// The pane's tree: a row of choices for each setting, the one chosen

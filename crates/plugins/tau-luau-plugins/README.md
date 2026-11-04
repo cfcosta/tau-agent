@@ -38,8 +38,8 @@ is `tau-luau-plugins-host`, which reads the plugins repository, loads
 each plugin, runs its hooks and publishes the `Record`s this crate
 folds.
 
-It builds on `tau-ui-plugin` and `tau-ui-kit`, and draws with gpui. It
-does not depend on `tau-codemode` or `tau-agent`.
+It builds on `tau-ui-plugin` and `tau-ui-kit`: its views return trees
+the interface draws. It does not depend on `tau-codemode` or `tau-agent`.
 
 Used by:
 

@@ -6,9 +6,8 @@
 //! The drawing reads JSON only, so the phone, which runs no Luau, draws
 //! what the computer does.
 
-use std::{collections::BTreeMap, rc::Rc};
+use std::collections::BTreeMap;
 
-use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_agent::tool::RunId;
@@ -162,8 +161,14 @@ impl State {
 }
 
 /// What the actions of a Luau plugin's tree start with, once it sits in
-/// one of the page's own: they are the plugin's, not the page's.
+/// one of tau-luau-plugins' own: they are the plugin's, not the page's.
+/// After it come the plugin's name, `/`, and its own action. A tree on a
+/// card or in the transcript acts on the run it is drawn in.
 const LUAU: &str = "luau/";
+
+/// [`LUAU`] for the tree on a plugin's own page, which acts on the newest
+/// run that drew one ([`page_run`]).
+const LUAU_PAGE: &str = "luau-page/";
 
 /// The page's own actions: write a plugin, allow a waiting version
 /// (`{ plugin }`), open a chat (`{ run }`).
@@ -257,8 +262,13 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
 /// marked as the plugin's. A piece it does not know draws as a red box
 /// that says so.
 pub fn embed(piece: &Value, plugin: &str) -> Node {
+    embed_as(piece, plugin, LUAU)
+}
+
+/// [`embed`], its actions starting with `mark`.
+fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
     let own = |id: String| format!("{plugin}/{id}");
-    let act = |action: String| format!("{LUAU}{action}");
+    let act = |action: String| format!("{mark}{plugin}/{action}");
     rewrite(Node::read(piece), &mut |node| match node {
         Node::Section {
             id,
@@ -364,66 +374,41 @@ pub fn embed(piece: &Value, plugin: &str) -> Node {
     })
 }
 
-/// Carries out the actions of `plugin`'s embedded tree, on its state in
-/// `run`; outside a run there is no state to act on. Says whether the
-/// action was one of the plugin's.
-pub type Acting = Rc<dyn Fn(&str, &Value, &mut App) -> bool>;
-
-/// [`Acting`] for `plugin` in `run`, with its state there.
-fn acting(
+/// Carries out `plugin`'s own `action` with `args`, on its state in
+/// `run`; outside a run there is no state to act on.
+fn luau_action(
     plugin: &str,
+    action: &str,
+    args: &Value,
     run: Option<(String, State)>,
     view: &ViewCx<'_, LuauPluginsUi>,
-) -> Acting {
-    let handle = view.handle.clone();
-    let plugin = plugin.to_owned();
-    let on = run.map(|(run, state)| {
-        let state = state
-            .plugins
-            .get(&plugin)
-            .map_or_else(|| json!({}), |part| part.state.clone());
-        (run, state, view.settings.plugins.get(&plugin).cloned())
+) {
+    let Some((run, state)) = run else {
+        return;
+    };
+    let state = state
+        .plugins
+        .get(plugin)
+        .map_or_else(|| json!({}), |part| part.state.clone());
+    view.handle.act(Act::Action {
+        plugin: plugin.to_owned(),
+        action: action.to_owned(),
+        args: args.clone(),
+        run,
+        state,
+        settings: view.settings.plugins.get(plugin).cloned(),
     });
-    Rc::new(move |action: &str, args: &Value, cx: &mut App| {
-        let Some(action) = action.strip_prefix(LUAU) else {
-            return false;
-        };
-        if let Some((run, state, settings)) = &on {
-            handle.act(
-                Act::Action {
-                    plugin: plugin.clone(),
-                    action: action.to_owned(),
-                    args: args.clone(),
-                    run: run.clone(),
-                    state: state.clone(),
-                    settings: settings.clone(),
-                },
-                cx,
-            );
-        }
-        true
-    })
 }
 
-/// [`acting`] in the run the view is of, if any.
-fn acting_here(plugin: &str, view: &ViewCx<'_, LuauPluginsUi>) -> Acting {
-    let run = view.run.map(|run| run.id.0.to_string());
-    let state = view.state.cloned();
-    acting(plugin, run.zip(state), view)
-}
-
-/// Draws a view tree a Luau plugin returned, in the run the view is of:
-/// where its buttons act.
-pub fn draw(
-    piece: &Value,
-    id: &str,
+/// The newest run that drew a page for `plugin`, its state there, and
+/// the page.
+fn page_run(
     plugin: &str,
-    view: &mut ViewCx<'_, LuauPluginsUi>,
-) -> AnyElement {
-    let tree = embed(piece, plugin);
-    let on = acting_here(plugin, view);
-    view.tree(id, &tree, move |action, args, cx| {
-        on(action, args, cx);
+    view: &ViewCx<'_, LuauPluginsUi>,
+) -> Option<(RunInfo, State, Value)> {
+    view.runs().into_iter().find_map(|(run, state)| {
+        let page = state.plugins.get(plugin)?.view.get("page")?.clone();
+        (!page.is_null()).then_some((run, state, page))
     })
 }
 
@@ -438,14 +423,46 @@ impl UiPlugin for LuauPluginsUi {
     }
 
     /// What an action left.
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
+    fn reply(&self, reply: Value, handle: &Handle) {
         if let Ok(done) = serde_json::from_value::<ActionDone>(reply.clone()) {
             // What an action left, with the run it was carried out on.
             let run = RunId(done.run.as_str().into());
             for record in done.records() {
-                handle.record(&run, record, cx);
+                handle.record(&run, record);
             }
         }
+    }
+
+    /// The actions of every tree it draws: a Luau plugin's own, on the run
+    /// its tree is drawn in or the one its page shows; a settings pane's,
+    /// which save; and the page's.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if let Some((plugin, own)) = action
+            .strip_prefix(LUAU)
+            .and_then(|rest| rest.split_once('/'))
+        {
+            let run = view.run.map(|run| run.id.0.to_string());
+            luau_action(plugin, own, args, run.zip(view.state.cloned()), view);
+            return;
+        }
+        if let Some((plugin, own)) = action
+            .strip_prefix(LUAU_PAGE)
+            .and_then(|rest| rest.split_once('/'))
+        {
+            let run = page_run(plugin, view)
+                .map(|(run, state, _)| (run.id.0.to_string(), state));
+            luau_action(plugin, own, args, run, view);
+            return;
+        }
+        if crate::pane::act(action, args, view) {
+            return;
+        }
+        page_action(&view.handle, action, args);
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -471,25 +488,19 @@ impl UiPlugin for LuauPluginsUi {
                 .icon(Icon::Plug),
             )
             .status(State::status)
-            .contribute(points::CARD, |at: &AtCard, view| {
+            .contribute(points::CARD, |at: &AtCard, _| {
                 let details = at.data.result.as_ref()?.details.as_ref()?;
                 let plugin = details.get("plugin")?.as_str()?;
                 let card =
                     details.get("card").filter(|card| !card.is_null())?;
                 Some(CardView {
-                    body: Some(draw(
-                        card,
-                        &format!("luau-card-{}", at.call_id),
-                        plugin,
-                        view,
-                    )),
+                    body: Some(embed(card, plugin)),
                     ..CardView::default()
                 })
             })
             .contribute(points::TRANSCRIPT, |at: &AtAnchor, view| {
                 let (plugin, note) = view.state?.notes.get(&at.key)?.clone();
-                let id = format!("luau-note-{}-{}", at.run.id.0, at.key);
-                let tree = Node::Card {
+                Some(Node::Card {
                     children: vec![
                         Node::row([
                             Node::Icon {
@@ -502,11 +513,7 @@ impl UiPlugin for LuauPluginsUi {
                         ]),
                         embed(&note, &plugin),
                     ],
-                };
-                let on = acting_here(&plugin, view);
-                Some(view.tree(&id, &tree, move |action, args, cx| {
-                    on(action, args, cx);
-                }))
+                })
             })
             .contribute(points::CARD_BADGE, |at: &AtCard, view| {
                 let state: &State = view.state?;
@@ -517,15 +524,10 @@ impl UiPlugin for LuauPluginsUi {
                             .get(&at.call_id)
                             .map(|reason| (name.clone(), reason.clone()))
                     })?;
-                let tree = Node::Badge {
+                Some(Node::Badge {
                     text: format!("flagged by {plugin}: {reason}"),
                     tone: Tone::Warn,
-                };
-                Some(view.tree(
-                    &format!("luau-flag-{}", at.call_id),
-                    &tree,
-                    |_, _, _| {},
-                ))
+                })
             })
     }
 }
@@ -534,54 +536,27 @@ impl UiPlugin for LuauPluginsUi {
 /// plugins repository as a card, with where it stands, and the chats
 /// writing them. Opened for one plugin, the page is that plugin's. A
 /// view tree in the frame the interface gives a page (ADR 0045).
-fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
-    let handle = view.handle.clone();
+fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
     match view.entry().map(str::to_owned) {
-        Some(entry) => {
-            let (tree, luau, saver) = plugin_page(&entry, view);
-            view.tree(
-                &format!("luau-plugin-{entry}"),
-                &tree,
-                move |action, args, cx| {
-                    if luau.as_ref().is_some_and(|on| on(action, args, cx)) {
-                        return;
-                    }
-                    if saver
-                        .as_ref()
-                        .is_some_and(|saver| saver.act(action, args, cx))
-                    {
-                        return;
-                    }
-                    page_action(&handle, action, args, cx);
-                },
-            )
-        }
-        None => {
-            let tree = overview(view);
-            view.tree("luau-plugins", &tree, move |action, args, cx| {
-                page_action(&handle, action, args, cx)
-            })
-        }
+        Some(entry) => plugin_page(&entry, view),
+        None => overview(view),
     }
 }
 
 /// Carries out one of the page's own actions.
-fn page_action(handle: &Handle, action: &str, args: &Value, cx: &mut App) {
+fn page_action(handle: &Handle, action: &str, args: &Value) {
     match action {
-        WRITE => handle.composer(format!("/{COMMAND} "), cx),
+        WRITE => handle.composer(format!("/{COMMAND} ")),
         ALLOW => {
             if let Some(plugin) = args["plugin"].as_str() {
-                handle.act(
-                    Act::Allow {
-                        plugin: plugin.to_owned(),
-                    },
-                    cx,
-                );
+                handle.act(Act::Allow {
+                    plugin: plugin.to_owned(),
+                });
             }
         }
         OPEN_RUN => {
             if let Some(run) = args["run"].as_str() {
-                handle.open_run(&RunId(run.into()), cx);
+                handle.open_run(&RunId(run.into()));
             }
         }
         _ => {}
@@ -847,12 +822,8 @@ fn failing_tests(failing: &[&TestResult]) -> Node {
 
 /// One plugin's own page: where it stands, Allow when it waits, where it
 /// steps in and what it reaches, its tests, and its settings, everywhere
-/// or a repository's own. With it, what its own page's actions do, and
-/// how its settings save.
-fn plugin_page(
-    entry: &str,
-    view: &mut ViewCx<'_, LuauPluginsUi>,
-) -> (Node, Option<Acting>, Option<crate::pane::Saver>) {
+/// or a repository's own.
+fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
     let back = Node::Link {
         label: "‹ Your plugins".into(),
         to: Link::page(PAGE),
@@ -867,7 +838,7 @@ fn plugin_page(
         let empty = Node::Empty {
             text: format!("No plugin {entry} here."),
         };
-        return (Node::stack([back, empty]), None, None);
+        return Node::stack([back, empty]);
     };
     let (label, tone) = standing_label(&found.standing);
     let mut standing = vec![Node::Badge {
@@ -947,19 +918,13 @@ fn plugin_page(
     }
     // What its view puts on its page, from the newest run that drew one;
     // its buttons act on that run.
-    let drawn = view.runs().into_iter().find_map(|(run, state)| {
-        let page = state.plugins.get(entry)?.view.get("page")?.clone();
-        (!page.is_null()).then_some((run, state, page))
-    });
-    let mut luau = None;
-    if let Some((run, state, drawn)) = drawn {
+    if let Some((run, _, drawn)) = page_run(entry, view) {
         let title = if run.title.is_empty() {
             "In its last run".to_owned()
         } else {
             format!("In {}", run.title)
         };
-        page.extend(section(&title, embed(&drawn, entry)));
-        luau = Some(acting(entry, Some((run.id.0.to_string(), state)), view));
+        page.extend(section(&title, embed_as(&drawn, entry, LUAU_PAGE)));
     }
     page.extend(section(
         "Tests",
@@ -991,17 +956,14 @@ fn plugin_page(
         .declaration
         .as_ref()
         .is_some_and(|declaration| declaration.settings.is_some());
-    let mut saver = None;
     if has_settings {
         page.push(Node::Heading {
             text: "Settings".into(),
         });
         page.extend(scopes(entry, view));
-        let (pane, save) = crate::pane::pane(view);
-        page.push(pane);
-        saver = save;
+        page.push(crate::pane::render(view));
     }
-    (Node::stack(page), luau, saver)
+    Node::stack(page)
 }
 
 /// A section of a plugin's page: its heading over `body`.
@@ -1084,14 +1046,11 @@ fn chats(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
 /// loaded and the person's words as its task.
 fn start_plugin_chat(args: &str, view: &mut ViewCx<'_, LuauPluginsUi>) {
     if args.is_empty() {
-        view.handle.composer("/plugin ", view.cx);
+        view.handle.composer("/plugin ");
         return;
     }
-    view.handle.start(
-        crate::REPO,
-        format!("/{} {args}", crate::SKILL),
-        view.cx,
-    );
+    view.handle
+        .start(crate::REPO, format!("/{} {args}", crate::SKILL));
 }
 
 #[cfg(test)]
@@ -1125,6 +1084,28 @@ mod tests {
             state.notes["note-1"].1,
             json!({ "piece": "text", "text": "second" })
         );
+    }
+
+    /// A Luau plugin's tree keeps its state under the plugin's name, and
+    /// its actions name the plugin, so the plugin's `on_action` knows
+    /// whose they are.
+    #[test]
+    fn an_embedded_tree_is_the_plugin_s() {
+        let piece = json!({ "piece": "stack", "children": [
+            { "piece": "button", "label": "Add", "action": "add" },
+            { "piece": "section", "id": "more", "title": "More", "children": [] },
+        ] });
+        let Node::Stack { children } = embed(&piece, "p") else {
+            panic!("not a stack");
+        };
+        assert!(matches!(
+            &children[0],
+            Node::Button { action, .. } if action == "luau/p/add"
+        ));
+        assert!(matches!(
+            &children[1],
+            Node::Section { id, .. } if id == "p/more"
+        ));
     }
 
     /// What an action left folds into the run as its records do: the

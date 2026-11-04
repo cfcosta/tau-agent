@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 
-use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
@@ -492,8 +491,8 @@ pub fn apply(now: &Snapshot, doing: Do) -> Vec<Request> {
 }
 
 /// Keeps what trying the rule gave, in the UI state.
-pub fn tried(handle: &Handle, result: TrialResult, cx: &mut App) {
-    handle.set_ui(TRYING, value(&Trying::from(result)), cx);
+pub fn tried(handle: &Handle, result: TrialResult) {
+    handle.set_ui(TRYING, value(&Trying::from(result)));
 }
 
 /// How many answers may go back after a step of `delta` from `holds`:
@@ -683,24 +682,25 @@ pub fn trial_samples(
     (calls, answers)
 }
 
-/// What a tree's buttons, switches and inputs ask: the [`Do`] in their
-/// arguments, from the page as `now` holds it.
-fn on_do(
-    handle: Handle,
-    now: Snapshot,
-) -> impl Fn(&str, &Value, &mut App) + 'static {
-    move |action, args, cx| {
-        let typed = || args["text"].as_str().map(str::to_owned);
-        let doing = match action {
-            DO => serde_json::from_value::<Do>(args.clone()).ok(),
-            SAVE_TYPED => Some(Do::Save { typed: typed() }),
-            ADD_TYPED => Some(Do::AddPlace { typed: typed() }),
-            _ => None,
-        };
-        for request in doing.map(|doing| apply(&now, doing)).unwrap_or_default()
-        {
-            handle.request(request, cx);
-        }
+/// What the page's buttons, switches and inputs ask: the [`Do`] in
+/// their arguments, from the page as `view` holds it at the click.
+pub fn on_action(
+    action: &str,
+    args: &Value,
+    view: &ViewCx<'_, ConstitutionUi>,
+) {
+    let typed = || args["text"].as_str().map(str::to_owned);
+    let doing = match action {
+        DO => serde_json::from_value::<Do>(args.clone()).ok(),
+        SAVE_TYPED => Some(Do::Save { typed: typed() }),
+        ADD_TYPED => Some(Do::AddPlace { typed: typed() }),
+        _ => None,
+    };
+    let Some(doing) = doing else {
+        return;
+    };
+    for request in apply(&Snapshot::of(view), doing) {
+        view.handle.request(request);
     }
 }
 
@@ -733,11 +733,8 @@ fn heading(text: impl Into<String>) -> Node {
 /// The page: its repository is the `repo` parameter; `rule`, when
 /// given, is the rule to show. The repository's own page draws its name
 /// above, so this starts with what the rules do.
-pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> AnyElement {
-    let now = Snapshot::of(view);
-    let tree = tree(view, &now);
-    let handle = view.handle.clone();
-    view.tree("constitution", &tree, on_do(handle, now))
+pub fn render(view: &mut ViewCx<'_, ConstitutionUi>) -> Node {
+    tree(view, &Snapshot::of(view))
 }
 
 /// The page's tree: the editor while a rule is written, else what the

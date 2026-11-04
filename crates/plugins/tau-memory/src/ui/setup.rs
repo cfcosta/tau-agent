@@ -13,7 +13,7 @@ use tau_ui_plugin::{
     tree::{Kind, Node},
 };
 
-use super::{DO, Do, MemoryUi, button, on_do};
+use super::{Do, MemoryUi, SETUP, button};
 use crate::import::{Material, Parts, Place, Request, Tool, ToolFound};
 
 /// The step's name among memory's.
@@ -69,9 +69,7 @@ pub fn step(
         [one] => format!("{one} is"),
         _ => format!("{} are", names.join(" and ")),
     };
-    let tree = tree(&imports.found, &at.repos, choice);
-    let handle = view.handle.clone();
-    let body = view.tree("memory-setup", &tree, on_do(handle, None));
+    let body = tree(&imports.found, &at.repos, choice);
     Some(SetupView {
         step: STEP,
         title: "Memories".into(),
@@ -98,7 +96,7 @@ pub fn tree(found: &[ToolFound], picked: &[SetupRepo], choice: Choice) -> Node {
             .into(),
         detail: None,
         on: choice.others,
-        action: DO.into(),
+        action: SETUP.into(),
         args: Do::Choose {
             choice: Choice {
                 others: !choice.others,
@@ -116,6 +114,7 @@ pub fn tree(found: &[ToolFound], picked: &[SetupRepo], choice: Choice) -> Node {
         Node::text("Only chats in the folders above"),
         Node::Spacer,
         button(
+            SETUP,
             "Read and show me the notes",
             if request.is_some() {
                 Kind::Primary
@@ -175,7 +174,7 @@ fn card(found: &ToolFound, picked: &[SetupRepo], choice: Choice) -> Node {
             label,
             detail: Some(detail),
             on,
-            action: DO.into(),
+            action: SETUP.into(),
             args: Do::Choose { choice: next }.args(),
         }
     };

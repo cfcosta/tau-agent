@@ -4,10 +4,8 @@
 //! tree (ADR 0045): the loading card's clock is a ticker the interface
 //! keeps, from when the load started.
 
-use gpui::AnyElement;
 use serde_json::Value;
 use tau_ui_plugin::{
-    Handle,
     ViewCx,
     points::{AtRepo, AtRun},
     tree::{Kind, Node, Tone},
@@ -43,33 +41,27 @@ fn args(act: &Act) -> Value {
     serde_json::to_value(act).unwrap_or(Value::Null)
 }
 
-/// What a tree's buttons and switches ask: the act in their arguments.
-fn on_act(handle: Handle) -> impl Fn(&str, &Value, &mut gpui::App) + 'static {
-    move |action, args, cx| {
-        if action != ACT {
-            return;
-        }
-        if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
-            handle.act(act, cx);
-        }
+/// What every tree's buttons and switches ask: the act in their
+/// arguments.
+pub fn on_action(action: &str, args: &Value, view: &mut ViewCx<'_, DirenvUi>) {
+    if action != ACT {
+        return;
+    }
+    if let Ok(act) = serde_json::from_value::<Act>(args.clone()) {
+        view.handle.act(act);
     }
 }
 
 /// The question, in the composer's place, while a live run waits for
 /// the person to say whether the repository's `.envrc` loads.
-pub fn question(
-    at: &AtRun,
-    view: &mut ViewCx<'_, DirenvUi>,
-) -> Option<AnyElement> {
+pub fn question(at: &AtRun, view: &mut ViewCx<'_, DirenvUi>) -> Option<Node> {
     if !at.run.live {
         return None;
     }
     let Some(Record::Asked { repo, envrc }) = view.state?.now.clone() else {
         return None;
     };
-    let tree = question_tree(&repo, &envrc);
-    let handle = view.handle.clone();
-    Some(view.tree("envrc-question", &tree, on_act(handle)))
+    Some(question_tree(&repo, &envrc))
 }
 
 /// The question's tree: what loads, the `.envrc` as direnv runs it (with
@@ -108,12 +100,10 @@ pub fn question_tree(repo: &str, envrc: &str) -> Node {
 
 /// Above a run's transcript: its environment loading, while it runs, or
 /// why it did not load.
-pub fn card(at: &AtRun, view: &mut ViewCx<'_, DirenvUi>) -> Option<AnyElement> {
+pub fn card(at: &AtRun, view: &mut ViewCx<'_, DirenvUi>) -> Option<Node> {
     let now = view.state?.now.clone()?;
     let run = at.run.id.0.to_string();
-    let tree = card_tree(&now, at.run.live, &run)?;
-    let handle = view.handle.clone();
-    Some(view.tree(&format!("envrc-card-{run}"), &tree, on_act(handle)))
+    card_tree(&now, at.run.live, &run)
 }
 
 /// The card's tree for where `run`'s environment stands: loading, while
@@ -175,15 +165,13 @@ pub fn card_tree(now: &Record, live: bool, run: &str) -> Option<Node> {
 pub fn menu_entry(
     at: &AtRepo,
     view: &mut ViewCx<'_, DirenvUi>,
-) -> Option<AnyElement> {
+) -> Option<Node> {
     let data = view.repo(&at.repo)?.clone();
     if !data.envrc {
         return None;
     }
     let on = view.settings.repos.get(&at.repo) == Some(&true);
-    let tree = menu_tree(&at.repo, data.direnv, on);
-    let handle = view.handle.clone();
-    Some(view.tree(&format!("envrc-menu-{}", at.repo), &tree, on_act(handle)))
+    Some(menu_tree(&at.repo, data.direnv, on))
 }
 
 /// The menu entry's tree: the switch, or, without direnv, why there is
@@ -214,7 +202,7 @@ pub fn menu_tree(repo: &str, direnv: bool, on: bool) -> Node {
 /// Its settings pane (ADR 0029): whether each repository's `.envrc`
 /// loads for agent commands. The choice is a repository's own, so the
 /// pane shows the repository in scope, or every one with an `.envrc`.
-pub fn settings_pane(view: &mut ViewCx<'_, DirenvUi>) -> AnyElement {
+pub fn settings_pane(view: &mut ViewCx<'_, DirenvUi>) -> Node {
     let scope = view.scope().map(str::to_owned);
     let repos: Vec<(String, crate::RepoData, bool)> = view
         .repos()
@@ -224,9 +212,7 @@ pub fn settings_pane(view: &mut ViewCx<'_, DirenvUi>) -> AnyElement {
             (name.to_owned(), data.clone(), on)
         })
         .collect();
-    let tree = settings_tree(&repos, scope.is_some());
-    let handle = view.handle.clone();
-    view.tree("envrc-settings", &tree, on_act(handle))
+    settings_tree(&repos, scope.is_some())
 }
 
 /// The pane's tree: a row for each repository with an `.envrc` (or the

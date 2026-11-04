@@ -201,7 +201,8 @@ fn the_panel_does_not_take_the_keys_from_a_message_being_written(
     // The panel's Cancel, which a phone shows for want of the header's,
     // cancels the run through the plugin's handle, as that button does.
     workspace.update(&mut cx, |ws, cx| {
-        ws.plugin_handle(tau_ask::NAME).cancel(&demo::run_id(), cx);
+        ws.plugin_handle(tau_ask::NAME).cancel(&demo::run_id());
+        ws.drain_plugin_requests(cx);
     });
     cx.run_until_parked();
     assert!(events.borrow().iter().any(|event| matches!(

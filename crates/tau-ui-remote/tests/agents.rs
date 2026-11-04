@@ -264,25 +264,25 @@ fn slash_agent_opens_the_new_agent_form(cx: &mut TestAppContext) {
 #[gpui::test]
 fn only_the_agent_s_main_chat_shows_it(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        let shown = |ws: &Workspace, run: &str, cx: &mut gpui::App| {
+    workspace.update(&mut cx, |ws, _| {
+        let shown = |ws: &Workspace, run: &str| {
             let at = points::AtRun {
                 run: ws.run(&id(run)).unwrap().info(),
             };
             let banners = ws
-                .contributions_of(tau_agents::NAME, points::RUN_BANNER, &at, cx)
+                .contributions_of(tau_agents::NAME, points::RUN_BANNER, &at)
                 .len();
             let statuses = ws
-                .contributions_of(tau_agents::NAME, points::STATUS, &at, cx)
+                .contributions_of(tau_agents::NAME, points::STATUS, &at)
                 .len();
             (banners, statuses)
         };
-        assert_eq!(shown(ws, "agent-main", cx), (1, 1));
+        assert_eq!(shown(ws, "agent-main"), (1, 1));
         // Its sub-agent works in the agent's repository but is not the
         // agent: no banner, no status of the agent's.
-        assert_eq!(shown(ws, "review", cx), (0, 0));
+        assert_eq!(shown(ws, "review"), (0, 0));
         // Nor is a run in the person's repository.
-        assert_eq!(shown(ws, "main", cx), (0, 0));
+        assert_eq!(shown(ws, "main"), (0, 0));
     });
 }
 

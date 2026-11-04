@@ -7,7 +7,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use gpui::{AnyElement, App};
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
 
@@ -22,6 +21,7 @@ use crate::{
     UiPlugin,
     host::{HostCx, RepoCtx, RunCtx},
     manifest::Manifest,
+    tree::Node,
     run::RunCx,
     view::{Handle, RunInfo, ViewCx},
 };
@@ -50,15 +50,6 @@ pub struct Env<'a> {
     pub others: &'a BTreeMap<String, PluginValue>,
     /// The plugin's UI state (ADR 0045).
     pub ui_state: &'a BTreeMap<String, Value>,
-    /// Where its trees' inputs get their editors (ADR 0045).
-    pub inputs: crate::tree::Inputs<'a>,
-    /// Where its trees' widgets are kept (ADR 0045).
-    pub widgets: crate::tree::Widgets<'a>,
-    /// Where its fetched trees are kept (ADR 0045).
-    pub fetches: crate::tree::Fetches<'a>,
-    /// The window's size, in pixels: where a modal lays its backdrop.
-    pub window: (f32, f32),
-    pub cx: &'a mut App,
 }
 
 /// A page, by name.
@@ -177,7 +168,10 @@ pub trait ErasedPlugin: Send + Sync {
     /// rewrite, [`crate::REWRITE`]), into its state in a run.
     fn apply(&self, state: &mut PluginValue, body: &Value, run: &mut dyn RunCx);
 
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App);
+    fn reply(&self, reply: Value, handle: &Handle);
+    /// Carries out the plugin's own `action` from one of its trees, with
+    /// `env` where the tree was drawn ([`UiPlugin::on_action`]).
+    fn on_action(&self, action: &str, args: &Value, env: Env<'_>);
     fn declared(&self) -> Vec<&'static str>;
     fn contributes_to(&self) -> Vec<&'static str>;
     /// What the plugin contributes at `point`, given its context, with
@@ -192,10 +186,11 @@ pub trait ErasedPlugin: Send + Sync {
     fn has_settings(&self) -> bool;
     /// Its settings pane, with `env.settings` the value for the scope in
     /// `env.params`.
-    fn draw_settings(&self, env: Env<'_>) -> Option<AnyElement>;
+    fn draw_settings(&self, env: Env<'_>) -> Option<Node>;
     fn pages(&self) -> Vec<PageInfo>;
     fn page_title(&self, page: &str, env: Env<'_>) -> Option<String>;
-    fn draw_page(&self, page: &str, env: Env<'_>) -> Option<AnyElement>;
+    /// The page's tree, and whether the interface frames it.
+    fn draw_page(&self, page: &str, env: Env<'_>) -> Option<(Node, bool)>;
     /// Its commands: the manifest's, then those it lists from `at`.
     fn commands(&self, at: CommandsAt<'_>) -> Vec<CommandInfo>;
     /// Runs the command `name` in `repo`; false when the plugin has none.
@@ -212,7 +207,7 @@ pub trait ErasedPlugin: Send + Sync {
         name: &str,
         args: &str,
         env: Env<'_>,
-    ) -> Option<AnyElement>;
+    ) -> Option<Node>;
     /// The keys it binds, in its manifest's order ([`Manifest::key`]).
     fn keys(&self) -> Vec<&'static str>;
     /// What it reads outside repositories ([`Manifest::reads`]).
@@ -300,14 +295,9 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
             env.handle,
             env.runs,
             env.cards,
-            env.cx,
         )
         .with_others(env.others)
-        .with_ui_state(env.ui_state)
-        .with_inputs(env.inputs)
-        .with_widgets(env.widgets)
-        .with_fetches(env.fetches)
-        .with_window(env.window);
+        .with_ui_state(env.ui_state);
         Some(f(&mut view))
     }
 }
@@ -486,8 +476,12 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         }
     }
 
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
-        self.plugin.reply(reply, handle, cx);
+    fn reply(&self, reply: Value, handle: &Handle) {
+        self.plugin.reply(reply, handle);
+    }
+
+    fn on_action(&self, action: &str, args: &Value, env: Env<'_>) {
+        self.with_view(env, |view| self.plugin.on_action(action, args, view));
     }
 
     fn declared(&self) -> Vec<&'static str> {
@@ -535,7 +529,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         self.manifest.settings.is_some()
     }
 
-    fn draw_settings(&self, env: Env<'_>) -> Option<AnyElement> {
+    fn draw_settings(&self, env: Env<'_>) -> Option<Node> {
         let draw = self.manifest.settings.as_ref()?;
         self.with_view(env, |view| draw(view))
     }
@@ -553,7 +547,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         self.with_view(env, |view| page.title_of(view))
     }
 
-    fn draw_page(&self, page: &str, env: Env<'_>) -> Option<AnyElement> {
+    fn draw_page(&self, page: &str, env: Env<'_>) -> Option<(Node, bool)> {
         let page = self.manifest.pages.iter().find(|p| p.name == page)?;
         self.with_view(env, |view| page.draw(view))
     }
@@ -612,7 +606,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         name: &str,
         args: &str,
         env: Env<'_>,
-    ) -> Option<AnyElement> {
+    ) -> Option<Node> {
         let command = self.manifest.commands.iter().find(|c| c.name == name)?;
         self.with_view(env, |view| command.draw_popover(args, view))
             .flatten()

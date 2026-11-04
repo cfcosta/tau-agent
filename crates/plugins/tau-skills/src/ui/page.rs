@@ -12,23 +12,24 @@ use super::SkillsUi;
 use crate::{Problem, SKILL_FILE, Skill, Skills};
 
 /// The button's action: show the skills folder in the file manager.
-const OPEN_FOLDER: &str = "open-folder";
+pub const OPEN_FOLDER: &str = "open-folder";
 
 pub fn title(_: &mut ViewCx<'_, SkillsUi>) -> String {
     "Skills".to_owned()
 }
 
-pub fn render(view: &mut ViewCx<'_, SkillsUi>) -> gpui::AnyElement {
-    let skills = view.data.clone();
-    let tree = tree(&skills);
-    let dir = skills.dir.clone();
-    view.tree("skills", &tree, move |action, _, cx| {
-        if action == OPEN_FOLDER
-            && let Some(dir) = &dir
-        {
-            cx.reveal_path(dir);
-        }
-    })
+pub fn render(view: &mut ViewCx<'_, SkillsUi>) -> Node {
+    tree(view.data)
+}
+
+/// The header's button opens the skills folder, as the data has it at
+/// the click, in the file manager.
+pub fn on_action(action: &str, view: &mut ViewCx<'_, SkillsUi>) {
+    if action == OPEN_FOLDER
+        && let Some(dir) = &view.data.dir
+    {
+        view.handle.reveal(dir);
+    }
 }
 
 /// The screen: its header, then the skills and the folders that are not.

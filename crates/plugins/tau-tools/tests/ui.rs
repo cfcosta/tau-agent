@@ -6,8 +6,11 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+
 use hegel::generators as gs;
 use serde_json::json;
+use tau_agent::tool::RunId;
 use tau_tools::{
     artifact_grant::ArtifactRecord,
     ui::{
@@ -15,6 +18,7 @@ use tau_tools::{
         PEEK,
         ReadView,
         State,
+        ToolsUi,
         artifact_status,
         diff_of,
         output_lines,
@@ -23,7 +27,17 @@ use tau_tools::{
     },
 };
 use tau_ui_kit::diff::{DiffKind, DiffLine};
-use tau_ui_plugin::{CallData, CallResult, Fold, testing::FakeRun, tree::Node};
+use tau_ui_plugin::{
+    CallData,
+    CallResult,
+    Fold,
+    Handle,
+    Request,
+    UiPlugin as _,
+    ViewCx,
+    testing::FakeRun,
+    tree::Node,
+};
 
 /// A result's diff is read as tau-ui-kit reads any diff (its property
 /// is `a_whole_file_diff_gives_back_both_sides`): a successful call's
@@ -239,6 +253,63 @@ fn a_read_card_opens_to_every_line() {
         },
         other => panic!("a stack: {other:?}"),
     };
-    assert_eq!(code(&read_body(&read, Some("rust"), false, None)), PEEK);
-    assert_eq!(code(&read_body(&read, Some("rust"), true, None)), 10);
+    assert_eq!(
+        code(&read_body(&read, "key", Some("rust"), false, None)),
+        PEEK
+    );
+    assert_eq!(code(&read_body(&read, "key", Some("rust"), true, None)), 10);
+}
+
+/// A `read` card's button carries the card's UI state key and whether
+/// it opens; the plugin sets that key when it is clicked.
+#[test]
+fn a_read_cards_button_opens_its_key() {
+    let read = ReadView {
+        first: 1,
+        total: 10,
+        lines: (1..=10).map(|n| format!("line {n}")).collect(),
+    };
+    let tree = read_body(&read, "read-open/r/c", None, false, None);
+    let Node::Stack { children } = &tree else {
+        panic!("a stack: {tree:?}");
+    };
+    let Some((action, args)) = children.iter().find_map(|node| match node {
+        Node::Button { action, args, .. } => Some((action, args)),
+        _ => None,
+    }) else {
+        panic!("a button: {tree:?}");
+    };
+    let requests = Rc::new(RefCell::new(Vec::new()));
+    let received = requests.clone();
+    let handle = Handle::new(
+        tau_tools::ui::NAME,
+        Rc::new(move |_, request| received.borrow_mut().push(request)),
+    );
+    let params = BTreeMap::new();
+    let repos = BTreeMap::new();
+    let list = Vec::new;
+    let cards = |_: &RunId| Vec::new();
+    let mut view = ViewCx::new(
+        &ToolsUi,
+        None,
+        &(),
+        &(),
+        &repos,
+        None,
+        &params,
+        false,
+        false,
+        1400.,
+        handle,
+        &list,
+        &cards,
+    );
+    ToolsUi.on_action(action, args, &mut view);
+    assert_eq!(
+        *requests.borrow(),
+        vec![Request::Ui {
+            key: "read-open/r/c".into(),
+            value: Some(json!(true)),
+        }]
+    );
 }

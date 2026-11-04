@@ -9,7 +9,6 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-gpui = { package = "gpui-pre", version = "=0.3.7" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

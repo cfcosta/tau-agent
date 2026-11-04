@@ -10,7 +10,9 @@
 //! shared by every run.
 //!
 //! Everything it draws is a view tree (ADR 0045); its buttons and
-//! switches carry a [`Do`] in their arguments.
+//! switches name their tree's action ([`BANNER`], [`REVIEW`], [`SETUP`],
+//! [`SETTINGS`]) and carry a [`Do`] in their arguments, carried out in
+//! [`UiPlugin::on_action`].
 
 pub mod banner;
 pub mod page;
@@ -20,7 +22,6 @@ pub mod setup;
 
 use std::collections::BTreeMap;
 
-use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ui_kit::assets::Icon;
@@ -33,6 +34,7 @@ use tau_ui_plugin::{
     Page,
     RunCx,
     UiPlugin,
+    ViewCx,
     points::{self, AtApp, AtRepo},
     tree::{Kind, Node, Tone},
 };
@@ -230,9 +232,48 @@ impl UiPlugin for MemoryUi {
     }
 
     /// What keeping proposals did, for the review page to say.
-    fn reply(&self, reply: serde_json::Value, handle: &Handle, cx: &mut App) {
+    fn reply(&self, reply: serde_json::Value, handle: &Handle) {
         if serde_json::from_value::<Kept>(reply.clone()).is_ok() {
-            handle.set_ui(KEPT, Some(reply), cx);
+            handle.set_ui(KEPT, Some(reply));
+        }
+    }
+
+    /// Carries out the [`Do`] a button or a switch of one of its trees
+    /// holds: saving settings only from the settings pane, choosing and
+    /// starting only from the setup step.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if ![BANNER, REVIEW, SETUP, SETTINGS].contains(&action) {
+            return;
+        }
+        let Ok(what) = serde_json::from_value::<Do>(args.clone()) else {
+            return;
+        };
+        let handle = &view.handle;
+        match what {
+            Do::Act { act } => handle.act(act),
+            Do::Import { request } => {
+                handle.act(Act::Import(request));
+                handle.navigate(review_link(None));
+            }
+            Do::Open { link } => handle.navigate(link),
+            Do::Choose { choice } if action == SETUP => {
+                handle.set_ui(setup::CHOICE, serde_json::to_value(choice).ok())
+            }
+            Do::Start { request } if action == SETUP => {
+                if let Some(request) = request {
+                    handle.act(Act::Import(request));
+                }
+                handle.setup_done();
+            }
+            Do::Save { settings } if action == SETTINGS => {
+                view.save_settings(&settings)
+            }
+            Do::Choose { .. } | Do::Start { .. } | Do::Save { .. } => {}
         }
     }
 
@@ -265,7 +306,7 @@ impl UiPlugin for MemoryUi {
             // The repository's notes, from anywhere in it.
             .key("ctrl-2", |at, view| {
                 if let Some(repo) = &at.repo {
-                    view.handle.navigate(notes_link(repo), view.cx);
+                    view.handle.navigate(notes_link(repo));
                 }
             })
             .contribute(points::SETUP, setup::step)
@@ -285,9 +326,18 @@ pub const KEPT: &str = "kept";
 /// The review page's search input.
 pub const REVIEW_SEARCH: &str = "review-search";
 
-/// Every button's and switch's action: carry out the [`Do`] its
-/// arguments hold.
-pub const DO: &str = "do";
+/// The action of the banner's buttons and the ways into an import, on
+/// the notes page and in a repository's menu.
+pub const BANNER: &str = "banner";
+
+/// The action of the review page's buttons and switches.
+pub const REVIEW: &str = "review";
+
+/// The action of the setup step's buttons and switches.
+pub const SETUP: &str = "setup";
+
+/// The action of the settings pane's buttons and switches.
+pub const SETTINGS: &str = "settings";
 
 /// What a button or a switch of memory's asks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -313,11 +363,16 @@ impl Do {
     }
 }
 
-/// A button that asks for `what`.
-pub fn button(label: impl Into<String>, kind: Kind, what: &Do) -> Node {
+/// A button of the tree whose action is `action`, that asks for `what`.
+pub fn button(
+    action: &str,
+    label: impl Into<String>,
+    kind: Kind,
+    what: &Do,
+) -> Node {
     Node::Button {
         label: label.into(),
-        action: DO.into(),
+        action: action.into(),
         args: what.args(),
         kind,
         icon: None,
@@ -329,43 +384,5 @@ pub fn icon(name: &str, tone: Tone) -> Node {
     Node::Icon {
         name: name.into(),
         tone,
-    }
-}
-
-/// What a tree's buttons and switches ask: the [`Do`] in their
-/// arguments, settings saved in `scope`.
-pub fn on_do(
-    handle: Handle,
-    scope: Option<String>,
-) -> impl Fn(&str, &Value, &mut App) + 'static {
-    move |action, args, cx| {
-        if action != DO {
-            return;
-        }
-        let Ok(what) = serde_json::from_value::<Do>(args.clone()) else {
-            return;
-        };
-        match what {
-            Do::Act { act } => handle.act(act, cx),
-            Do::Import { request } => {
-                handle.act(Act::Import(request), cx);
-                handle.navigate(review_link(None), cx);
-            }
-            Do::Open { link } => handle.navigate(link, cx),
-            Do::Choose { choice } => handle.set_ui(
-                setup::CHOICE,
-                serde_json::to_value(choice).ok(),
-                cx,
-            ),
-            Do::Start { request } => {
-                if let Some(request) = request {
-                    handle.act(Act::Import(request), cx);
-                }
-                handle.setup_done(cx);
-            }
-            Do::Save { settings } => {
-                handle.save_settings_in(scope.as_deref(), &settings, cx)
-            }
-        }
     }
 }

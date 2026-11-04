@@ -10,7 +10,6 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-gpui = { package = "gpui-pre", version = "=0.3.7" }
 serde.workspace = true
 serde_json.workspace = true
 tau-agent.workspace = true
@@ -22,7 +21,6 @@ tau-ui-plugin.workspace = true
 
 [dev-dependencies]
 tau-ui-plugin = { workspace = true, features = ["testing"] }
-gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 tau-store-sqlite.workspace = true
 futures-util.workspace = true
 hegeltest.workspace = true

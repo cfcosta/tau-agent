@@ -18,7 +18,6 @@ tau-ai.workspace = true
 tau-jev.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-gpui = { package = "gpui-pre", version = "=0.3.7" }
 # Its UI (ADR 0017).
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true

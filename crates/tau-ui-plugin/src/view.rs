@@ -3,7 +3,6 @@
 
 use std::{collections::BTreeMap, rc::Rc};
 
-use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
@@ -192,10 +191,14 @@ pub enum Request {
     OpenRun(RunId),
     /// Asks for the TypeSafe key plugins that ask Jev need.
     AskJevKey,
-    /// Gives the keys to `handle`, an element the plugin draws, as the
-    /// window draws next: a panel that takes the composer's place. Not
-    /// while the person is writing in the composer.
-    Focus(gpui::FocusHandle),
+    /// Opens a page of the web in the person's browser.
+    OpenUrl(String),
+    /// Shows a file or folder in the system's file manager.
+    Reveal(std::path::PathBuf),
+    /// Opens a file with the system's application for it.
+    Open(std::path::PathBuf),
+    /// Puts text on the clipboard.
+    Copy(String),
     /// Cancels a run going on, as its Cancel button does.
     Cancel(RunId),
     /// Shows `text` over the composer for a moment: what a command did
@@ -221,10 +224,11 @@ pub enum Request {
 }
 
 /// Where a [`Handle`]'s requests go: the interface, which carries out
-/// what `plugin` asked.
-pub type Sink = Rc<dyn Fn(&'static str, Request, &mut App)>;
+/// what `plugin` asked once the plugin's handler returns.
+pub type Sink = Rc<dyn Fn(&'static str, Request)>;
 
-/// A plugin's way back to the interface from an event handler.
+/// A plugin's way back to the interface from what it carries out: an
+/// action, a reply, a command or a key.
 #[derive(Clone)]
 pub struct Handle {
     plugin: &'static str,
@@ -241,60 +245,44 @@ impl Handle {
         self.plugin
     }
 
-    pub fn request(&self, request: Request, cx: &mut App) {
-        (self.sink)(self.plugin, request, cx);
+    pub fn request(&self, request: Request) {
+        (self.sink)(self.plugin, request);
     }
 
-    /// Asks the plugin's host half for the picture `key` with `action`;
-    /// the answer goes to the interface's pictures.
-    pub fn fetch(&self, key: String, action: Value, cx: &mut App) {
-        self.request(Request::Fetch { key, action }, cx);
+    /// Asks the plugin's host half for the picture or tree `key` with
+    /// `action`; the answer goes to what the interface keeps of them.
+    pub fn fetch(&self, key: String, action: Value) {
+        self.request(Request::Fetch { key, action });
     }
 
     /// Sets `key` of the plugin's UI state to `value`, or forgets it.
-    pub fn set_ui(
-        &self,
-        key: impl Into<String>,
-        value: Option<Value>,
-        cx: &mut App,
-    ) {
-        self.request(
-            Request::Ui {
-                key: key.into(),
-                value,
-            },
-            cx,
-        );
+    pub fn set_ui(&self, key: impl Into<String>, value: Option<Value>) {
+        self.request(Request::Ui {
+            key: key.into(),
+            value,
+        });
     }
 
     /// Asks the plugin's host half to carry out `action`.
-    pub fn act(&self, action: impl Serialize, cx: &mut App) {
+    pub fn act(&self, action: impl Serialize) {
         let action = serde_json::to_value(action).unwrap_or_default();
-        self.request(Request::Act(action), cx);
+        self.request(Request::Act(action));
     }
 
-    pub fn navigate(&self, link: Link, cx: &mut App) {
-        self.request(Request::Navigate(link.from(self.plugin)), cx);
+    pub fn navigate(&self, link: Link) {
+        self.request(Request::Navigate(link.from(self.plugin)));
     }
 
-    pub fn alert(
-        &self,
-        title: impl Into<String>,
-        message: impl Into<String>,
-        cx: &mut App,
-    ) {
-        self.request(
-            Request::Alert {
-                title: title.into(),
-                message: message.into(),
-            },
-            cx,
-        );
+    pub fn alert(&self, title: impl Into<String>, message: impl Into<String>) {
+        self.request(Request::Alert {
+            title: title.into(),
+            message: message.into(),
+        });
     }
 
     /// Saves the plugin's settings everywhere.
-    pub fn save_settings(&self, settings: &impl Serialize, cx: &mut App) {
-        self.save_settings_in(None, settings, cx);
+    pub fn save_settings(&self, settings: &impl Serialize) {
+        self.save_settings_in(None, settings);
     }
 
     /// Saves the plugin's settings everywhere, or as `repo`'s own copy.
@@ -302,123 +290,111 @@ impl Handle {
         &self,
         repo: Option<&str>,
         settings: &impl Serialize,
-        cx: &mut App,
     ) {
         let value = serde_json::to_value(settings).unwrap_or_default();
-        self.request(
-            Request::Settings {
-                repo: repo.map(str::to_owned),
-                value: Some(value),
-            },
-            cx,
-        );
+        self.request(Request::Settings {
+            repo: repo.map(str::to_owned),
+            value: Some(value),
+        });
     }
 
     /// Drops `repo`'s own copy of the plugin's settings: its runs take
     /// the value everywhere again.
-    pub fn drop_settings(&self, repo: &str, cx: &mut App) {
-        self.request(
-            Request::Settings {
-                repo: Some(repo.to_owned()),
-                value: None,
-            },
-            cx,
-        );
+    pub fn drop_settings(&self, repo: &str) {
+        self.request(Request::Settings {
+            repo: Some(repo.to_owned()),
+            value: None,
+        });
     }
 
-    pub fn record(&self, run: &RunId, body: impl Serialize, cx: &mut App) {
+    pub fn record(&self, run: &RunId, body: impl Serialize) {
         let body = serde_json::to_value(body).unwrap_or_default();
-        self.request(
-            Request::Record {
-                run: run.clone(),
-                body,
-            },
-            cx,
-        );
+        self.request(Request::Record {
+            run: run.clone(),
+            body,
+        });
     }
 
-    pub fn steer(&self, run: &RunId, text: impl Into<String>, cx: &mut App) {
-        self.request(
-            Request::Steer {
-                run: run.clone(),
-                text: text.into(),
-            },
-            cx,
-        );
+    pub fn steer(&self, run: &RunId, text: impl Into<String>) {
+        self.request(Request::Steer {
+            run: run.clone(),
+            text: text.into(),
+        });
     }
 
-    pub fn send(
-        &self,
-        run: Option<&RunId>,
-        text: impl Into<String>,
-        cx: &mut App,
-    ) {
-        self.request(
-            Request::Send {
-                run: run.cloned(),
-                text: text.into(),
-            },
-            cx,
-        );
+    pub fn send(&self, run: Option<&RunId>, text: impl Into<String>) {
+        self.request(Request::Send {
+            run: run.cloned(),
+            text: text.into(),
+        });
     }
 
-    pub fn start(
-        &self,
-        repo: impl Into<String>,
-        text: impl Into<String>,
-        cx: &mut App,
-    ) {
-        self.request(
-            Request::Start {
-                repo: repo.into(),
-                text: text.into(),
-            },
-            cx,
-        );
+    pub fn start(&self, repo: impl Into<String>, text: impl Into<String>) {
+        self.request(Request::Start {
+            repo: repo.into(),
+            text: text.into(),
+        });
     }
 
-    pub fn composer(&self, text: impl Into<String>, cx: &mut App) {
-        self.request(Request::Composer(text.into()), cx);
+    pub fn composer(&self, text: impl Into<String>) {
+        self.request(Request::Composer(text.into()));
     }
 
-    pub fn run_details(&self, cx: &mut App) {
-        self.request(Request::RunDetails, cx);
+    pub fn run_details(&self) {
+        self.request(Request::RunDetails);
     }
 
     /// Opens the pane of the run in view ([`crate::points::PANE`]).
-    pub fn open_pane(&self, cx: &mut App) {
-        self.request(Request::OpenPane, cx);
+    pub fn open_pane(&self) {
+        self.request(Request::OpenPane);
     }
 
-    pub fn refresh(&self, cx: &mut App) {
-        self.request(Request::Refresh, cx);
+    pub fn refresh(&self) {
+        self.request(Request::Refresh);
     }
 
     /// Shows `text` over the composer for a moment.
-    pub fn note(&self, text: impl Into<String>, cx: &mut App) {
-        self.request(Request::Note(text.into()), cx);
+    pub fn note(&self, text: impl Into<String>) {
+        self.request(Request::Note(text.into()));
     }
 
-    pub fn open_run(&self, run: &RunId, cx: &mut App) {
-        self.request(Request::OpenRun(run.clone()), cx);
+    pub fn open_run(&self, run: &RunId) {
+        self.request(Request::OpenRun(run.clone()));
     }
 
-    pub fn ask_jev_key(&self, cx: &mut App) {
-        self.request(Request::AskJevKey, cx);
+    /// Opens `url` in the person's browser: a sign-in.
+    pub fn open_url(&self, url: impl Into<String>) {
+        self.request(Request::OpenUrl(url.into()));
     }
 
-    /// Gives the keys to `handle` as the window draws next.
-    pub fn focus(&self, handle: &gpui::FocusHandle, cx: &mut App) {
-        self.request(Request::Focus(handle.clone()), cx);
+    /// Shows `path` in the system's file manager: a folder the plugin
+    /// keeps.
+    pub fn reveal(&self, path: impl Into<std::path::PathBuf>) {
+        self.request(Request::Reveal(path.into()));
     }
 
-    pub fn cancel(&self, run: &RunId, cx: &mut App) {
-        self.request(Request::Cancel(run.clone()), cx);
+    /// Opens `path` with the system's application for it: a whole
+    /// output kept on disk.
+    pub fn open(&self, path: impl Into<std::path::PathBuf>) {
+        self.request(Request::Open(path.into()));
+    }
+
+    /// Puts `text` on the clipboard.
+    pub fn copy(&self, text: impl Into<String>) {
+        self.request(Request::Copy(text.into()));
+    }
+
+    pub fn ask_jev_key(&self) {
+        self.request(Request::AskJevKey);
+    }
+
+    pub fn cancel(&self, run: &RunId) {
+        self.request(Request::Cancel(run.clone()));
     }
 
     /// Ends the plugin's step of first-run setup, the one on screen.
-    pub fn setup_done(&self, cx: &mut App) {
-        self.request(Request::SetupDone, cx);
+    pub fn setup_done(&self) {
+        self.request(Request::SetupDone);
     }
 }
 
@@ -428,7 +404,10 @@ pub const SCOPE: &str = "scope";
 /// A settings pane's parameter: the plugin's own entry it is of.
 pub const ENTRY: &str = "entry";
 
-/// What a contribution, a page or a command reaches as it runs.
+/// What a contribution, a page or a command reaches as it runs: the
+/// plugin's values, the run, the page's parameters and UI state to read,
+/// and a [`Handle`] for what an action, a command or a key asks. A view
+/// only reads it, and gives back a tree (ADR 0045).
 pub struct ViewCx<'a, P: UiPlugin> {
     pub plugin: &'a P,
     /// The plugin's state in the run drawn, when there is one.
@@ -455,15 +434,6 @@ pub struct ViewCx<'a, P: UiPlugin> {
     others: &'a BTreeMap<String, crate::PluginValue>,
     /// The plugin's UI state: see [`Self::ui_value`].
     ui_state: &'a BTreeMap<String, Value>,
-    /// Where its trees' inputs get their editors: see [`Self::inputs`].
-    inputs: Option<crate::tree::Inputs<'a>>,
-    /// Where its trees' widgets are kept: see [`Self::widgets`].
-    widgets: Option<crate::tree::Widgets<'a>>,
-    /// Where its fetched trees are kept: see [`Self::with_fetches`].
-    fetches: Option<crate::tree::Fetches<'a>>,
-    /// The window's size, in pixels: see [`Self::with_window`].
-    window: (f32, f32),
-    pub cx: &'a mut App,
 }
 
 /// No plugin's data, for a view made without it.
@@ -487,7 +457,6 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         handle: Handle,
         runs: &'a dyn Fn() -> Vec<(RunInfo, crate::PluginValue)>,
         cards: &'a dyn Fn(&RunId) -> Vec<crate::CardInfo>,
-        cx: &'a mut App,
     ) -> Self {
         Self {
             plugin,
@@ -505,11 +474,6 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             cards,
             others: &NO_OTHERS,
             ui_state: &NO_UI_STATE,
-            inputs: None,
-            widgets: None,
-            fetches: None,
-            window: (960., 720.),
-            cx,
         }
     }
 
@@ -528,87 +492,7 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         self.ui_state.get(key)
     }
 
-    /// The same view, giving its trees' inputs editors from `inputs`.
-    pub fn with_inputs(mut self, inputs: crate::tree::Inputs<'a>) -> Self {
-        self.inputs = Some(inputs);
-        self
-    }
-
-    /// The same view, in a window of `window`'s size, where its trees'
-    /// modals lay their backdrops.
-    pub fn with_window(mut self, window: (f32, f32)) -> Self {
-        self.window = window;
-        self
-    }
-
-    /// The window's size, in pixels.
-    pub fn window(&self) -> (f32, f32) {
-        self.window
-    }
-
-    /// The same view, drawing its trees' widgets with `widgets`.
-    pub fn with_widgets(mut self, widgets: crate::tree::Widgets<'a>) -> Self {
-        self.widgets = Some(widgets);
-        self
-    }
-
-    /// The same view, drawing its trees' fetched trees from `fetches`.
-    pub fn with_fetches(mut self, fetches: crate::tree::Fetches<'a>) -> Self {
-        self.fetches = Some(fetches);
-        self
-    }
-
-    /// Where the interface keeps the views of the plugin's trees'
-    /// widgets ([`crate::tree::Draw::widgets`]).
-    pub fn widgets(&self) -> Option<crate::tree::Widgets<'a>> {
-        self.widgets
-    }
-
-    /// Where the interface keeps the editors of the plugin's trees'
-    /// inputs ([`crate::tree::Draw::inputs`]); none where nothing can
-    /// be typed.
-    pub fn inputs(&self) -> Option<crate::tree::Inputs<'a>> {
-        self.inputs
-    }
-
-    /// Draws `node`, a tree of the plugin's (ADR 0045), named `id` apart
-    /// from its other trees on screen: with the plugin's UI state, the
-    /// window's inputs and widgets, and clicks carried out. A link opens
-    /// its page and a section or a tab changes the UI state; the plugin's
-    /// own actions go to `on_action` with their arguments.
-    pub fn tree(
-        &mut self,
-        id: &str,
-        node: &crate::tree::Node,
-        on_action: impl Fn(&str, &Value, &mut App) + 'static,
-    ) -> gpui::AnyElement {
-        use crate::tree::{Act, Draw};
-
-        let handle = self.handle.clone();
-        let t = self.theme().clone();
-        let mut draw = Draw::new(&t, id.to_owned())
-            .width(self.width)
-            .window(self.window)
-            .ui(self.ui_state)
-            .on_act(Rc::new(move |act, cx| match act {
-                Act::Navigate(link) => handle.navigate(link, cx),
-                Act::Ui { key, value } => handle.set_ui(key, value, cx),
-                Act::Plugin { action, args } => on_action(&action, &args, cx),
-            }));
-        if let Some(inputs) = self.inputs {
-            draw = draw.inputs(inputs);
-        }
-        if let Some(widgets) = self.widgets {
-            draw = draw.widgets(widgets);
-        }
-        if let Some(fetches) = self.fetches {
-            draw = draw.fetches(fetches);
-        }
-        draw.draw(node, self.cx)
-    }
-
-    /// The plugin's whole UI state, for a tree drawn with it
-    /// ([`crate::tree::Draw::ui`]).
+    /// The plugin's whole UI state.
     pub fn ui_state(&self) -> &'a BTreeMap<String, Value> {
         self.ui_state
     }
@@ -642,10 +526,8 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     }
 
     /// Saves `settings` in the scope the settings pane shows.
-    pub fn save_settings(&mut self, settings: &P::Settings) {
-        let scope = self.scope().map(str::to_owned);
-        self.handle
-            .save_settings_in(scope.as_deref(), settings, self.cx);
+    pub fn save_settings(&self, settings: &P::Settings) {
+        self.handle.save_settings_in(self.scope(), settings);
     }
 
     /// The tool calls of `run`, in order.
@@ -676,10 +558,5 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
     /// The page's parameter `name`, or nothing.
     pub fn param(&self, name: &str) -> Option<&str> {
         self.params.get(name).map(String::as_str)
-    }
-
-    /// The theme.
-    pub fn theme(&self) -> &tau_ui_kit::theme::Theme {
-        tau_ui_kit::theme::theme(self.cx)
     }
 }

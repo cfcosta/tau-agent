@@ -24,14 +24,14 @@ pub fn render(
     };
     let notes: Vec<&PluginNote> = run.start_notes().collect();
     // What plugins with their UI decided in `start`.
-    let plugin_steps = ws.contributions(
+    let plugin_steps = ws.drawn(
         tau_ui_plugin::points::PLAN_STEPS,
         &tau_ui_plugin::points::AtRun { run: run.info() },
         cx,
     );
     let no_plugin_steps = plugin_steps.is_empty();
     let effort = ws
-        .run_plan(run, cx)
+        .run_plan(run)
         .into_iter()
         .find(|field| field.name == "reasoning")
         .map_or("its own effort".to_owned(), |field| field.value.clone());
@@ -147,7 +147,7 @@ pub fn render(
         .gap(sp(3.5))
         .when(!compact, |side| side.w(rems(21.625)).flex_shrink_0())
         .child(heading("RunPlan after start", t))
-        .child(plan_table(&ws.run_plan(run, cx), t));
+        .child(plan_table(&ws.run_plan(run), t));
 
     let main = div()
         .flex_1()

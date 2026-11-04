@@ -10,7 +10,6 @@ pub mod stats;
 
 use std::collections::BTreeMap;
 
-use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ui_kit::{assets::Icon, theme::Tone};
@@ -25,6 +24,7 @@ use tau_ui_plugin::{
     Page,
     RunCx,
     UiPlugin,
+    ViewCx,
     points::{self, AtRepo},
 };
 
@@ -378,10 +378,20 @@ impl UiPlugin for ConstitutionUi {
         NAME
     }
 
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
+    fn reply(&self, reply: Value, handle: &Handle) {
         if let Ok(result) = serde_json::from_value::<TrialResult>(reply) {
-            page::tried(handle, result, cx);
+            page::tried(handle, result);
         }
+    }
+
+    /// Only the rules page draws anything to click.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        page::on_action(action, args, view);
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -403,7 +413,7 @@ impl UiPlugin for ConstitutionUi {
 /// a person.
 fn sidebar(
     at: &AtRepo,
-    view: &mut tau_ui_plugin::ViewCx<'_, ConstitutionUi>,
+    view: &mut ViewCx<'_, ConstitutionUi>,
 ) -> Option<NavEntry> {
     let rules = view.repo(&at.repo).map_or(0, |repo| repo.rules.len());
     let waiting = page::review_items(view, &at.repo).len();

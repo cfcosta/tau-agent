@@ -2,7 +2,6 @@
 //! The rules go in through the plugin's own [`Act`]s, so the real host
 //! half keeps them.
 
-use gpui::App;
 use serde_json::{Value, json};
 use tau_constitution::ui::{
     Act,
@@ -134,30 +133,30 @@ fn fold(now: &mut Snapshot, request: &Request) {
 }
 
 /// Asks the interface for `request`, as the page holds it in `now`.
-fn ask(handle: &Handle, now: &mut Snapshot, request: Request, cx: &mut App) {
+fn ask(handle: &Handle, now: &mut Snapshot, request: Request) {
     fold(now, &request);
-    handle.request(request, cx);
+    handle.request(request);
 }
 
 /// Clicks `doing` on the page as `now` holds it.
-fn click(handle: &Handle, now: &mut Snapshot, doing: Do, cx: &mut App) {
+fn click(handle: &Handle, now: &mut Snapshot, doing: Do) {
     for request in page::apply(now, doing) {
-        ask(handle, now, request, cx);
+        ask(handle, now, request);
     }
 }
 
 /// Writes a new rule for `repo` in the editor: [`RULE`], as typed.
-fn write_rule(handle: &Handle, now: &mut Snapshot, repo: &str, cx: &mut App) {
+fn write_rule(handle: &Handle, now: &mut Snapshot, repo: &str) {
     let open = Do::Open {
         repo: repo.to_owned(),
         rule: None,
     };
-    click(handle, now, open, cx);
+    click(handle, now, open);
     let typed = Request::Ui {
         key: tree::draft_key(page::RULE_TEXT),
         value: Some(json!(RULE)),
     };
-    ask(handle, now, typed, cx);
+    ask(handle, now, typed);
 }
 
 /// The rules page of `repo`, through `handle`, in the state `name`
@@ -169,29 +168,28 @@ pub fn open(
     handle: &Handle,
     repo: &str,
     calls: Vec<(String, Value)>,
-    cx: &mut App,
 ) -> bool {
     let mut now = Snapshot::default();
     match name {
         "rule-editor" => {
-            write_rule(handle, &mut now, repo, cx);
+            write_rule(handle, &mut now, repo);
             let place = Do::Place {
                 place: "exec_command.cmd".into(),
             };
-            click(handle, &mut now, place, cx);
+            click(handle, &mut now, place);
             let tried = Do::Try {
                 calls,
                 answers: Vec::new(),
             };
-            click(handle, &mut now, tried, cx);
+            click(handle, &mut now, tried);
         }
         "rule-missing" => {
-            write_rule(handle, &mut now, repo, cx);
-            click(handle, &mut now, Do::Save { typed: None }, cx);
+            write_rule(handle, &mut now, repo);
+            click(handle, &mut now, Do::Save { typed: None });
         }
         // The second tab: what waits for review.
         "rules-review" => {
-            handle.set_ui(tree::tab_key(page::TABS), Some(json!(1)), cx);
+            handle.set_ui(tree::tab_key(page::TABS), Some(json!(1)));
         }
         _ => return false,
     }

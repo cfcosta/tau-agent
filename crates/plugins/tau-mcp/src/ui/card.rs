@@ -87,24 +87,13 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, McpUi>) -> Option<CardView> {
         (server.name.clone(), tool.tool.clone(), tool.annotations)
     });
     let shown = shown(&at.data, listed);
-    let ignore = |_: &str, _: &Value, _: &mut gpui::App| {};
-    let head = view.tree(
-        &format!("mcp-card-head-{}", at.call_id),
-        &head(&shown, &at.summary),
-        ignore,
-    );
-    let body = view.tree(
-        &format!("mcp-card-body-{}", at.call_id),
-        &body(&at.data, &shown),
-        ignore,
-    );
     Some(CardView {
-        head: Some(head),
+        head: Some(head(&shown, &at.summary)),
         label: None,
         failed: shown.failed.clone(),
         edge: shown.failed.as_ref().map(|_| Tone::Danger),
         shape: None,
-        body: Some(body),
+        body: Some(body(&at.data, &shown)),
         folds: at.data.result.is_some(),
         inset: false,
     })

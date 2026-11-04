@@ -615,7 +615,8 @@ pub fn scope_line(
                             crate::plugins::registry().get(&plugin)
                         {
                             ws.plugin_handle(erased.name())
-                                .drop_settings(&repo, cx);
+                                .drop_settings(&repo);
+                            ws.drain_plugin_requests(cx);
                         }
                     })),
             )

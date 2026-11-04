@@ -197,7 +197,8 @@ fn a_run_first_drawn_with_a_canvas_keeps_its_pane_closed_until_asked(
 
     // A card's click opens it, through the plugin's handle.
     workspace.update(&mut cx, |ws, cx| {
-        ws.plugin_handle(tau_canvas::NAME).open_pane(cx)
+        ws.plugin_handle(tau_canvas::NAME).open_pane();
+        ws.drain_plugin_requests(cx)
     });
     cx.run_until_parked();
     assert!(pane_of(&workspace, &other, &mut cx));

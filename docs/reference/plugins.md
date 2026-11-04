@@ -465,6 +465,19 @@ registry ([0030](../decisions/0030-host-halves-are-crates.md)).
   its UI state, as data (ADR 0045): `ViewCx::ui_value` reads it and
   `Handle::set_ui` writes it, and `UiPlugin::reply` gets the plugin's
   `Handle` to keep an answer there.
+- **Views and actions.** A plugin draws nothing itself (ADR 0045):
+  every contribution, page, settings pane, popover and part of a card
+  is a `tree::Node`, plain data the interface draws with its own
+  pieces and widgets, on the computer and the phone alike. A view
+  reads its `ViewCx` and returns the tree; it asks for nothing. A
+  button, a switch, an input's Enter or a key in one of its trees
+  names one of the plugin's actions, which the interface hands to
+  `UiPlugin::on_action` with its arguments and a `ViewCx` made again
+  where the tree was drawn: the same run, page parameters and settings
+  scope. What an action, a reply, a command or a key asks goes through
+  `view.handle` (`act`, `navigate`, `record`, `set_ui`, `composer`,
+  `open_url`, `reveal`, `open`, `copy`, …), and the interface carries
+  it out once the plugin returns. No plugin crate depends on gpui.
 - **Values.** The interface keeps a plugin's state, data and settings
   as `PluginValue`: its own type once read, JSON only on the wire.
 - **Agent commands' environment.** `HostHalf::launcher(host, repo,
@@ -503,11 +516,12 @@ settings)` gives what commands in a repository start through: a
   drawn, in order. Core names no plugin in either place
   ([0006](../decisions/0006-plugin-crates.md)).
 - **Keys.** `Manifest::key("ctrl-2", |at: &KeyAt, view| ..)` binds a
-  key in the workspace (gpui's spelling). Pressing it runs the closure
-  with `at.repo`, the repository the sidebar has selected, if any; it
-  navigates to a page (`view.handle.navigate`) or asks the host half
-  (`view.handle.act`). tau-ui-remote binds them in `bind_keys`, after its
-  own, as one `PluginKey { plugin, key }` action each. A key tau binds
+  key in the workspace, as the keymap spells it. Pressing it runs the
+  closure with `at.repo`, the repository the sidebar has selected, if
+  any; it navigates to a page (`view.handle.navigate`) or asks the
+  host half (`view.handle.act`). tau-ui-remote binds them in
+  `bind_keys`, after its own, as one `PluginKey { plugin, key }`
+  action each. A key tau binds
   stays tau's, and a key an earlier plugin in the registry declared
   stays that plugin's; the later declaration is dropped, and a key gpui
   cannot read too, each said on stderr. Memory's ctrl-2 opens the

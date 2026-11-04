@@ -42,7 +42,6 @@ pub mod ui_state;
 pub mod value;
 pub mod view;
 
-use gpui::App;
 pub use host::{
     By,
     ConfigDir,
@@ -366,7 +365,20 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
 
     /// What [`HostHalf::act`] answered, which the plugin keeps in its UI
     /// state or acts on through `handle`.
-    fn reply(&self, _reply: Value, _handle: &Handle, _cx: &mut App) {}
+    fn reply(&self, _reply: Value, _handle: &Handle) {}
+
+    /// Carries out `action`, one of the plugin's own that a button, a
+    /// switch, an input's Enter or a key in one of its trees named, with
+    /// its `args` (ADR 0045). `view` is the plugin's, as it was where the
+    /// tree was drawn: the same run and parameters, read again now; what
+    /// the action asks goes through [`ViewCx::handle`].
+    fn on_action(
+        &self,
+        _action: &str,
+        _args: &Value,
+        _view: &mut ViewCx<'_, Self>,
+    ) {
+    }
 
     /// Whether its context rewrites keep the transcript, marking what
     /// they drop ([`RunCx::dropped`]), rather than replace it with

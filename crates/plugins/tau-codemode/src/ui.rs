@@ -21,7 +21,6 @@
 
 use std::{collections::BTreeMap, io::Write};
 
-use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
@@ -121,21 +120,12 @@ pub fn validate_selection(
 }
 
 /// The inspector's button sends only run, name, and exact version.
-pub fn select_version(
-    run: &RunId,
-    name: &str,
-    version: &str,
-    handle: &Handle,
-    cx: &mut App,
-) {
-    handle.act(
-        Action::Select {
-            run: run.clone(),
-            name: name.to_owned(),
-            version: version.to_owned(),
-        },
-        cx,
-    );
+pub fn select_version(run: &RunId, name: &str, version: &str, handle: &Handle) {
+    handle.act(Action::Select {
+        run: run.clone(),
+        name: name.to_owned(),
+        version: version.to_owned(),
+    });
 }
 
 /// The button sends only the persisted request identity and decision.
@@ -144,16 +134,12 @@ pub fn decide_promotion(
     request_id: &str,
     decision: promotion::Decision,
     handle: &Handle,
-    cx: &mut App,
 ) {
-    handle.act(
-        Action::Promote {
-            run: run.clone(),
-            request_id: request_id.to_owned(),
-            decision,
-        },
-        cx,
-    );
+    handle.act(Action::Promote {
+        run: run.clone(),
+        request_id: request_id.to_owned(),
+        decision,
+    });
 }
 
 /// What a run's scripts kept in the store, as its records leave it.
@@ -534,14 +520,14 @@ impl UiPlugin for CodemodeUi {
         PLUGIN
     }
 
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
+    fn reply(&self, reply: Value, handle: &Handle) {
         if let Ok(reply) = serde_json::from_value::<ActionReply>(reply) {
             let title = if reply.error.starts_with("Promotion:") {
                 "Module promotion failed"
             } else {
                 "Module selection failed"
             };
-            handle.alert(title, reply.error, cx);
+            handle.alert(title, reply.error);
         }
     }
 
@@ -568,6 +554,21 @@ impl UiPlugin for CodemodeUi {
                 })
             })
     }
+
+    /// What a tree's buttons ask: the [`Action`] in their arguments.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        if action != ACT {
+            return;
+        }
+        if let Ok(action) = serde_json::from_value::<Action>(args.clone()) {
+            view.handle.act(action);
+        }
+    }
 }
 
 /// Every button's action: carry out the [`Action`] its arguments hold.
@@ -581,18 +582,6 @@ fn button(label: &str, action: &Action) -> Node {
         args: serde_json::to_value(action).unwrap_or(Value::Null),
         kind: Kind::Secondary,
         icon: None,
-    }
-}
-
-/// What a tree's buttons ask: the action in their arguments.
-fn on_act(handle: Handle) -> impl Fn(&str, &Value, &mut App) + 'static {
-    move |action, args, cx| {
-        if action != ACT {
-            return;
-        }
-        if let Ok(action) = serde_json::from_value::<Action>(args.clone()) {
-            handle.act(action, cx);
-        }
     }
 }
 
@@ -638,7 +627,7 @@ pub fn description(jev: bool) -> String {
 /// The `codemode` card.
 pub fn card(
     at: &AtCard,
-    view: &mut ViewCx<'_, CodemodeUi>,
+    _view: &mut ViewCx<'_, CodemodeUi>,
 ) -> Option<CardView> {
     if at.tool != NAME {
         return None;
@@ -651,17 +640,8 @@ pub fn card(
         .as_ref()
         .and_then(|result| failure(&result.text, result.error));
     let code = script(data);
-    let ignore = |_: &str, _: &Value, _: &mut App| {};
-    let head = view.tree(
-        &format!("codemode-card-head-{}", at.call_id),
-        &mono(first_line(code)),
-        ignore,
-    );
-    let body = view.tree(
-        &format!("codemode-card-body-{}", at.call_id),
-        &body(&at.call_id, code, &calls, failed.clone(), details),
-        ignore,
-    );
+    let head = mono(first_line(code));
+    let body = body(&at.call_id, code, &calls, failed.clone(), details);
     Some(CardView {
         head: Some(head),
         label: Some(label(&calls, details)),
@@ -799,16 +779,10 @@ fn call_row(row: &Row) -> Vec<Node> {
 
 /// The inspector: the store a run's scripts kept, its repository's
 /// modules, its own, and its promotion requests.
-pub fn inspector(
-    _: &AtRun,
-    view: &mut ViewCx<'_, CodemodeUi>,
-) -> Option<AnyElement> {
+pub fn inspector(_: &AtRun, view: &mut ViewCx<'_, CodemodeUi>) -> Option<Node> {
     let state = view.state?;
-    let run = view.run.map(|run| run.id.clone());
-    let tree = inspector_tree(state, run.as_ref());
-    let handle = view.handle.clone();
-    let id = run.as_ref().map_or(String::new(), ToString::to_string);
-    Some(view.tree(&format!("codemode-inspector-{id}"), &tree, on_act(handle)))
+    let run = view.run.map(|run| &run.id);
+    Some(inspector_tree(state, run))
 }
 
 /// The inspector's tree for `state`, in `run` when there is one.

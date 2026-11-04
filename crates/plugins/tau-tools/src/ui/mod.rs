@@ -15,7 +15,6 @@ pub mod term_card;
 
 use std::collections::BTreeMap;
 
-use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_ui_kit::{diff, syntax, theme::Tone};
@@ -298,7 +297,7 @@ fn lang_name(lang: syntax::Lang) -> &'static str {
 /// the [`Action`] to ask the host half.
 const ACT: &str = "act";
 /// The action of a `read` card's button that shows its other lines, or
-/// hides them again.
+/// hides them again, with `{ "key": its UI state key, "open": bool }`.
 const MORE: &str = "more";
 
 impl UiPlugin for ToolsUi {
@@ -311,11 +310,11 @@ impl UiPlugin for ToolsUi {
         NAME
     }
 
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
+    fn reply(&self, reply: Value, handle: &Handle) {
         if let Ok(reply) = serde_json::from_value::<ActionReply>(reply) {
             let preview =
                 reply.range.unwrap_or_else(|| json!({"error": reply.error}));
-            handle.set_ui(format!("{PREVIEW}{}", reply.id), Some(preview), cx);
+            handle.set_ui(format!("{PREVIEW}{}", reply.id), Some(preview));
         }
     }
 
@@ -333,22 +332,7 @@ impl UiPlugin for ToolsUi {
                         Some((id.to_owned(), preview.clone()))
                     })
                     .collect();
-                let tree = inspector(state, &run, &previews);
-                let handle = view.handle.clone();
-                Some(view.tree(
-                    &format!("tools-inspector-{}", run.0),
-                    &tree,
-                    move |action, args, cx| {
-                        if action != ACT {
-                            return;
-                        }
-                        if let Ok(act) =
-                            serde_json::from_value::<Action>(args.clone())
-                        {
-                            handle.act(act, cx);
-                        }
-                    },
-                ))
+                Some(inspector(state, &run, &previews))
             })
             .contribute_at(points::STATUS, -20, |_: &AtRun, _| {
                 Some(PluginStatus {
@@ -357,6 +341,45 @@ impl UiPlugin for ToolsUi {
                     tone: Tone::Quiet,
                 })
             })
+    }
+
+    /// What its trees' buttons ask: the inspector's previews, a `read`
+    /// card's other lines, and a terminal's full output or its text.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        match action {
+            ACT => {
+                if let Ok(act) = serde_json::from_value::<Action>(args.clone())
+                {
+                    view.handle.act(act);
+                }
+            }
+            MORE => {
+                if let (Some(key), Some(open)) = (
+                    args.get("key").and_then(Value::as_str),
+                    args.get("open").and_then(Value::as_bool),
+                ) {
+                    view.handle.set_ui(key, Some(Value::Bool(open)));
+                }
+            }
+            #[cfg(feature = "terminal")]
+            term_card::OPEN => {
+                if let Some(path) = args.get("path").and_then(Value::as_str) {
+                    view.handle.open(path);
+                }
+            }
+            #[cfg(feature = "terminal")]
+            term_card::COPY => {
+                if let Some(text) = args.get("text").and_then(Value::as_str) {
+                    view.handle.copy(text);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -419,10 +442,11 @@ pub fn inspector(
 }
 
 /// A `read` card's body: its first lines, or all of them once opened,
-/// highlighted as `lang`, the button that shows the rest, and why its
-/// artifact was not kept, when it was not.
+/// highlighted as `lang`, the button that shows the rest (opening the
+/// UI state `key`), and why its artifact was not kept, when it was not.
 pub fn read_body(
     read: &ReadView,
+    key: &str,
     lang: Option<&str>,
     open: bool,
     missing: Option<&ArtifactStatus>,
@@ -452,7 +476,7 @@ pub fn read_body(
                     )
                 },
                 action: MORE.into(),
-                args: json!(!open),
+                args: json!({ "key": key, "open": !open }),
                 kind: Kind::Secondary,
                 icon: None,
             });
@@ -486,38 +510,12 @@ fn output(lines: &[String]) -> Node {
 fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
     let compact = view.compact;
     let data = &at.data;
-    let id = format!("{}-{}", at.run.id.0, at.call_id);
-    let ignore = |_: &str, _: &Value, _: &mut gpui::App| {};
     match at.tool.as_str() {
         "exec_command" | "write_stdin" => {
             #[cfg(feature = "terminal")]
             if let Some(term) = term::TermOutput::of(data, at.cut.is_some()) {
-                let tree = term_card::body(&id, &term, at.cut.as_ref());
-                let body = view.tree(
-                    &format!("tools-term-{id}"),
-                    &tree,
-                    |action, args, cx| match action {
-                        term_card::OPEN => {
-                            if let Some(path) =
-                                args.get("path").and_then(Value::as_str)
-                            {
-                                cx.open_with_system(std::path::Path::new(path));
-                            }
-                        }
-                        term_card::COPY => {
-                            if let Some(text) =
-                                args.get("text").and_then(Value::as_str)
-                            {
-                                cx.write_to_clipboard(
-                                    gpui::ClipboardItem::new_string(
-                                        text.to_owned(),
-                                    ),
-                                );
-                            }
-                        }
-                        _ => {}
-                    },
-                );
+                let id = format!("{}-{}", at.run.id.0, at.call_id);
+                let body = term_card::body(&id, &term, at.cut.as_ref());
                 return Some(CardView {
                     failed: term.failure(),
                     body: Some(body),
@@ -530,13 +528,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                 None => tail(output_lines(data), 6),
             };
             Some(CardView {
-                body: (!lines.is_empty()).then(|| {
-                    view.tree(
-                        &format!("tools-out-{id}"),
-                        &output(&lines),
-                        ignore,
-                    )
-                }),
+                body: (!lines.is_empty()).then(|| output(&lines)),
                 ..CardView::default()
             })
         }
@@ -562,17 +554,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                     ..CardView::default()
                 });
             }
-            let tree = read_body(&read, lang, open, missing.as_ref());
-            let handle = view.handle.clone();
-            let body = view.tree(
-                &format!("tools-read-{id}"),
-                &tree,
-                move |action, args, cx| {
-                    if action == MORE {
-                        handle.set_ui(key.clone(), Some(args.clone()), cx);
-                    }
-                },
-            );
+            let body = read_body(&read, &key, lang, open, missing.as_ref());
             Some(CardView {
                 label: Some(read.label()),
                 body: Some(body),
@@ -592,11 +574,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             };
             Some(CardView {
                 label: Some(diff::stat(&diff::parse(text))),
-                body: Some(view.tree(
-                    &format!("tools-diff-{id}"),
-                    &tree,
-                    ignore,
-                )),
+                body: Some(tree),
                 // A whole file can be long: a write's diff opens on a
                 // click, an edit's few lines show at once.
                 folds: at.tool == "write",
@@ -609,13 +587,9 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             let head = listing_card::summary(&listing, &at.summary, compact);
             let body = listing_card::body(&listing, compact);
             Some(CardView {
-                head: Some(view.tree(
-                    &format!("tools-ls-head-{id}"),
-                    &head,
-                    ignore,
-                )),
+                head: Some(head),
                 label: Some(listing.summary()),
-                body: Some(view.tree(&format!("tools-ls-{id}"), &body, ignore)),
+                body: Some(body),
                 folds: true,
                 ..CardView::default()
             })

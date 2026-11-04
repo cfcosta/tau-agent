@@ -12,7 +12,6 @@ pub mod page;
 
 use std::collections::BTreeSet;
 
-use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tau_ui_kit::{assets::Icon, theme::Tone};
@@ -423,10 +422,20 @@ impl UiPlugin for McpUi {
 
     /// A prompt goes to the composer; one that failed says why and puts
     /// the command back.
-    fn reply(&self, reply: Value, handle: &Handle, cx: &mut App) {
+    fn reply(&self, reply: Value, handle: &Handle) {
         if let Ok(reply) = serde_json::from_value::<Reply>(reply) {
-            page::answered(handle, reply, cx);
+            page::answered(handle, reply);
         }
+    }
+
+    /// The Servers page's buttons, in the page or the settings pane.
+    fn on_action(
+        &self,
+        action: &str,
+        args: &Value,
+        view: &mut ViewCx<'_, Self>,
+    ) {
+        page::on_action(action, args, view);
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -466,19 +475,16 @@ pub fn run_prompt(
     });
     match checked {
         Some(Err(error)) => {
-            view.handle.alert("The prompt needs fixing", error, view.cx);
-            view.handle.composer(written, view.cx);
+            view.handle.alert("The prompt needs fixing", error);
+            view.handle.composer(written);
         }
-        _ => view.handle.act(
-            Act::Prompt {
-                repo: repo
-                    .filter(|repo| view.repo(repo).is_some())
-                    .map(str::to_owned),
-                command: command.to_owned(),
-                arguments: arguments.to_owned(),
-            },
-            view.cx,
-        ),
+        _ => view.handle.act(Act::Prompt {
+            repo: repo
+                .filter(|repo| view.repo(repo).is_some())
+                .map(str::to_owned),
+            command: command.to_owned(),
+            arguments: arguments.to_owned(),
+        }),
     }
 }
 

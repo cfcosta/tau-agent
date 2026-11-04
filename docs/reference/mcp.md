@@ -948,9 +948,9 @@ From the design above, as first written:
   token, ID token, verifier or secret in anything it is given, though
   rmcp's sign-in debug lines reach it, and a layer behind
   `secrets_filter` gets none of them below info; and the filter clamps
-  exactly those targets. In gpui's test app, the page draws a server
-  waiting and one signed in, its buttons ask the host, and the host's
-  answer opens the browser.
+  exactly those targets. The page's tree shows a server waiting and
+  one signed in, its buttons, carried out through `on_action`, ask the
+  host, and the host's answer opens the browser.
 - **The server list, as a property:** at most 4,096 characters,
   descriptions at most 250, kept servers in order, the overflow count
   right.
@@ -983,8 +983,8 @@ From the design above, as first written:
   turns off or, from a repository, one off everywhere; a repository
   keeps its plugin until its servers change, and then keeps the
   connections whose entries did not; a user server with a relative
-  `cwd` runs per repository; Connect starts a repository's servers. In
-  gpui's test app: the editor sends only what it may; the page draws
+  `cwd` runs per repository; Connect starts a repository's servers. On
+  the page's tree: the editor sends only what it may; the page draws
   on a computer and a phone, with the editor open and with locked
   switches; the sidebar and the run's line count servers and
   approvals; the card names the server and shows the structured result

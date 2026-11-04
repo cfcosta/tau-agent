@@ -56,7 +56,7 @@ three are MIT; the notices are in `THIRD_PARTY_NOTICES.md`.
 It is a single crate: the plugin, its `UiPlugin` and its `HostHalf` live
 here. It builds on `tau-agent` (the `rewrite_context` and
 `after_tool_result` seams), `tau-ai` and `tau-jev`, the shared Jev
-client. Its UI uses `tau-ui-kit`, `tau-ui-plugin` and gpui.
+client. Its UI uses `tau-ui-kit` and `tau-ui-plugin`.
 
 `tau-ui` registers `FastCompactionHost`, which adds the plugin to a run
 only when the host has a Jev (a saved TypeSafe key), and archives to

@@ -20,20 +20,6 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{
-    App,
-    Context,
-    IntoElement,
-    ParentElement as _,
-    Render,
-    Styled as _,
-    TestAppContext,
-    VisualTestContext,
-    Window,
-    div,
-    px,
-    size,
-};
 use hegel::{
     TestCase,
     generators::{self as gs, Generator as _},
@@ -949,7 +935,7 @@ fn handle_into(asked: &Asked) -> Handle {
     let sink = asked.clone();
     Handle::new(
         NAME,
-        Rc::new(move |_, request, _: &mut App| sink.borrow_mut().push(request)),
+        Rc::new(move |_, request| sink.borrow_mut().push(request)),
     )
 }
 
@@ -1039,22 +1025,32 @@ impl Window_ {
         }
     }
 
-    /// Clicks what is labelled `label` on `repo`'s page of `servers`.
-    fn click(
-        &mut self,
-        cx: &mut TestAppContext,
-        repo: Option<&str>,
-        servers: &Servers,
-        label: &str,
-    ) {
-        let tree = page::tree(repo, servers, &self.held(), false);
-        let (action, args) =
-            find(&tree.value(), label).unwrap_or_else(|| panic!("{label}"));
-        let on = page::on_action(
-            handle_into(&self.asked),
-            servers.user_names.clone(),
-        );
-        cx.update(|cx| on(&action, &args, cx));
+    /// Clicks what is labelled `label` on `repo`'s page of `servers`,
+    /// or the user's page of them without one: finds it in the page's
+    /// tree, and carries out its action as the interface would.
+    fn click(&mut self, repo: Option<&str>, servers: &Servers, label: &str) {
+        let (repos, params, data) = match repo {
+            Some(repo) => (
+                BTreeMap::from([(repo.to_owned(), servers.clone())]),
+                BTreeMap::from([("repo".to_owned(), repo.to_owned())]),
+                Servers::default(),
+            ),
+            None => (BTreeMap::new(), BTreeMap::new(), servers.clone()),
+        };
+        let at = At {
+            repos: &repos,
+            params: &params,
+            data: &data,
+            ui_state: &self.ui,
+            run: None,
+            compact: false,
+        };
+        at.view(handle_into(&self.asked), |view| {
+            let tree = page::render(view);
+            let (action, args) =
+                find(&tree.value(), label).unwrap_or_else(|| panic!("{label}"));
+            McpUi.on_action(&action, &args, view);
+        });
         self.take();
     }
 
@@ -1065,8 +1061,8 @@ impl Window_ {
 
 /// The editor sends only a server it may add, and says why otherwise;
 /// removing asks twice; the rest is sent as clicked.
-#[gpui::test]
-fn the_editor_sends_what_it_may(cx: &mut TestAppContext) {
+#[test]
+fn the_editor_sends_what_it_may() {
     let user = BTreeSet::from(["linear".to_owned()]);
     let checked = page::checked;
     // What may be saved.
@@ -1088,25 +1084,25 @@ fn the_editor_sends_what_it_may(cx: &mut TestAppContext) {
     let servers = servers();
     let repo = Some("r");
     let mut window = Window_::default();
-    window.click(cx, repo, &servers, "Add a server");
+    window.click(repo, &servers, "Add a server");
     assert_eq!(window.held().editor, Some(page::Editor::default()));
     window.type_in(page::NAME_INPUT, "linear");
     window.type_in(page::ENTRY_INPUT, "{ \"command\": \"x\" }");
-    window.click(cx, repo, &servers, "Save");
+    window.click(repo, &servers, "Save");
     assert!(window.problem().contains("mcp.json"));
     window.type_in(page::NAME_INPUT, "git");
     window.type_in(page::ENTRY_INPUT, "{ \"command\": ");
-    window.click(cx, repo, &servers, "Save");
+    window.click(repo, &servers, "Save");
     assert!(window.problem().starts_with("The entry is not JSON"));
     assert!(window.acts.is_empty());
     window.type_in(
         page::ENTRY_INPUT,
         "{ \"command\": \"uvx\", \"args\": [\"mcp-server-git\"] }",
     );
-    window.click(cx, repo, &servers, "Save");
+    window.click(repo, &servers, "Save");
     assert_eq!(window.held().editor, None);
     // Edit opens on the server's entry as it is.
-    window.click(cx, repo, &servers, "Edit");
+    window.click(repo, &servers, "Edit");
     let held = window.held();
     assert_eq!(held.editor.unwrap().editing.as_deref(), Some("git"));
     assert_eq!(
@@ -1114,25 +1110,25 @@ fn the_editor_sends_what_it_may(cx: &mut TestAppContext) {
         json!({ "command": "uvx", "args": ["mcp-server-git"] })
     );
     window.type_in(page::ENTRY_INPUT, "{ \"command\": \"git-mcp\" }");
-    window.click(cx, repo, &servers, "Save");
+    window.click(repo, &servers, "Save");
     // Cancel closes the editor, and forgets a removal asked.
-    window.click(cx, repo, &servers, "Add a server");
-    window.click(cx, repo, &servers, "Remove");
+    window.click(repo, &servers, "Add a server");
+    window.click(repo, &servers, "Remove");
     assert_eq!(window.held().removing.as_deref(), Some("git"));
-    window.click(cx, repo, &servers, "Cancel");
+    window.click(repo, &servers, "Cancel");
     assert_eq!(window.held(), page::Held::default());
     // Removing asks twice.
-    window.click(cx, repo, &servers, "Remove");
+    window.click(repo, &servers, "Remove");
     assert_eq!(window.held().removing.as_deref(), Some("git"));
-    window.click(cx, repo, &servers, "Remove it");
+    window.click(repo, &servers, "Remove it");
     assert_eq!(window.held().removing, None);
     // The rest asks the host half as clicked.
-    window.click(cx, None, &servers, "On in every repository");
-    window.click(cx, repo, &servers, "Approve");
-    window.click(cx, repo, &servers, "Reconnect");
+    window.click(None, &servers, "On in every repository");
+    window.click(repo, &servers, "Approve");
+    window.click(repo, &servers, "Reconnect");
     let mut unstarted = servers.clone();
     unstarted.started = false;
-    window.click(cx, repo, &unstarted, "Connect now");
+    window.click(repo, &unstarted, "Connect now");
     assert_eq!(
         window.acts,
         [
@@ -1279,23 +1275,68 @@ fn servers() -> Servers {
     }
 }
 
+/// Where a view of the plugin is made: the repositories' servers, the
+/// page's parameters, the user's servers, the UI state, the run, and
+/// whether on a phone.
+struct At<'a> {
+    repos: &'a BTreeMap<String, Servers>,
+    params: &'a BTreeMap<String, String>,
+    data: &'a Servers,
+    ui_state: &'a BTreeMap<String, Value>,
+    run: Option<&'a RunInfo>,
+    compact: bool,
+}
+
+impl At<'_> {
+    /// Runs `f` with the view, asking through `handle`.
+    fn view<R>(
+        &self,
+        handle: Handle,
+        f: impl FnOnce(&mut ViewCx<'_, McpUi>) -> R,
+    ) -> R {
+        let list = Vec::new;
+        let cards = |_: &RunId| Vec::new();
+        let settings = Settings::default();
+        let repos = tau_ui_plugin::testing::RepoValues::new(self.repos);
+        let repos = repos.refs();
+        let mut view = ViewCx::new(
+            &McpUi,
+            None,
+            self.data,
+            &settings,
+            &repos,
+            self.run,
+            self.params,
+            self.compact,
+            false,
+            if self.compact { 400. } else { 1400. },
+            handle,
+            &list,
+            &cards,
+        )
+        .with_ui_state(self.ui_state);
+        f(&mut view)
+    }
+}
+
+/// A handle that asks nothing.
+fn quiet() -> Handle {
+    Handle::new(NAME, Rc::new(|_, _| {}))
+}
+
 /// Runs `f` with the page's view of `repos`, at `params`.
 fn with_view<R>(
-    cx: &mut TestAppContext,
     repos: &BTreeMap<String, Servers>,
     params: &BTreeMap<String, String>,
     run: Option<&RunInfo>,
     compact: bool,
     f: impl FnOnce(&mut ViewCx<'_, McpUi>) -> R,
 ) -> R {
-    let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
-    with_view_handle(cx, repos, params, run, compact, handle, f)
+    with_view_handle(repos, params, run, compact, quiet(), f)
 }
 
 /// [`with_view`] with the handle the view asks through.
-#[allow(clippy::too_many_arguments)]
 fn with_view_handle<R>(
-    cx: &mut TestAppContext,
     repos: &BTreeMap<String, Servers>,
     params: &BTreeMap<String, String>,
     run: Option<&RunInfo>,
@@ -1303,114 +1344,85 @@ fn with_view_handle<R>(
     handle: Handle,
     f: impl FnOnce(&mut ViewCx<'_, McpUi>) -> R,
 ) -> R {
-    let list = Vec::new;
-    let cards = |_: &RunId| Vec::new();
-    let data = Servers::default();
-    let settings = Settings::default();
-    let repos = tau_ui_plugin::testing::RepoValues::new(repos);
-    let repos = repos.refs();
-    cx.update(|cx| {
-        cx.set_global(tau_ui_kit::theme::Theme::graphite());
-        let mut view = ViewCx::new(
-            &McpUi, None, &data, &settings, &repos, run, params, compact,
-            false, 1400., handle, &list, &cards, cx,
-        );
-        f(&mut view)
-    })
+    let at = At {
+        repos,
+        params,
+        data: &Servers::default(),
+        ui_state: &BTreeMap::new(),
+        run,
+        compact,
+    };
+    at.view(handle, f)
 }
 
-/// The page, drawn in a window as tau-ui draws it.
-struct PageView {
-    repos: BTreeMap<String, Servers>,
-    params: BTreeMap<String, String>,
-    compact: bool,
-    /// The plugin's UI state, as the interface keeps it.
-    ui_state: BTreeMap<String, Value>,
-}
-
-impl Render for PageView {
-    fn render(
-        &mut self,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let list = Vec::new;
-        let cards = |_: &RunId| Vec::new();
-        let handle = Handle::new(NAME, Rc::new(|_, _, _: &mut App| {}));
-        let (data, settings) = (Servers::default(), Settings::default());
-        let params = self.params.clone();
-        let repos = tau_ui_plugin::testing::RepoValues::new(&self.repos);
-        let repos = repos.refs();
-        let mut view = ViewCx::new(
-            &McpUi,
-            None,
-            &data,
-            &settings,
-            &repos,
-            None,
-            &params,
-            self.compact,
-            false,
-            1400.,
-            handle,
-            &list,
-            &cards,
-            cx,
-        )
-        .with_ui_state(&self.ui_state);
-        div().size_full().flex().child(page::render(&mut view))
+/// Every text in the tree `node`, one after another.
+fn texts(node: &Value) -> String {
+    match node {
+        Value::String(text) => format!("{text}\n"),
+        Value::Object(piece) => piece.values().map(texts).collect(),
+        Value::Array(children) => children.iter().map(texts).collect(),
+        _ => String::new(),
     }
 }
 
-/// Draws the page at `params` in a window, on a computer or a phone,
-/// with the UI state `ui_state`.
+/// The page at `params`, on a computer or a phone, with the UI state
+/// `ui_state`, as tau-ui is handed it: a tree that reads back as
+/// itself, with nothing in it that did not read, and the page's settings
+/// pane the same tree. The tree's texts, for what it shows.
 fn draw_page_in(
-    cx: &mut TestAppContext,
     repos: &BTreeMap<String, Servers>,
     params: BTreeMap<String, String>,
     compact: bool,
     ui_state: BTreeMap<String, Value>,
-) {
-    cx.update(|cx| cx.set_global(tau_ui_kit::theme::Theme::graphite()));
-    let window = cx.add_window({
-        let repos = repos.clone();
-        move |_, _| PageView {
-            repos,
-            params,
-            compact,
-            ui_state,
-        }
+) -> String {
+    let at = At {
+        repos,
+        params: &params,
+        data: &Servers::default(),
+        ui_state: &ui_state,
+        run: None,
+        compact,
+    };
+    let (drawn, pane) = at.view(quiet(), |view| {
+        (page::render(view), page::settings_pane(view))
     });
-    let cx = VisualTestContext::from_window(*window, cx);
-    let width = if compact { 400. } else { 1400. };
-    cx.simulate_resize(size(px(width), px(900.)));
-    cx.run_until_parked();
+    assert_eq!(drawn, pane);
+    let value = drawn.value();
+    assert_eq!(tree::Node::read(&value), drawn, "the tree reads back");
+    assert!(
+        !value.to_string().contains("\"piece\":\"invalid\""),
+        "{value}"
+    );
+    texts(&value)
 }
 
-/// Draws the page at `params` in a window, on a computer or a phone.
+/// [`draw_page_in`] without UI state.
 fn draw_page(
-    cx: &mut TestAppContext,
     repos: &BTreeMap<String, Servers>,
     params: BTreeMap<String, String>,
     compact: bool,
-) {
-    draw_page_in(cx, repos, params, compact, BTreeMap::new());
+) -> String {
+    draw_page_in(repos, params, compact, BTreeMap::new())
 }
 
 /// The page draws a repository's servers on a computer and a phone, the
 /// user's alone without one; the sidebar counts the servers and what
 /// waits; the run's line sums them up.
-#[gpui::test]
-fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
+#[test]
+fn the_page_and_the_sidebar_draw_the_servers() {
     let repos = BTreeMap::from([("r".to_owned(), servers())]);
     let at_repo = BTreeMap::from([("repo".to_owned(), "r".to_owned())]);
-    with_view(cx, &repos, &at_repo, None, false, |view| {
+    with_view(&repos, &at_repo, None, false, |view| {
         let (repo, shown) = page::servers_of(view);
         assert_eq!(repo.as_deref(), Some("r"));
         assert_eq!(shown.servers.len(), 2);
     });
     for compact in [false, true] {
-        draw_page(cx, &repos, at_repo.clone(), compact);
+        let shown = draw_page(&repos, at_repo.clone(), compact);
+        for name in ["git", "linear", "db", "status", "push"] {
+            assert!(shown.contains(name), "{name} in {shown}");
+        }
+        assert!(shown.contains("Approve"), "{shown}");
     }
     // Servers turned off, by their entry and for every repository: the
     // repository's page cannot turn them on, the user's can turn on the
@@ -1430,20 +1442,22 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
     assert_eq!(page::locked(&servers().servers[0], true), None);
     let off_repos = BTreeMap::from([("r".to_owned(), off)]);
     for compact in [false, true] {
-        draw_page(cx, &off_repos, at_repo.clone(), compact);
+        let shown = draw_page(&off_repos, at_repo.clone(), compact);
+        assert!(shown.contains("off in its entry"), "{shown}");
     }
     // Without a repository, the user's servers alone; the editor, open,
     // draws over the page.
-    with_view(cx, &repos, &BTreeMap::new(), None, false, |view| {
+    with_view(&repos, &BTreeMap::new(), None, false, |view| {
         let (repo, shown) = page::servers_of(view);
         assert_eq!((repo, shown.servers.len()), (None, 0));
     });
     let mut window = Window_::default();
-    window.click(cx, None, &repos["r"], "Add a server");
-    window.click(cx, None, &repos["r"], "Save");
+    window.click(None, &repos["r"], "Add a server");
+    window.click(None, &repos["r"], "Save");
     assert!(window.held().editor.unwrap().problem.is_some());
-    draw_page_in(cx, &repos, BTreeMap::new(), false, window.ui);
-    let entry = with_view(cx, &repos, &BTreeMap::new(), None, false, |view| {
+    let shown = draw_page_in(&repos, BTreeMap::new(), false, window.ui);
+    assert!(shown.contains("Add server"), "the editor: {shown}");
+    let entry = with_view(&repos, &BTreeMap::new(), None, false, |view| {
         ui::sidebar(&AtRepo { repo: "r".into() }, view)
     })
     .unwrap();
@@ -1453,7 +1467,7 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
     assert_eq!(entry.to.params["repo"], "r");
     let run = info("r");
     let status =
-        with_view(cx, &repos, &BTreeMap::new(), Some(&run), false, |view| {
+        with_view(&repos, &BTreeMap::new(), Some(&run), false, |view| {
             ui::status(&AtRun { run: run.clone() }, view)
         })
         .unwrap();
@@ -1462,7 +1476,7 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
     let quiet = info("elsewhere");
     let repos = BTreeMap::from([("elsewhere".to_owned(), Servers::default())]);
     assert!(
-        with_view(cx, &repos, &BTreeMap::new(), Some(&quiet), false, |view| {
+        with_view(&repos, &BTreeMap::new(), Some(&quiet), false, |view| {
             ui::status(&AtRun { run: quiet.clone() }, view)
         })
         .is_none()
@@ -1473,8 +1487,8 @@ fn the_page_and_the_sidebar_draw_the_servers(cx: &mut TestAppContext) {
 /// who and what; both draw, the buttons ask the host, the host's answer
 /// opens the browser, and the run's line and the summary count the
 /// server that waits.
-#[gpui::test]
-fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
+#[test]
+fn the_page_signs_in_and_out() {
     let (ui, asked) = window_ui();
     let mut servers = servers();
     servers.pending.clear();
@@ -1510,11 +1524,14 @@ fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
     let repos = BTreeMap::from([("r".to_owned(), servers)]);
     let at_repo = BTreeMap::from([("repo".to_owned(), "r".to_owned())]);
     for compact in [false, true] {
-        draw_page(cx, &repos, at_repo.clone(), compact);
+        let shown = draw_page(&repos, at_repo.clone(), compact);
+        for label in ["Sign in", "Sign out", "ada@example.com"] {
+            assert!(shown.contains(label), "{label} in {shown}");
+        }
     }
     let run = info("r");
     let status =
-        with_view(cx, &repos, &BTreeMap::new(), Some(&run), false, |view| {
+        with_view(&repos, &BTreeMap::new(), Some(&run), false, |view| {
             ui::status(&AtRun { run: run.clone() }, view)
         })
         .unwrap();
@@ -1522,20 +1539,16 @@ fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
     assert_eq!(status.tone, tau_ui_kit::theme::Tone::Warn);
 
     let mut window = Window_::default();
-    window.click(cx, Some("r"), &repos["r"], "Sign in");
-    window.click(cx, None, &repos["r"], "Sign out");
-    cx.update(|cx| {
-        McpUi.reply(
-            serde_json::to_value(Reply::SignIn {
-                server: "db".into(),
-                url: "https://auth.dev/authorize?state=s".into(),
-            })
-            .unwrap(),
-            &ui,
-            cx,
-        );
-    });
-    assert!(asked.borrow().is_empty(), "the browser signs in");
+    window.click(Some("r"), &repos["r"], "Sign in");
+    window.click(None, &repos["r"], "Sign out");
+    McpUi.reply(
+        serde_json::to_value(Reply::SignIn {
+            server: "db".into(),
+            url: "https://auth.dev/authorize?state=s".into(),
+        })
+        .unwrap(),
+        &ui,
+    );
     assert_eq!(
         window.acts,
         [
@@ -1549,9 +1562,12 @@ fn the_page_signs_in_and_out(cx: &mut TestAppContext) {
             },
         ]
     );
+    // The browser signs in.
     assert_eq!(
-        cx.opened_url().as_deref(),
-        Some("https://auth.dev/authorize?state=s")
+        *asked.borrow(),
+        [Request::OpenUrl(
+            "https://auth.dev/authorize?state=s".into()
+        )]
     );
 }
 
@@ -1571,22 +1587,22 @@ fn at_card(tool: &str, data: CallData) -> AtCard {
 /// runs, from the repository's servers, and once it ended, from its
 /// details; it shows the structured result when there is one, else the
 /// text, and goes red when the call failed.
-#[gpui::test]
-fn the_card_shows_the_server_and_the_result(cx: &mut TestAppContext) {
+#[test]
+fn the_card_shows_the_server_and_the_result() {
     let repos = BTreeMap::from([("r".to_owned(), servers())]);
-    let draw = |cx: &mut TestAppContext, at: AtCard| {
-        with_view(cx, &repos, &BTreeMap::new(), None, false, |view| {
+    let draw = |at: AtCard| {
+        with_view(&repos, &BTreeMap::new(), None, false, |view| {
             card::card(&at, view)
                 .map(|card| (card.failed, card.folds, card.edge.is_some()))
         })
     };
-    assert!(draw(cx, at_card("bash", CallData::default())).is_none());
+    assert!(draw(at_card("bash", CallData::default())).is_none());
     let running = CallData {
         args: json!({ "path": "." }),
         ..CallData::default()
     };
     assert_eq!(
-        draw(cx, at_card("mcp__git__push", running.clone())),
+        draw(at_card("mcp__git__push", running.clone())),
         Some((None, false, false))
     );
     let listed = card::shown(
@@ -1621,7 +1637,7 @@ fn the_card_shows_the_server_and_the_result(cx: &mut TestAppContext) {
     assert_eq!(shown.structured.as_deref(), Some("{\n  \"clean\": true\n}"));
     assert_eq!(shown.text, None);
     assert_eq!(
-        draw(cx, at_card("mcp__git__status", done)),
+        draw(at_card("mcp__git__status", done)),
         Some((None, true, false))
     );
 
@@ -1639,7 +1655,7 @@ fn the_card_shows_the_server_and_the_result(cx: &mut TestAppContext) {
         Some("MCP tool git/push returned an error\nmore")
     );
     assert_eq!(
-        draw(cx, at_card("mcp__git__push", failed)),
+        draw(at_card("mcp__git__push", failed)),
         Some((
             Some("MCP tool git/push returned an error".into()),
             true,
@@ -1653,8 +1669,8 @@ fn the_card_shows_the_server_and_the_result(cx: &mut TestAppContext) {
 /// its arguments first: a mistake says so and puts the command back;
 /// otherwise the host is asked, and its answer fills the composer, or
 /// says why not and puts the command back.
-#[gpui::test]
-fn prompts_are_commands_that_fill_the_composer(cx: &mut TestAppContext) {
+#[test]
+fn prompts_are_commands_that_fill_the_composer() {
     let registry = tau_ui_plugin::Registry::new().with(McpUi);
     let plugin = registry.get(NAME).unwrap();
     let repo = tau_ui_plugin::PluginValue::typed(servers());
@@ -1684,13 +1700,11 @@ fn prompts_are_commands_that_fill_the_composer(cx: &mut TestAppContext) {
         let sink = asked.clone();
         Handle::new(
             NAME,
-            Rc::new(move |_, request, _: &mut App| {
-                sink.borrow_mut().push(request)
-            }),
+            Rc::new(move |_, request| sink.borrow_mut().push(request)),
         )
     };
     let params = BTreeMap::new();
-    with_view_handle(cx, &repos, &params, None, false, handle, |view| {
+    with_view_handle(&repos, &params, None, false, handle, |view| {
         ui::run_prompt(
             "mcp__git__commit_message",
             "style=short",
@@ -1729,23 +1743,19 @@ fn prompts_are_commands_that_fill_the_composer(cx: &mut TestAppContext) {
     );
 
     let reply = |reply: Reply| serde_json::to_value(reply).unwrap();
-    cx.update(|cx| {
-        McpUi.reply(
-            reply(Reply::Prompt {
-                text: "Fix it.".into(),
-            }),
-            &ui,
-            cx,
-        );
-        McpUi.reply(
-            reply(Reply::PromptFailed {
-                error: "the server failed".into(),
-                command: "/mcp__git__commit_message changes=x".into(),
-            }),
-            &ui,
-            cx,
-        );
-    });
+    McpUi.reply(
+        reply(Reply::Prompt {
+            text: "Fix it.".into(),
+        }),
+        &ui,
+    );
+    McpUi.reply(
+        reply(Reply::PromptFailed {
+            error: "the server failed".into(),
+            command: "/mcp__git__commit_message changes=x".into(),
+        }),
+        &ui,
+    );
     let asked_now: Vec<Request> = asked.borrow_mut().drain(..).collect();
     assert_eq!(asked_now[0], Request::Composer("Fix it.".into()));
     assert!(matches!(

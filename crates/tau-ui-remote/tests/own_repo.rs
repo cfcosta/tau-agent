@@ -73,7 +73,7 @@ fn tau_s_own_repositories_are_not_listed(cx: &mut TestAppContext) {
         // Its main chat is still one.
         assert!(ws.is_main(&id("plugins-main")));
         let repos: Vec<Pick> = ws
-            .search_hits("", cx)
+            .search_hits("")
             .into_iter()
             .map(|hit| hit.pick)
             .filter(|pick| matches!(pick, Pick::Repo(_) | Pick::NewRunIn(_)))
