@@ -44,6 +44,9 @@ pub struct TreeWidgets {
     screens: HashMap<String, Screen>,
     tickers: HashMap<String, Ticking>,
     pictures: HashMap<String, Picture>,
+    /// Each area that takes the keys: its focus, and the focus number it
+    /// last took them for.
+    areas: HashMap<String, (gpui::FocusHandle, Option<u64>)>,
 }
 
 /// A tree's image, as far as the window has it.
@@ -110,6 +113,75 @@ impl TreeWidgets {
         };
         self.pictures.insert(id, picture);
     }
+}
+
+/// The area of `spec` for `handle`'s plugin: its keys go to the plugin
+/// while it has them, its fields let `through` keys come to it, a click
+/// outside its fields gives it the keys, and so does a new focus number.
+fn area(
+    widgets: &Rc<RefCell<TreeWidgets>>,
+    handle: &Handle,
+    spec: tau_ui_plugin::tree::KeysSpec,
+    cx: &mut App,
+) -> AnyElement {
+    use gpui::{InteractiveElement as _, ParentElement as _, Styled as _};
+
+    let id = format!("{}\u{0}{}", handle.plugin(), spec.key);
+    let (focus, refocus) = {
+        let mut all = widgets.borrow_mut();
+        let (focus, last) = all
+            .areas
+            .entry(id)
+            .or_insert_with(|| (cx.focus_handle(), None));
+        let refocus = spec.focus.is_some() && spec.focus != *last;
+        *last = spec.focus;
+        (focus.clone(), refocus)
+    };
+    if refocus {
+        handle.focus(&focus, cx);
+    }
+    let (keys, through, on_key) = (spec.keys, spec.through, spec.on_key);
+    let (pressed, clicked) = (focus.clone(), focus.clone());
+    gpui::div()
+        .track_focus(&focus)
+        .flex()
+        .flex_col()
+        .on_key_down(move |event: &gpui::KeyDownEvent, window, cx| {
+            let Some(on_key) = &on_key else {
+                return;
+            };
+            let stroke = &event.keystroke;
+            let held = stroke.modifiers.control
+                || stroke.modifiers.alt
+                || stroke.modifiers.platform
+                || stroke.modifiers.function;
+            let key = stroke.key.as_str();
+            if held {
+                return;
+            }
+            if pressed.is_focused(window) {
+                if keys.iter().any(|k| k == key) {
+                    cx.stop_propagation();
+                    on_key(key, false, cx);
+                }
+            } else if pressed.contains_focused(window, cx)
+                && through.iter().any(|k| k == key)
+            {
+                cx.stop_propagation();
+                on_key(key, true, cx);
+            }
+        })
+        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+            // A field's own click keeps the keys; anywhere else in the
+            // area takes them.
+            let in_field = clicked.contains_focused(window, cx)
+                && !clicked.is_focused(window);
+            if !in_field {
+                window.focus(&clicked, cx);
+            }
+        })
+        .children(spec.children)
+        .into_any_element()
 }
 
 /// The picture of `spec` for `handle`'s plugin, drawn: asked of the host
@@ -200,6 +272,7 @@ pub fn widget(
             mono(text, Type::CAPTION, theme(cx).text_soft).into_any_element()
         }
         WidgetSpec::Image(spec) => picture(widgets, handle, spec, cx),
+        WidgetSpec::Keys(spec) => area(widgets, handle, spec, cx),
     }
 }
 

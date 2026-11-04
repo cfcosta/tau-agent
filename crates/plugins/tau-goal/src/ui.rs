@@ -892,6 +892,7 @@ pub fn popover_tree(jev: bool, compact: bool) -> Node {
         submit: Some(format!("{SUBMIT}{id}")),
         keep: false,
         secret: false,
+        focus: None,
     };
     let about = if jev {
         Node::text(

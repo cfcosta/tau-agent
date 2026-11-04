@@ -439,6 +439,7 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
                 submit: None,
                 keep: false,
                 secret: false,
+                focus: None,
             },
         },
         Node::Input {
@@ -451,6 +452,7 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
             submit: None,
             keep: false,
             secret: false,
+            focus: None,
         },
     ];
     if let Some(problem) = &editor.problem {

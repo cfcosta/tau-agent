@@ -220,6 +220,7 @@ pub fn bound(piece: &Value, current: &Value, fields: &str) -> Node {
                     submit: Some(format!("{submit}{key}")),
                     keep: true,
                     secret: false,
+                    focus: None,
                 },
                 Node::text("Enter saves it."),
             ])

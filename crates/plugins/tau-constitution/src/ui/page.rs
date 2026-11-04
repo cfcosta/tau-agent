@@ -1357,6 +1357,7 @@ fn editor(
             submit: Some(SAVE_TYPED.into()),
             keep: false,
             secret: false,
+            focus: None,
         },
     ];
     if let Some(kept) = draft.kept.as_ref().filter(|_| now.text.is_empty()) {
@@ -1397,6 +1398,7 @@ fn editor(
             submit: Some(ADD_TYPED.into()),
             keep: false,
             secret: false,
+            focus: None,
         },
         button("Add field", Kind::Secondary, &Do::AddPlace { typed: None }),
     ]));

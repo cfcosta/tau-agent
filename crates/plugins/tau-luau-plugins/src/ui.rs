@@ -195,6 +195,21 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
         Node::Card { children } => Node::Card {
             children: each(children, f),
         },
+        Node::Keys {
+            id,
+            keys,
+            through,
+            action,
+            focus,
+            children,
+        } => Node::Keys {
+            id,
+            keys,
+            through,
+            action,
+            focus,
+            children: each(children, f),
+        },
         Node::List { items } => Node::List {
             items: each(items, f),
         },
@@ -266,6 +281,7 @@ pub fn embed(piece: &Value, plugin: &str) -> Node {
             submit,
             keep,
             secret,
+            focus,
         } => Node::Input {
             id: own(id),
             placeholder,
@@ -273,6 +289,22 @@ pub fn embed(piece: &Value, plugin: &str) -> Node {
             submit: submit.map(act),
             keep,
             secret,
+            focus,
+        },
+        Node::Keys {
+            id,
+            keys,
+            through,
+            action,
+            focus,
+            children,
+        } => Node::Keys {
+            id: own(id),
+            keys,
+            through,
+            action: act(action),
+            focus,
+            children,
         },
         Node::Terminal {
             id,

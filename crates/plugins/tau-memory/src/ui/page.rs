@@ -164,6 +164,7 @@ pub fn list_tree(
             submit: None,
             keep: true,
             secret: false,
+            focus: None,
         },
     ];
     bar.extend(kinds.map(|(each, name, count)| {

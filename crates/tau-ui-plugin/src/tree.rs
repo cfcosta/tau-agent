@@ -266,6 +266,27 @@ pub enum Node {
         /// gives it to the plugin.
         #[serde(default)]
         secret: bool,
+        /// Raised to give it the keys: each new number moves them here
+        /// once, so drawing again never takes them back.
+        #[serde(default)]
+        focus: Option<u64>,
+    },
+    /// An area that takes the keys (ADR 0045): while it has them, each of
+    /// its `keys` (`up`, `enter`, `n`, ...) carries out `action` with
+    /// `{ "key": k, "field": false }`; in a field inside it, `through`
+    /// keys still come to it with `"field": true`. A click outside its
+    /// fields gives it the keys, and a new `focus` number does too.
+    Keys {
+        id: String,
+        #[serde(default)]
+        keys: Vec<String>,
+        #[serde(default)]
+        through: Vec<String>,
+        action: String,
+        #[serde(default)]
+        focus: Option<u64>,
+        #[serde(default, deserialize_with = "nodes")]
+        children: Vec<Node>,
     },
     /// A panel over the page, for a choice or a form that stops the rest
     /// until it is done. The tree holds it only while it is open; a
@@ -463,6 +484,23 @@ pub enum WidgetSpec {
     Terminal(TerminalSpec),
     Ticker(TickerSpec),
     Image(ImageSpec),
+    Keys(KeysSpec),
+}
+
+/// Carries out a key an area took: its name, and whether it came from a
+/// field inside the area.
+pub type OnKey = Rc<dyn Fn(&str, bool, &mut App)>;
+
+/// What an area that takes the keys is drawn from: its key, the keys it
+/// takes and those its fields let through, its focus number, what is in
+/// it, and what a key does.
+pub struct KeysSpec {
+    pub key: String,
+    pub keys: Vec<String>,
+    pub through: Vec<String>,
+    pub focus: Option<u64>,
+    pub children: Vec<AnyElement>,
+    pub on_key: Option<OnKey>,
 }
 
 /// What an image is drawn from: its key, its type, the plugin's action
@@ -494,6 +532,8 @@ pub struct InputSpec {
     pub multiline: bool,
     pub keep: bool,
     pub secret: bool,
+    /// The focus number: a new one gives the input the keys.
+    pub focus: Option<u64>,
     pub on_submit: Option<OnSubmit>,
 }
 
@@ -1220,6 +1260,7 @@ impl<'a> Draw<'a> {
                 submit,
                 keep,
                 secret,
+                focus,
             } => {
                 let key = self.key(draft_key(id));
                 let draft = if *secret {
@@ -1257,6 +1298,7 @@ impl<'a> Draw<'a> {
                         multiline: *multiline,
                         keep: *keep,
                         secret: *secret,
+                        focus: *focus,
                         on_submit,
                     },
                     cx,
@@ -1465,6 +1507,46 @@ impl<'a> Draw<'a> {
                 )
                 .with_priority(2)
                 .into_any_element()
+            }
+            Node::Keys {
+                id,
+                keys,
+                through,
+                action,
+                focus,
+                children,
+            } => {
+                let children = self.children(children, depth, path, cx);
+                let Some(widgets) = self.widgets else {
+                    return div()
+                        .flex()
+                        .flex_col()
+                        .children(children)
+                        .into_any_element();
+                };
+                let on_key = self.on_act.clone().map(|on_act| {
+                    let action = action.clone();
+                    Rc::new(move |key: &str, field: bool, cx: &mut App| {
+                        on_act(
+                            Act::Plugin {
+                                action: action.clone(),
+                                args: serde_json::json!({ "key": key, "field": field }),
+                            },
+                            cx,
+                        )
+                    }) as OnKey
+                });
+                widgets(
+                    WidgetSpec::Keys(KeysSpec {
+                        key: self.key(format!("{id}.keys")),
+                        keys: keys.clone(),
+                        through: through.clone(),
+                        focus: *focus,
+                        children,
+                        on_key,
+                    }),
+                    cx,
+                )
             }
             Node::Empty { text } => empty(text.clone(), t).into_any_element(),
             Node::Button {

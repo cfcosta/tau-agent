@@ -23,6 +23,8 @@ struct Editor {
     sent: Vec<String>,
     /// What its Enter does, as the tree drew it last.
     on_submit: Option<OnSubmit>,
+    /// The focus number it last took the keys for.
+    focused: Option<u64>,
 }
 
 /// Every input's editor in one window, by plugin and key.
@@ -44,6 +46,8 @@ pub fn editor(
         let mut all = inputs.borrow_mut();
         all.editors.get_mut(&id).map(|editor| {
             editor.on_submit = spec.on_submit.clone();
+            let refocus = spec.focus.is_some() && spec.focus != editor.focused;
+            editor.focused = spec.focus;
             let replace =
                 match editor.sent.iter().position(|sent| *sent == spec.draft) {
                     // Its own edits came back, up to this one.
@@ -62,17 +66,26 @@ pub fn editor(
                     }
                     None => None,
                 };
-            (editor.input.clone(), replace)
+            (editor.input.clone(), replace, refocus)
         })
     };
-    match found {
-        Some((input, Some(draft))) => {
+    let (input, refocus) = match found {
+        Some((input, Some(draft), refocus)) => {
             input.update(cx, |input, cx| input.set_text(draft, cx));
-            input
+            (input, refocus)
         }
-        Some((input, None)) => input,
-        None => make(inputs, handle, &id, spec, cx),
+        Some((input, None, refocus)) => (input, refocus),
+        None => {
+            let refocus = spec.focus.is_some();
+            (make(inputs, handle, &id, spec, cx), refocus)
+        }
+    };
+    if refocus {
+        use gpui::Focusable as _;
+        let focus = input.read(cx).focus_handle(cx);
+        handle.focus(&focus, cx);
     }
+    input
 }
 
 /// Makes the editor `id`, showing `spec`'s draft, that sends its edits
@@ -91,6 +104,7 @@ fn make(
         multiline,
         keep,
         secret,
+        focus,
         on_submit,
     } = spec;
     let input = cx.new(|cx| {
@@ -155,6 +169,7 @@ fn make(
             shown: draft,
             sent: Vec::new(),
             on_submit,
+            focused: focus,
         },
     );
     input
@@ -175,6 +190,7 @@ mod tests {
             multiline: false,
             keep: false,
             secret: false,
+            focus: None,
             on_submit: None,
         }
     }

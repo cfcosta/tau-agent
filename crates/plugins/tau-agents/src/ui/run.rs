@@ -350,6 +350,7 @@ fn secrets(agent: &Agent) -> Vec<Node> {
         submit: None,
         keep: true,
         secret: false,
+        focus: None,
     });
     // Drawn as dots, kept out of the shared UI state; Enter saves it.
     rows.push(Node::Input {
@@ -359,6 +360,7 @@ fn secrets(agent: &Agent) -> Vec<Node> {
         submit: Some(SAVE_SECRET.into()),
         keep: false,
         secret: true,
+        focus: None,
     });
     rows
 }

@@ -374,6 +374,7 @@ pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
             submit: None,
             keep: true,
             secret: false,
+            focus: None,
         },
     ];
     if form.name.trim().is_empty() && !suggested.is_empty() {
@@ -409,6 +410,7 @@ pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
         submit: None,
         keep: true,
         secret: false,
+        focus: None,
     });
     let default_model = crate::default_model();
     page.push(label("Model"));
