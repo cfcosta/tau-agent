@@ -6,12 +6,10 @@ pub mod card;
 pub mod draft;
 pub mod panel;
 
-use std::collections::{BTreeMap, BTreeSet};
-
-use gpui::{App, AppContext as _, Context, Entity, FocusHandle};
+use gpui::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tau_ui_kit::{input::TextInput, theme::Tone};
+use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
     Fold,
     Handle,
@@ -117,75 +115,50 @@ pub struct Refused {
     pub message: String,
 }
 
-/// The panel's state in a window: the answers being written to each
-/// waiting call, and its fields.
-pub struct Ui {
-    /// The panel's own focus: the keys it takes come through it.
-    pub focus: FocusHandle,
-    /// The person's own answer to the question in view.
-    pub other: Entity<TextInput>,
-    /// The note on the question in view.
-    pub note: Entity<TextInput>,
-    /// The answers being written, with what each call asked.
-    pub drafts: BTreeMap<CallKey, (Ask, Draft)>,
-    /// The call whose draft the fields hold now.
-    pub shown: Option<CallKey>,
-    /// The calls whose panel took the focus as it first appeared.
-    pub focused: BTreeSet<CallKey>,
-    /// The calls whose answers went, waiting for the call to end.
-    pub sent: BTreeSet<CallKey>,
-    /// Why the host could not take a call's answers.
-    pub refused: BTreeMap<CallKey, String>,
+/// The panel's state, which is the interface's (ADR 0045), by the run
+/// and the call it answers: the draft, whether its answers went, why the
+/// host refused them, and its focus numbers.
+pub fn draft_key((run, call): &CallKey) -> String {
+    format!("draft:{run}:{call}")
 }
 
-impl Ui {
-    /// The draft for `key`, made if there is none.
-    pub fn draft_for(&mut self, key: &CallKey, ask: &Ask) -> &mut Draft {
-        &mut self
-            .drafts
-            .entry(key.clone())
-            .or_insert_with(|| (ask.clone(), Draft::new(key.1.clone(), ask)))
-            .1
-    }
+pub fn sent_key((run, call): &CallKey) -> String {
+    format!("sent:{run}:{call}")
+}
 
-    /// Takes what the fields hold into the draft they show.
-    pub fn take_fields(&mut self, cx: &App) {
-        let other = self.other.read(cx).text().to_owned();
-        let note = self.note.read(cx).text().to_owned();
-        let Some((ask, draft)) =
-            self.shown.as_ref().and_then(|key| self.drafts.get_mut(key))
-        else {
-            return;
-        };
-        draft.write_other(ask, &other);
-        draft.write_note(ask, &note);
-    }
+pub fn refused_key((run, call): &CallKey) -> String {
+    format!("refused:{run}:{call}")
+}
 
-    /// Fills the fields from the draft they show, for its question in
-    /// view.
-    pub fn fill_fields(&mut self, cx: &mut Context<Self>) {
-        let Some((_, draft)) =
-            self.shown.as_ref().and_then(|key| self.drafts.get(key))
-        else {
-            return;
-        };
-        let at = draft.tab.min(draft.other.len().saturating_sub(1));
-        let (other, note) = (draft.other[at].clone(), draft.notes[at].clone());
-        self.other.update(cx, |input, cx| input.set_text(other, cx));
-        self.note.update(cx, |input, cx| input.set_text(note, cx));
-    }
+pub fn focus_key((run, call): &CallKey) -> String {
+    format!("focus:{run}:{call}")
+}
 
-    /// Shows `key`'s draft in the fields, keeping what they held for the
-    /// draft they showed before.
-    pub fn show(&mut self, key: &CallKey, cx: &mut Context<Self>) {
-        if self.shown.as_ref() == Some(key) {
-            self.take_fields(cx);
-            return;
+/// Which of the panel's parts takes the keys next: each count rises to
+/// give its part the keys once (ADR 0045).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub struct Focus {
+    pub panel: u64,
+    pub other: u64,
+    pub note: u64,
+}
+
+impl Focus {
+    /// Before anything moved it: the panel takes the keys as it first
+    /// appears.
+    pub fn start() -> Self {
+        Self {
+            panel: 1,
+            ..Self::default()
         }
-        self.take_fields(cx);
-        self.shown = Some(key.clone());
-        self.fill_fields(cx);
     }
+}
+
+/// The way back to the interface, for the host's answers.
+pub struct Ui {
+    handle: Handle,
 }
 
 impl UiPlugin for AskUi {
@@ -199,12 +172,17 @@ impl UiPlugin for AskUi {
         NAME
     }
 
+    /// The host refused the answers: they did not go, and the panel says
+    /// why.
     fn reply(&self, ui: &mut Ui, reply: Value, cx: &mut Context<Ui>) {
         if let Ok(refused) = serde_json::from_value::<Refused>(reply) {
             let key = (refused.run, refused.call);
-            ui.sent.remove(&key);
-            ui.refused.insert(key, refused.message);
-            cx.notify();
+            ui.handle.set_ui(sent_key(&key), None, cx);
+            ui.handle.set_ui(
+                refused_key(&key),
+                Some(Value::String(refused.message)),
+                cx,
+            );
         }
     }
 
@@ -235,27 +213,7 @@ impl UiPlugin for AskUi {
 }
 
 impl PluginUi for Ui {
-    fn new(handle: Handle, cx: &mut Context<Self>) -> Self {
-        let other = cx
-            .new(|cx| TextInput::new("Your own answer…", cx).keep_on_submit());
-        let note = cx.new(|cx| {
-            TextInput::new(
-                "Anything the agent should know about this answer…",
-                cx,
-            )
-            .multiline()
-            .keep_on_submit()
-        });
-        panel::subscribe(&other, &note, handle, cx);
-        Ui {
-            focus: cx.focus_handle(),
-            other,
-            note,
-            drafts: BTreeMap::new(),
-            shown: None,
-            focused: BTreeSet::new(),
-            sent: BTreeSet::new(),
-            refused: BTreeMap::new(),
-        }
+    fn new(handle: Handle, _cx: &mut Context<Self>) -> Self {
+        Ui { handle }
     }
 }

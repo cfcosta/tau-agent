@@ -6,8 +6,9 @@ use std::collections::BTreeSet;
 
 use crate::{Answer, Ask, Reply};
 
-/// The answers to one call, as they stand.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The answers to one call, as they stand: the interface's state, kept
+/// as data (ADR 0045).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Draft {
     /// The call it answers.
     pub call: String,

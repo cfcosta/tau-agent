@@ -1,17 +1,13 @@
 //! The card of an `ask` call: what it asked, then each answer with its
 //! note, read from the call's own arguments and result so a stored run
-//! shows it as the live one did.
+//! shows it as the live one did. A view tree (ADR 0045).
 
-use gpui::{Div, div, prelude::*, rems};
-use tau_ui_kit::{
-    assets::Icon,
-    components::{self as ui, mono},
-    theme::{IconSize, Theme, Tone, Type, sp, weight},
-};
+use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
     CallData,
     ViewCx,
     points::{AtCard, CardView},
+    tree::{self, Node},
 };
 
 use super::AskUi;
@@ -44,7 +40,6 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, AskUi>) -> Option<CardView> {
     if at.tool != TOOL {
         return None;
     }
-    let t = view.theme().clone();
     let shown = shown(&at.data);
     let n = shown.ask.as_ref().map_or(0, |ask| ask.questions.len());
     let label = match (&shown.reply, &shown.failed) {
@@ -54,20 +49,22 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, AskUi>) -> Option<CardView> {
         (None, None) if at.run.live => "waiting for you".to_owned(),
         (None, None) => "not answered".to_owned(),
     };
+    let ignore = |_: &str, _: &serde_json::Value, _: &mut gpui::App| {};
+    let id = format!("ask-card-{}-{}", at.run.id.0, at.call_id);
     let head = shown.ask.as_ref().map(|ask| {
         let headers: Vec<&str> =
             ask.questions.iter().map(|q| q.header.as_str()).collect();
-        mono(
-            format!("ask · {}", headers.join(" · ")),
-            Type::CAPTION,
-            t.text_soft,
-        )
-        .min_w(rems(0.))
-        .truncate()
-        .into_any_element()
+        let head = Node::Mono {
+            text: format!("ask · {}", headers.join(" · ")),
+        };
+        view.tree(&format!("{id}-head"), &head, ignore)
     });
     let waiting =
         shown.reply.is_none() && shown.failed.is_none() && at.run.live;
+    let body = shown.ask.as_ref().map(|ask| {
+        let tree = body(ask, shown.reply.as_ref(), waiting);
+        view.tree(&format!("{id}-body"), &tree, ignore)
+    });
     Some(CardView {
         head,
         label: Some(label),
@@ -78,87 +75,71 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, AskUi>) -> Option<CardView> {
             shown.failed.as_ref().map(|_| Tone::Danger)
         },
         shape: None,
-        body: shown.ask.as_ref().map(|ask| {
-            body(ask, shown.reply.as_ref(), waiting, &t).into_any_element()
-        }),
+        body,
         folds: false,
         inset: false,
     })
 }
 
 /// Each question's header and its answer, with the note under it.
-fn body(ask: &Ask, reply: Option<&Reply>, waiting: bool, t: &Theme) -> Div {
+pub fn body(ask: &Ask, reply: Option<&Reply>, waiting: bool) -> Node {
     let answers = match reply {
         Some(Reply::Answered { answers }) => Some(answers),
         _ => None,
     };
-    let rows = ask.questions.iter().enumerate().map(|(i, question)| {
+    let mut rows: Vec<Vec<Node>> = Vec::new();
+    for (i, question) in ask.questions.iter().enumerate() {
         let answer = answers.and_then(|answers| answers.get(i));
-        div()
-            .flex()
-            .items_start()
-            .gap(sp(3.))
-            .child(
-                ui::text(question.header.clone(), Type::CAPTION, t.dim)
-                    .w(rems(6.))
-                    .flex_shrink_0(),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(rems(0.))
-                    .flex()
-                    .flex_col()
-                    .gap(sp(0.5))
-                    .child(match answer {
-                        Some(answer) => {
-                            ui::text(answer.text(), Type::SMALL, t.text)
-                                .font_weight(weight::EMPHASIS)
-                        }
-                        None => ui::text(
-                            question.question.clone(),
-                            Type::SMALL,
-                            t.muted,
-                        ),
-                    })
-                    .children(answer.and_then(|a| a.note.clone()).map(
-                        |note| {
-                            div()
-                                .flex()
-                                .items_start()
-                                .gap(sp(1.5))
-                                .child(
-                                    ui::icon(
-                                        Icon::Pencil,
-                                        IconSize::TINY,
-                                        t.accent,
-                                    )
-                                    .mt(sp(0.5)),
-                                )
-                                .child(ui::text(note, Type::CAPTION, t.muted))
-                        },
-                    )),
-            )
-    });
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .px(sp(3.))
-        .py(sp(2.5))
-        .children(rows)
-        .when(waiting, |body| {
-            body.child(ui::text(
-                "Answer in the panel below.",
-                Type::CAPTION,
-                t.accent,
-            ))
-        })
-        .when(matches!(reply, Some(Reply::Declined)), |body| {
-            body.child(ui::text(
-                "You declined to answer.",
-                Type::CAPTION,
-                t.muted,
-            ))
-        })
+        let mut said = vec![match answer {
+            Some(answer) => Node::Rich {
+                text: format!("**{}**", answer.text()),
+            },
+            None => Node::Toned {
+                text: question.question.clone(),
+                tone: tree::Tone::Neutral,
+                mono: false,
+            },
+        }];
+        if let Some(note) = answer.and_then(|answer| answer.note.clone()) {
+            said.push(Node::row([
+                Node::Icon {
+                    name: "pencil".into(),
+                    tone: tree::Tone::Info,
+                },
+                Node::Toned {
+                    text: note,
+                    tone: tree::Tone::Neutral,
+                    mono: false,
+                },
+            ]));
+        }
+        rows.push(vec![
+            Node::Toned {
+                text: question.header.clone(),
+                tone: tree::Tone::Neutral,
+                mono: false,
+            },
+            Node::stack(said),
+        ]);
+    }
+    let mut pieces = vec![Node::Table {
+        head: Vec::new(),
+        rows,
+        widths: vec![1., 4.],
+    }];
+    if waiting {
+        pieces.push(Node::Toned {
+            text: "Answer in the panel below.".into(),
+            tone: tree::Tone::Info,
+            mono: false,
+        });
+    }
+    if matches!(reply, Some(Reply::Declined)) {
+        pieces.push(Node::Toned {
+            text: "You declined to answer.".into(),
+            tone: tree::Tone::Neutral,
+            mono: false,
+        });
+    }
+    Node::stack(pieces)
 }

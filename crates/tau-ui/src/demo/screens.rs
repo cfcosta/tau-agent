@@ -1826,26 +1826,35 @@ fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
         },
         cx,
     );
-    let Some(ui) = workspace.plugin_ui::<tau_ask::ui::Ui>(tau_ask::NAME) else {
+    // The answers written so far are tau-ask's UI state (ADR 0045).
+    if open == "ask" {
         return;
-    };
-    ui.update(cx, |ui, _| {
-        let key = (run.0.to_string(), "call_ask".to_owned());
-        let draft = ui.draft_for(&key, &ask);
-        if open == "ask" {
-            return;
-        }
-        draft.key(&ask, Key::Digit(1));
-        draft.key(&ask, Key::Digit(1));
-        draft.key(&ask, Key::Digit(3));
-        draft.notes[1] = "Only when the run has waited a while.".into();
-        if open == "ask-note" {
-            draft.note_open = true;
-            return;
-        }
+    }
+    let key = (run.0.to_string(), "call_ask".to_owned());
+    let mut draft = tau_ask::ui::Draft::new("call_ask", &ask);
+    draft.key(&ask, Key::Digit(1));
+    draft.key(&ask, Key::Digit(1));
+    draft.key(&ask, Key::Digit(3));
+    draft.notes[1] = "Only when the run has waited a while.".into();
+    if open == "ask-note" {
+        draft.note_open = true;
+        // Its field shows the note.
+        workspace.plugin_handle(tau_ask::NAME).set_ui(
+            tau_ui_plugin::tree::draft_key(&tau_ask::ui::panel::note_input(
+                &key, 1,
+            )),
+            Some(json!(draft.notes[1])),
+            cx,
+        );
+    } else {
         draft.key(&ask, Key::Right);
         draft.key(&ask, Key::Digit(2));
-    });
+    }
+    workspace.plugin_handle(tau_ask::NAME).set_ui(
+        tau_ask::ui::draft_key(&key),
+        serde_json::to_value(&draft).ok(),
+        cx,
+    );
 }
 
 /// The demo run with a note from the watcher under its last step, and

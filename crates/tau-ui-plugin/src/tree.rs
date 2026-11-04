@@ -1808,7 +1808,7 @@ mod tests {
         assert_eq!(Node::read(&setting).value(), setting);
         let modal = json!({ "piece": "modal", "title": "Add server",
             "children": [{ "piece": "input", "id": "name", "placeholder": null,
-                           "multiline": false, "submit": null, "keep": true, "secret": false }],
+                           "multiline": false, "submit": null, "keep": true, "secret": false, "focus": null }],
             "dismiss": "cancel" });
         assert_eq!(Node::read(&modal).value(), modal);
         assert_eq!(
@@ -1823,7 +1823,7 @@ mod tests {
             }
         );
         let input = json!({ "piece": "input", "id": "note", "placeholder": null,
-                            "multiline": true, "submit": "save", "keep": false, "secret": false });
+                            "multiline": true, "submit": "save", "keep": false, "secret": false, "focus": null });
         assert_eq!(Node::read(&input).value(), input);
         assert_eq!(tab_key("views"), "views.tab");
     }
