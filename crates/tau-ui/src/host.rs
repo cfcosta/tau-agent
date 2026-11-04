@@ -263,13 +263,14 @@ pub struct Host {
     /// The plugins with their UI, each with its state on this host (ADR
     /// 0017).
     hosted: Vec<hosted::Hosted>,
-    /// What fills the `tau.vcs` slot, once the plugins are hosted:
-    /// what opens the repositories' projects.
-    vcs: Option<Arc<dyn tau_ui_plugin::vcs::Vcs>>,
-    /// What fills the `tau.forge` slot, once the plugins are hosted:
-    /// where repositories are cloned from, pushed to and opened pull
-    /// requests on.
-    forge: Option<Arc<dyn tau_ui_plugin::forge::Forge>>,
+    /// What can fill each slot once the plugins are hosted, with the
+    /// person's picks (ADR 0045): `tau.vcs` opens the repositories'
+    /// projects ([`Host::vcs`]), `tau.forge` is where repositories are
+    /// cloned from, pushed to and opened pull requests on
+    /// ([`Host::forge`]).
+    slots: Mutex<tau_ui_plugin::slots::Fills>,
+    /// A forge in place of the slot's: for tests.
+    forge_override: Option<Arc<dyn tau_ui_plugin::forge::Forge>>,
     /// Held while a run starts, and while a sweep reads what the
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
@@ -575,8 +576,8 @@ impl Host {
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
-            vcs: None,
-            forge: None,
+            slots: Mutex::default(),
+            forge_override: None,
             jev_key: Mutex::new(jev_key),
             list_saving: Saving::default(),
             settings_saving: Saving::default(),
@@ -624,8 +625,40 @@ impl Host {
         mut self,
         forge: Arc<dyn tau_ui_plugin::forge::Forge>,
     ) -> Self {
-        self.forge = Some(forge);
+        self.forge_override = Some(forge);
         self
+    }
+
+    /// What fills the `tau.vcs` slot now.
+    pub(crate) fn vcs(&self) -> Option<Arc<dyn tau_ui_plugin::vcs::Vcs>> {
+        self.slots
+            .lock()
+            .expect("not poisoned")
+            .get(&tau_ui_plugin::vcs::VCS)
+    }
+
+    /// What fills the `tau.forge` slot now.
+    pub(crate) fn forge(&self) -> Option<Arc<dyn tau_ui_plugin::forge::Forge>> {
+        self.forge_override.clone().or_else(|| {
+            self.slots
+                .lock()
+                .expect("not poisoned")
+                .get(&tau_ui_plugin::forge::FORGE)
+        })
+    }
+
+    /// Each slot some plugin can fill, with them in its order, for the
+    /// Plugins screen.
+    fn slot_infos(&self) -> Vec<crate::catalog::SlotInfo> {
+        let slots = self.slots.lock().expect("not poisoned");
+        slots
+            .slots()
+            .into_iter()
+            .map(|slot| crate::catalog::SlotInfo {
+                name: slot.to_owned(),
+                candidates: slots.candidates(slot),
+            })
+            .collect()
     }
 
     /// Closes a conversation, or opens it again, for the sidebar.
@@ -839,11 +872,12 @@ impl Host {
                     "select agent, sum(cost_usd) from runs group by agent"
                         .into(),
             },
-            pull_requests: match &self.forge {
+            pull_requests: match self.forge() {
                 Some(forge) => forge.signed_in().await.is_some(),
                 None => false,
             },
-            forge: self.forge.as_ref().map(|forge| forge.name().to_owned()),
+            forge: self.forge().map(|forge| forge.name().to_owned()),
+            slots: self.slot_infos(),
             project,
             update: self.last_update.lock().expect("not poisoned").clone(),
             models: self.models(),
@@ -900,7 +934,7 @@ impl Host {
             }
         };
         let repository = repo.repository().await?;
-        let notes = self.vcs.as_ref().ok_or_else(no_vcs)?.spawn_notes();
+        let notes = self.vcs().ok_or_else(no_vcs)?.spawn_notes();
         // How the run's commands start: through what the plugins give
         // them, an environment. An agent's commands run only in its
         // sandbox: without one, its runs have no commands (ADR 0037).

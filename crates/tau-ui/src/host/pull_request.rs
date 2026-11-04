@@ -32,7 +32,7 @@ impl Host {
         &self,
         run: &RunId,
     ) -> anyhow::Result<PullRequest> {
-        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let forge = self.forge().ok_or_else(no_forge)?;
         if self.is_main(run) {
             anyhow::bail!(
                 "main pushes to {name} itself: use Push to {name} instead \
@@ -152,7 +152,7 @@ impl Host {
         keep_pushing: bool,
         reviewers: &[String],
     ) -> anyhow::Result<(Opened, String)> {
-        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let forge = self.forge().ok_or_else(no_forge)?;
         let slot = self.slot_of_run(run).await?;
         let repository = slot.repository().await?;
         let remote = self.forge_remote(&slot.name).await?;
@@ -254,7 +254,7 @@ impl Host {
             .get(run)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("No pull request for the run"))?;
-        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let forge = self.forge().ok_or_else(no_forge)?;
         let checks = forge.checks(&open.repo, &open.head).await?;
         Ok(match checks {
             ForgeChecks::Running => crate::pull_request::Checks::Running,

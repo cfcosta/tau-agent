@@ -352,6 +352,40 @@ impl Workspace {
         )
     }
 
+    /// The plugin that fills the slot named `slot`, as this window knows
+    /// it: the person's pick when it can, else the first in the slot's
+    /// order (ADR 0045).
+    pub fn slot_filler(&self, slot: &str) -> Option<&str> {
+        let candidates = &self
+            .catalog
+            .slots
+            .iter()
+            .find(|info| info.name == slot)?
+            .candidates;
+        let pick = self
+            .ui_state
+            .get(tau_ui_plugin::slots::PICKS, slot)
+            .and_then(Value::as_str);
+        tau_ui_plugin::slots::chosen(candidates, pick)
+    }
+
+    /// The person picks `plugin` to fill `slot`: kept in the UI state,
+    /// which the host saves and applies, and every interface shows.
+    pub fn pick_slot(
+        &mut self,
+        slot: &str,
+        plugin: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let key = slot.to_owned();
+        let value = Some(Value::String(plugin.to_owned()));
+        self.plugin_request(
+            intern(tau_ui_plugin::slots::PICKS),
+            Request::Ui { key, value },
+            cx,
+        );
+    }
+
     /// Sets `key` of `plugin`'s UI state, as its trees do: where the
     /// demo and tests put a window.
     pub fn set_plugin_ui(

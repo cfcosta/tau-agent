@@ -83,7 +83,7 @@ use tau_ui_plugin::{
     UiState,
     ViewCx,
     points::{self, AtApp, AtRepo, AtRun},
-    slots::{Fills, Slot},
+    slots::{Fills, PICKS, Slot, chosen},
     tree::{Kind, Node, draft_key, open_key},
     wire::{Built, View, ViewKey, Wired},
 };
@@ -138,7 +138,12 @@ impl Probed for Filler {
     }
 }
 
-/// The slots the probes fill: `probe-a` the first, `probe-b` the second.
+/// `test.alpha`'s declared order: the rival, registered after the
+/// probes, fills it first.
+const ALPHA_ORDER: [&str; 2] = ["rival", "probe-a"];
+
+/// The slots the probes fill: `probe-a` the first, which the rival can
+/// fill too, and `probe-b` the second.
 const SLOTS: [Slot<dyn Probed>; 2] =
     [Slot::new("test.alpha"), Slot::new("test.beta")];
 
@@ -325,7 +330,12 @@ fn install() {
                 .with(Probe::<1>)
                 .host(ProbeHost::<1>)
                 .with(Probe::<2>)
-                .host(ProbeHost::<2>),
+                .host(ProbeHost::<2>)
+                // Registered last, and first in the slot's order: the
+                // order decides, not the registration.
+                .with(Rival)
+                .host(RivalHost)
+                .slot_order(&SLOTS[0], &ALPHA_ORDER),
         )
     });
 }
@@ -334,8 +344,8 @@ fn install() {
 /// fills the slots.
 struct Hosting {
     hosted: Vec<hosted::Hosted>,
-    cx: HostCx,
-    runtime: tokio::runtime::Runtime,
+    _cx: HostCx,
+    _runtime: tokio::runtime::Runtime,
     _dir: tempfile::TempDir,
 }
 
@@ -360,8 +370,8 @@ static HOSTING: LazyLock<Hosting> = LazyLock::new(|| {
     let hosted = runtime.block_on(hosted::host_all(&cx));
     Hosting {
         hosted,
-        cx,
-        runtime,
+        _cx: cx,
+        _runtime: runtime,
         _dir: dir,
     }
 });
@@ -416,6 +426,17 @@ fn catalog() -> Catalog {
             main: Some(main_run()),
             ..Default::default()
         }],
+        slots: {
+            let fills = hosted::fills(&HOSTING.hosted);
+            fills
+                .slots()
+                .into_iter()
+                .map(|slot| catalog::SlotInfo {
+                    name: slot.to_owned(),
+                    candidates: fills.candidates(slot),
+                })
+                .collect()
+        },
         ..Default::default()
     }
 }
@@ -595,6 +616,40 @@ struct Stored {
     ui: UiState,
     /// `ui`, as written to `ui.json`.
     saved: String,
+    /// What fills the slots, with the picks the host took, as `tau-ui`'s
+    /// host keeps them.
+    slots: Fills,
+}
+
+impl Stored {
+    fn new() -> Self {
+        let ui = UiState::default();
+        Self {
+            records: Vec::new(),
+            saved: serde_json::to_string(&ui).unwrap(),
+            slots: slots_from(&ui),
+            ui,
+        }
+    }
+}
+
+/// The slots as a host starting with `ui` fills them.
+fn slots_from(ui: &UiState) -> Fills {
+    let mut fills = hosted::fills(&HOSTING.hosted);
+    fills.picks_from(ui);
+    fills
+}
+
+/// Who must fill `test.alpha`: the person's pick, else the first in its
+/// declared order, of those in `hosted`.
+fn alpha_filler(hosted: &[&str], ui: &UiState) -> Option<String> {
+    let candidates: Vec<String> = ALPHA_ORDER
+        .iter()
+        .filter(|name| hosted.contains(name))
+        .map(|name| (*name).to_owned())
+        .collect();
+    let pick = ui.get(PICKS, SLOTS[0].name()).and_then(Value::as_str);
+    chosen(&candidates, pick).map(str::to_owned)
 }
 
 struct Tau {
@@ -654,8 +709,7 @@ impl Tau {
         }));
         let inbox = Inbox::default();
         let refresh = Rc::new(RefCell::new(false));
-        let mut host = Stored::default();
-        host.saved = serde_json::to_string(&host.ui).unwrap();
+        let host = Stored::new();
         let computer = computer(&app, &host, &wire, &inbox, &refresh);
 
         let mut calls = Vec::new();
@@ -775,6 +829,13 @@ impl Tau {
             match event {
                 WorkspaceEvent::Ui(event) => {
                     self.host.ui.apply(&event);
+                    // A pick holds from now on, as `Host::set_ui` does.
+                    if event.plugin == PICKS {
+                        self.host.slots.pick(
+                            &event.key,
+                            event.value.as_ref().and_then(Value::as_str),
+                        );
+                    }
                     self.host.saved =
                         serde_json::to_string(&self.host.ui).unwrap();
                     computer.workspace.update(&mut computer.cx, |ws, cx| {
@@ -1085,6 +1146,14 @@ impl Tau {
         );
         let after = self.computer.synced();
         assert_synced("the computer after a restart", &before, &after);
+        let saved: UiState = serde_json::from_str(&self.host.saved).unwrap();
+        let slots = slots_from(&saved);
+        assert_eq!(
+            format!("{slots:?}"),
+            format!("{:?}", self.host.slots),
+            "the slots are filled otherwise after a restart"
+        );
+        self.host.slots = slots;
     }
 }
 
@@ -1439,30 +1508,64 @@ impl Tau {
                 tc.draw(gs::integers::<usize>().max_value(picked.len() - 1));
             ordered.push(picked.remove(at));
         }
-        // What each fills alone: no slot here has two who can fill it,
-        // so together they fill each one with the one who can.
+        // What each fills alone. Only `test.alpha` has two who can
+        // fill it; together they fill each other slot with the one who
+        // can, and it with the person's pick or the first in its order.
         let mut alone: BTreeMap<&'static str, Option<String>> =
             slot_table(&Fills::default());
         for hosted in &ordered {
             let mut fills = Fills::default();
             hosted.plugin.fill(&hosted.state, &mut fills);
             for (slot, filler) in slot_table(&fills) {
-                if let Some(filler) = filler {
+                if let Some(filler) = filler
+                    && slot != SLOTS[0].name()
+                {
                     let before = alone.insert(slot, Some(filler));
                     assert_eq!(before, Some(None), "{slot} has two fillers");
                 }
             }
         }
+        let names: Vec<&str> =
+            ordered.iter().map(|hosted| hosted.plugin.name()).collect();
+        alone.insert(SLOTS[0].name(), alpha_filler(&names, &self.host.ui));
         // All of them fill every slot: tau's own fillers, tau-vcs-host
         // and tau-github-host, are among them.
         let all = slot_table(&hosted::fills(hosted));
         assert!(all.values().all(Option::is_some), "{all:?}");
+        let mut fills = hosted::fills(&ordered);
+        fills.picks_from(&self.host.ui);
         assert_eq!(
-            slot_table(&hosted::fills(&ordered)),
+            slot_table(&fills),
             alone,
-            "the slots are filled otherwise in the order {:?}",
-            ordered.iter().map(|h| h.plugin.name()).collect::<Vec<_>>()
+            "the slots are filled otherwise in the order {names:?}"
         );
+    }
+
+    /// The person picks another plugin to fill `test.alpha` on the
+    /// Plugins screen, on the computer or a phone: that window shows it
+    /// at once.
+    #[rule(weight = 2)]
+    fn pick_filler(&mut self, tc: TestCase) {
+        let who = self.who(&tc);
+        let slot = SLOTS[0].name();
+        let device = self.device(who);
+        let now = device.read(|ws| ws.slot_filler(slot).map(str::to_owned));
+        let plugin = ALPHA_ORDER
+            .into_iter()
+            .find(|plugin| Some(*plugin) != now.as_deref())
+            .expect("two can fill it");
+        device.open(Route::Plugins);
+        let Some(bounds) = device.bounds(&format!("slot:{slot}:{plugin}"))
+        else {
+            tc.event("the slot's row was not drawn yet");
+            self.device(who).open(Route::Run(main_run()));
+            return;
+        };
+        device.click(bounds);
+        let filler = device.read(|ws| ws.slot_filler(slot).map(str::to_owned));
+        assert_eq!(filler.as_deref(), Some(plugin), "the pick shows here");
+        device.open(Route::Run(main_run()));
+        self.host_settles();
     }
 
     /// One message crosses the network, one way or the other.
@@ -1534,6 +1637,14 @@ impl Tau {
         for phone in 0..self.phones.len() {
             let theirs = self.phones[phone].synced();
             assert_synced(&format!("phone {phone}"), &computer, &theirs);
+            let slot = SLOTS[0].name();
+            let (ours, their) = (
+                self.computer
+                    .read(|ws| ws.slot_filler(slot).map(str::to_owned)),
+                self.phones[phone]
+                    .read(|ws| ws.slot_filler(slot).map(str::to_owned)),
+            );
+            assert_eq!(their, ours, "phone {phone}'s filler of {slot}");
             let layout = self.phones[phone].read(Workspace::view_layout);
             for place in PLACES {
                 let built = self.built(place, layout);
@@ -1565,6 +1676,20 @@ impl Tau {
     /// The computer shows the UI state the host saved, and what the host
     /// stored and saved is what it shows: a restart now would change
     /// nothing.
+    /// `test.alpha` is filled by the person's pick, else by the first in
+    /// its declared order, whatever the registration order: on the host
+    /// and as the computer shows it.
+    #[invariant(always_run)]
+    fn the_pick_or_the_order_fills_a_slot(&mut self, _tc: TestCase) {
+        let slot = SLOTS[0].name();
+        let want = alpha_filler(&ALPHA_ORDER, &self.host.ui);
+        assert_eq!(self.host.slots.filler(slot), want, "the host's filler");
+        let shown = self
+            .computer
+            .read(|ws| ws.slot_filler(slot).map(str::to_owned));
+        assert_eq!(shown, want, "the computer's Plugins screen");
+    }
+
     /// The computer builds views only for the phones connected now.
     #[invariant(always_run)]
     fn views_are_built_for_phones_there(&mut self, _tc: TestCase) {
@@ -1696,8 +1821,8 @@ fn plugins_build_the_same_screen_on_every_device_nightly(tc: TestCase) {
     hegel::stateful::machine(Tau::new(phones)).steps(40).run(tc);
 }
 
-/// A plugin that can fill `probe-a`'s slot too, kept out of the
-/// registry: two plugins that can fill one slot are the question below.
+/// A plugin that can fill `probe-a`'s slot too, registered after it and
+/// first in the slot's order.
 struct Rival;
 
 impl UiPlugin for Rival {
@@ -1744,30 +1869,35 @@ impl HostHalf for RivalHost {
     }
 }
 
-/// Two plugins that can both fill a slot: today the first registered
-/// keeps it (`Fills::fill`), so the registry's order picks the filler,
-/// where ADR 0045 says the Plugins screen asks the person once and keeps
-/// the answer.
+/// Two plugins that can both fill a slot: the slot's declared order
+/// picks the first, not the order they were registered in, until the
+/// person picks the other, which then fills it in any order (ADR 0045).
 #[test]
-#[ignore = "which plugin fills a slot two can fill: the first registered, \
-            or the person's pick on the Plugins screen (ADR 0045), and \
-            what fills it before they pick?"]
 fn a_slot_two_plugins_can_fill_does_not_follow_the_order() {
     let hosting = &*HOSTING;
-    let registry = tau_ui_plugin::Registry::new().with(Rival).host(RivalHost);
-    let rival = registry.plugins().next().unwrap().clone();
-    let state = hosting.runtime.block_on(rival.host(&hosting.cx)).unwrap();
-    let rival = hosted::Hosted {
-        plugin: rival,
-        state: Arc::new(state),
+    let named = |name: &str| {
+        hosting
+            .hosted
+            .iter()
+            .find(|hosted| hosted.plugin.name() == name)
+            .unwrap()
+            .clone()
     };
-    let probe = hosting
-        .hosted
-        .iter()
-        .find(|hosted| hosted.plugin.name() == PROBES[0])
-        .unwrap()
-        .clone();
-    let first = slot_table(&hosted::fills(&[probe.clone(), rival.clone()]));
-    let second = slot_table(&hosted::fills(&[rival, probe]));
-    assert_eq!(first, second);
+    let (probe, rival) = (named(PROBES[0]), named("rival"));
+    let filler = |hosted: &[hosted::Hosted], pick: Option<&str>| {
+        let mut fills = hosted::fills(hosted);
+        fills.pick(SLOTS[0].name(), pick);
+        slot_table(&fills)[SLOTS[0].name()].clone()
+    };
+    for pick in [None, Some(PROBES[0]), Some("rival")] {
+        let want = pick.unwrap_or("rival");
+        assert_eq!(
+            filler(&[probe.clone(), rival.clone()], pick).as_deref(),
+            Some(want)
+        );
+        assert_eq!(
+            filler(&[rival.clone(), probe.clone()], pick).as_deref(),
+            Some(want)
+        );
+    }
 }

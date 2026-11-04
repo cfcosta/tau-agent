@@ -23,14 +23,14 @@ pub(super) use crate::hosted::Hosted;
 
 impl Host {
     /// Makes each plugin's host state, takes the slots' fillers from
-    /// them, then asks each to start again the jobs a restart cut off
+    /// them with the person's picks as saved, then asks each to start again the jobs a restart cut off
     /// (`HostHalf::resume`): once, as the host starts.
     pub(super) fn host_plugins(&mut self) {
         let cx = self.host_cx();
         self.hosted = self.setting_up(hosted::host_all(&cx));
-        let fills = hosted::fills(&self.hosted);
-        self.vcs = fills.get(&tau_ui_plugin::vcs::VCS);
-        self.forge = fills.get(&tau_ui_plugin::forge::FORGE);
+        let mut fills = hosted::fills(&self.hosted);
+        fills.picks_from(&self.ui_state());
+        *self.slots.lock().expect("not poisoned") = fills;
         self.setting_up(hosted::resume(&self.hosted, &cx));
     }
 

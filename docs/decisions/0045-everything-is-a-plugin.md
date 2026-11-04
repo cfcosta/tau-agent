@@ -104,10 +104,14 @@ pub const VCS: Slot<dyn Vcs> = Slot::new("tau.vcs");
 | `tau.notify`     | where notices go when the window is not in front                                | `tau-notify` (desktop)           | at once         |
 
 - **Filling a slot.** A plugin's declaration says which slots it can
-  fill. If one plugin can, it does. If several can, the Plugins screen
-  asks the person once and keeps the answer, globally or per
-  repository. If none can, the kernel's default fills it, or the
-  feature is off and says so (no VCS: chats do not land).
+  fill. If one plugin can, it does. If several can, the first in the
+  slot's declared order fills it (the order is declared beside the
+  registration list, in `tau-plugins`; the order plugins are registered
+  in never decides), until the person picks another on the Plugins
+  screen. The pick is the interface's state, so phones show it and it
+  outlives a restart, and it fills the slot from then on. If none can,
+  the kernel's default fills it, or the feature is off and says so (no
+  VCS: chats do not land).
 - **Filling a slot needs the person's Allow**, for every plugin that is
   not compiled into tau (see Capabilities), because a slot reaches
   everything its role touches.
@@ -349,8 +353,9 @@ Each step lands on main by itself and leaves tau working.
    choice; `tau.title`, `tau.notify`, `tau.store`, `tau.side-model`.
 6. **`tau.vcs`.** A `Vcs` trait the kernel's landing, lanes, queue and
    sweep call, implemented by `tau-vcs`. Then `tau-github`.
-   As built: `tau_ui_plugin::slots` (`Slot`, `Fills`, filled by
-   `HostHalf::fill`, first filler wins) and `tau_ui_plugin::vcs`'s `Vcs`
+   As built: `tau_ui_plugin::slots` (`Slot`, `Fills`, offered by
+   `HostHalf::fill`; the person's pick, kept in the UI state under
+   `slots::PICKS`, else the first in `Registry::slot_order`) and `tau_ui_plugin::vcs`'s `Vcs`
    (opens a repository) and `Repository` (catch up, conflicts, newest,
    land, landed, discard, forget, held, sweep). tau-vcs-host's
    `JjVcs`/`JjRepository` fill it; landing, lanes and the startup sweep

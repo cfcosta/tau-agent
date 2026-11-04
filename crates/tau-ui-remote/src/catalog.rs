@@ -32,6 +32,11 @@ pub struct Catalog {
     /// plugin fills the forge's slot.
     #[serde(default)]
     pub forge: Option<String>,
+    /// Each slot some plugin can fill, with those plugins in the slot's
+    /// order (ADR 0045): the first fills it until the person picks
+    /// another, which the UI state keeps (`tau_ui_plugin::slots::PICKS`).
+    #[serde(default)]
+    pub slots: Vec<SlotInfo>,
     /// Where runs work.
     pub project: ProjectStatus,
     /// What the latest update of a repository found, for the status bar:
@@ -163,6 +168,13 @@ impl Catalog {
 
 /// A repository runs work on: its memory and its plugins' data belong
 /// to it alone.
+/// A slot, and the plugins that can fill it, in its order.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SlotInfo {
+    pub name: String,
+    pub candidates: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Repo {
     /// Its own id, which a move or a new name keeps: what a page or the

@@ -57,4 +57,8 @@ pub fn plugins() -> Registry {
         // own `start` (tau-mcp, for its servers' direct tools) must be
         // registered before it, or scripts' signatures miss them.
         .with(tau_codemode::CodemodeUi)
+        // Who fills each slot first when several plugins can, until the
+        // person picks another on the Plugins screen (ADR 0045).
+        .slot_order(&tau_ui_plugin::vcs::VCS, &[tau_vcs::ui::NAME])
+        .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_github::NAME])
 }

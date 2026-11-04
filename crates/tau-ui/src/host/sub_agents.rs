@@ -261,8 +261,7 @@ impl Host {
             if let Some(kept) = &end.kept {
                 let limit = end.limit.as_deref().and_then(limit_of);
                 let note = self
-                    .vcs
-                    .as_ref()
+                    .vcs()
                     .map(|vcs| vcs.kept_note(kept, limit))
                     .unwrap_or_default();
                 sections.push(format!(
@@ -274,7 +273,7 @@ impl Host {
             let note = landings
                 .iter()
                 .find(|(landed, _)| *landed == run)
-                .zip(self.vcs.as_ref())
+                .zip(self.vcs())
                 .map(|((_, landing), vcs)| {
                     vcs.landing_note(
                         landing,

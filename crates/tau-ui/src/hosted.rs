@@ -85,10 +85,10 @@ pub async fn host_all(cx: &HostCx) -> Vec<Hosted> {
     hosted
 }
 
-/// What each plugin fills of the slots, in the registry's order: the
-/// first to fill a slot keeps it (`HostHalf::fill`).
+/// What each plugin can fill of the slots (`HostHalf::fill`), with each
+/// slot's declared order: the same in whatever order `hosted` is.
 pub fn fills(hosted: &[Hosted]) -> Fills {
-    let mut fills = Fills::default();
+    let mut fills = registry().fills();
     for hosted in hosted {
         hosted.plugin.fill(&hosted.state, &mut fills);
     }

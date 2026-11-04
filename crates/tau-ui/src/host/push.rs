@@ -16,7 +16,7 @@ impl Host {
         if let Some(error) = self.local_has_no_remote(repo) {
             return Err(error);
         }
-        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let forge = self.forge().ok_or_else(no_forge)?;
         let full_name = self.forge_of(repo).ok_or_else(|| {
             anyhow::anyhow!("{repo} was not cloned from {}", forge.name())
         })?;

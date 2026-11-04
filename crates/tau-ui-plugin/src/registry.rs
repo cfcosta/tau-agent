@@ -510,6 +510,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
     }
 
     fn fill(&self, host: &HostState, fills: &mut crate::slots::Fills) {
+        fills.filling(self.plugin.name());
         self.half.fill(self.host_of(host), fills);
     }
 
@@ -699,6 +700,9 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
 #[derive(Default)]
 pub struct Registry {
     plugins: Vec<Arc<dyn ErasedPlugin>>,
+    /// Each slot's order: who fills it first when several can (ADR
+    /// 0045), by slot name.
+    slot_orders: BTreeMap<&'static str, Vec<&'static str>>,
     /// Points contributed to that nobody declares, logged once each.
     dropped: Mutex<BTreeSet<String>>,
 }
@@ -755,6 +759,27 @@ impl Registry {
             }),
         );
         self
+    }
+
+    /// Declares `slot`'s order: of the plugins that can fill it, the
+    /// first of `order` does until the person picks another
+    /// ([`crate::slots::Fills`]). The registration order never decides.
+    pub fn slot_order<T: ?Sized>(
+        mut self,
+        slot: &crate::slots::Slot<T>,
+        order: &[&'static str],
+    ) -> Self {
+        self.slot_orders.insert(slot.name(), order.to_vec());
+        self
+    }
+
+    /// The fillers' table, empty, with every slot's declared order.
+    pub fn fills(&self) -> crate::slots::Fills {
+        let mut fills = crate::slots::Fills::default();
+        for (slot, order) in &self.slot_orders {
+            fills.declare(slot, order);
+        }
+        fills
     }
 
     pub fn plugins(&self) -> impl Iterator<Item = &Arc<dyn ErasedPlugin>> {

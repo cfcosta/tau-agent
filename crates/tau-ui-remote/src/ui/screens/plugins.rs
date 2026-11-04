@@ -241,6 +241,7 @@ fn list(
     let catalog = &ws.catalog;
     let spent: f64 = catalog.built_in().map(|plugin| plugin.spend).sum();
     let rows = rows(ws);
+    let roles = roles(ws, t, cx);
     // The person's own plugins are on a page of their own.
     let yours = ws.yours_route(None).map(|route| {
         div()
@@ -316,10 +317,96 @@ fn list(
                 )
                 .child(mono(usd(spent), Type::CAPTION, t.roles.cost)),
         )
+        // Choices first: who fills a slot several plugins can.
+        .children(roles)
         .children(yours)
         .children(groups)
         .children(jev)
         .into_any_element()
+}
+
+/// The slots several plugins can fill (ADR 0045): each with those
+/// plugins in the slot's order, the one that fills it marked. Picking
+/// another is the person's choice, kept in the UI state, so phones show
+/// it and it outlives a restart.
+fn roles(
+    ws: &Workspace,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Option<AnyElement> {
+    let contested: Vec<_> = ws
+        .catalog
+        .slots
+        .iter()
+        .filter(|slot| slot.candidates.len() > 1)
+        .collect();
+    if contested.is_empty() {
+        return None;
+    }
+    let slots = contested.into_iter().map(|slot| {
+        let filler = ws.slot_filler(&slot.name).map(str::to_owned);
+        let rows = slot.candidates.iter().map(|plugin| {
+            let on = filler.as_deref() == Some(plugin.as_str());
+            let id = format!("slot:{}:{plugin}", slot.name);
+            let (name, picked) = (slot.name.clone(), plugin.clone());
+            div()
+                .id(SharedString::from(id.clone()))
+                .debug_selector(move || id.clone())
+                .flex()
+                .items_center()
+                .gap(sp(2.5))
+                .min_h(rems(2.))
+                .px(sp(2.))
+                .rounded(radius::CONTROL)
+                .cursor_pointer()
+                .when(on, |row| row.bg(t.selected))
+                .when(!on, |row| row.hover(|style| style.bg(t.card)))
+                .child(
+                    div()
+                        .size(rems(0.4375))
+                        .flex_shrink_0()
+                        .rounded(radius::FULL)
+                        .when(on, |dot| dot.bg(t.accent))
+                        .when(!on, |dot| dot.border_1().border_color(t.dim)),
+                )
+                .child(mono(
+                    plugin.clone(),
+                    Type::SMALL,
+                    if on { t.text } else { t.text_soft },
+                ))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.pick_slot(&name, &picked, cx)
+                }))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(sp(0.5))
+            .child(
+                div()
+                    .px(sp(2.))
+                    .pb(sp(1.5))
+                    .typeset(Type::MICRO)
+                    .text_color(t.dim)
+                    .child(slot.name.clone()),
+            )
+            .children(rows)
+    });
+    Some(
+        div()
+            .flex()
+            .flex_col()
+            .gap(sp(3.))
+            .child(
+                div()
+                    .px(sp(2.))
+                    .typeset(Type::MICRO)
+                    .text_color(t.dim)
+                    .child("ROLES"),
+            )
+            .children(slots)
+            .into_any_element(),
+    )
 }
 
 fn list_row(

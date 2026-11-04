@@ -29,6 +29,14 @@ impl Host {
     /// Applies `event` and saves the result (ADR 0028).
     pub async fn set_ui(&self, event: &UiEvent) -> anyhow::Result<()> {
         self.ui_state.lock().expect("not poisoned").apply(event);
+        // A pick of who fills a slot holds from now on (ADR 0045).
+        if event.plugin == tau_ui_plugin::slots::PICKS {
+            self.slots.lock().expect("not poisoned").pick(
+                &event.key,
+                event.value.as_ref().and_then(serde_json::Value::as_str),
+            );
+            self.catalog_changed();
+        }
         let path = Self::ui_state_path(&self.config);
         self.ui_saving
             .save(

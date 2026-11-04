@@ -236,7 +236,7 @@ pub(super) fn clone_into_tau(
             id: None,
         })
     };
-    let detail = match &host.forge {
+    let detail = match host.forge() {
         Some(forge) => format!("fetching from {}", forge.name()),
         None => "fetching".into(),
     };
@@ -318,7 +318,7 @@ impl Host {
             Open::OrImport(slot.path.clone())
         };
         let catalog = self.catalog_wanted.clone();
-        let vcs = self.vcs.clone();
+        let vcs = self.vcs();
         self.runtime.spawn(async move {
             let opened = match &vcs {
                 Some(vcs) => vcs.open(&dir, how).await,
@@ -574,10 +574,7 @@ impl Host {
             let slot = RepoSlot {
                 id: id.clone(),
                 name: name.clone(),
-                remote: self
-                    .forge
-                    .as_ref()
-                    .map(|forge| forge.clone_url(full_name)),
+                remote: self.forge().map(|forge| forge.clone_url(full_name)),
                 path: dir.clone(),
                 local: None,
                 project: ProjectSlot::new(ProjectState::Importing),
@@ -596,7 +593,7 @@ impl Host {
     pub async fn forge_repos(
         &self,
     ) -> anyhow::Result<Vec<tau_ui_plugin::forge::ForgeRepo>> {
-        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let forge = self.forge().ok_or_else(no_forge)?;
         forge.repos().await
     }
 
@@ -607,7 +604,7 @@ impl Host {
         &self,
         full_name: &str,
     ) -> anyhow::Result<Repo> {
-        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let forge = self.forge().ok_or_else(no_forge)?;
         let remote = forge.remote(full_name).await?;
         let (owner, name) = full_name
             .split_once('/')
@@ -619,7 +616,7 @@ impl Host {
                 })
             })
             .ok_or_else(|| anyhow::anyhow!("{full_name} is not owner/name"))?;
-        let vcs = self.vcs.as_ref().ok_or_else(no_vcs)?;
+        let vcs = self.vcs().ok_or_else(no_vcs)?;
         let dir = self.config.forge_dir(forge.id()).join(owner).join(name);
         if !vcs.is_project(&dir) {
             // What is there without a project is a clone that never
@@ -657,7 +654,7 @@ impl Host {
         + Send
         + 'static,
     ) -> Result<Repo, NotAdded> {
-        let vcs = self.vcs.as_ref().ok_or_else(no_vcs);
+        let vcs = self.vcs().ok_or_else(no_vcs);
         let vcs = vcs.map_err(NotAdded::Failed)?;
         let found = vcs.inspect(folder).await.map_err(NotAdded::Refused)?;
         let listed = {
@@ -812,7 +809,7 @@ impl Host {
     /// 0043): its `origin`'s repository on the forge, SSH or HTTPS, when
     /// the forge's sign-in can push there, else nowhere.
     async fn push_to(&self, found: &LocalFolder) -> PushTo {
-        let Some(forge) = &self.forge else {
+        let Some(forge) = self.forge() else {
             return PushTo::Nowhere;
         };
         let Some(full_name) = found
@@ -846,7 +843,7 @@ impl Host {
         if let Some(error) = self.local_has_no_remote(name) {
             return Err(error);
         }
-        let forge = self.forge.as_ref().ok_or_else(no_forge)?;
+        let forge = self.forge().ok_or_else(no_forge)?;
         let full_name = self.forge_of(name).ok_or_else(|| {
             anyhow::anyhow!("{name} was not cloned from {}", forge.name())
         })?;
@@ -961,7 +958,7 @@ impl Host {
     /// URL for a clone from there, and for a local repository whose
     /// pushes go there.
     pub(super) fn remote_of(&self, listed: &Listed) -> Option<String> {
-        let forge = self.forge.as_ref()?;
+        let forge = self.forge()?;
         let pushed =
             listed.local.as_ref().and_then(|local| match &local.push {
                 PushTo::Forge(full_name) => Some(full_name),

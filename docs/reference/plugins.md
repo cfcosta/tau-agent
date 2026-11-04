@@ -458,6 +458,17 @@ server says it left (`ServerEvent::Left`) and the computer builds no
 view for it until it asks again (`Workspace::forget_phone`). `tau-ui`'s `tests/plugins_model.rs` checks it, with the
 rest of how plugins compose (see [testing](testing.md#tau-ui)).
 
+A slot (`tau_ui_plugin::slots`, ADR 0045) is a role one plugin fills,
+such as `tau.vcs` or `tau.forge`. Each plugin's `HostHalf::fill` offers
+what it can fill; `hosted::fills` gathers every offer. When several
+plugins can fill a slot, the first in the slot's order fills it: the
+order `tau-plugins` declares with `Registry::slot_order`, then by name,
+never the registration order. The Plugins screen lists such slots under
+Roles; picking another plugin there sets the UI state's
+`slots::PICKS` key for the slot, which the host applies at once
+(`Fills::pick`) and again from `ui.json` as it starts, and which phones
+show like any UI state.
+
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,
   `tau-<plugin>-host`: tau-codemode (Luau), tau-luau-plugins, tau-vcs

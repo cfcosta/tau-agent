@@ -1492,6 +1492,7 @@ pub fn catalog() -> Catalog {
         },
         pull_requests: true,
         forge: Some("GitHub".into()),
+        slots: Vec::new(),
         project: Default::default(),
         update: None,
         models: models(),
