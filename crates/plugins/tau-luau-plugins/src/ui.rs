@@ -1,48 +1,18 @@
 //! tau-luau-plugins' UI (ADR 0017, 0027): the records folded into each
-//! run's state, the view trees Luau plugins return drawn with tau-ui-kit's
-//! pieces, the run's status line, the cards of the plugins' own tools,
-//! and a badge on calls a plugin flagged.
+//! run's state, the view trees Luau plugins return drawn with the shared
+//! tree (ADR 0045), the run's status line, the cards of the plugins' own
+//! tools, and a badge on calls a plugin flagged.
 //!
 //! The drawing reads JSON only, so the phone, which runs no Luau, draws
 //! what the computer does.
 
 use std::{collections::BTreeMap, rc::Rc};
 
-use gpui::{
-    AnyElement,
-    IntoElement,
-    ParentElement,
-    Styled,
-    div,
-    prelude::*,
-    rems,
-};
+use gpui::{AnyElement, App};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tau_agent::tool::RunId;
-use tau_ui_kit::{
-    assets::Icon,
-    components::{
-        self,
-        ButtonKind,
-        NoteHead,
-        badge,
-        button,
-        card,
-        code_block,
-        dot,
-        empty,
-        heading,
-        icon,
-        mono,
-        pill,
-        tag,
-        text_link,
-        tile,
-    },
-    prose::rich,
-    theme::{Design as _, IconSize, Theme, Tone, Type, radius, sp},
-};
+use tau_ui_kit::assets::Icon;
 use tau_ui_plugin::{
     ENTRY,
     Fold,
@@ -57,7 +27,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtAnchor, AtCard, CardView},
-    tree::{self, Draw, Node},
+    tree::{Kind, Node, Tab, Tone},
 };
 
 use crate::{
@@ -73,7 +43,7 @@ use crate::{
     Standing,
     TestResult,
     Uses,
-    pane::{Bind, SettingsUi},
+    pane::SettingsUi,
 };
 
 /// The page of the person's own plugins, and, with an entry, of one.
@@ -193,86 +163,236 @@ impl State {
     }
 }
 
-/// Draws a view tree a Luau plugin returned (ADR 0045's tree). A piece
-/// it does not know draws as a red box that says so.
-/// Its sections and tabs keep their state under `plugin`'s name, the
-/// Luau plugin that drew it.
+/// What the actions of a Luau plugin's tree start with, once it sits in
+/// one of the page's own: they are the plugin's, not the page's.
+const LUAU: &str = "luau/";
+
+/// The page's own actions: write a plugin, allow a waiting version
+/// (`{ plugin }`), open a chat (`{ run }`).
+const WRITE: &str = "write";
+const ALLOW: &str = "allow";
+const OPEN_RUN: &str = "open-run";
+
+/// `node`, with each child rewritten first, then itself by `f`.
+pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
+    fn each(children: Vec<Node>, f: &mut dyn FnMut(Node) -> Node) -> Vec<Node> {
+        children
+            .into_iter()
+            .map(|child| rewrite(child, &mut *f))
+            .collect()
+    }
+    let node = match node {
+        Node::Stack { children } => Node::Stack {
+            children: each(children, f),
+        },
+        Node::Row { children } => Node::Row {
+            children: each(children, f),
+        },
+        Node::Scroll { height, children } => Node::Scroll {
+            height,
+            children: each(children, f),
+        },
+        Node::Card { children } => Node::Card {
+            children: each(children, f),
+        },
+        Node::List { items } => Node::List {
+            items: each(items, f),
+        },
+        Node::Section {
+            id,
+            title,
+            open,
+            children,
+        } => Node::Section {
+            id,
+            title,
+            open,
+            children: each(children, f),
+        },
+        Node::Modal {
+            title,
+            children,
+            dismiss,
+        } => Node::Modal {
+            title,
+            children: each(children, f),
+            dismiss,
+        },
+        Node::Table { head, rows, widths } => Node::Table {
+            head,
+            rows: rows.into_iter().map(|row| each(row, &mut *f)).collect(),
+            widths,
+        },
+        Node::Tabs { id, tabs } => Node::Tabs {
+            id,
+            tabs: tabs
+                .into_iter()
+                .map(|tab| Tab {
+                    label: tab.label,
+                    children: each(tab.children, &mut *f),
+                })
+                .collect(),
+        },
+        other => other,
+    };
+    f(node)
+}
+
+/// A view tree a Luau plugin returned, read to sit inside one of
+/// tau-luau-plugins' own (ADR 0045): its sections, tabs, inputs and
+/// widgets keep their state under `plugin`'s name, and its actions are
+/// marked as the plugin's. A piece it does not know draws as a red box
+/// that says so.
+pub fn embed(piece: &Value, plugin: &str) -> Node {
+    let own = |id: String| format!("{plugin}/{id}");
+    let act = |action: String| format!("{LUAU}{action}");
+    rewrite(Node::read(piece), &mut |node| match node {
+        Node::Section {
+            id,
+            title,
+            open,
+            children,
+        } => Node::Section {
+            id: own(id),
+            title,
+            open,
+            children,
+        },
+        Node::Tabs { id, tabs } => Node::Tabs { id: own(id), tabs },
+        Node::Input {
+            id,
+            placeholder,
+            multiline,
+            submit,
+            keep,
+            secret,
+        } => Node::Input {
+            id: own(id),
+            placeholder,
+            multiline,
+            submit: submit.map(act),
+            keep,
+            secret,
+        },
+        Node::Terminal {
+            id,
+            text,
+            cols,
+            rows,
+            live,
+        } => Node::Terminal {
+            id: own(id),
+            text,
+            cols,
+            rows,
+            live,
+        },
+        Node::Ticker { id, since, until } => Node::Ticker {
+            id: own(id),
+            since,
+            until,
+        },
+        Node::Due { id, at } => Node::Due { id: own(id), at },
+        Node::Button {
+            label,
+            action,
+            args,
+            kind,
+            icon,
+        } => Node::Button {
+            label,
+            action: act(action),
+            args,
+            kind,
+            icon,
+        },
+        Node::Switch {
+            label,
+            detail,
+            on,
+            action,
+            args,
+        } => Node::Switch {
+            label,
+            detail,
+            on,
+            action: act(action),
+            args,
+        },
+        Node::Modal {
+            title,
+            children,
+            dismiss,
+        } => Node::Modal {
+            title,
+            children,
+            dismiss: dismiss.map(act),
+        },
+        other => other,
+    })
+}
+
+/// Carries out the actions of `plugin`'s embedded tree, on its state in
+/// `run`; outside a run there is no state to act on. Says whether the
+/// action was one of the plugin's.
+pub type Acting = Rc<dyn Fn(&str, &Value, &mut App) -> bool>;
+
+/// [`Acting`] for `plugin` in `run`, with its state there.
+fn acting(
+    plugin: &str,
+    run: Option<(String, State)>,
+    view: &ViewCx<'_, LuauPluginsUi>,
+) -> Acting {
+    let handle = view.handle.clone();
+    let plugin = plugin.to_owned();
+    let on = run.map(|(run, state)| {
+        let state = state
+            .plugins
+            .get(&plugin)
+            .map_or_else(|| json!({}), |part| part.state.clone());
+        (run, state, view.settings.plugins.get(&plugin).cloned())
+    });
+    Rc::new(move |action: &str, args: &Value, cx: &mut App| {
+        let Some(action) = action.strip_prefix(LUAU) else {
+            return false;
+        };
+        if let Some((run, state, settings)) = &on {
+            handle.act(
+                Act::Action {
+                    plugin: plugin.clone(),
+                    action: action.to_owned(),
+                    args: args.clone(),
+                    run: run.clone(),
+                    state: state.clone(),
+                    settings: settings.clone(),
+                },
+                cx,
+            );
+        }
+        true
+    })
+}
+
+/// [`acting`] in the run the view is of, if any.
+fn acting_here(plugin: &str, view: &ViewCx<'_, LuauPluginsUi>) -> Acting {
+    let run = view.run.map(|run| run.id.0.to_string());
+    let state = view.state.cloned();
+    acting(plugin, run.zip(state), view)
+}
+
+/// Draws a view tree a Luau plugin returned, in the run the view is of:
+/// where its buttons act.
 pub fn draw(
     piece: &Value,
     id: &str,
     plugin: &str,
     view: &mut ViewCx<'_, LuauPluginsUi>,
 ) -> AnyElement {
-    let run = view.run.map(|run| run.id.0.to_string());
-    let state = view.state.cloned();
-    draw_in(piece, id, plugin, run.zip(state), view)
-}
-
-/// [`draw`], for the run `run` with its state: where its buttons act.
-fn draw_in(
-    piece: &Value,
-    id: &str,
-    plugin: &str,
-    run: Option<(String, State)>,
-    view: &mut ViewCx<'_, LuauPluginsUi>,
-) -> AnyElement {
-    let handle = view.handle.clone();
-    let t = view.theme().clone();
-    // A button acts on the plugin's state in the run drawn.
-    let acting = run.map(|(run, state)| {
-        let state = state
-            .plugins
-            .get(plugin)
-            .map_or_else(|| serde_json::json!({}), |part| part.state.clone());
-        (run, state, view.settings.plugins.get(plugin).cloned())
-    });
-    let plugin_name = plugin.to_owned();
-    let mut draw = Draw::new(&t, id.to_owned())
-        .width(view.width)
-        .window(view.window())
-        .ui(view.ui_state())
-        .prefix(plugin)
-        .on_act(Rc::new(move |act, cx| match act {
-            tree::Act::Navigate(link) => handle.navigate(link, cx),
-            tree::Act::Ui { key, value } => handle.set_ui(key, value, cx),
-            tree::Act::Plugin { action, args } => {
-                // Outside a run there is no state to act on.
-                if let Some((run, state, settings)) = &acting {
-                    handle.act(
-                        Act::Action {
-                            plugin: plugin_name.clone(),
-                            action,
-                            args,
-                            run: run.clone(),
-                            state: state.clone(),
-                            settings: settings.clone(),
-                        },
-                        cx,
-                    );
-                }
-            }
-        }));
-    if let Some(inputs) = view.inputs() {
-        draw = draw.inputs(inputs);
-    }
-    if let Some(widgets) = view.widgets() {
-        draw = draw.widgets(widgets);
-    }
-    draw.draw(&Node::read(piece), view.cx)
-}
-
-/// Draws a settings page: its bound pieces read and save the settings
-/// through `bind` (ADR 0029).
-pub fn draw_bound(
-    piece: &Value,
-    t: &Theme,
-    bind: &Bind,
-    cx: &mut gpui::App,
-) -> AnyElement {
-    let setting = |piece: &Value, t: &Theme| crate::pane::bound(piece, t, bind);
-    Draw::new(t, "luau-settings")
-        .setting(&setting)
-        .draw(&Node::read(piece), cx)
+    let tree = embed(piece, plugin);
+    let on = acting_here(plugin, view);
+    view.tree(id, &tree, move |action, args, cx| {
+        on(action, args, cx);
+    })
 }
 
 impl UiPlugin for LuauPluginsUi {
@@ -286,7 +406,7 @@ impl UiPlugin for LuauPluginsUi {
         NAME
     }
 
-    /// A settings page the host drew.
+    /// A settings page the host drew, or what an action left.
     fn reply(
         &self,
         ui: &mut SettingsUi,
@@ -308,10 +428,16 @@ impl UiPlugin for LuauPluginsUi {
 
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
-            .page(Page::new(PAGE, page).title(|view| {
-                view.entry()
-                    .map_or_else(|| "Your plugins".to_owned(), str::to_owned)
-            }))
+            .page(
+                Page::new(PAGE, page)
+                    .title(|view| {
+                        view.entry().map_or_else(
+                            || "Your plugins".to_owned(),
+                            str::to_owned,
+                        )
+                    })
+                    .framed(),
+            )
             .settings(crate::pane::render)
             .command(
                 SlashCommand::new(
@@ -329,45 +455,36 @@ impl UiPlugin for LuauPluginsUi {
                 let card =
                     details.get("card").filter(|card| !card.is_null())?;
                 Some(CardView {
-                    body: Some(
-                        div()
-                            .px(sp(3.5))
-                            .py(sp(2.5))
-                            .child(draw(
-                                card,
-                                &format!("luau-card-{}", at.call_id),
-                                plugin,
-                                view,
-                            ))
-                            .into_any_element(),
-                    ),
+                    body: Some(draw(
+                        card,
+                        &format!("luau-card-{}", at.call_id),
+                        plugin,
+                        view,
+                    )),
                     ..CardView::default()
                 })
             })
             .contribute(points::TRANSCRIPT, |at: &AtAnchor, view| {
                 let (plugin, note) = view.state?.notes.get(&at.key)?.clone();
                 let id = format!("luau-note-{}-{}", at.run.id.0, at.key);
-                let body = draw(&note, &id, &plugin, view);
-                let t = view.theme().clone();
-                Some(
-                    components::note(
-                        gpui::SharedString::from(id),
-                        NoteHead {
-                            plugin,
-                            icon: Icon::Plug,
-                            tone: Tone::Info,
-                            text: String::new(),
-                            detail: None,
-                        },
-                        None,
-                        None,
-                        None,
-                        Some(body),
-                        view.compact,
-                        &t,
-                    )
-                    .into_any_element(),
-                )
+                let tree = Node::Card {
+                    children: vec![
+                        Node::row([
+                            Node::Icon {
+                                name: "plug".into(),
+                                tone: Tone::Info,
+                            },
+                            Node::Mono {
+                                text: plugin.clone(),
+                            },
+                        ]),
+                        embed(&note, &plugin),
+                    ],
+                };
+                let on = acting_here(&plugin, view);
+                Some(view.tree(&id, &tree, move |action, args, cx| {
+                    on(action, args, cx);
+                }))
             })
             .contribute(points::CARD_BADGE, |at: &AtCard, view| {
                 let state: &State = view.state?;
@@ -378,111 +495,129 @@ impl UiPlugin for LuauPluginsUi {
                             .get(&at.call_id)
                             .map(|reason| (name.clone(), reason.clone()))
                     })?;
-                let t = view.theme().clone();
-                Some(
-                    badge(
-                        format!("flagged by {plugin}: {reason}"),
-                        t.tone(Tone::Warn),
-                        t.tone(Tone::Warn).opacity(0.4),
-                    )
-                    .into_any_element(),
-                )
+                let tree = Node::Badge {
+                    text: format!("flagged by {plugin}: {reason}"),
+                    tone: Tone::Warn,
+                };
+                Some(view.tree(
+                    &format!("luau-flag-{}", at.call_id),
+                    &tree,
+                    |_, _, _| {},
+                ))
             })
     }
 }
 
 /// The page of the person's own plugins (ADR 0036): each plugin of the
 /// plugins repository as a card, with where it stands, and the chats
-/// writing them. Opened for one plugin, the page is that plugin's.
+/// writing them. Opened for one plugin, the page is that plugin's. A
+/// view tree in the frame the interface gives a page (ADR 0045).
 fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
+    let handle = view.handle.clone();
     match view.entry().map(str::to_owned) {
-        Some(entry) => plugin_page(&entry, view),
-        None => overview(view),
+        Some(entry) => {
+            let (tree, luau, saver) = plugin_page(&entry, view);
+            view.tree(
+                &format!("luau-plugin-{entry}"),
+                &tree,
+                move |action, args, cx| {
+                    if luau.as_ref().is_some_and(|on| on(action, args, cx)) {
+                        return;
+                    }
+                    if saver
+                        .as_ref()
+                        .is_some_and(|saver| saver.act(action, args, cx))
+                    {
+                        return;
+                    }
+                    page_action(&handle, action, args, cx);
+                },
+            )
+        }
+        None => {
+            let tree = overview(view);
+            view.tree("luau-plugins", &tree, move |action, args, cx| {
+                page_action(&handle, action, args, cx)
+            })
+        }
+    }
+}
+
+/// Carries out one of the page's own actions.
+fn page_action(handle: &Handle, action: &str, args: &Value, cx: &mut App) {
+    match action {
+        WRITE => handle.composer(format!("/{COMMAND} "), cx),
+        ALLOW => {
+            if let Some(plugin) = args["plugin"].as_str() {
+                handle.act(
+                    Act::Allow {
+                        plugin: plugin.to_owned(),
+                    },
+                    cx,
+                );
+            }
+        }
+        OPEN_RUN => {
+            if let Some(run) = args["run"].as_str() {
+                handle.open_run(&RunId(run.into()), cx);
+            }
+        }
+        _ => {}
     }
 }
 
 /// Every plugin of the plugins repository, the way to write one, and the
 /// chats there.
-fn overview(view: &mut ViewCx<'_, LuauPluginsUi>) -> AnyElement {
-    let t = view.theme().clone();
-    let overview = view.data.clone();
-    let handle = view.handle.clone();
-    let write = {
-        let handle = handle.clone();
-        button("Write a plugin", ButtonKind::Primary, &t)
-            .id("write-plugin")
-            .on_click(move |_, _, cx| {
-                handle.composer(format!("/{COMMAND} "), cx)
-            })
-    };
-    let head = div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .gap(sp(3.5))
-        .child(tile(
-            Icon::Plug,
-            t.change,
-            t.change.opacity(0.12),
-            t.change.opacity(0.3),
-        ))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems(12.))
-                .flex()
-                .flex_col()
-                .gap(sp(0.5))
-                .child(
-                    div()
-                        .typeset(Type::TITLE)
-                        .text_color(t.text)
-                        .child("Your plugins"),
-                )
-                .child(mono(crate::REPO, Type::CAPTION, t.dim)),
-        )
-        .child(write);
-    let mut column = div()
-        .flex()
-        .flex_col()
-        .gap(sp(5.))
-        .p(sp(6.))
-        .max_w(rems(66.))
-        .child(head)
-        .child(div().typeset(Type::SMALL).child(rich(
-            &format!(
+fn overview(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
+    let overview = view.data;
+    let mut page = vec![
+        Node::row([
+            Node::Icon {
+                name: "plug".into(),
+                tone: Tone::Info,
+            },
+            Node::Title {
+                text: "Your plugins".into(),
+                subtitle: Some(crate::REPO.into()),
+            },
+            Node::Spacer,
+            Node::Button {
+                label: "Write a plugin".into(),
+                action: WRITE.into(),
+                args: Value::Null,
+                kind: Kind::Primary,
+                icon: None,
+            },
+        ]),
+        Node::Rich {
+            text: format!(
                 "Type `/{COMMAND}` and what it should do in any chat, and \
                  tau writes one here. A version is active once it lands \
                  and its tests pass."
             ),
-            t.muted,
-            &t,
-        )));
+        },
+    ];
     if let Some(error) = &overview.error {
-        column = column.child(
-            div()
-                .typeset(Type::SMALL)
-                .text_color(t.red)
-                .child(error.clone()),
-        );
+        page.push(Node::Status {
+            text: error.clone(),
+            detail: None,
+            tone: Tone::Bad,
+        });
     }
     if overview.plugins.is_empty() {
-        column = column.child(empty("No plugins yet.", &t));
+        page.push(Node::Empty {
+            text: "No plugins yet.".into(),
+        });
     } else {
-        column = column.child(counts(&overview, &t)).child(
-            div().flex().flex_wrap().gap(sp(4.)).children(
-                overview
-                    .plugins
-                    .iter()
-                    .map(|entry| plugin_card(entry, &handle, &t)),
-            ),
-        );
+        page.push(counts(overview));
+        page.extend(overview.plugins.iter().map(plugin_card));
     }
-    column.child(chats(view, &t)).into_any_element()
+    page.push(chats(view));
+    Node::stack(page)
 }
 
 /// How many plugins there are, and how many stand each way.
-fn counts(overview: &Overview, t: &Theme) -> gpui::Div {
+fn counts(overview: &Overview) -> Node {
     let count = |of: fn(&Standing) -> bool| {
         overview
             .plugins
@@ -507,28 +642,24 @@ fn counts(overview: &Overview, t: &Theme) -> gpui::Div {
                 matches!(standing, Standing::Failing | Standing::Broken { .. })
             }),
             "failing",
-            Tone::Danger,
+            Tone::Bad,
         ),
     ];
-    div()
-        .flex()
-        .flex_wrap()
-        .gap(sp(2.))
-        .child(pill(
-            if all == 1 {
-                "1 plugin".to_owned()
-            } else {
-                format!("{all} plugins")
-            },
-            t.text_soft,
-            t.raised,
-        ))
-        .children(tones.into_iter().filter(|(n, ..)| *n > 0).map(
-            |(n, label, tone)| {
-                let color = t.tone(tone);
-                pill(format!("{n} {label}"), color, color.opacity(0.12))
-            },
-        ))
+    let mut pills = vec![Node::Pill {
+        text: if all == 1 {
+            "1 plugin".to_owned()
+        } else {
+            format!("{all} plugins")
+        },
+        tone: Tone::Neutral,
+    }];
+    pills.extend(tones.into_iter().filter(|(n, ..)| *n > 0).map(
+        |(n, label, tone)| Node::Pill {
+            text: format!("{n} {label}"),
+            tone,
+        },
+    ));
+    Node::row(pills)
 }
 
 /// Where `standing` leaves a plugin, in words and a tone.
@@ -536,8 +667,8 @@ fn standing_label(standing: &Standing) -> (&'static str, Tone) {
     match standing {
         Standing::Active => ("active", Tone::Good),
         Standing::Waiting { .. } => ("waiting for you", Tone::Warn),
-        Standing::Failing => ("tests failing", Tone::Danger),
-        Standing::Broken { .. } => ("does not load", Tone::Danger),
+        Standing::Failing => ("tests failing", Tone::Bad),
+        Standing::Broken { .. } => ("does not load", Tone::Bad),
     }
 }
 
@@ -593,169 +724,115 @@ fn entry_link(entry: &str) -> Link {
 }
 
 /// The Allow that lets a waiting version of `plugin` reach what it asks.
-fn allow(
-    plugin: &str,
-    handle: &Handle,
-    t: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    let (plugin, handle) = (plugin.to_owned(), handle.clone());
-    button("Allow", ButtonKind::Primary, t)
-        .id(gpui::SharedString::from(format!("allow-{plugin}")))
-        .on_click(move |_, _, cx| {
-            handle.act(
-                Act::Allow {
-                    plugin: plugin.clone(),
-                },
-                cx,
-            )
-        })
+fn allow(plugin: &str) -> Node {
+    Node::Button {
+        label: "Allow".into(),
+        action: ALLOW.into(),
+        args: json!({ "plugin": plugin }),
+        kind: Kind::Primary,
+        icon: None,
+    }
+}
+
+/// Tags, one per thing said, side by side.
+fn tags(words: Vec<String>) -> Node {
+    Node::row(words.into_iter().map(|text| Node::Pill {
+        text,
+        tone: Tone::Neutral,
+    }))
 }
 
 /// One plugin on the page of all of them: its name, which opens its own
 /// page, where it stands, where it steps in, and what it needs.
-fn plugin_card(entry: &Entry, handle: &Handle, t: &Theme) -> AnyElement {
+fn plugin_card(entry: &Entry) -> Node {
     let (label, tone) = standing_label(&entry.standing);
-    let color = t.tone(tone);
-    let open = {
-        let (link, handle) = (entry_link(&entry.name), handle.clone());
-        move |_: &gpui::ClickEvent, _: &mut gpui::Window, cx: &mut gpui::App| {
-            handle.navigate(link.clone(), cx)
-        }
-    };
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .gap(sp(3.))
-        .child(
-            div()
-                .id(gpui::SharedString::from(format!("open-{}", entry.name)))
-                .flex()
-                .flex_col()
-                .gap(sp(1.))
-                .cursor_pointer()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .child(
-                            mono(entry.name.clone(), Type::SMALL, t.text)
-                                .min_w(rems(0.))
-                                .truncate(),
-                        )
-                        .child(badge(label, color, color.opacity(0.4)))
-                        .child(div().flex_1())
-                        .child(icon(Icon::Chevron, IconSize::TINY, t.dim)),
-                )
-                .children(
-                    tests_line(entry)
-                        .map(|line| mono(line, Type::CAPTION, t.dim)),
-                )
-                .on_click(open),
-        )
-        .when(!entry.description.is_empty(), |body| {
-            body.child(
-                div()
-                    .typeset(Type::SMALL)
-                    .text_color(t.text_soft)
-                    .child(entry.description.clone()),
-            )
-        });
+    let mut head = vec![
+        Node::Link {
+            label: entry.name.clone(),
+            to: entry_link(&entry.name),
+        },
+        Node::Badge {
+            text: label.into(),
+            tone,
+        },
+    ];
+    if let Some(line) = tests_line(entry) {
+        head.push(Node::Spacer);
+        head.push(Node::Mono { text: line });
+    }
+    let mut body = vec![Node::row(head)];
+    if !entry.description.is_empty() {
+        body.push(Node::text(entry.description.clone()));
+    }
     if let Some(declaration) = &entry.declaration {
         let seams = steps_in(declaration);
         if !seams.is_empty() {
-            body = body.child(
-                div().flex().flex_wrap().gap(sp(1.5)).children(
-                    seams
-                        .into_iter()
-                        .map(|seam| tag(seam, Type::CAPTION, t.text_soft, t)),
-                ),
-            );
+            body.push(tags(seams));
         }
     }
     match &entry.standing {
-        Standing::Waiting { grown } => {
-            body = body.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(3.))
-                    .p(sp(3.))
-                    .rounded(radius::BOX)
-                    .bg(color.opacity(0.08))
-                    .child(div().flex_1().typeset(Type::SMALL).child(rich(
-                        &format!("It wants to use {}.", grown.join(", ")),
-                        t.text,
-                        t,
-                    )))
-                    .child(allow(&entry.name, handle, t)),
-            );
-        }
-        Standing::Broken { error } => {
-            body = body.child(code_block(None, error, t));
-        }
+        Standing::Waiting { grown } => body.push(Node::row([
+            Node::Rich {
+                text: format!("It wants to use {}.", grown.join(", ")),
+            },
+            Node::Spacer,
+            allow(&entry.name),
+        ])),
+        Standing::Broken { error } => body.push(Node::Code {
+            lang: None,
+            text: error.clone(),
+        }),
         _ => {}
     }
     let failing: Vec<_> =
         entry.tests.iter().filter(|test| !test.passed).collect();
     if !failing.is_empty() {
-        body = body.child(failing_tests(&failing, t));
+        body.push(failing_tests(&failing));
     }
     if entry.keeps_earlier {
-        body =
-            body.child(div().typeset(Type::CAPTION).text_color(t.dim).child(
-                "Runs keep the version before until this one is fixed or \
-                 allowed.",
-            ));
+        body.push(Node::text(
+            "Runs keep the version before until this one is fixed or \
+             allowed.",
+        ));
     }
-    card(t)
-        .p(sp(4.))
-        .flex_1()
-        .min_w(rems(20.))
-        .when(matches!(entry.standing, Standing::Waiting { .. }), |card| {
-            card.border_color(color.opacity(0.4))
-        })
-        .child(body)
-        .into_any_element()
+    Node::Card { children: body }
+}
+
+/// A test's line: its file and name, and why it failed, if it did.
+fn test_lines(test: &TestResult) -> Vec<Node> {
+    let mut lines = vec![Node::Mono {
+        text: format!("{} · {}", test.file, test.name),
+    }];
+    if let Some(error) = &test.error {
+        lines.push(Node::Status {
+            text: error.clone(),
+            detail: None,
+            tone: Tone::Bad,
+        });
+    }
+    lines
 }
 
 /// Tests that fail, each with why.
-fn failing_tests(failing: &[&TestResult], t: &Theme) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(1.5))
-        .child(heading("Failing tests", t))
-        .children(failing.iter().map(|test| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(1.))
-                .child(mono(
-                    format!("{} · {}", test.file, test.name),
-                    Type::CAPTION,
-                    t.text_soft,
-                ))
-                .when_some(test.error.clone(), |column, error| {
-                    column.child(mono(error, Type::CAPTION, t.red))
-                })
-        }))
+fn failing_tests(failing: &[&TestResult]) -> Node {
+    let mut lines = vec![Node::Heading {
+        text: "Failing tests".into(),
+    }];
+    lines.extend(failing.iter().flat_map(|test| test_lines(test)));
+    Node::stack(lines)
 }
 
 /// One plugin's own page: where it stands, Allow when it waits, where it
 /// steps in and what it reaches, its tests, and its settings, everywhere
-/// or a repository's own.
+/// or a repository's own. With it, what its own page's actions do, and
+/// how its settings save.
 fn plugin_page(
     entry: &str,
     view: &mut ViewCx<'_, LuauPluginsUi>,
-) -> AnyElement {
-    let t = view.theme().clone();
-    let handle = view.handle.clone();
-    let back = {
-        let handle = handle.clone();
-        text_link("‹ Your plugins", Type::CAPTION, &t)
-            .id("back-to-plugins")
-            .on_click(move |_, _, cx| handle.navigate(Link::page(PAGE), cx))
+) -> (Node, Option<Acting>, Option<crate::pane::Saver>) {
+    let back = Node::Link {
+        label: "‹ Your plugins".into(),
+        to: Link::page(PAGE),
     };
     let Some(found) = view
         .data
@@ -764,150 +841,84 @@ fn plugin_page(
         .find(|plugin| plugin.name == entry)
         .cloned()
     else {
-        return div()
-            .flex()
-            .flex_col()
-            .gap(sp(4.))
-            .p(sp(6.))
-            .child(back)
-            .child(empty(format!("No plugin {entry} here."), &t))
-            .into_any_element();
+        let empty = Node::Empty {
+            text: format!("No plugin {entry} here."),
+        };
+        return (Node::stack([back, empty]), None, None);
     };
     let (label, tone) = standing_label(&found.standing);
-    let color = t.tone(tone);
-    let head = div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(2.5))
-                .child(mono(found.name.clone(), Type::TITLE, t.text))
-                .child(badge(label, color, color.opacity(0.4)))
-                .children(
-                    tests_line(&found)
-                        .map(|line| mono(line, Type::CAPTION, t.dim)),
-                ),
-        )
-        .when(!found.description.is_empty(), |head| {
-            head.child(
-                div()
-                    .text_color(t.muted)
-                    .leading(1.5)
-                    .child(found.description.clone()),
-            )
-        });
-    let mut column = div()
-        .flex()
-        .flex_col()
-        .gap(sp(5.))
-        .p(sp(6.))
-        .max_w(rems(66.))
-        .child(back)
-        .child(head);
+    let mut standing = vec![Node::Badge {
+        text: label.into(),
+        tone,
+    }];
+    if let Some(line) = tests_line(&found) {
+        standing.push(Node::Mono { text: line });
+    }
+    let mut page = vec![
+        back,
+        Node::Title {
+            text: found.name.clone(),
+            subtitle: (!found.description.is_empty())
+                .then(|| found.description.clone()),
+        },
+        Node::row(standing),
+    ];
     match &found.standing {
         Standing::Waiting { grown } => {
-            column = column.child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(sp(3.5))
-                    .p(sp(3.5))
-                    .rounded(radius::BOX)
-                    .bg(color.opacity(0.08))
-                    .border_1()
-                    .border_color(color.opacity(0.35))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(rems(14.))
-                            .flex()
-                            .flex_col()
-                            .gap(sp(1.))
-                            .child(div().typeset(Type::SMALL).child(rich(
-                                &format!(
-                                    "Its new version wants to use {}.",
-                                    grown.join(", ")
-                                ),
-                                t.text,
-                                &t,
-                            )))
-                            .when(found.keeps_earlier, |text| {
-                                text.child(
-                                    div()
-                                        .typeset(Type::CAPTION)
-                                        .text_color(t.muted)
-                                        .child(
-                                            "Runs keep the version before \
-                                             until you allow it.",
-                                        ),
-                                )
-                            }),
-                    )
-                    .child(allow(&found.name, &handle, &t)),
-            );
+            let mut words = vec![Node::Rich {
+                text: format!(
+                    "Its new version wants to use {}.",
+                    grown.join(", ")
+                ),
+            }];
+            if found.keeps_earlier {
+                words.push(Node::text(
+                    "Runs keep the version before until you allow it.",
+                ));
+            }
+            page.push(Node::Card {
+                children: vec![Node::row([
+                    Node::stack(words),
+                    Node::Spacer,
+                    allow(&found.name),
+                ])],
+            });
         }
         Standing::Broken { error } => {
-            column = column
-                .child(heading("It does not load", &t))
-                .child(code_block(None, error, &t));
+            page.push(Node::Heading {
+                text: "It does not load".into(),
+            });
+            page.push(Node::Code {
+                lang: None,
+                text: error.clone(),
+            });
         }
         Standing::Failing if found.keeps_earlier => {
-            column = column.child(
-                div().typeset(Type::CAPTION).text_color(t.dim).child(
-                    "Runs keep the version before until its tests pass.",
-                ),
-            );
+            page.push(Node::text(
+                "Runs keep the version before until its tests pass.",
+            ));
         }
         _ => {}
     }
 
-    // What it does, on the left; its settings beside it.
-    let mut about = div()
-        .flex_grow(1.)
-        .flex_basis(rems(26.))
-        .min_w(rems(0.))
-        .flex()
-        .flex_col()
-        .gap(sp(5.));
     if let Some(declaration) = &found.declaration {
         let seams = steps_in(declaration);
-        about = about.child(section(
+        page.extend(section(
             "Where it steps in",
             if seams.is_empty() {
-                div()
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child("Only in the interface.")
+                Node::text("Only in the interface.")
             } else {
-                div().flex().flex_wrap().gap(sp(1.5)).children(
-                    seams
-                        .into_iter()
-                        .map(|seam| tag(seam, Type::CAPTION, t.text_soft, &t)),
-                )
+                tags(seams)
             },
-            &t,
         ));
         let reach = reaches(&declaration.uses);
-        about = about.child(section(
+        page.extend(section(
             "What it may reach",
             if reach.is_empty() {
-                div()
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child("Nothing beyond the run it is in.")
+                Node::text("Nothing beyond the run it is in.")
             } else {
-                div().flex().flex_wrap().gap(sp(1.5)).children(
-                    reach.into_iter().map(|reach| {
-                        tag(reach, Type::CAPTION, t.text_soft, &t)
-                    }),
-                )
+                tags(reach)
             },
-            &t,
         ));
     }
     // What its view puts on its page, from the newest run that drew one;
@@ -916,124 +927,73 @@ fn plugin_page(
         let page = state.plugins.get(entry)?.view.get("page")?.clone();
         (!page.is_null()).then_some((run, state, page))
     });
-    if let Some((run, state, page)) = drawn {
-        let id = format!("luau-page-{entry}-{}", run.id.0);
+    let mut luau = None;
+    if let Some((run, state, drawn)) = drawn {
         let title = if run.title.is_empty() {
             "In its last run".to_owned()
         } else {
             format!("In {}", run.title)
         };
-        let body = draw_in(
-            &page,
-            &id,
-            entry,
-            Some((run.id.0.to_string(), state)),
-            view,
-        );
-        about = about.child(section(&title, div().child(body), &t));
+        page.extend(section(&title, embed(&drawn, entry)));
+        luau = Some(acting(entry, Some((run.id.0.to_string(), state)), view));
     }
-    about = about.child(section(
+    page.extend(section(
         "Tests",
         if found.tests.is_empty() {
-            div()
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .child("It has none yet.")
+            Node::text("It has none yet.")
         } else {
-            card(&t).flex().flex_col().children(found.tests.iter().map(
-                |test| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(sp(1.))
-                        .px(sp(3.5))
-                        .py(sp(2.))
-                        .border_b_1()
-                        .border_color(t.border)
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(sp(2.5))
-                                .child(if test.passed {
-                                    icon(
-                                        Icon::Check,
-                                        IconSize::COMPACT,
-                                        t.green,
-                                    )
-                                } else {
-                                    icon(Icon::Close, IconSize::COMPACT, t.red)
-                                })
-                                .child(
-                                    mono(
-                                        format!(
-                                            "{} · {}",
-                                            test.file, test.name
-                                        ),
-                                        Type::CAPTION,
-                                        t.text_soft,
-                                    )
-                                    .flex_1()
-                                    .min_w(rems(0.)),
-                                ),
-                        )
-                        .when_some(test.error.clone(), |row, error| {
-                            row.child(
-                                mono(error, Type::CAPTION, t.red).pl(sp(6.5)),
-                            )
-                        })
-                },
-            ))
+            Node::Card {
+                children: found
+                    .tests
+                    .iter()
+                    .map(|test| {
+                        let mut line = vec![Node::Icon {
+                            name: if test.passed { "check" } else { "close" }
+                                .into(),
+                            tone: if test.passed {
+                                Tone::Good
+                            } else {
+                                Tone::Bad
+                            },
+                        }];
+                        line.push(Node::stack(test_lines(test)));
+                        Node::row(line)
+                    })
+                    .collect(),
+            }
         },
-        &t,
     ));
     let has_settings = found
         .declaration
         .as_ref()
         .is_some_and(|declaration| declaration.settings.is_some());
-    let settings = has_settings.then(|| {
-        div()
-            .flex_grow(1.)
-            .flex_basis(rems(20.))
-            .max_w(rems(28.))
-            .min_w(rems(0.))
-            .flex()
-            .flex_col()
-            .gap(sp(3.))
-            .child(heading("Settings", &t))
-            .child(scopes(entry, view, &t))
-            .child(crate::pane::render(view))
-    });
-    column
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_start()
-                .gap(sp(7.))
-                .child(about)
-                .children(settings),
-        )
-        .into_any_element()
+    let mut saver = None;
+    if has_settings {
+        page.push(Node::Heading {
+            text: "Settings".into(),
+        });
+        page.extend(scopes(entry, view));
+        let (pane, save) = crate::pane::pane(view);
+        page.push(pane);
+        saver = save;
+    }
+    (Node::stack(page), luau, saver)
 }
 
 /// A section of a plugin's page: its heading over `body`.
-fn section(title: &str, body: gpui::Div, t: &Theme) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.5))
-        .child(heading(title, t))
-        .child(body)
+fn section(title: &str, body: Node) -> [Node; 2] {
+    [
+        Node::Heading {
+            text: title.to_owned(),
+        },
+        body,
+    ]
 }
 
-/// Everywhere and each of the person's repositories, as a switch: the
-/// scope `entry`'s settings show (ADR 0029), and what it means.
-fn scopes(
-    entry: &str,
-    view: &ViewCx<'_, LuauPluginsUi>,
-    t: &Theme,
-) -> gpui::Div {
+/// Everywhere and each of the person's repositories, the one shown
+/// marked: the scope `entry`'s settings show (ADR 0029), and what it
+/// means.
+fn scopes(entry: &str, view: &ViewCx<'_, LuauPluginsUi>) -> [Node; 2] {
     let scope = view.scope().map(str::to_owned);
     let options = std::iter::once(None).chain(
         view.repos()
@@ -1041,93 +1001,59 @@ fn scopes(
             .filter(|name| *name != crate::REPO)
             .map(|name| Some(name.to_owned())),
     );
-    let switch = div()
-        .flex()
-        .flex_wrap()
-        .gap(sp(0.5))
-        .p(sp(0.75))
-        .rounded(radius::CONTROL)
-        .bg(t.panel)
-        .border_1()
-        .border_color(t.border)
-        .children(options.map(|option| {
-            let on = option == scope;
-            let label = option.clone().unwrap_or_else(|| "Everywhere".into());
-            let link = match &option {
-                Some(repo) => entry_link(entry).param(SCOPE, repo.clone()),
-                None => entry_link(entry),
+    let switch = Node::row(options.map(|option| {
+        let label = option.clone().unwrap_or_else(|| "Everywhere".into());
+        if option == scope {
+            return Node::Pill {
+                text: label,
+                tone: Tone::Info,
             };
-            let handle = view.handle.clone();
-            div()
-                .id(gpui::SharedString::from(format!("scope-{label}")))
-                .px(sp(3.))
-                .py(sp(1.5))
-                .rounded(radius::SMALL)
-                .cursor_pointer()
-                .typeset(Type::CAPTION)
-                .text_color(if on { t.text } else { t.dim })
-                .when(on, |option| option.bg(t.raised))
-                .child(label)
-                .on_click(move |_, _, cx| handle.navigate(link.clone(), cx))
-        }));
+        }
+        let to = match &option {
+            Some(repo) => entry_link(entry).param(SCOPE, repo.clone()),
+            None => entry_link(entry),
+        };
+        Node::Link { label, to }
+    }));
     let means = match &scope {
         Some(repo) => format!("Runs in {repo} use these."),
         None => "Every repository without its own copy uses these.".to_owned(),
     };
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .child(switch)
-        .child(div().typeset(Type::CAPTION).text_color(t.dim).child(means))
+    [switch, Node::text(means)]
 }
 
 /// The chats writing plugins, newest first, each opening its run.
-fn chats(view: &ViewCx<'_, LuauPluginsUi>, t: &Theme) -> AnyElement {
+fn chats(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
     let runs: Vec<RunInfo> = view
         .runs()
         .into_iter()
         .map(|(run, _)| run)
         .filter(|run| run.repo == crate::REPO && !run.title.is_empty())
         .collect();
-    let mut list = div().flex().flex_col().child(heading("Chats", t));
+    let mut list = vec![Node::Heading {
+        text: "Chats".into(),
+    }];
     if runs.is_empty() {
-        return list
-            .child(
-                div()
-                    .typeset(Type::SMALL)
-                    .text_color(t.dim)
-                    .child("None yet."),
-            )
-            .into_any_element();
+        list.push(Node::text("None yet."));
     }
-    for run in runs {
-        let handle = view.handle.clone();
-        let color = if run.live { t.tone(Tone::Good) } else { t.dim };
-        list = list.child(
-            div()
-                .id(gpui::SharedString::from(format!("chat-{}", run.id.0)))
-                .flex()
-                .items_center()
-                .gap(sp(2.))
-                .px(sp(2.))
-                .py(sp(1.5))
-                .rounded(radius::SMALL)
-                .cursor_pointer()
-                .hover(|row| row.bg(t.selected))
-                .child(dot(color, 7.))
-                .child(
-                    div()
-                        .flex_1()
-                        .truncate()
-                        .typeset(Type::SMALL)
-                        .text_color(t.text)
-                        .child(run.title.clone()),
-                )
-                .on_click(move |_, _, cx| handle.open_run(&run.id, cx)),
-        );
-    }
-    list.into_any_element()
+    list.extend(runs.into_iter().map(|run| {
+        Node::row([
+            Node::Status {
+                text: run.title.clone(),
+                detail: None,
+                tone: if run.live { Tone::Good } else { Tone::Neutral },
+            },
+            Node::Spacer,
+            Node::Button {
+                label: "Open".into(),
+                action: OPEN_RUN.into(),
+                args: json!({ "run": run.id.0.to_string() }),
+                kind: Kind::Secondary,
+                icon: None,
+            },
+        ])
+    }));
+    Node::stack(list)
 }
 
 /// `/plugin <what>`: a chat in the plugins repository, with the skill
