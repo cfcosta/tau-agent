@@ -358,6 +358,12 @@ pub enum Node {
         id: String,
         at: i64,
     },
+    /// How long ago `at` was, in milliseconds since 1970: `now`, then
+    /// `4m ago`. The state says when, the interface counts.
+    Ago {
+        id: String,
+        at: i64,
+    },
     /// Room that pushes what follows in a row to its end.
     Spacer,
     /// A small map: nodes at fractions of a box `height` rems tall,
@@ -1454,6 +1460,19 @@ impl<'a> Draw<'a> {
                 ),
                 None => invalid(
                     "a countdown, drawn where the interface keeps one",
+                    t,
+                ),
+            },
+            Node::Ago { id, at } => match self.widgets {
+                Some(widgets) => widgets(
+                    WidgetSpec::Ticker(TickerSpec {
+                        key: self.key(format!("{id}.ago")),
+                        count: tau_ui_kit::ticker::Count::Ago { at: *at },
+                    }),
+                    cx,
+                ),
+                None => invalid(
+                    "a time ago, drawn where the interface keeps one",
                     t,
                 ),
             },

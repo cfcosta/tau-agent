@@ -8,7 +8,15 @@ use crate::{
     host::RepoId,
     manifest::{Point, PointCx},
     tree::Node,
-    view::{NavEntry, PlanField, PluginStatus, RowNote, RunInfo},
+    view::{
+        NavEntry,
+        PlanField,
+        PluginStatus,
+        RepoKind,
+        RowNote,
+        RunInfo,
+        Waiting,
+    },
     wire::AtKey,
 };
 
@@ -316,6 +324,18 @@ pub const CARD_STAT: Point<AtCard, PluginStatus> =
 /// Changes a landing brings, drawn by the VCS slot's plugin: the first
 /// contribution draws them.
 pub const CHANGES: Point<AtChanges> = Point::new("tau.run.changes");
+/// A kind of repository the plugin makes, with a section of the sidebar
+/// and of the phone's list for them.
+pub const REPO_KIND: Point<AtApp, RepoKind> = Point::new("tau.sidebar.kind");
+/// At the end of a repository's row in its kind's section: where it
+/// stands, as an agent's `working` or when it wakes.
+pub const KIND_ROW_END: Point<AtRepo> = Point::new("tau.sidebar.kind.end");
+/// Under a repository's row in its kind's section while the row is
+/// open, and under its name on the phone: its last word.
+pub const KIND_ROW_LINE: Point<AtRepo> = Point::new("tau.sidebar.kind.line");
+/// What waits on the person among the plugin's things: each new one is
+/// a notice while they are away, on the computer and on the phone.
+pub const WAITING: Point<AtApp, Waiting> = Point::new("tau.app.waiting");
 /// Above a run's transcript.
 pub const RUN_BANNER: Point<AtRun> = Point::new("tau.run.banner");
 /// A section of the run inspector.

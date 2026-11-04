@@ -6,6 +6,12 @@ use std::sync::LazyLock;
 
 use gpui::{Context, Window};
 use tau_agent::tool::RunId;
+use tau_ui_plugin::{
+    Link,
+    RepoKind,
+    Waiting,
+    points::{self, AtApp},
+};
 
 use crate::{
     catalog::Repo,
@@ -283,12 +289,22 @@ impl Workspace {
         self.rows_of(repo, self.open_agents.contains(name), "")
     }
 
-    /// What tau-agents' host last said of the agents, if it said.
-    pub fn agents(&self) -> Option<&tau_agents::Overview> {
-        self.catalog
-            .plugin_data
-            .get(tau_agents::NAME)
-            .map(|data| data.get::<tau_agents::Overview>())
+    /// The kinds of repository plugins make, each with its section of
+    /// the sidebar (`REPO_KIND`), and the plugin that makes it.
+    pub fn repo_kinds(&self) -> Vec<(&'static str, RepoKind)> {
+        self.contributions_named(points::REPO_KIND, |_| Some(&AtApp))
+    }
+
+    /// The route a kind's link opens: `plugin`'s page when it names
+    /// none of another's.
+    pub fn kind_route(&self, plugin: &str, link: &Link) -> Option<Route> {
+        self.link_route(&link.clone().from(plugin), None)
+    }
+
+    /// What waits on the person among plugins' things (`WAITING`), by
+    /// plugin, for the notices told while they are away.
+    pub fn waiting(&self) -> Vec<(&'static str, Waiting)> {
+        self.contributions_named(points::WAITING, |_| Some(&AtApp))
     }
 
     /// `repo`'s rows, `open` or folded, for a lowercase `filter`.
@@ -436,13 +452,26 @@ impl Workspace {
     /// Opens an agent's conversation: its repository's main chat, with
     /// the inspector beside it, where the agent's panel is (ADR 0037).
     pub fn open_agent(&mut self, name: &str, cx: &mut Context<Self>) {
-        let main = self.catalog.repo(name).and_then(|repo| repo.main.clone());
+        let repo = self.catalog.repo(name);
+        let main = repo.and_then(|repo| repo.main.clone());
+        // Without a conversation yet, its kind's page.
+        let own = repo.and_then(|repo| repo.own);
         match main {
             Some(main) => {
                 self.details_open = true;
                 self.navigate(Route::Run(main), cx)
             }
-            None => self.navigate(Route::agents(tau_agents::ui::OVERVIEW), cx),
+            None => {
+                let page =
+                    self.repo_kinds().into_iter().find_map(|(plugin, kind)| {
+                        (own.map(crate::catalog::Own::name) == Some(&kind.kind))
+                            .then(|| self.kind_route(plugin, &kind.page))
+                            .flatten()
+                    });
+                if let Some(page) = page {
+                    self.navigate(page, cx)
+                }
+            }
         }
     }
 

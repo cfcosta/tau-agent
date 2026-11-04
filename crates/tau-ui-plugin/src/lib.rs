@@ -42,6 +42,7 @@ pub mod ui_state;
 pub mod value;
 pub mod vcs;
 pub mod view;
+pub mod waiting;
 pub mod wire;
 
 pub use host::{
@@ -113,12 +114,16 @@ pub use view::{
     NavEntry,
     PlanField,
     PluginStatus,
+    RepoKind,
     Request,
     RowNote,
     RunInfo,
     SCOPE,
     Sink,
     ViewCx,
+    WaitGroup,
+    WaitItem,
+    Waiting,
 };
 
 /// A published body's key saying where history shows it. A run's history

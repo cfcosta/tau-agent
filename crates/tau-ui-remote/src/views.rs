@@ -149,7 +149,7 @@ impl Workspace {
 
     /// Asks the computer for the views this window drew without, and
     /// tells it of those it stopped drawing.
-    pub(crate) fn ask_for_views(&mut self, cx: &mut Context<Self>) {
+    pub fn ask_for_views(&mut self, cx: &mut Context<Self>) {
         let Some(cache) = &self.remote_views else {
             return;
         };
@@ -450,6 +450,16 @@ impl Workspace {
             p if p == points::REPO_ACTIONS.name => {
                 at!(points::REPO_ACTIONS, at_repo())
             }
+            p if p == points::REPO_KIND.name => {
+                at!(points::REPO_KIND, at_app())
+            }
+            p if p == points::KIND_ROW_END.name => {
+                at!(points::KIND_ROW_END, at_repo())
+            }
+            p if p == points::KIND_ROW_LINE.name => {
+                at!(points::KIND_ROW_LINE, at_repo())
+            }
+            p if p == points::WAITING.name => at!(points::WAITING, at_app()),
             // A card's context is each plugin's own: its anchors on it.
             p if p == points::CARD.name => {
                 self.card_outs(points::CARD, at, layout)

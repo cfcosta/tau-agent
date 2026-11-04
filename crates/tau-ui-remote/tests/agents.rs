@@ -147,19 +147,14 @@ fn open(
 fn an_agent_s_row_opens_its_conversation(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
-        // The row reads the agent from tau-agents' overview.
-        assert_eq!(
-            ws.agents()
-                .and_then(|overview| overview.agent(AGENT))
-                .map(|a| &a.status),
-            Some(&Status::Working)
-        );
+        // tau-agents makes the section its row is in.
+        assert!(ws.repo_kinds().iter().any(|(_, kind)| kind.kind == "agent"));
         ws.open_agent(AGENT, cx);
         assert_eq!(ws.route(), &Route::Run(id("agent-main")));
         // One the host has not made a conversation for opens the
         // Agents page.
         ws.open_agent(NEW, cx);
-        assert_eq!(ws.route(), &Route::agents(tau_agents::ui::OVERVIEW));
+        assert_eq!(ws.route(), &agents_page(tau_agents::ui::OVERVIEW));
     });
 }
 
@@ -251,7 +246,7 @@ fn slash_agent_opens_the_new_agent_form(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, _| {
-        assert_eq!(ws.route(), &Route::agents(tau_agents::ui::NEW));
+        assert_eq!(ws.route(), &agents_page(tau_agents::ui::NEW));
     });
     assert!(
         !events
@@ -307,4 +302,13 @@ fn a_tapped_notice_opens_its_agent_once_the_window_knows_it(
 fn install_plugins() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| tau_ui_remote::plugins::install(tau_plugins::plugins()));
+}
+
+/// tau-agents' page `page`.
+fn agents_page(page: &str) -> Route {
+    Route::Plugin {
+        plugin: tau_agents::NAME.to_owned(),
+        page: page.to_owned(),
+        params: Default::default(),
+    }
 }

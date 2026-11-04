@@ -269,6 +269,14 @@ fn agent_with(
     }
 }
 
+/// What waits on the person among `overview`'s agents, as tau-agents
+/// lists it.
+fn waits(
+    overview: &tau_agents::Overview,
+) -> Vec<(&'static str, tau_ui_plugin::Waiting)> {
+    vec![(tau_agents::NAME, tau_agents::alert::waiting(overview))]
+}
+
 fn left(id: &str, choices: Option<Vec<String>>) -> tau_agents::Notice {
     tau_agents::Notice {
         id: id.into(),
@@ -285,8 +293,8 @@ fn an_agent_s_notes_questions_and_cap_notify_once() {
     use tau_agents::Status;
     let mut notifier = Notifier::default();
     let mut shown = Shown::default();
-    notifier.agents(
-        &agent_with(Status::Waiting, Vec::new()),
+    notifier.waiting(
+        &waits(&agent_with(Status::Waiting, Vec::new())),
         false,
         &mut shown,
     );
@@ -294,16 +302,16 @@ fn an_agent_s_notes_questions_and_cap_notify_once() {
         Status::Waiting,
         vec![left("n1", None), left("n2", Some(vec!["Yes".into()]))],
     );
-    notifier.agents(&left_two, false, &mut shown);
-    notifier.agents(&left_two, false, &mut shown);
+    notifier.waiting(&waits(&left_two), false, &mut shown);
+    notifier.waiting(&waits(&left_two), false, &mut shown);
     // Seen while the window was focused: no notice, then or later.
     let at_cap = agent_with(Status::AtCap, left_two.agents[0].notices.clone());
-    notifier.agents(&at_cap, true, &mut shown);
-    notifier.agents(&at_cap, false, &mut shown);
+    notifier.waiting(&waits(&at_cap), true, &mut shown);
+    notifier.waiting(&waits(&at_cap), false, &mut shown);
     let mut both = at_cap.clone();
     both.agents[0].status = Status::Waiting;
-    notifier.agents(&both, false, &mut shown);
-    notifier.agents(&at_cap, false, &mut shown);
+    notifier.waiting(&waits(&both), false, &mut shown);
+    notifier.waiting(&waits(&at_cap), false, &mut shown);
     let said: Vec<(Kind, &str, &str)> = shown
         .0
         .iter()
@@ -315,10 +323,10 @@ fn an_agent_s_notes_questions_and_cap_notify_once() {
     assert_eq!(
         said,
         [
-            (Kind::AgentNote, "triage says", "notice n1"),
-            (Kind::AgentAsks, "triage asks you", "notice n2"),
+            (Kind::Waiting, "triage says", "notice n1"),
+            (Kind::Waiting, "triage asks you", "notice n2"),
             (
-                Kind::AgentAtCap,
+                Kind::Waiting,
                 "triage reached its cap",
                 "It spent $1.00 today; its events wait for tomorrow or for you"
             ),

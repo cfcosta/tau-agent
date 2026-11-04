@@ -1478,12 +1478,15 @@ fn agents(
         ws.apply(HostUpdate::Run(Box::new(run)), cx);
     }
     ws.toggle_agent_open("pr-triage", cx);
+    let agents = |page: &str| Route::Plugin {
+        plugin: tau_agents::NAME.to_owned(),
+        page: page.to_owned(),
+        params: Default::default(),
+    };
     match at {
-        AgentsAt::Overview => {
-            ws.navigate(Route::agents(tau_agents::ui::OVERVIEW), cx)
-        }
+        AgentsAt::Overview => ws.navigate(agents(tau_agents::ui::OVERVIEW), cx),
         AgentsAt::Conversation => ws.open_agent("pr-triage", cx),
-        AgentsAt::New => ws.navigate(Route::agents(tau_agents::ui::NEW), cx),
+        AgentsAt::New => ws.navigate(agents(tau_agents::ui::NEW), cx),
         AgentsAt::Home => ws.navigate(Route::Home, cx),
         AgentsAt::Details => {
             ws.open_agent("pr-triage", cx);

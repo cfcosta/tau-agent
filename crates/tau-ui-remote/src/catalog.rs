@@ -103,12 +103,13 @@ impl Catalog {
             .find(|repo| repo.own == Some(Own::Plugins))
     }
 
-    /// The agents, each a repository of tau's own (ADR 0037), by name.
-    pub fn agents(&self) -> impl Iterator<Item = &Repo> {
+    /// The repositories of the kind `kind` (`RepoKind`), such as the
+    /// agents' (ADR 0037), by name.
+    pub fn of_kind(&self, kind: &str) -> impl Iterator<Item = &Repo> {
         let mut agents: Vec<&Repo> = self
             .repos
             .iter()
-            .filter(|repo| repo.own == Some(Own::Agent))
+            .filter(|repo| repo.own.is_some_and(|own| own.name() == kind))
             .collect();
         agents.sort_by(|a, b| a.name.cmp(&b.name));
         agents.into_iter()
@@ -196,6 +197,16 @@ pub enum Own {
     Plugins,
     /// An agent's (ADR 0037).
     Agent,
+}
+
+impl Own {
+    /// Its name, as a plugin's repository kind names it (`RepoKind`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Plugins => "plugins",
+            Self::Agent => "agent",
+        }
+    }
 }
 
 impl Repo {

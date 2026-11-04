@@ -174,6 +174,8 @@ macro_rules! wired {
 wired!(
     crate::tree::Node,
     crate::NavEntry,
+    crate::RepoKind,
+    crate::Waiting,
     crate::PluginStatus,
     crate::PlanField,
     crate::RowNote,

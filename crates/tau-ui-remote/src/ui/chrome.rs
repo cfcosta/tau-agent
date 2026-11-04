@@ -16,6 +16,10 @@ use gpui::{
     px,
     rems,
 };
+use tau_ui_plugin::{
+    RepoKind,
+    points::{self, AtRepo},
+};
 
 use super::{
     Edge,
@@ -177,7 +181,7 @@ pub fn sidebar(
                     .child("No repositories yet. Add one to start runs in it."),
             )
         })
-        .child(agents_section(ws, t, cx))
+        .children(kind_sections(ws, t, cx))
         .child(div().flex_1().min_h(sp(4.)))
         .child(section("Everywhere", None, t))
         .child(plugins_tree(ws, t, cx))
@@ -370,35 +374,50 @@ fn plugins_tree(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
     tree.child(body)
 }
 
-/// The agents, a section of their own (ADR 0037): its heading opens the
-/// Agents page and its `+` the New agent form; each agent's row opens
-/// its conversation, and its chevron shows its last line and its
-/// sub-agents at work.
-fn agents_section(
+/// The sections of the kinds of repository plugins make (`REPO_KIND`),
+/// each of their own: an agent's (ADR 0037).
+fn kind_sections(
     ws: &Workspace,
     t: &Theme,
     cx: &mut Context<Workspace>,
+) -> Vec<Div> {
+    ws.repo_kinds()
+        .into_iter()
+        .map(|(plugin, kind)| kind_section(ws, plugin, &kind, t, cx))
+        .collect()
+}
+
+/// A kind's section: its heading opens the kind's page and its `+` the
+/// page that makes one; each repository's row opens its conversation,
+/// and its chevron shows its last word and its sub-agents at work.
+fn kind_section(
+    ws: &Workspace,
+    plugin: &str,
+    kind: &RepoKind,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
 ) -> Div {
-    let on_page = |page: &str| {
-        matches!(&ws.route, Route::Plugin { plugin, page: at, .. }
-            if plugin == tau_agents::NAME && at == page)
-    };
-    let new = div()
-        .id("new-agent")
-        .size(rems(1.375))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(radius::TAG)
-        .cursor_pointer()
-        .hover(|style| style.bg(t.selected))
-        .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
-        .on_click(cx.listener(|ws, _, _, cx| {
-            cx.stop_propagation();
-            ws.navigate(Route::agents(tau_agents::ui::NEW), cx)
-        }));
+    let page = ws.kind_route(plugin, &kind.page);
+    let on_page = page.as_ref() == Some(&ws.route);
+    let new = kind.new.as_ref().and_then(|new| ws.kind_route(plugin, new));
+    let new = new.map(|route| {
+        div()
+            .id(SharedString::from(format!("new-{}", kind.kind)))
+            .size(rems(1.375))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius::TAG)
+            .cursor_pointer()
+            .hover(|style| style.bg(t.selected))
+            .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                cx.stop_propagation();
+                ws.navigate(route.clone(), cx)
+            }))
+    });
     let heading = div()
-        .id("agents")
+        .id(SharedString::from(format!("kind-{}", kind.kind)))
         .flex()
         .flex_shrink_0()
         .items_center()
@@ -409,19 +428,18 @@ fn agents_section(
         .rounded(radius::BOX)
         .cursor_pointer()
         .typeset(Type::CAPTION)
-        .text_color(if on_page(tau_agents::ui::OVERVIEW) {
-            t.text
-        } else {
-            t.dim
-        })
+        .text_color(if on_page { t.text } else { t.dim })
         .hover(|style| style.text_color(t.text_soft))
-        .child(div().flex_1().child("Agents"))
-        .child(new)
-        .on_click(cx.listener(|ws, _, _, cx| {
-            ws.navigate(Route::agents(tau_agents::ui::OVERVIEW), cx)
+        .child(div().flex_1().child(kind.title.clone()))
+        .children(new)
+        .on_click(cx.listener(move |ws, _, _, cx| {
+            if let Some(page) = page.clone() {
+                ws.navigate(page, cx)
+            }
         }));
     let mut section = div().flex().flex_col().flex_shrink_0().child(heading);
-    let agents: Vec<&crate::catalog::Repo> = ws.catalog.agents().collect();
+    let agents: Vec<&crate::catalog::Repo> =
+        ws.catalog.of_kind(&kind.kind).collect();
     if agents.is_empty() {
         return section.child(
             div()
@@ -429,21 +447,18 @@ fn agents_section(
                 .py(sp(1.5))
                 .typeset(Type::CAPTION)
                 .text_color(t.muted)
-                .child("None yet. /agent and what it should do makes one."),
+                .child(kind.empty.clone()),
         );
     }
-    let overview = ws.agents();
-    let now = tau_agents::shown::now();
     let current = ws.current().map(|run| ws.listed_as(run).clone());
     let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
     for repo in agents {
         let name = repo.name.clone();
-        let agent = overview.and_then(|overview| overview.agent(&name));
         let open = ws.open_agents.contains(&name);
         let active = on_run
             && repo.main.is_some()
             && current.as_ref() == repo.main.as_ref();
-        let end = agent_tag(ws, repo, agent, now, Type::MICRO, t);
+        let end = kind_row_end(ws, repo, Type::MICRO, t, cx);
         let fold = {
             let name = name.clone();
             div()
@@ -500,26 +515,19 @@ fn agents_section(
             .gap(sp(0.25))
             .pl(sp(6.5))
             .pb(sp(1.5));
-        if let Some(last) = agent.and_then(|agent| agent.last.as_ref()) {
-            body = body.child(
-                div()
-                    .flex()
-                    .gap(sp(2.))
-                    .h(rems(1.5))
-                    .items_center()
-                    .px(sp(2.))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(rems(0.))
-                            .truncate()
-                            .child(last.line.clone()),
-                    )
-                    .child(tau_agents::shown::relative(last.at, now)),
-            );
-        }
+        let at = AtRepo { repo: name.clone() };
+        body = body.children(
+            ws.drawn(points::KIND_ROW_LINE, &at, cx)
+                .into_iter()
+                .map(|line| {
+                    div()
+                        .py(sp(0.5))
+                        .px(sp(2.))
+                        .typeset(Type::CAPTION)
+                        .text_color(t.dim)
+                        .child(line)
+                }),
+        );
         // Its row stands for its main chat: what is under it is the
         // agent's crew.
         if let Some(rows) = ws.agent_rows(&name) {
@@ -574,44 +582,29 @@ fn agents_section(
     section
 }
 
-/// Where an agent stands, on its row's end: what it left the person
-/// first, then whether it works or is paused, else when it wakes next.
-fn agent_tag(
+/// Where a repository of a kind stands, on its row's end: `working`
+/// while its main chat is, else what its plugins say (`KIND_ROW_END`).
+fn kind_row_end(
     ws: &Workspace,
     repo: &crate::catalog::Repo,
-    agent: Option<&tau_agents::Agent>,
-    now: i64,
     size: Type,
     t: &Theme,
-) -> Option<AnyElement> {
+    cx: &mut Context<Workspace>,
+) -> Vec<AnyElement> {
     let live = repo
         .main
         .as_ref()
         .and_then(|id| ws.run(id))
         .is_some_and(|main| main.status.is_live());
-    let waits = agent.map_or(0, tau_agents::Agent::waits_on_you);
-    match agent.map(|agent| &agent.status) {
-        // What it left the person, or its spent day, comes first.
-        _ if waits > 0 => {
-            Some(need_you_pill(waits, size, t).into_any_element())
-        }
-        _ if live => {
-            Some(status_tag("working", t.roles.live, size).into_any_element())
-        }
-        Some(tau_agents::Status::Working) => {
-            Some(status_tag("working", t.roles.live, size).into_any_element())
-        }
-        Some(tau_agents::Status::Paused) => {
-            Some(status_tag("paused", t.roles.waiting, size).into_any_element())
-        }
-        _ => agent.and_then(|agent| agent.next()).map(|next| {
-            div()
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .child(tau_agents::shown::relative(next, now))
-                .into_any_element()
-        }),
+    if live {
+        return vec![
+            status_tag("working", t.roles.live, size).into_any_element(),
+        ];
     }
+    let at = AtRepo {
+        repo: repo.name.clone(),
+    };
+    ws.drawn(points::KIND_ROW_END, &at, cx)
 }
 
 /// A word on a small tinted pill: an agent's `working`, `paused`.
@@ -1539,32 +1532,47 @@ pub fn phone_run_list(
                 t,
             ))
         })
-        .children(phone_agents(ws, t, cx))
+        .children(phone_kinds(ws, t, cx))
 }
 
-/// The phone's agents (ADR 0037), under the repositories: one row each,
-/// opening its conversation, with where it stands.
-fn phone_agents(
+/// The phone's repositories of each kind plugins make (`REPO_KIND`),
+/// under the others: an agent's (ADR 0037).
+fn phone_kinds(
     ws: &Workspace,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Option<impl IntoElement> {
-    let agents: Vec<&crate::catalog::Repo> = ws.catalog.agents().collect();
+) -> Vec<Div> {
+    ws.repo_kinds()
+        .into_iter()
+        .filter_map(|(_, kind)| phone_kind(ws, &kind, t, cx))
+        .collect()
+}
+
+/// A kind's repositories on the phone: one row each, opening its
+/// conversation, with where it stands.
+fn phone_kind(
+    ws: &Workspace,
+    kind: &RepoKind,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Option<Div> {
+    let agents: Vec<&crate::catalog::Repo> =
+        ws.catalog.of_kind(&kind.kind).collect();
     if agents.is_empty() {
         return None;
     }
-    let overview = ws.agents();
-    let now = tau_agents::shown::now();
     let heading = div()
         .px(sp(4.))
         .pt(sp(5.))
         .pb(sp(2.))
         .typeset(Type::CAPTION)
         .text_color(t.dim)
-        .child("Agents");
+        .child(kind.title.clone());
     let rows = agents.into_iter().map(|repo| {
         let name = repo.name.clone();
-        let agent = overview.and_then(|overview| overview.agent(&name));
+        let at = AtRepo { repo: name.clone() };
+        let line = ws.drawn(points::KIND_ROW_LINE, &at, cx);
+        let end = kind_row_end(ws, repo, Type::CAPTION, t, cx);
         div()
             .id(SharedString::from(format!("phone-agent-{name}")))
             .flex()
@@ -1588,17 +1596,14 @@ fn phone_agents(
                             .font_weight(weight::STRONG)
                             .child(name.clone()),
                     )
-                    .children(agent.and_then(|agent| agent.last.as_ref()).map(
-                        |last| {
-                            div()
-                                .truncate()
-                                .typeset(Type::CAPTION)
-                                .text_color(t.dim)
-                                .child(last.line.clone())
-                        },
-                    )),
+                    .children(line.into_iter().map(|line| {
+                        div()
+                            .typeset(Type::CAPTION)
+                            .text_color(t.dim)
+                            .child(line)
+                    })),
             )
-            .children(agent_tag(ws, repo, agent, now, Type::CAPTION, t))
+            .children(end)
             .on_click(cx.listener(move |ws, _, _, cx| ws.open_agent(&name, cx)))
     });
     Some(div().flex().flex_col().child(heading).children(rows))

@@ -25,11 +25,12 @@ use tau_ui_plugin::{
     Manifest,
     Page,
     PluginStatus,
+    RepoKind,
     SlashCommand,
     UiPlugin,
     ViewCx,
-    points::{self, AtRun},
-    tree::{self, draft_key},
+    points::{self, AtApp, AtRepo, AtRun},
+    tree::{self, Node, draft_key},
 };
 
 use crate::{Act, Agent, COMMAND, NAME, Overview, Settings, Status};
@@ -420,10 +421,56 @@ impl UiPlugin for AgentsUi {
                     tone: tone(&agent.status),
                 })
             })
+            .contribute(points::REPO_KIND, |_: &AtApp, _| {
+                Some(RepoKind {
+                    kind: KIND.into(),
+                    title: "Agents".into(),
+                    page: Link::page(OVERVIEW),
+                    new: Some(Link::page(NEW)),
+                    empty: "None yet. /agent and what it should do makes one."
+                        .into(),
+                })
+            })
+            .contribute(points::KIND_ROW_END, |at: &AtRepo, view| {
+                row_end(view.data.agent(&at.repo)?)
+            })
+            .contribute(points::KIND_ROW_LINE, |at: &AtRepo, view| {
+                let last = view.data.agent(&at.repo)?.last.as_ref()?;
+                Some(Node::row([
+                    Node::text(last.line.clone()),
+                    Node::Spacer,
+                    Node::Ago {
+                        id: format!("last-{}", at.repo),
+                        at: last.at * 1000,
+                    },
+                ]))
+            })
+            .contribute(points::WAITING, |_: &AtApp, view| {
+                Some(crate::alert::waiting(view.data))
+            })
             .contribute(points::RUN_BANNER, run::banner)
             .contribute_at(points::INSPECTOR, -200, run::panel)
             .contribute(points::USER_MESSAGE, run::event_card)
     }
+}
+
+/// The kind an agent's repository has in the catalog (ADR 0037).
+const KIND: &str = "agent";
+
+/// Where an agent stands, on its row's end: what it left the person
+/// first, then whether it works or is paused, else when it wakes next.
+fn row_end(agent: &Agent) -> Option<Node> {
+    let pill = |text: String, tone| Node::Pill { text, tone };
+    let waits = agent.waits_on_you();
+    Some(match agent.status {
+        _ if waits > 0 => pill(format!("{waits} need you"), tree::Tone::Info),
+        Status::Working => pill("working".into(), tree::Tone::Good),
+        Status::Paused => pill("paused".into(), tree::Tone::Warn),
+        _ => Node::Due {
+            id: format!("next-{}", agent.name),
+            at: agent.next()? * 1000,
+        },
+    })
 }
 
 /// `/agent <purpose>`: the New agent form, filled in from what follows.

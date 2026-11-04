@@ -13,6 +13,8 @@ pub enum Count {
     Since { since: i64, until: Option<i64> },
     /// The time left until `at`: `in 5m`, then `now`.
     Due { at: i64 },
+    /// The time since `at`, said as how long ago: `now`, then `4m ago`.
+    Ago { at: i64 },
 }
 
 /// Now, in milliseconds since 1970.
@@ -46,6 +48,18 @@ pub fn due(at: i64, now: i64) -> String {
     }
 }
 
+/// How long ago `at` was, at `now`: `now` within a minute, then the
+/// minutes, hours or days since.
+pub fn ago(at: i64, now: i64) -> String {
+    let gap = now.saturating_sub(at) / 1000;
+    match gap {
+        ..60 => "now".to_owned(),
+        60..3600 => format!("{}m ago", gap / 60),
+        3600..86_400 => format!("{}h ago", gap / 3600),
+        _ => format!("{}d ago", gap / 86_400),
+    }
+}
+
 impl Count {
     /// What it reads at `now`, and whether it still changes.
     pub fn read(self, now: i64) -> (String, bool) {
@@ -54,6 +68,7 @@ impl Count {
                 (reading(since, until.unwrap_or(now)), until.is_none())
             }
             Self::Due { at } => (due(at, now), at > now),
+            Self::Ago { at } => (ago(at, now), true),
         }
     }
 }
@@ -93,5 +108,18 @@ mod tests {
             .read(5)
             .1
         );
+    }
+
+    /// A time ago reads `now` within a minute, then the largest whole
+    /// unit since, and keeps counting.
+    #[test]
+    fn a_time_ago_reads_the_time_since() {
+        let minute = 60_000;
+        assert_eq!(ago(0, 59_999), "now");
+        assert_eq!(ago(5_000, 0), "now");
+        assert_eq!(ago(0, 4 * minute + 30_000), "4m ago");
+        assert_eq!(ago(0, 125 * minute), "2h ago");
+        assert_eq!(ago(0, 3 * 24 * 60 * minute), "3d ago");
+        assert!(Count::Ago { at: 0 }.read(minute).1);
     }
 }

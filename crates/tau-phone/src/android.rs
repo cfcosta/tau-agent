@@ -137,18 +137,25 @@ pub extern "system" fn Java_dev_cfcosta_tau_TauViewfinder_decode<'caller>(
     .resolve::<ThrowRuntimeExAndDefault>()
 }
 
-/// Shows what the computer's agents leave the person as Android
-/// notifications, while the phone is connected (ADR 0037): each note or
-/// question, and each agent that reaches its cap, once. Tapping one
-/// opens that agent's conversation.
+/// Shows what waits on the person among the computer's plugins' things
+/// as Android notifications, while the phone is connected (ADR 0037):
+/// each agent's note or question, and each that reaches its cap, once.
+/// Tapping one opens that agent's conversation.
 fn follow_agents(workspace: &gpui::Entity<Workspace>, cx: &mut App) {
-    let mut watch = tau_agents::alert::Watch::default();
+    let mut watch = tau_ui_plugin::waiting::Watch::default();
     cx.observe(workspace, move |workspace, cx| {
-        let overview = workspace.read(cx).agents().cloned().unwrap_or_default();
-        for alert in watch.observe(&overview) {
-            let tag = format!("{}:{:?}", alert.agent, alert.kind);
+        // What waits is a view the computer builds (ADR 0046): asked
+        // for here too, so it comes while nothing on screen draws it.
+        let waiting = workspace.update(cx, |ws, cx| {
+            let waiting = ws.waiting();
+            ws.ask_for_views(cx);
+            waiting
+        });
+        for alert in watch.observe(&waiting) {
+            let tag =
+                format!("{}:{}:{}", alert.plugin, alert.group, alert.title);
             if let Err(error) =
-                show(&tag, &alert.agent, &alert.title, &alert.body)
+                show(&tag, &alert.group, &alert.title, &alert.body)
             {
                 log::error!("tau: cannot show a notification: {error}");
             }

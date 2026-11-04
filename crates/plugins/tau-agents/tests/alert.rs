@@ -1,18 +1,14 @@
 //! When the person hears of their agents while they are away (ADR 0037):
 //! once per note or question an agent leaves, once each time it reaches
 //! its cap, and once, in one alert, for what was there when tau first
-//! saw it.
+//! saw it. tau-agents says what waits, and the kernel's watch when.
 
 use std::collections::BTreeMap;
 
 use hegel::generators::{self as gs, Generator as _};
-use tau_agents::{
-    Agent,
-    Notice,
-    Overview,
-    Status,
-    alert::{Alert, AlertKind, Watch},
-};
+use tau_agent::tool::RunId;
+use tau_agents::{Agent, NAME, Notice, Overview, Status, alert::waiting};
+use tau_ui_plugin::waiting::{Alert, Watch};
 
 fn agent(status: Status, notices: Vec<Notice>) -> Agent {
     Agent {
@@ -126,10 +122,10 @@ fn alerts_follow_what_is_new_since_each_agent_was_last_seen(
             if !look.present {
                 continue;
             }
-            let alert = |kind, title: String, body: String| Alert {
-                agent: (*name).to_owned(),
-                main: Some(format!("main-of-{name}")),
-                kind,
+            let alert = |title: String, body: String| Alert {
+                plugin: NAME.to_owned(),
+                group: (*name).to_owned(),
+                run: Some(RunId(format!("main-of-{name}").into())),
                 title,
                 body,
             };
@@ -156,15 +152,7 @@ fn alerts_follow_what_is_new_since_each_agent_was_last_seen(
                     }
                     if !parts.is_empty() {
                         tc.event("first sight with something waiting");
-                        let kind = if questions > 0 {
-                            AlertKind::Question
-                        } else if notes > 0 {
-                            AlertKind::Note
-                        } else {
-                            AlertKind::AtCap
-                        };
                         expected.push(alert(
-                            kind,
                             format!("{name} needs you"),
                             format!(
                                 "While you were away: {}",
@@ -181,21 +169,16 @@ fn alerts_follow_what_is_new_since_each_agent_was_last_seen(
                             continue;
                         }
                         tc.event("a new notice");
-                        let (kind, title) = if *asks {
-                            (AlertKind::Question, format!("{name} asks you"))
+                        let title = if *asks {
+                            format!("{name} asks you")
                         } else {
-                            (AlertKind::Note, format!("{name} says"))
+                            format!("{name} says")
                         };
-                        expected.push(alert(
-                            kind,
-                            title,
-                            format!("{name} {id}"),
-                        ));
+                        expected.push(alert(title, format!("{name} {id}")));
                     }
                     if look.at_cap && !was_at_cap {
                         tc.event("reached the cap");
                         expected.push(alert(
-                            AlertKind::AtCap,
                             format!("{name} reached its cap"),
                             "It spent $1.00 today; its events wait for \
                              tomorrow or for you"
@@ -207,6 +190,7 @@ fn alerts_follow_what_is_new_since_each_agent_was_last_seen(
             now.insert(*name, (look.notices.clone(), look.at_cap));
         }
         seen = now;
-        assert_eq!(watch.observe(&Overview { agents }), expected);
+        let waits = waiting(&Overview { agents });
+        assert_eq!(watch.observe(&[(NAME, waits)]), expected);
     }
 }

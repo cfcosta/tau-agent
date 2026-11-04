@@ -130,6 +130,54 @@ pub struct RowNote {
     pub tone: Tone,
 }
 
+/// A kind of repository the plugin makes, with a section of the sidebar
+/// for them, and of the phone's list (ADR 0045's repository kinds): an
+/// agent's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoKind {
+    /// The kind, as the catalog's repositories carry it: `agent`.
+    pub kind: String,
+    /// The section's heading: `Agents`.
+    pub title: String,
+    /// The page its heading opens; the plugin's own when it names none.
+    pub page: Link,
+    /// The page its `+` opens, to make one.
+    pub new: Option<Link>,
+    /// What the section says while there are none.
+    pub empty: String,
+}
+
+/// What waits on the person among the plugin's things, as the interface
+/// tells them while they are away: an agent's notes, its questions, its
+/// spent day (ADR 0037). Each new one is a notice, once.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Waiting {
+    pub groups: Vec<WaitGroup>,
+}
+
+/// The things of one of the plugin's own, such as an agent, that wait on
+/// the person.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitGroup {
+    /// What they are of, by name: the agent's.
+    pub name: String,
+    /// The run a notice of theirs opens.
+    pub run: Option<RunId>,
+    pub items: Vec<WaitItem>,
+    /// What one notice says of them all, for a group first seen with
+    /// some waiting: what was left while no one was told.
+    pub away: Option<WaitItem>,
+}
+
+/// One thing that waits on the person, by an id that stays while it
+/// waits, and the notice's words.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitItem {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+}
+
 /// A field of a run's plan, and who set it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanField {

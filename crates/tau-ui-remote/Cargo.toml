@@ -25,6 +25,7 @@ tau-luau-plugins.workspace = true
 tau-tools.workspace = true
 tau-goal.workspace = true
 tau-vcs.workspace = true
+tau-agents.workspace = true
 
 [dependencies]
 base64.workspace = true
@@ -34,7 +35,6 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-agents.workspace = true
 tau-remote.workspace = true
 tau-store.workspace = true
 # Draws the view tree's terminals.

@@ -113,8 +113,10 @@ fn agents_are_tau_s_own_and_neither_the_person_s_nor_the_plugins_repository() {
         catalog.listed().map(|repo| repo.name.as_str()).collect();
     assert_eq!(listed, [REPO]);
     assert_eq!(catalog.own_repo().map(|repo| repo.name.as_str()), Some(OWN));
-    let agents: Vec<&str> =
-        catalog.agents().map(|repo| repo.name.as_str()).collect();
+    let agents: Vec<&str> = catalog
+        .of_kind("agent")
+        .map(|repo| repo.name.as_str())
+        .collect();
     assert_eq!(agents, ["digest", "triage"]);
     assert!(catalog.is_agent("triage"));
     assert!(!catalog.is_agent(OWN));
@@ -124,5 +126,5 @@ fn agents_are_tau_s_own_and_neither_the_person_s_nor_the_plugins_repository() {
     let mut catalog = catalog;
     catalog.repos.retain(|repo| repo.own != Some(Own::Plugins));
     assert!(catalog.own_repo().is_none());
-    assert_eq!(catalog.agents().count(), 2);
+    assert_eq!(catalog.of_kind("agent").count(), 2);
 }

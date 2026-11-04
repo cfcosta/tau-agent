@@ -76,16 +76,6 @@ impl Tab {
 }
 
 impl Route {
-    /// tau-agents' page `page`: the Agents page, or the New agent form
-    /// (ADR 0037).
-    pub fn agents(page: &str) -> Self {
-        Self::Plugin {
-            plugin: tau_agents::NAME.to_owned(),
-            page: page.to_owned(),
-            params: Default::default(),
-        }
-    }
-
     /// The run a screen is about, if any.
     pub fn run(&self) -> Option<&RunId> {
         match self {

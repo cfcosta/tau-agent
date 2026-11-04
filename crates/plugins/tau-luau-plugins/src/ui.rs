@@ -335,6 +335,7 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             until,
         },
         Node::Due { id, at } => Node::Due { id: own(id), at },
+        Node::Ago { id, at } => Node::Ago { id: own(id), at },
         Node::Button {
             label,
             action,
