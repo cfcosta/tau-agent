@@ -226,8 +226,20 @@ impl Host {
         let repo = self.slot_of_run(run).await?;
         let choice =
             ModelChoice::new(request.model.clone(), self.choice_of(run).effort);
+        let kind = if self.is_main(run) {
+            tau_ui_plugin::RunKind::Main
+        } else {
+            tau_ui_plugin::RunKind::Chat
+        };
+        let registered = self.registered(&repo).await;
+        // The run's own instructions, so it reads the run's prompt cache.
         let agent = {
-            let base = self.base.lock().expect("not poisoned").clone();
+            let base = self
+                .base
+                .lock()
+                .expect("not poisoned")
+                .clone()
+                .instructions(registered.instructions(kind));
             for_model(
                 base,
                 &choice,
@@ -237,14 +249,8 @@ impl Host {
                 },
             )
         };
-        let kind = if self.is_main(run) {
-            tau_ui_plugin::RunKind::Main
-        } else {
-            tau_ui_plugin::RunKind::Chat
-        };
-        let registered = self.registered(&repo).await;
-        let agent =
-            registered(agent, kind, &choice, Services::default()).await?;
+        let ctx = registered.run(kind, &choice, Services::default());
+        let agent = registered.agent_plugins(agent, &ctx).await?;
         // Its events go where a run's do; a stopped compaction's failures
         // are only that it stopped.
         let (sender, mut receiver) = mpsc::channel(64);

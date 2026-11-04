@@ -158,7 +158,13 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
         tau_memory::NAME,
         serde_json::json!({ "after_each_run": false }),
     );
-    let host = host.with_repo("hello", project.clone());
+    let host = host.with_repository(
+        "hello",
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project.clone(),
+            Identity::default(),
+        )),
+    );
     cx.update(|_, cx| host.attach(&workspace, events, cx));
     // The host shows its catalog and history from its runtime, a moment
     // after.

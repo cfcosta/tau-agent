@@ -96,7 +96,16 @@ impl Disk {
             tau_memory::NAME,
             serde_json::json!({ "after_each_run": false }),
         );
-        (host.with_repo(REPO, self.project.clone()), events)
+        (
+            host.with_repository(
+                REPO,
+                std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+                    self.project.clone(),
+                    Identity::default(),
+                )),
+            ),
+            events,
+        )
     }
 
     /// Stores `entry` on `run`, as a host would have before it closed.

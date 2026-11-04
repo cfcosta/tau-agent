@@ -119,12 +119,6 @@ impl ProjectSlot {
     }
 }
 
-/// The jj project behind `repository`: for tests ([`Host::project_of`]).
-fn jj_project(repository: &dyn Repository) -> Option<Project> {
-    let jj = repository.as_any().downcast_ref::<JjRepository>()?;
-    Some(jj.project().clone())
-}
-
 /// What one repository serializes (ADR 0028): its own multi-step work,
 /// so work in another repository never waits on it.
 #[derive(Default)]
@@ -341,13 +335,15 @@ impl Host {
         });
     }
 
-    /// Lists `project` as the repository `name`, in place of any listed
-    /// under that name, for a host built elsewhere: runs in it get a
-    /// workspace each there, as in a clone from the forge.
-    pub fn with_repo(self, name: &str, project: Project) -> Self {
-        let path = project.root().to_owned();
-        let repository: Arc<dyn Repository> =
-            Arc::new(JjRepository::new(project, self.identity()));
+    /// Lists `repository` as the repository `name`, in place of any
+    /// listed under that name, for a host built elsewhere: runs in it get
+    /// a workspace each there, as in a clone from the forge.
+    pub fn with_repository(
+        self,
+        name: &str,
+        repository: Arc<dyn Repository>,
+    ) -> Self {
+        let path = repository.root().to_owned();
         let id = {
             let mut list = self.list.lock().expect("not poisoned");
             let before = list.repos.iter().find(|listed| listed.name == name);
@@ -513,13 +509,6 @@ impl Host {
         name.and_then(|name| self.slot(&name)).ok_or_else(|| {
             anyhow::anyhow!("{} works in no listed repository", run.0)
         })
-    }
-
-    /// A listed repository's project, waiting for its import: for
-    /// tests.
-    #[doc(hidden)]
-    pub async fn project_of(&self, repo: &str) -> Option<Project> {
-        jj_project(self.slot(repo)?.project.wait().await?.as_ref())
     }
 
     /// Whether a repository is still being imported.

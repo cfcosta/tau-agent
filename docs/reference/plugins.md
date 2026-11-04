@@ -491,16 +491,37 @@ settings)` gives what commands in a repository start through: a
   `tau_agent::launch::Launcher`, which answers, for a directory, the
   words to put before the program and the variables to set (`Launch`),
   and may wait first (an environment loading). The host joins every
-  plugin's in the registry's order (`Launchers`) and hands the result
-  to tau-tools' `exec_command` (`CodingTools::with_launcher`) and, through
-  `RunCtx::services`, to tau-mcp, which starts the repository's stdio
-  servers through it in the main workspace (`RepoLauncher`). With none,
-  commands start as they are. tau-direnv is the first such plugin
+  plugin's in the registry's order (`Launchers`) and hands the result,
+  through `RunCtx::services`, to a run's commands (`RunCommands`) and
+  to tau-mcp, which starts the repository's stdio servers through it in
+  the main workspace (`RepoLauncher`). With none, commands start as
+  they are. tau-direnv is the first such plugin
   ([0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md)).
 - **What a run's services hold.** Besides the metered Jev and the turn
-  hooks, `RunCtx::services` holds the run's workspace (`WorkspaceDir`),
-  and the repository's joined launcher (`RepoLauncher`) when a plugin
-  gives one.
+  hooks (`TurnHooks`), `RunCtx::services` holds the run's workspace
+  (`WorkspaceDir`); how its commands start (`RunCommands`: `Direct`,
+  `Through` the joined launcher, or `Off` for an agent's repository
+  without a sandbox); what wakes it with tau's message (`RunWake`), for
+  main chats and chats, not sub-agents; `AgentRepo` when it works in an
+  agent's repository; and the repository's joined launcher
+  (`RepoLauncher`) when a plugin gives one.
+- **A run's tools and prompt.** The host builds a run's agent (ADR
+  0045, step 4): `spawn` (or the refusing one), then every plugin's
+  `HostHalf::run_tools(host, run, settings)` in the registry's order,
+  the tools that keep state per workspace (tau-tools' coding tools,
+  with the commands a run leaves running), then the VCS's parts of the
+  workspace, the repository's `AGENTS.md`, and last every plugin's
+  `agent_plugins`. Every run declares the same tools in the same
+  order, so each reads the others' prompt cache (ADR 0022). When a
+  workspace closes (a landing, a drop, a sub-agent's work kept or
+  dropped) the host calls every plugin's `HostHalf::workspace_closed(
+  host, repo, dir)`: tau-tools ends the commands left running there.
+  `HostHalf::prompt(host, kind, settings)` gives a `Prompt`: a part of
+  the instructions, which must not hang on `kind` as every run shares
+  them, and context put before the run's first message, which may. The
+  host joins its own first sentence, the plugins' parts in the
+  registry's order, then its last sentence: tau-tools says to use the
+  tools, tau-vcs to use the vcs tools and commit.
 - **The repository.** `RepoCtx` says which repository a run or a host
   half works for: its `id` (`RepoId`), its sidebar `name`, its
   `remote` (GitHub's URL for a clone from there, else `None`), the

@@ -9,6 +9,7 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+mod common;
 mod support;
 
 use std::{
@@ -208,7 +209,7 @@ fn main_pushes_and_a_moved_main_fetches_first() {
     let (host, mut events) =
         host(llm, &github, "http://127.0.0.1:9", data.path());
     let repo = host.block_on(host.clone_from_forge(FULL_NAME)).unwrap();
-    let project = host.block_on(host.project_of(&repo.name)).unwrap();
+    let project = common::project(&host, &repo.name);
     let main = host.block_on(host.main_of(&repo.name)).unwrap();
     assert_eq!(listed(&host, &repo.name).unpushed, 0);
 
@@ -301,7 +302,7 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
         .turn(|t| t.text("Added d.txt."));
     let (host, mut events) = host(llm, &github, &api, data.path());
     let repo = host.block_on(host.clone_from_forge(FULL_NAME)).unwrap();
-    let project = host.block_on(host.project_of(&repo.name)).unwrap();
+    let project = common::project(&host, &repo.name);
     let main = host.block_on(host.main_of(&repo.name)).unwrap();
     go_on(&host, &mut events, &main, "write m");
     let mains = project.blocking().trunk().unwrap();

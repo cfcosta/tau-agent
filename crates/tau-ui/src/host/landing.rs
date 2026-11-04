@@ -99,14 +99,6 @@ pub(super) fn last_link(
 }
 
 impl Host {
-    /// Ends the commands left running in the workspace at `dir`: it is
-    /// closing.
-    pub(super) fn stop_processes(&self, dir: &std::path::Path) {
-        let ended = self.processes.lock().expect("not poisoned").remove(dir);
-        if let Some(processes) = ended {
-            processes.terminate_all();
-        }
-    }
     /// What landing `child` on its parent would do (ADR 0009): its
     /// changes as they would sit on the parent's stack, and the files
     /// that would conflict. Changes nothing.
@@ -341,7 +333,8 @@ impl Host {
         }
         // The child's changes live on the parent's stack now.
         let workspace = intent.child_workspace.clone();
-        self.stop_processes(&repository.workspace_dir(&workspace));
+        self.workspace_closed(&child, &repository.workspace_dir(&workspace))
+            .await;
         repository.forget_workspaces(vec![workspace]).await?;
         self.cut(LandingStep::Workspace)?;
         repository.forget_run(&child).await?;
@@ -561,7 +554,8 @@ impl Host {
                 .map(|(_, link)| link.workspace),
         };
         if let Some(name) = &workspace {
-            self.stop_processes(&repository.workspace_dir(name));
+            self.workspace_closed(child, &repository.workspace_dir(name))
+                .await;
         }
         repository
             .discard(Discard {

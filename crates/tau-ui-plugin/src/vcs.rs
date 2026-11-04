@@ -5,7 +5,6 @@
 //! slot the host reaches a repository's code through.
 
 use std::{
-    any::Any,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
@@ -682,7 +681,4 @@ pub trait Repository: Send + Sync {
         owners: Vec<Owner>,
         held: Held,
     ) -> HostFuture<'_, anyhow::Result<()>>;
-
-    /// Itself, for tests that reach the project behind it.
-    fn as_any(&self) -> &dyn Any;
 }

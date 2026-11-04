@@ -38,7 +38,7 @@ pub mod secrets;
 pub mod truncate;
 pub mod write;
 
-pub use half::ToolsHost;
+pub use half::{Tools, ToolsHost};
 // The shapes the tools return, from the interface half.
 pub use tau_tools::details;
 use tau_tools::ui;

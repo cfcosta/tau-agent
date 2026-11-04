@@ -230,7 +230,13 @@ fn a_job_resumes_reports_reads_live_repositories_and_stops() {
         }]
     );
 
-    let host = host.with_repo("later", project());
+    let host = host.with_repository(
+        "later",
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project(),
+            Identity::default(),
+        )),
+    );
     jobs_until(&host, |jobs| {
         jobs.iter().any(|job| job.line == "from 3: later")
     });

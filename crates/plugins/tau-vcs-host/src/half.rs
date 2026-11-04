@@ -7,7 +7,9 @@ use tau_ui_plugin::{
     HostCx,
     HostHalf,
     PluginInfo,
+    Prompt,
     RunCtx,
+    RunKind,
     Seam,
     slots::Fills,
     vcs::{self, VCS},
@@ -15,6 +17,14 @@ use tau_ui_plugin::{
 use tau_vcs::VcsUi;
 
 use crate::JjVcs;
+
+/// What tau-vcs adds to every run's instructions: the model commits its
+/// own work (ADR 0014).
+const INSTRUCTIONS: &str = "Use the vcs tools for version control, never \
+    `git` or `jj` in a shell command. Nothing is committed for you: your \
+    commits are how your work is reviewed and landed, so commit with \
+    `vcs_commit` wherever a reviewer would want a boundary, each with a \
+    Conventional Commits message, and commit everything before you finish.";
 
 /// tau-vcs on the host.
 #[derive(Debug, Clone, Copy, Default)]
@@ -48,6 +58,13 @@ impl HostHalf for VcsHost {
             seams: vec![Seam::Tools],
             page: None,
             ..Default::default()
+        }
+    }
+
+    fn prompt(&self, _host: &JjVcs, _kind: RunKind, _settings: &()) -> Prompt {
+        Prompt {
+            instructions: Some(INSTRUCTIONS.to_owned()),
+            context: None,
         }
     }
 

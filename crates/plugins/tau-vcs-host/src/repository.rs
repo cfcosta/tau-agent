@@ -2,7 +2,6 @@
 //! [`vcs::Vcs`] and [`vcs::Repository`], on jj.
 
 use std::{
-    any::Any,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
@@ -574,10 +573,6 @@ impl vcs::Repository for JjRepository {
             }
             Ok(())
         })
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 

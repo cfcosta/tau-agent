@@ -7,8 +7,8 @@
 //! other way through each run's [`RunControl`].
 //!
 //! Repositories are cloned from the forge (`tau.forge`'s plugin), or
-//! added from the person's folders: the host makes each a [`Project`]
-//! under `$XDG_DATA_HOME/tau/repos`, and
+//! added from the person's folders: the VCS (`tau.vcs`'s plugin) makes
+//! each a project under `$XDG_DATA_HOME/tau/repos`, and
 //! each run gets a workspace there from the VCS ([`RunWorkspace`]) with
 //! a commit per turn, so a fork starts from a turn's conversation and code. The
 //! repositories tau lists, and which the sidebar shows open, are kept in
@@ -40,14 +40,8 @@ use tau_ai::{
     model::find,
     refusal::Refusal,
 };
-use tau_artifacts::{Bytes, Quotas};
 use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
-use tau_tools_host::{
-    exec::Processes,
-    path::Root,
-    plugin::{CodingTools, Tool},
-};
 use tau_ui_plugin::{
     By,
     HOST_RECORD,
@@ -72,7 +66,7 @@ use tau_ui_plugin::{
         WORKSPACE_PLUGIN,
     },
 };
-use tau_vcs_host::{Identity, JjRepository, Project};
+use tau_vcs_host::Identity;
 use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
@@ -246,10 +240,6 @@ pub struct Host {
     /// Each repository's main chat's sub-agents, which run beside it
     /// and outlive its turns (ADR 0026), by repository.
     sub_agents: Mutex<HashMap<String, SubAgents>>,
-    /// The commands each workspace's runs started and left running
-    /// (`exec_command`), by directory: they outlive a turn, and a
-    /// workspace that closes ends them.
-    processes: Arc<Mutex<HashMap<PathBuf, Processes>>>,
     /// What each run going on was steered with and has not read yet.
     unread: Arc<Mutex<HashMap<RunId, Vec<Prompt>>>>,
     /// Runs whose `RunEnd` went by while their outcome is still being
@@ -312,9 +302,9 @@ pub struct Host {
     /// end until [`Self::attach`] takes it.
     pushes: mpsc::UnboundedSender<tau_ui_plugin::Push>,
     pushed: Mutex<Option<mpsc::UnboundedReceiver<tau_ui_plugin::Push>>>,
-    /// Background commands that ended, with the name of the workspace of
-    /// the run that asked to be told (`exec_command`'s `notify`), and the receiving end until
-    /// [`Self::attach`] takes it.
+    /// What woke a run ([`tau_ui_plugin::RunWake`]), with the name of
+    /// its workspace, such as a background command's end, and the
+    /// receiving end until [`Self::attach`] takes it.
     wakes: mpsc::UnboundedSender<(String, String)>,
     woken: Mutex<Option<mpsc::UnboundedReceiver<(String, String)>>>,
     /// What plugins' host halves ask of the host's conversations (ADR
@@ -366,7 +356,7 @@ pub use self::{
 use self::{
     config::*,
     history::*,
-    instructions::RepoInstructions,
+    instructions::{PluginContext, RepoInstructions},
     onboarding::*,
     pull_request::*,
     repos::*,
@@ -389,7 +379,6 @@ fn coder(
     let agent = Agent::new(client.clone())
         .name("coder")
         .model(model)
-        .instructions(INSTRUCTIONS)
         // No cap on turns, as in Codex and pi: compaction keeps a long
         // run going, and the person stops it. Plugins that hold a stop
         // cap themselves: the constitution by its holds, a goal by its
@@ -398,14 +387,13 @@ fn coder(
     Ok((agent, client))
 }
 
-const INSTRUCTIONS: &str = "You are tau, a coding agent working in the \
-    user's repository. Use the tools to read and change files and to run \
-    commands, and the vcs tools for version control, never `git` or `jj` \
-    in `exec_command`. Nothing is committed for you: your commits are how your work \
-    is reviewed and landed, so commit with `vcs_commit` wherever a \
-    reviewer would want a boundary, each with a Conventional Commits \
-    message, and commit everything before you finish. Be concise, and say \
-    which tests you ran.";
+/// What every run's instructions start with, before the plugins' parts
+/// (`HostHalf::prompt`).
+const LEAD: &str = "You are tau, a coding agent working in the user's \
+    repository.";
+
+/// What every run's instructions end with, after the plugins' parts.
+const CLOSING: &str = "Be concise, and say which tests you ran.";
 
 impl Host {
     /// Who the host's commits are by, under the person's jj config when
@@ -507,7 +495,7 @@ impl Host {
 
     /// A host over an agent built elsewhere: another model, other
     /// plugins, or a scripted model in tests. It lists no repository
-    /// until one is cloned, or given with [`Self::with_repo`].
+    /// until one is cloned, or given with [`Self::with_repository`].
     pub fn with_agent(
         runtime: Runtime,
         agent: Agent,
@@ -579,7 +567,6 @@ impl Host {
             plugin_jobs,
             runs: Arc::default(),
             sub_agents: Mutex::default(),
-            processes: Arc::default(),
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
@@ -879,10 +866,21 @@ impl Host {
                  enable plan use on the Models screen."
             );
         }
+        let kind = if main {
+            tau_ui_plugin::RunKind::Main
+        } else {
+            tau_ui_plugin::RunKind::Chat
+        };
+        let registered = self.registered(repo).await;
         // What hangs on the model: its effort. A sub-agent can run on
         // another model than its caller.
         let for_model = {
-            let base = self.base.lock().expect("not poisoned").clone();
+            let base = self
+                .base
+                .lock()
+                .expect("not poisoned")
+                .clone()
+                .instructions(registered.instructions(kind));
             let start = HostRecord {
                 repo: repo.name.clone(),
                 access: Some(self.access_label().to_owned()),
@@ -896,101 +894,42 @@ impl Host {
                 for_model(base.clone(), choice, start)
             }
         };
-        // The plugins with their UI, after the rest: the repository's
-        // rules check what the tools do, tau-goal's hold of a stop comes
-        // after theirs, and context compaction goes by the run's model.
-        let registered = self.registered(repo).await;
         let repository = repo.repository().await?;
         let notes = self.vcs.as_ref().ok_or_else(no_vcs)?.spawn_notes();
-        // What the plugins give the run's commands: an environment. An
-        // agent's commands run only in its sandbox: without one, its runs
-        // have no `exec_command` (ADR 0037).
-        let launcher = self.launcher_of(repo).await;
-        let no_commands =
-            launcher.is_none() && self.config.is_agent_path(&repo.path);
-        // tau's directory for the repository, not the project's root: a
-        // local repository's is the person's folder.
-        let artifacts = Bytes::new(
-            self.repo_ctx(repo).dir.join("artifacts"),
-            Quotas::default(),
-        )?;
-        // An agent's runs reach the network with `http`, its keys named
-        // from its own secret store (ADR 0037); no other run does.
-        let http = self.config.is_agent_path(&repo.path).then(|| {
-            tau_tools_host::secrets::SecretStore::of_agent(
-                &self.config.credentials.dir,
-                &repo.name,
-            )
-        });
-        let processes = self.processes.clone();
-        let wakes = self.wakes.clone();
-        // A run and its sub-agents work the same way, each in its own
-        // workspace: tools, then the VCS's parts, then what plugins add,
-        // which hear each turn's commit. Every run declares the same
-        // tools, in the same order, so each reads the others' prompt
-        // cache (ADR 0022): only the main chat can spawn sub-agents, so
-        // sub-agents do not nest, and the others' `spawn` refuses, as
-        // `vcs_land` does on the runs that do not propose their landing
-        // (ADR 0014).
-        let on_workspace =
-            move |agent: Agent,
-                  workspace: &dyn RunWorkspace,
-                  wake: Option<String>| {
-                let hooks = workspace.turns();
-                let dir = workspace.dir();
-                // The commands it leaves running stay for its next turn.
-                let running = processes
-                    .lock()
-                    .expect("not poisoned")
-                    .entry(dir.clone())
-                    .or_default()
-                    .clone();
-                let tools = CodingTools::new(Root::new(dir.clone()))
-                    .with_artifacts(artifacts.clone())
-                    .with_processes(running);
-                // A command left running that ends wakes the run that
-                // asked to be told; a sub-agent's is not told, as it ends
-                // and lands.
-                let tools = match wake {
-                    Some(workspace) => {
-                        let wakes = wakes.clone();
-                        tools.with_notifier(Arc::new(move |ended| {
-                            let _ = wakes
-                                .send((workspace.clone(), ended_note(&ended)));
-                        }))
-                    }
-                    None => tools,
-                };
-                let tools = if no_commands {
-                    tools.without(Tool::ExecCommand).without(Tool::WriteStdin)
-                } else {
-                    tools
-                };
-                let tools = match &launcher {
-                    Some(launcher) => tools.with_launcher(launcher.clone()),
-                    None => tools,
-                };
-                let tools = match &http {
-                    Some(store) => tools.with_http(store.clone()),
-                    None => tools,
-                };
-                let services = Services::default()
-                    .with(hooks)
-                    .with(tau_ui_plugin::WorkspaceDir(dir.clone()));
-                // The repository's instructions come after the workspace,
-                // which makes the directory as the run starts.
-                let agent = workspace
-                    .agent_plugins()
-                    .into_iter()
-                    .fold(agent.plugin(tools), Agent::boxed_plugin)
-                    .plugin(RepoInstructions { dir });
-                (agent, services)
-            };
-        let kind = if main {
-            tau_ui_plugin::RunKind::Main
-        } else {
-            tau_ui_plugin::RunKind::Chat
+        // How the run's commands start: through what the plugins give
+        // them, an environment. An agent's commands run only in its
+        // sandbox: without one, its runs have no commands (ADR 0037).
+        let agent_repo = self.config.is_agent_path(&repo.path);
+        let commands = match self.launcher_of(repo).await {
+            Some(launcher) => tau_ui_plugin::RunCommands::Through(launcher),
+            None if agent_repo => tau_ui_plugin::RunCommands::Off,
+            None => tau_ui_plugin::RunCommands::Direct,
         };
+        // What a run's workspace offers its plugins: the turn hooks, its
+        // directory, how its commands start, and what wakes it.
+        let services_of =
+            move |workspace: &dyn RunWorkspace,
+                  wake: Option<tau_ui_plugin::RunWake>| {
+                let mut services = Services::default()
+                    .with(workspace.turns())
+                    .with(tau_ui_plugin::WorkspaceDir(workspace.dir()))
+                    .with(commands.clone());
+                if agent_repo {
+                    services = services.with(tau_ui_plugin::AgentRepo);
+                }
+                if let Some(wake) = wake {
+                    services = services.with(wake);
+                }
+                services
+            };
+        // A run and its sub-agents work the same way, each in its own
+        // workspace: `spawn`, the plugins' tools, then the VCS's parts,
+        // then what plugins add, which hear each turn's commit. Every run
+        // declares the same tools, in the same order, so each reads the
+        // others' prompt cache (ADR 0022): only the main chat can spawn
+        // sub-agents, so sub-agents do not nest, and the others' `spawn`
+        // refuses, as the VCS's landing tool does on the runs that do not
+        // propose their landing (ADR 0014).
         let workspace = repository
             .run_workspace(RunSpec {
                 name: name.clone(),
@@ -1004,7 +943,7 @@ impl Host {
         // the same place, so all declare the same tools (ADR 0022).
         let agent = if main {
             let agents = self.sub_agents_of(&repo.name);
-            let child_on_workspace = on_workspace.clone();
+            let child_services = services_of.clone();
             let registered = registered.clone();
             let caller = choice.clone();
             let refused = models.clone();
@@ -1023,15 +962,19 @@ impl Host {
                     };
                     let agent = for_model(&choice, child.as_ref())
                         .tool(RefusingSpawn::new(&child_notes, &refused));
-                    let (agent, services) =
-                        child_on_workspace(agent, child.as_ref(), None);
-                    let built = registered(
-                        agent,
-                        tau_ui_plugin::RunKind::SubAgent,
-                        &choice,
-                        services,
-                    );
+                    // A sub-agent is not woken: it ends and lands.
+                    let services = child_services(child.as_ref(), None);
+                    let registered = registered.clone();
                     Box::pin(async move {
+                        let kind = tau_ui_plugin::RunKind::SubAgent;
+                        let built = async {
+                            let run = registered.run(kind, &choice, services);
+                            let agent = registered
+                                .on_workspace(agent, child.as_ref(), &run)
+                                .await?;
+                            let agent = registered.with_context(agent, kind);
+                            registered.agent_plugins(agent, &run).await
+                        };
                         built.await.map_err(|error| format!("{error:#}").into())
                     })
                 },
@@ -1045,8 +988,19 @@ impl Host {
         let hold = (main && resolving).then(|| lanes::ResolveHold {
             workspace: workspace.clone(),
         });
-        let (agent, services) =
-            on_workspace(agent, workspace.as_ref(), Some(name.clone()));
+        // What wakes the run with tau's message, as a command it left
+        // running ends: a turn of it, by its workspace's name.
+        let wake = {
+            let (wakes, workspace) = (self.wakes.clone(), name.clone());
+            tau_ui_plugin::RunWake(Arc::new(move |text| {
+                let _ = wakes.send((workspace.clone(), text));
+            }))
+        };
+        let services = services_of(workspace.as_ref(), Some(wake));
+        let run = registered.run(kind, choice, services);
+        let agent = registered
+            .on_workspace(agent, workspace.as_ref(), &run)
+            .await?;
         let agent = match hold {
             Some(hold) => agent.plugin(hold),
             None => agent,
@@ -1058,7 +1012,8 @@ impl Host {
         } else {
             agent
         };
-        let agent = registered(agent, kind, choice, services).await?;
+        let agent = registered.with_context(agent, kind);
+        let agent = registered.agent_plugins(agent, &run).await?;
         Ok((agent, name))
     }
 
@@ -1792,20 +1747,6 @@ impl Drop for Job {
     fn drop(&mut self) {
         self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
-}
-
-/// What a background command's end tells the run that asked to be told.
-fn ended_note(ended: &tau_tools_host::exec::Ended) -> String {
-    let how = if ended.code == 0 {
-        "exited with code 0".to_owned()
-    } else {
-        format!("exited with code {}", ended.code)
-    };
-    format!(
-        "Process {} (`{}`) {how}. write_stdin with process_id {} reads \
-         its output.",
-        ended.process, ended.command, ended.process
-    )
 }
 
 #[cfg(test)]

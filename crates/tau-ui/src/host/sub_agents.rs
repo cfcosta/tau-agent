@@ -143,6 +143,11 @@ impl Host {
         let repo = self.slot_of_run(&main).await?.name;
         let agents = self.sub_agents_of(&repo);
         let ending = agents.ended(child).await;
+        // Its work was kept or dropped, and its workspace closed: what it
+        // left running there has nowhere to go on.
+        if let Some(dir) = agents.closed(child) {
+            self.workspace_closed(&main, &dir).await;
+        }
         let state = self.repo_state(&repo);
         let _draining = state.draining.lock().await;
         let end = match ending {

@@ -116,7 +116,17 @@ fn host(
         tau_memory::NAME,
         serde_json::json!({ "after_each_run": false }),
     );
-    (host.with_repo(REPO, project), events, data)
+    (
+        host.with_repository(
+            REPO,
+            std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+                project,
+                Identity::default(),
+            )),
+        ),
+        events,
+        data,
+    )
 }
 
 /// A turn running `command` with `exec_command`, then one answering.

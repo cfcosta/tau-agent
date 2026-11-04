@@ -965,7 +965,13 @@ fn host(
     // Forecasts start at once: no person's burst of changes to wait out.
     let host = host.with_forecast_wait(Duration::from_millis(1));
     let host = REPOS.iter().fold(host, |host, repo| {
-        host.with_repo(repo, project(&dir.join(repo).join("checkout")))
+        host.with_repository(
+            repo,
+            std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+                project(&dir.join(repo).join("checkout")),
+                Identity::default(),
+            )),
+        )
     });
     (host, events)
 }

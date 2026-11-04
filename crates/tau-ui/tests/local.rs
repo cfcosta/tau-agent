@@ -42,6 +42,9 @@ use tau_ui_plugin::vcs::SetupStep;
 use tau_ui_remote::{Workspace, catalog::Catalog, models::ModelChoice};
 use tau_vcs_host::{
     Identity,
+    Layout,
+    Project,
+    ProjectRepo,
     local::{Refusal, State, Step},
 };
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -270,6 +273,19 @@ impl Disk {
     }
 
     /// What `repos.json` keeps of the repositories listed.
+    /// The project of the one repository listed, a local one, opened
+    /// again where its listing says its workspaces are.
+    fn project(&self) -> Project {
+        let listed = self.listed();
+        let local = &listed[0]["local"];
+        let dir = |key: &str| PathBuf::from(local[key].as_str().unwrap());
+        let layout =
+            Layout::local(dir("folder"), dir("main_dir"), dir("runs_dir"));
+        ProjectRepo::open_local(layout, Identity::default())
+            .map(Project::from)
+            .unwrap()
+    }
+
     fn listed(&self) -> Vec<serde_json::Value> {
         std::fs::read_to_string(self.repo_list())
             .ok()
@@ -450,7 +466,7 @@ fn adding_a_folder_lists_it_on_trunk_beside_the_persons_work(tc: TestCase) {
 
     // The main chat's workspace is on trunk: its `HEAD` is `@-`.
     let trunk = rev(&disk.folder, world.trunk());
-    let project = host.block_on(host.project_of("hello")).unwrap();
+    let project = disk.project();
     assert_eq!(project.blocking().trunk_name().unwrap(), world.trunk());
     assert_eq!(project.blocking().trunk().unwrap(), trunk);
     assert_eq!(rev(&main_dir, "HEAD"), trunk);
@@ -629,7 +645,7 @@ fn a_restart_keeps_a_local_repository_and_fetches_nothing(
     assert_eq!(catalog.repos[0].id, added.id);
     assert_eq!(catalog.repos[0].main, added.main);
     assert_eq!(catalog.update, None);
-    let project = host.block_on(host.project_of("hello")).unwrap();
+    let project = disk.project();
     assert!(project.blocking().layout().local);
     assert_eq!(project.blocking().trunk_name().unwrap(), "main");
     assert_eq!(project.root(), disk.folder);

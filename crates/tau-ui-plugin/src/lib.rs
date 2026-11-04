@@ -49,6 +49,7 @@ pub mod waiting;
 pub mod wire;
 
 pub use host::{
+    AgentRepo,
     By,
     ConfigDir,
     Conversations,
@@ -59,14 +60,17 @@ pub use host::{
     ModelPick,
     OutsideResources,
     OutsideTools,
+    Prompt,
     Push,
     RepoCtx,
     RepoId,
     RepoLauncher,
     ResourceSource,
     ResourceWatch,
+    RunCommands,
     RunCtx,
     RunKind,
+    RunWake,
     SavedSettings,
     ToolSource,
     Turn,
@@ -431,6 +435,42 @@ pub trait HostHalf: Send + Sync + 'static {
         run: &RunCtx,
         settings: &SettingsOf<Self>,
     ) -> impl Future<Output = anyhow::Result<Vec<Box<dyn Plugin>>>> + Send;
+
+    /// The tools for one run or sub-agent that keep state per workspace,
+    /// such as the commands it leaves running: built on the run's
+    /// [`WorkspaceDir`], they go on the agent before the VCS's. The host
+    /// asks every plugin in the registry's order; none by default.
+    fn run_tools(
+        &self,
+        _host: &Self::Host,
+        _run: &RunCtx,
+        _settings: &SettingsOf<Self>,
+    ) -> impl Future<Output = anyhow::Result<Vec<Box<dyn Plugin>>>> + Send {
+        std::future::ready(Ok(Vec::new()))
+    }
+
+    /// The workspace at `dir` in `repo` closed: what the plugin keeps for
+    /// it, such as the commands left running there, ends.
+    fn workspace_closed(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _dir: &std::path::Path,
+    ) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+
+    /// What the plugin adds to a run's prompt of `kind`: the host joins
+    /// every plugin's instructions in the registry's order, between its
+    /// own first and last sentences.
+    fn prompt(
+        &self,
+        _host: &Self::Host,
+        _kind: RunKind,
+        _settings: &SettingsOf<Self>,
+    ) -> Prompt {
+        Prompt::default()
+    }
 
     /// Records to fold into a run's state as it starts or goes on, before
     /// anything is published: whether the plugin is on, and why not.

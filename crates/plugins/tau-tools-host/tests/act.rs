@@ -15,12 +15,13 @@ fn restarted_inspector_preview_reads_only_its_runs_grant() {
     use tau_agent::tool::RunId;
     use tau_artifacts::{Bytes, Quotas};
     use tau_store::{Entry, NewRun, RunKind, TurnUsage};
-    use tau_tools_host::ToolsHost;
+    use tau_tools_host::{Tools, ToolsHost};
     use tau_ui_plugin::{
         HOST_RECORD,
         HostCx,
         HostHalf as _,
         HostRecord,
+        PluginHost as _,
         RepoCtx,
         Services,
     };
@@ -93,16 +94,17 @@ fn restarted_inspector_preview_reads_only_its_runs_grant() {
         }],
         Arc::new(|_| {}),
     );
+    let tools = cx.runtime.block_on(Tools::new(&cx)).unwrap();
     let action = |run: &str| json!({"action":"read","run":RunId(run.into()),"id":artifact.id(),"offset":0,"encoding":"utf8"});
     let allowed = cx
         .runtime
-        .block_on(ToolsHost.act(&(), action("allowed"), &cx))
+        .block_on(ToolsHost.act(&tools, action("allowed"), &cx))
         .unwrap()
         .unwrap();
     assert_eq!(allowed["range"]["data"], "preview after restart");
     let denied = cx
         .runtime
-        .block_on(ToolsHost.act(&(), action("other"), &cx))
+        .block_on(ToolsHost.act(&tools, action("other"), &cx))
         .unwrap()
         .unwrap();
     assert!(denied["error"].as_str().unwrap().contains("not granted"));

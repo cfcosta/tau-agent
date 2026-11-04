@@ -73,6 +73,63 @@ pub struct RepoCtx {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceDir(pub PathBuf);
 
+/// How a run's commands start. The host puts it in
+/// [`RunCtx::services`] for each run with a workspace.
+#[derive(Clone)]
+pub enum RunCommands {
+    /// As they are, with no environment from plugins.
+    Direct,
+    /// Through the launcher plugins give the repository, joined.
+    Through(Arc<dyn tau_agent::launch::Launcher>),
+    /// Not at all: an agent's repository without a sandbox (ADR 0037).
+    Off,
+}
+
+impl std::fmt::Debug for RunCommands {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Direct => "Direct",
+            Self::Through(_) => "Through",
+            Self::Off => "Off",
+        })
+    }
+}
+
+/// What wakes a run with tau's message, such as a background command's
+/// end. The host puts it in [`RunCtx::services`] for main chats and
+/// chats; a sub-agent has none, as it ends and lands.
+#[derive(Clone)]
+pub struct RunWake(pub Arc<dyn Fn(String) + Send + Sync>);
+
+impl RunWake {
+    /// Wakes the run with `text`.
+    pub fn wake(&self, text: String) {
+        (self.0)(text);
+    }
+}
+
+impl std::fmt::Debug for RunWake {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RunWake")
+    }
+}
+
+/// Says the run works in an agent's repository (ADR 0037), which no
+/// person attends. The host puts it in [`RunCtx::services`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentRepo;
+
+/// What a plugin adds to every run's prompt
+/// ([`crate::HostHalf::prompt`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Prompt {
+    /// A part of the instructions, which every run shares (ADR 0022):
+    /// it must not depend on the run's kind.
+    pub instructions: Option<String>,
+    /// Text put before the run's first message, which may.
+    pub context: Option<String>,
+}
+
 /// What the repository's own commands start through, besides a run's:
 /// the launcher plugins give it, joined, and the directory its servers
 /// start in, the main workspace. The host puts it in

@@ -7,6 +7,8 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+mod common;
+
 use std::{path::Path, time::Duration};
 
 use tau_agent::{
@@ -147,7 +149,16 @@ fn host_of(
         tau_memory::NAME,
         serde_json::json!({ "after_each_run": false }),
     );
-    (host.with_repo(REPO, project_of(root)), events)
+    (
+        host.with_repository(
+            REPO,
+            std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+                project_of(root),
+                Identity::default(),
+            )),
+        ),
+        events,
+    )
 }
 
 /// [`host_on`], with the person's skills in `skills`.
@@ -185,7 +196,16 @@ fn host_with_skills(
         tau_memory::NAME,
         serde_json::json!({ "after_each_run": false }),
     );
-    (host.with_repo(REPO, project_of(root)), events)
+    (
+        host.with_repository(
+            REPO,
+            std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+                project_of(root),
+                Identity::default(),
+            )),
+        ),
+        events,
+    )
 }
 
 /// The ChatGPT account a host under test runs on; nothing connects
@@ -334,7 +354,7 @@ fn new_chats_fork_the_repository_main_chat() {
         std::fs::read_to_string(dir.join("a.txt")).unwrap(),
         "a.txt\n"
     );
-    let project = host.block_on(host.project_of(REPO)).unwrap();
+    let project = common::project(&host, REPO);
     let on_trunk = |path: &str| {
         project
             .blocking()
@@ -773,7 +793,13 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: a.txt says one")))
         .turn(|t| t.text("forked"));
     let (host, mut events) = host_on(llm.clone(), src.path());
-    let host = host.with_repo(REPO, project);
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
 
     let main = on_main(&host, "write a.txt twice");
     until_end(&mut events);
@@ -910,7 +936,13 @@ fn a_fork_lands_on_its_parent_and_closes() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: a and c")))
         .turn(|t| t.text("forked"));
     let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_repo(REPO, project.clone());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project.clone(),
+            Identity::default(),
+        )),
+    );
 
     let main = on_main(&host, "write two files");
     until_end(&mut events);
@@ -1029,7 +1061,13 @@ fn a_chat_after_an_update() -> AfterUpdate {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: c")))
         .turn(|t| t.text("done too"));
     let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_repo(REPO, project.clone());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project.clone(),
+            Identity::default(),
+        )),
+    );
 
     let main = on_main(&host, "write a");
     until_end(&mut events);
@@ -1264,7 +1302,13 @@ fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
     })
     .name("coder");
     let (host, mut events) = host_of(runtime, store, agent, src.path());
-    let host = host.with_repo(REPO, project.clone());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project.clone(),
+            Identity::default(),
+        )),
+    );
     let main = on_main(&host, "hand c.txt off");
     // Both end: main without waiting, the sub-agent once it is done.
     let mut ended = Vec::new();
@@ -1381,7 +1425,13 @@ fn detached_sub_agent(
     })
     .name("coder");
     let (host, mut events) = host_of(runtime, store, agent, src.path());
-    let host = host.with_repo(REPO, project);
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
     let main = on_main(&host, "hand c.txt off");
     let mut ended = Vec::new();
     while ended.len() < 2 {
@@ -1688,7 +1738,13 @@ fn what_waits_lands_after_a_main_turn_that_finishes_slowly() {
     .plugin(SlowFinish(Duration::from_secs(7)))
     .name("coder");
     let (host, mut events) = host_of(runtime, store, agent, src.path());
-    let host = host.with_repo(REPO, project);
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
     let main = on_main(&host, "read both");
     let mut ended = Vec::new();
     while ended.len() < 3 {
@@ -1757,7 +1813,13 @@ fn runs_come_back_under_their_repository() {
         .turn(|t| t.text("one"))
         .turn(|t| t.text("two"));
     let (host, mut events) = host(llm);
-    let host = host.with_repo("other", project_of(other.path()));
+    let host = host.with_repository(
+        "other",
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project_of(other.path()),
+            Identity::default(),
+        )),
+    );
 
     let here = host
         .block_on(host.start("in the first", &ModelChoice::default(), REPO))
@@ -2060,8 +2122,13 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     let account = credentials.plan_account().unwrap();
     assert_eq!(account, plan);
     let (host, _events) = Host::new(HostConfig { account, ..config }).unwrap();
-    let host =
-        host.with_repo(REPO, project_of(&tempfile::tempdir().unwrap().keep()));
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project_of(&tempfile::tempdir().unwrap().keep()),
+            Identity::default(),
+        )),
+    );
     assert!(host.models().access.chatgpt);
 
     // Switching to an account that declined plan usage leaves nothing
@@ -2122,9 +2189,7 @@ fn github_repositories_clone_into_tau() {
             .any(|listed| listed.name == "hello")
     );
     // Waiting for the project is what blocks, not cloning.
-    let project = host
-        .block_on(host.project_of("hello"))
-        .expect("the clone imports");
+    let project = common::project(&host, "hello");
     assert!(project.root().starts_with(data.path().join("repos")));
     assert!(!project.blocking().trunk().unwrap().is_empty());
     assert!(!host.is_importing());
@@ -2176,7 +2241,13 @@ fn a_finished_run_goes_on_in_its_workspace() {
         .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
         .turn(|t| t.text("wrote b"));
     let (host, mut events) = host_on(llm.clone(), src.path());
-    let host = host.with_repo(REPO, project);
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
 
     let chat = host
         .block_on(host.start("write a.txt", &ModelChoice::default(), REPO))
@@ -2267,9 +2338,7 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
     let db = data.path().join("runs.db");
     let (host, _events) =
         host_with_store(ScriptedModel::new(), dir.path(), &db);
-    let key = host
-        .block_on(host.project_of(REPO))
-        .unwrap()
+    let key = common::project(&host, REPO)
         .root()
         .canonicalize()
         .unwrap()
@@ -2368,11 +2437,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     let host = host
         .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.95)));
     // What the store holds for the repository, as a run would read it.
-    let root = host
-        .block_on(host.project_of(REPO))
-        .unwrap()
-        .root()
-        .to_owned();
+    let root = common::project(&host, REPO).root().to_owned();
     let rules_db = host
         .plugin_dir(tau_constitution_host::NAME)
         .join("constitution.db");
@@ -2568,7 +2633,13 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         tau_memory::NAME,
         serde_json::json!({ "after_each_run": false }),
     );
-    let host = host.with_repo(REPO, project_of(dir.path()));
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project_of(dir.path()),
+            Identity::default(),
+        )),
+    );
     // Jev finds every chunk it is asked about disposable: the first
     // and last stay anyway.
     let host = host
@@ -3050,7 +3121,13 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
         .turn(|t| t.tool_call("exec_command", exec.clone()))
         .turn(|t| t.text("changed"));
     let (host, mut events) = host_on(llm, src.path());
-    let host = host.with_repo(REPO, project);
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
     let memory_of = |host: &Host| {
         let catalog = host.block_on(host.catalog());
         let repo = catalog
@@ -3122,7 +3199,7 @@ fn landing_keeps_a_chat_whose_final_commit_failed() {
     until_end(&mut events);
     wait_until_done(&host, &chat.id);
     let dir = host.block_on(host.workspace(&chat.id)).unwrap();
-    let project = host.block_on(host.project_of(REPO)).unwrap();
+    let project = common::project(&host, REPO);
     let trunk = project.blocking().trunk().unwrap();
     for action in [
         host.block_on(host.preview_landing(&chat.id)),
@@ -3303,7 +3380,7 @@ fn a_chat_lands_and_goes_on() {
         .turn(|t| t.text("wrote c"));
     let src = tempfile::tempdir().unwrap();
     let (host, mut events) = host_on(llm.clone(), src.path());
-    let project = host.block_on(host.project_of(REPO)).unwrap();
+    let project = common::project(&host, REPO);
     let main = host.block_on(host.main_of(REPO)).unwrap();
     let chat = host
         .block_on(host.start("write a", &ModelChoice::default(), REPO))
@@ -3401,7 +3478,7 @@ fn a_landed_or_dropped_chat_takes_no_more_messages() {
         .turn(|t| t.text("wrote b"));
     let src = tempfile::tempdir().unwrap();
     let (host, mut events) = host_on(llm.clone(), src.path());
-    let project = host.block_on(host.project_of(REPO)).unwrap();
+    let project = common::project(&host, REPO);
     let main = host.block_on(host.main_of(REPO)).unwrap();
     let mut chat = |prompt: &str| {
         let view = host
@@ -4030,9 +4107,7 @@ fn a_new_agent_is_a_repository_of_tau_s_own_with_a_main_chat() {
     assert_eq!(repo.own, Some(tau_ui_remote::catalog::Own::Agent));
     let main = repo.main.clone().expect("a main chat");
 
-    let project = host
-        .block_on(host.project_of("triage"))
-        .expect("its project opens");
+    let project = common::project(&host, "triage");
     let dir = project.root().to_owned();
     assert!(dir.ends_with("agents/triage"), "{dir:?}");
     let repo_files = project.blocking();

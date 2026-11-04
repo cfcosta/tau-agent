@@ -127,7 +127,13 @@ fn setup(cx: &mut TestAppContext, llm: ScriptedModel) -> Setup {
         serde_json::json!({ "after_each_run": false }),
     );
     let host = host
-        .with_repo("hello", project.clone())
+        .with_repository(
+            "hello",
+            std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+                project.clone(),
+                Identity::default(),
+            )),
+        )
         .on_conflicts_on_main(hook);
     vcx.update(|_, cx| host.attach(&workspace, events, cx));
     // The host builds its catalog on its runtime, a moment after.

@@ -334,6 +334,17 @@ Each step lands on main by itself and leaves tau working.
 4. **Run assembly.** `workspace`, `tools` with per-workspace state,
    `prompt(kind)`; `tau-tools` and `tau-vcs` build their own parts, and
    `agent_for_run` shrinks to the kernel's lifecycle.
+   As built: the VCS gives a run's workspace (`Repository::run_workspace`,
+   `vcs::RunWorkspace`) and `spawn` is the kernel's
+   (`tau_ui_plugin::sub_agents`). `HostHalf::run_tools` builds the tools
+   with per-workspace state (tau-tools' coding tools and their commands
+   left running), from the services the host puts in `RunCtx`
+   (`WorkspaceDir`, `TurnHooks`, `RunCommands`, `RunWake`, `AgentRepo`);
+   `HostHalf::workspace_closed` hears a workspace close; and
+   `HostHalf::prompt` gives each plugin's part of the instructions,
+   which the host puts between its own first and last sentences.
+   `Repository::as_any` is gone: `tau-ui` names tau-vcs-host only to
+   give tau-vcs its host half, and the person's `Identity`.
 5. **Slots, the easy ones.** The slot table and the Plugins screen's
    choice; `tau.title`, `tau.notify`, `tau.store`, `tau.side-model`.
 6. **`tau.vcs`.** A `Vcs` trait the kernel's landing, lanes, queue and
@@ -348,8 +359,7 @@ Each step lands on main by itself and leaves tau working.
    (`tau_ui_plugin::forge::Forge`: sign-in state, remotes with their
    token, the repository list, pull requests and checks), filled by
    `tau-github-host`; `tau-github` draws sign-in as a setup step placed
-   before Repositories (`SetupAt`) and a Models section. Only run
-   assembly (step 4) still reaches jj through `Repository::as_any`.
+   before Repositories (`SetupAt`) and a Models section.
 7. **`tau.provider`.** A neutral `Settings` and catalog in `tau-ai`;
    `tau-chatgpt` with sign-in, models and plan usage.
 8. **`tau.compaction`**, with the chain as its default; idle compaction

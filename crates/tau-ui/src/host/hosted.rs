@@ -299,25 +299,9 @@ impl Host {
         false
     }
 
-    /// What adds each plugin's agent plugins, in the registry's order, to
-    /// an agent in `repo`: the run's, or a sub-agent's, on its model, with
-    /// what its workspace offers (`services`). A plugin that cannot build
-    /// its own fails the run.
-    pub(super) async fn registered(
-        &self,
-        repo: &RepoSlot,
-    ) -> impl Fn(
-        Agent,
-        RunKind,
-        &ModelChoice,
-        Services,
-    ) -> tau_ui_plugin::registry::HostFuture<
-        'static,
-        anyhow::Result<Agent>,
-    > + Clone
-    + Send
-    + Sync
-    + 'static {
+    /// Each plugin's part of the agents in `repo`, with its settings
+    /// there: what builds a run's agent, and its sub-agents'.
+    pub(super) async fn registered(&self, repo: &RepoSlot) -> Registered {
         // An agent asks through tau-agents' own `ask`, whose answer comes
         // back as an event: tau-ask's holds the turn open for a person
         // who is not watching (ADR 0037).
@@ -336,7 +320,6 @@ impl Host {
                 )
             })
             .collect();
-        let jev = self.jev();
         // The repository's own commands (its MCP servers) start through
         // what the plugins give it, in its main workspace.
         let repo_launcher = self.launcher_of(repo).await.and_then(|launcher| {
@@ -346,41 +329,27 @@ impl Host {
                 dir: repository.workspace_dir(repository.main_workspace()),
             })
         });
-        let hosted = Arc::new(hosted);
-        let repo = self.repo_ctx(repo);
-        move |agent: Agent,
-              kind: RunKind,
-              choice: &ModelChoice,
-              mut services: Services| {
-            if let Some(jev) = &jev {
-                services = services.with(jev.clone());
-            }
-            if let Some(launcher) = &repo_launcher {
-                services = services.with(launcher.clone());
-            }
-            let run = RunCtx {
-                kind,
-                repo: repo.clone(),
-                model: choice.model.clone(),
-                effort: choice
-                    .effort
-                    .reasoning()
-                    .map(|effort| effort.as_str().to_owned()),
-                services,
-            };
-            let hosted = hosted.clone();
-            Box::pin(async move {
-                let mut agent = agent;
-                for (hosted, settings) in hosted.iter() {
-                    agent = hosted
-                        .plugin
-                        .agent_plugins(&hosted.state, &run, settings)
-                        .await?
-                        .into_iter()
-                        .fold(agent, Agent::boxed_plugin);
-                }
-                Ok(agent)
-            })
+        Registered {
+            hosted: Arc::new(hosted),
+            repo: self.repo_ctx(repo),
+            jev: self.jev(),
+            repo_launcher,
+        }
+    }
+
+    /// Tells every plugin that the workspace at `dir` of `run`'s
+    /// repository closed (`HostHalf::workspace_closed`): what it kept
+    /// there, such as the commands left running, ends.
+    pub(super) async fn workspace_closed(&self, run: &RunId, dir: &Path) {
+        let Ok(slot) = self.slot_of_run(run).await else {
+            return;
+        };
+        let repo = self.repo_ctx(&slot);
+        for hosted in &self.hosted {
+            hosted
+                .plugin
+                .workspace_closed(&hosted.state, &repo, dir)
+                .await;
         }
     }
 
@@ -533,6 +502,130 @@ impl Host {
             RunKind::Chat
         };
         self.starting(&self.run_ctx(kind, &slot, choice)).await
+    }
+}
+
+/// Each plugin's part of the agents in one repository, in the
+/// registry's order, with its settings there ([`Host::registered`]).
+#[derive(Clone)]
+pub(super) struct Registered {
+    hosted: Arc<Vec<(Hosted, PluginValue)>>,
+    repo: RepoCtx,
+    jev: Option<Arc<dyn tau_jev::Jev>>,
+    repo_launcher: Option<tau_ui_plugin::RepoLauncher>,
+}
+
+impl Registered {
+    /// The run (or sub-agent) `kind` on `choice`, with what its
+    /// workspace offers (`services`), as plugins see it.
+    pub(super) fn run(
+        &self,
+        kind: RunKind,
+        choice: &ModelChoice,
+        mut services: Services,
+    ) -> RunCtx {
+        if let Some(jev) = &self.jev {
+            services = services.with(jev.clone());
+        }
+        if let Some(launcher) = &self.repo_launcher {
+            services = services.with(launcher.clone());
+        }
+        RunCtx {
+            kind,
+            repo: self.repo.clone(),
+            model: choice.model.clone(),
+            effort: choice
+                .effort
+                .reasoning()
+                .map(|effort| effort.as_str().to_owned()),
+            services,
+        }
+    }
+
+    /// A run's instructions: tau's first sentence, each plugin's part
+    /// (`HostHalf::prompt`), then tau's last. They do not hang on the
+    /// run's kind, so every run reads the others' prompt cache (ADR
+    /// 0022).
+    pub(super) fn instructions(&self, kind: RunKind) -> String {
+        let mut parts = vec![LEAD.to_owned()];
+        for (hosted, settings) in self.hosted.iter() {
+            parts.extend(
+                hosted
+                    .plugin
+                    .prompt(&hosted.state, kind, settings)
+                    .instructions,
+            );
+        }
+        parts.push(CLOSING.to_owned());
+        parts.join(" ")
+    }
+
+    /// `agent` with what plugins put before a run of `kind`'s first
+    /// message (`Prompt::context`), when any does.
+    pub(super) fn with_context(&self, agent: Agent, kind: RunKind) -> Agent {
+        let context: Vec<String> = self
+            .hosted
+            .iter()
+            .filter_map(|(hosted, settings)| {
+                hosted.plugin.prompt(&hosted.state, kind, settings).context
+            })
+            .collect();
+        if context.is_empty() {
+            agent
+        } else {
+            agent.plugin(PluginContext(context))
+        }
+    }
+
+    /// `agent` with what the workspace of `run` brings, in the order
+    /// every run declares them (ADR 0022): each plugin's tools with
+    /// state per workspace (`HostHalf::run_tools`), the VCS's parts,
+    /// then the repository's instructions, which come after the
+    /// workspace, as it makes the directory when the run starts.
+    pub(super) async fn on_workspace(
+        &self,
+        agent: Agent,
+        workspace: &dyn RunWorkspace,
+        run: &RunCtx,
+    ) -> anyhow::Result<Agent> {
+        let mut agent = agent;
+        for (hosted, settings) in self.hosted.iter() {
+            agent = hosted
+                .plugin
+                .run_tools(&hosted.state, run, settings)
+                .await?
+                .into_iter()
+                .fold(agent, Agent::boxed_plugin);
+        }
+        Ok(workspace
+            .agent_plugins()
+            .into_iter()
+            .fold(agent, Agent::boxed_plugin)
+            .plugin(RepoInstructions {
+                dir: workspace.dir(),
+            }))
+    }
+
+    /// `agent` with each plugin's agent plugins
+    /// (`HostHalf::agent_plugins`), after the rest: the repository's
+    /// rules check what the tools do, tau-goal's hold of a stop comes
+    /// after theirs, and context compaction goes by the run's model. A
+    /// plugin that cannot build its own fails the run.
+    pub(super) async fn agent_plugins(
+        &self,
+        agent: Agent,
+        run: &RunCtx,
+    ) -> anyhow::Result<Agent> {
+        let mut agent = agent;
+        for (hosted, settings) in self.hosted.iter() {
+            agent = hosted
+                .plugin
+                .agent_plugins(&hosted.state, run, settings)
+                .await?
+                .into_iter()
+                .fold(agent, Agent::boxed_plugin);
+        }
+        Ok(agent)
     }
 }
 

@@ -50,6 +50,26 @@ impl Plugin for RepoInstructions {
     }
 }
 
+/// Puts what plugins add before a run's first message
+/// (`Prompt::context`) there as it starts, in the registry's order.
+pub(super) struct PluginContext(pub(super) Vec<String>);
+
+#[async_trait]
+impl Plugin for PluginContext {
+    fn name(&self) -> &str {
+        "tau-plugin-context"
+    }
+
+    async fn start(
+        &self,
+        plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        plan.context.extend(self.0.iter().cloned());
+        Ok(Box::new(Quiet))
+    }
+}
+
 /// A plugin run that does nothing after its start.
 struct Quiet;
 

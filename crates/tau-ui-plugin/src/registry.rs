@@ -104,6 +104,27 @@ pub trait ErasedPlugin: Send + Sync {
         run: &'a RunCtx,
         settings: &'a PluginValue,
     ) -> HostFuture<'a, anyhow::Result<Vec<Box<dyn Plugin>>>>;
+    /// Its tools with state per workspace, for one run or sub-agent.
+    fn run_tools<'a>(
+        &'a self,
+        host: &'a HostState,
+        run: &'a RunCtx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, anyhow::Result<Vec<Box<dyn Plugin>>>>;
+    /// The workspace at `dir` in `repo` closed.
+    fn workspace_closed<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+        dir: &'a std::path::Path,
+    ) -> HostFuture<'a, ()>;
+    /// What it adds to a run's prompt of `kind`.
+    fn prompt(
+        &self,
+        host: &HostState,
+        kind: crate::RunKind,
+        settings: &PluginValue,
+    ) -> crate::Prompt;
     fn starting<'a>(
         &'a self,
         host: &'a HostState,
@@ -341,6 +362,33 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
             run,
             settings.get(),
         ))
+    }
+
+    fn run_tools<'a>(
+        &'a self,
+        host: &'a HostState,
+        run: &'a RunCtx,
+        settings: &'a PluginValue,
+    ) -> HostFuture<'a, anyhow::Result<Vec<Box<dyn Plugin>>>> {
+        Box::pin(self.half.run_tools(self.host_of(host), run, settings.get()))
+    }
+
+    fn workspace_closed<'a>(
+        &'a self,
+        host: &'a HostState,
+        repo: &'a RepoCtx,
+        dir: &'a std::path::Path,
+    ) -> HostFuture<'a, ()> {
+        Box::pin(self.half.workspace_closed(self.host_of(host), repo, dir))
+    }
+
+    fn prompt(
+        &self,
+        host: &HostState,
+        kind: crate::RunKind,
+        settings: &PluginValue,
+    ) -> crate::Prompt {
+        self.half.prompt(self.host_of(host), kind, settings.get())
     }
 
     fn starting<'a>(
