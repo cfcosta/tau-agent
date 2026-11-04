@@ -33,12 +33,15 @@ pi, a note says so.
    7. Persist the turn's messages and usage in one transaction.
    8. Check limits and cancellation.
    9. Emit `TurnEnd`.
-   10. Drain the steering queue into the transcript.
+   10. Drain the steering queue into the transcript: store the
+       message, then emit `Steered`. A steer the run could not store
+       stays unread.
    11. No tool calls and no steering: ask each plugin's `before_stop`,
        in order. The first that continues adds its text as a user
-       message and emits `Continued`, up to `Limits::max_continuations`
-       times (default 3) per run. A plugin error there is reported as
-       `PluginError` and counts as letting the run stop.
+       message, stores it and then emits `Continued`, up to
+       `Limits::max_continuations` times (default 3) per run. A plugin
+       error there is reported as `PluginError` and counts as letting
+       the run stop.
    12. Offer the context to each plugin's `rewrite_context`, in order
        (the order they were added). The first rewrite is checked, stored as a
        `context` entry with its messages, and becomes the transcript;

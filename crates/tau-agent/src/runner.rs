@@ -348,15 +348,18 @@ impl Runner {
                 .preempted
                 .take()
                 .or_else(|| self.steering.try_recv().ok());
+            // Read once stored: a steer the run could not store stays
+            // unread, for the host to hand on.
             if let Some(prompt) = steered.clone() {
-                self.emit(RunEvent::Steered {
-                    run: self.run.clone(),
-                    text: prompt.text.clone(),
-                })
-                .await;
+                let text = prompt.text.clone();
                 let message = self.said(prompt);
                 self.persist(std::slice::from_ref(&message), &Usage::default())
                     .await?;
+                self.emit(RunEvent::Steered {
+                    run: self.run.clone(),
+                    text,
+                })
+                .await;
                 transcript.push(message);
             }
             if calls.is_empty() && steered.is_none() {
@@ -368,15 +371,15 @@ impl Runner {
                     break StopReason::Stop;
                 };
                 continuations += 1;
+                let message = self.user(text.clone());
+                self.persist(std::slice::from_ref(&message), &Usage::default())
+                    .await?;
                 self.emit(RunEvent::Continued {
                     run: self.run.clone(),
                     plugin,
-                    message: text.clone(),
+                    message: text,
                 })
                 .await;
-                let message = self.user(text);
-                self.persist(std::slice::from_ref(&message), &Usage::default())
-                    .await?;
                 transcript.push(message);
             }
             // Failures were reported as events; the run goes on with the
