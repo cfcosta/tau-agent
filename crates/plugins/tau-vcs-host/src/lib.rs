@@ -18,6 +18,8 @@
 //! the run starts and snapshots it after each turn, so forks start from
 //! a turn's code. The model makes the commits, with `vcs_commit`
 //! ([ADR 0014](../../../docs/decisions/0014-the-model-commits-and-runs-land-as-stacked-diffs.md)).
+//! The host reaches a project through the `tau.vcs` slot, which
+//! [`JjVcs`] fills: each project it opens is a [`JjRepository`].
 //!
 //! Every operation tau writes says it is tau's: the attribute
 //! [`TAU_OP_ATTRIBUTE`] and a description starting `tau: `, which
@@ -44,6 +46,7 @@ mod operations;
 mod ops;
 pub mod plugin;
 pub mod project;
+mod repository;
 mod revsets;
 pub mod run_workspace;
 mod session;
@@ -84,7 +87,8 @@ pub use project::{
     Updated,
     main_workspace_name,
 };
-pub use run_workspace::{Link, RunWorkspace};
+pub use repository::{JjRepository, JjVcs};
+pub use run_workspace::RunWorkspace;
 pub use session::MAX_NEW_FILE_SIZE;
 pub use sub_agents::{ONLY_MAIN_SPAWNS, RefusingSpawn, Spawn, SubAgents};
 use tau_vcs::ui;

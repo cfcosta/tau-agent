@@ -76,7 +76,7 @@ pub(super) struct ProjectSlot {
 #[derive(Clone)]
 pub(super) enum ProjectState {
     Importing,
-    Ready(Project),
+    Ready(Arc<dyn Repository>),
     /// The clone could not be made a project, for this reason; runs
     /// cannot start in it.
     Failed(String),
@@ -100,23 +100,35 @@ impl ProjectSlot {
     /// The project if it is imported now, without waiting.
     pub(super) fn ready(&self) -> Option<Project> {
         match &*self.state.borrow() {
-            ProjectState::Ready(project) => Some(project.clone()),
+            ProjectState::Ready(repository) => jj_project(repository.as_ref()),
             _ => None,
         }
     }
 
     /// The project, once the import is over; `None` if it failed.
     pub(super) async fn wait(&self) -> Option<Project> {
+        jj_project(self.wait_repository().await?.as_ref())
+    }
+
+    /// The repository, once the import is over; `None` if it failed.
+    pub(super) async fn wait_repository(&self) -> Option<Arc<dyn Repository>> {
         let mut state = self.state.subscribe();
         let state = state
             .wait_for(|state| !matches!(state, ProjectState::Importing))
             .await
             .ok()?;
         match &*state {
-            ProjectState::Ready(project) => Some(project.clone()),
+            ProjectState::Ready(repository) => Some(repository.clone()),
             _ => None,
         }
     }
+}
+
+/// The jj project behind `repository`, for the callers that still reach
+/// it (ADR 0045 steps 4 and 6b).
+pub(super) fn jj_project(repository: &dyn Repository) -> Option<Project> {
+    let jj = repository.as_any().downcast_ref::<JjRepository>()?;
+    Some(jj.project().clone())
 }
 
 /// What one repository serializes (ADR 0028): its own multi-step work,
@@ -143,12 +155,12 @@ pub(super) struct RepoSlot {
 }
 
 impl RepoSlot {
-    /// The project runs in the repository work in, once imported.
-    pub(super) async fn project(&self) -> anyhow::Result<Project> {
-        self.project
-            .wait()
-            .await
-            .ok_or_else(|| match self.project.peek() {
+    /// The repository's project, as the kernel asks it, once imported.
+    pub(super) async fn repository(
+        &self,
+    ) -> anyhow::Result<Arc<dyn Repository>> {
+        self.project.wait_repository().await.ok_or_else(|| {
+            match self.project.peek() {
                 ProjectState::Failed(why) => {
                     anyhow::anyhow!(
                         "{} could not be imported: {why}",
@@ -156,8 +168,26 @@ impl RepoSlot {
                     )
                 }
                 _ => anyhow::anyhow!("{} has no project", self.name),
-            })
+            }
+        })
     }
+
+    /// The jj project runs in the repository work in, once imported:
+    /// for the callers that still reach it (ADR 0045 steps 4 and 6b).
+    pub(super) async fn project(&self) -> anyhow::Result<Project> {
+        jj_project(self.repository().await?.as_ref()).ok_or_else(|| {
+            anyhow::anyhow!("{}'s project is not a jj project", self.name)
+        })
+    }
+}
+
+/// Why a repository's project cannot be opened: no plugin fills the
+/// `tau.vcs` slot.
+pub(super) fn no_vcs() -> anyhow::Error {
+    anyhow::anyhow!(
+        "No plugin fills {}: tau has nothing to open repositories with",
+        tau_ui_plugin::vcs::VCS.name()
+    )
 }
 
 /// A name for a new workspace: `slug` (a message's first words), then
@@ -247,19 +277,22 @@ impl Host {
         } else {
             None
         };
-        let cloned = dir == slot.path;
+        let how = if let Some(first_files) = first_files {
+            Open::OrInit(first_files)
+        } else if dir == slot.path {
+            Open::Existing
+        } else {
+            Open::OrImport(slot.path.clone())
+        };
         let catalog = self.catalog_wanted.clone();
-        let identity = self.identity();
+        let vcs = self.vcs.clone();
         self.runtime.spawn(async move {
-            let opened = if let Some(first_files) = first_files {
-                Project::open_or_init(dir, identity, first_files).await
-            } else if cloned {
-                Project::open(dir, identity).await
-            } else {
-                Project::open_or_import(source.clone(), dir, identity).await
+            let opened = match &vcs {
+                Some(vcs) => vcs.open(&dir, how).await,
+                None => Err(no_vcs()),
             };
             project.set(match opened {
-                Ok(project) => ProjectState::Ready(project),
+                Ok(repository) => ProjectState::Ready(repository),
                 Err(error) => {
                     eprintln!("tau-ui: cannot import {source}: {error:#}");
                     ProjectState::Failed(format!("{error:#}"))
@@ -274,6 +307,8 @@ impl Host {
     /// workspace each there, as in a clone from GitHub.
     pub fn with_repo(self, name: &str, project: Project) -> Self {
         let path = project.root().to_owned();
+        let repository: Arc<dyn Repository> =
+            Arc::new(JjRepository::new(project, self.identity()));
         let id = {
             let mut list = self.list.lock().expect("not poisoned");
             let before = list.repos.iter().find(|listed| listed.name == name);
@@ -298,7 +333,7 @@ impl Host {
             name: name.to_owned(),
             remote: None,
             path,
-            project: ProjectSlot::new(ProjectState::Ready(project)),
+            project: ProjectSlot::new(ProjectState::Ready(repository)),
         });
         drop(repos);
         if let Err(error) = self.setting_up(self.main_of(name)) {
@@ -387,46 +422,14 @@ impl Host {
             .any(|listed| listed.main.as_deref() == Some(&*run.0))
     }
 
-    /// The head `run`'s commits move: trunk's branch for a main chat,
-    /// which commits on it, else the run's own.
-    pub(super) async fn head_of(
-        &self,
-        run: &RunId,
-        project: &Project,
-    ) -> anyhow::Result<Head> {
+    /// What `run`'s commits move: trunk's branch for a main chat, which
+    /// commits on it, else the run's own head.
+    pub(super) fn onto_of(&self, run: &RunId) -> Onto {
         if self.is_main(run) {
-            let trunk = project.run(|project| project.trunk_name()).await?;
-            return Ok(Head::Branch(trunk));
+            Onto::Trunk
+        } else {
+            Onto::Run(run.clone())
         }
-        Ok(Head::Run(run.clone()))
-    }
-
-    /// Brings a main chat's workspace, `name`, up to trunk, which moves
-    /// without it on an update from GitHub: its work in `@` goes onto
-    /// trunk's head, so its next commit moves trunk forward, not aside.
-    pub(super) async fn catch_up(
-        &self,
-        project: &Project,
-        name: &str,
-    ) -> anyhow::Result<()> {
-        let known = name.to_owned();
-        let (exists, trunk, trunk_name) = project
-            .run(move |project| {
-                let exists = known == project.main_workspace()
-                    || project.workspaces()?.contains(&known);
-                anyhow::Ok((exists, project.trunk()?, project.trunk_name()?))
-            })
-            .await?;
-        if !exists {
-            return Ok(());
-        }
-        let vcs = tau_vcs_host::Vcs::open(
-            project.workspace_dir(name),
-            self.identity(),
-        )
-        .await?;
-        vcs.move_onto(trunk, trunk_name, true).await?;
-        Ok(())
     }
 
     /// The locks of the repository `name`, made the first time.

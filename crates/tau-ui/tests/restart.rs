@@ -338,7 +338,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
     let records = tokio::runtime::Runtime::new().unwrap().block_on(async {
         let store = tau_store_sqlite::open(disk.db()).await.unwrap();
         store
-            .plugin_entries(&main.0, tau_vcs_host::run_workspace::PLUGIN)
+            .plugin_entries(&main.0, tau_ui_plugin::vcs::WORKSPACE_PLUGIN)
             .await
             .unwrap()
     });
@@ -381,7 +381,7 @@ fn landed_state(disk: &Disk, host: &Host, chat: &RunId) -> Landed {
             .collect(),
         landed_links: records
             .iter()
-            .filter_map(|(_, body)| tau_vcs_host::Link::parse(body))
+            .filter_map(|(_, body)| tau_ui_plugin::vcs::Link::parse(body))
             .filter(|link| link.from.as_deref() == Some(&*chat.0))
             .count(),
         ending: match host.block_on(host.ending_of(chat)).unwrap() {

@@ -3,51 +3,17 @@
 //! nothing cleans once the process that ran them is gone
 //! (`docs/reference/vcs.md`, "Sweeping at start").
 //!
-//! [`plan`] is the rule, a pure function of the runs' standings and
-//! what the project holds; [`ProjectRepo::sweep`] carries a plan out.
+//! [`plan`] is the rule, a pure function of the runs' standings
+//! ([`Owner`]) and what the project holds; [`ProjectRepo::sweep`]
+//! carries a plan out.
 
 use std::collections::BTreeSet;
 
 use tau_agent::tool::RunId;
+use tau_ui_plugin::vcs::{Keep, Owner, Standing};
 
 pub use crate::heads::RUN_HEAD_PREFIX;
 use crate::{ProjectRepo, error::VcsError, heads::Head};
-
-/// Where a run stands, as far as its workspaces and head go.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Standing {
-    /// It keeps them: running, or open, as a chat that can go on, or a
-    /// sub-agent whose workspace was kept for recovery.
-    Kept,
-    /// Its work is on its parent now: they go, its commits stay.
-    Landed,
-    /// Its work is thrown away, as for a dropped chat or a sub-agent
-    /// that failed or was cut off: they go, and so do its own commits.
-    Discarded,
-}
-
-/// What a discarded run's commits are measured against: what its
-/// parent has stays, and so does trunk.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Keep {
-    /// What this head's commit has: the parent run's.
-    Head(Head),
-    /// What this workspace's working copy has: the main chat's, which
-    /// commits on trunk, and whose own commits trunk may be past.
-    Workspace(String),
-}
-
-/// One run that may own workspaces and a head in the project.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Owner {
-    /// The run's id: its head is [`Head::Run`]'s.
-    pub run: String,
-    pub standing: Standing,
-    /// The workspaces it worked in, by name.
-    pub workspaces: Vec<String>,
-    /// For a discarded run: what stays when its commits go.
-    pub keep: Keep,
-}
 
 /// The commits of a discarded run to abandon: what `heads` have that
 /// `keep` lacks.
@@ -172,7 +138,7 @@ impl ProjectRepo {
     pub fn sweep(&self, sweep: &Sweep) -> Result<(), VcsError> {
         for abandon in &sweep.abandon {
             let keep = match &abandon.keep {
-                Keep::Head(head) => self.head(head)?,
+                Keep::Run(run) => self.head(&Head::Run(run.clone()))?,
                 Keep::Workspace(name) => self.workspace_head(name)?,
             };
             // Trunk always stays: a main chat that never ran stands on

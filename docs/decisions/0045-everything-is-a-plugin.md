@@ -338,6 +338,14 @@ Each step lands on main by itself and leaves tau working.
    choice; `tau.title`, `tau.notify`, `tau.store`, `tau.side-model`.
 6. **`tau.vcs`.** A `Vcs` trait the kernel's landing, lanes, queue and
    sweep call, implemented by `tau-vcs`. Then `tau-github`.
+   As built: `tau_ui_plugin::slots` (`Slot`, `Fills`, filled by
+   `HostHalf::fill`, first filler wins) and `tau_ui_plugin::vcs`'s `Vcs`
+   (opens a repository) and `Repository` (catch up, conflicts, newest,
+   land, landed, discard, forget, held, sweep). tau-vcs-host's
+   `JjVcs`/`JjRepository` fill it; landing, lanes and the startup sweep
+   call only it. A run's workspace, sub-agents, push, pull requests and
+   clone still reach jj directly, through `Repository::as_any`, until
+   steps 4 and 6b.
 7. **`tau.provider`.** A neutral `Settings` and catalog in `tau-ai`;
    `tau-chatgpt` with sign-in, models and plan usage.
 8. **`tau.compaction`**, with the chain as its default; idle compaction

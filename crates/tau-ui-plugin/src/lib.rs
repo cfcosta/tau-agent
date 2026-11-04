@@ -35,6 +35,7 @@ pub mod points;
 pub mod registry;
 pub mod run;
 pub mod services;
+pub mod slots;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub mod tree;
@@ -532,6 +533,10 @@ pub trait HostHalf: Send + Sync + 'static {
     ) -> impl Future<Output = ()> + Send {
         std::future::ready(())
     }
+
+    /// Fills the slots the plugin fills ([`slots`]) from its host state:
+    /// called once, after the host made every plugin's.
+    fn fill(&self, _host: &Self::Host, _fills: &mut slots::Fills) {}
 
     /// Carries out what the plugin's UI asked; a reply goes back to its
     /// [`UiPlugin::reply`].

@@ -15,6 +15,7 @@ use tau_ui_plugin::{
     Registry,
     RepoCtx,
     registry::HostState,
+    slots::Fills,
 };
 use tau_ui_remote::{
     catalog::PluginInfo,
@@ -81,6 +82,16 @@ pub async fn host_all(cx: &HostCx) -> Vec<Hosted> {
         }
     }
     hosted
+}
+
+/// What each plugin fills of the slots, in the registry's order: the
+/// first to fill a slot keeps it (`HostHalf::fill`).
+pub fn fills(hosted: &[Hosted]) -> Fills {
+    let mut fills = Fills::default();
+    for hosted in hosted {
+        hosted.plugin.fill(&hosted.state, &mut fills);
+    }
+    fills
 }
 
 /// Asks each plugin to start again the jobs a restart cut off, in the

@@ -49,13 +49,13 @@ use jj_lib::{
     workspace::Workspace,
 };
 use pollster::block_on;
+use tau_ui_plugin::vcs::Link;
 
 use crate::{
     ChangeKind,
     FileChange,
     clone::{CloneError, Head, ORIGIN_HEAD, TRACKING},
     error::VcsError,
-    run_workspace::Link,
     vcs::{Identity, Vcs},
 };
 

@@ -20,14 +20,8 @@ use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::agent::Checkpoint;
 use tau_testing::scripted::ScriptedModel;
-use tau_vcs_host::{
-    Head,
-    Identity,
-    Link,
-    ProjectRepo,
-    RunWorkspace,
-    run_workspace::PLUGIN,
-};
+use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
+use tau_vcs_host::{Head, Identity, ProjectRepo, RunWorkspace};
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
 const VALUES: [&str; 4] = ["", "one\n", "two\n", "three\n"];
@@ -155,8 +149,12 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
             );
         }
 
-        let turns_linked =
-            links(&store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap());
+        let turns_linked = links(
+            &store
+                .plugin_entries(&outcome.run.0, WORKSPACE_PLUGIN)
+                .await
+                .unwrap(),
+        );
         // Asked to commit, the run answered once more: one more turn.
         let expected = turns.len() + 1 + usize::from(dirty);
         assert_eq!(turns_linked.len(), expected, "one link per turn");
@@ -224,8 +222,12 @@ fn a_fork_starts_on_its_turns_files(tc: TestCase) {
             .outcome()
             .await
             .unwrap();
-        let fork_links =
-            links(&store.plugin_entries(&forked.run.0, PLUGIN).await.unwrap());
+        let fork_links = links(
+            &store
+                .plugin_entries(&forked.run.0, WORKSPACE_PLUGIN)
+                .await
+                .unwrap(),
+        );
         // The fork's first own turn only read: its snapshot holds the
         // files of the turn it started from.
         let own: Vec<&Link> = fork_links

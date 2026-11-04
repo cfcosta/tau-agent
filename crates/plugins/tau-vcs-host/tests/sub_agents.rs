@@ -29,15 +29,14 @@ use tau_ai::{
     responses::request::ReasoningEffort,
 };
 use tau_testing::scripted::{ScriptedModel, TurnBuilder};
+use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
 use tau_vcs_host::{
     Head,
     Identity,
-    Link,
     ProjectRepo,
     RunWorkspace,
     Spawn,
     SubAgents,
-    run_workspace::PLUGIN,
     sub_agents::{ChildModel, Ending, MAX_RUNNING, Taken},
 };
 
@@ -92,7 +91,7 @@ async fn workspace_of(
     run: &RunId,
 ) -> PathBuf {
     let link = store
-        .plugin_entries(&run.0, PLUGIN)
+        .plugin_entries(&run.0, WORKSPACE_PLUGIN)
         .await
         .unwrap()
         .iter()
@@ -200,7 +199,7 @@ fn a_sub_agent_works_on_the_callers_code() {
         assert_eq!(stack_of(&project, &outcome.run), ["feat: parent"]);
         // The caller's links are its own.
         let links: Vec<Link> = store
-            .plugin_entries(&outcome.run.0, PLUGIN)
+            .plugin_entries(&outcome.run.0, WORKSPACE_PLUGIN)
             .await
             .unwrap()
             .iter()

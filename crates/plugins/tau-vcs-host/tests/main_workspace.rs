@@ -57,15 +57,8 @@ use jj_lib::{
 use pollster::block_on;
 use tau_agent::tool::RunId;
 use tau_testing::{block_on_io, git::git};
-use tau_vcs_host::{
-    Head,
-    Identity,
-    JjEnv,
-    MAIN_WORKSPACE,
-    ProjectRepo,
-    Vcs,
-    sweep::{Keep, Owner, Standing},
-};
+use tau_ui_plugin::vcs::{Keep, Owner, Standing};
+use tau_vcs_host::{Head, Identity, JjEnv, MAIN_WORKSPACE, ProjectRepo, Vcs};
 
 const DEFAULT: &str = "default";
 const PATHS: [&str; 3] = ["a.txt", "c.txt", "dir/b.txt"];

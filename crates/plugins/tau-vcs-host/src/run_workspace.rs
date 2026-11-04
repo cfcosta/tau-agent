@@ -20,7 +20,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use tau_agent::{
     error::PluginError,
     event::{RunEvent, StopReason},
@@ -38,6 +37,7 @@ use tau_ai::{
     message::{AssistantMessage, Message, UserContent, UserMessage},
     responses::request::Settings,
 };
+use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
 
 use crate::{
     TurnSnapshot,
@@ -59,38 +59,6 @@ const DESCRIBE: &str = "Write the commit message for this change, in Conventiona
 style: a subject line `type(scope): summary` of at most 72 characters, a \
 blank line, then a short body that says what changed and why. Answer \
 with the message only.";
-
-/// The name the plugin stores its links under.
-pub const PLUGIN: &str = crate::ui::NAME;
-
-/// A turn, and the commit that holds the files it left. Stored as the
-/// plugin's record after each turn, and for each change a landing
-/// brought.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Link {
-    pub turn: u32,
-    pub workspace: String,
-    pub commit_id: String,
-    pub change_id: String,
-    /// The turn changed files.
-    pub changed: bool,
-    /// The child run whose landing put this change on the run's stack
-    /// (ADR 0009); none for the run's own turns. A landing stores one
-    /// link per change it brought, all with the run's latest turn.
-    pub from: Option<String>,
-    /// The commit is a snapshot of `@` at the end of the turn, found by
-    /// its commit id: `@` moves on under the same change id (ADR 0014).
-    /// Otherwise it is a change, found by its change id.
-    #[serde(default)]
-    pub snapshot: bool,
-}
-
-impl Link {
-    /// Reads a link back from a stored record body.
-    pub fn parse(body: &str) -> Option<Self> {
-        serde_json::from_str(body).ok()
-    }
-}
 
 /// A run's workspace, as a plugin. Build one per run, with a workspace
 /// name of its own, and point the run's other tools at [`Self::dir`].
@@ -210,7 +178,7 @@ impl RunWorkspace {
 #[async_trait]
 impl Plugin for RunWorkspace {
     fn name(&self) -> &str {
-        PLUGIN
+        WORKSPACE_PLUGIN
     }
 
     async fn start(

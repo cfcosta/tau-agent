@@ -55,21 +55,28 @@ use tau_ui_plugin::{
     Services,
     TurnCommit,
     TurnHooks,
+    vcs::{
+        Discard,
+        Land,
+        Landing,
+        Link,
+        Newest,
+        Onto,
+        Open,
+        Repository,
+        WORKSPACE_PLUGIN,
+    },
 };
 use tau_vcs_host::{
-    ChangeKind,
-    FileDiff,
     Head,
     Identity,
-    Landing,
-    Link,
+    JjRepository,
     Project,
     ProjectRepo,
     RefusingSpawn,
     RunWorkspace,
     Spawn,
     VcsPlugin,
-    run_workspace::PLUGIN as WORKSPACE_PLUGIN,
     sub_agents::ChildModel,
 };
 use tokio::{runtime::Runtime, sync::mpsc};
@@ -270,6 +277,9 @@ pub struct Host {
     /// The plugins with their UI, each with its state on this host (ADR
     /// 0017).
     hosted: Vec<hosted::Hosted>,
+    /// What fills the `tau.vcs` slot, once the plugins are hosted:
+    /// what opens the repositories' projects.
+    vcs: Option<Arc<dyn tau_ui_plugin::vcs::Vcs>>,
     /// Held while a run starts, and while a sweep reads what the
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
@@ -327,6 +337,7 @@ struct SessionRun {
 }
 
 mod attach;
+mod compare;
 mod config;
 mod conversations;
 mod forecast;
@@ -576,6 +587,7 @@ impl Host {
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
+            vcs: None,
             jev_key: Mutex::new(jev_key),
             list_saving: Saving::default(),
             settings_saving: Saving::default(),
@@ -781,7 +793,7 @@ impl Host {
             // What the main chat would push, for a repository from
             // GitHub (ADR 0023).
             if listed.github.is_some()
-                && let ProjectState::Ready(project) = slot.project.peek()
+                && let Some(project) = slot.project.ready()
             {
                 let (unpushed, trunk) = project
                     .run(|project| {
@@ -1361,7 +1373,7 @@ impl Host {
         // it recorded as it started.
         let workspace = match known {
             _ if main => {
-                Some(repo.project().await?.main_workspace().to_owned())
+                Some(repo.repository().await?.main_workspace().to_owned())
             }
             Some(name) => Some(name),
             None => match self.link(run, None).await? {
@@ -1372,7 +1384,7 @@ impl Host {
         // A main chat catches up with trunk first: its commits move
         // trunk, which may have moved without it.
         if main && let Some(name) = &workspace {
-            self.catch_up(&repo.project().await?, name).await?;
+            repo.repository().await?.catch_up(name).await?;
         }
         // An effort the model does not take falls back to auto.
         let choice = &choice.clone().fitted();

@@ -13,7 +13,7 @@ pub(super) struct Intent {
     /// The child landing.
     pub(super) from: String,
     /// Its head as the landing read it: the restack's operation records
-    /// what it did under it (`Project::landed`).
+    /// what it did under it (`Repository::landed`).
     pub(super) child_head: String,
     pub(super) child_workspace: String,
     pub(super) parent_workspace: String,
@@ -65,13 +65,25 @@ pub(super) enum Reading {
 /// [`Host::forecast_landing`] work with.
 pub(super) struct LandingPlan {
     pub(super) parent: RunId,
-    pub(super) project: Project,
+    pub(super) repository: Arc<dyn Repository>,
+    /// The parent's workspace, where the landing runs.
     pub(super) parent_workspace: String,
     pub(super) child_workspace: String,
     /// The child's newest commit, from its head.
     pub(super) child_head: String,
-    /// The parent's workspace, where the landing runs.
-    pub(super) parent_vcs: tau_vcs_host::Vcs,
+}
+
+impl LandingPlan {
+    /// The landing of the child's newest commit on the parent, `onto`
+    /// its head, landed when `confirm`.
+    fn land(&self, onto: Onto, confirm: bool) -> Land {
+        Land {
+            child: self.child_head.clone(),
+            workspace: self.parent_workspace.clone(),
+            onto,
+            confirm,
+        }
+    }
 }
 
 /// The latest link in `entries`, up to `seq` when given.
@@ -84,79 +96,6 @@ pub(super) fn last_link(
         .filter(|(at, _)| seq.is_none_or(|seq| *at <= seq))
         .filter_map(|(_, body)| Link::parse(body))
         .next_back()
-}
-
-/// See [`Host::branch_code`].
-pub(super) async fn branch_code(
-    store: Store,
-    slot: anyhow::Result<RepoSlot>,
-    main: RunId,
-    fork: RunId,
-) -> anyhow::Result<BranchCode> {
-    let project = slot?.project().await?;
-    let record = store
-        .run(&fork.0)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("No run {}", fork.0))?;
-    let RunKind::Fork { parent, fork_seq } = record.kind else {
-        anyhow::bail!("{} is not a fork", fork.0);
-    };
-    let base = last_link(
-        &store.plugin_entries(&parent, WORKSPACE_PLUGIN).await?,
-        Some(fork_seq),
-    )
-    .ok_or_else(|| anyhow::anyhow!("The fork point has no commit"))?;
-    let head = |run: &RunId| {
-        let store = store.clone();
-        let run = run.0.to_string();
-        let base = base.clone();
-        async move {
-            let entries = store.plugin_entries(&run, WORKSPACE_PLUGIN).await?;
-            anyhow::Ok(last_link(&entries, None).unwrap_or(base))
-        }
-    };
-    let main_head = head(&main).await?;
-    let fork_head = head(&fork).await?;
-    project
-        .run(move |project| {
-            // Each at the commit its change has now.
-            let [base, main_head, fork_head]: [Link; 3] = project
-                .current([base, main_head, fork_head])?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Three links went in"))?;
-            let (base, main_head, fork_head) =
-                (base.commit_id, main_head.commit_id, fork_head.commit_id);
-            let stats =
-                |from: &str, to: &str| -> anyhow::Result<Vec<FileStat>> {
-                    Ok(project.diff(from, to)?.iter().map(file_stat).collect())
-                };
-            Ok(BranchCode {
-                main: stats(&base, &main_head)?,
-                fork: stats(&base, &fork_head)?,
-                between: project
-                    .diff(&main_head, &fork_head)?
-                    .iter()
-                    .map(|file| FileChange {
-                        stat: file_stat(file),
-                        lines: tau_ui_kit::diff::parse(&file.text),
-                    })
-                    .collect(),
-            })
-        })
-        .await
-}
-
-pub(super) fn file_stat(file: &FileDiff) -> FileStat {
-    FileStat {
-        path: file.path.clone(),
-        kind: match file.kind {
-            ChangeKind::Added => FileKind::Added,
-            ChangeKind::Modified => FileKind::Modified,
-            ChangeKind::Removed => FileKind::Removed,
-        },
-        added: file.added,
-        removed: file.removed,
-    }
 }
 
 impl Host {
@@ -199,8 +138,8 @@ impl Host {
         reading: Reading,
     ) -> anyhow::Result<Landing> {
         let plan = self.landing(child, reading).await?;
-        let into = self.head_of(&plan.parent, &plan.project).await?;
-        Ok(plan.parent_vcs.land(&plan.child_head, into, false).await?)
+        let onto = self.onto_of(&plan.parent);
+        plan.repository.land(plan.land(onto, false)).await
     }
 
     /// Lands `child` on its parent (ADR 0009): restacks its changes onto
@@ -283,7 +222,7 @@ impl Host {
         let state = self.repo_state_of(child).await?;
         let _starting = state.starting.lock().await;
         let plan = self.landing(child, Reading::Land).await?;
-        let into = self.head_of(&plan.parent, &plan.project).await?;
+        let onto = self.onto_of(&plan.parent);
         let intent = Intent {
             from: child.0.to_string(),
             child_head: plan.child_head.clone(),
@@ -294,7 +233,7 @@ impl Host {
         };
         self.store_intent(&plan.parent, &intent).await?;
         self.cut(LandingStep::Intent)?;
-        let landed = plan.parent_vcs.land(&plan.child_head, into, true).await;
+        let landed = plan.repository.land(plan.land(onto, true)).await;
         let landing = match landed {
             Ok(landing) => landing,
             // It did not land: the next start does not try again.
@@ -304,12 +243,12 @@ impl Host {
                     ..intent
                 };
                 self.store_intent(&plan.parent, &cancelled).await?;
-                return Err(error.into());
+                return Err(error);
             }
         };
         self.cut(LandingStep::Restack)?;
         self.finish_landing(
-            &plan.project,
+            plan.repository.as_ref(),
             &plan.parent,
             &intent,
             &landing,
@@ -326,7 +265,7 @@ impl Host {
     /// keeps both, and its links do not name it: it did not end.
     async fn finish_landing(
         &self,
-        project: &Project,
+        repository: &dyn Repository,
         parent: &RunId,
         intent: &Intent,
         landing: &Landing,
@@ -402,15 +341,10 @@ impl Host {
         }
         // The child's changes live on the parent's stack now.
         let workspace = intent.child_workspace.clone();
-        self.stop_processes(&project.workspace_dir(&workspace));
-        project
-            .run(move |project| project.forget_workspace(&workspace))
-            .await?;
+        self.stop_processes(&repository.workspace_dir(&workspace));
+        repository.forget_workspaces(vec![workspace]).await?;
         self.cut(LandingStep::Workspace)?;
-        let head = Head::Run(child.clone());
-        project
-            .run(move |project| project.remove_head(&head))
-            .await?;
+        repository.forget_run(&child).await?;
         self.session(&child, |run| run.workspace.take());
         Ok(record)
     }
@@ -497,9 +431,9 @@ impl Host {
                 continue;
             }
             let finish = async {
-                let project = self.slot_of_run(&child).await?.project().await?;
-                let head = intent.child_head.clone();
-                match project.run(move |project| project.landed(&head)).await? {
+                let repository =
+                    self.slot_of_run(&child).await?.repository().await?;
+                match repository.landed(&intent.child_head).await? {
                     // A child that goes on and whose landing was recorded
                     // is done: nothing to finish, or to show again.
                     Some(landing)
@@ -513,7 +447,11 @@ impl Host {
                     }
                     Some(landing) => self
                         .finish_landing(
-                            &project, &parent, &intent, &landing, true,
+                            repository.as_ref(),
+                            &parent,
+                            &intent,
+                            &landing,
+                            true,
                         )
                         .await
                         .map(Some),
@@ -597,7 +535,7 @@ impl Host {
                 );
             }
         }
-        let project = self.slot_of_run(child).await?.project().await?;
+        let repository = self.slot_of_run(child).await?.repository().await?;
         // The record first: once it is stored the chat takes no more
         // messages, and should tau close before the rest is done, its
         // start finishes it (`Host::sweep`).
@@ -611,11 +549,10 @@ impl Host {
         // A main chat catches up with trunk first, as for a landing, and
         // keeps what its working copy stands on: its commits that an
         // update moved trunk past are its own, not the child's.
-        let main = self.is_main(&parent);
-        if main {
-            self.catch_up(&project, project.main_workspace()).await?;
+        if self.is_main(&parent) {
+            repository.catch_up(repository.main_workspace()).await?;
         }
-        let into = self.head_of(&parent, &project).await?;
+        let onto = self.onto_of(&parent);
         let workspace = match self.session(child, |run| run.workspace.take()) {
             Some(name) => Some(name),
             None => self
@@ -623,33 +560,14 @@ impl Host {
                 .await?
                 .map(|(_, link)| link.workspace),
         };
-        let child_head = Head::Run(child.clone());
         if let Some(name) = &workspace {
-            self.stop_processes(&project.workspace_dir(name));
+            self.stop_processes(&repository.workspace_dir(name));
         }
-        project
-            .run(move |project| {
-                if let Some(head) = project.head(&child_head)? {
-                    let stands_on = match project
-                        .workspace_head(project.main_workspace())?
-                    {
-                        Some(wc) if main => project.parent_of(&wc)?,
-                        _ => None,
-                    };
-                    let keep = match stands_on {
-                        Some(keep) => keep,
-                        None => match project.head(&into)? {
-                            Some(keep) => keep,
-                            None => project.trunk()?,
-                        },
-                    };
-                    project.abandon_between(&keep, &head)?;
-                }
-                if let Some(name) = workspace {
-                    project.forget_workspace(&name)?;
-                }
-                project.remove_head(&child_head)?;
-                anyhow::Ok(())
+        repository
+            .discard(Discard {
+                run: child.clone(),
+                onto,
+                workspace,
             })
             .await
     }
@@ -718,25 +636,19 @@ impl Host {
                 anyhow::bail!("{} is still running; land once it stops", run.0);
             }
         }
-        let project = self.slot_of_run(child).await?.project().await?;
+        let repository = self.slot_of_run(child).await?.repository().await?;
         let child_workspace = self.workspace_of(child).await?;
         let parent_workspace = match self.workspace_of(&parent).await {
             // A main chat works in its repository's main workspace.
             _ if self.is_main(&parent) => {
-                let name = project.main_workspace().to_owned();
+                let name = repository.main_workspace().to_owned();
                 self.session(&parent, |run| run.workspace = Some(name.clone()));
                 name
             }
             Ok(name) => {
                 // Opening a workspace that is gone would make a new one
                 // on trunk; landing there would lose the parent's work.
-                let known = name.clone();
-                let gone = project
-                    .run(move |project| {
-                        anyhow::Ok(!project.workspaces()?.contains(&known))
-                    })
-                    .await?;
-                if gone {
+                if !repository.workspaces().await?.contains(&name) {
                     anyhow::bail!("The parent's workspace is gone");
                 }
                 name
@@ -747,52 +659,34 @@ impl Host {
         // may restack the child, so its head is read after it.
         let writes = reading != Reading::Forecast;
         if self.is_main(&parent) && !parent_busy && writes {
-            self.catch_up(&project, &parent_workspace).await?;
+            repository.catch_up(&parent_workspace).await?;
         }
         // A completed run may have failed its final commit. Do not land
         // only its earlier commits and then delete the remaining edits.
-        // Open the existing workspace, never recreate a missing one.
-        let child_vcs = tau_vcs_host::Vcs::open(
-            project.workspace_dir(&child_workspace),
-            self.identity(),
-        )
-        .await?;
-        let copy = child_vcs.working_copy().await?;
-        if !copy.is_committed() {
-            anyhow::bail!(
+        // Open the existing workspace, never recreate a missing one. A
+        // child that never committed and ended no turn with a snapshot
+        // lands with nothing in it, as `wait` lands it.
+        let child_head = match repository
+            .newest(child, &child_workspace)
+            .await?
+        {
+            Newest::Commit(head) => head,
+            Newest::Uncommitted => anyhow::bail!(
                 "The child has uncommitted or oversized untracked files; its workspace \
-                 is retained. Commit or recover its work before landing."
-            );
-        }
-        // A child that never committed and ended no turn with a snapshot
-        // has no head: its working copy's parent is its newest commit,
-        // and it lands with nothing in it, as `wait` lands it.
-        let head = Head::Run(child.clone());
-        let child_head = project
-            .run(move |project| project.head(&head))
-            .await?
-            .unwrap_or(copy.head);
-        let parent_vcs = if parent_busy || !writes {
-            tau_vcs_host::Vcs::open(
-                project.workspace_dir(&parent_workspace),
-                self.identity(),
-            )
-            .await?
-        } else {
-            let name = parent_workspace.clone();
-            project
-                .run(move |project| {
-                    project.add_workspace(&name, &project.trunk()?)
-                })
-                .await?
+                     is retained. Commit or recover its work before landing."
+            ),
         };
+        // A reading that writes makes the parent's workspace when it is
+        // not there: a main chat's, on trunk.
+        if !parent_busy && writes {
+            repository.ready_workspace(&parent_workspace).await?;
+        }
         Ok(LandingPlan {
             parent,
-            project,
+            repository,
             parent_workspace,
             child_workspace,
             child_head,
-            parent_vcs,
         })
     }
 
@@ -800,7 +694,7 @@ impl Host {
     /// other branches that are not running: the run it was forked from,
     /// and its other forks. Their commits stay in the project.
     pub async fn keep_branch(&self, run: &RunId) -> anyhow::Result<()> {
-        let project = self.slot_of_run(run).await?.project().await?;
+        let repository = self.slot_of_run(run).await?.repository().await?;
         let store = &self.store;
         let kept = run.0.to_string();
         let running: Vec<String> = self
@@ -836,30 +730,8 @@ impl Host {
                 .filter_map(|(_, body)| Link::parse(body))
                 .map(|link| link.workspace)
                 .collect();
-            project
-                .run(move |project| {
-                    names
-                        .iter()
-                        .try_for_each(|name| project.forget_workspace(name))
-                })
-                .await?;
+            repository.forget_workspaces(names).await?;
         }
         Ok(())
-    }
-
-    /// The code of `main` and its fork `fork`: what each changed after
-    /// the fork point, and how the fork's code differs from the run's.
-    pub async fn branch_code(
-        &self,
-        main: &RunId,
-        fork: &RunId,
-    ) -> anyhow::Result<BranchCode> {
-        branch_code(
-            self.store.clone(),
-            self.slot_of_run(main).await,
-            main.clone(),
-            fork.clone(),
-        )
-        .await
     }
 }

@@ -51,10 +51,10 @@ use std::{
 use hegel::{TestCase, generators as gs};
 use tau_agent::tool::RunId;
 use tau_testing::{block_on, git::git};
+use tau_ui_plugin::vcs::Link;
 use tau_vcs_host::{
     Head,
     Identity,
-    Link,
     MAIN_WORKSPACE,
     ProjectRepo,
     UpdateFrom,

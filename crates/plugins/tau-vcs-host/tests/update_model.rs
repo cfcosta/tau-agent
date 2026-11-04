@@ -28,7 +28,8 @@ use std::{
 use hegel::{Generator as _, TestCase, generators as gs};
 use tau_agent::tool::RunId;
 use tau_testing::{block_on, git::git};
-use tau_vcs_host::{Head, Identity, Link, ProjectRepo, UpdateFrom, Vcs};
+use tau_ui_plugin::vcs::Link;
+use tau_vcs_host::{Head, Identity, ProjectRepo, UpdateFrom, Vcs};
 
 const BRANCHES: [&str; 5] = ["main", "master", "trunk", "feature", "feat/x"];
 const TAGS: [&str; 2] = ["v1", "v2"];

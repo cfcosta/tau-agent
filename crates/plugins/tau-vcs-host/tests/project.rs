@@ -13,7 +13,8 @@ use std::path::Path;
 
 use hegel::{Generator as _, TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
-use tau_vcs_host::{Identity, Link, ProjectRepo, UpdateFrom};
+use tau_ui_plugin::vcs::Link;
+use tau_vcs_host::{Identity, ProjectRepo, UpdateFrom};
 
 /// A Git repository with one commit on `main`, and that commit's id.
 fn source(dir: &Path) -> String {

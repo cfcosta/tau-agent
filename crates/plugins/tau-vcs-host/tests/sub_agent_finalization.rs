@@ -20,14 +20,13 @@ use tau_agent::{
     tool::RunId,
 };
 use tau_testing::scripted::ScriptedModel;
+use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
 use tau_vcs_host::{
     Head,
     Identity,
-    Link,
     RunWorkspace,
     Spawn,
     Vcs,
-    run_workspace::PLUGIN,
     sub_agents::Ending,
 };
 
@@ -229,8 +228,10 @@ fn finalization_commits_exact_bytes_or_keeps_the_child_workspace(tc: TestCase) {
             let children = store.subagents(&outcome.run.0).await.unwrap();
             assert_eq!(children.len(), 1);
             let child_run = &children[0];
-            let records =
-                store.plugin_entries(&child_run.id, PLUGIN).await.unwrap();
+            let records = store
+                .plugin_entries(&child_run.id, WORKSPACE_PLUGIN)
+                .await
+                .unwrap();
             let link = records
                 .iter()
                 .filter_map(|(_, body)| Link::parse(body))

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use tau_vcs_host::sweep::{Keep, Owner, Standing};
+use tau_ui_plugin::vcs::{Held, Keep, Owner, Standing};
 
 use super::*;
 
@@ -39,7 +39,7 @@ async fn runs(store: &Store) -> anyhow::Result<Runs> {
     })
 }
 
-/// Where a run stands for a sweep (see `tau_vcs_host::sweep`):
+/// Where a run stands for a sweep (`Repository::sweep`):
 ///
 /// - a run going on in this process, or under one that is, keeps what
 ///   it has;
@@ -121,7 +121,7 @@ impl Host {
     }
 
     /// Sweeps every listed repository's project of the workspaces and
-    /// heads no open run owns (`tau_vcs_host::sweep`): those of runs
+    /// heads no open run owns (`Repository::sweep`): those of runs
     /// gone, landed, dropped, or of sub-agents that failed or were cut
     /// off, whose commits go too. A main chat's checkout, the default
     /// workspace, and the workspaces of open chats stay.
@@ -141,17 +141,10 @@ impl Host {
         // starts after is in neither.
         let mut held = Vec::new();
         for slot in slots {
-            match slot.project().await {
-                Ok(project) => {
-                    let (workspaces, heads) = project
-                        .run(|project| {
-                            anyhow::Ok((
-                                project.workspaces()?,
-                                project.run_heads()?,
-                            ))
-                        })
-                        .await?;
-                    held.push((slot.name.clone(), project, workspaces, heads));
+            match slot.repository().await {
+                Ok(repository) => {
+                    let holds = repository.held().await?;
+                    held.push((slot.name.clone(), repository, holds));
                 }
                 Err(error) => eprintln!("tau-ui: cannot sweep: {error:#}"),
             }
@@ -174,8 +167,8 @@ impl Host {
                     .collect(),
             )
         };
-        for (repo, project, workspaces, heads) in held {
-            let main = project.main_workspace();
+        for (repo, repository, holds) in held {
+            let main = repository.main_workspace();
             let mut owners = self.owners(&repo, main, &runs, &live);
             owners.push(Owner {
                 run: String::new(),
@@ -186,7 +179,8 @@ impl Host {
             // A run of this session may be making a sub-agent's
             // workspace, named after its own, before the store has the
             // sub-agent: those are not swept.
-            let workspaces: Vec<String> = workspaces
+            let workspaces: Vec<String> = holds
+                .workspaces
                 .into_iter()
                 .filter(|name| {
                     !live_workspaces
@@ -194,10 +188,11 @@ impl Host {
                         .any(|live| name.starts_with(&format!("{live}-sub-")))
                 })
                 .collect();
-            let sweep = tau_vcs_host::sweep::plan(&owners, &workspaces, &heads);
-            if !sweep.is_empty() {
-                project.run(move |project| project.sweep(&sweep)).await?;
-            }
+            let holds = Held {
+                workspaces,
+                heads: holds.heads,
+            };
+            repository.sweep(owners, holds).await?;
         }
         Ok(())
     }
@@ -247,7 +242,7 @@ impl Host {
                 Some(parent)
                     if !self.is_main(&RunId(parent.as_str().into())) =>
                 {
-                    Keep::Head(Head::Run(RunId(parent.as_str().into())))
+                    Keep::Run(RunId(parent.as_str().into()))
                 }
                 _ => Keep::Workspace(main.to_owned()),
             };

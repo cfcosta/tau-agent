@@ -18,9 +18,9 @@ use std::{path::Path, sync::Arc};
 use tau_agent::{agent::Agent, tool::RunId};
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_tools_host::{path::Root, plugin::CodingTools};
+use tau_ui_plugin::vcs::Link;
 use tau_vcs_host::{
     Identity,
-    Link,
     ProjectRepo,
     RunWorkspace,
     SubAgents,

@@ -46,15 +46,14 @@ use tau_agent::{
 use tau_ai::message::{InputBlock, Message, UserContent};
 use tau_store::Entry;
 use tau_testing::scripted::ScriptedModel;
+use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
 use tau_vcs_host::{
     Head,
     Identity,
-    Link,
     MAIN_WORKSPACE,
     RunWorkspace,
     Spawn,
     SubAgents,
-    run_workspace::PLUGIN,
     sub_agents::{ChildModel, Ending, MAX_RUNNING},
 };
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -667,7 +666,7 @@ fn a_batch_ends_as_the_model_says(tc: TestCase) {
         let got: Vec<&str> = stack.iter().map(|c| c.description.trim()).collect();
         assert_eq!(got, want);
         let links: Vec<Link> = store
-            .plugin_entries(&outcome.run.0, PLUGIN)
+            .plugin_entries(&outcome.run.0, WORKSPACE_PLUGIN)
             .await
             .unwrap()
             .iter()

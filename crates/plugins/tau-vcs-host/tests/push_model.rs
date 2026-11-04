@@ -27,15 +27,8 @@ use std::{
 
 use hegel::{Generator as _, TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
-use tau_vcs_host::{
-    Identity,
-    Link,
-    ProjectRepo,
-    Remote,
-    UpdateFrom,
-    Vcs,
-    VcsError,
-};
+use tau_ui_plugin::vcs::Link;
+use tau_vcs_host::{Identity, ProjectRepo, Remote, UpdateFrom, Vcs, VcsError};
 
 /// A bare repository standing for GitHub, a checkout that pushes to it
 /// as someone else would, and a project cloned from it whose main chat

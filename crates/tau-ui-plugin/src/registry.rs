@@ -163,6 +163,8 @@ pub trait ErasedPlugin: Send + Sync {
         repos: &'a [crate::points::SetupRepo],
         cx: &'a HostCx,
     ) -> HostFuture<'a, ()>;
+    /// Fills the slots it fills, from its host state.
+    fn fill(&self, host: &HostState, fills: &mut crate::slots::Fills);
 
     /// Folds `body`, a record the plugin published (or the details of a
     /// rewrite, [`crate::REWRITE`]), into its state in a run.
@@ -457,6 +459,10 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         cx: &'a HostCx,
     ) -> HostFuture<'a, ()> {
         Box::pin(self.half.setup_finished(self.host_of(host), repos, cx))
+    }
+
+    fn fill(&self, host: &HostState, fills: &mut crate::slots::Fills) {
+        self.half.fill(self.host_of(host), fills);
     }
 
     fn apply(

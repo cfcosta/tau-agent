@@ -22,13 +22,8 @@ use jj_lib::{
 };
 use tau_agent::tool::RunId;
 use tau_testing::block_on_io as block_on;
-use tau_vcs_host::{
-    Head,
-    MAIN_WORKSPACE,
-    ProjectRepo,
-    Vcs,
-    sweep::{Keep, Owner, Standing},
-};
+use tau_ui_plugin::vcs::{Keep, Owner, Standing};
+use tau_vcs_host::{Head, MAIN_WORKSPACE, ProjectRepo, Vcs};
 
 /// A run's workspace `name` on trunk, with `file` committed under the
 /// run's head. Returns the commit's change id.

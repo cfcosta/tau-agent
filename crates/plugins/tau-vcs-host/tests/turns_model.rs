@@ -41,14 +41,8 @@ use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::{agent::Checkpoint, limits::Limits};
 use tau_testing::scripted::ScriptedModel;
-use tau_vcs_host::{
-    Head,
-    Identity,
-    Link,
-    ProjectRepo,
-    RunWorkspace,
-    run_workspace::PLUGIN,
-};
+use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
+use tau_vcs_host::{Head, Identity, ProjectRepo, RunWorkspace};
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
 const VALUES: [&str; 3] = ["", "one\n", "two\n"];
@@ -525,8 +519,10 @@ fn check_turns(
         );
 
         // One link a turn, each a snapshot of `@` as the model has it.
-        let entries =
-            store.plugin_entries(&outcome.run.0, PLUGIN).await.unwrap();
+        let entries = store
+            .plugin_entries(&outcome.run.0, WORKSPACE_PLUGIN)
+            .await
+            .unwrap();
         let linked = links(&entries);
         assert_eq!(
             linked.len(),
@@ -659,12 +655,16 @@ fn check_turns(
             .outcome()
             .await
             .unwrap();
-        let own: Vec<Link> =
-            links(&store.plugin_entries(&forked.run.0, PLUGIN).await.unwrap())
-                .into_iter()
-                .map(|(_, link)| link)
-                .filter(|link| link.workspace == "fork")
-                .collect();
+        let own: Vec<Link> = links(
+            &store
+                .plugin_entries(&forked.run.0, WORKSPACE_PLUGIN)
+                .await
+                .unwrap(),
+        )
+        .into_iter()
+        .map(|(_, link)| link)
+        .filter(|link| link.workspace == "fork")
+        .collect();
         assert_eq!(
             at_commit(&project, &own[0].commit_id),
             start,

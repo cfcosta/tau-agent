@@ -22,12 +22,13 @@ use crate::hosted;
 pub(super) use crate::hosted::Hosted;
 
 impl Host {
-    /// Makes each plugin's host state, then asks each to start again the
-    /// jobs a restart cut off (`HostHalf::resume`): once, as the host
-    /// starts.
+    /// Makes each plugin's host state, takes the slots' fillers from
+    /// them, then asks each to start again the jobs a restart cut off
+    /// (`HostHalf::resume`): once, as the host starts.
     pub(super) fn host_plugins(&mut self) {
         let cx = self.host_cx();
         self.hosted = self.setting_up(hosted::host_all(&cx));
+        self.vcs = hosted::fills(&self.hosted).get(&tau_ui_plugin::vcs::VCS);
         self.setting_up(hosted::resume(&self.hosted, &cx));
     }
 
@@ -564,9 +565,9 @@ fn repo_ctx_of(config: &HostConfig, slot: &RepoSlot) -> RepoCtx {
         dir: config.project_dir_of(&slot.path),
         // The project's root once imported; until then, where it
         // will be.
-        workspaces: match slot.project.peek() {
-            ProjectState::Ready(project) => project.root().to_owned(),
-            _ => config.project_dir_of(&slot.path),
+        workspaces: match slot.project.ready() {
+            Some(project) => project.root().to_owned(),
+            None => config.project_dir_of(&slot.path),
         },
     }
 }
