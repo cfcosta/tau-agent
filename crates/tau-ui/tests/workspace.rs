@@ -1764,10 +1764,16 @@ fn notes_cards_and_picks_follow_the_clicks(cx: &mut TestAppContext) {
     const CHANGES: [&str; 2] = ["qpvuntsm", "rlvkpnrz"];
     let runs = [demo::run_id(), demo::fork_id()];
     let (workspace, mut cx, _) = open_demo(cx);
-    let cards = workspace.read_with(&cx, |ws, _| {
-        ws.plugin_ui::<tau_vcs::ui::Ui>(tau_vcs::ui::NAME)
-            .expect("tau-vcs draws its cards")
-    });
+    // A log card's pick is tau-vcs's UI state (ADR 0045).
+    let picked = |ws: &tau_ui_remote::workspace::Workspace,
+                  run: &tau_agent::tool::RunId,
+                  key: &str| {
+        ws.synced()
+            .ui_state
+            .get(tau_vcs::ui::NAME, &tau_vcs::ui::pick_key(run, key))
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+    };
     // Everything the clicks can reach, as the workspace has it now.
     let observe = |cx: &mut VisualTestContext| {
         let (notes, open) = workspace.read_with(cx, |ws, _| {
@@ -1787,12 +1793,12 @@ fn notes_cards_and_picks_follow_the_clicks(cx: &mut TestAppContext) {
             }
             (notes, open)
         });
-        let picks = cards.read_with(cx, |cards, _| {
+        let picks = workspace.read_with(cx, |ws, _| {
             let mut picks = HashMap::new();
             for (r, run) in runs.iter().enumerate() {
                 for (k, key) in KEYS.iter().enumerate() {
-                    if let Some(change) = cards.picked(run, key) {
-                        picks.insert((r, k), change.to_owned());
+                    if let Some(change) = picked(ws, run, key) {
+                        picks.insert((r, k), change);
                     }
                 }
             }
@@ -1838,9 +1844,18 @@ fn notes_cards_and_picks_follow_the_clicks(cx: &mut TestAppContext) {
                     }
                 }
                 Click::Pick(r, k, c) => {
-                    cards.update(&mut cx, |cards, _| {
-                        cards.pick(&runs[r], KEYS[k], CHANGES[c])
+                    // As a click on the change's button does.
+                    workspace.update(&mut cx, |ws, cx| {
+                        let now = picked(ws, &runs[r], KEYS[k]);
+                        let next =
+                            tau_vcs::ui::pick(now.as_deref(), CHANGES[c]);
+                        ws.plugin_handle(tau_vcs::ui::NAME).set_ui(
+                            tau_vcs::ui::pick_key(&runs[r], KEYS[k]),
+                            next.map(serde_json::Value::from),
+                            cx,
+                        );
                     });
+                    cx.run_until_parked();
                     if picks.get(&(r, k)).map(String::as_str)
                         == Some(CHANGES[c])
                     {

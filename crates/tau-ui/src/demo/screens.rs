@@ -452,10 +452,12 @@ pub static SCREENS: &[(&str, Screen)] = &[
         let run = run_id();
         ws.navigate(Route::Run(run.clone()), cx);
         ws.toggle_card(&run, LOG_CALL, cx);
-        if let Some(cards) = ws.plugin_ui::<tau_vcs::ui::Ui>(tau_vcs::ui::NAME)
-        {
-            cards.update(cx, |cards, _| cards.pick(&run, LOG_CALL, LOG_PICKED));
-        }
+        // The change picked is tau-vcs's UI state (ADR 0045).
+        ws.plugin_handle(tau_vcs::ui::NAME).set_ui(
+            tau_vcs::ui::pick_key(&run, LOG_CALL),
+            Some(json!(LOG_PICKED)),
+            cx,
+        );
     }),
     ("status", |ws, _, cx| {
         vcs_card(ws, STATUS_CALL, SHOW_FILE, cx)
@@ -1596,11 +1598,12 @@ fn vcs_card(
     let run = run_id();
     workspace.navigate(Route::Run(run.clone()), cx);
     workspace.toggle_card(&run, call, cx);
-    if let Some(cards) =
-        workspace.plugin_ui::<tau_vcs::ui::Ui>(tau_vcs::ui::NAME)
-    {
-        cards.update(cx, |cards, _| cards.toggle_file(&run, call, file));
-    }
+    // The file open is tau-vcs's UI state (ADR 0045).
+    workspace.plugin_handle(tau_vcs::ui::NAME).set_ui(
+        tau_ui_plugin::tree::open_key(&tau_vcs::ui::file_id(&run, call, file)),
+        Some(json!(true)),
+        cx,
+    );
 }
 
 /// tau-agent's rules page in the state `name` names, which
