@@ -25,7 +25,12 @@ use tau_ai::message::{
 use tau_testing::{block_on, scripted::ScriptedModel};
 
 mod common;
-use common::{assert_grammar, stored};
+use common::{
+    assert_grammar,
+    assert_results_follow_calls,
+    counter_clock,
+    stored,
+};
 use tau_agent::error::{PluginError, ToolError};
 use tokio::time::Instant;
 
@@ -137,43 +142,6 @@ impl Plugin for Recorder {
 impl Recorder {
     fn events(&self) -> Vec<RunEvent> {
         self.0.lock().unwrap().clone()
-    }
-}
-
-/// A counter clock, so timestamps are deterministic.
-fn counter_clock() -> tau_agent::runner::Clock {
-    let next = Arc::new(Mutex::new(0u64));
-    Arc::new(move || {
-        let mut n = next.lock().unwrap();
-        *n += 1;
-        *n
-    })
-}
-
-/// Every tool call in the transcript has exactly one result, right after
-/// its assistant message and in source order.
-fn assert_results_follow_calls(transcript: &[Message]) {
-    for (i, message) in transcript.iter().enumerate() {
-        let Message::Assistant(assistant) = message else {
-            continue;
-        };
-        let calls: Vec<&str> = assistant
-            .content
-            .iter()
-            .filter_map(|b| match b {
-                AssistantBlock::ToolCall(c) => Some(c.id.as_str()),
-                _ => None,
-            })
-            .collect();
-        let results: Vec<&str> = transcript[i + 1..]
-            .iter()
-            .take_while(|m| matches!(m, Message::ToolResult(_)))
-            .map(|m| match m {
-                Message::ToolResult(r) => r.tool_call_id.as_str(),
-                _ => unreachable!(),
-            })
-            .collect();
-        assert_eq!(results, calls, "results after message {i}");
     }
 }
 

@@ -2,13 +2,16 @@
 
 #![allow(dead_code)]
 
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use tau_agent::{
     event::{LimitKind, RunEvent},
     limits::Limits,
 };
-use tau_ai::message::{Message, Usage};
+use tau_ai::message::{AssistantBlock, Message, StopReason, Usage};
 use tau_store::{Entry, Store};
 
 /// The run's stored transcript, as messages.
@@ -91,4 +94,59 @@ pub fn reference(
     ]
     .into_iter()
     .find_map(|(hit, kind)| (hit == Some(true)).then_some(kind))
+}
+
+/// A counter clock, so timestamps are deterministic.
+pub fn counter_clock() -> tau_agent::runner::Clock {
+    let next = Arc::new(Mutex::new(0u64));
+    Arc::new(move || {
+        let mut n = next.lock().unwrap();
+        *n += 1;
+        *n
+    })
+}
+
+/// Every tool call in the transcript has exactly one result, right after
+/// its assistant message and in source order. A failed or aborted
+/// message's calls never ran, and the request leaves that message out
+/// (`tau_ai::responses::input`, rule 3): nothing answers them.
+pub fn assert_results_follow_calls(transcript: &[Message]) {
+    for (i, message) in transcript.iter().enumerate() {
+        let Message::Assistant(assistant) = message else {
+            if let Message::ToolResult(result) = message {
+                let after_call = transcript[..i]
+                    .iter()
+                    .rev()
+                    .find(|m| !matches!(m, Message::ToolResult(_)))
+                    .is_some_and(|m| matches!(m, Message::Assistant(_)));
+                assert!(
+                    after_call,
+                    "result {} at {i} follows no assistant message",
+                    result.tool_call_id
+                );
+            }
+            continue;
+        };
+        let failed = matches!(
+            assistant.stop_reason,
+            StopReason::Error | StopReason::Aborted
+        );
+        let calls: Vec<&str> = assistant
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                AssistantBlock::ToolCall(c) if !failed => Some(c.id.as_str()),
+                _ => None,
+            })
+            .collect();
+        let results: Vec<&str> = transcript[i + 1..]
+            .iter()
+            .take_while(|m| matches!(m, Message::ToolResult(_)))
+            .map(|m| match m {
+                Message::ToolResult(r) => r.tool_call_id.as_str(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(results, calls, "results after message {i}");
+    }
 }
