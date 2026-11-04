@@ -1,21 +1,21 @@
 //! tau-memory's settings (ADR 0029): whether it saves what each run
 //! taught as the run ends, the model it writes notes with then and
 //! before compaction drops a conversation, and how hard that model
-//! reasons. Search runs locally and needs none.
+//! reasons. Search runs locally and needs none. Its pane is a view
+//! tree (ADR 0045).
 
-use gpui::{AnyElement, SharedString, div, prelude::*, rems};
+use gpui::AnyElement;
 use serde::{Deserialize, Serialize};
 use tau_ai::{
     model::{PLAN_FAMILIES, family_version, plan_models},
     responses::request::ReasoningEffort,
 };
-use tau_ui_kit::{
-    components::{self as ui, Material as _},
-    theme::{Design as _, Type, radius, sp},
+use tau_ui_plugin::{
+    ViewCx,
+    tree::{Kind, Node},
 };
-use tau_ui_plugin::ViewCx;
 
-use super::MemoryUi;
+use super::{DO, Do, MemoryUi, button, on_do};
 
 /// The family memory writes with unless the user picks another: the
 /// newest of it on the plan.
@@ -97,160 +97,98 @@ impl Settings {
 /// Its settings pane: the family, the effort, and the switch to write
 /// with the chat's model instead.
 pub fn pane(view: &mut ViewCx<'_, MemoryUi>) -> AnyElement {
-    let t = view.theme().clone();
-    let settings = view.settings.clone();
+    let tree = pane_tree(view.settings);
+    let handle = view.handle.clone();
     let scope = view.scope().map(str::to_owned);
-    let row = |last: bool| {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(4.))
-            .px(sp(4.))
-            .py(sp(3.5))
-            .when(!last, |row| row.border_b_1().border_color(t.border))
-    };
-    let what = |name: &str, caption: &str| {
-        div()
-            .flex_1()
-            .min_w(rems(0.))
-            .flex()
-            .flex_col()
-            .gap(sp(0.75))
-            .child(name.to_owned())
-            .child(ui::text(caption.to_owned(), Type::CAPTION, t.muted))
-    };
-    // One choice of a segmented control: `on` when it is the setting,
-    // saving `next` when clicked.
-    let segment = |id: String, label: &str, on: bool, next: Settings| {
-        let handle = view.handle.clone();
-        let scope = scope.clone();
-        div()
-            .id(SharedString::from(id))
-            .h(rems(1.75))
-            .px(sp(2.5))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(radius::CONTROL)
-            .typeset(Type::CAPTION)
-            .cursor_pointer()
-            .text_color(if on { t.text } else { t.muted })
-            .when(on, |segment| segment.key(&t))
-            .child(label.to_owned())
-            .on_click(move |_, _, cx| {
-                handle.save_settings_in(scope.as_deref(), &next, cx)
-            })
-    };
-    let control = |segments: Vec<gpui::Stateful<gpui::Div>>| {
-        div()
-            .flex()
-            .gap(sp(0.5))
-            .p(sp(0.5))
-            .rounded(radius::BOX)
-            .well(&t)
-            .children(segments)
-    };
-    let families = PLAN_FAMILIES
-        .iter()
-        .map(|family| {
-            segment(
-                format!("memory-family-{family}"),
-                family,
-                settings.family == *family,
-                Settings {
-                    family: (*family).to_owned(),
-                    ..settings.clone()
-                },
-            )
-        })
-        .collect();
-    let efforts = EFFORTS
-        .iter()
-        .map(|effort| {
-            segment(
-                format!("memory-effort-{}", effort.unwrap_or("auto")),
-                effort.unwrap_or("auto"),
-                settings.reasoning.as_deref() == *effort,
-                Settings {
-                    reasoning: effort.map(str::to_owned),
-                    ..settings.clone()
-                },
-            )
-        })
-        .collect();
-    let after_each_run = {
-        let handle = view.handle.clone();
-        let scope = scope.clone();
-        let next = Settings {
-            after_each_run: !settings.after_each_run,
-            ..settings.clone()
+    view.tree("memory-settings", &tree, on_do(handle, scope))
+}
+
+/// The pane's tree for `settings`: each control saves the settings it
+/// would make.
+pub fn pane_tree(settings: &Settings) -> Node {
+    let save = |next: Settings| Do::Save { settings: next };
+    let switch =
+        |label: &str, detail: &str, on: bool, next: Settings| Node::Switch {
+            label: label.into(),
+            detail: Some(detail.into()),
+            on,
+            action: DO.into(),
+            args: save(next).args(),
         };
-        div()
-            .id("memory-after-each-run")
-            .cursor_pointer()
-            .child(ui::switch(settings.after_each_run, &t))
-            .on_click(move |_, _, cx| {
-                handle.save_settings_in(scope.as_deref(), &next, cx)
-            })
-    };
-    let follow = {
-        let handle = view.handle.clone();
-        let scope = scope.clone();
-        let next = Settings {
-            follow_chat: !settings.follow_chat,
-            ..settings.clone()
-        };
-        div()
-            .id("memory-follow-chat")
-            .cursor_pointer()
-            .child(ui::switch(settings.follow_chat, &t))
-            .on_click(move |_, _, cx| {
-                handle.save_settings_in(scope.as_deref(), &next, cx)
-            })
-    };
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .child(
-            ui::card(&t)
-                .child(
-                    row(false)
-                        .child(what(
-                            "Save after each run",
-                            "When a run ends, one request reads it and saves what a later \
-                             run should know, often nothing. Off, memory keeps what the \
-                             agent writes and what compaction is about to drop.",
-                        ))
-                        .child(after_each_run),
-                )
-                .child(
-                    row(false)
-                        .child(what(
-                            "Model",
-                            "Writes notes after each run and before compaction drops the \
-                             conversation. Search runs locally and needs none.",
-                        ))
-                        .child(control(families)),
-                )
-                .child(
-                    row(false)
-                        .child(what(
-                            "Reasoning",
-                            "How hard it thinks about what is worth keeping. Auto leaves \
-                             it to the model.",
-                        ))
-                        .child(control(efforts)),
-                )
-                .child(
-                    row(true)
-                        .child(what(
-                            "Use the chat's model instead",
-                            "Notes come from whatever model and effort the run is on.",
-                        ))
-                        .child(follow),
-                ),
+    // One choice of a row of them: primary when it is the setting.
+    let choice = |label: &str, on: bool, next: Settings| {
+        button(
+            label,
+            if on { Kind::Primary } else { Kind::Secondary },
+            &save(next),
         )
-        .child(ui::text(settings.runs_as(), Type::CAPTION.mono(), t.dim))
-        .into_any_element()
+    };
+    let families = PLAN_FAMILIES.iter().map(|family| {
+        choice(
+            family,
+            settings.family == *family,
+            Settings {
+                family: (*family).to_owned(),
+                ..settings.clone()
+            },
+        )
+    });
+    let efforts = EFFORTS.iter().map(|effort| {
+        choice(
+            effort.unwrap_or("auto"),
+            settings.reasoning.as_deref() == *effort,
+            Settings {
+                reasoning: effort.map(str::to_owned),
+                ..settings.clone()
+            },
+        )
+    });
+    let what = |name: &str, caption: &str| {
+        Node::stack([Node::Heading { text: name.into() }, Node::text(caption)])
+    };
+    Node::stack([
+        Node::Card {
+            children: vec![
+                switch(
+                    "Save after each run",
+                    "When a run ends, one request reads it and saves what a \
+                     later run should know, often nothing. Off, memory keeps \
+                     what the agent writes and what compaction is about to \
+                     drop.",
+                    settings.after_each_run,
+                    Settings {
+                        after_each_run: !settings.after_each_run,
+                        ..settings.clone()
+                    },
+                ),
+                Node::Rule,
+                what(
+                    "Model",
+                    "Writes notes after each run and before compaction drops \
+                     the conversation. Search runs locally and needs none.",
+                ),
+                Node::row(families),
+                Node::Rule,
+                what(
+                    "Reasoning",
+                    "How hard it thinks about what is worth keeping. Auto \
+                     leaves it to the model.",
+                ),
+                Node::row(efforts),
+                Node::Rule,
+                switch(
+                    "Use the chat's model instead",
+                    "Notes come from whatever model and effort the run is on.",
+                    settings.follow_chat,
+                    Settings {
+                        follow_chat: !settings.follow_chat,
+                        ..settings.clone()
+                    },
+                ),
+            ],
+        },
+        Node::Mono {
+            text: settings.runs_as(),
+        },
+    ])
 }

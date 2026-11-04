@@ -4,26 +4,30 @@
 //! the repositories just picked, and what goes to the person's notes;
 //! whether to bring folders tau does not have yet; and the button that
 //! starts the import and ends the step. The import goes on after setup.
+//! A view tree (ADR 0045); what the person chose is UI state.
 
-use gpui::{AnyElement, SharedString, div, prelude::*, rems};
-use tau_ui_kit::{
-    components::{self as ui, ButtonKind},
-    theme::{Design as _, Theme, Type, radius, sp, weight},
-};
+use serde::{Deserialize, Serialize};
 use tau_ui_plugin::{
     ViewCx,
     points::{AtSetup, SetupRepo, SetupView},
+    tree::{Kind, Node},
 };
 
-use super::MemoryUi;
-use crate::import::{Act, Material, Parts, Place, Request, Tool, ToolFound};
+use super::{DO, Do, MemoryUi, button, on_do};
+use crate::import::{Material, Parts, Place, Request, Tool, ToolFound};
 
 /// The step's name among memory's.
 pub const STEP: &str = "memories";
 
+/// The UI state key of what the person chose so far.
+pub const CHOICE: &str = "setup.choice";
+
 /// What the person chose so far, kept per window: every part, and not
 /// the folders tau does not have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(default)]
 pub struct Choice {
     pub parts: Parts,
     pub others: bool,
@@ -51,112 +55,23 @@ pub fn step(
     at: &AtSetup,
     view: &mut ViewCx<'_, MemoryUi>,
 ) -> Option<SetupView> {
-    let imports = view.data.imports.clone();
+    let imports = &view.data.imports;
     if !imports.any_found() {
         return None;
     }
-    let t = view.theme().clone();
-    let choice = view.read_ui().choice;
+    let choice = view
+        .ui_value(CHOICE)
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default();
     let names: Vec<&str> =
         imports.found.iter().map(|f| f.tool.label()).collect();
     let on = match names.as_slice() {
         [one] => format!("{one} is"),
         _ => format!("{} are", names.join(" and ")),
     };
-    let cards = div().w_full().flex().flex_wrap().gap(sp(5.)).children(
-        imports
-            .found
-            .iter()
-            .map(|found| card(found, &at.repos, choice, view, &t)),
-    );
-    let others = {
-        // Weak: setup's motion keeps what it drew a while.
-        let ui = view.ui.downgrade();
-        let handle = view.handle.clone();
-        div()
-            .id("memory-setup-others")
-            .debug_selector(|| "memory-setup-others".to_owned())
-            .flex()
-            .items_center()
-            .gap(sp(2.5))
-            .cursor_pointer()
-            .typeset(Type::SMALL)
-            .text_color(t.muted)
-            .child(ui::checkbox(choice.others, false, &t))
-            .child("Also bring folders tau does not have yet, to use when you add them")
-            .on_click(move |_, _, cx| {
-                let _ = ui.update(cx, |ui, cx| {
-                    ui.choice.others = !ui.choice.others;
-                    cx.notify();
-                });
-                handle.refresh(cx);
-            })
-    };
-    let start = {
-        let handle = view.handle.clone();
-        let only: Vec<Place> = at.repos.iter().map(place_of).collect();
-        div()
-            .id("memory-setup-start")
-            .debug_selector(|| "memory-setup-start".to_owned())
-            .child(ui::big_button(
-                "Read and show me the notes",
-                None,
-                if choice.parts.any() {
-                    ButtonKind::Primary
-                } else {
-                    ButtonKind::Secondary
-                },
-                &t,
-            ))
-            .on_click(move |_, _, cx| {
-                if choice.parts.any() {
-                    handle.act(
-                        Act::Import(Request {
-                            parts: choice.parts,
-                            only: only.clone(),
-                            others: choice.others,
-                        }),
-                        cx,
-                    );
-                }
-                handle.setup_done(cx);
-            })
-    };
-    let body = div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .gap(sp(5.))
-        .child(cards)
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(3.5))
-                .child(others)
-                .child(
-                    div()
-                        .ml_auto()
-                        .flex()
-                        .items_center()
-                        .gap(sp(3.))
-                        .child(ui::text(
-                            "Only chats in the folders above",
-                            Type::CAPTION,
-                            t.muted,
-                        ))
-                        .child(start),
-                ),
-        )
-        .child(ui::text(
-            "Read only: tau never changes Claude Code's or Codex's files. What \
-             they wrote is treated as notes to keep, never as instructions.",
-            Type::CAPTION,
-            t.muted,
-        ))
-        .into_any_element();
+    let tree = tree(&imports.found, &at.repos, choice);
+    let handle = view.handle.clone();
+    let body = view.tree("memory-setup", &tree, on_do(handle, None));
     Some(SetupView {
         step: STEP,
         title: "Memories".into(),
@@ -170,14 +85,55 @@ pub fn step(
     })
 }
 
+/// The step's tree: a card for each tool found, whether to bring the
+/// folders tau does not have, and the button that starts the import.
+pub fn tree(found: &[ToolFound], picked: &[SetupRepo], choice: Choice) -> Node {
+    let mut children: Vec<Node> = found
+        .iter()
+        .map(|found| card(found, picked, choice))
+        .collect();
+    children.push(Node::Switch {
+        label: "Also bring folders tau does not have yet, to use when you \
+                add them"
+            .into(),
+        detail: None,
+        on: choice.others,
+        action: DO.into(),
+        args: Do::Choose {
+            choice: Choice {
+                others: !choice.others,
+                ..choice
+            },
+        }
+        .args(),
+    });
+    let request = choice.parts.any().then(|| Request {
+        parts: choice.parts,
+        only: picked.iter().map(place_of).collect(),
+        others: choice.others,
+    });
+    children.push(Node::row([
+        Node::text("Only chats in the folders above"),
+        Node::Spacer,
+        button(
+            "Read and show me the notes",
+            if request.is_some() {
+                Kind::Primary
+            } else {
+                Kind::Secondary
+            },
+            &Do::Start { request },
+        ),
+    ]));
+    children.push(Node::text(
+        "Read only: tau never changes Claude Code's or Codex's files. What \
+         they wrote is treated as notes to keep, never as instructions.",
+    ));
+    Node::stack(children)
+}
+
 /// One tool: what it has, what to read of it, and where it goes.
-fn card(
-    found: &ToolFound,
-    picked: &[SetupRepo],
-    choice: Choice,
-    view: &ViewCx<'_, MemoryUi>,
-    t: &Theme,
-) -> AnyElement {
+fn card(found: &ToolFound, picked: &[SetupRepo], choice: Choice) -> Node {
     let tool = found.tool;
     let folders = found.folders.iter().filter(|f| f.saved > 0).count();
     let (saved, saved_detail, chats, chats_detail) = match tool {
@@ -211,65 +167,24 @@ fn card(
                 .to_owned(),
         ),
     };
-    let what = |material: Material, title: String, detail: String| {
-        let ui = view.ui.downgrade();
-        let handle = view.handle.clone();
+    let what = |material: Material, label: String, detail: String| {
         let on = choice.parts.reads(tool, material);
-        let id = format!(
-            "memory-setup-{}-{}",
-            match tool {
-                Tool::ClaudeCode => "claude",
-                Tool::Codex => "codex",
-            },
-            match material {
-                Material::Saved => "saved",
-                Material::Chat => "chats",
-            }
-        );
-        let selector = id.clone();
-        div()
-            .id(SharedString::from(id))
-            .debug_selector(move || selector.clone())
-            .flex()
-            .items_start()
-            .gap(sp(3.))
-            .px(sp(3.5))
-            .py(sp(3.))
-            .rounded(radius::BOX)
-            .bg(t.setup.field)
-            .border_1()
-            .border_color(t.setup.surface_border)
-            .cursor_pointer()
-            .child(ui::checkbox(on, false, t))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(rems(0.))
-                    .flex()
-                    .flex_col()
-                    .gap(sp(0.75))
-                    .child(
-                        div()
-                            .text_color(t.text)
-                            .font_weight(weight::EMPHASIS)
-                            .child(title),
-                    )
-                    .child(ui::text(detail, Type::CAPTION, t.muted)),
-            )
-            .on_click(move |_, _, cx| {
-                let _ = ui.update(cx, |ui, cx| {
-                    ui.choice.parts.set(tool, material, !on);
-                    cx.notify();
-                });
-                handle.refresh(cx);
-            })
+        let mut next = choice;
+        next.parts.set(tool, material, !on);
+        Node::Switch {
+            label,
+            detail: Some(detail),
+            on,
+            action: DO.into(),
+            args: Do::Choose { choice: next }.args(),
+        }
     };
     // Where its folders go: each picked repository that claims one.
     let unit = match tool {
         Tool::ClaudeCode => ("note", "notes"),
         Tool::Codex => ("summary", "summaries"),
     };
-    let mut rows: Vec<(String, String, bool)> = Vec::new();
+    let mut rows: Vec<(String, String)> = Vec::new();
     let mut claimed = vec![false; found.folders.len()];
     for repo in picked {
         let place = place_of(repo);
@@ -293,7 +208,6 @@ fn card(
                     short(&repo.name),
                     plural(count, unit.0, unit.1)
                 ),
-                true,
             ));
         }
     }
@@ -301,7 +215,6 @@ fn card(
         rows.push((
             "about you, in any folder".into(),
             format!("About you · {}", plural(found.about_you, unit.0, unit.1)),
-            true,
         ));
     }
     let left = claimed.iter().filter(|claimed| !**claimed).count();
@@ -313,78 +226,32 @@ fn card(
             } else {
                 "left out".into()
             },
-            false,
         ));
     }
-    let map =
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(1.5))
-            .children(rows.into_iter().map(|(from, to, goes)| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(3.))
-                    .typeset(Type::CAPTION)
-                    .child(
-                        ui::mono(from, Type::CAPTION, t.muted)
-                            .flex_1()
-                            .min_w(rems(0.))
-                            .truncate(),
-                    )
-                    .child(div().text_color(t.muted).child("→"))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(rems(0.))
-                            .truncate()
-                            .text_color(if goes { t.text } else { t.muted })
-                            .child(to),
-                    )
-            }));
-    div()
-        .flex_1()
-        .min_w(rems(22.))
-        .flex()
-        .flex_col()
-        .gap(sp(4.))
-        .p(sp(5.5))
-        .rounded(radius::CARD)
-        .bg(t.setup.glass)
-        .border_1()
-        .border_color(t.setup.surface_border)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(sp(3.))
-                .child(ui::repo_mark(
-                    // Codex's mark is its X.
-                    match tool {
-                        Tool::ClaudeCode => "Claude Code",
-                        Tool::Codex => "X Codex",
-                    },
-                    34.,
-                    t,
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(sp(0.5))
-                        .child(
-                            div()
-                                .typeset(Type::BODY)
-                                .font_weight(weight::STRONG)
-                                .text_color(t.text)
-                                .child(tool.label()),
-                        )
-                        .child(ui::mono(tool.root(), Type::CAPTION, t.muted)),
-                ),
-        )
-        .child(what(Material::Saved, saved, saved_detail))
-        .child(what(Material::Chat, chats, chats_detail))
-        .child(map)
-        .into_any_element()
+    Node::Card {
+        children: vec![
+            Node::Heading {
+                text: tool.label().into(),
+            },
+            Node::Mono {
+                text: tool.root().into(),
+            },
+            what(Material::Saved, saved, saved_detail),
+            what(Material::Chat, chats, chats_detail),
+            Node::Table {
+                head: Vec::new(),
+                rows: rows
+                    .into_iter()
+                    .map(|(from, to)| {
+                        vec![
+                            Node::Mono { text: from },
+                            Node::text("→"),
+                            Node::text(to),
+                        ]
+                    })
+                    .collect(),
+                widths: vec![4., 0.5, 4.],
+            },
+        ],
+    }
 }

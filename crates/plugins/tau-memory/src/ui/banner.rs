@@ -3,15 +3,14 @@
 //! banner on a repository's notes when the tools know it: proposals
 //! wait for it, or there is what they kept that no import read.
 
-use gpui::{AnyElement, div, prelude::*, rems};
-use tau_ui_kit::{
-    assets::Icon,
-    components::{self as ui, ButtonKind, icon},
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
+use gpui::AnyElement;
+use tau_ui_plugin::{
+    ViewCx,
+    points::AtRepo,
+    tree::{Kind, Node, Tone},
 };
-use tau_ui_plugin::{Handle, ViewCx, points::AtRepo};
 
-use super::{MemoryUi, review_link};
+use super::{Do, MemoryUi, button, icon, on_do, review_link};
 use crate::import::{Act, Banner, Imports, Request, Tool};
 
 /// What the way into an import says.
@@ -23,29 +22,17 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 
 /// Starts an import of every listed repository, and opens the review
 /// page to watch it.
-fn import(handle: &Handle, cx: &mut gpui::App) {
-    handle.act(Act::Import(Request::default()), cx);
-    handle.navigate(review_link(None), cx);
+fn import() -> Do {
+    Do::Import {
+        request: Request::default(),
+    }
 }
 
 /// The notes page's button, when either tool is on this computer.
-pub fn import_button(
-    handle: &Handle,
-    imports: &Imports,
-    t: &Theme,
-) -> Option<AnyElement> {
-    if !imports.any_found() {
-        return None;
-    }
-    let handle = handle.clone();
-    Some(
-        div()
-            .id("memory-import")
-            .debug_selector(|| "memory-import".to_owned())
-            .child(ui::button(IMPORT, ButtonKind::Secondary, t))
-            .on_click(move |_, _, cx| import(&handle, cx))
-            .into_any_element(),
-    )
+pub fn import_button(imports: &Imports) -> Option<Node> {
+    imports
+        .any_found()
+        .then(|| button(IMPORT, Kind::Secondary, &import()))
 }
 
 /// The repository menu's entry, when either tool is on this computer.
@@ -53,30 +40,19 @@ pub fn menu_entry(
     _at: &AtRepo,
     view: &mut ViewCx<'_, MemoryUi>,
 ) -> Option<AnyElement> {
-    if !view.data.imports.any_found() {
-        return None;
-    }
-    let t = view.theme().clone();
+    let tree = menu_tree(&view.data.imports)?;
     let handle = view.handle.clone();
-    let hover = t.selected;
-    Some(
-        div()
-            .id("menu-memory-import")
-            .debug_selector(|| "menu-memory-import".to_owned())
-            .flex()
-            .items_center()
-            .gap(sp(2.5))
-            .h(rems(2.125))
-            .px(sp(2.5))
-            .rounded(radius::CONTROL)
-            .cursor_pointer()
-            .text_color(t.text)
-            .hover(move |style| style.bg(hover))
-            .child(icon(Icon::Memory, IconSize::BASE, t.muted))
-            .child(IMPORT)
-            .on_click(move |_, _, cx| import(&handle, cx))
-            .into_any_element(),
-    )
+    Some(view.tree("menu-memory-import", &tree, on_do(handle, None)))
+}
+
+/// The menu entry's tree.
+pub fn menu_tree(imports: &Imports) -> Option<Node> {
+    imports.any_found().then(|| {
+        Node::row([
+            icon("memory", Tone::Neutral),
+            button(IMPORT, Kind::Secondary, &import()),
+        ])
+    })
 }
 
 /// What the tools kept for the repository, in words: "Claude Code kept 9
@@ -102,12 +78,7 @@ fn kept(banner: &Banner) -> String {
 }
 
 /// The banner on `repo`'s notes, when its tools know it.
-pub fn banner(
-    handle: &Handle,
-    repo: &str,
-    imports: &Imports,
-    t: &Theme,
-) -> Option<AnyElement> {
+pub fn banner(repo: &str, imports: &Imports) -> Option<Node> {
     let banner = imports.banners.get(repo)?.clone();
     let mut text = kept(&banner);
     if banner.ready > 0 {
@@ -119,105 +90,55 @@ pub fn banner(
             }
         ));
     }
-    let only = banner.places.clone();
-    let primary = if banner.ready > 0 {
-        let (handle, repo) = (handle.clone(), repo.to_owned());
-        div()
-            .id("memory-banner-review")
-            .debug_selector(|| "memory-banner-review".to_owned())
-            .child(ui::button(
-                format!("Review {}", plural(banner.ready, "note", "notes")),
-                ButtonKind::Primary,
-                t,
-            ))
-            .on_click(move |_, _, cx| {
-                handle.navigate(review_link(Some(&repo)), cx)
-            })
-            .into_any_element()
+    let read = Do::Import {
+        request: Request {
+            only: banner.places.clone(),
+            ..Request::default()
+        },
+    };
+    let mut buttons = vec![if banner.ready > 0 {
+        button(
+            format!("Review {}", plural(banner.ready, "note", "notes")),
+            Kind::Primary,
+            &Do::Open {
+                link: review_link(Some(repo)),
+            },
+        )
     } else {
-        let (handle, only) = (handle.clone(), only.clone());
-        div()
-            .id("memory-banner-bring")
-            .debug_selector(|| "memory-banner-bring".to_owned())
-            .child(ui::button("Bring what they kept", ButtonKind::Primary, t))
-            .on_click(move |_, _, cx| {
-                handle.act(
-                    Act::Import(Request {
-                        only: only.clone(),
-                        ..Request::default()
-                    }),
-                    cx,
-                );
-                handle.navigate(review_link(None), cx);
-            })
-            .into_any_element()
-    };
-    let chats = (banner.unread_chats > 0 && banner.ready > 0).then(|| {
-        let (handle, only) = (handle.clone(), only.clone());
-        div()
-            .id("memory-banner-chats")
-            .debug_selector(|| "memory-banner-chats".to_owned())
-            .child(ui::button(
-                format!(
-                    "Read its {} too",
-                    plural(banner.unread_chats, "chat", "chats")
-                ),
-                ButtonKind::Secondary,
-                t,
-            ))
-            .on_click(move |_, _, cx| {
-                handle.act(
-                    Act::Import(Request {
-                        only: only.clone(),
-                        ..Request::default()
-                    }),
-                    cx,
-                )
-            })
-    });
-    let later = {
-        let (handle, repo) = (handle.clone(), repo.to_owned());
-        div()
-            .id("memory-banner-later")
-            .debug_selector(|| "memory-banner-later".to_owned())
-            .cursor_pointer()
-            .px(sp(3.))
-            .typeset(Type::CAPTION)
-            .text_color(t.muted)
-            .child("Not now")
-            .on_click(move |_, _, cx| {
-                handle.act(Act::NotNow { repo: repo.clone() }, cx)
-            })
-    };
-    Some(
-        div()
-            .debug_selector(|| "memory-banner".to_owned())
-            .flex()
-            .flex_col()
-            .gap(sp(3.5))
-            .px(sp(5.5))
-            .py(sp(5.))
-            .rounded(radius::CARD)
-            .bg(t.panel)
-            .border_1()
-            .border_color(t.accent_border)
-            .child(
-                div()
-                    .typeset(Type::SUBTITLE)
-                    .font_weight(weight::STRONG)
-                    .child("Claude Code and Codex know this repository"),
-            )
-            .child(ui::text(text, Type::SMALL, t.muted))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(sp(2.5))
-                    .child(primary)
-                    .children(chats)
-                    .child(later),
-            )
-            .into_any_element(),
-    )
+        button("Bring what they kept", Kind::Primary, &read)
+    }];
+    if banner.unread_chats > 0 && banner.ready > 0 {
+        // Reads the chats too, staying on the notes.
+        buttons.push(button(
+            format!(
+                "Read its {} too",
+                plural(banner.unread_chats, "chat", "chats")
+            ),
+            Kind::Secondary,
+            &Do::Act {
+                act: Act::Import(Request {
+                    only: banner.places.clone(),
+                    ..Request::default()
+                }),
+            },
+        ));
+    }
+    buttons.push(button(
+        "Not now",
+        Kind::Secondary,
+        &Do::Act {
+            act: Act::NotNow {
+                repo: repo.to_owned(),
+            },
+        },
+    ));
+    Some(Node::Card {
+        children: vec![
+            Node::Heading {
+                text: "Claude Code and Codex know this repository".into(),
+            },
+            Node::text(text),
+            Node::row(buttons),
+        ],
+    })
 }

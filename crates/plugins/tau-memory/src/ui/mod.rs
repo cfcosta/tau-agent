@@ -8,6 +8,9 @@
 //! rules; the user's, across repositories, in tau's data directory.
 //! Embeddings are cached beside each. Every scope is opened once and
 //! shared by every run.
+//!
+//! Everything it draws is a view tree (ADR 0045); its buttons and
+//! switches carry a [`Do`] in their arguments.
 
 pub mod banner;
 pub mod page;
@@ -17,9 +20,10 @@ pub mod setup;
 
 use std::collections::BTreeMap;
 
-use gpui::{AppContext as _, Context};
+use gpui::{App, Context};
 use serde::{Deserialize, Serialize};
-use tau_ui_kit::{assets::Icon, input::TextInput};
+use serde_json::Value;
+use tau_ui_kit::assets::Icon;
 use tau_ui_plugin::{
     Fold,
     Handle,
@@ -27,13 +31,14 @@ use tau_ui_plugin::{
     Manifest,
     NavEntry,
     Page,
-    PluginUi,
     RunCx,
     UiPlugin,
     points::{self, AtApp, AtRepo},
+    tree::{Kind, Node, Tone},
 };
 
 use crate::{
+    import::{Act, Kept, Request},
     note::NoteType,
     record::{NAME, Record},
 };
@@ -219,7 +224,7 @@ impl UiPlugin for MemoryUi {
     type Data = MemoryData;
     type RepoData = Notebook;
     type Settings = settings::Settings;
-    type Ui = page::Ui;
+    type Ui = Ui;
 
     fn name(&self) -> &'static str {
         NAME
@@ -228,9 +233,9 @@ impl UiPlugin for MemoryUi {
     /// What keeping proposals did, for the review page to say.
     fn reply(
         &self,
-        ui: &mut page::Ui,
+        ui: &mut Ui,
         reply: serde_json::Value,
-        cx: &mut Context<page::Ui>,
+        cx: &mut Context<Ui>,
     ) {
         if let Ok(kept) = serde_json::from_value(reply) {
             ui.kept = Some(kept);
@@ -241,8 +246,12 @@ impl UiPlugin for MemoryUi {
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .reads(READS)
-            .page(Page::new("notes", page::render).title(page::title))
-            .page(Page::new("import", review::render).title(review::title))
+            .page(Page::new("notes", page::render).title(page::title).framed())
+            .page(
+                Page::new("import", review::render)
+                    .title(review::title)
+                    .framed(),
+            )
             .contribute_at(points::SIDEBAR, 10, |_: &AtApp, view| {
                 Some(
                     NavEntry::new("Your notes", Icon::Memory, notes_link(USER))
@@ -273,17 +282,101 @@ impl UiPlugin for MemoryUi {
     }
 }
 
-impl PluginUi for page::Ui {
-    fn new(_handle: Handle, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| TextInput::new("Search notes", cx));
-        cx.observe(&search, |_, _, cx| cx.notify()).detach();
-        let review_search = cx.new(|cx| TextInput::new("Search", cx));
-        cx.observe(&review_search, |_, _, cx| cx.notify()).detach();
-        page::Ui {
-            search,
-            choice: setup::Choice::default(),
-            review_search,
-            kept: None,
+/// The plugin's state in one window: what keeping proposals last did,
+/// as the host half answered. Drafts and the setup step's choice are UI
+/// state ([`SEARCH`], [`REVIEW_SEARCH`], [`setup::CHOICE`]).
+#[derive(Debug, Default)]
+pub struct Ui {
+    pub(crate) kept: Option<Kept>,
+}
+
+/// The notes page's search input.
+pub const SEARCH: &str = "search";
+
+/// The review page's search input.
+pub const REVIEW_SEARCH: &str = "review-search";
+
+/// Every button's and switch's action: carry out the [`Do`] its
+/// arguments hold.
+pub const DO: &str = "do";
+
+/// What a button or a switch of memory's asks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "do", rename_all = "snake_case")]
+pub enum Do {
+    /// Asks the host half for `act`.
+    Act { act: Act },
+    /// Starts an import, and opens the review page to watch it.
+    Import { request: Request },
+    /// Opens a page.
+    Open { link: Link },
+    /// Keeps what the setup step has chosen so far.
+    Choose { choice: setup::Choice },
+    /// Starts `request`, when there is one, and ends the setup step.
+    Start { request: Option<Request> },
+    /// Saves the settings pane's settings.
+    Save { settings: settings::Settings },
+}
+
+impl Do {
+    pub fn args(&self) -> Value {
+        serde_json::to_value(self).unwrap_or(Value::Null)
+    }
+}
+
+/// A button that asks for `what`.
+pub fn button(label: impl Into<String>, kind: Kind, what: &Do) -> Node {
+    Node::Button {
+        label: label.into(),
+        action: DO.into(),
+        args: what.args(),
+        kind,
+        icon: None,
+    }
+}
+
+/// An icon of tau's, by its file's name.
+pub fn icon(name: &str, tone: Tone) -> Node {
+    Node::Icon {
+        name: name.into(),
+        tone,
+    }
+}
+
+/// What a tree's buttons and switches ask: the [`Do`] in their
+/// arguments, settings saved in `scope`.
+pub fn on_do(
+    handle: Handle,
+    scope: Option<String>,
+) -> impl Fn(&str, &Value, &mut App) + 'static {
+    move |action, args, cx| {
+        if action != DO {
+            return;
+        }
+        let Ok(what) = serde_json::from_value::<Do>(args.clone()) else {
+            return;
+        };
+        match what {
+            Do::Act { act } => handle.act(act, cx),
+            Do::Import { request } => {
+                handle.act(Act::Import(request), cx);
+                handle.navigate(review_link(None), cx);
+            }
+            Do::Open { link } => handle.navigate(link, cx),
+            Do::Choose { choice } => handle.set_ui(
+                setup::CHOICE,
+                serde_json::to_value(choice).ok(),
+                cx,
+            ),
+            Do::Start { request } => {
+                if let Some(request) = request {
+                    handle.act(Act::Import(request), cx);
+                }
+                handle.setup_done(cx);
+            }
+            Do::Save { settings } => {
+                handle.save_settings_in(scope.as_deref(), &settings, cx)
+            }
         }
     }
 }
