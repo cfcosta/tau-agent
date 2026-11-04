@@ -73,8 +73,10 @@ The kernel is what stays when every plugin is removed:
 
 The kernel names no plugin. A test in `tau-ui-remote` and `tau-ui`
 checks that no non-test source mentions a plugin crate or a plugin's
-record or tool name; the registration list in `tau` (the app crate) is
-the one place they are named.
+record or tool name; the registration list in `tau-plugins` is the one
+place they are named. `tau-ui-remote`'s holds now, with tau-phone's
+sources in it too, and checks that neither links a plugin crate;
+`tau-ui`'s follows the slots.
 
 ### Slots
 

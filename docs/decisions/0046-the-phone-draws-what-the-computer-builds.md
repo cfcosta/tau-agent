@@ -96,9 +96,11 @@ What comes back is JSON: trees, and the typed outputs (`NavEntry`,
 ### What the phone keeps
 
 The phone keeps what the kernel draws itself: runs, the catalog and the
-UI state. It stops folding plugins' records once nothing on it reads a
-plugin's state. It stops linking plugin crates once the kernel names
-none (0045's steps 6 and 12).
+UI state. It folds no plugin's records, and links no plugin crate: the
+kernel names none, and tau-plugins lists them for the computer. Landing
+shows a landing's changes through a point, agents' sidebar section is a
+repository kind, and what waits on the person is a point the phone's
+notifications watch.
 
 ## Order of work
 

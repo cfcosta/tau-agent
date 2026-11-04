@@ -437,10 +437,16 @@ two halves (`tau-ui-plugin`). Its `UiPlugin` folds what it publishes
 (`PluginCtx::publish`) into its state for the run, live and from
 history alike, and adds its pages and contributions to the interface
 at extension points. Its `HostHalf` builds its agent plugin for a run,
-and keeps what the plugin needs on the host. `tau-ui-remote` lists the
-plugins in `plugins.rs`; `tau-ui` gives each its host half
-(`Registry::host`) and builds a run's plugins only through that
-registry ([0030](../decisions/0030-host-halves-are-crates.md)).
+and keeps what the plugin needs on the host. `tau-plugins` lists the
+plugins, the one place they are named; `tau-ui` gives each its host
+half (`Registry::host`), installs them, and builds a run's plugins only
+through that registry
+([0030](../decisions/0030-host-halves-are-crates.md)). `tau-ui-remote`,
+the kernel, names and links none: a process that installs nothing, a
+phone, has none ([0046](../decisions/0046-the-phone-draws-what-the-computer-builds.md)),
+and `tests/core_names_no_plugin.rs` checks that neither its sources
+outside their tests nor tau-phone's name a plugin crate, a plugin's
+name or its tools, and that neither links one.
 
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,
@@ -451,7 +457,7 @@ registry ([0030](../decisions/0030-host-halves-are-crates.md)).
   (`details` modules, tau-mcp's `info`). tau-ask, tau-direnv and
   tau-skills keep theirs behind a default `host` feature; the rest,
   which are light, beside their `UiPlugin`. `tau-ui-remote` depends on
-  none of it, so neither it nor a phone links it.
+  no plugin crate at all, so neither it nor a phone links one.
 
 - **The fold.** `UiPlugin::State` implements `Fold`: its `Record` is
   the plugin's record enum, `apply(&mut self, record, run)` folds one,
@@ -515,6 +521,34 @@ settings)` gives what commands in a repository start through: a
   the plugin does for the whole repository. Every contribution is
   drawn, in order. Core names no plugin in either place
   ([0006](../decisions/0006-plugin-crates.md)).
+- **Kinds of repository.** `points::REPO_KIND` (`Point<AtApp,
+  RepoKind>`) gives a section of the sidebar and of the phone's list to
+  the repositories of one kind: its `kind` as the catalog's `Repo::own`
+  names it (`agent`), its `title`, the `page` its heading opens, the
+  `new` page its `+` opens, and the line it shows while there are none.
+  `points::KIND_ROW_END` (`Point<AtRepo>`) is drawn at a row's end
+  (where an agent stands), unless the repository's main chat is going,
+  which reads `working`; `points::KIND_ROW_LINE` (`Point<AtRepo>`)
+  under an open row and under its name on the phone (its last word).
+  tau-agents fills all three
+  ([0037](../decisions/0037-agents.md)).
+- **What waits on the person.** `points::WAITING` (`Point<AtApp,
+  Waiting>`) lists the plugin's things that wait on the person, by
+  group (an agent): each `WaitItem` by an id that stays while it waits,
+  with a notice's title and body, the run a notice opens, and the
+  `away` words for a group first seen with some waiting.
+  `tau_ui_plugin::waiting::Watch` tells each new item once, and a
+  group's `away` once, on the desktop (`tau-ui`'s notices) and on the
+  phone (Android's) alike; an item that stops waiting is forgotten.
+- **Landing's changes and a card's stat.** `points::CHANGES`
+  (`Point<AtChanges>`) draws the changes a landing brings, in its
+  preview and on the card it leaves in the parent's chat: tau-vcs's.
+  `points::CARD_STAT` (`Point<AtCard, PluginStatus>`) is what a card
+  says of its run on the compare screen; the newest card with one says
+  it (tau-tools' tests, from a command's summary).
+- **Times.** A tree's `ticker` counts from a start, `due` down to a
+  time, and `ago` up from one (`4m ago`): the state says when, and only
+  the interface reads the clock.
 - **Keys.** `Manifest::key("ctrl-2", |at: &KeyAt, view| ..)` binds a
   key in the workspace, as the keymap spells it. Pressing it runs the
   closure with `at.repo`, the repository the sidebar has selected, if

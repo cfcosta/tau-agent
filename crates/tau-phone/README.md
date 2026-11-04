@@ -32,9 +32,11 @@ and `tau-remote` (`PairingCode`). It draws plugins' views as the computer
 builds them, and sends their clicks, commands and keys to the computer,
 which carries them out
 ([0046](../../docs/decisions/0046-the-phone-draws-what-the-computer-builds.md)).
-It still links each plugin's UI half, which the kernel names, and none of
-their host halves, so no tools, Luau, jj-lib or MCP client end up in the
-APK. Nothing depends on it.
+It links no plugin crate, as the kernel names none, so no plugin's code,
+tools, Luau, jj-lib or MCP client end up in the APK; a new plugin is no
+new phone build. What waits on the person, such as an agent's notes, it
+shows as Android notifications through `tau_ui_plugin::waiting::Watch`.
+Nothing depends on it.
 
 ## Building
 
