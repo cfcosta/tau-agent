@@ -1198,7 +1198,13 @@ impl<'a> Draw<'a> {
                     },
                     cx,
                 );
-                field(&input, false, t).into_any_element()
+                // It takes the room a row gives it, and never less than
+                // a few words.
+                div()
+                    .flex_1()
+                    .min_w(rems(12.))
+                    .child(field(&input, false, t))
+                    .into_any_element()
             }
             Node::Diff { text, path } => tau_ui_kit::diff::view(
                 &tau_ui_kit::diff::parse(text),

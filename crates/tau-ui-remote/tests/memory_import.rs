@@ -523,6 +523,9 @@ fn without_the_tools_the_memory_tab_offers_none(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds(IMPORT).is_none());
     workspace.update(&mut cx, |ws, cx| ws.toggle_repo_menu("hello", cx));
     cx.run_until_parked();
-    assert!(cx.debug_bounds("link:Memory").is_some(), "the menu is drawn");
+    assert!(
+        cx.debug_bounds("link:Memory").is_some(),
+        "the menu is drawn"
+    );
     assert!(cx.debug_bounds(IMPORT).is_none());
 }

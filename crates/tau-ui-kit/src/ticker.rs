@@ -22,9 +22,16 @@ pub fn now() -> i64 {
         .map_or(0, |since| since.as_millis() as i64)
 }
 
-/// What a ticker from `since` reads at `at`: `m:ss`, never below zero.
+/// What a ticker from `since` reads at `at`, never below zero: `m:ss`
+/// within an hour, then hours and minutes, then days.
 pub fn reading(since: i64, at: i64) -> String {
-    clock(Duration::from_millis(at.saturating_sub(since).max(0) as u64))
+    let gap = Duration::from_millis(at.saturating_sub(since).max(0) as u64);
+    let secs = gap.as_secs();
+    match secs {
+        ..3600 => clock(gap),
+        3600..86_400 => format!("{}h {:02}m", secs / 3600, secs % 3600 / 60),
+        _ => format!("{}d", secs / 86_400),
+    }
 }
 
 /// What a countdown to `at` reads at `now`: `now` within a minute, then
@@ -62,6 +69,8 @@ mod tests {
         assert_eq!(reading(1_000, 1_000), "0:00");
         assert_eq!(reading(1_000, 84_999), "1:23");
         assert_eq!(reading(5_000, 1_000), "0:00");
+        assert_eq!(reading(0, 3_725_000), "1h 02m");
+        assert_eq!(reading(0, 86_406_000), "1d");
     }
 
     /// A countdown reads the time left in its largest whole unit, and
