@@ -3094,13 +3094,7 @@ mod tests {
         assert_eq!(view.tool("c7").and_then(|card| card.dropped), None);
         assert!(view.tool("c7").is_some_and(|card| card.cut.is_some()));
         assert!(view.tool("c7").is_some_and(|card| {
-            tau_tools::ui::term_card::TermCards::default()
-                .output(
-                    &(view.id.clone(), card.call_id.clone()),
-                    &card.data,
-                    true,
-                )
-                .is_some()
+            tau_tools::ui::term::TermOutput::of(&card.data, true).is_some()
         }));
         // What `start` decided comes before the first turn: what memory
         // recalled, and tau-reasoning's choice, which each draws itself.

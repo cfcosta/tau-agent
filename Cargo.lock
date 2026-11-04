@@ -10168,7 +10168,6 @@ dependencies = [
  "serde_json",
  "tau-agent",
  "tau-ai",
- "tau-terminal",
  "tau-ui-kit",
  "tau-ui-plugin",
  "uuid",

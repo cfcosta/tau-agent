@@ -487,15 +487,26 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                 let body = view.tree(
                     &format!("tools-term-{id}"),
                     &tree,
-                    |action, args, cx| {
-                        if action != term_card::OPEN {
-                            return;
+                    |action, args, cx| match action {
+                        term_card::OPEN => {
+                            if let Some(path) =
+                                args.get("path").and_then(Value::as_str)
+                            {
+                                cx.open_with_system(std::path::Path::new(path));
+                            }
                         }
-                        if let Some(path) =
-                            args.get("path").and_then(Value::as_str)
-                        {
-                            cx.open_with_system(std::path::Path::new(path));
+                        term_card::COPY => {
+                            if let Some(text) =
+                                args.get("text").and_then(Value::as_str)
+                            {
+                                cx.write_to_clipboard(
+                                    gpui::ClipboardItem::new_string(
+                                        text.to_owned(),
+                                    ),
+                                );
+                            }
                         }
+                        _ => {}
                     },
                 );
                 return Some(CardView {

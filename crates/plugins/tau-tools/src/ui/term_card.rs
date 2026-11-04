@@ -16,6 +16,10 @@ use super::term::{SeenLine, TermOutput};
 /// `{ "path": archive }`.
 pub const OPEN: &str = "open";
 
+/// The action of the button that copies the command's text, with
+/// `{ "text": ... }`.
+pub const COPY: &str = "copy";
+
 /// The card's body: the strip, then the screen; on a cut card, the
 /// terminal and the text the model saw, as tabs. `id` names the card
 /// among the plugin's: its run and call.
@@ -65,12 +69,22 @@ fn strip(term: &TermOutput, live: bool) -> Node {
     } else {
         term.size_label()
     };
-    let mut row = vec![Node::Mono { text: label }];
+    let mut row = vec![Node::Mono { text: label }, Node::Spacer];
     if live {
-        row.push(Node::Spacer);
         row.push(Node::Pill {
             text: "live".into(),
             tone: Tone::Info,
+        });
+    }
+    // Its text, without the terminal's colors and moves.
+    let text = term.seen.trim_end();
+    if !text.is_empty() {
+        row.push(Node::Button {
+            label: String::new(),
+            action: COPY.into(),
+            args: serde_json::json!({ "text": text }),
+            kind: Kind::Secondary,
+            icon: Some("copy".into()),
         });
     }
     Node::row(row)

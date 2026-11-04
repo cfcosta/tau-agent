@@ -13,10 +13,7 @@ use tau_agent::{
     tool::{RunId, ToolOutput},
 };
 use tau_ai::message::Message;
-use tau_tools::ui::{
-    term::{SeenLine, TermOutput, TermStatus},
-    term_card::TermCards,
-};
+use tau_tools::ui::term::{SeenLine, TermOutput, TermStatus};
 use tau_ui_remote::{
     Workspace,
     catalog::Catalog,
@@ -71,11 +68,7 @@ fn card(view: &RunView) -> &ToolCard {
 /// The terminal tau-tools draws for the card, folded from scratch.
 fn term(view: &RunView) -> Option<TermOutput> {
     let card = card(view);
-    TermCards::default().output(
-        &(run(), card.call_id.clone()),
-        &card.data,
-        card.cut.is_some(),
-    )
+    TermOutput::of(&card.data, card.cut.is_some())
 }
 
 /// Chunks join in `seq` order, whatever else arrives: a repeated or
@@ -309,24 +302,17 @@ fn the_workspace_draws_and_copies_a_terminal(cx: &mut TestAppContext) {
         );
     });
     cx.run_until_parked();
-    let cards = workspace.read_with(&cx, |ws, _| {
-        ws.plugin_ui::<tau_tools::ui::Ui>(tau_tools::ui::NAME)
-            .expect("tau-tools draws its cards")
-    });
-    let key = (run(), "c1".to_owned());
-    cards.update(&mut cx, |cards, cx| cards.terms.copy(&key, cx));
+    // The card's copy button copies the command's text.
+    let copy = cx
+        .debug_bounds("button:copy")
+        .expect("the card's copy button");
+    cx.simulate_click(copy.center(), gpui::Modifiers::none());
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text())
             .as_deref(),
         Some("   Compiling tau\n    Finished")
     );
-    // Expanding and switching tabs are plain toggles.
-    cards.update(&mut cx, |cards, cx| {
-        cards.terms.toggle_expanded(&key, cx);
-        cards.terms.show_model_text(&key, true);
-    });
-    cx.run_until_parked();
     workspace.read_with(&cx, |ws, _| {
         assert!(term(ws.run(&run()).unwrap()).is_some());
     });
