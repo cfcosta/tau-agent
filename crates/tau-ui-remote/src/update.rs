@@ -164,6 +164,13 @@ pub enum HostUpdate {
         plugin: String,
         reply: serde_json::Value,
     },
+    /// The picture `key` a plugin's host half answered a tree's image
+    /// with (ADR 0045).
+    PluginFetched {
+        plugin: String,
+        key: String,
+        reply: serde_json::Value,
+    },
     /// A model wrote a run's title.
     Titled {
         run: RunId,

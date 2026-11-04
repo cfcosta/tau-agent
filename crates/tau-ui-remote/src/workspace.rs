@@ -254,6 +254,13 @@ pub enum WorkspaceEvent {
         plugin: String,
         action: serde_json::Value,
     },
+    /// A tree's image asks its plugin's host half for the picture `key`
+    /// with `action` (ADR 0045).
+    PluginFetch {
+        plugin: String,
+        key: String,
+        action: serde_json::Value,
+    },
     /// Save a plugin's settings: everywhere, or as `repo`'s own copy.
     /// No settings drops the repository's copy (ADR 0029).
     PluginSettings {
@@ -1179,6 +1186,12 @@ impl Workspace {
                 {
                     view.restate(&plugin, &records);
                 }
+                cx.notify();
+            }
+            HostUpdate::PluginFetched { plugin, key, reply } => {
+                self.tree_widgets
+                    .borrow_mut()
+                    .fetched(&plugin, &key, &reply);
                 cx.notify();
             }
             HostUpdate::PluginReply { plugin, reply } => {

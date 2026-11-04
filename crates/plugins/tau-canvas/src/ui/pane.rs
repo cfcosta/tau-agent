@@ -1,24 +1,23 @@
 //! The run's canvas in its pane: a tab per item when there are several,
 //! the revision shown with a way through the others, and the image or
-//! the document itself. All but the image is a view tree (ADR 0045).
+//! the document itself. A view tree (ADR 0045); the interface fetches
+//! the image.
 
-use gpui::{Div, ObjectFit, div, img, prelude::*, rems};
-use tau_ui_kit::{
-    components as ui,
-    theme::{Theme, Type, radius, sp},
-};
 use tau_ui_plugin::{
     ViewCx,
     points::{AtRun, PaneView},
     tree::{Kind, Node, Tone},
 };
 
-use super::{CanvasUi, Loaded, PICK, Pick, image, on_action, picked, shown};
+use super::{CanvasUi, PICK, Pick, image, on_action, picked, shown};
 use crate::{Canvas, Content, Item, Kind as ItemKind};
 
 /// How tall a document scrolls, at most, in rems: the pane clips it
 /// before that.
 const DOCUMENT_HEIGHT: f32 = 80.;
+
+/// How tall an image is in the pane, in rems; it keeps its shape.
+const IMAGE_HEIGHT: f32 = 30.;
 
 /// The pane, once the run has anything on its canvas.
 pub fn pane(at: &AtRun, view: &mut ViewCx<'_, CanvasUi>) -> Option<PaneView> {
@@ -38,103 +37,34 @@ pub fn pane(at: &AtRun, view: &mut ViewCx<'_, CanvasUi>) -> Option<PaneView> {
             image: shown,
             caption,
         } => {
-            let t = view.theme().clone();
-            let loaded = image(view, &at.run.repo, &shown.blob, &shown.mime);
-            let mut under = Vec::new();
+            let mut parts = vec![image(&at.run.repo, shown, IMAGE_HEIGHT)];
             if !caption.is_empty() {
-                under.push(Node::text(caption.clone()));
+                parts.push(Node::text(caption.clone()));
             }
-            under.push(Node::Mono {
+            parts.push(Node::Mono {
                 text: format!("{} · {}", shown.describe(), shown.path),
             });
-            let under = view.tree(
-                &format!("{id}-under"),
-                &Node::stack(under),
-                |_, _, _| {},
-            );
-            div()
-                .flex_1()
-                .min_h(rems(0.))
-                .flex()
-                .flex_col()
-                .child(
-                    picture(&loaded, &t)
-                        .flex_1()
-                        .min_h(rems(0.))
-                        .m(sp(if view.compact { 3. } else { 5. })),
-                )
-                .child(div().flex_shrink_0().px(sp(5.)).pb(sp(4.)).child(under))
-                .into_any_element()
+            Node::stack(parts)
         }
-        Content::Document { text } => {
-            let document = Node::Scroll {
-                height: Some(DOCUMENT_HEIGHT),
-                children: vec![
-                    Node::Title {
-                        text: item.title.clone(),
-                        subtitle: None,
-                    },
-                    Node::Markdown { text: text.clone() },
-                ],
-            };
-            let document = view.tree(&id, &document, |_, _, _| {});
-            div()
-                .flex_1()
-                .min_h(rems(0.))
-                .flex()
-                .flex_col()
-                .px(sp(if view.compact { 4. } else { 7. }))
-                .py(sp(5.))
-                .child(document)
-                .into_any_element()
-        }
+        Content::Document { text } => Node::Scroll {
+            height: Some(DOCUMENT_HEIGHT),
+            children: vec![
+                Node::Title {
+                    text: item.title.clone(),
+                    subtitle: None,
+                },
+                Node::Markdown { text: text.clone() },
+            ],
+        },
     };
+    bars.push(content);
     let handle = view.handle.clone();
-    let bars = (!bars.is_empty()).then(|| {
-        view.tree("canvas-bars", &Node::stack(bars), on_action(handle, run))
-    });
-    let body = div()
-        .flex_1()
-        .min_h(rems(0.))
-        .flex()
-        .flex_col()
-        .when_some(bars, |body, bars| {
-            body.child(div().flex_shrink_0().px(sp(3.)).py(sp(2.)).child(bars))
-        })
-        .child(content);
+    let body = view.tree(&id, &Node::stack(bars), on_action(handle, run));
     Some(PaneView {
         title: "Canvas".into(),
         fresh: canvas.fresh,
-        body: body.into_any_element(),
+        body,
     })
-}
-
-// ADR 0045: not a tree yet — needs an image piece (the bytes of a blob
-// the plugin fetched, fitted inside the box it is given).
-/// An image as the window has it, fitted inside whatever box it is
-/// given: the picture, or a word on why it is not there yet.
-pub(super) fn picture(loaded: &Loaded, t: &Theme) -> Div {
-    let frame = div().flex().items_center().justify_center();
-    match loaded {
-        Loaded::Ready(image) => frame.child(
-            img(image.clone())
-                .size_full()
-                .object_fit(ObjectFit::Contain),
-        ),
-        Loaded::Waiting(..) => frame
-            .rounded(radius::CARD)
-            .bg(t.raised)
-            .child(ui::text("Loading the image…", Type::CAPTION, t.dim)),
-        Loaded::Failed(error) => frame
-            .rounded(radius::CARD)
-            .bg(t.raised)
-            .p(sp(3.))
-            .child(ui::text(
-                format!("The image could not be loaded: {error}"),
-                Type::CAPTION,
-                t.muted,
-            )),
-    }
 }
 
 /// A button that shows `pick`.

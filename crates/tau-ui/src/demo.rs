@@ -1133,6 +1133,30 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 };
                 workspace.update(cx, |ws, cx| ws.apply(update, cx));
             }
+            // A tree's picture, fetched as an action is.
+            WorkspaceEvent::PluginFetch {
+                plugin,
+                key,
+                action,
+            } => {
+                let (job, plugin, key, action) =
+                    (host.clone(), plugin.clone(), key.clone(), action.clone());
+                let workspace = workspace.downgrade();
+                let acting = cx.background_executor().spawn({
+                    let plugin = plugin.clone();
+                    async move { job.act(&plugin, action) }
+                });
+                cx.spawn(async move |cx| {
+                    let reply = acting.await.ok().flatten().unwrap_or_default();
+                    let _ = workspace.update(cx, |ws, cx| {
+                        ws.apply(
+                            HostUpdate::PluginFetched { plugin, key, reply },
+                            cx,
+                        )
+                    });
+                })
+                .detach();
+            }
             // Off the UI thread, as on a host: an action may ask Jev.
             WorkspaceEvent::PluginAct { plugin, action } => {
                 let (job, plugin, action) =

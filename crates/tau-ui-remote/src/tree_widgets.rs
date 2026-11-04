@@ -43,6 +43,135 @@ struct Screen {
 pub struct TreeWidgets {
     screens: HashMap<String, Screen>,
     tickers: HashMap<String, Ticking>,
+    pictures: HashMap<String, Picture>,
+}
+
+/// A tree's image, as far as the window has it.
+#[derive(Clone)]
+enum Picture {
+    /// Asked for at an instant; its type, to decode it with.
+    Waiting(String, std::time::Instant),
+    Ready(std::sync::Arc<gpui::Image>),
+    Failed(String),
+}
+
+/// How long an image asked for waits before it is asked for again.
+const RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The format gpui decodes an image of type `mime` as.
+fn format_of(mime: &str) -> Option<gpui::ImageFormat> {
+    use gpui::ImageFormat;
+    Some(match mime {
+        "image/png" => ImageFormat::Png,
+        "image/jpeg" => ImageFormat::Jpeg,
+        "image/gif" => ImageFormat::Gif,
+        "image/webp" => ImageFormat::Webp,
+        "image/bmp" => ImageFormat::Bmp,
+        "image/svg+xml" => ImageFormat::Svg,
+        _ => return None,
+    })
+}
+
+impl TreeWidgets {
+    /// Keeps what `plugin`'s host half answered for its picture `key`:
+    /// `{ "data": base64 }`, or `{ "error": why }`. An answer nothing
+    /// waits for is dropped.
+    pub fn fetched(
+        &mut self,
+        plugin: &str,
+        key: &str,
+        reply: &serde_json::Value,
+    ) {
+        use base64::Engine as _;
+
+        let id = format!("{plugin}\u{0}{key}");
+        let Some(Picture::Waiting(mime, _)) = self.pictures.get(&id).cloned()
+        else {
+            return;
+        };
+        let data = reply.get("data").and_then(serde_json::Value::as_str);
+        let picture = match (data, format_of(&mime)) {
+            (Some(data), Some(format)) => {
+                match base64::engine::general_purpose::STANDARD.decode(data) {
+                    Ok(bytes) => Picture::Ready(std::sync::Arc::new(
+                        gpui::Image::from_bytes(format, bytes),
+                    )),
+                    Err(error) => Picture::Failed(error.to_string()),
+                }
+            }
+            (Some(_), None) => Picture::Failed(format!("cannot draw {mime}")),
+            (None, _) => Picture::Failed(
+                reply
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("nothing came")
+                    .to_owned(),
+            ),
+        };
+        self.pictures.insert(id, picture);
+    }
+}
+
+/// The picture of `spec` for `handle`'s plugin, drawn: asked of the host
+/// the first time, and again while no answer came for a while.
+fn picture(
+    widgets: &Rc<RefCell<TreeWidgets>>,
+    handle: &Handle,
+    spec: tau_ui_plugin::tree::ImageSpec,
+    cx: &mut App,
+) -> AnyElement {
+    use gpui::{Styled as _, StyledImage as _, prelude::FluentBuilder as _};
+    use tau_ui_kit::theme::{Design as _, radius, sp};
+
+    let id = format!("{}\u{0}{}", handle.plugin(), spec.key);
+    let kept = widgets.borrow().pictures.get(&id).cloned();
+    let picture = match kept {
+        Some(Picture::Waiting(_, at)) if at.elapsed() >= RETRY => None,
+        kept => kept,
+    };
+    let picture = picture.unwrap_or_else(|| {
+        let waiting =
+            Picture::Waiting(spec.mime.clone(), std::time::Instant::now());
+        widgets.borrow_mut().pictures.insert(id, waiting.clone());
+        handle.fetch(spec.key.clone(), spec.fetch.clone(), cx);
+        waiting
+    });
+    let t = theme(cx).clone();
+    let frame = gpui::div()
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .when_some(spec.height, |frame, height| {
+            frame.h(rems(height.clamp(2., 80.)))
+        });
+    match picture {
+        Picture::Ready(image) => frame
+            .child(
+                gpui::img(image)
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Contain),
+            )
+            .into_any_element(),
+        Picture::Waiting(..) => frame
+            .min_h(rems(4.))
+            .rounded(radius::CARD)
+            .bg(t.raised)
+            .child(mono("Loading the image…", Type::CAPTION, t.dim))
+            .into_any_element(),
+        Picture::Failed(error) => frame
+            .min_h(rems(4.))
+            .rounded(radius::CARD)
+            .bg(t.raised)
+            .p(sp(3.))
+            .child(
+                gpui::div()
+                    .typeset(Type::CAPTION)
+                    .text_color(t.muted)
+                    .child(format!("The image could not be loaded: {error}")),
+            )
+            .into_any_element(),
+    }
 }
 
 /// A ticker's timer, and when the ticker was last drawn: the timer stops
@@ -70,6 +199,7 @@ pub fn widget(
             let text = tick(widgets, handle, spec, cx);
             mono(text, Type::CAPTION, theme(cx).text_soft).into_any_element()
         }
+        WidgetSpec::Image(spec) => picture(widgets, handle, spec, cx),
     }
 }
 

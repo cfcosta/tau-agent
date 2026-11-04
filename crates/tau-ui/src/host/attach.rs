@@ -1043,6 +1043,34 @@ impl Host {
                         cx,
                     );
                 }
+                WorkspaceEvent::PluginFetch {
+                    plugin,
+                    key,
+                    action,
+                } => {
+                    // As an action; the answer goes to the window's
+                    // pictures, not to the plugin's UI.
+                    let (job_plugin, plugin, key, action) =
+                        (plugin.clone(), plugin.clone(), key.clone(), action.clone());
+                    let failed = alert(format!("{plugin} could not fetch a picture"));
+                    on_host(
+                        &handler,
+                        &workspace,
+                        async move |host| host.plugin_act(&job_plugin, action).await,
+                        move |ws, reply, cx| {
+                            ws.apply(
+                                HostUpdate::PluginFetched {
+                                    plugin,
+                                    key,
+                                    reply: reply.unwrap_or_default(),
+                                },
+                                cx,
+                            )
+                        },
+                        failed,
+                        cx,
+                    );
+                }
                 WorkspaceEvent::PluginAct { plugin, action } => {
                     // On the host: an action may ask Jev, or the store.
                     let (job_plugin, plugin, action) =

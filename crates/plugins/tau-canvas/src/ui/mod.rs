@@ -13,10 +13,7 @@
 mod card;
 mod pane;
 
-use std::{collections::HashMap, sync::Arc};
-
-use base64::{Engine, engine::general_purpose::STANDARD};
-use gpui::{App, Context};
+use gpui::App;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_agent::tool::RunId;
@@ -28,6 +25,7 @@ use tau_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtRun},
+    tree::Node,
 };
 
 use crate::{Blob, Canvas, Item, NAME, Record};
@@ -61,13 +59,6 @@ pub struct Fetched {
     pub error: Option<String>,
 }
 
-/// What a window keeps of the canvas: the images fetched, or being
-/// fetched, by blob.
-#[derive(Default)]
-pub struct Ui {
-    images: HashMap<String, Loaded>,
-}
-
 /// A revision the person picked to look at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pick {
@@ -76,18 +67,6 @@ pub struct Pick {
     pub revision: usize,
     /// How fresh the canvas was then ([`Canvas::fresh`]).
     pub fresh: u64,
-}
-
-/// How long an image asked for waits before it is asked for again.
-pub const RETRY: std::time::Duration = std::time::Duration::from_secs(10);
-
-/// An image, as far as the window has it.
-#[derive(Clone)]
-pub enum Loaded {
-    /// Asked for at an instant; its type, to decode it with.
-    Waiting(String, std::time::Instant),
-    Ready(Arc<gpui::Image>),
-    Failed(String),
 }
 
 /// The UI state key under which the canvas of `run` keeps its
@@ -138,63 +117,19 @@ pub fn shown(canvas: &Canvas, pick: Option<Pick>) -> Option<(&Item, usize)> {
     Some((item, item.revisions.len() - 1))
 }
 
-/// The image `blob` of type `mime` from the repository `repo`, as far
-/// as the window has it; asks the host for it the first time.
-fn image(
-    view: &mut ViewCx<'_, CanvasUi>,
-    repo: &str,
-    blob: &Blob,
-    mime: &str,
-) -> Loaded {
-    match view.read_ui().images.get(&blob.id) {
-        Some(Loaded::Waiting(_, at)) if at.elapsed() >= RETRY => {}
-        Some(loaded) => return loaded.clone(),
-        None => {}
-    }
-    let waiting = Loaded::Waiting(mime.to_owned(), std::time::Instant::now());
-    view.ui.update(view.cx, |ui, _| {
-        ui.images.insert(blob.id.clone(), waiting.clone());
-    });
-    view.handle.act(
-        Action::Fetch {
+/// The image `shown` from the repository `repo` as a tree piece, `height`
+/// rems tall: the interface fetches it with this plugin's action and
+/// keeps it, by its blob.
+fn image(repo: &str, shown: &crate::ImageRef, height: f32) -> Node {
+    Node::Image {
+        key: shown.blob.id.clone(),
+        mime: shown.mime.clone(),
+        fetch: serde_json::to_value(Action::Fetch {
             repo: repo.to_owned(),
-            blob: blob.clone(),
-        },
-        view.cx,
-    );
-    waiting
-}
-
-/// The format gpui decodes an image of type `mime` as.
-fn format_of(mime: &str) -> Option<gpui::ImageFormat> {
-    use gpui::ImageFormat;
-    Some(match mime {
-        "image/png" => ImageFormat::Png,
-        "image/jpeg" => ImageFormat::Jpeg,
-        "image/gif" => ImageFormat::Gif,
-        "image/webp" => ImageFormat::Webp,
-        "image/bmp" => ImageFormat::Bmp,
-        "image/svg+xml" => ImageFormat::Svg,
-        _ => return None,
-    })
-}
-
-/// What a fetched image becomes, given the type it was asked for as.
-fn loaded(fetched: Fetched, mime: &str) -> Loaded {
-    let bytes = match (fetched.data, fetched.error) {
-        (Some(data), _) => STANDARD.decode(data),
-        (None, error) => {
-            return Loaded::Failed(
-                error.unwrap_or_else(|| "nothing came".to_owned()),
-            );
-        }
-    };
-    match (bytes, format_of(mime)) {
-        (Ok(bytes), Some(format)) => {
-            Loaded::Ready(Arc::new(gpui::Image::from_bytes(format, bytes)))
-        }
-        (Err(error), _) => Loaded::Failed(error.to_string()),
-        (_, None) => Loaded::Failed(format!("cannot draw {mime}")),
+            blob: shown.blob.clone(),
+        })
+        .unwrap_or_default(),
+        height: Some(height),
     }
 }
 
@@ -203,23 +138,10 @@ impl UiPlugin for CanvasUi {
     type Data = ();
     type RepoData = ();
     type Settings = ();
-    type Ui = Ui;
+    type Ui = ();
 
     fn name(&self) -> &'static str {
         NAME
-    }
-
-    fn reply(&self, ui: &mut Ui, reply: Value, cx: &mut Context<Ui>) {
-        let Ok(fetched) = serde_json::from_value::<Fetched>(reply) else {
-            return;
-        };
-        let Some(Loaded::Waiting(mime, _)) =
-            ui.images.get(&fetched.id).cloned()
-        else {
-            return;
-        };
-        ui.images.insert(fetched.id.clone(), loaded(fetched, &mime));
-        cx.notify();
     }
 
     fn manifest(&self) -> Manifest<Self> {

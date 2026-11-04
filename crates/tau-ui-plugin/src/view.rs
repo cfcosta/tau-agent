@@ -211,6 +211,13 @@ pub enum Request {
         key: String,
         value: Option<Value>,
     },
+    /// Asks the plugin's host half to carry out `action`, whose answer
+    /// is the picture `key` the interface keeps
+    /// ([`crate::tree::Node::Image`]).
+    Fetch {
+        key: String,
+        action: Value,
+    },
 }
 
 /// Where a [`Handle`]'s requests go: the interface, which carries out
@@ -236,6 +243,12 @@ impl Handle {
 
     pub fn request(&self, request: Request, cx: &mut App) {
         (self.sink)(self.plugin, request, cx);
+    }
+
+    /// Asks the plugin's host half for the picture `key` with `action`;
+    /// the answer goes to the interface's pictures.
+    pub fn fetch(&self, key: String, action: Value, cx: &mut App) {
+        self.request(Request::Fetch { key, action }, cx);
     }
 
     /// Sets `key` of the plugin's UI state to `value`, or forgets it.

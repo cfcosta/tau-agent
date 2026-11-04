@@ -1,18 +1,16 @@
 //! The cards of the canvas tools: the revision a call made, small, and
 //! a click away from the canvas showing it. A card reads the revision
 //! from the run's canvas by its call, so a stored run shows it as the
-//! live one did. Each is a view tree (ADR 0045), but for an image's
-//! thumbnail.
+//! live one did. Each is a view tree (ADR 0045).
 
-use gpui::{div, prelude::*, rems};
-use tau_ui_kit::theme::{Tone, sp};
+use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
     ViewCx,
     points::{AtCard, CardView},
     tree::{Kind, Node},
 };
 
-use super::{CanvasUi, OPEN, Pick, image, on_action, pane::picture};
+use super::{CanvasUi, OPEN, Pick, image, on_action};
 use crate::{Content, READ, TOOLS, words};
 
 /// How tall an image's thumbnail is.
@@ -98,38 +96,13 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, CanvasUi>) -> Option<CardView> {
     let act = on_action(handle, at.run.id.clone());
     let id = format!("canvas-card-{}", at.call_id);
     let body = match content {
-        Content::Image { image: shown, .. } => {
-            let t = view.theme().clone();
-            let loaded = image(view, &at.run.repo, &shown.blob, &shown.mime);
-            let aspect = match (shown.width, shown.height) {
-                (Some(width), Some(height)) if height > 0 => {
-                    width as f32 / height as f32
-                }
-                _ => 1.,
-            };
-            let thumbnail = picture(&loaded, &t)
-                .h(rems(THUMBNAIL))
-                .w(rems((THUMBNAIL * aspect).clamp(4., 30.)))
-                .max_w_full();
-            let open = view.tree(&id, &open, act);
-            div()
-                .flex()
-                .flex_col()
-                .items_start()
-                .gap(sp(2.))
-                .px(sp(3.))
-                .py(sp(2.5))
-                .child(thumbnail)
-                .child(open)
-                .into_any_element()
-        }
+        Content::Image { image: shown, .. } => view.tree(
+            &id,
+            &Node::stack([image(&at.run.repo, shown, THUMBNAIL), open]),
+            act,
+        ),
         Content::Document { text } => {
-            let tree = Node::stack([excerpt(text), open]);
-            div()
-                .px(sp(3.))
-                .py(sp(2.5))
-                .child(view.tree(&id, &tree, act))
-                .into_any_element()
+            view.tree(&id, &Node::stack([excerpt(text), open]), act)
         }
     };
     Some(CardView {

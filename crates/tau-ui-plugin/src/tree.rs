@@ -267,6 +267,18 @@ pub enum Node {
         #[serde(default)]
         dismiss: Option<String>,
     },
+    /// A picture the interface fetches and keeps (ADR 0045): `key` names
+    /// it, such as its blob's digest; `fetch` is the plugin's own action
+    /// that asks its host half for it, answered with `{ "data": base64 }`
+    /// or `{ "error": why }`; `mime` is its type. It fits `height` rems,
+    /// keeping its shape.
+    Image {
+        key: String,
+        mime: String,
+        fetch: Value,
+        #[serde(default)]
+        height: Option<f32>,
+    },
     /// A unified diff, its lines colored as `path`'s language when known.
     Diff {
         text: String,
@@ -434,6 +446,16 @@ pub struct TickerSpec {
 pub enum WidgetSpec {
     Terminal(TerminalSpec),
     Ticker(TickerSpec),
+    Image(ImageSpec),
+}
+
+/// What an image is drawn from: its key, its type, the plugin's action
+/// that fetches it, and the height it fits.
+pub struct ImageSpec {
+    pub key: String,
+    pub mime: String,
+    pub fetch: Value,
+    pub height: Option<f32>,
 }
 
 /// Draws a widget, kept by the interface from one draw to the next.
@@ -1206,6 +1228,25 @@ impl<'a> Draw<'a> {
                     .child(field(&input, false, t))
                     .into_any_element()
             }
+            Node::Image {
+                key,
+                mime,
+                fetch,
+                height,
+            } => match self.widgets {
+                Some(widgets) => widgets(
+                    WidgetSpec::Image(ImageSpec {
+                        key: key.clone(),
+                        mime: mime.clone(),
+                        fetch: fetch.clone(),
+                        height: *height,
+                    }),
+                    cx,
+                ),
+                None => {
+                    invalid("an image, drawn where the interface keeps one", t)
+                }
+            },
             Node::Diff { text, path } => tau_ui_kit::diff::view(
                 &tau_ui_kit::diff::parse(text),
                 path.as_deref().and_then(tau_ui_kit::syntax::Lang::of_path),

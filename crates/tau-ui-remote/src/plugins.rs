@@ -270,6 +270,13 @@ impl Workspace {
             Request::Cancel(run) => cx.emit(WorkspaceEvent::Cancel { run }),
             Request::Note(text) => self.show_composer_note(text, cx),
             Request::SetupDone => self.plugin_setup_step_done(plugin, cx),
+            Request::Fetch { key, action } => {
+                cx.emit(WorkspaceEvent::PluginFetch {
+                    plugin: plugin.to_owned(),
+                    key,
+                    action,
+                })
+            }
             Request::Ui { key, value } => {
                 // Shown here at once; the host keeps it, and tells the
                 // other interfaces.

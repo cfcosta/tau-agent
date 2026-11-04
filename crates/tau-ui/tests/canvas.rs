@@ -123,7 +123,9 @@ fn fetches(events: &Events) -> usize {
         .borrow()
         .iter()
         .filter(|event| {
-            matches!(event, WorkspaceEvent::PluginAct { plugin, action }
+            // The pane's and the card's image are the interface's, which
+            // fetches it as a picture (ADR 0045).
+            matches!(event, WorkspaceEvent::PluginFetch { plugin, action, .. }
                 if plugin == tau_canvas::NAME && action["action"] == "fetch")
         })
         .count()

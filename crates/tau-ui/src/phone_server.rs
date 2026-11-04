@@ -213,7 +213,9 @@ pub fn to_phones(update: &HostUpdate) -> Option<Value> {
 pub fn transient(update: &HostUpdate) -> bool {
     matches!(
         update,
-        HostUpdate::Picture { .. } | HostUpdate::PluginReply { .. }
+        HostUpdate::Picture { .. }
+            | HostUpdate::PluginReply { .. }
+            | HostUpdate::PluginFetched { .. }
     )
 }
 
