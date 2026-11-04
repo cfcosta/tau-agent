@@ -200,17 +200,6 @@ fn serving(
             WorkspaceEvent::Phones(request) => {
                 handle(&requests, request.clone(), &workspace, cx);
             }
-            // A phone asks for the plugins' views it draws (ADR 0046).
-            WorkspaceEvent::AskViews(keys) => {
-                let Some(server) = requests.borrow().server.clone() else {
-                    return;
-                };
-                let answers =
-                    workspace.update(cx, |ws, _| ws.ask_views(keys.clone()));
-                if let Some(body) = to_phones(&answers) {
-                    server.broadcast_transient(body);
-                }
-            }
             // A phone's click, command or key: carried out here, and
             // what is for its window goes back to it (ADR 0046).
             WorkspaceEvent::PluginCall {
@@ -558,6 +547,18 @@ fn on_event(
             server.snapshot(conn, snapshot(workspace.read(cx)));
         }
         ServerEvent::Up { device, body, .. } => match from_phone(body) {
+            // The plugins' views a phone draws, built here for it, and
+            // those it stopped drawing (ADR 0046).
+            Some(PhoneUp::Event(WorkspaceEvent::AskViews(keys))) => {
+                let answers = workspace
+                    .update(cx, |ws, _| ws.ask_views(&device.id, keys));
+                if let Some(body) = to_phones(&answers) {
+                    server.broadcast_transient(body);
+                }
+            }
+            Some(PhoneUp::Event(WorkspaceEvent::DropViews(keys))) => {
+                workspace.update(cx, |ws, _| ws.drop_views(&device.id, &keys));
+            }
             // The host acts on it as on its own interface's.
             Some(PhoneUp::Event(event)) => {
                 workspace.update(cx, |_, cx| cx.emit(event));

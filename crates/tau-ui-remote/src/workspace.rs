@@ -268,6 +268,8 @@ pub enum WorkspaceEvent {
     /// A phone asks the computer for the plugins' views it drew without
     /// (ADR 0046).
     AskViews(Vec<tau_ui_plugin::wire::ViewKey>),
+    /// A phone no longer draws these views (ADR 0046).
+    DropViews(Vec<tau_ui_plugin::wire::ViewKey>),
     /// A tree's image asks its plugin's host half for the picture `key`
     /// with `action` (ADR 0045).
     PluginFetch {
@@ -720,9 +722,10 @@ pub struct Workspace {
     /// On the computer, the phone's call being carried out, which what
     /// it asks of a host half answers.
     pub(crate) asker: Option<u64>,
-    /// On the computer, each view a phone asked for, as last built.
+    /// On the computer, each view a phone asked for, as last built, and
+    /// the phones that draw it.
     pub(crate) phone_views:
-        BTreeMap<tau_ui_plugin::wire::ViewKey, tau_ui_plugin::wire::Built>,
+        BTreeMap<tau_ui_plugin::wire::ViewKey, crate::views::Asked>,
     /// What a plugin asked to give the keys to, as the window draws.
     pub(crate) plugin_focus: Option<gpui::FocusHandle>,
     /// A plugin's note over the composer, and the task that takes it

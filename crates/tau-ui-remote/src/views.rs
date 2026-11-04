@@ -35,11 +35,17 @@ use crate::{
     workspace::{Workspace, WorkspaceEvent},
 };
 
+/// How long a phone keeps a view it no longer draws: after it, the phone
+/// drops it, and the computer stops building it for this phone.
+pub const KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// What a phone has of plugins' views: each one the computer sent, and
 /// those it lacks, to ask for once the window has drawn.
 #[derive(Debug, Default)]
 pub struct ViewCache {
     built: HashMap<ViewKey, Built>,
+    /// When each view was last drawn.
+    drawn: HashMap<ViewKey, std::time::Instant>,
     /// Drawn without an answer, and not asked for yet.
     missing: BTreeSet<ViewKey>,
     /// Asked for, with no answer yet.
@@ -50,10 +56,31 @@ impl ViewCache {
     /// The view `key` names, if the computer sent it; else it is asked
     /// for once the window has drawn.
     pub fn get(&mut self, key: &ViewKey) -> Option<&Built> {
+        self.drawn.insert(key.clone(), std::time::Instant::now());
         if !self.built.contains_key(key) && !self.asked.contains(key) {
             self.missing.insert(key.clone());
         }
         self.built.get(key)
+    }
+
+    /// Drops the views not drawn for [`KEEP`] by `now`, and gives them:
+    /// the computer need not build them for this phone any more.
+    fn take_stale(&mut self, now: std::time::Instant) -> Vec<ViewKey> {
+        let stale: Vec<ViewKey> = self
+            .built
+            .keys()
+            .filter(|key| {
+                self.drawn
+                    .get(*key)
+                    .is_none_or(|at| now.saturating_duration_since(*at) >= KEEP)
+            })
+            .cloned()
+            .collect();
+        for key in &stale {
+            self.built.remove(key);
+            self.drawn.remove(key);
+        }
+        stale
     }
 
     /// The views to ask for now: those drawn without one since the last
@@ -66,8 +93,11 @@ impl ViewCache {
 
     /// Keeps what the computer sent.
     fn take(&mut self, answers: Vec<(ViewKey, Built)>) {
+        let now = std::time::Instant::now();
         for (key, built) in answers {
             self.asked.remove(&key);
+            // Kept from when it came, as if drawn then.
+            self.drawn.entry(key.clone()).or_insert(now);
             self.built.insert(key, built);
         }
     }
@@ -79,6 +109,14 @@ impl ViewCache {
         self.asked.clear();
         self.missing.extend(self.built.keys().cloned());
     }
+}
+
+/// A view phones asked for, on the computer: as last built, and the
+/// phones that draw it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Asked {
+    built: Built,
+    by: BTreeSet<String>,
 }
 
 impl Workspace {
@@ -109,14 +147,24 @@ impl Workspace {
         Some(cache.borrow_mut().get(&key).cloned())
     }
 
-    /// Asks the computer for the views this window drew without.
+    /// Asks the computer for the views this window drew without, and
+    /// tells it of those it stopped drawing.
     pub(crate) fn ask_for_views(&mut self, cx: &mut Context<Self>) {
         let Some(cache) = &self.remote_views else {
             return;
         };
-        let missing = cache.borrow_mut().take_missing();
+        let (missing, stale) = {
+            let mut cache = cache.borrow_mut();
+            (
+                cache.take_missing(),
+                cache.take_stale(std::time::Instant::now()),
+            )
+        };
         if !missing.is_empty() {
             cx.emit(WorkspaceEvent::AskViews(missing));
+        }
+        if !stale.is_empty() {
+            cx.emit(WorkspaceEvent::DropViews(stale));
         }
     }
 
@@ -140,9 +188,13 @@ impl Workspace {
         }
     }
 
-    /// Builds the views a phone asked for, keeps them to build again
-    /// after a change, and gives them to send.
-    pub fn ask_views(&mut self, keys: Vec<ViewKey>) -> HostUpdate {
+    /// Builds the views the phone `device` asked for, keeps them to build
+    /// again after a change, and gives them to send.
+    pub fn ask_views(
+        &mut self,
+        device: &str,
+        keys: Vec<ViewKey>,
+    ) -> HostUpdate {
         let answers: Vec<(ViewKey, Built)> = keys
             .into_iter()
             .map(|key| {
@@ -151,9 +203,30 @@ impl Workspace {
             })
             .collect();
         for (key, built) in &answers {
-            self.phone_views.insert(key.clone(), built.clone());
+            let asked =
+                self.phone_views
+                    .entry(key.clone())
+                    .or_insert_with(|| Asked {
+                        built: built.clone(),
+                        by: BTreeSet::new(),
+                    });
+            asked.built = built.clone();
+            asked.by.insert(device.to_owned());
         }
         HostUpdate::Views { answers }
+    }
+
+    /// The phone `device` no longer draws `keys`: they are built again
+    /// only for the phones that still do.
+    pub fn drop_views(&mut self, device: &str, keys: &[ViewKey]) {
+        for key in keys {
+            if let Some(asked) = self.phone_views.get_mut(key) {
+                asked.by.remove(device);
+                if asked.by.is_empty() {
+                    self.phone_views.remove(key);
+                }
+            }
+        }
     }
 
     /// Builds again every view phones asked for, and gives those whose
@@ -163,12 +236,23 @@ impl Workspace {
         let mut answers = Vec::new();
         for key in keys {
             let built = self.build_view(&key);
-            if self.phone_views.get(&key) != Some(&built) {
-                self.phone_views.insert(key.clone(), built.clone());
+            if let Some(asked) = self.phone_views.get_mut(&key)
+                && asked.built != built
+            {
+                asked.built = built.clone();
                 answers.push((key, built));
             }
         }
         (!answers.is_empty()).then_some(HostUpdate::Views { answers })
+    }
+
+    /// The views phones asked for, for tests: each with the phones that
+    /// still draw it.
+    pub fn asked_views(&self) -> BTreeMap<ViewKey, BTreeSet<String>> {
+        self.phone_views
+            .iter()
+            .map(|(key, asked)| (key.clone(), asked.by.clone()))
+            .collect()
     }
 
     /// Forgets what phones asked for: none is connected.
@@ -511,5 +595,49 @@ pub fn at_card(
         data: card.data.clone(),
         summary: card.summary.clone(),
         cut: card.cut.as_deref().cloned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tau_ui_plugin::wire::{AtKey, Built, Layout, View, ViewKey};
+
+    use super::{KEEP, ViewCache};
+
+    fn key(point: &str) -> ViewKey {
+        ViewKey {
+            view: View::Point {
+                point: point.to_owned(),
+                at: AtKey::App,
+            },
+            layout: Layout::default(),
+        }
+    }
+
+    /// A view drawn without an answer is asked for once; a view the
+    /// phone has is kept while it draws it, and dropped once it has not
+    /// for [`KEEP`].
+    #[test]
+    fn a_view_is_asked_once_and_dropped_once_unseen() {
+        let mut cache = ViewCache::default();
+        let (shown, gone) = (key("shown"), key("gone"));
+        assert!(cache.get(&shown).is_none());
+        assert!(cache.get(&gone).is_none());
+        assert_eq!(cache.take_missing().len(), 2);
+        assert!(cache.get(&shown).is_none());
+        assert!(cache.take_missing().is_empty(), "asked, not again");
+        cache.take(vec![
+            (shown.clone(), Built::Nothing),
+            (gone.clone(), Built::Nothing),
+        ]);
+        let start = std::time::Instant::now();
+        assert!(cache.take_stale(start).is_empty());
+        // Only `shown` is drawn again; `gone`'s last draw is older.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(cache.get(&shown).is_some());
+        let later = start + KEEP + std::time::Duration::from_millis(1);
+        assert_eq!(cache.take_stale(later), std::slice::from_ref(&gone));
+        assert!(cache.get(&gone).is_none(), "dropped, so asked again");
+        assert_eq!(cache.take_missing(), [gone]);
     }
 }

@@ -390,7 +390,8 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
             if keys.is_empty() {
                 return;
             }
-            let answers = computer.update(ccx, |ws, _| ws.ask_views(keys));
+            let answers =
+                computer.update(ccx, |ws, _| ws.ask_views("phone", keys));
             phone.update(pcx, |ws, cx| ws.apply(answers, cx));
             pcx.run_until_parked();
         }
@@ -657,4 +658,31 @@ fn a_reply_goes_to_the_window_that_asked(cx: &mut TestAppContext) {
         phone.read_with(&pcx, |ws, cx| ws.composer_text(cx).to_owned()),
         ""
     );
+}
+
+/// The computer builds a view while any phone draws it: one phone that
+/// stops leaves it for the other, and it goes when both have.
+#[gpui::test]
+fn a_view_is_built_while_a_phone_draws_it(cx: &mut TestAppContext) {
+    let (computer, mut ccx, _host) = open(cx);
+    let key = ViewKey {
+        view: View::Point {
+            point: points::STATUS.name.to_owned(),
+            at: tau_ui_plugin::wire::AtKey::Run {
+                run: demo::run_id(),
+            },
+        },
+        layout: Layout::of(true, 400.),
+    };
+    computer.update(&mut ccx, |ws, _| {
+        ws.ask_views("one", vec![key.clone()]);
+        ws.ask_views("two", vec![key.clone()]);
+        ws.drop_views("one", std::slice::from_ref(&key));
+        assert_eq!(
+            ws.asked_views().get(&key).cloned(),
+            Some(["two".to_owned()].into())
+        );
+        ws.drop_views("two", std::slice::from_ref(&key));
+        assert!(ws.asked_views().is_empty());
+    });
 }
