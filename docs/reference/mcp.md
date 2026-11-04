@@ -176,6 +176,18 @@ The common `mcpServers` shape:
   request without running it, so posting it again runs no tool twice.
   Without this, every call to such a server after its restart waited
   out its timeout.
+- **A server that restarted** under a live HTTP connection forgot
+  everything tau told it. tau takes it as the connection lost and found
+  again: when rmcp starts a new session (above), when a stream of
+  messages in the session is refused (404 or 400; a ping then finds out),
+  or, on 2026-07-28, when a `subscriptions/listen` ends though the
+  connection did not, tau lists the tools, resources and prompts again,
+  listens for list changes again, and subscribes every watched resource
+  again on the session, so watches go on and their owners do nothing.
+  One the server refuses now ends its watches. It starts once no request
+  of the session waits for its answer, and calls wait for it to finish,
+  so the two never both repair the same thing (a token the server turned
+  down is refreshed once).
 - **Stdio close:** rmcp's `cancel()`, then the child's process group
   gets SIGTERM and, after 2 s, SIGKILL.
 - **Roots:** the repository's directory, as a `file://` URI, when the
@@ -526,6 +538,9 @@ An agent's `mcp` trigger (ADR 0037) watches one resource:
   `OutsideResources` service's `changed`) waits until the server's
   connection changes, so a watch refused as unsupported is tried again
   when the server connects again or says what it offers changed.
+- **Through a restart:** an HTTP server that restarted under a live
+  connection gets every watched resource subscribed again ("Connections",
+  "A server that restarted"); its watches go on.
 - **Tied to the session:** a session that ends ends its watches
   (`changed()` is `false`). Watching again connects again and
   subscribes on the new session; the watcher reads the resource again,
@@ -921,9 +936,9 @@ From the design above, as first written:
   through the plugin; tau's lists are the server's; the resources tau
   subscribes are the server's; every call returns once, its progress all
   before its result, in order; and the connection's watchers saw every
-  change. Ignored cases record what it found over HTTP: tau does not
-  hear of a restart, so the server's later list changes and the watches
-  taken before it are lost.
+  change. It found that tau did not hear of an HTTP server's restart,
+  so the restarted server's list changes and the watches taken before
+  it were lost; the shrunk cases are kept, on both protocols.
 - **Resources and prompts** (`tests/resources.rs`, `tests/prompts.rs`):
   as properties, the resource tools' exposure is the widest among the
   servers that offer resources, for any servers in any order; MCP apps

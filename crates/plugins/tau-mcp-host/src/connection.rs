@@ -425,12 +425,16 @@ pub struct Connection {
     subscribing: tokio::sync::Mutex<()>,
     /// Names each watch.
     watches: AtomicU64,
+    /// Whether it is listing and subscribing again on a renewed session
+    /// ([`Self::renew`]): a call waits for that, so the two never race
+    /// to repair the same thing, such as a token the server turned down.
+    renewing: watch::Sender<bool>,
 }
 
 /// One resource's subscription, on one session, and who watches it.
 struct Watched {
     session: Arc<Session>,
-    _subscription: ResourceSub,
+    subscription: ResourceSub,
     watchers: BTreeMap<u64, mpsc::UnboundedSender<()>>,
 }
 
@@ -492,6 +496,7 @@ impl Connection {
             watched: Mutex::default(),
             subscribing: tokio::sync::Mutex::default(),
             watches: AtomicU64::new(0),
+            renewing: watch::channel(false).0,
         })
     }
 
@@ -836,13 +841,21 @@ impl Connection {
                     .error
                     .unwrap_or_else(|| AuthNeed::default().message()));
             }
-            {
+            let live = {
                 let inner = self.inner.lock().expect("connection lock");
-                if let Some(session) = &inner.session
-                    && !session.is_closed()
-                {
-                    return Ok(session.clone());
+                inner
+                    .session
+                    .as_ref()
+                    .filter(|session| !session.is_closed())
+                    .cloned()
+            };
+            if let Some(session) = live {
+                let mut renewing = self.renewing.subscribe();
+                tokio::select! {
+                    _ = renewing.wait_for(|renewing| !renewing) => {}
+                    () = cancel.cancelled() => return Err("cancelled".into()),
                 }
+                return Ok(session);
             }
             let mut status = self.status.subscribe();
             self.connect();
@@ -1106,7 +1119,7 @@ impl Connection {
                 uri.to_owned(),
                 Watched {
                     session,
-                    _subscription: subscription,
+                    subscription,
                     watchers: BTreeMap::from([(id, sender)]),
                 },
             );
@@ -1216,6 +1229,101 @@ impl Connection {
 }
 
 impl Connection {
+    /// The server forgot `session` and it goes on anew, as when an HTTP
+    /// server restarts (`docs/reference/mcp.md`, "Lost HTTP sessions"):
+    /// lists what it offers again, listens for list changes again, and
+    /// subscribes every watched resource again, so their watches go on
+    /// as they were.
+    async fn renew(&self, session: &Arc<Session>) {
+        session.idle().await;
+        if !self.is_current(session) {
+            return;
+        }
+        /// Clears [`Connection::renewing`] however the renewal ends.
+        struct Renewing<'a>(&'a watch::Sender<bool>);
+        impl Drop for Renewing<'_> {
+            fn drop(&mut self) {
+                self.0.send_replace(false);
+            }
+        }
+        self.renewing.send_replace(true);
+        let _renewing = Renewing(&self.renewing);
+        session.listen_for_changes();
+        // Only lists the server gave: the session may be ending too, and
+        // a list that fails would empty what tau shows.
+        self.relist(session).await;
+        if session.features().resources
+            && let Ok(lists) = try_list_resources(session).await
+        {
+            self.update(session, |inner| {
+                (inner.resources, inner.templates) = lists;
+            });
+        }
+        if session.features().prompts
+            && let Ok(prompts) = session.list_prompts().await
+        {
+            self.update(session, |inner| inner.prompts = prompts);
+        }
+        self.resubscribe(session).await;
+    }
+
+    fn is_current(&self, session: &Arc<Session>) -> bool {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .session
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, session))
+    }
+
+    /// Subscribes again every resource watched on `session`. One the
+    /// server refuses now ends its watches, as a lost session's do.
+    async fn resubscribe(&self, session: &Arc<Session>) {
+        let _subscribing = self.subscribing.lock().await;
+        let uris: Vec<String> = self
+            .watched
+            .lock()
+            .expect("watch lock")
+            .iter()
+            .filter(|(_, watched)| Arc::ptr_eq(&watched.session, session))
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        for uri in uris {
+            let subscribed = session
+                .subscribe_resource(
+                    &uri,
+                    self.config.timeout(),
+                    &CancellationToken::new(),
+                )
+                .await;
+            let mut watched = self.watched.lock().expect("watch lock");
+            let Some(entry) = watched
+                .get_mut(&uri)
+                .filter(|entry| Arc::ptr_eq(&entry.session, session))
+            else {
+                // Its watches went meanwhile; a new subscription drops,
+                // and unsubscribes.
+                continue;
+            };
+            match subscribed {
+                Ok(subscription) => {
+                    std::mem::replace(&mut entry.subscription, subscription)
+                        .forget();
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "tau_mcp::server",
+                        server = self.config.name.as_str(),
+                        "cannot subscribe to {uri} again: {error:?}"
+                    );
+                    if let Some(entry) = watched.remove(&uri) {
+                        entry.subscription.forget();
+                    }
+                }
+            }
+        }
+    }
+
     /// Lists the resources and templates again, after the server said
     /// they changed.
     async fn relist_resources(&self, session: &Arc<Session>) {
@@ -1257,16 +1365,20 @@ async fn list_resources(
     if !session.features().resources {
         return (Vec::new(), Vec::new());
     }
-    let resources = session.list_resources().await.unwrap_or_else(|error| {
+    try_list_resources(session).await.unwrap_or_else(|error| {
         tracing::warn!(target: "tau_mcp::server", server, "{error}");
-        Vec::new()
-    });
-    // A server may offer resources without templates.
-    let templates = session.list_templates().await.unwrap_or_else(|error| {
-        tracing::debug!(target: "tau_mcp::server", server, "{error}");
-        Vec::new()
-    });
-    (
+        (Vec::new(), Vec::new())
+    })
+}
+
+/// The server's resources and templates, but MCP apps'; templates empty
+/// when listing them fails, as a server may offer resources without.
+async fn try_list_resources(
+    session: &Session,
+) -> Result<(Vec<ResourceInfo>, Vec<TemplateInfo>), String> {
+    let resources = session.list_resources().await?;
+    let templates = session.list_templates().await.unwrap_or_default();
+    Ok((
         resources
             .into_iter()
             .filter(|r| {
@@ -1282,7 +1394,7 @@ async fn list_resources(
                 )
             })
             .collect(),
-    )
+    ))
 }
 
 /// The server's prompts when it offers them; empty when it does not, or
@@ -1317,6 +1429,10 @@ async fn watch_session(
             }
             SessionEvent::ResourceUpdated(uri) => {
                 connection.resource_updated(&session, &uri);
+            }
+            SessionEvent::Renewed => connection.renew(&session).await,
+            SessionEvent::Stale => {
+                session.ping(connection.config.timeout()).await;
             }
             SessionEvent::Closed => {
                 connection.lost(&session);

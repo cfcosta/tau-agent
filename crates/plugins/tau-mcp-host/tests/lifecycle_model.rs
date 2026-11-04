@@ -34,11 +34,9 @@
 //! - the connection's watchers saw a change whenever its status or its
 //!   lists changed (b116c50f).
 //!
-//! Over HTTP the model found that tau never hears of a restart: the
-//! restarted server's list changes and the watches taken before it are
-//! lost. Those are the ignored cases at the end, which wait on a
-//! decision; until then an HTTP restart happens only with no watch held,
-//! and the server's lists stay put until the session starts again.
+//! Over HTTP the model found that tau never heard of a restart, so the
+//! restarted server's list changes and the watches taken before it
+//! were lost; the cases it shrank to are at the end.
 
 #![allow(
     clippy::disallowed_methods,
@@ -219,10 +217,6 @@ struct Machine {
     ended: Vec<ResourceWatch>,
     /// How many times `slow` ran, as the calls made it.
     slow_calls: usize,
-    /// The HTTP server restarted under the live session: tau does not
-    /// hear of its list changes until the session starts again (see
-    /// `a_tool_added_after_an_http_restart_is_listed_*`).
-    deaf: bool,
 }
 
 impl Machine {
@@ -289,7 +283,6 @@ impl Machine {
             held: Vec::new(),
             ended: Vec::new(),
             slow_calls: 0,
-            deaf: false,
         };
         // The builder started the first connect: the waiter reads from
         // before it, an empty list.
@@ -380,7 +373,6 @@ impl Machine {
     /// A session came up: tau listed what the server has.
     fn became_live(&mut self) {
         self.live = true;
-        self.deaf = false;
         self.moved = true;
         self.session_subscribes =
             self.fixture.subscribable.load(Ordering::SeqCst);
@@ -494,11 +486,6 @@ impl Machine {
     fn server_restarts(&mut self, tc: TestCase) {
         match &self.http {
             Some(http) => {
-                // A watch the restart forgets is
-                // `a_watch_survives_an_http_restart_*`.
-                if !self.held.is_empty() {
-                    tc.reject();
-                }
                 // The spec's 404, or the TypeScript SDK's 400.
                 let spec = tc.draw(gs::booleans());
                 http.restart(if spec {
@@ -506,7 +493,6 @@ impl Machine {
                 } else {
                     Unknown::BadRequest
                 });
-                self.deaf = self.live;
             }
             None => {
                 let subscribable = tc.draw(gs::booleans());
@@ -538,9 +524,6 @@ impl Machine {
     /// The server adds or removes a tool, and says its list changed.
     #[rule(weight = 2)]
     fn server_changes_its_tools(&mut self, tc: TestCase) {
-        if self.deaf {
-            tc.reject();
-        }
         let name = tc.draw(gs::sampled_from(TOOLS.to_vec()));
         let fixture = self.fixture.clone();
         if server_tools(&fixture).iter().any(|tool| tool == name) {
@@ -557,9 +540,6 @@ impl Machine {
     /// The server adds or removes a resource, and says its list changed.
     #[rule(weight = 2)]
     fn server_changes_its_resources(&mut self, tc: TestCase) {
-        if self.deaf {
-            tc.reject();
-        }
         let uri = tc.draw(gs::sampled_from(RESOURCES.to_vec()));
         let fixture = self.fixture.clone();
         if server_resources(&fixture).iter().any(|r| r == uri) {
@@ -748,8 +728,11 @@ fn a_connection_keeps_to_its_server_over_http(tc: TestCase) {
         .run(tc);
 }
 
+/// Fewer cases than the profile's: each takes seconds of the wall's
+/// clock, and 80 take about ten minutes.
 #[hegel::test(
     profile = "nightly_slow",
+    test_cases = 80,
     suppress_health_check = [hegel::HealthCheck::TooSlow]
 )]
 #[ignore = "nightly"]
@@ -811,12 +794,10 @@ async fn call_slow(connection: &Arc<Connection>) {
 }
 
 /// Shrunk from the model over HTTP: a tool the server added after it
-/// restarted is never listed. On 2025-11-25 rmcp starts a new session
-/// on the next request and posts it again, which tau never hears of, so
-/// it does not list again what the restarted server offers, and the
-/// change it said before that new session reached no one. On 2026-07-28
-/// the restart ends tau's `subscriptions/listen`, and nothing opens it
-/// again.
+/// restarted is listed. On 2025-11-25 rmcp starts a new session on the
+/// next request and posts it again, and the change the server said
+/// before that reached no one; on 2026-07-28 the restart ends tau's
+/// `subscriptions/listen`. Neither was listed again, nor listened for.
 async fn a_tool_added_after_an_http_restart_is_listed(legacy: bool) {
     let fixture = Fixture::subscribable(legacy);
     let server = HttpServer::start(fixture.clone()).await;
@@ -830,25 +811,19 @@ async fn a_tool_added_after_an_http_restart_is_listed(legacy: bool) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "an HTTP server restarted under a live connection: should tau \
-            hear of rmcp's new session (or of its listen ending) and list \
-            again, or count the session lost and connect again?"]
 async fn a_tool_added_after_an_http_restart_is_listed_2025() {
     a_tool_added_after_an_http_restart_is_listed(true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "an HTTP server restarted under a live connection: should tau \
-            hear of rmcp's new session (or of its listen ending) and list \
-            again, or count the session lost and connect again?"]
 async fn a_tool_added_after_an_http_restart_is_listed_2026() {
     a_tool_added_after_an_http_restart_is_listed(false).await;
 }
 
 /// Shrunk from the model over HTTP: a watch taken before the server
-/// restarted neither ends nor is subscribed again. The restarted server
-/// forgot the subscription, but tau still counts it, so the watch waits
-/// for changes that never come, and a trigger on it never fires again.
+/// restarted is subscribed again, and its watcher does nothing. It used
+/// to go on waiting for changes the restarted server, which forgot the
+/// subscription, never sent, so a trigger on it never fired again.
 async fn a_watch_survives_an_http_restart(legacy: bool) {
     let fixture = Fixture::subscribable(legacy);
     let server = HttpServer::start(fixture.clone()).await;
@@ -863,35 +838,28 @@ async fn a_watch_survives_an_http_restart(legacy: bool) {
     );
     server.restart(Unknown::BadRequest);
     call_slow(&connection).await;
-    // Either the watch ended, so its watcher watches again, or the
-    // server has it subscribed again.
-    let ended = matches!(
-        tokio::time::timeout(Duration::from_secs(1), watch.changed()).await,
-        Ok(false)
-    );
     let subscribed =
         within_5s(|| fixture.subscribed_uris().contains("file:///status"))
             .await;
     assert!(
-        ended || subscribed,
+        subscribed,
         "tau counts {} subscriptions, the server has {:?}",
         connection.subscriptions(),
         fixture.subscribed_uris()
     );
+    // The same watch hears the restarted server's changes.
+    fixture.set_status("red").await;
+    let heard =
+        tokio::time::timeout(Duration::from_secs(5), watch.changed()).await;
+    assert_eq!(heard, Ok(true), "the watch heard the change");
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "an HTTP server restarted under a live watch: should tau end \
-            the watch, so its watcher watches again, or subscribe again on \
-            the new session?"]
 async fn a_watch_survives_an_http_restart_2025() {
     a_watch_survives_an_http_restart(true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "an HTTP server restarted under a live watch: should tau end \
-            the watch, so its watcher watches again, or subscribe again on \
-            the new session?"]
 async fn a_watch_survives_an_http_restart_2026() {
     a_watch_survives_an_http_restart(false).await;
 }

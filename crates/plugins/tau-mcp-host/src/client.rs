@@ -17,7 +17,11 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -43,6 +47,7 @@ use rmcp::{
         ListRootsResult,
         LoggingLevel,
         LoggingMessageNotificationParam,
+        PingRequest,
         ProgressNotificationParam,
         ProgressToken,
         ProtocolVersion,
@@ -163,6 +168,17 @@ pub(crate) enum SessionEvent {
     PromptsChanged,
     /// A resource the session subscribes to changed: read it again.
     ResourceUpdated(String),
+    /// The server forgot the session, as one that restarted does, and
+    /// the session goes on with it anew: on 2025-11-25 over HTTP rmcp
+    /// started a new session in its place, and on 2026-07-28 a
+    /// `subscriptions/listen` ended though the connection did not. What
+    /// the server offers may have changed, and what it was told is gone:
+    /// list again, listen again and subscribe again.
+    Renewed,
+    /// The server no longer knows the session's stream of messages
+    /// (2025-11-25 over HTTP): a request finds out whether it restarted,
+    /// and if it did, rmcp starts a new session ([`Self::Renewed`]).
+    Stale,
     /// The connection ended.
     Closed,
 }
@@ -472,6 +488,28 @@ pub(crate) struct Session {
     /// to the same resource waits for it, so it cannot reach the server
     /// first and be undone.
     unsubscribing: Unsubscribing,
+    /// The lists whose changes it listens for, on 2026-07-28.
+    changes: Changes,
+    /// Whether the `subscriptions/listen` for list changes is open.
+    listening: Arc<AtomicBool>,
+    /// How many requests and tool calls are waiting for their answer.
+    in_flight: watch::Sender<usize>,
+}
+
+/// Counts a request in [`Session::in_flight`] until it is answered.
+struct InFlight<'a>(&'a watch::Sender<usize>);
+
+impl<'a> InFlight<'a> {
+    fn new(counter: &'a watch::Sender<usize>) -> Self {
+        counter.send_modify(|n| *n += 1);
+        Self(counter)
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.send_modify(|n| *n -= 1);
+    }
 }
 
 /// The `resources/unsubscribe` requests going, by resource.
@@ -501,6 +539,16 @@ enum SubEnd {
     /// A `resources/subscribe`, undone by `resources/unsubscribe`, which
     /// goes in the session's [`Unsubscribing`].
     Legacy(Peer<RoleClient>, String, Unsubscribing),
+}
+
+impl ResourceSub {
+    /// Lets go of a subscription the server already forgot, telling it
+    /// nothing: an unsubscribe would reach the session that replaced it.
+    pub fn forget(mut self) {
+        if let Some(SubEnd::Listen(task)) = self.ends.take() {
+            task.abort();
+        }
+    }
 }
 
 impl Drop for ResourceSub {
@@ -551,7 +599,6 @@ impl Session {
         events: mpsc::UnboundedSender<SessionEvent>,
     ) -> Result<Self, ConnectError> {
         let routes = Routes::default();
-        let list_events = events.clone();
         let mut handler = Handler {
             server: server.into(),
             roots: root
@@ -653,10 +700,7 @@ impl Session {
             let _ = done_tx.send(true);
             let _ = events.send(SessionEvent::Closed);
         });
-        if changes.any() {
-            tokio::spawn(watch_lists(peer.clone(), changes, list_events));
-        }
-        Ok(Self {
+        let session = Self {
             peer,
             stop: Mutex::new(Some(stop)),
             done,
@@ -667,7 +711,43 @@ impl Session {
             events: subscription_events,
             listens,
             unsubscribing: Unsubscribing::default(),
-        })
+            changes,
+            listening: Arc::default(),
+            in_flight: watch::channel(0).0,
+        };
+        session.listen_for_changes();
+        Ok(session)
+    }
+
+    /// Opens the `subscriptions/listen` for list changes, on 2026-07-28,
+    /// unless it is open.
+    pub fn listen_for_changes(&self) {
+        if self.changes.any() && !self.listening.swap(true, Ordering::SeqCst) {
+            tokio::spawn(watch_lists(
+                self.peer.clone(),
+                self.changes,
+                self.events.clone(),
+                self.listening.clone(),
+            ));
+        }
+    }
+
+    /// Waits until no request or tool call waits for its answer: one
+    /// that rmcp posts again in a new session gets there first, so what
+    /// follows does not race it (a token the server turned down is then
+    /// refreshed once, not by both).
+    pub async fn idle(&self) {
+        let mut in_flight = self.in_flight.subscribe();
+        let _ = in_flight.wait_for(|n| *n == 0).await;
+    }
+
+    /// Pings the server, which finds out whether it still knows the
+    /// session.
+    pub async fn ping(&self, timeout: Duration) {
+        let request = ClientRequest::PingRequest(PingRequest::default());
+        let _ = self
+            .request(request, timeout, &CancellationToken::new())
+            .await;
     }
 
     /// Subscribes to the resource `uri`: on 2026-07-28 through a
@@ -704,6 +784,7 @@ impl Session {
                 )));
             }
             let (events, watched) = (self.events.clone(), uri.to_owned());
+            let peer = self.peer.clone();
             let task = tokio::spawn(async move {
                 while let Ok(Some(notification)) = subscription.next().await {
                     if let ServerNotification::ResourceUpdatedNotification(
@@ -718,6 +799,10 @@ impl Session {
                     {
                         return;
                     }
+                }
+                // Ended by the server, not by tau, which aborts it.
+                if !peer.is_transport_closed() {
+                    let _ = events.send(SessionEvent::Renewed);
                 }
             });
             return Ok(ResourceSub {
@@ -939,6 +1024,7 @@ impl Session {
         timeout: Duration,
         cancel: &CancellationToken,
     ) -> Result<ServerResult, CallError> {
+        let _in_flight = InFlight::new(&self.in_flight);
         let options = PeerRequestOptions::with_timeout(timeout);
         let handle = self
             .peer
@@ -973,6 +1059,7 @@ impl Session {
         on_progress: &(dyn Fn(Progress) + Send + Sync),
         cancel: &CancellationToken,
     ) -> Result<Value, CallError> {
+        let _in_flight = InFlight::new(&self.in_flight);
         let mut params = CallToolRequestParams::new(tool.to_owned());
         params.arguments = arguments;
         let request =
@@ -1137,7 +1224,10 @@ async fn open(
                 // refreshed when it is about to expire or turned down.
                 Some(manager) => {
                     let transport = StreamableHttpClientTransport::with_client(
-                        AuthClient::new(HttpClient(mcp_client()), manager),
+                        AuthClient::new(
+                            HttpClient::new(handler.events.clone()),
+                            manager,
+                        ),
                         config,
                     );
                     handler
@@ -1149,7 +1239,7 @@ async fn open(
                 }
                 None => {
                     let transport = StreamableHttpClientTransport::with_client(
-                        HttpClient(mcp_client()),
+                        HttpClient::new(handler.events.clone()),
                         config,
                     );
                     handler
@@ -1195,8 +1285,60 @@ async fn open(
 /// it, since nothing marks the session gone. The server rejected the
 /// request before running it, so starting a new session and posting it
 /// again cannot run a tool twice.
+///
+/// It also tells the session when the server forgot it: a request
+/// rmcp then posts again in a new session ([`SessionEvent::Renewed`]),
+/// or a stream of messages the server no longer knows
+/// ([`SessionEvent::Stale`]).
 #[derive(Clone)]
-struct HttpClient(reqwest::Client);
+struct HttpClient {
+    client: reqwest::Client,
+    events: mpsc::UnboundedSender<SessionEvent>,
+}
+
+impl HttpClient {
+    fn new(events: mpsc::UnboundedSender<SessionEvent>) -> Self {
+        Self {
+            client: mcp_client(),
+            events,
+        }
+    }
+
+    /// Tells the session of a request the server answered as one in a
+    /// session it does not know.
+    fn posted<T>(
+        &self,
+        response: &Result<T, StreamableHttpError<reqwest::Error>>,
+        request_in_session: bool,
+    ) {
+        if request_in_session
+            && matches!(response, Err(StreamableHttpError::SessionExpired))
+        {
+            let _ = self.events.send(SessionEvent::Renewed);
+        }
+    }
+
+    /// Tells the session of a stream the server would not open in it: 404
+    /// as the spec has it, 400 as the TypeScript SDK's examples do.
+    fn streamed<T>(
+        &self,
+        response: &Result<T, StreamableHttpError<reqwest::Error>>,
+        in_session: bool,
+    ) {
+        if in_session
+            && let Err(StreamableHttpError::Client(error)) = response
+            && matches!(
+                error.status(),
+                Some(
+                    reqwest::StatusCode::NOT_FOUND
+                        | reqwest::StatusCode::BAD_REQUEST
+                )
+            )
+        {
+            let _ = self.events.send(SessionEvent::Stale);
+        }
+    }
+}
 
 impl rmcp::transport::streamable_http_client::StreamableHttpClient
     for HttpClient
@@ -1221,10 +1363,12 @@ impl rmcp::transport::streamable_http_client::StreamableHttpClient
         let is_request =
             matches!(message, rmcp::model::ClientJsonRpcMessage::Request(_));
         let response = self
-            .0
+            .client
             .post_message(uri, message, session_id, auth_header, custom_headers)
             .await;
-        expired_session(response, in_session && is_request)
+        let response = expired_session(response, in_session && is_request);
+        self.posted(&response, in_session && is_request);
+        response
     }
 
     async fn post_message_with_max_sse_event_size(
@@ -1246,7 +1390,7 @@ impl rmcp::transport::streamable_http_client::StreamableHttpClient
         let is_request =
             matches!(message, rmcp::model::ClientJsonRpcMessage::Request(_));
         let response = self
-            .0
+            .client
             .post_message_with_max_sse_event_size(
                 uri,
                 message,
@@ -1256,7 +1400,9 @@ impl rmcp::transport::streamable_http_client::StreamableHttpClient
                 max_sse_event_size,
             )
             .await;
-        expired_session(response, in_session && is_request)
+        let response = expired_session(response, in_session && is_request);
+        self.posted(&response, in_session && is_request);
+        response
     }
 
     async fn delete_session(
@@ -1269,7 +1415,7 @@ impl rmcp::transport::streamable_http_client::StreamableHttpClient
             reqwest::header::HeaderValue,
         >,
     ) -> Result<(), StreamableHttpError<reqwest::Error>> {
-        self.0
+        self.client
             .delete_session(uri, session_id, auth_header, custom_headers)
             .await
     }
@@ -1294,7 +1440,9 @@ impl rmcp::transport::streamable_http_client::StreamableHttpClient
         >,
         StreamableHttpError<reqwest::Error>,
     > {
-        self.0
+        let in_session = session_id.is_some();
+        let response = self
+            .client
             .get_stream(
                 uri,
                 session_id,
@@ -1302,7 +1450,9 @@ impl rmcp::transport::streamable_http_client::StreamableHttpClient
                 auth_header,
                 custom_headers,
             )
-            .await
+            .await;
+        self.streamed(&response, in_session);
+        response
     }
 
     async fn get_stream_with_max_sse_event_size(
@@ -1326,7 +1476,9 @@ impl rmcp::transport::streamable_http_client::StreamableHttpClient
         >,
         StreamableHttpError<reqwest::Error>,
     > {
-        self.0
+        let in_session = session_id.is_some();
+        let response = self
+            .client
             .get_stream_with_max_sse_event_size(
                 uri,
                 session_id,
@@ -1335,7 +1487,9 @@ impl rmcp::transport::streamable_http_client::StreamableHttpClient
                 custom_headers,
                 max_sse_event_size,
             )
-            .await
+            .await;
+        self.streamed(&response, in_session);
+        response
     }
 }
 
@@ -1414,11 +1568,24 @@ impl Changes {
 /// On the 2026-07-28 protocol, list changes come through
 /// `subscriptions/listen`; on older ones, as plain notifications to the
 /// handler.
+///
+/// A listen the server ends under a live connection, as one that
+/// restarted does, is [`SessionEvent::Renewed`]; `listening` is false
+/// once it is over.
 async fn watch_lists(
     peer: Peer<RoleClient>,
     changes: Changes,
     events: mpsc::UnboundedSender<SessionEvent>,
+    listening: Arc<AtomicBool>,
 ) {
+    /// Clears `listening` however the listen ends.
+    struct Over(Arc<AtomicBool>);
+    impl Drop for Over {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
+    let over = Over(listening);
     let mut filter = SubscriptionFilter::builder();
     if changes.tools {
         filter = filter.tools_list_changed();
@@ -1448,6 +1615,10 @@ async fn watch_lists(
         if events.send(event).is_err() {
             return;
         }
+    }
+    drop(over);
+    if !peer.is_transport_closed() {
+        let _ = events.send(SessionEvent::Renewed);
     }
 }
 
