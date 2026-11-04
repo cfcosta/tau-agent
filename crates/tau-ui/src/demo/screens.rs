@@ -1719,20 +1719,18 @@ fn canvas(
             cx,
         );
     }
-    if let Some((item, revision)) = pick
-        && let Some(ui) =
-            workspace.plugin_ui::<tau_canvas::ui::Ui>(tau_canvas::NAME)
-    {
-        ui.update(cx, |ui, _| {
-            ui.pick(
-                &run,
-                tau_canvas::ui::Pick {
-                    item,
-                    revision,
-                    fresh,
-                },
-            )
-        });
+    // What the pane shows is tau-canvas's UI state (ADR 0045).
+    if let Some((item, revision)) = pick {
+        let picked = tau_canvas::ui::Pick {
+            item,
+            revision,
+            fresh,
+        };
+        workspace.plugin_handle(tau_canvas::NAME).set_ui(
+            tau_canvas::ui::pick_key(&run),
+            serde_json::to_value(picked).ok(),
+            cx,
+        );
     }
     workspace.open_pane(cx);
 }

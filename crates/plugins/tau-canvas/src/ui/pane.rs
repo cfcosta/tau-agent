@@ -70,8 +70,9 @@ pub fn pane(at: &AtRun, view: &mut ViewCx<'_, CanvasUi>) -> Option<PaneView> {
             let document = Node::Scroll {
                 height: Some(DOCUMENT_HEIGHT),
                 children: vec![
-                    Node::Heading {
+                    Node::Title {
                         text: item.title.clone(),
+                        subtitle: None,
                     },
                     Node::Markdown { text: text.clone() },
                 ],
