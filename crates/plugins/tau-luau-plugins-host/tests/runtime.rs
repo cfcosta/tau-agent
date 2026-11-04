@@ -535,7 +535,7 @@ return tau.plugin {
       ui.table({ "name", "n" }, { { "a", ui.badge("1") }, { "b", "2" } }),
       ui.list { "one", ui.mono("two") },
       ui.progress(0.4, "40%"), ui.progress(2),
-      ui.code("lua", "x = 1"), ui.code(nil, "plain"),
+      ui.code("lua", "x = 1"), ui.code(nil, "plain", { first_line = 10 }), ui.toned("PASS", "good", true),
       ui.row { ui.button("Go", "go"), ui.button("Drop", "drop", { id = 1 }, "danger") },
       ui.scroll({ "a", "b" }, 10), ui.scroll {},
       ui.rule(), ui.empty("Nothing yet."),
@@ -574,7 +574,7 @@ async fn every_ui_piece_reads_as_a_tree() {
     let tau_ui_plugin::tree::Node::Stack { children } = &node else {
         panic!("a stack: {node:?}")
     };
-    assert_eq!(children.len(), 40);
+    assert_eq!(children.len(), 41);
     let written = node.value().to_string();
     assert!(!written.contains(r#""piece":"invalid""#), "{written}");
 }

@@ -280,12 +280,14 @@ pub fn embed(piece: &Value, plugin: &str) -> Node {
             cols,
             rows,
             live,
+            fold,
         } => Node::Terminal {
             id: own(id),
             text,
             cols,
             rows,
             live,
+            fold,
         },
         Node::Ticker { id, since, until } => Node::Ticker {
             id: own(id),
@@ -781,6 +783,7 @@ fn plugin_card(entry: &Entry) -> Node {
         Standing::Broken { error } => body.push(Node::Code {
             lang: None,
             text: error.clone(),
+            first_line: None,
         }),
         _ => {}
     }
@@ -891,6 +894,7 @@ fn plugin_page(
             page.push(Node::Code {
                 lang: None,
                 text: error.clone(),
+                first_line: None,
             });
         }
         Standing::Failing if found.keeps_earlier => {

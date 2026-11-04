@@ -245,14 +245,14 @@ fn tick(
     text
 }
 
-fn options(cols: u16, rows: u16, t: &Theme) -> ViewOptions {
+fn options(cols: u16, rows: u16, shown: Option<u16>, t: &Theme) -> ViewOptions {
     ViewOptions {
         size: Size { cols, rows },
         font_family: MONO.into(),
         font_size: rems(t.term.text.size / 16.),
         line_height: t.term.leading,
         palette: t.term.palette,
-        visible_rows: Some(usize::from(rows).min(t.term.rows)),
+        visible_rows: shown.map(usize::from),
         ..ViewOptions::default()
     }
 }
@@ -350,7 +350,7 @@ fn view(
             let view = made(
                 &spec.bytes,
                 spec.live,
-                options(spec.cols, spec.rows, &t),
+                options(spec.cols, spec.rows, spec.shown, &t),
                 cx,
             )?;
             terminals.borrow_mut().screens.insert(
@@ -378,6 +378,7 @@ mod tests {
             cols: 20,
             rows: 4,
             live,
+            shown: None,
         }
     }
 

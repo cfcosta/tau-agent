@@ -1260,6 +1260,7 @@ fn review_card(
             Node::Code {
                 lang: None,
                 text: item.flag.shown.clone(),
+                first_line: None,
             }
         },
     ];

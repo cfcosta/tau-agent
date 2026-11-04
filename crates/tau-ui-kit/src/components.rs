@@ -964,6 +964,30 @@ pub fn weighted_table(
 /// A fenced block of code from a reply, in the monospace face, with its
 /// language in the corner.
 pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
+    numbered_code_block(lang, text, None, t)
+}
+
+/// [`code_block`], with each line's number in a gutter from `first`
+/// when given. Numbered lines do not wrap, so each number stays beside
+/// its line.
+pub fn numbered_code_block(
+    lang: Option<&str>,
+    text: &str,
+    first: Option<u32>,
+    t: &Theme,
+) -> Div {
+    let gutter = first.map(|first| {
+        let count = text.lines().count().max(1) as u32;
+        let numbers: Vec<String> =
+            (first..first + count).map(|n| n.to_string()).collect();
+        div()
+            .flex_shrink_0()
+            .pr(sp(3.))
+            .text_right()
+            .typeset(Type::SMALL.mono())
+            .text_color(t.dim)
+            .child(numbers.join("\n"))
+    });
     div()
         .relative()
         .w_full()
@@ -974,33 +998,43 @@ pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
         .border_1()
         .border_color(t.border)
         .child(
-            match lang
-                .and_then(crate::syntax::Lang::of_name)
-                .filter(|_| !text.is_empty())
-            {
-                Some(lang) => {
-                    let parts = crate::syntax::highlight_cached(lang, text);
-                    div()
-                        .typeset(Type::SMALL.mono())
-                        .text_color(t.text_soft)
-                        .child(crate::select::selectable(
-                            gpui::StyledText::new(text.to_owned()).with_runs(
-                                crate::syntax::runs(
-                                    text,
-                                    &parts,
-                                    t.text_soft,
-                                    &t.syntax,
-                                ),
-                            ),
-                        ))
-                }
-                None => div()
-                    .typeset(Type::SMALL.mono())
-                    .text_color(t.text_soft)
-                    .child(crate::select::selectable(gpui::StyledText::new(
-                        text.to_owned(),
-                    ))),
-            },
+            div().flex().children(gutter).child(
+                div()
+                    .flex_1()
+                    .min_w(rems(0.))
+                    .when(first.is_some(), |code| {
+                        code.whitespace_nowrap().overflow_x_hidden()
+                    })
+                    .child(
+                        match lang
+                            .and_then(crate::syntax::Lang::of_name)
+                            .filter(|_| !text.is_empty())
+                        {
+                            Some(lang) => {
+                                let parts =
+                                    crate::syntax::highlight_cached(lang, text);
+                                div()
+                                    .typeset(Type::SMALL.mono())
+                                    .text_color(t.text_soft)
+                                    .child(crate::select::selectable(
+                                        gpui::StyledText::new(text.to_owned())
+                                            .with_runs(crate::syntax::runs(
+                                                text,
+                                                &parts,
+                                                t.text_soft,
+                                                &t.syntax,
+                                            )),
+                                    ))
+                            }
+                            None => div()
+                                .typeset(Type::SMALL.mono())
+                                .text_color(t.text_soft)
+                                .child(crate::select::selectable(
+                                    gpui::StyledText::new(text.to_owned()),
+                                )),
+                        },
+                    ),
+            ),
         )
         .children(lang.map(|lang| {
             div().absolute().top(sp(1.5)).right(sp(2.5)).child(mono(

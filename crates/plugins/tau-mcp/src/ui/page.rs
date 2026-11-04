@@ -501,6 +501,7 @@ fn pending(repo: Option<&str>, row: &PendingRow) -> Node {
         Node::Code {
             lang: Some("json".into()),
             text: serde_json::to_string_pretty(&row.entry).unwrap_or_default(),
+            first_line: None,
         },
     ];
     if let Some(repo) = repo {

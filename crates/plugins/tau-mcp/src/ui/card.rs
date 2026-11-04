@@ -127,6 +127,7 @@ pub fn body(data: &CallData, shown: &Shown) -> Node {
     let json = |text: String| Node::Code {
         lang: Some("json".into()),
         text,
+        first_line: None,
     };
     let mut body = Vec::new();
     if !data.args.is_null()

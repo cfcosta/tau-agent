@@ -152,8 +152,21 @@ function ui.progress(share, label)
 	return { piece = "progress", share = share, label = label and tostring(label) or json.null }
 end
 
-function ui.code(lang, text)
-	return { piece = "code", lang = lang and tostring(lang) or json.null, text = tostring(text) }
+-- Code, highlighted as `lang`; `opts.first_line` numbers its lines.
+function ui.code(lang, text, opts)
+	opts = opts or {}
+	return {
+		piece = "code",
+		lang = lang and tostring(lang) or json.null,
+		text = tostring(text),
+		first_line = opts.first_line and math.floor(tonumber(opts.first_line) or 1) or json.null,
+	}
+end
+
+-- A line in a tone: `good` for a passed test, `neutral` dims it.
+-- `mono` sets it in the monospace face.
+function ui.toned(text, of, mono)
+	return { piece = "toned", text = tostring(text), tone = tone(of), mono = mono == true }
 end
 
 function ui.stack(children)
@@ -271,6 +284,7 @@ function ui.terminal(id, text, opts)
 		cols = tonumber(opts.cols) or 80,
 		rows = tonumber(opts.rows) or 24,
 		live = opts.live == true,
+		fold = opts.fold == true,
 	}
 end
 

@@ -131,7 +131,9 @@ Plain tables, drawn by tau on the computer and on the phone:
 - `ui.list({ ... })`, `ui.stack({ ... })` (one under another),
   `ui.row({ ... })` (side by side); strings in them are text
 - `ui.progress(share, label)` with `share` from 0 to 1
-- `ui.code(lang, text)`
+- `ui.code(lang, text, { first_line = 1 })`: highlighted code; with
+  `first_line`, its lines are numbered
+- `ui.toned(text, tone, mono)`: a line in a tone; `"neutral"` dims it
 - `ui.heading(text)`, `ui.markdown(text)`, `ui.pill(text, tone)`
 - `ui.icon(name, tone)`: one of tau's icons by name, such as
   `"memory"`, `"check"` or `"sub-agent"`
@@ -140,8 +142,9 @@ Plain tables, drawn by tau on the computer and on the phone:
 - `ui.scroll({ ... }, height)`: pieces that scroll past `height` rems
 - `ui.rule()`, `ui.empty(text)`
 - `ui.diff(text, path)`: a unified diff, colored as `path`'s language
-- `ui.terminal(id, text, { cols = 80, rows = 24, live = false })`: what
-  a program wrote, escapes and all, on a terminal tau keeps under `id`
+- `ui.terminal(id, text, { cols = 80, rows = 24, live = false, fold = true })`:
+  what a program wrote, escapes and all, on a terminal tau keeps under
+  `id`; with `fold`, it shows a few rows until the person opens it
 - `ui.ticker(id, since, stopped)`: the time since `since` (milliseconds
   since 1970), counting until `stopped` is given; keep `since` in the
   state

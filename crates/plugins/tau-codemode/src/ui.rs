@@ -635,6 +635,7 @@ fn code(lang: &str, text: impl AsRef<str>) -> Node {
     Node::Code {
         lang: Some(lang.into()),
         text: text.as_ref().to_owned(),
+        first_line: None,
     }
 }
 
@@ -881,6 +882,7 @@ fn store_section(state: &State, run: Option<&RunId>) -> Node {
                             Node::Code {
                                 lang: None,
                                 text: value,
+                                first_line: None,
                             },
                         ]
                     })

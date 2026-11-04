@@ -439,6 +439,7 @@ pub fn read_body(
         pieces.push(Node::Code {
             lang: lang.map(str::to_owned),
             text: read.lines[..shown].join("\n"),
+            first_line: Some(read.first.max(1) as u32),
         });
         let rest = read.lines.len() - read.lines.len().min(PEEK);
         if rest > 0 {
@@ -467,10 +468,20 @@ pub fn read_body(
 
 /// Output lines, as the model got them.
 fn output(lines: &[String]) -> Node {
-    Node::Code {
-        lang: None,
-        text: lines.join("\n"),
-    }
+    // A passing test's line stands out in green.
+    Node::stack(lines.iter().map(|line| {
+        let passed = line.contains("PASS")
+            || line.trim_start().starts_with("test result: ok");
+        if passed {
+            Node::Toned {
+                text: line.clone(),
+                tone: tau_ui_plugin::tree::Tone::Good,
+                mono: true,
+            }
+        } else {
+            Node::Mono { text: line.clone() }
+        }
+    }))
 }
 
 /// A card of one of its tools.

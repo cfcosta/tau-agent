@@ -113,9 +113,19 @@ fn row(listed: &Listed, compact: bool) -> Vec<Node> {
     if let Some(target) = &entry.target {
         name.push_str(&format!("  → {target}"));
     }
+    // An ignored entry matters less: dimmed.
+    let name = if ignored {
+        Node::Toned {
+            text: name,
+            tone: Tone::Neutral,
+            mono: true,
+        }
+    } else {
+        Node::Mono { text: name }
+    };
     let mut cells = vec![
         mark(listed),
-        Node::Mono { text: name },
+        name,
         Node::Mono {
             text: measure.unwrap_or_default(),
         },

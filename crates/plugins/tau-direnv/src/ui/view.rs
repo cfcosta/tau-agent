@@ -96,6 +96,7 @@ pub fn question_tree(repo: &str, envrc: &str) -> Node {
             Node::Code {
                 lang: Some("bash".into()),
                 text: envrc.trim_end().to_owned(),
+                first_line: None,
             },
             Node::row([
                 button("Load it", Kind::Primary, &decide(true)),
@@ -150,6 +151,7 @@ pub fn card_tree(now: &Record, live: bool, run: &str) -> Option<Node> {
                 Node::Code {
                     lang: None,
                     text: output.clone(),
+                    first_line: None,
                 },
                 Node::row([
                     Node::text("Commands run without it until it loads."),

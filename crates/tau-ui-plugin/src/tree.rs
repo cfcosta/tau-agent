@@ -29,7 +29,6 @@ use tau_ui_kit::{
         ButtonKind,
         badge,
         button,
-        code_block,
         dot,
         empty,
         field,
@@ -185,10 +184,21 @@ pub enum Node {
         #[serde(default)]
         label: Option<String>,
     },
+    /// `first_line`, when given, numbers its lines from it.
     Code {
         #[serde(default)]
         lang: Option<String>,
         text: String,
+        #[serde(default)]
+        first_line: Option<u32>,
+    },
+    /// A line in a tone: a passed test in green, a line that matters
+    /// less dimmed (neutral). `mono` sets it in the monospace face.
+    Toned {
+        text: String,
+        tone: Tone,
+        #[serde(default)]
+        mono: bool,
     },
     /// Pieces one under the other.
     Stack {
@@ -299,6 +309,10 @@ pub enum Node {
         rows: u16,
         #[serde(default)]
         live: bool,
+        /// Whether it folds to a few rows, with a button that shows them
+        /// all; the interface keeps which.
+        #[serde(default)]
+        fold: bool,
     },
     /// The time since `since`, counting while `until` is not given, in
     /// milliseconds since 1970: the state says when, the interface counts.
@@ -432,6 +446,8 @@ pub struct TerminalSpec {
     pub cols: u16,
     pub rows: u16,
     pub live: bool,
+    /// How many rows it shows; all of them when `None`.
+    pub shown: Option<u16>,
 }
 
 /// What a ticker is drawn from: its key, and the time it counts from and,
@@ -460,6 +476,9 @@ pub struct ImageSpec {
 
 /// Draws a widget, kept by the interface from one draw to the next.
 pub type Widgets<'a> = &'a dyn Fn(WidgetSpec, &mut App) -> AnyElement;
+
+/// How many rows a folded terminal shows.
+pub const FOLDED_ROWS: u16 = 12;
 
 /// The UI state key under which an input's `id` keeps its draft.
 pub fn draft_key(id: &str) -> String {
@@ -998,8 +1017,30 @@ impl<'a> Draw<'a> {
                     )
                     .into_any_element()
             }
-            Node::Code { lang, text } => {
-                code_block(lang.as_deref(), text, t).into_any_element()
+            Node::Code {
+                lang,
+                text,
+                first_line,
+            } => tau_ui_kit::components::numbered_code_block(
+                lang.as_deref(),
+                text,
+                *first_line,
+                t,
+            )
+            .into_any_element(),
+            Node::Toned { text, tone, mono } => {
+                let color = match tone {
+                    Tone::Neutral => t.dim,
+                    tone => t.tone((*tone).into()),
+                };
+                let line = div().typeset(if *mono {
+                    Type::CAPTION.mono()
+                } else {
+                    Type::SMALL
+                });
+                line.text_color(color)
+                    .child(text.clone())
+                    .into_any_element()
             }
             Node::Stack { children } => div()
                 .flex()
@@ -1259,17 +1300,55 @@ impl<'a> Draw<'a> {
                 cols,
                 rows,
                 live,
+                fold,
             } => match self.widgets {
-                Some(widgets) => widgets(
-                    WidgetSpec::Terminal(TerminalSpec {
-                        key: self.key(format!("{id}.terminal")),
-                        bytes: text.as_bytes().to_vec(),
-                        cols: (*cols).clamp(10, 400),
-                        rows: (*rows).clamp(2, 200),
-                        live: *live,
-                    }),
-                    cx,
-                ),
+                Some(widgets) => {
+                    // Folded, it shows a few rows; the person opens it.
+                    let key = self.key(format!("{id}.expanded"));
+                    let expanded = self
+                        .ui
+                        .and_then(|ui| ui.get(&key))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let screen = widgets(
+                        WidgetSpec::Terminal(TerminalSpec {
+                            key: self.key(format!("{id}.terminal")),
+                            bytes: text.as_bytes().to_vec(),
+                            cols: (*cols).clamp(10, 400),
+                            rows: (*rows).clamp(2, 200),
+                            live: *live,
+                            shown: (*fold && !expanded).then_some(FOLDED_ROWS),
+                        }),
+                        cx,
+                    );
+                    if !*fold {
+                        return screen;
+                    }
+                    let toggle = div()
+                        .id(SharedString::from(format!("{path}:expand")))
+                        .debug_selector(selector(
+                            "button",
+                            if expanded { "show less" } else { "show all" },
+                        ))
+                        .cursor_pointer()
+                        .typeset(Type::CAPTION)
+                        .text_color(t.dim)
+                        .child(if expanded { "show less" } else { "show all" })
+                        .when_some(
+                            self.click(Act::Ui {
+                                key,
+                                value: Some(Value::Bool(!expanded)),
+                            }),
+                            |toggle, click| toggle.on_click(click),
+                        );
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(sp(1.))
+                        .child(screen)
+                        .child(div().flex().justify_end().child(toggle))
+                        .into_any_element()
+                }
                 None => invalid(
                     "a terminal, drawn where the interface keeps one",
                     t,
@@ -1516,7 +1595,7 @@ mod tests {
             { "piece": "status", "text": "on", "detail": "2 turns", "tone": "good" },
             { "piece": "rows", "rows": [{ "key": "a", "value": "1" }] },
             { "piece": "progress", "share": 0.5, "label": "half" },
-            { "piece": "code", "lang": "rust", "text": "fn f() {}" },
+            { "piece": "code", "lang": "rust", "text": "fn f() {}", "first_line": 3 },
             { "piece": "button", "label": "Reset", "action": "reset", "args": { "n": 1 }, "kind": "danger", "icon": null },
             { "piece": "row", "children": [{ "piece": "badge", "text": "x", "tone": "warn" }] },
             { "piece": "list", "items": [{ "piece": "mono", "text": "m" }] },
@@ -1543,7 +1622,8 @@ mod tests {
             Node::read(&json!({ "piece": "code", "lang": null, "text": "x" })),
             Node::Code {
                 lang: None,
-                text: "x".into()
+                text: "x".into(),
+                first_line: None,
             }
         );
         assert_eq!(
@@ -1625,7 +1705,7 @@ mod tests {
         let widgets = json!({ "piece": "stack", "children": [
             { "piece": "diff", "text": "@@ -1 +1 @@\n-a\n+b\n", "path": "src/lib.rs" },
             { "piece": "terminal", "id": "out", "text": "\u{1b}[32mok\u{1b}[0m\r\n",
-              "cols": 40, "rows": 4, "live": false },
+              "cols": 40, "rows": 4, "live": false, "fold": true },
         ]});
         assert_eq!(Node::read(&widgets).value(), widgets);
         let more = json!({ "piece": "stack", "children": [
@@ -1656,7 +1736,8 @@ mod tests {
                 text: String::new(),
                 cols: 80,
                 rows: 24,
-                live: false
+                live: false,
+                fold: false,
             }
         );
         let input = json!({ "piece": "input", "id": "note", "placeholder": null,

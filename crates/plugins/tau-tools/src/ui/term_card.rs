@@ -31,6 +31,8 @@ pub fn body(id: &str, term: &TermOutput, cut: Option<&OutputCut>) -> Node {
         cols: term.cols,
         rows: term.rows,
         live,
+        // A long output folds to its last rows; the person opens it.
+        fold: true,
     };
     let Some(cut) = cut else {
         return Node::stack([strip(term, live), screen]);
@@ -100,6 +102,7 @@ fn seen(term: &TermOutput) -> Node {
             pieces.push(Node::Code {
                 lang: None,
                 text: text.join("\n"),
+                first_line: None,
             });
             text.clear();
         }
