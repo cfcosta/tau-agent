@@ -13,7 +13,6 @@
 //! host halves.
 
 pub mod accounts;
-pub mod demo;
 pub mod host;
 pub mod hosted;
 pub mod mirror;
@@ -22,15 +21,12 @@ pub mod notify;
 // The interface's modules, by the paths the host has always used.
 use tau_ui_remote::{
     Workspace,
-    WorkspaceEvent,
     catalog,
     models,
-    pairing,
     phones,
     plugins,
     pull_request,
     push,
-    queue,
     route,
     setup,
     titles,

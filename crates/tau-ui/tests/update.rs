@@ -4,7 +4,7 @@
 //! `phones` table.)
 
 use serde::{Deserialize, Serialize};
-use tau_ui::demo;
+use tau_demo as demo;
 use tau_ui_remote::{
     update::HostUpdate,
     view::{CodeState, RunUpdate},

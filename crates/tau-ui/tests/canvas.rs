@@ -8,7 +8,7 @@ use std::sync::Arc;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use tau_agent::tool::RunId;
 use tau_canvas::{Blob, Content, ImageRef, Record};
-use tau_ui::demo;
+use tau_demo as demo;
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,

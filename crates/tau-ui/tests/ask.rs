@@ -6,7 +6,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use tau_agent::tool::RunId;
 use tau_ask::{Answer, Record, Reply, ui::Act};
-use tau_ui::demo;
+use tau_demo as demo;
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,

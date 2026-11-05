@@ -3,7 +3,7 @@
 //! itself, for every place the demo's runs and screens have.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use tau_ui::demo;
+use tau_demo as demo;
 use tau_ui_plugin::{
     Point,
     PointCx,

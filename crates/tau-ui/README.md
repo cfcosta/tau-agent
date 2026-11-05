@@ -18,7 +18,6 @@ It is a library: the `tau` app (`crates/tau`) is the binary.
 | `mirror`            | The window as phones mirror it: what crosses, what a phone may ask, the `tau.app` service          |
 | `notify`            | When to notify while the window is not focused (`Notifier`), through the `tau.notify` slot (`Slotted`) |
 | `metered`           | Jev requests counted for the Plugins screen: `Metered`                                            |
-| `demo`              | A scripted session, for running the interface without an agent                                    |
 
 `Host` owns a tokio runtime beside GPUI's executor. A new run starts on that
 runtime; a task reads its events and sends them to the workspace on the UI

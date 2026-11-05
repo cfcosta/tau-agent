@@ -4,8 +4,8 @@
 //! has the toggle only for a repository with an `.envrc`.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use tau_demo as demo;
 use tau_direnv::{NAME, Record, RepoData};
-use tau_ui::demo;
 use tau_ui_plugin::{
     PluginValue,
     points::{self, AtRepo, AtRun},

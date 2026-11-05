@@ -513,10 +513,12 @@ Each step lands on main by itself and leaves tau working.
     plugin crate's path (`tau_skills::`). What still names one is
     listed there with why, and the list only shrinks: a new name fails
     the test, and so does a listed one the source dropped. Listed now:
-    the host halves tau-ui composes (`hosted.rs`) and the demo's data,
-    which name every plugin by design; and in the host, the person's
-    identity for tau-vcs, memory's search mode and service, the skills
-    directory, ChatGPT's plan account and tau-tools' artifact grants.
+    only the host halves tau-ui composes (`hosted.rs`), which name every
+    plugin by design, as tau-plugins does the interface's. The app
+    gives plugins its identity, skills directory and memory's search as
+    services (`HostConfig::services`, `hosted::app_services`); ChatGPT's
+    accounts are tau-chatgpt's alone, pruning artifacts tau-tools', and
+    the demo is a crate of its own (`tau-demo`).
 
 ## Alternatives considered
 

@@ -3,9 +3,9 @@
 
 use gpui::Context;
 use tau_ui_plugin::PluginValue;
+use tau_ui_remote::{route::Route, workspace::PickerTarget};
 
-use super::*;
-use crate::{route::Route, workspace::PickerTarget};
+use crate::*;
 
 /// Opens a screen of the demo on the workspace, with what it needs from
 /// the demo's host.
@@ -251,7 +251,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
     }),
     ("push-rejected", |ws, _, cx| {
         ws.navigate(Route::Run(run_id()), cx);
-        let result = Err(crate::push::PushFailure::Moved {
+        let result = Err(tau_ui_remote::push::PushFailure::Moved {
             branch: "main".into(),
             ahead: 3,
         });
@@ -325,9 +325,10 @@ pub static SCREENS: &[(&str, Screen)] = &[
         };
         view.id = RunId("interrupted".into());
         view.title = "Atomic landing".into();
-        view.items
-            .retain(|item| !matches!(item, crate::view::Item::Stop { .. }));
-        view.status = crate::view::RunStatus::Interrupted;
+        view.items.retain(|item| {
+            !matches!(item, tau_ui_remote::view::Item::Stop { .. })
+        });
+        view.status = tau_ui_remote::view::RunStatus::Interrupted;
         let run = view.id.clone();
         ws.apply(HostUpdate::History(vec![view]), cx);
         ws.navigate(Route::Run(run), cx);
@@ -339,7 +340,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
         let Some(title) = ws.run(&run).map(|view| view.title.clone()) else {
             return;
         };
-        let record = crate::view::LandingRecord {
+        let record = tau_ui_remote::view::LandingRecord {
             from: run.0.to_string(),
             title,
             landing: landing_preview(false),
@@ -363,7 +364,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // A resolving turn left conflicts on main: the card that holds
     // landings and new chats.
     ("conflicts-on-main", |ws, _, cx| {
-        let conflicts = crate::queue::MainConflicts {
+        let conflicts = tau_ui_remote::queue::MainConflicts {
             files: vec![
                 "crates/tau-ui/src/host.rs".into(),
                 "crates/tau-ui/src/host/landing.rs".into(),
@@ -1028,7 +1029,7 @@ fn yours(
             },
         })
         .collect();
-    let info = crate::catalog::PluginInfo {
+    let info = tau_ui_remote::catalog::PluginInfo {
         name: tau_luau_plugins::NAME.into(),
         description: "Plugins written in Luau".into(),
         group: Group::Yours,
@@ -1050,7 +1051,7 @@ fn yours(
     host.pin(info, data);
     let chat = RunId("plugins-commit-style".into());
     if catalog.of_kind(tau_luau_plugins::KIND).next().is_none() {
-        catalog.repos.push(crate::catalog::Repo {
+        catalog.repos.push(tau_ui_remote::catalog::Repo {
             name: tau_luau_plugins::REPO.into(),
             main: Some(chat.clone()),
             kind: Some(tau_luau_plugins::KIND.to_owned()),
@@ -1362,7 +1363,7 @@ fn agents(
         ],
     };
     let mut catalog = ws.catalog().clone();
-    let info = crate::catalog::PluginInfo {
+    let info = tau_ui_remote::catalog::PluginInfo {
         name: tau_agents::NAME.into(),
         description: "Agents that keep going on their own".into(),
         group: Group::Tools,
@@ -1398,7 +1399,7 @@ fn agents(
     }
     for agent in &overview.agents {
         if catalog.repo(&agent.name).is_none() {
-            catalog.repos.push(crate::catalog::Repo {
+            catalog.repos.push(tau_ui_remote::catalog::Repo {
                 name: agent.name.clone(),
                 main: Some(main(&agent.name)),
                 kind: Some(tau_agents::KIND.to_owned()),
@@ -1506,7 +1507,7 @@ fn agents(
         tau_agents::default_model(),
     )
     .in_repo("pr-triage")
-    .with_origin(crate::view::Origin::SubAgent {
+    .with_origin(tau_ui_remote::view::Origin::SubAgent {
         parent: main("pr-triage"),
     });
     ws.apply(HostUpdate::Run(Box::new(review)), cx);
@@ -1824,7 +1825,7 @@ fn uploads(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     workspace.apply(
         HostUpdate::Pictures {
             run,
-            pictures: vec![super::upload()],
+            pictures: vec![crate::upload()],
         },
         cx,
     );
@@ -1940,7 +1941,7 @@ fn watcher(
     // The note anchors at the end of the transcript so far, so it waits
     // for the script to play out.
     let played: std::time::Duration =
-        super::script().iter().map(|(wait, _)| *wait).sum();
+        crate::script().iter().map(|(wait, _)| *wait).sum();
     let note = Record::Noted {
         step: 12,
         tag: Tag::HeadsUp,
@@ -2202,7 +2203,7 @@ fn land_queue(ws: &mut Workspace, cx: &mut Context<Workspace>) {
         .map_or_else(|| "Queue landings".to_owned(), |view| view.title.clone());
     let host_rs = "crates/tau-ui/src/host.rs".to_owned();
     let queue = vec![
-        crate::queue::Waiting {
+        tau_ui_remote::queue::Waiting {
             run: fork.0.to_string(),
             title,
             changes: 4,
@@ -2210,7 +2211,7 @@ fn land_queue(ws: &mut Workspace, cx: &mut Context<Workspace>) {
             confirmed: Vec::new(),
             sub_agent: None,
         },
-        crate::queue::Waiting {
+        tau_ui_remote::queue::Waiting {
             run: "load-agents".into(),
             title: "Load AGENTS.md".into(),
             changes: 2,
@@ -2325,7 +2326,7 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     workspace.apply(
         HostUpdate::LandingQueue {
             main: main.clone(),
-            queue: vec![crate::queue::Waiting {
+            queue: vec![tau_ui_remote::queue::Waiting {
                 run: "queue-landings".into(),
                 title: "Queue landings".into(),
                 changes: 3,
@@ -2342,7 +2343,7 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         HostUpdate::LandingQueue {
             main: RunId("docbert-main".into()),
             queue: Vec::new(),
-            conflicts: Some(crate::queue::MainConflicts {
+            conflicts: Some(tau_ui_remote::queue::MainConflicts {
                 files: vec!["src/rerank.rs".into(), "src/index.rs".into()],
                 from: Some("rerank-latency".into()),
                 prompt: "Landing `rerank-latency` left conflicts.".into(),
@@ -2405,7 +2406,7 @@ fn scheduled(ws: &mut Workspace, host: &DemoHost, cx: &mut Context<Workspace>) {
         ],
     };
     let mut catalog = ws.catalog().clone();
-    let info = crate::catalog::PluginInfo {
+    let info = tau_ui_remote::catalog::PluginInfo {
         name: tau_schedule::NAME.into(),
         description: "Chats wake themselves later, with a note".into(),
         group: Group::Tools,

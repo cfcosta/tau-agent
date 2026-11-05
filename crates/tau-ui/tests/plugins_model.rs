@@ -900,7 +900,7 @@ impl Tau {
         let device = &mut self.phones[phone];
         device.workspace.update(&mut device.cx, |ws, cx| {
             ws.update_pairing(
-                PairingUpdate::Connected(tau_ui::demo::computer()),
+                PairingUpdate::Connected(tau_demo::computer()),
                 cx,
             )
         });

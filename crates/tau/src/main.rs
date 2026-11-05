@@ -9,7 +9,7 @@
 //! - `--prompt <text>`: start a run with this task right away.
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: a screen of the demo, by its name in
-//!   `tau_ui::demo::SCREENS`: run, plugins, constitution, pr-opened,
+//!   `tau_demo::SCREENS`: run, plugins, constitution, pr-opened,
 //!   pair-scan, rules-broken, and so on.
 //!   With a sign-in, only `page:<plugin>/<page>[?key=value&...]`, a
 //!   plugin's page, such as `page:tau-mcp/servers?repo=` for the MCP
@@ -33,9 +33,9 @@ use gpui::{
     px,
     size,
 };
+use tau_demo as demo;
 use tau_ui::{
     accounts::Credentials,
-    demo,
     host::{Host, HostConfig},
 };
 use tau_ui_remote::{

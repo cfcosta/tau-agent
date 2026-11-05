@@ -9,8 +9,9 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use tau_demo as demo;
 use tau_phones::{Act, Phones};
-use tau_ui::{demo, mirror};
+use tau_ui::mirror;
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,

@@ -12,12 +12,7 @@ use tau_agent::{
 };
 use tau_ai::message::{Usage, UsageCost};
 use tau_ui_plugin::Push;
-
-pub use self::{
-    host::DemoHost,
-    screens::{SCREENS, Screen, open},
-};
-use crate::{
+use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
     catalog::{Catalog, Repo, StoreInfo},
@@ -49,6 +44,11 @@ use crate::{
     },
 };
 
+pub use self::{
+    host::DemoHost,
+    screens::{SCREENS, Screen, open},
+};
+
 mod host;
 mod screens;
 
@@ -64,8 +64,8 @@ pub fn upload_data() -> String {
 }
 
 /// The picture the demo's uploads screen sent.
-pub fn upload() -> crate::view::Picture {
-    crate::view::Picture::of(&tau_ai::message::ImageContent {
+pub fn upload() -> tau_ui_remote::view::Picture {
+    tau_ui_remote::view::Picture::of(&tau_ai::message::ImageContent {
         data: upload_data(),
         mime_type: "image/png".into(),
     })
@@ -255,7 +255,7 @@ pub fn history() -> Vec<RunView> {
                 return view;
             };
             view.status = RunStatus::Finished(stop.clone());
-            view.items.push(crate::view::Item::Stop {
+            view.items.push(tau_ui_remote::view::Item::Stop {
                 stop,
                 turns,
                 tokens,
@@ -506,7 +506,7 @@ pub fn fork_run(
     from: &RunView,
     turn: u32,
     prompt: &str,
-    model: &crate::models::ModelChoice,
+    model: &tau_ui_remote::models::ModelChoice,
     id: RunId,
 ) -> (RunView, Vec<Step>) {
     let mut s = Script::for_run(id.clone());
@@ -548,7 +548,7 @@ pub fn fork_run(
     );
     let mut view = RunView::new(
         id,
-        crate::titles::placeholder(prompt),
+        tau_ui_remote::titles::placeholder(prompt),
         "coder",
         &model.model,
     )
@@ -881,8 +881,8 @@ pub fn signed_in() -> tau_github::SignIn {
 }
 
 /// What the demo's main chat pushed to GitHub: three changes.
-pub fn pushed() -> crate::push::Pushed {
-    use crate::push::{Pushed, PushedChange};
+pub fn pushed() -> tau_ui_remote::push::Pushed {
+    use tau_ui_remote::push::{Pushed, PushedChange};
     let change = |id: &str, title: &str| PushedChange {
         change_id: id.into(),
         title: title.into(),
@@ -1408,7 +1408,7 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                         model: model.clone(),
                         pictures: images
                             .iter()
-                            .map(crate::view::Picture::of)
+                            .map(tau_ui_remote::view::Picture::of)
                             .collect(),
                     };
                     ws.apply(resumed, cx);
@@ -1420,7 +1420,7 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 let code = HostUpdate::BranchCode {
                     main: main.clone(),
                     fork: fork.clone(),
-                    code: crate::view::CodeState::Ready(branch_code()),
+                    code: tau_ui_remote::view::CodeState::Ready(branch_code()),
                 };
                 later(vec![(400, Answer::Host(code))], cx)
             }
@@ -1604,8 +1604,8 @@ pub fn chatgpt_accounts() -> Vec<tau_chatgpt::ui::Account> {
 
 /// The models the demo offers: the plan's, from the model table, with
 /// defaults for each of the demo's agents.
-pub fn models() -> crate::models::Models {
-    use crate::models::{
+pub fn models() -> tau_ui_remote::models::Models {
+    use tau_ui_remote::models::{
         AccessInfo,
         Effort,
         ModelChoice,
@@ -3062,8 +3062,9 @@ pub fn script() -> Vec<Step> {
 
 #[cfg(test)]
 mod tests {
+    use tau_ui_remote::view::{Item, ToolState};
+
     use super::*;
-    use crate::view::{Item, ToolState};
 
     /// Every demo screen has a name of its own, and every demo run is in
     /// a listed repository.
@@ -3168,7 +3169,7 @@ mod tests {
 
     #[test]
     fn the_script_plays_to_a_finished_run() {
-        crate::hosted::install();
+        tau_ui::hosted::install();
         let mut view = retry_after();
         for (_, update) in script() {
             view.update(update);
@@ -3212,7 +3213,7 @@ mod tests {
         );
         assert_eq!(
             view.tool("c8").and_then(|card| card.dropped),
-            Some(crate::view::Dropped::Result)
+            Some(tau_ui_remote::view::Dropped::Result)
         );
         // The test run output pruning cut stays, with its terminal.
         assert_eq!(view.tool("c7").and_then(|card| card.dropped), None);

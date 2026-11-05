@@ -16,21 +16,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "the host halves tau-ui gives the plugins: the app's composition, \
          as tau-plugins is the interface's",
     ),
-    (
-        "tau-ui/src/demo.rs",
-        "*",
-        "the demo's own data for each plugin's screens",
-    ),
-    (
-        "tau-ui/src/demo/screens.rs",
-        "*",
-        "the demo's own data for each plugin's screens",
-    ),
-    (
-        "tau-ui/src/demo/host.rs",
-        "*",
-        "the demo's own data for each plugin's screens",
-    ),
 ];
 
 fn crates() -> PathBuf {

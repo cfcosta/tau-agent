@@ -2,7 +2,7 @@
 //! while it is new, and an annotation in the transcript for good.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use tau_ui::demo;
+use tau_demo as demo;
 use tau_ui_plugin::points::{self, AtAnchor, AtRun};
 use tau_ui_remote::{
     Workspace,

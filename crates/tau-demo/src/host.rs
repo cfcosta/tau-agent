@@ -19,6 +19,7 @@ use std::{
 
 use serde_json::Value;
 use tau_jev::{Jev, fake::FakeJev};
+use tau_ui::hosted::{self, Hosted};
 use tau_ui_plugin::{
     ConfigDir,
     ErasedPlugin,
@@ -29,12 +30,8 @@ use tau_ui_plugin::{
     SavedSettings,
     Services,
 };
+use tau_ui_remote::catalog::{Catalog, PluginInfo};
 use tokio::{runtime::Runtime, sync::mpsc};
-
-use crate::{
-    catalog::{Catalog, PluginInfo},
-    hosted::{self, Hosted},
-};
 
 /// What the demo's runs cost each plugin over the last 30 days, as the
 /// store would add it up.
@@ -78,7 +75,7 @@ impl DemoHost {
             .worker_threads(1)
             .enable_all()
             .build()?;
-        let store = runtime.block_on(crate::hosted::open_store(
+        let store = runtime.block_on(tau_ui::hosted::open_store(
             &dir.path().join("runs.db"),
             &tau_ui_plugin::UiState::default(),
         ))?;

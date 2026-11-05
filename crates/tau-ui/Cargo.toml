@@ -1,6 +1,6 @@
 [package]
 name = "tau-ui"
-description = "tau on the computer: the host that runs agents behind tau-ui-remote's interface, and the server for paired phones."
+description = "tau on the computer: the host that runs agents behind tau-ui-remote's interface, and mirrors it for the phones tau-phones pairs."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -8,6 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 [dev-dependencies]
+# The demo's session, which tests drive the interface with.
+tau-demo.workspace = true
 image = { workspace = true, features = ["png"] }
 # The app's plugins, every host half included, for the demo's tests.
 tau.workspace = true
@@ -19,6 +21,13 @@ tau-testing.workspace = true
 # The phone model's network: a proxy on the loopback.
 tokio = { workspace = true, features = ["io-util", "net"] }
 tokio-util.workspace = true
+# The plugins whose data and records the tests read.
+tau-remote.workspace = true
+tau-constitution.workspace = true
+tau-github.workspace = true
+tau-mcp.workspace = true
+tau-memory.workspace = true
+tau-vcs.workspace = true
 
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }
@@ -28,13 +37,11 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-codemode.workspace = true
 tau-compaction.workspace = true
-tau-constitution.workspace = true
-tau-constitution-host = { workspace = true, features = ["demo"] }
+tau-constitution-host.workspace = true
 tau-ask.workspace = true
-tau-canvas = { workspace = true, features = ["demo"] }
-tau-skills = { workspace = true, features = ["demo"] }
+tau-canvas.workspace = true
+tau-skills.workspace = true
 tau-direnv.workspace = true
 tau-notify.workspace = true
 tau-phones.workspace = true
@@ -43,17 +50,14 @@ tau-sqlite.workspace = true
 tau-chatgpt.workspace = true
 tau-compaction-chain.workspace = true
 tau-schedule.workspace = true
-tau-goal = { workspace = true, features = ["demo"] }
+tau-goal.workspace = true
 tau-agents.workspace = true
 tau-luau-plugins.workspace = true
 tau-jev.workspace = true
-tau-mcp = { workspace = true, features = ["demo"] }
 tau-mcp-host.workspace = true
-tau-memory.workspace = true
 tau-watcher.workspace = true
-tau-memory-host = { workspace = true, features = ["docbert", "demo"] }
+tau-memory-host = { workspace = true, features = ["docbert"] }
 tau-reasoning.workspace = true
-tau-remote.workspace = true
 tau-fast-compaction.workspace = true
 tau-tree-compaction.workspace = true
 tau-store.workspace = true
@@ -61,12 +65,8 @@ tau-store.workspace = true
 # pseudo-terminal (docs/decisions/0010-terminal-rendering.md).
 tau-tools = { workspace = true, features = ["terminal"] }
 tau-tools-host.workspace = true
-tau-artifacts.workspace = true
-tau-vcs.workspace = true
 tau-vcs-host.workspace = true
-# GitHub: the forge slot's plugin, with its sign-in, whose data the
-# demo scripts.
-tau-github.workspace = true
+# GitHub: the forge slot's plugin, with its sign-in.
 tau-github-host.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
@@ -80,8 +80,5 @@ tokio = { workspace = true, features = ["fs", "rt-multi-thread", "time"] }
 tokio-util.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
-if-addrs.workspace = true
-libc.workspace = true
-# Where the demo's plugins keep their files.
 tempfile.workspace = true
 

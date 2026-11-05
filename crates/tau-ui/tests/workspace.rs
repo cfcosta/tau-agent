@@ -8,8 +8,8 @@
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use tau_agent::event::StopReason;
+use tau_demo as demo;
 use tau_github::{GitHubData, SignIn};
-use tau_ui::demo;
 use tau_ui_plugin::PluginValue;
 use tau_ui_remote::{
     Workspace,

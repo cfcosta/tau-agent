@@ -70,6 +70,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use hegel::{HealthCheck, TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::tool::RunId;
+use tau_demo as demo;
 use tau_phones::{Act, Phones};
 use tau_remote::{
     Address,
@@ -82,7 +83,7 @@ use tau_remote::{
     ServerHandle,
     reach,
 };
-use tau_ui::{demo, mirror};
+use tau_ui::mirror;
 use tau_ui_kit::assets::Icon;
 use tau_ui_plugin::{
     Link,
