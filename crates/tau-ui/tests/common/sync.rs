@@ -804,6 +804,16 @@ pub fn pick(tc: &TestCase, runs: &[RunView]) -> RunId {
 /// Fails with the first field `theirs` shows otherwise than `ours`;
 /// `who` names whose it is.
 pub fn assert_synced(who: &str, ours: &Synced, theirs: &Synced) {
+    // A phone is sent the catalog without what computer-only plugins
+    // keep (`HostUpdate::for_phones`): the two compare without it.
+    let ours = &Synced {
+        catalog: ours.catalog.clone().for_phones(),
+        ..ours.clone()
+    };
+    let theirs = &Synced {
+        catalog: theirs.catalog.clone().for_phones(),
+        ..theirs.clone()
+    };
     if ours == theirs {
         return;
     }

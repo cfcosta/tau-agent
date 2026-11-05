@@ -91,6 +91,19 @@ pub enum View {
     },
 }
 
+impl View {
+    /// The plugin whose view it is, for those of one plugin.
+    pub fn plugin(&self) -> Option<&str> {
+        match self {
+            Self::Page { plugin, .. }
+            | Self::Settings { plugin, .. }
+            | Self::Popover { plugin, .. }
+            | Self::Title { plugin, .. } => Some(plugin),
+            Self::Point { .. } | Self::Commands { .. } => None,
+        }
+    }
+}
+
 /// How the window that draws a view is laid out: what a view may read
 /// of it.
 #[derive(

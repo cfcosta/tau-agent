@@ -227,3 +227,62 @@ impl HostUpdate {
         Self::Catalog(Box::new(catalog))
     }
 }
+
+impl HostUpdate {
+    /// This update as phones are sent it: without what plugins that only
+    /// the computer may reach keep (`Declaration::computer_only`), such as
+    /// a sign-in or the pairing code, in the catalog or in their views.
+    pub fn for_phones(mut self) -> Self {
+        let kept = |plugin: &str| !computer_only(plugin);
+        match &mut self {
+            Self::Catalog(catalog) => catalog.strip_for_phones(),
+            Self::Snapshot(synced) => synced.catalog.strip_for_phones(),
+            Self::Views { answers } => {
+                for (key, built) in answers.iter_mut() {
+                    if key.view.plugin().is_some_and(|plugin| !kept(plugin)) {
+                        *built = tau_ui_plugin::wire::Built::Nothing;
+                    }
+                    if let tau_ui_plugin::wire::Built::Outs { outs } = built {
+                        outs.retain(|out| kept(&out.plugin));
+                    }
+                    if let tau_ui_plugin::wire::Built::Commands { commands } =
+                        built
+                    {
+                        commands.retain(|(plugin, _)| kept(plugin));
+                    }
+                }
+            }
+            _ => {}
+        }
+        self
+    }
+}
+
+/// Whether only the computer may reach `plugin` (`Declaration::computer_only`).
+pub fn computer_only(plugin: &str) -> bool {
+    crate::plugins::registry()
+        .get(plugin)
+        .is_some_and(|erased| erased.declaration().reach.computer_only)
+}
+
+impl Catalog {
+    /// Takes away what plugins only the computer may reach keep: what
+    /// phones are sent of the catalog ([`HostUpdate::for_phones`]).
+    pub fn strip_for_phones(&mut self) {
+        let kept = |plugin: &String, _: &mut _| !computer_only(plugin);
+        self.plugin_data.retain(kept);
+        self.plugin_settings.retain(kept);
+        for settings in self.repo_plugin_settings.values_mut() {
+            settings.retain(kept);
+        }
+        for repo in &mut self.repos {
+            repo.plugins.retain(kept);
+        }
+    }
+
+    /// The catalog as phones are sent it.
+    pub fn for_phones(mut self) -> Self {
+        self.strip_for_phones();
+        self
+    }
+}

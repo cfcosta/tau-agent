@@ -185,3 +185,82 @@ fn a_phone_pairs_and_steers_the_computer(cx: &mut TestAppContext) {
     }));
     drop(runtime);
 }
+
+/// What a plugin that only the computer may reach keeps never goes to
+/// a phone: tau-chatgpt's sign-in, in the catalog and in the views the
+/// computer builds for a phone.
+#[test]
+fn a_computer_only_plugin_s_data_and_views_stay_on_the_computer() {
+    use tau_ui_plugin::wire::{
+        AtKey,
+        Built,
+        Contributed,
+        Layout,
+        View,
+        ViewKey,
+    };
+    use tau_ui_remote::update::HostUpdate;
+    tau_ui::hosted::install();
+    let chatgpt = tau_ui_plugin::PluginValue::from_json(serde_json::json!({
+        "sign_in": { "state": "waiting", "url": "https://auth.openai.com/x" },
+    }));
+    let mut catalog = tau_ui_remote::catalog::Catalog::default();
+    catalog
+        .plugin_data
+        .insert(tau_chatgpt::NAME.into(), chatgpt);
+    catalog.plugin_data.insert(
+        tau_github::NAME.into(),
+        tau_ui_plugin::PluginValue::from_json(serde_json::json!({})),
+    );
+    let sent = phone_server::to_phones(&HostUpdate::catalog(catalog)).unwrap();
+    let data = &sent["Catalog"]["plugin_data"];
+    assert!(data.get(tau_chatgpt::NAME).is_none(), "{data}");
+    assert!(data.get(tau_github::NAME).is_some(), "{data}");
+
+    let layout = Layout::default();
+    let page = ViewKey {
+        view: View::Page {
+            plugin: tau_chatgpt::NAME.into(),
+            page: "any".into(),
+            params: Default::default(),
+        },
+        layout,
+    };
+    let point = ViewKey {
+        view: View::Point {
+            point: tau_ui_plugin::points::MODELS.name.into(),
+            at: AtKey::App,
+        },
+        layout,
+    };
+    let outs = |plugin: &str| Contributed {
+        plugin: plugin.into(),
+        out: serde_json::Value::Null,
+    };
+    let answers = HostUpdate::Views {
+        answers: vec![
+            (
+                page,
+                Built::Title {
+                    title: "secret".into(),
+                },
+            ),
+            (
+                point,
+                Built::Outs {
+                    outs: vec![outs(tau_chatgpt::NAME), outs(tau_github::NAME)],
+                },
+            ),
+        ],
+    };
+    let HostUpdate::Views { answers } = answers.for_phones() else {
+        unreachable!()
+    };
+    assert_eq!(answers[0].1, Built::Nothing);
+    assert_eq!(
+        answers[1].1,
+        Built::Outs {
+            outs: vec![outs(tau_github::NAME)]
+        }
+    );
+}

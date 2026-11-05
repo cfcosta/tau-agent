@@ -245,12 +245,13 @@ fn refresh_views(
 }
 
 /// What phones are sent of `update`: all but onboarding, which stays
-/// on the computer.
+/// on the computer, and what plugins only the computer may reach keep
+/// (`HostUpdate::for_phones`).
 pub fn to_phones(update: &HostUpdate) -> Option<Value> {
     if matches!(update, HostUpdate::Setup(_)) {
         return None;
     }
-    serde_json::to_value(update)
+    serde_json::to_value(update.clone().for_phones())
         .inspect_err(|error| {
             eprintln!("tau-ui: cannot send an update: {error}")
         })
