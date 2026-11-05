@@ -10058,6 +10058,7 @@ dependencies = [
  "tau-reasoning",
  "tau-schedule",
  "tau-skills",
+ "tau-titles",
  "tau-tools",
  "tau-tree-compaction",
  "tau-ui-plugin",
@@ -10225,6 +10226,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-titles"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hegeltest",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-ui-plugin",
+ "tokio-util",
+]
+
+[[package]]
 name = "tau-tools"
 version = "0.1.0"
 dependencies = [
@@ -10346,6 +10361,7 @@ dependencies = [
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
+ "tau-titles",
  "tau-tools",
  "tau-tools-host",
  "tau-tree-compaction",

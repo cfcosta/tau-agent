@@ -5,6 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use serde_json::Value;
 use tau_agent::plugin::AskError;
 use tau_ai::{
     llm::Llm,
@@ -25,6 +26,9 @@ pub struct AskSettings {
     /// `None` leaves the effort to the model.
     pub reasoning: Option<ReasoningEffort>,
     pub instructions: Option<String>,
+    /// The shape the reply's text must take (`text.format`), such as a
+    /// JSON schema.
+    pub text_format: Option<Value>,
 }
 
 impl AskSettings {
@@ -36,11 +40,18 @@ impl AskSettings {
             model: model.into(),
             reasoning,
             instructions: None,
+            text_format: None,
         }
     }
 
     pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
         self.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Holds the reply's text to `format` (`text.format`).
+    pub fn text_format(mut self, format: Value) -> Self {
+        self.text_format = Some(format);
         self
     }
 
@@ -50,6 +61,7 @@ impl AskSettings {
             model: self.model.clone(),
             reasoning: self.reasoning,
             instructions: self.instructions.clone(),
+            text_format: self.text_format.clone(),
             tools: tools.to_vec(),
             ..Settings::default()
         }

@@ -198,10 +198,11 @@ fn go_on(
     );
 }
 
-/// Has a model write `run`'s title from `prompt`, keeps it in the store
-/// and shows it. Without a client, as in tests, or when the call fails,
-/// the run keeps its placeholder. The run's record is written as it
-/// starts, well before the model answers.
+/// Has what fills the `tau.title` slot write `run`'s title from
+/// `prompt`, keeps it in the store and shows it. With nothing in the
+/// slot, nothing to write it with (no model, as in tests), or when it
+/// fails, the run keeps its placeholder. The run's record is written as
+/// it starts, well before the title comes.
 pub(super) fn title_in_background(
     host: &Arc<Host>,
     run: &RunId,
@@ -209,7 +210,12 @@ pub(super) fn title_in_background(
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
-    let Some(client) = host.client.lock().expect("not poisoned").clone() else {
+    let titler = host
+        .slots
+        .lock()
+        .expect("not poisoned")
+        .get(&tau_ui_plugin::title::TITLE);
+    let Some(titler) = titler else {
         return;
     };
     let model = host.session_of(run).choice.map_or_else(
@@ -217,18 +223,21 @@ pub(super) fn title_in_background(
         |choice| choice.model.clone(),
     );
     let job = {
-        let (run, prompt) = (run.clone(), prompt.to_owned());
+        let (run, task) = (run.clone(), crate::titles::task(prompt));
         host.spawn(async move |writer| {
-            let title = crate::titles::write(&client, &model, &prompt).await?;
+            let Some(title) = titler.write(&task, &model).await? else {
+                return anyhow::Ok(None);
+            };
             writer.store.set_title(&run.0, &title).await?;
-            anyhow::Ok(title)
+            anyhow::Ok(Some(title))
         })
     };
     let run = run.clone();
     let workspace = workspace.downgrade();
     cx.spawn(async move |cx| {
         let title = match job.await {
-            Ok(Ok(title)) => title,
+            Ok(Ok(Some(title))) => title,
+            Ok(Ok(None)) => return,
             Ok(Err(error)) => {
                 return eprintln!(
                     "tau-ui: cannot title run {}: {error:#}",

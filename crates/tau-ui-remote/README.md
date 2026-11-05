@@ -24,7 +24,7 @@ take one path.
 | `pull_request`, `push`, `queue`  | Pull requests, pushing main, and the landing queue, labelled with `Catalog::forge`           |
 | `models`, `picker`, `plan_usage` | Choosing models and effort, and what a ChatGPT plan error says                               |
 | `route`, `search`, `slash`       | The screens, the search palette (Ctrl K), and slash commands in the composer                 |
-| `titles`                         | A run's title, written by a model from its first prompt                                      |
+| `titles`                         | A run's title until the `tau.title` slot writes one: its prompt's first line                 |
 | `ui`                             | The pieces screens are built from, and the screens themselves (`ui::screens`)                |
 | `init`                           | Sets up fonts, the theme and the keys, plugins' among them, once per app                     |
 

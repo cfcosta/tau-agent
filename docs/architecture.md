@@ -51,6 +51,8 @@ tau-agent/
 │       │                         # clock agents' schedules go by (ADR 0039)
 │       ├── tau-skills/           # instructions an agent loads when a task
 │       │                         # calls for them
+│       ├── tau-titles/           # a run's title from the person's model,
+│       │                         # filling `tau.title`
 │       ├── tau-tools/            # read, exec_command, write_stdin, edit, ...
 │       ├── tau-tree-compaction/  # compaction into a tree of summaries the
 │       │                         # agent zooms into, after OptChat

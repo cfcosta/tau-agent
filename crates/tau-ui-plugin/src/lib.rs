@@ -43,6 +43,7 @@ pub mod slots;
 pub mod sub_agents;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
+pub mod title;
 pub mod tree;
 pub mod ui_state;
 pub mod value;

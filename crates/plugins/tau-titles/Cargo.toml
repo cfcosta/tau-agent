@@ -1,0 +1,25 @@
+[package]
+name = "tau-titles"
+description = "Writes a tau run's title with the person's model, as a plugin filling the tau.title slot."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The host half: the request to the person's model.
+host = ["dep:tokio-util"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+tau-ui-plugin.workspace = true
+tokio-util = { workspace = true, optional = true }
+
+[dev-dependencies]
+hegeltest.workspace = true

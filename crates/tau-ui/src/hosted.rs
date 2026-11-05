@@ -46,6 +46,7 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_mcp_host::McpHost)
         .host(tau_skills::SkillsHost)
         .host(tau_notify::NotifyHost)
+        .host(tau_titles::TitlesHost)
 }
 
 /// Gives the plugins the host halves tau-ui has ([`halves`]), unless the

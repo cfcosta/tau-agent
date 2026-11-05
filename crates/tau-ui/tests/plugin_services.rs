@@ -328,6 +328,49 @@ fn a_host_half_asks_the_model_and_the_plugin_pays() {
     assert!(host.host_cx().model(NAME).is_none());
 }
 
+/// What fills `tau.title` writes a run's title with the person's model,
+/// holding the reply to its schema and cleaning it up, and books the
+/// request to tau-titles.
+#[test]
+fn titles_are_written_with_the_persons_model_and_booked_to_tau_titles() {
+    use tau_ai::{client::OpenAi, ws::proto::pool::Limits};
+    use tau_testing::fake_openai::{FakeOpenAi, LocalConnector, Reply};
+
+    let fake = FakeOpenAi::new(vec![Reply::text(
+        "resp_1",
+        r#"{"title":"Fix the retry loop."}"#,
+    )]);
+    let address = fake.listen();
+    let runtime = runtime();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let client = {
+        let _guard = runtime.enter();
+        OpenAi::with_connector(LocalConnector(address), Limits::default())
+    };
+    let agent = Agent::new(client.clone()).name("coder");
+    let (host, _events) = host_in(&own_dir(), runtime, store.clone(), agent);
+    let host = host.with_client(client);
+
+    let titler = host
+        .slots()
+        .lock()
+        .unwrap()
+        .get(&tau_ui_plugin::title::TITLE)
+        .expect("tau-titles fills tau.title");
+    let title = host
+        .block_on(titler.write("the retry loop gives up too soon", "gpt-6-sol"))
+        .unwrap();
+    assert_eq!(title.as_deref(), Some("Fix the retry loop"));
+    let received = fake.received();
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].body["text"]["format"]["name"], "run_title");
+
+    let booked = host
+        .block_on(store.query("SELECT plugin FROM plugin_usage", 10))
+        .unwrap();
+    assert_eq!(booked.rows, [[tau_titles::NAME]]);
+}
+
 /// The end of first-run setup reaches every plugin's host half, with the
 /// repositories the person picked.
 #[test]
