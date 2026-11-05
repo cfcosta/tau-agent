@@ -36,6 +36,7 @@ use tau_ui_kit::{
         icon,
         mono,
         pill,
+        qr_code,
         rule,
         text_link,
     },
@@ -309,6 +310,12 @@ pub enum Node {
         fetch: Value,
         #[serde(default)]
         height: Option<f32>,
+    },
+    /// `text` as a QR code `size` pixels wide, for a phone's camera: a
+    /// pairing code.
+    Qr {
+        text: String,
+        size: f32,
     },
     /// A tree the interface fetches and keeps (ADR 0045), as a picture:
     /// `key` names it, and changes when what it shows does; `fetch` is the
@@ -1348,6 +1355,10 @@ impl<'a> Draw<'a> {
                     invalid("an image, drawn where the interface keeps one", t)
                 }
             },
+            Node::Qr { text, size } => qr_code(text, *size).map_or_else(
+                || invalid("text too long for a QR code", t),
+                IntoElement::into_any_element,
+            ),
             Node::Fetched { key, fetch } => match self.fetches {
                 Some(fetches) => match fetches(key, fetch, cx) {
                     Some(Ok(answer)) => {

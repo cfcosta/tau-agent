@@ -411,6 +411,9 @@ pub const ASKS: Point<AtRun, String> = Point::new("tau.run.asks");
 pub const USER_MESSAGE: Point<AtMessage> = Point::new("tau.run.user_message");
 /// The sidebar's own entries, above the repositories.
 pub const SIDEBAR: Point<AtApp, NavEntry> = Point::new("tau.sidebar");
+/// Entries of the sidebar's Everywhere, after History: Phones.
+pub const EVERYWHERE: Point<AtApp, NavEntry> =
+    Point::new("tau.sidebar.everywhere");
 /// Entries under each repository in the sidebar and the phone's Runs
 /// list.
 pub const SIDEBAR_REPO: Point<AtRepo, NavEntry> =
@@ -460,7 +463,7 @@ pub const SETUP: Point<AtSetup, SetupView> = Point::new("tau.setup.step");
 pub const PANE: Point<AtRun, PaneView> = Point::new("tau.run.pane");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 27] = [
+pub const ALL: [&str; 28] = [
     CARD.name,
     TRANSCRIPT.name,
     REWRITE.name,
@@ -476,6 +479,7 @@ pub const ALL: [&str; 27] = [
     ASKS.name,
     USER_MESSAGE.name,
     SIDEBAR.name,
+    EVERYWHERE.name,
     SIDEBAR_REPO.name,
     MODELS.name,
     SEARCH.name,

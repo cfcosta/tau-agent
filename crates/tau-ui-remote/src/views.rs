@@ -444,6 +444,9 @@ impl Workspace {
             }
             p if p == points::PANE.name => at!(points::PANE, at_run()),
             p if p == points::SIDEBAR.name => at!(points::SIDEBAR, at_app()),
+            p if p == points::EVERYWHERE.name => {
+                at!(points::EVERYWHERE, at_app())
+            }
             p if p == points::MODELS.name => at!(points::MODELS, at_app()),
             p if p == points::SEARCH.name => at!(points::SEARCH, at_app()),
             p if p == points::PICKER_AUTO.name => {

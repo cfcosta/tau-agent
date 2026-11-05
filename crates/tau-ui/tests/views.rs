@@ -115,6 +115,7 @@ fn what_the_computer_builds_is_what_it_draws(cx: &mut TestAppContext) {
             }
         };
         count(same!(points::SIDEBAR, AtApp));
+        count(same!(points::EVERYWHERE, AtApp));
         count(same!(points::SEARCH, AtApp));
         count(same!(points::MODELS, AtApp));
         count(same!(points::ACTIVITY, AtApp));

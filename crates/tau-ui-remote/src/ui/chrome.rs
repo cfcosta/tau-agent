@@ -121,12 +121,33 @@ pub fn sidebar(
         0 => String::new(),
         n => format!("{n} paired"),
     };
-    let everywhere = [
-        (Route::History, "History", "all repos".to_owned(), t.dim),
-        (Route::Phones, "Phones", phones, t.green),
-        // Sign-ins, keys and the models runs use.
-        (Route::Models, "Models and accounts", String::new(), t.dim),
+    let mut everywhere = vec![
+        (
+            Route::History,
+            "History".to_owned(),
+            "all repos".to_owned(),
+            t.dim,
+        ),
+        (Route::Phones, "Phones".to_owned(), phones, t.green),
     ];
+    // What plugins list there.
+    for entry in ws.contributions(points::EVERYWHERE, &points::AtApp) {
+        let Some(route) = ws.link_route(&entry.to, None) else {
+            continue;
+        };
+        let (meta, ink) = match (entry.badge, entry.detail) {
+            (Some((badge, tone)), _) => (badge, t.tone(tone)),
+            (None, detail) => (detail.unwrap_or_default(), t.dim),
+        };
+        everywhere.push((route, entry.label, meta, ink));
+    }
+    // Sign-ins, keys and the models runs use.
+    everywhere.push((
+        Route::Models,
+        "Models and accounts".to_owned(),
+        String::new(),
+        t.dim,
+    ));
 
     // The app's name, and what all runs cost today.
     let total: f64 = ws.runs.iter().map(|run| run.usage.cost).sum();
@@ -189,7 +210,7 @@ pub fn sidebar(
         .children(everywhere.into_iter().map(|(route, label, meta, ink)| {
             let active = ws.route == route;
             div()
-                .id(label)
+                .id(SharedString::from(label.clone()))
                 .flex()
                 .flex_shrink_0()
                 .items_center()

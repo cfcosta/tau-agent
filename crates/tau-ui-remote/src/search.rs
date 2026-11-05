@@ -152,6 +152,7 @@ impl Workspace {
         }
         let everywhere = [
             tau_ui_plugin::points::SIDEBAR,
+            tau_ui_plugin::points::EVERYWHERE,
             tau_ui_plugin::points::SEARCH,
         ]
         .into_iter()
