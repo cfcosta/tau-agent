@@ -275,9 +275,13 @@ fn arrive(
             let stored =
                 store(&state.borrow().platform.dir, Some(&credentials));
             state.borrow_mut().credentials = Some(credentials.clone());
+            // What was asked of the computer paired before is not this
+            // one's to take, and its messages' numbers are not this one's.
+            forget_requests(state);
             start_session(state, credentials, Some(connection));
             workspace.update(cx, |ws, cx| {
                 ws.update_pairing(PairingUpdate::Paired(computer), cx);
+                ws.update_pairing(PairingUpdate::Unsent(0), cx);
                 if let Err(error) = stored {
                     ws.show_alert(
                         "Paired, but tau could not save it",
@@ -303,12 +307,15 @@ fn arrive(
         }
         News::Disconnected => state.borrow_mut().sender = None,
         News::Revoked(credentials) => {
+            // What it asked of that computer goes nowhere now.
+            forget_requests(state);
             let mut state = state.borrow_mut();
             state.credentials = None;
             state.sender = None;
             let _ = store(&state.platform.dir, None);
             drop(state);
             workspace.update(cx, |ws, cx| {
+                ws.update_pairing(PairingUpdate::Unsent(0), cx);
                 ws.start_pairing(PairStep::Welcome, cx);
                 ws.show_alert(
                     format!("{} no longer knows this phone", credentials.host),
@@ -320,6 +327,14 @@ fn arrive(
         }
     }
     Some(())
+}
+
+/// Drops what the phone asked of its computer and the number of the
+/// last message it had from it: the pairing they belong to is over.
+fn forget_requests(state: &Rc<RefCell<State>>) {
+    let mut state = state.borrow_mut();
+    state.outbox = Outbox::new(clock());
+    *state.last_seq.lock().expect("not poisoned") = None;
 }
 
 /// Sends `up` once connected, and again on each connection until the
