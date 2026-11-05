@@ -62,7 +62,8 @@ local ui = tau.ui
 return tau.plugin {
   name = "...",              -- the folder's name
   description = "...",       -- one line, for the Plugins screen
-  uses = { tools = { "exec_command" }, jev = false, infer = false },
+  uses = { tools = { "exec_command" }, jev = false, infer = false,
+           network = { "ntfy.sh" }, secrets = { "ntfy" } },
   settings = { schema = { ... }, default = { ... }, view = function(settings, ctx) end },
   tools = { name = { description, parameters, call, card } },
   start = function(plan, ctx) end,
@@ -163,6 +164,19 @@ one, its `card`.
   plugin from loading.
 - Hooks run each in a fresh VM: keep what must last in `ctx.state`, not
   in local variables.
+
+### HTTP
+
+A plugin that names hosts in `uses.network` sends requests to them, from
+any hook: `http.request{ method?, url, headers?, body?, timeout? }`
+answers `{ status, headers, body, json, truncated }`. A header or the
+body names a secret with `"Bearer " .. http.secret("ntfy")`: its value
+goes in as the request leaves and is taken out of everything that comes
+back, so the plugin never sees it. A request may go only to a host
+`uses.network` names, and name only a secret `uses.secrets` names; the
+person types each secret's value on the plugin's settings pane, kept for
+this plugin alone. Redirects are not followed. A new host or secret is
+new reach.
 
 ### `ctx`
 

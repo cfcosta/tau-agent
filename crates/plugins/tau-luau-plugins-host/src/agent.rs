@@ -104,6 +104,8 @@ struct Inner {
     /// and turn.
     run: Value,
     jev: Option<Arc<dyn Jev>>,
+    /// tau's configuration directory, where each plugin's secrets are.
+    config: Option<std::path::PathBuf>,
     /// The state of each run going on, by run.
     runs: Mutex<HashMap<RunId, Arc<tokio::sync::Mutex<RunState>>>>,
 }
@@ -139,8 +141,18 @@ impl LuauPlugins {
             versions: Arc::new(Fixed(active)),
             run,
             jev,
+            config: None,
             runs: Mutex::default(),
         }))
+    }
+
+    /// The plugins, their HTTP requests naming secrets kept in tau's
+    /// configuration directory `config`.
+    pub fn with_config(mut self, config: std::path::PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("the directory is given before the plugins are shared")
+            .config = Some(config);
+        self
     }
 
     /// The plugins `versions` has active, as they change: taken now, and
@@ -156,6 +168,7 @@ impl LuauPlugins {
             versions,
             run,
             jev,
+            config: None,
             runs: Mutex::default(),
         }))
     }
@@ -207,6 +220,10 @@ impl Inner {
             now: now(),
             settings: active.settings.clone(),
             state: state.states.get(name).cloned().unwrap_or_else(|| json!({})),
+            secrets: self
+                .config
+                .as_deref()
+                .map(|config| crate::runtime::secrets_of(config, name)),
         }
     }
 

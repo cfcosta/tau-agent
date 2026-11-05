@@ -55,6 +55,12 @@ pub struct Uses {
     /// `before_tool` may change a call's arguments (`tau.change`).
     #[serde(default)]
     pub change_args: bool,
+    /// The hosts its HTTP requests may reach, by name: `ntfy.sh`.
+    #[serde(default)]
+    pub network: Vec<String>,
+    /// The secrets those requests may name, kept for the plugin alone.
+    #[serde(default)]
+    pub secrets: Vec<String>,
 }
 
 impl Uses {
@@ -76,6 +82,18 @@ impl Uses {
         if self.change_args && !before.change_args {
             grown.push("changing a tool call's arguments".into());
         }
+        grown.extend(
+            self.network
+                .iter()
+                .filter(|host| !before.network.contains(host))
+                .map(|host| format!("reaching `{host}`")),
+        );
+        grown.extend(
+            self.secrets
+                .iter()
+                .filter(|secret| !before.secrets.contains(secret))
+                .map(|secret| format!("the secret `{secret}`")),
+        );
         grown
     }
 }
@@ -329,6 +347,13 @@ pub enum Act {
         settings: Value,
         fields: String,
     },
+    /// Keeps `value` as `plugin`'s secret `name`, which only its HTTP
+    /// requests reach.
+    SetSecret {
+        plugin: String,
+        name: String,
+        value: String,
+    },
     /// Carries out `plugin`'s `actions[action]` with `args`, on the state
     /// it has in `run`, under the person's `settings` for it; the answer
     /// is an [`ActionDone`], which the interface records with the run.
@@ -445,6 +470,8 @@ mod tests {
                 jev,
                 infer: false,
                 change_args: false,
+                network: Vec::new(),
+                secrets: Vec::new(),
             },
             settings: None,
             tools: Vec::new(),

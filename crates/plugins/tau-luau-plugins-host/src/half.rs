@@ -91,14 +91,19 @@ impl HostHalf for LuauPluginsHost {
             settings: settings.clone(),
             workspace,
         };
-        plugins.push(Box::new(
-            crate::agent::LuauPlugins::live(
-                std::sync::Arc::new(versions),
-                info,
-                jev,
-            )
-            .await,
-        ));
+        let luau = crate::agent::LuauPlugins::live(
+            std::sync::Arc::new(versions),
+            info,
+            jev,
+        )
+        .await;
+        // Their HTTP requests name secrets kept for each in tau's
+        // configuration directory.
+        let luau = match run.services.get::<tau_ui_plugin::ConfigDir>() {
+            Some(config) => luau.with_config(config.0.clone()),
+            None => luau,
+        };
+        plugins.push(Box::new(luau));
         Ok(plugins)
     }
 
@@ -181,6 +186,11 @@ impl HostHalf for LuauPluginsHost {
         let action: Act = serde_json::from_value(action)?;
         match action {
             Act::Allow { plugin } => host.allow(&plugin).await?,
+            Act::SetSecret {
+                plugin,
+                name,
+                value,
+            } => host.set_secret(&plugin, &name, &value).await?,
             Act::SettingsView {
                 plugin,
                 settings,

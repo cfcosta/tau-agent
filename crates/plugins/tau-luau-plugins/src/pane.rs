@@ -240,11 +240,12 @@ pub fn pane(view: &mut ViewCx<'_, LuauPluginsUi>) -> (Node, Option<Saver>) {
         };
         return (empty, None);
     };
+    let secrets = secrets_card(&entry, &declaration);
     if declaration.settings.is_none() {
-        let empty = Node::Empty {
+        let card = secrets.unwrap_or_else(|| Node::Empty {
             text: format!("{entry} has nothing to set."),
-        };
-        return (empty, None);
+        });
+        return (card, None);
     }
     let scope = view.scope().map(str::to_owned);
     let all: LuauSettings = view.settings.clone();
@@ -280,6 +281,7 @@ pub fn pane(view: &mut ViewCx<'_, LuauPluginsUi>) -> (Node, Option<Saver>) {
             tone: Tone::Warn,
         }
     }));
+    children.extend(secrets);
     let saver = Saver {
         handle: view.handle.clone(),
         entry,
@@ -316,6 +318,43 @@ pub fn settings_view(
     json!({ "tree": tree.value() })
 }
 
+/// The action of a secret's input, with its name after it.
+const SET_SECRET: &str = "set-secret/";
+
+/// A field for each secret `declaration` names, which keeps what is typed
+/// as the secret once Enter is pressed: never shown, never in the
+/// interface's state.
+fn secrets_card(entry: &str, declaration: &Declaration) -> Option<Node> {
+    if declaration.uses.secrets.is_empty() {
+        return None;
+    }
+    let mut children = vec![Node::Heading {
+        text: "Secrets".into(),
+    }];
+    for name in &declaration.uses.secrets {
+        children.push(Node::Rich {
+            text: format!("`{name}`, for its requests to {}", {
+                let hosts = &declaration.uses.network;
+                if hosts.is_empty() {
+                    "no host".to_owned()
+                } else {
+                    hosts.join(", ")
+                }
+            }),
+        });
+        children.push(Node::Input {
+            id: format!("secret/{entry}/{name}"),
+            placeholder: Some("Type a new value, then press Enter".into()),
+            multiline: false,
+            submit: Some(format!("{SET_SECRET}{name}")),
+            keep: false,
+            secret: true,
+            focus: None,
+        });
+    }
+    Some(Node::Card { children })
+}
+
 /// The pane of the Luau plugin `entry`.
 pub fn render(view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
     pane(view).0
@@ -328,6 +367,18 @@ pub fn act(
     args: &Value,
     view: &mut ViewCx<'_, LuauPluginsUi>,
 ) -> bool {
+    if let (Some(name), Some(plugin)) =
+        (action.strip_prefix(SET_SECRET), view.entry())
+    {
+        if let Some(value) = args["text"].as_str().filter(|v| !v.is_empty()) {
+            view.handle.act(Act::SetSecret {
+                plugin: plugin.to_owned(),
+                name: name.to_owned(),
+                value: value.to_owned(),
+            });
+        }
+        return true;
+    }
     pane(view).1.is_some_and(|saver| saver.act(action, args))
 }
 

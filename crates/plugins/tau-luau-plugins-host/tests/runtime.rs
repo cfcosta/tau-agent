@@ -109,6 +109,7 @@ fn context(weekday: &str) -> Context {
         now: json!({ "unix": 0, "iso": "2026-10-09T10:00:00Z", "weekday": weekday }),
         settings: json!({ "days": ["Friday"] }),
         state: json!({}),
+        secrets: None,
     }
 }
 
@@ -128,6 +129,8 @@ async fn a_plugin_declares_what_it_is() {
             jev: false,
             infer: false,
             change_args: false,
+            network: Vec::new(),
+            secrets: Vec::new(),
         }
     );
     let tools: Vec<(&str, bool)> = declared
@@ -625,4 +628,103 @@ async fn a_hook_is_given_its_input_whole() {
         assert_eq!(out.error, None);
         assert_eq!(out.value, input);
     }
+}
+
+const PINGS: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "pings",
+  uses = { network = { "127.0.0.1" }, secrets = { "token" } },
+  tools = {
+    ping = {
+      description = "Pings the server.",
+      call = function(args, ctx)
+        local answer = http.request({
+          url = args.url,
+          headers = { authorization = "Bearer " .. http.secret(args.secret) },
+        })
+        return answer.body
+      end,
+    },
+  },
+}
+"#;
+
+/// A plugin's HTTP requests reach the hosts it declares, with the
+/// secrets it declares put in as they leave, from its own store; any
+/// other host or secret is refused.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugin_reaches_the_hosts_and_secrets_it_declares() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let server = heard.clone();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let mut buffer = vec![0u8; 4096];
+            let read = stream.read(&mut buffer).await.unwrap_or(0);
+            *server.lock().unwrap() =
+                String::from_utf8_lossy(&buffer[..read]).into_owned();
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\nconnection: close\r\n\r\npong")
+                .await;
+        }
+    });
+    let config = tempfile::tempdir().unwrap();
+    let secrets =
+        tau_luau_plugins_host::runtime::secrets_of(config.path(), "pings");
+    tau_tools_host::secrets::SecretStore::new(&secrets)
+        .set("token", "s3cr3t-value")
+        .await
+        .unwrap();
+    let pings = Files {
+        source: PINGS.into(),
+        ..Files::default()
+    };
+    let loaded = load("pings", pings).await.unwrap();
+    let context = Context {
+        secrets: Some(secrets),
+        ..context("Monday")
+    };
+    let ping = |url: String, secret: &str| {
+        let (loaded, context) = (loaded.clone(), context.clone());
+        let args = json!({ "url": url, "secret": secret });
+        async move {
+            loaded
+                .call(
+                    &Hook::Tool("ping".into()),
+                    args,
+                    &context,
+                    no_reach(),
+                    CancellationToken::new(),
+                )
+                .await
+        }
+    };
+    let answered = ping(format!("http://127.0.0.1:{port}/"), "token").await;
+    assert_eq!(answered.error, None);
+    assert_eq!(answered.value, json!("pong"));
+    assert!(
+        heard.lock().unwrap().contains("Bearer s3cr3t-value"),
+        "{}",
+        heard.lock().unwrap()
+    );
+
+    let elsewhere = ping("http://localhost:1/".into(), "token").await;
+    assert!(
+        elsewhere
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("`localhost`")),
+        "{elsewhere:?}"
+    );
+    let other = ping(format!("http://127.0.0.1:{port}/"), "github").await;
+    assert!(
+        other
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("`github`")),
+        "{other:?}"
+    );
 }

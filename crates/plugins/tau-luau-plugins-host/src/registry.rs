@@ -68,6 +68,8 @@ struct Shared {
     refresh: Box<dyn Fn() + Send + Sync>,
     /// The person's settings, as they are now.
     settings: Box<dyn Fn() -> tau_luau_plugins::LuauSettings + Send + Sync>,
+    /// tau's configuration directory, where each plugin's secrets are.
+    config: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -96,6 +98,10 @@ impl PluginHost for Registry {
             move || refresher.refresh(),
         )
         .with_settings(move || reader.settings(crate::NAME));
+        let registry = match cx.config_dir() {
+            Some(config) => registry.with_config(config.to_owned()),
+            None => registry,
+        };
         let watcher = registry.clone();
         cx.runtime.spawn(async move { watcher.watch().await });
         Ok(registry)
@@ -120,7 +126,53 @@ impl Registry {
             tried: tokio::sync::Mutex::default(),
             refresh: Box::new(refresh),
             settings: Box::new(Default::default),
+            config: None,
         }))
+    }
+
+    /// The registry, keeping each plugin's secrets in tau's configuration
+    /// directory `config`.
+    pub fn with_config(self, config: PathBuf) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("the directory is given before the registry is shared");
+        Self(Arc::new(Shared {
+            config: Some(config),
+            ..shared
+        }))
+    }
+
+    /// Where `plugin`'s secrets are kept, when the host keeps any.
+    pub fn secrets_of(&self, plugin: &str) -> Option<PathBuf> {
+        let config = self.0.config.as_deref()?;
+        Some(crate::runtime::secrets_of(config, plugin))
+    }
+
+    /// Keeps `value` as `plugin`'s secret `name`, one its active version
+    /// declares.
+    pub async fn set_secret(
+        &self,
+        plugin: &str,
+        name: &str,
+        value: &str,
+    ) -> anyhow::Result<()> {
+        let declared = self.active().await.iter().any(|active| {
+            active.loaded.declaration.name == plugin
+                && active
+                    .loaded
+                    .declaration
+                    .uses
+                    .secrets
+                    .iter()
+                    .any(|s| s == name)
+        });
+        anyhow::ensure!(declared, "{plugin} does not use the secret `{name}`");
+        let path = self
+            .secrets_of(plugin)
+            .ok_or_else(|| anyhow::anyhow!("this host keeps no secrets"))?;
+        tau_tools_host::secrets::SecretStore::new(path)
+            .set(name, value)
+            .await?;
+        Ok(())
     }
 
     /// The registry, reading the person's settings with `settings`.
@@ -439,6 +491,7 @@ impl Registry {
             Some(loaded) => {
                 let context = crate::runtime::Context {
                     settings: settings.clone(),
+                    secrets: self.secrets_of(plugin),
                     ..Default::default()
                 };
                 let outcome = loaded
@@ -518,6 +571,7 @@ impl Registry {
             )
             .0,
             state,
+            secrets: self.secrets_of(plugin),
         };
         let outcome = loaded
             .call(

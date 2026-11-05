@@ -336,6 +336,23 @@ pub struct Context {
     pub now: Value,
     pub settings: Value,
     pub state: Value,
+    /// The plugin's own secret store, which its HTTP requests name
+    /// secrets from ([`secrets_of`]); none where the host keeps none.
+    #[serde(skip)]
+    pub secrets: Option<std::path::PathBuf>,
+}
+
+/// The file the plugin `plugin`'s secrets are kept in, in tau's
+/// configuration directory `config`: apart from every agent's, and from
+/// every other plugin's.
+pub fn secrets_of(
+    config: &std::path::Path,
+    plugin: &str,
+) -> std::path::PathBuf {
+    config
+        .join(tau_tools_host::secrets::AGENTS_DIR)
+        .join("plugins")
+        .join(format!("{plugin}.json"))
 }
 
 /// What a hook may reach beyond the VM: the tools its plugin's `uses`
@@ -522,7 +539,7 @@ impl Loaded {
         let (value, error) = run(
             self.modules.clone(),
             reach,
-            Reaches::of(&self.declaration),
+            Reaches::of(&self.declaration, context.secrets.as_deref()),
             script,
             inputs,
             hook.limit(),
@@ -680,15 +697,34 @@ struct Reaches {
     tools: Vec<String>,
     infer: bool,
     jev: bool,
+    network: Option<Network>,
+}
+
+/// The HTTP requests a plugin may send (`uses.network`): to these hosts,
+/// naming these secrets from its own store.
+#[derive(Clone)]
+struct Network {
+    hosts: Vec<String>,
+    secrets: Vec<String>,
+    store: Option<tau_tools_host::secrets::SecretStore>,
 }
 
 impl Reaches {
-    fn of(declaration: &Declaration) -> Self {
+    fn of(
+        declaration: &Declaration,
+        secrets: Option<&std::path::Path>,
+    ) -> Self {
+        let uses = &declaration.uses;
         Self {
             name: declaration.name.clone(),
-            tools: declaration.uses.tools.clone(),
-            infer: declaration.uses.infer,
-            jev: declaration.uses.jev,
+            tools: uses.tools.clone(),
+            infer: uses.infer,
+            jev: uses.jev,
+            network: (!uses.network.is_empty()).then(|| Network {
+                hosts: uses.network.clone(),
+                secrets: uses.secrets.clone(),
+                store: secrets.map(tau_tools_host::secrets::SecretStore::new),
+            }),
         }
     }
 
@@ -698,6 +734,7 @@ impl Reaches {
             tools: Vec::new(),
             infer: false,
             jev: false,
+            network: None,
         }
     }
 }
@@ -719,6 +756,7 @@ async fn run(
         tools: reaches.tools,
         infer: reaches.infer,
         jev: reaches.jev,
+        network: reaches.network,
     });
     let request = Request {
         call_id: format!("plugin:{}", reaches.name),
@@ -769,6 +807,59 @@ struct PluginHost {
     tools: Vec<String>,
     infer: bool,
     jev: bool,
+    network: Option<Network>,
+}
+
+impl PluginHost {
+    /// Sends the HTTP request `args` names, when it goes to a host the
+    /// plugin declares and names only the secrets it declares.
+    async fn request(
+        &self,
+        network: &Network,
+        args: &Value,
+    ) -> Result<ToolReply, String> {
+        use tau_tools_host::http;
+        let request = http::Request::parse(args)?;
+        let host = request.url.host_str().unwrap_or_default();
+        if !network.hosts.iter().any(|allowed| allowed == host) {
+            return Err(format!(
+                "this plugin does not reach `{host}`: add it to `uses.network`"
+            ));
+        }
+        let names = http::secret_names(args);
+        if let Some(name) =
+            names.iter().find(|name| !network.secrets.contains(name))
+        {
+            return Err(format!(
+                "this plugin does not use the secret `{name}`: add it to `uses.secrets`"
+            ));
+        }
+        let empty;
+        let store = match &network.store {
+            Some(store) => store,
+            None if names.is_empty() => {
+                empty = tau_tools_host::secrets::SecretStore::new(
+                    std::path::PathBuf::from("/nonexistent/tau-secrets.json"),
+                );
+                &empty
+            }
+            None => return Err("this host keeps no secrets".into()),
+        };
+        let fetched = http::fetch(
+            &http::client(),
+            store,
+            args,
+            &CancellationToken::new(),
+        )
+        .await?;
+        Ok(ToolReply::success(json!({
+            "status": fetched.status,
+            "headers": fetched.headers,
+            "body": fetched.body,
+            "json": fetched.json,
+            "truncated": fetched.cut,
+        })))
+    }
 }
 
 impl PluginHost {
@@ -781,11 +872,25 @@ impl PluginHost {
 #[async_trait]
 impl Host for PluginHost {
     fn tools(&self) -> Vec<ToolEntry> {
-        self.reach
+        let mut tools: Vec<ToolEntry> = self
+            .reach
             .tools()
             .into_iter()
             .filter(|entry| self.allowed(&entry.name))
-            .collect()
+            .collect();
+        // What makes `http.request` there: the plugin's own requests.
+        if self.network.is_some() {
+            tools.push(ToolEntry {
+                name: "http".into(),
+                description: "One HTTP request to a host `uses.network` names."
+                    .into(),
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                namespace: None,
+                sequential: false,
+            });
+        }
+        tools
     }
 
     async fn module(
@@ -803,6 +908,9 @@ impl Host for PluginHost {
     }
 
     async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String> {
+        if let (Some(network), "http") = (&self.network, call.name.as_str()) {
+            return self.request(network, &call.args).await;
+        }
         if !self.allowed(&call.name) {
             return Err(format!(
                 "this plugin does not use `{}`: add it to `uses.tools`",

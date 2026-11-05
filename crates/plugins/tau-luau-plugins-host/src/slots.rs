@@ -4,7 +4,7 @@
 //! slot no active plugin fills answers as an empty filler would, and a
 //! hook that fails or runs out of time answers nothing.
 
-use serde_json::{Value, json};
+use serde_json::json;
 use tau_ui_plugin::{compaction::Compaction, title::Title};
 use tokio_util::sync::CancellationToken;
 
@@ -14,12 +14,13 @@ use crate::{
 };
 
 /// What a hook outside any run has as its `ctx`: no run, no state.
-fn context(settings: Value) -> Context {
+fn context(registry: &Registry, active: &crate::agent::Active) -> Context {
     Context {
         run: json!({}),
         now: crate::agent::now(),
-        settings,
+        settings: active.settings.clone(),
         state: json!({}),
+        secrets: registry.secrets_of(&active.loaded.declaration.name),
     }
 }
 
@@ -43,7 +44,7 @@ impl Title for LuauTitle {
                 .call(
                     &Hook::Title,
                     json!({ "task": task, "model": run_model }),
-                    &context(active.settings.clone()),
+                    &context(&self.0, &active),
                     std::sync::Arc::new(NoReach),
                     CancellationToken::new(),
                 )

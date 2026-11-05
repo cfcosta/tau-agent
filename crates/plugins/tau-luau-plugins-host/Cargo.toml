@@ -18,6 +18,7 @@ tau-ai.workspace = true
 tau-codemode.workspace = true
 tau-codemode-host.workspace = true
 tau-jev.workspace = true
+tau-tools-host.workspace = true
 tau-luau-plugins.workspace = true
 # Where the skill tau ships is installed.
 tau-skills = { path = "../tau-skills", default-features = false }

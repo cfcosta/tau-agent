@@ -9889,6 +9889,7 @@ dependencies = [
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
+ "tau-tools-host",
  "tau-ui-kit",
  "tau-ui-plugin",
  "tau-vcs-host",
