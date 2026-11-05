@@ -897,3 +897,36 @@ fn the_host_keeps_the_last_of_quick_model_picks() {
         assert_synced("phone 0", &net.computer.synced(), &phone);
     }
 }
+
+/// A phone that last saw a chat finished closes it while the computer
+/// has it going again; a message after that opens it again, on every
+/// device and after a restart, as any message to a closed chat does.
+#[test]
+fn a_message_opens_a_chat_closed_while_it_went_on() {
+    let mut tau = Tau::new();
+    let chat = tau.chats[0].clone();
+    tau.wire.borrow_mut().drop_phone(0);
+    tau.say_to(Who::Computer, &chat, "go on".into());
+    tau.host_settles();
+    // The phone still shows it finished: closing it does not stop it.
+    let phone = &mut tau.net.phones[0];
+    phone
+        .workspace
+        .update(&mut phone.cx, |ws, cx| ws.close_run(&chat, cx));
+    phone.cx.run_until_parked();
+    tau.settle();
+    tau.say_to(Who::Computer, &chat, "and this".into());
+    tau.settle();
+    let open = |synced: &Synced| !synced.closed.contains(&chat);
+    assert!(open(&tau.computer.synced()), "the message opened it");
+    for phone in &mut tau.net.phones {
+        assert!(open(&phone.synced()), "a phone shows it open");
+    }
+    // Its turn ends, and tau starts again.
+    while tau.gate.waiting() > 0 {
+        tau.gate.answer(0, Reply::Text);
+        tau.host_settles();
+    }
+    tau.net.restart();
+    assert!(open(&tau.computer.synced()), "open after a restart");
+}

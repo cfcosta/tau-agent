@@ -676,17 +676,22 @@ impl Host {
         run: &RunId,
         closed: bool,
     ) -> anyhow::Result<()> {
+        self.mark_closed(run, closed)?;
+        self.save_list().await
+    }
+
+    /// Keeps `run` closed or open, at once; [`Host::set_closed`] saves
+    /// it too.
+    pub fn mark_closed(&self, run: &RunId, closed: bool) -> anyhow::Result<()> {
         if closed && self.is_main(run) {
             anyhow::bail!("A repository's main chat stays open");
         }
-        {
-            let mut list = self.list.lock().expect("not poisoned");
-            list.closed.retain(|id| **id != *run.0);
-            if closed {
-                list.closed.push(run.0.to_string());
-            }
+        let mut list = self.list.lock().expect("not poisoned");
+        list.closed.retain(|id| **id != *run.0);
+        if closed {
+            list.closed.push(run.0.to_string());
         }
-        self.save_list().await
+        Ok(())
     }
 
     /// Writes `repos.json` as the list is kept now (ADR 0028).

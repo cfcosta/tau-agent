@@ -1074,6 +1074,9 @@ impl Workspace {
                 self.set_branch_code(&main, &fork, code, cx)
             }
             HostUpdate::Steered { run, text } => {
+                // A message opens a closed conversation again, going on
+                // or not.
+                self.closed.remove(&run);
                 self.queued.entry(run).or_default().push(text);
                 cx.notify();
             }

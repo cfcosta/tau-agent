@@ -1161,15 +1161,32 @@ impl Host {
                     );
                 }
                 WorkspaceEvent::CloseRun { run } => {
-                    let job_run = run.clone();
-                    handler.spawn(async move |host| {
-                        if let Err(error) = host.set_closed(&job_run, true).await {
-                            eprintln!("tau-ui: cannot save closed runs: {error:#}");
-                        }
-                    });
+                    // Kept at once, in the order of the messages that
+                    // open it again, and saved on the host.
+                    if handler.mark_closed(run, true).is_ok() {
+                        let counted = handler.job();
+                        handler.spawn(async move |host| {
+                            let _counted = counted;
+                            if let Err(error) = host.save_list().await {
+                                eprintln!("tau-ui: cannot save closed runs: {error:#}");
+                            }
+                        });
+                    }
                     workspace.update(cx, |ws, cx| ws.apply(HostUpdate::Closed(run.clone()), cx));
                 }
                 WorkspaceEvent::Say { run, text, model, images } => {
+                    // A message opens a closed conversation again, one
+                    // that goes on as well as one that ended: kept at
+                    // once, in the order of the closes, and saved.
+                    if handler.mark_closed(run, false).is_ok() {
+                        let counted = handler.job();
+                        handler.spawn(async move |host| {
+                            let _counted = counted;
+                            if let Err(error) = host.save_list().await {
+                                eprintln!("tau-ui: cannot save closed runs: {error:#}");
+                            }
+                        });
+                    }
                     let said = Prompt::new(text).images(images.clone());
                     let (job_run, job_said) = (run.clone(), said.clone());
                     let (run, text, model) = (run.clone(), text.clone(), model.clone());
