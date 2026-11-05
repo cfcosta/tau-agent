@@ -149,6 +149,10 @@ pub struct Hooks {
     /// `notify`: where tau's notices go, for `tau.notify`.
     #[serde(default)]
     pub notify: bool,
+    /// `repo_data`: what it keeps of a repository, for its sidebar entry
+    /// and pages there.
+    #[serde(default)]
+    pub repo_data: bool,
     #[serde(default)]
     pub run_end: bool,
     #[serde(default)]
@@ -214,6 +218,23 @@ pub struct CommandSpec {
     #[serde(default)]
     pub args: String,
 }
+
+/// Its entry under each repository in the sidebar, which opens one of
+/// its pages for that repository.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoNav {
+    pub label: String,
+    /// The page it opens, one of `pages`.
+    pub page: String,
+    #[serde(default)]
+    pub icon: String,
+}
+
+/// What each Luau plugin's `repo_data` gave of one repository, by plugin:
+/// what its sidebar entry and pages there read.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RepoValues(pub BTreeMap<String, Value>);
 
 /// One of its jobs: work it does by itself, every `every` seconds, while
 /// tau runs.
@@ -302,6 +323,12 @@ pub struct Declaration {
     /// Its jobs.
     #[serde(default)]
     pub jobs: Vec<JobSpec>,
+    /// Its pages of a repository, by name (`pages`).
+    #[serde(default)]
+    pub pages: Vec<String>,
+    /// Its entry under each repository in the sidebar.
+    #[serde(default)]
+    pub repo_nav: Option<RepoNav>,
 }
 
 impl Declaration {
@@ -445,6 +472,22 @@ pub enum Act {
         name: String,
         value: String,
     },
+    /// Draws `plugin`'s page `page` of `params` (its `repo` among them);
+    /// the answer is a fetched tree.
+    Page {
+        plugin: String,
+        page: String,
+        params: BTreeMap<String, String>,
+    },
+    /// Carries out `plugin`'s `actions[action]` with `args` from one of
+    /// its pages of the repository `repo`: no run's state, its store
+    /// there.
+    RepoAction {
+        plugin: String,
+        repo: String,
+        action: String,
+        args: Value,
+    },
     /// Carries out `plugin`'s `actions[action]` with `args`, on the state
     /// it has in `run`, under the person's `settings` for it; the answer
     /// is an [`ActionDone`], which the interface records with the run.
@@ -583,6 +626,8 @@ mod tests {
             nav: None,
             commands: Vec::new(),
             jobs: Vec::new(),
+            pages: Vec::new(),
+            repo_nav: None,
         }
     }
 
@@ -618,6 +663,7 @@ mod tests {
             on_event: true,
             title: true,
             notify: true,
+            repo_data: true,
             run_end: true,
             view: true,
             settings_view: true,

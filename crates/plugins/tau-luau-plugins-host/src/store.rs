@@ -71,13 +71,22 @@ impl Fuse {
     }
 }
 
+/// Hears that a store changed: what draws from it draws again.
+pub type Changed = Arc<dyn Fn() + Send + Sync>;
+
 /// One plugin's store in one repository.
-#[derive(Debug)]
 pub struct Kv {
     pool: SqlitePool,
     /// Hooks take turns.
     turn: Arc<tokio::sync::Mutex<()>>,
     fuse: Arc<Fuse>,
+    changed: Option<Changed>,
+}
+
+impl std::fmt::Debug for Kv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Kv").finish_non_exhaustive()
+    }
 }
 
 impl Kv {
@@ -128,7 +137,14 @@ impl Kv {
             pool,
             turn: Arc::default(),
             fuse,
+            changed: None,
         })
+    }
+
+    /// The store, telling `changed` after each commit that wrote.
+    pub fn with_changed(mut self, changed: Option<Changed>) -> Self {
+        self.changed = changed;
+        self
     }
 
     /// A hook's session: its turn, from now until it is dropped.
@@ -258,17 +274,30 @@ impl Session {
             }
         }
         self.kv.fuse.take()?;
-        tx.commit().await.map_err(fail)
+        tx.commit().await.map_err(fail)?;
+        if let Some(changed) = &self.kv.changed {
+            changed();
+        }
+        Ok(())
     }
 }
 
 /// Every Luau plugin's stores, opened as they are first asked for: in
 /// `dir`, `<plugin>/<repo>.db`, or in memory.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Stores {
     dir: Option<PathBuf>,
     open: tokio::sync::Mutex<HashMap<(String, String), Arc<Kv>>>,
     fuse: Mutex<Option<Arc<Fuse>>>,
+    changed: Option<Changed>,
+}
+
+impl std::fmt::Debug for Stores {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Stores")
+            .field("dir", &self.dir)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Stores {
@@ -282,6 +311,12 @@ impl Stores {
     /// Stores in memory, for tests.
     pub fn memory() -> Self {
         Self::default()
+    }
+
+    /// Stores that tell `changed` after each commit that wrote.
+    pub fn with_changed(mut self, changed: Changed) -> Self {
+        self.changed = Some(changed);
+        self
     }
 
     /// Stores opened from now on write through `fuse`: for the crash
@@ -315,7 +350,7 @@ impl Stores {
             }
             None => Kv::memory(fuse).await?,
         };
-        let kv = Arc::new(kv);
+        let kv = Arc::new(kv.with_changed(self.changed.clone()));
         open.insert(key, kv.clone());
         Ok(kv)
     }

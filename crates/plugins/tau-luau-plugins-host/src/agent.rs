@@ -560,6 +560,8 @@ fn hook_name(hook: &Hook) -> String {
         Hook::Notify => "notify".into(),
         Hook::Forge(name) => format!("forge.{name}"),
         Hook::Job(name) => format!("jobs.{name}"),
+        Hook::RepoData => "repo_data".into(),
+        Hook::Page(name) => format!("pages.{name}"),
         Hook::RunEnd => "run_end".into(),
         Hook::View => "view".into(),
         Hook::SettingsView => "settings.view".into(),

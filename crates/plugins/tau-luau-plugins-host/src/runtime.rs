@@ -255,6 +255,10 @@ pub enum Hook {
     Forge(String),
     /// One of its jobs, by name.
     Job(String),
+    /// What it keeps of a repository (`repo_data`), with nothing as input.
+    RepoData,
+    /// One of its pages of a repository, by name, with the page's params.
+    Page(String),
     RunEnd,
     View,
     /// Its settings page, with the settings shown as input (ADR 0029).
@@ -275,6 +279,8 @@ impl Hook {
             | Self::BeforeRequest
             | Self::OnEvent => 200,
             Self::Start
+            | Self::RepoData
+            | Self::Page(_)
             | Self::Title
             | Self::BeforeTool
             | Self::AfterToolResult
@@ -307,6 +313,8 @@ impl Hook {
             Self::Title => "p.title(input, ctx)".into(),
             Self::Notify => "p.notify(input, ctx)".into(),
             Self::Job(name) => format!("p.jobs[\"{name}\"].run(ctx)"),
+            Self::RepoData => "p.repo_data(ctx)".into(),
+            Self::Page(name) => format!("p.pages[\"{name}\"](input, ctx)"),
             Self::Forge(name) => format!("p.forge[\"{name}\"](input, ctx)"),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
             Self::View => "p.view(ctx.state, ctx)".into(),
@@ -336,6 +344,8 @@ impl Hook {
             Self::Job(name) => {
                 declaration.jobs.iter().any(|job| &job.name == name)
             }
+            Self::RepoData => declaration.hooks.repo_data,
+            Self::Page(name) => declaration.pages.contains(name),
             Self::Forge(name) => declaration
                 .forge
                 .as_ref()
@@ -519,6 +529,14 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
                 "{PLUGIN_FILE}: it fills `{slot}`, which needs {missing}"
             ));
         }
+    }
+    if let Some(nav) = &declaration.repo_nav
+        && !declaration.pages.contains(&nav.page)
+    {
+        return Err(format!(
+            "{PLUGIN_FILE}: `repo_nav` opens the page `{}`, which `pages` lacks",
+            nav.page
+        ));
     }
     if let Some(job) = declaration
         .jobs

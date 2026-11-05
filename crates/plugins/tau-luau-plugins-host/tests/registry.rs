@@ -836,3 +836,80 @@ fn a_built_in_plugin_is_active_and_its_name_is_its_own() {
         ]
     );
 }
+
+const LISTS: &str = r#"
+local tau = require("tau")
+local ui = tau.ui
+return tau.plugin {
+  name = "greet",
+  uses = { store = true },
+  repo_nav = { label = "List", page = "list" },
+  pages = {
+    list = function(params, ctx)
+      local rows = {}
+      for _, item in ipairs(ctx.store.list("item/")) do
+        table.insert(rows, ui.button(item.value, "drop", { key = item.key }))
+      end
+      return ui.stack(rows)
+    end,
+  },
+  repo_data = function(ctx)
+    return { nav = { detail = tostring(#ctx.store.list("item/")) .. " items" } }
+  end,
+  actions = {
+    add = function(args, ctx) ctx.store.put("item/" .. args.text, args.text) end,
+    drop = function(args, ctx) ctx.store.delete(args.key) end,
+  },
+}
+"#;
+
+/// A plugin's page of a repository and what it keeps of it read its
+/// store there; an action from the page writes it, and another
+/// repository's store is its own.
+#[test]
+fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    );
+    let (v1, trunk) = project(home.path(), 1, LISTS, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    block_on_io(registry.allow("greet")).unwrap();
+    for text in ["milk", "eggs"] {
+        block_on_io(registry.repo_action(
+            "greet",
+            "home",
+            "add",
+            serde_json::json!({ "text": text }),
+        ))
+        .unwrap();
+    }
+    let kept = block_on_io(registry.repo_data("home"));
+    assert_eq!(kept.0["greet"]["nav"]["detail"], "2 items");
+    let elsewhere = block_on_io(registry.repo_data("work"));
+    assert_eq!(elsewhere.0["greet"]["nav"]["detail"], "0 items");
+
+    let params = std::collections::BTreeMap::from([
+        ("entry".to_owned(), "greet".to_owned()),
+        ("repo".to_owned(), "home".to_owned()),
+    ]);
+    let page = block_on_io(registry.page("greet", "list", &params));
+    let tree = page["tree"].to_string();
+    assert!(tree.contains("eggs") && tree.contains("milk"), "{tree}");
+    // Its buttons act in the repository the page shows.
+    assert!(tree.contains("luau-repo/greet/drop"), "{tree}");
+    block_on_io(registry.repo_action(
+        "greet",
+        "home",
+        "drop",
+        serde_json::json!({ "key": "item/milk" }),
+    ))
+    .unwrap();
+    assert_eq!(
+        block_on_io(registry.repo_data("home")).0["greet"]["nav"]["detail"],
+        "1 items"
+    );
+}

@@ -30,7 +30,7 @@ use tau_ui_plugin::{
     SlashCommand,
     UiPlugin,
     ViewCx,
-    points::{self, AtAnchor, AtApp, AtCard, AtRun, CardView},
+    points::{self, AtAnchor, AtApp, AtCard, AtRepo, AtRun, CardView},
     tree::{Kind, Node, Tab, Tone},
 };
 
@@ -176,6 +176,16 @@ const LUAU: &str = "luau/";
 /// run that drew one ([`page_run`]).
 const LUAU_PAGE: &str = "luau-page/";
 
+/// What the actions of a Luau plugin's page of a repository start with
+/// ([`embed_repo`]): carried out in the repository the page shows.
+const LUAU_REPO: &str = "luau-repo/";
+
+/// The page parameter naming which of a plugin's pages it shows.
+pub const PAGE_PARAM: &str = "page";
+
+/// The page parameter naming the repository a plugin's page shows.
+pub const REPO_PARAM: &str = "repo";
+
 /// The page's own actions: write a plugin, allow a waiting version
 /// (`{ plugin }`), open a chat (`{ run }`).
 const WRITE: &str = "write";
@@ -269,6 +279,12 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
 /// that says so.
 pub fn embed(piece: &Value, plugin: &str) -> Node {
     embed_as(piece, plugin, LUAU)
+}
+
+/// `piece`, a Luau plugin's page of a repository, as a tree whose
+/// actions are carried out in that repository.
+pub fn embed_repo(piece: &Value, plugin: &str) -> Node {
+    embed_as(piece, plugin, LUAU_REPO)
 }
 
 /// [`embed`], its actions starting with `mark`.
@@ -456,7 +472,7 @@ fn page_run(
 impl UiPlugin for LuauPluginsUi {
     type State = State;
     type Data = Overview;
-    type RepoData = ();
+    type RepoData = crate::RepoValues;
     type Settings = LuauSettings;
 
     fn name(&self) -> &'static str {
@@ -512,6 +528,23 @@ impl UiPlugin for LuauPluginsUi {
                 (run.id.0.to_string(), Some(run.repo.clone()), state)
             });
             luau_action(plugin, own, args, run, view);
+            return;
+        }
+        if let Some((plugin, own)) = action
+            .strip_prefix(LUAU_REPO)
+            .and_then(|rest| rest.split_once('/'))
+        {
+            if kernel_action(own, args, None, &view.handle) {
+                return;
+            }
+            if let Some(repo) = view.params.get(REPO_PARAM) {
+                view.handle.act(Act::RepoAction {
+                    plugin: plugin.to_owned(),
+                    repo: repo.clone(),
+                    action: own.to_owned(),
+                    args: args.clone(),
+                });
+            }
             return;
         }
         if crate::pane::act(action, args, view) {
@@ -659,10 +692,20 @@ impl UiPlugin for LuauPluginsUi {
                 })
             });
         // The plugins that ask for one, in the sidebar: the first few.
-        (0..NAV_ENTRIES).fold(manifest, |manifest, at| {
+        let manifest = (0..NAV_ENTRIES).fold(manifest, |manifest, at| {
             manifest.contribute(points::SIDEBAR, move |_: &AtApp, view| {
                 nav_entries(view.data).nth(at)
             })
+        });
+        // Under each repository, the plugins' entries for it.
+        (0..NAV_ENTRIES).fold(manifest, |manifest, at| {
+            manifest.contribute(
+                points::SIDEBAR_REPO,
+                move |at_repo: &AtRepo, view| {
+                    let kept = view.repo(&at_repo.repo);
+                    repo_nav_entries(view.data, kept, &at_repo.repo).nth(at)
+                },
+            )
         })
     }
 }
@@ -729,6 +772,54 @@ fn run_command(
     );
 }
 
+/// The active plugins' entries under the repository `repo`, each opening
+/// its page there, with what it keeps of the repository: its `nav`'s
+/// `detail`, and its `badge` with a `tone`.
+fn repo_nav_entries<'a>(
+    overview: &'a Overview,
+    kept: Option<&'a crate::RepoValues>,
+    repo: &'a str,
+) -> impl Iterator<Item = NavEntry> + 'a {
+    overview
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .filter_map(move |entry| {
+            let nav = entry.declaration.as_ref()?.repo_nav.as_ref()?;
+            let icon = Icon::named(&nav.icon).unwrap_or(Icon::Plug);
+            let said = kept
+                .and_then(|values| values.0.get(&entry.name))
+                .map(|value| &value["nav"]);
+            let mut item = NavEntry::new(
+                nav.label.clone(),
+                icon,
+                repo_page_link(&entry.name, &nav.page, repo),
+            );
+            item.detail = said
+                .and_then(|nav| nav["detail"].as_str())
+                .map(str::to_owned);
+            item.badge =
+                said.and_then(|nav| nav["badge"].as_str()).map(|badge| {
+                    let tone = match nav_tone(said) {
+                        Some(tone) => tone,
+                        None => tau_ui_kit::theme::Tone::Quiet,
+                    };
+                    (badge.to_owned(), tone)
+                });
+            Some(item)
+        })
+}
+
+fn nav_tone(nav: Option<&Value>) -> Option<tau_ui_kit::theme::Tone> {
+    Some(match nav?["tone"].as_str()? {
+        "good" => tau_ui_kit::theme::Tone::Good,
+        "warn" => tau_ui_kit::theme::Tone::Warn,
+        "bad" => tau_ui_kit::theme::Tone::Danger,
+        "info" => tau_ui_kit::theme::Tone::Info,
+        _ => return None,
+    })
+}
+
 /// The most of the person's plugins the sidebar lists.
 const NAV_ENTRIES: usize = 8;
 
@@ -754,10 +845,48 @@ fn nav_entries(overview: &Overview) -> impl Iterator<Item = NavEntry> + '_ {
 /// writing them. Opened for one plugin, the page is that plugin's. A
 /// view tree in the frame the interface gives a page (ADR 0045).
 fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
+    if let (Some(entry), Some(page), Some(repo)) = (
+        view.entry().map(str::to_owned),
+        view.params.get(PAGE_PARAM).cloned(),
+        view.params.get(REPO_PARAM).cloned(),
+    ) {
+        return repo_page(&entry, &page, &repo, view);
+    }
     match view.entry().map(str::to_owned) {
         Some(entry) => plugin_page(&entry, view),
         None => overview(view),
     }
+}
+
+/// `plugin`'s page `page` of `repo`, drawn by its host half: fetched
+/// again whenever what it keeps of the repository changes.
+fn repo_page(
+    plugin: &str,
+    page: &str,
+    repo: &str,
+    view: &mut ViewCx<'_, LuauPluginsUi>,
+) -> Node {
+    let kept = view
+        .repo(repo)
+        .and_then(|values| values.0.get(plugin))
+        .map(Value::to_string)
+        .unwrap_or_default();
+    let params = view.params.clone();
+    Node::Fetched {
+        key: format!("luau-repo-page/{plugin}/{}/{kept}", json!(params)),
+        fetch: json!(Act::Page {
+            plugin: plugin.to_owned(),
+            page: page.to_owned(),
+            params,
+        }),
+    }
+}
+
+/// The link to `plugin`'s page `page` of `repo`.
+pub fn repo_page_link(plugin: &str, page: &str, repo: &str) -> Link {
+    entry_link(plugin)
+        .param(PAGE_PARAM, page)
+        .param(REPO_PARAM, repo)
 }
 
 /// Carries out one of the page's own actions.

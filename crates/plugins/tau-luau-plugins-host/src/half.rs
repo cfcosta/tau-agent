@@ -225,6 +225,16 @@ impl HostHalf for LuauPluginsHost {
         host.overview().await
     }
 
+    /// What each Luau plugin keeps of `repo` (`repo_data`).
+    async fn repo_data(
+        &self,
+        host: &Self::Host,
+        repo: &RepoCtx,
+        _cx: &HostCx,
+    ) -> tau_luau_plugins::RepoValues {
+        host.repo_data(&repo.name).await
+    }
+
     async fn act(
         &self,
         host: &Self::Host,
@@ -234,6 +244,17 @@ impl HostHalf for LuauPluginsHost {
         let action: Act = serde_json::from_value(action)?;
         match action {
             Act::Allow { plugin } => host.allow(&plugin).await?,
+            Act::Page {
+                plugin,
+                page,
+                params,
+            } => return Ok(Some(host.page(&plugin, &page, &params).await)),
+            Act::RepoAction {
+                plugin,
+                repo,
+                action,
+                args,
+            } => host.repo_action(&plugin, &repo, &action, args).await?,
             Act::SetSecret {
                 plugin,
                 name,

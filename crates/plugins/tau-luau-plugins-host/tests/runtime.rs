@@ -163,6 +163,7 @@ async fn a_plugin_declares_what_it_is() {
             on_event: false,
             title: false,
             notify: false,
+            repo_data: false,
             run_end: false,
             view: true,
             settings_view: false,

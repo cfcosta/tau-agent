@@ -140,8 +140,11 @@ impl PluginHost for Registry {
             Some(model) => registry.with_model(model.clone()),
             None => registry,
         };
+        // What draws from a store draws again once a hook wrote it.
+        let changer = cx.clone();
         let registry = registry.with_stores(Arc::new(
-            crate::store::Stores::at(cx.plugin_dir(crate::NAME).join("stores")),
+            crate::store::Stores::at(cx.plugin_dir(crate::NAME).join("stores"))
+                .with_changed(Arc::new(move || changer.refresh())),
         ));
         registry.load_built_in().await;
         let watcher = registry.clone();
@@ -372,6 +375,128 @@ impl Registry {
     pub fn filler_now(&self, slot: &str) -> Option<Active> {
         let active = self.0.state.try_read().ok()?.active.clone();
         self.filler_of(slot, active)
+    }
+
+    /// A hook's context in the repository `repo`, outside any run: the
+    /// person's settings for `active`, and its store there.
+    async fn repo_context(
+        &self,
+        active: &Active,
+        repo: &str,
+    ) -> crate::runtime::Context {
+        crate::runtime::Context {
+            run: serde_json::json!({ "repo": repo }),
+            now: crate::agent::now(),
+            settings: active.settings.clone(),
+            state: serde_json::json!({}),
+            secrets: self.secrets_of(&active.loaded.declaration.name),
+            store: self.store_of(&active.loaded.declaration, Some(repo)).await,
+        }
+    }
+
+    /// What each active plugin keeps of `repo` (`repo_data`), by plugin.
+    /// One whose hook fails gives nothing, and says why.
+    pub async fn repo_data(&self, repo: &str) -> tau_luau_plugins::RepoValues {
+        let mut values = BTreeMap::new();
+        for active in self.active().await {
+            if !active.loaded.declaration.hooks.repo_data {
+                continue;
+            }
+            let name = active.loaded.declaration.name.clone();
+            let Some(active) = self.plugin(&name).await else {
+                continue;
+            };
+            let context = self.repo_context(&active, repo).await;
+            let outcome = active
+                .loaded
+                .call(
+                    &crate::runtime::Hook::RepoData,
+                    serde_json::Value::Null,
+                    &context,
+                    Arc::new(crate::runtime::NoReach),
+                    CancellationToken::new(),
+                )
+                .await;
+            match outcome.error {
+                None => {
+                    values.insert(name, outcome.value);
+                }
+                Some(error) => {
+                    eprintln!("{name}'s repo_data in {repo}: {error}")
+                }
+            }
+        }
+        tau_luau_plugins::RepoValues(values)
+    }
+
+    /// Draws `plugin`'s page `page` of `params`, `repo` among them, as a
+    /// fetched tree: its actions carried out in that repository.
+    pub async fn page(
+        &self,
+        plugin: &str,
+        page: &str,
+        params: &BTreeMap<String, String>,
+    ) -> serde_json::Value {
+        let failed = |why: String| {
+            serde_json::json!({ "tree": {
+                "piece": "status", "text": format!("Its page failed: {why}"), "tone": "bad",
+            } })
+        };
+        let Some(active) = self.plugin(plugin).await else {
+            return failed(format!("{plugin} is not active"));
+        };
+        let Some(repo) = params.get("repo") else {
+            return failed("the page names no repository".into());
+        };
+        let context = self.repo_context(&active, repo).await;
+        let outcome = active
+            .loaded
+            .call(
+                &crate::runtime::Hook::Page(page.to_owned()),
+                serde_json::json!(params),
+                &context,
+                Arc::new(crate::runtime::NoReach),
+                CancellationToken::new(),
+            )
+            .await;
+        match outcome.error {
+            Some(error) => failed(error),
+            None => {
+                let tree =
+                    tau_luau_plugins::ui::embed_repo(&outcome.value, plugin);
+                serde_json::json!({ "tree": tree.value() })
+            }
+        }
+    }
+
+    /// Carries out `plugin`'s `actions[action]` with `args` from one of
+    /// its pages of `repo`: on its store there, with no run's state.
+    pub async fn repo_action(
+        &self,
+        plugin: &str,
+        repo: &str,
+        action: &str,
+        args: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let active = self
+            .plugin(plugin)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("{plugin} is not active"))?;
+        let context = self.repo_context(&active, repo).await;
+        let outcome = active
+            .loaded
+            .call(
+                &crate::runtime::Hook::Action(action.to_owned()),
+                args,
+                &context,
+                Arc::new(crate::runtime::NoReach),
+                CancellationToken::new(),
+            )
+            .await;
+        match outcome.error {
+            Some(error) => anyhow::bail!("{plugin}'s {action}: {error}"),
+            None => Ok(()),
+        }
     }
 
     /// The active version of `plugin`, with the person's settings for it.

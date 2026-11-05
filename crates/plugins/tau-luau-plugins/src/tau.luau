@@ -84,6 +84,16 @@ function tau._commands(commands)
 	return list
 end
 
+-- The names of a table's functions, in order.
+function tau._names(functions)
+	local names = array({})
+	for name in pairs(functions or {}) do
+		table.insert(names, name)
+	end
+	table.sort(names)
+	return names
+end
+
 -- A plugin's jobs as the host reads them: each by name, with how often
 -- it runs and what it does, in name order.
 function tau._jobs(jobs)
@@ -561,6 +571,7 @@ function tau._describe(plugin)
 			on_event = plugin.on_event ~= nil,
 			title = plugin.title ~= nil,
 			notify = plugin.notify ~= nil,
+			repo_data = plugin.repo_data ~= nil,
 			run_end = plugin.run_end ~= nil,
 			view = plugin.view ~= nil,
 			settings_view = plugin.settings ~= nil and plugin.settings.view ~= nil,
@@ -569,6 +580,12 @@ function tau._describe(plugin)
 		events = plugin.events or array({}),
 		commands = tau._commands(plugin.commands),
 		jobs = tau._jobs(plugin.jobs),
+		pages = tau._names(plugin.pages),
+		repo_nav = plugin.repo_nav and {
+			label = tostring(plugin.repo_nav.label or plugin.name),
+			page = tostring(plugin.repo_nav.page or ""),
+			icon = plugin.repo_nav.icon or "",
+		} or json.null,
 		fills = plugin.fills or array({}),
 		compaction = plugin.compaction and {
 			rewriters = plugin.compaction.rewriters or array({}),
