@@ -37,11 +37,18 @@ use tau_agent::{
         RunPlan,
         StopDecision,
         ToolCall,
+        ToolResultView,
     },
     tool::{AgentTool, RunId, ToolCtx, ToolOutput, ToolSource},
 };
 use tau_ai::{
-    message::{AssistantBlock, AssistantMessage, Usage},
+    message::{
+        AssistantBlock,
+        AssistantMessage,
+        InputBlock,
+        TextContent,
+        Usage,
+    },
     responses::request::ReasoningEffort,
 };
 use tau_codemode_host::{ToolCall as ScriptCall, ToolEntry, ToolReply};
@@ -355,6 +362,44 @@ impl Inner {
     }
 }
 
+/// The most of a result's text `after_tool_result` is given, well inside
+/// what a hook's input may hold.
+const RESULT_TEXT: usize = 256 * 1024;
+
+/// `output`'s text, cut at [`RESULT_TEXT`], and whether it was.
+fn result_text(output: &ToolOutput) -> (String, bool) {
+    let mut text = String::new();
+    for block in &output.content {
+        if let InputBlock::Text(content) = block {
+            text.push_str(&content.text);
+        }
+    }
+    if text.len() <= RESULT_TEXT {
+        return (text, false);
+    }
+    let mut end = RESULT_TEXT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    (text, true)
+}
+
+/// `output` with `text` in place of its text; its other blocks, such as
+/// images, stay.
+fn replace_text(output: &mut ToolOutput, text: &str) {
+    output
+        .content
+        .retain(|block| !matches!(block, InputBlock::Text(_)));
+    output.content.insert(
+        0,
+        InputBlock::Text(TextContent {
+            text: text.to_owned(),
+            text_signature: None,
+        }),
+    );
+}
+
 /// `event` as `on_event` hears it, by the kind `events` names: the
 /// run's own events, not its sub-agents'; what streams in pieces and
 /// tools' output stay out.
@@ -432,6 +477,7 @@ fn hook_name(hook: &Hook) -> String {
         Hook::Card(name) => format!("card of {name}"),
         Hook::BeforeTool => "before_tool".into(),
         Hook::BeforeRequest => "before_request".into(),
+        Hook::AfterToolResult => "after_tool_result".into(),
         Hook::BeforeStop => "before_stop".into(),
         Hook::TurnEnd => "turn_end".into(),
         Hook::OnEvent => "on_event".into(),
@@ -561,6 +607,58 @@ impl PluginRun for LuauRun {
             }
         }
         Ok(Decision::Allow)
+    }
+
+    async fn after_tool_result(
+        &mut self,
+        view: &ToolResultView<'_>,
+        output: &mut ToolOutput,
+        ctx: &PluginCtx,
+    ) -> Result<(), PluginError> {
+        let inner = &self.plugins.0;
+        if !inner
+            .active()
+            .iter()
+            .any(|active| active.loaded.declaration.hooks.after_tool_result)
+        {
+            return Ok(());
+        }
+        let mut state = self.state.lock().await;
+        for active in inner.active().iter() {
+            let (text, truncated) = result_text(output);
+            let input = json!({
+                "id": view.call.id,
+                "name": view.call.name,
+                "args": view.call.args,
+                "ok": !view.is_error,
+                "text": text,
+                "truncated": truncated,
+            });
+            let Some(answer) = inner
+                .call(
+                    active,
+                    Hook::AfterToolResult,
+                    input,
+                    &mut state,
+                    ctx,
+                    Arc::new(NoReach),
+                )
+                .await
+            else {
+                continue;
+            };
+            // The plugins after it read the result as it left it.
+            if let Some(text) = answer["text"].as_str() {
+                replace_text(output, text);
+                ctx.publish(&Record::Flag {
+                    plugin: active.loaded.declaration.name.clone(),
+                    call_id: view.call.id.clone(),
+                    reason: "changed what the model reads of it".into(),
+                })
+                .await;
+            }
+        }
+        Ok(())
     }
 
     async fn before_stop(

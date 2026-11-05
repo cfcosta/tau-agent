@@ -877,3 +877,42 @@ return tau.plugin { name = "odd", events = { "text_delta" }, on_event = function
     let error = block_on_io(load("odd", files)).unwrap_err();
     assert!(error.contains("`text_delta`"), "{error}");
 }
+
+const SHORT: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "short",
+  after_tool_result = function(result, ctx)
+    if result.ok and #result.text > 5 then
+      return tau.result(result.text:sub(1, 5) .. "…")
+    end
+  end,
+}
+"#;
+
+/// `after_tool_result` changes what the model reads of a result, and the
+/// call is marked for review.
+#[test]
+fn a_plugin_changes_what_the_model_reads_of_a_result() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "make test" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("short", SHORT)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let outcome = block_on_io(async {
+        let mut run = agent.start("test it", &store);
+        let _: Vec<RunEvent> = run.events().collect().await;
+        run.outcome().await.unwrap()
+    });
+    assert_eq!(tool_results(&llm), [("ran \"…".to_owned(), false)]);
+    assert!(records(&store, &outcome.run).iter().any(|record| matches!(
+        record,
+        Record::Flag { plugin, reason, .. }
+            if plugin == "short" && reason == "changed what the model reads of it"
+    )));
+}

@@ -73,6 +73,12 @@ function tau.change(args)
 	return { decision = "change", args = args }
 end
 
+-- What `after_tool_result` answers to have the model read `text` in
+-- place of the call's result.
+function tau.result(text)
+	return { text = tostring(text) }
+end
+
 -- What `before_request` answers to set the turn's reasoning effort:
 -- "low", "medium", "high" and so on.
 function tau.effort(level)
@@ -454,6 +460,7 @@ function tau._describe(plugin)
 		hooks = {
 			before_tool = plugin.before_tool ~= nil,
 			before_request = plugin.before_request ~= nil,
+			after_tool_result = plugin.after_tool_result ~= nil,
 			before_stop = plugin.before_stop ~= nil,
 			turn_end = plugin.turn_end ~= nil,
 			on_event = plugin.on_event ~= nil,

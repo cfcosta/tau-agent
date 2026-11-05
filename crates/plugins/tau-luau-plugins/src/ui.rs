@@ -479,6 +479,7 @@ impl UiPlugin for LuauPluginsUi {
                 tau_ui_plugin::Seam::Start,
                 tau_ui_plugin::Seam::BeforeRequest,
                 tau_ui_plugin::Seam::BeforeTool,
+                tau_ui_plugin::Seam::AfterTool,
                 tau_ui_plugin::Seam::OnEvent,
                 tau_ui_plugin::Seam::BeforeStop,
                 tau_ui_plugin::Seam::Finish,

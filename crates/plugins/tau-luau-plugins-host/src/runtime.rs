@@ -232,6 +232,8 @@ pub enum Hook {
     BeforeTool,
     /// Before each turn's request, with `{ model, effort, turn, messages }`.
     BeforeRequest,
+    /// After a call, with `{ id, name, args, ok, text, truncated }`.
+    AfterToolResult,
     BeforeStop,
     TurnEnd,
     /// One of the run's events it names in `events`, as
@@ -255,7 +257,10 @@ impl Hook {
             | Self::SettingsView
             | Self::BeforeRequest
             | Self::OnEvent => 200,
-            Self::BeforeTool | Self::TurnEnd | Self::Action(_) => 2_000,
+            Self::BeforeTool
+            | Self::AfterToolResult
+            | Self::TurnEnd
+            | Self::Action(_) => 2_000,
             Self::BeforeStop | Self::RunEnd => 10_000,
         })
     }
@@ -269,6 +274,7 @@ impl Hook {
             ),
             Self::BeforeTool => "p.before_tool(input, ctx)".into(),
             Self::BeforeRequest => "p.before_request(input, ctx)".into(),
+            Self::AfterToolResult => "p.after_tool_result(input, ctx)".into(),
             Self::BeforeStop => "p.before_stop(input, ctx)".into(),
             Self::TurnEnd => "p.turn_end(input, ctx)".into(),
             Self::OnEvent => "p.on_event(input, ctx)".into(),
@@ -288,6 +294,7 @@ impl Hook {
             Self::Card(name) => tool(name).is_some_and(|t| t.card),
             Self::BeforeTool => declaration.hooks.before_tool,
             Self::BeforeRequest => declaration.hooks.before_request,
+            Self::AfterToolResult => declaration.hooks.after_tool_result,
             Self::BeforeStop => declaration.hooks.before_stop,
             Self::TurnEnd => declaration.hooks.turn_end,
             Self::OnEvent => declaration.hooks.on_event,

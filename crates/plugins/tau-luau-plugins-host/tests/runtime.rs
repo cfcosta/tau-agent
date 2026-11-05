@@ -148,6 +148,7 @@ async fn a_plugin_declares_what_it_is() {
         Hooks {
             before_tool: true,
             before_request: false,
+            after_tool_result: false,
             before_stop: true,
             turn_end: true,
             on_event: false,

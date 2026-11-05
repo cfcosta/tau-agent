@@ -67,6 +67,7 @@ return tau.plugin {
   tools = { name = { description, parameters, call, card } },
   before_tool = function(call, ctx) end,
   before_request = function(request, ctx) end,
+  after_tool_result = function(result, ctx) end,
   before_stop = function(stop, ctx) end,
   turn_end = function(turn, ctx) end,
   events = { "tool_end" },   -- what `on_event` hears
@@ -88,6 +89,7 @@ one, its `card`.
 | tool `card`   | the call's arguments and the result        | a view piece, drawn on the call's card     | 200 ms |
 | `before_tool` | `{ id, name, args }`                       | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
 | `before_request` | `{ model, effort, turn, messages }`    | `nil`, or `tau.effort(level)`              | 200 ms |
+| `after_tool_result` | `{ id, name, args, ok, text, truncated }` | `nil`, or `tau.result(text)`  | 2 s    |
 | `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
 | `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
 | `on_event`    | `{ kind, turn, ... }`, for each of `events` | nothing                                    | 200 ms |
@@ -101,6 +103,11 @@ one, its `card`.
   for review too; it needs `uses.change_args = true`, which the person
   allows as they allow new tools. The tool checks the new arguments as
   it would the model's, and the plugins after it see them.
+- `tau.result(text)` has the model read `text` in place of the call's
+  result, marked for review; the plugins after it read it as changed.
+  `text` is the result's text, cut at 256 KiB (`truncated` says so).
+  Having `after_tool_result` at all is new reach, which the person
+  allows: it changes what the model reads.
 - `tau.effort(level)` sends the turn's request with that reasoning
   effort (`"low"`, `"medium"`, `"high"`…), and the ones after it; the
   first plugin that picks one sets it. `messages` counts the transcript.
@@ -137,7 +144,8 @@ JSON has no empty array: use `array({})` for one that must stay a list.
 ### `tau`
 
 - `tau.plugin(table)`, `tau.block(why)`, `tau.flag(why)`,
-  `tau.change(args)`, `tau.effort(level)`, `tau.continue(message)`.
+  `tau.change(args)`, `tau.result(text)`, `tau.effort(level)`,
+  `tau.continue(message)`.
 - `tau.contains(list, value)`: whether `list` holds `value`.
 
 ### `tau.ui`: what views are made of
