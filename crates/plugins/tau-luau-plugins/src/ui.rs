@@ -383,6 +383,39 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
 
 /// Carries out `plugin`'s own `action` with `args`, on its state in
 /// `run`; outside a run there is no state to act on.
+/// What a Luau tree's action starting with `tau.` asks of the interface,
+/// on `run`, the run the tree is drawn in or its page shows: whether it
+/// was one.
+fn kernel_action(
+    action: &str,
+    args: &Value,
+    run: Option<&RunId>,
+    handle: &Handle,
+) -> bool {
+    let Some(kernel) = action.strip_prefix("tau.") else {
+        return false;
+    };
+    let text = |key: &str| args[key].as_str().unwrap_or_default().to_owned();
+    match kernel {
+        // To the run going on, cutting in.
+        "steer" => {
+            if let Some(run) = run {
+                handle.steer(run, text("text"));
+            }
+        }
+        // The next message: to the run, or as a new one.
+        "send" => handle.send(run, text("text")),
+        "composer" => handle.composer(text("text")),
+        "start" => handle.start(text("repo"), text("text")),
+        "alert" => handle.alert(text("title"), text("message")),
+        "details" => handle.run_details(),
+        other => {
+            handle.note(format!("`tau.{other}` is not one of tau's actions"))
+        }
+    }
+    true
+}
+
 fn luau_action(
     plugin: &str,
     action: &str,
@@ -453,7 +486,11 @@ impl UiPlugin for LuauPluginsUi {
             .strip_prefix(LUAU)
             .and_then(|rest| rest.split_once('/'))
         {
-            let run = view.run.map(|run| run.id.0.to_string());
+            let run = view.run.map(|run| run.id.clone());
+            if kernel_action(own, args, run.as_ref(), &view.handle) {
+                return;
+            }
+            let run = run.map(|run| run.0.to_string());
             luau_action(plugin, own, args, run.zip(view.state.cloned()), view);
             return;
         }
@@ -461,8 +498,12 @@ impl UiPlugin for LuauPluginsUi {
             .strip_prefix(LUAU_PAGE)
             .and_then(|rest| rest.split_once('/'))
         {
-            let run = page_run(plugin, view)
-                .map(|(run, state, _)| (run.id.0.to_string(), state));
+            let run = page_run(plugin, view);
+            let id = run.as_ref().map(|(run, _, _)| run.id.clone());
+            if kernel_action(own, args, id.as_ref(), &view.handle) {
+                return;
+            }
+            let run = run.map(|(run, state, _)| (run.id.0.to_string(), state));
             luau_action(plugin, own, args, run, view);
             return;
         }
@@ -1272,6 +1313,65 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// A tree's `tau.` actions ask the interface, on the run the tree is
+    /// drawn in; the plugin's own are not, and an unknown one says so.
+    #[test]
+    fn a_trees_tau_actions_ask_the_interface() {
+        use std::{cell::RefCell, rc::Rc};
+
+        use tau_ui_plugin::Request;
+        let asked: Rc<RefCell<Vec<Request>>> = Rc::default();
+        let sink = asked.clone();
+        let handle = Handle::new(
+            NAME,
+            Rc::new(move |_, request| sink.borrow_mut().push(request)),
+        );
+        let run = RunId("r1".into());
+        assert!(kernel_action(
+            "tau.steer",
+            &json!({ "text": "stop" }),
+            Some(&run),
+            &handle
+        ));
+        assert!(kernel_action(
+            "tau.send",
+            &json!({ "text": "go on" }),
+            Some(&run),
+            &handle
+        ));
+        assert!(kernel_action(
+            "tau.composer",
+            &json!({ "text": "draft" }),
+            None,
+            &handle
+        ));
+        // Steering needs a run going on.
+        assert!(kernel_action(
+            "tau.steer",
+            &json!({ "text": "lost" }),
+            None,
+            &handle
+        ));
+        assert!(!kernel_action("reset", &json!({}), Some(&run), &handle));
+        assert!(kernel_action("tau.nope", &json!({}), None, &handle));
+        let asked = asked.borrow();
+        assert_eq!(
+            asked[..3],
+            [
+                Request::Steer {
+                    run: run.clone(),
+                    text: "stop".into()
+                },
+                Request::Send {
+                    run: Some(run.clone()),
+                    text: "go on".into()
+                },
+                Request::Composer("draft".into()),
+            ]
+        );
+        assert_eq!(asked.len(), 4, "{asked:?}");
+    }
 
     fn with_views(views: &[(&str, Value)]) -> State {
         State {

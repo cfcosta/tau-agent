@@ -480,11 +480,15 @@ Each step lands on main by itself and leaves tau working.
     composer band, row and asks, and `nav` puts a plugin's page in the
     sidebar. New reach (a slot, a host, a secret, changed arguments or
     results, `start`, a rewrite) waits for the person's Allow. A hook's
-    input reaches it as globals, not as source to compile. Left for
-    later: commands, keys and kernel actions from a Luau tree, the
-    points drawn outside a run, the person's model and conversations
-    as services, jobs, and repository kinds of a Luau plugin's own; a
-    Luau plugin adds to the prompt through `start`.
+    input reaches it as globals, not as source to compile. After the
+    step: a Luau plugin's slash commands (`commands`, run as its
+    actions `/name`), its jobs (`jobs`, run through the host's when due,
+    their state kept), `infer` in hooks outside a run (the model
+    `uses.model` names, booked to tau-luau-plugins), and a tree's
+    `tau.` actions (send, steer, composer, start, alert, details). Left:
+    keys, the points drawn outside a run, the conversations service and
+    repository kinds of a Luau plugin's own; a Luau plugin adds to the
+    prompt through `start`.
 11. **`tau.loop`**, with the runner's invariant tests run against any
     filler.
     As built: `tau_agent::runner::driver::Loop` drives a run once the

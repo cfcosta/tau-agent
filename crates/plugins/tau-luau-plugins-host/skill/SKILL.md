@@ -298,6 +298,14 @@ read the state: it has no tools. What it returns goes in three places:
 - `asks`: what the run asks the person, in words: its row says so, and
   a notice shows it while tau's window is not in front.
 
+A button whose action starts with `tau.` asks tau, not the plugin, on
+the run the tree is drawn in (or its page shows):
+`ui.button("Ship it", "tau.send", { text = "ship it" })` sends the next
+message; `tau.steer` cuts into a turn going on; `tau.composer` puts
+`text` in the composer; `tau.start` starts a run in `repo` with `text`;
+`tau.alert` shows `title` and `message`; `tau.details` opens the run's
+details.
+
 A plugin's `commands` are slash commands in the composer's menu, each
 with its `description` and what follows it (`args`, such as
 `"<version>"`). Typed in a chat, `/name text` runs `run(text, ctx)` on
