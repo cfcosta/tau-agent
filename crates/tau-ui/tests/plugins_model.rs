@@ -594,7 +594,13 @@ impl Device {
             .debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))
     }
 
+    /// A click at `bounds`. A dialog covers the whole window and takes
+    /// every click, so none is open.
     fn click(&mut self, bounds: Bounds<Pixels>) {
+        let dialog = self.read(|ws| {
+            ws.alert().map(|(title, message)| format!("{title}: {message}"))
+        });
+        assert_eq!(dialog, None, "a dialog covers what is clicked");
         self.cx.simulate_click(bounds.center(), Modifiers::none());
         self.cx.run_until_parked();
     }
@@ -1336,6 +1342,23 @@ impl Tau {
             assert_eq!(called.as_deref(), Some(plugin.as_str()), "{label}");
         }
         self.host_settles();
+        // With no TypeSafe key, tau-goal's Resume and Keep going say
+        // goals need Jev, in a dialog over the window. The person reads
+        // it, and puts it away.
+        let device = self.device(who);
+        let dialog =
+            device.read(|ws| ws.alert().map(|(title, _)| title.to_owned()));
+        if let Some(title) = dialog {
+            assert_eq!(
+                (plugin.as_str(), title.as_str()),
+                (tau_goal::NAME, "Goals need Jev"),
+                "{label} opened a dialog"
+            );
+            device
+                .workspace
+                .update(&mut device.cx, |ws, cx| ws.dismiss_alert(cx));
+            device.cx.run_until_parked();
+        }
     }
 
     /// A probe's section opens or closes, on the computer or a phone.
