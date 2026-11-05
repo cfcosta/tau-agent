@@ -362,7 +362,6 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     // the shared temp directory would give the host a repository.
     let dir = tempfile::tempdir().unwrap().keep();
     let config = HostConfig {
-        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(dir.join("config")),
         model: Some("gpt-5.5".into()),
         store: dir.join("unused.db"),
@@ -3372,7 +3371,6 @@ fn a_host_half_makes_an_agent_and_starts_its_turns(cx: &mut TestAppContext) {
     let agent = tau_agent::agent::Agent::new(model).name("coder");
     let dir = tempfile::tempdir().unwrap().keep();
     let config = HostConfig {
-        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(dir.join("config")),
         model: Some("gpt-5.5".into()),
         store: dir.join("unused.db"),
@@ -3499,7 +3497,6 @@ fn a_host_half_wakes_a_chat_that_is_idle(cx: &mut TestAppContext) {
     let agent = tau_agent::agent::Agent::new(model).name("coder");
     let dir = tempfile::tempdir().unwrap().keep();
     let config = HostConfig {
-        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(dir.join("config")),
         model: Some("gpt-5.5".into()),
         store: dir.join("unused.db"),

@@ -95,7 +95,6 @@ fn setup(cx: &mut TestAppContext, llm: ScriptedModel) -> Setup {
     let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let config = HostConfig {
-        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(dir.path().join("config")),
         model: Some("gpt-5.5".into()),
         store: dir.path().join("unused.db"),

@@ -168,7 +168,6 @@ fn host_in(
 ) -> (Host, UnboundedReceiver<RunEvent>) {
     install();
     let config = HostConfig {
-        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(dir.join("config")),
         model: Some("gpt-6-luna".into()),
         store: dir.join("runs.db"),

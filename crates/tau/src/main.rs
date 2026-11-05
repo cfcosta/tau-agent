@@ -1,9 +1,8 @@
 //! Opens the interface.
 //!
-//! With a ChatGPT sign-in that allows plan use, `tau` runs a real
-//! coding agent in the repositories cloned from GitHub: type a task to
-//! start a run.
-//! Without one it opens onboarding to sign in. With `--demo` it
+//! `tau` runs a real coding agent in the repositories cloned from
+//! GitHub, on what fills `tau.provider`: type a task to start a run.
+//! With no model to run on yet, it opens setup to sign in. With `--demo` it
 //! replays the scripted session instead.
 //!
 //! - `--model <id>`: the model; gpt-6.1-sol by default.
@@ -37,7 +36,7 @@ use gpui::{
 use tau_ui::{
     accounts::Credentials,
     demo,
-    host::{self, Host, HostConfig},
+    host::{Host, HostConfig},
 };
 use tau_ui_remote::{
     Workspace,
@@ -46,6 +45,7 @@ use tau_ui_remote::{
     motion::MotionPreference,
     route::Route,
     setup::SetupStep,
+    update::HostUpdate,
 };
 
 struct Args {
@@ -107,17 +107,9 @@ fn main() {
     tau::install();
     let args = args();
     let credentials = Credentials::default_dir();
-    let account = if args.demo {
-        None
-    } else {
-        credentials.plan_account()
-    };
-    let model = args.model.clone();
-    let saved = credentials.clone();
-    let config = move |account| HostConfig {
-        model: model.clone(),
-        account,
-        credentials: saved.clone(),
+    let config = HostConfig {
+        model: args.model.clone(),
+        credentials: credentials.clone(),
         store: HostConfig::default_store(),
         repos: HostConfig::default_repos(),
         settings: HostConfig::default_settings(),
@@ -126,14 +118,10 @@ fn main() {
         home: std::env::var_os("HOME").map(std::path::PathBuf::from),
         identity: HostConfig::default_identity(),
     };
-    let host = account.and_then(|account| match Host::new(config(account)) {
-        Ok(host) => Some(host),
-        Err(error) => {
-            eprintln!("tau: cannot start agents: {error}");
-            None
-        }
-    });
-    let onboarding = host.is_none() && !args.demo;
+    // The host starts signed out or in: what fills `tau.provider` says
+    // whether there is a model to run on, and setup opens when there is
+    // none (ADR 0045).
+    let host = (!args.demo).then(|| Host::new(config));
 
     gpui_platform::application().with_assets(Assets).run(
         move |cx: &mut App| {
@@ -151,8 +139,8 @@ fn main() {
             };
             let name = "tau";
             let live = match &host {
-                Some((host, _)) => Some(host.catalog_now()),
-                None if onboarding => Some(Catalog::default()),
+                Some(Ok((host, _))) => Some(host.catalog_now()),
+                Some(Err(_)) => Some(Catalog::default()),
                 None => None,
             };
             let opened = cx.open_window(options, |window, cx| {
@@ -187,11 +175,18 @@ fn main() {
             });
             follow_motion_preference(&workspace, args.reduce_motion, cx);
             match host {
-                Some((host, events)) => {
-                    workspace
-                        .update(cx, |ws, cx| ws.navigate(Route::NewRun, cx));
+                Some(Ok((host, events))) => {
+                    let signed_in = host.signed_in();
                     with_notices(host, &workspace, window, cx)
                         .attach(&workspace, events, cx);
+                    workspace.update(cx, |ws, cx| {
+                        if signed_in {
+                            ws.navigate(Route::NewRun, cx)
+                        } else {
+                            // No model yet: set one up.
+                            ws.start_setup(SetupStep::Welcome, cx)
+                        }
+                    });
                     if let Some(prompt) = args.prompt.clone() {
                         workspace
                             .update(cx, |ws, cx| ws.submit_prompt(prompt, cx));
@@ -202,39 +197,17 @@ fn main() {
                         workspace.update(cx, |ws, cx| ws.navigate(route, cx));
                     }
                 }
-                // No model yet: set one up, then start the host.
-                None if onboarding => {
+                Some(Err(error)) => {
+                    eprintln!("tau: cannot start agents: {error:#}");
                     workspace.update(cx, |ws, cx| {
-                        ws.start_setup(SetupStep::Welcome, cx)
+                        ws.apply(
+                            HostUpdate::alert(
+                                "tau cannot start agents",
+                                format!("{error:#}"),
+                            ),
+                            cx,
+                        )
                     });
-                    let entity = workspace.clone();
-                    host::onboard(
-                        &workspace,
-                        args.model.clone(),
-                        credentials.clone(),
-                        cx,
-                        move |account, cx| {
-                            // Off the interface's thread: making the host
-                            // opens its store and its plugins.
-                            let config = config(account);
-                            let made = cx
-                                .background_executor()
-                                .spawn(async move { Host::new(config) });
-                            let entity = entity.clone();
-                            cx.spawn(async move |cx| match made.await {
-                                Ok((host, events)) => cx.update(|cx| {
-                                    with_notices(host, &entity, window, cx)
-                                        .attach(&entity, events, cx);
-                                }),
-                                Err(error) => {
-                                    eprintln!(
-                                        "tau: cannot start agents: {error}"
-                                    )
-                                }
-                            })
-                            .detach();
-                        },
-                    );
                 }
                 // The demo: answer the way a host would.
                 None => {

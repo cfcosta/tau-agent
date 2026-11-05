@@ -4,10 +4,10 @@
 //!
 //! [`host::Host`] is the wiring for a real coding agent: a tokio runtime
 //! beside GPUI, every plugin through the registry with its host half
-//! ([`hosted::halves`]), a ChatGPT plan through Sign in with ChatGPT,
-//! and the run store. The `tau` app (`cargo run -p tau`) uses it when a
-//! ChatGPT account with plan use is signed in, and opens onboarding to
-//! sign one in when none is ([`host::onboard`]). With `--demo`, [`demo`]
+//! ([`hosted::halves`]), models through what fills `tau.provider`, and
+//! the run store. The `tau` app (`cargo run -p tau`) always starts it,
+//! and opens setup to sign in while there is no model to run on
+//! ([`host::Host::signed_in`]). With `--demo`, [`demo`]
 //! replays a scripted session, its plugins answering through their real
 //! host halves.
 

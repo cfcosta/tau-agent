@@ -124,7 +124,6 @@ fn host_of(
     // `repos`: a directory of the host's own, not the shared temporary one.
     let own = fresh_repo_list();
     let config = HostConfig {
-        account: test_account(),
         credentials: Credentials::new(
             fresh_repo_list().with_extension("config"),
         ),
@@ -175,7 +174,6 @@ fn host_with_skills(
     // As in `host_of`: plugins' files in a directory of the host's own.
     let own = fresh_repo_list();
     let config = HostConfig {
-        account: test_account(),
         credentials: Credentials::new(
             fresh_repo_list().with_extension("config"),
         ),
@@ -206,12 +204,6 @@ fn host_with_skills(
         ),
         events,
     )
-}
-
-/// The ChatGPT account a host under test runs on; nothing connects
-/// until a run asks.
-fn test_account() -> tau_ai::chatgpt::AccountId {
-    tau_ai::chatgpt::AccountId::parse("test-account").unwrap()
 }
 
 /// A repository list of the test's own, so tests do not share one.
@@ -2029,7 +2021,6 @@ fn a_listed_repository_keeps_its_id() {
 
 fn config_on(data: &Path) -> HostConfig {
     HostConfig {
-        account: test_account(),
         credentials: Credentials::new(data.join("config")),
         model: Some("gpt-6-luna".into()),
         store: data.join("runs.db"),
@@ -2061,7 +2052,6 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let credentials = config_on(data.path()).credentials;
     let account = sign_in_saved(&credentials, "a@example.com", PLAN);
     let config = HostConfig {
-        account: account.clone(),
         ..config_on(data.path())
     };
     let (host, _events) = Host::new(config).unwrap();
@@ -2122,7 +2112,7 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     let plan = sign_in_saved(&credentials, "a@example.com", PLAN);
     let account = credentials.plan_account().unwrap();
     assert_eq!(account, plan);
-    let (host, _events) = Host::new(HostConfig { account, ..config }).unwrap();
+    let (host, _events) = Host::new(config).unwrap();
     let host = host.with_repository(
         REPO,
         std::sync::Arc::new(tau_vcs_host::JjRepository::new(
@@ -4081,7 +4071,6 @@ fn a_long_idle_chat_compacts_before_its_cache_lapses() {
 fn agents_live_in_a_repository_each_beside_the_plugins_repository() {
     let root = tempfile::tempdir().unwrap();
     let config = HostConfig {
-        account: test_account(),
         credentials: Credentials::new(root.path().join("config")),
         model: None,
         store: root.path().join("runs.db"),
@@ -4323,7 +4312,6 @@ fn the_interfaces_state_comes_back_after_a_restart() {
             .unwrap();
         let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
         let config = HostConfig {
-            account: test_account(),
             credentials: Credentials::new(
                 fresh_repo_list().with_extension("config"),
             ),

@@ -2,46 +2,6 @@
 
 use super::*;
 
-/// Carries out onboarding when no model is configured: Sign in with
-/// ChatGPT. Once a sign-in with plan use is saved, `ready` gets its
-/// account to build a [`Host`] from, and the host handles sign-ins from
-/// then on, and plugins' setup steps with its plugins.
-pub fn onboard(
-    workspace: &Entity<Workspace>,
-    model: Option<String>,
-    credentials: Credentials,
-    cx: &mut App,
-    ready: impl Fn(AccountId, &mut App) + 'static,
-) {
-    let done = std::rc::Rc::new(std::cell::Cell::new(false));
-    let connected: accounts::Connected = {
-        let done = done.clone();
-        std::rc::Rc::new(move |account, cx| {
-            // A sign-in without plan usage connects nothing yet.
-            if let Some(account) = account {
-                done.set(true);
-                ready(account, cx)
-            }
-        })
-    };
-    let sign_ins = accounts::SignIns::default();
-    cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
-        // Once a host runs, it answers.
-        if done.get() {
-            return;
-        }
-        sign_ins.handle(
-            event,
-            &workspace,
-            &credentials,
-            model.as_deref(),
-            &connected,
-            cx,
-        );
-    })
-    .detach();
-}
-
 /// Checks on the host's runtime whether the account just signed in may
 /// use its plan, then, if onboarding is on the model step and it may
 /// not, says so. Nothing happens signed out.

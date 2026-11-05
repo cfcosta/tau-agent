@@ -943,7 +943,6 @@ fn host(
     let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let dir = tempfile::tempdir().unwrap().keep();
     let config = HostConfig {
-        account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
         credentials: Credentials::new(dir.join("config")),
         model: Some("gpt-6-luna".into()),
         store: dir.join("unused.db"),

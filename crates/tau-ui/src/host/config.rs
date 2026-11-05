@@ -5,9 +5,6 @@ use super::*;
 /// What the host needs to start.
 #[derive(Debug, Clone)]
 pub struct HostConfig {
-    /// The ChatGPT account whose plan runs use at first; see
-    /// [`Host::set_account`].
-    pub account: AccountId,
     /// Where sign-ins and keys are kept.
     pub credentials: Credentials,
     /// The model runs use when nothing else is chosen; `None` takes

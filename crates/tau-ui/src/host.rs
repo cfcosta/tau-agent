@@ -348,7 +348,6 @@ pub use self::{
     instructions::{AGENTS_FILE, AGENTS_HEADING, AGENTS_LIMIT, agents_section},
     landing::{LANDING_INTENT, LandingStep},
     lanes::{ConflictsHook, DrainReport, QUEUE_PLUGIN},
-    onboarding::onboard,
     repos::NotAdded,
     startup::CUT_OFF,
 };
@@ -630,7 +629,7 @@ impl Host {
     }
 
     /// Whether runs have a model to run on now.
-    pub(crate) fn signed_in(&self) -> bool {
+    pub fn signed_in(&self) -> bool {
         self.provider()
             .is_some_and(|provider| provider.llm().is_some())
     }

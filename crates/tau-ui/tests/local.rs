@@ -267,7 +267,6 @@ impl Disk {
             .block_on(tau_store_sqlite::open(self.root.join("runs.db")))
             .unwrap();
         let config = HostConfig {
-            account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
             credentials: self.credentials(),
             model: Some("gpt-6-luna".into()),
             store: self.root.join("runs.db"),

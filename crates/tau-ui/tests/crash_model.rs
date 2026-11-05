@@ -791,7 +791,6 @@ impl Life {
             std::fs::write(&list, saved.to_string()).unwrap();
         }
         let config = HostConfig {
-            account: tau_ai::chatgpt::AccountId::parse("test-account").unwrap(),
             credentials: Credentials::new(root.join("config")),
             model: Some("gpt-6-luna".into()),
             store: disk.db(),
