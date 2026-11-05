@@ -53,11 +53,13 @@ impl UiPlugin for CompactionUi {
     }
 
     fn declaration(&self) -> tau_ui_plugin::Declaration {
-        tau_ui_plugin::Declaration::new().seams(&[
-            tau_ui_plugin::Seam::Start,
-            tau_ui_plugin::Seam::StartIdle,
-            tau_ui_plugin::Seam::Rewrite,
-        ])
+        tau_ui_plugin::Declaration::new()
+            .seams(&[
+                tau_ui_plugin::Seam::Start,
+                tau_ui_plugin::Seam::StartIdle,
+                tau_ui_plugin::Seam::Rewrite,
+            ])
+            .fills(&[tau_ui_plugin::compaction::COMPACTION.name()])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -145,5 +147,24 @@ impl HostHalf for CompactionHost {
             page: None,
             ..Default::default()
         }
+    }
+
+    /// The summary alone compacts, when the person picks it for
+    /// `tau.compaction` over the chain.
+    fn fill(&self, _host: &(), fills: &mut tau_ui_plugin::slots::Fills) {
+        fills.fill(
+            &tau_ui_plugin::compaction::COMPACTION,
+            std::sync::Arc::new(Summary)
+                as std::sync::Arc<dyn tau_ui_plugin::compaction::Compaction>,
+        );
+    }
+}
+
+/// `tau.compaction` filled by the summary alone.
+struct Summary;
+
+impl tau_ui_plugin::compaction::Compaction for Summary {
+    fn rewriters(&self) -> Vec<String> {
+        vec![crate::NAME.to_owned()]
     }
 }

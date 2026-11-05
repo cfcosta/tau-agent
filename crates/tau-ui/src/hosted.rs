@@ -51,6 +51,7 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_jev::JevHost)
         .host(tau_sqlite::SqliteHost)
         .host(tau_chatgpt::ChatGptHost)
+        .host(tau_compaction_chain::ChainHost)
 }
 
 /// Gives the plugins the host halves tau-ui has ([`halves`]), unless the

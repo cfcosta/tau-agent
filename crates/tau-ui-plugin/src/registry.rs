@@ -320,16 +320,22 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
         }
     }
 
-    /// `plugins`, called only at the seams this plugin declared.
+    /// `plugins`, called only at the seams this plugin declared, less a
+    /// rewrite the run's `tau.compaction` does not name
+    /// ([`crate::compaction::Rewriters`]).
     fn gate(
         &self,
+        run: &RunCtx,
         plugins: anyhow::Result<Vec<Box<dyn Plugin>>>,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
+        let seams = crate::compaction::Rewriters::seams(
+            run.services.get::<crate::compaction::Rewriters>(),
+            self.plugin.name(),
+            &self.declaration.reach.seams,
+        );
         Ok(plugins?
             .into_iter()
-            .map(|plugin| {
-                crate::gate::gate(plugin, &self.declaration.reach.seams)
-            })
+            .map(|plugin| crate::gate::gate(plugin, &seams))
             .collect())
     }
 
@@ -400,6 +406,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         Box::pin(async move {
             let run = self.scope_run(run);
             self.gate(
+                &run,
                 self.half
                     .agent_plugins(self.host_of(host), &run, settings.get())
                     .await,
@@ -416,6 +423,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         Box::pin(async move {
             let run = self.scope_run(run);
             self.gate(
+                &run,
                 self.half
                     .run_tools(self.host_of(host), &run, settings.get())
                     .await,

@@ -36,6 +36,8 @@ tau-agent/
 │       │                         # `tau.provider`
 │       ├── tau-codemode/         # Luau scripts that call tools and Jev
 │       ├── tau-compaction/       # summarizing compaction
+│       ├── tau-compaction-chain/ # pruning, the tree and the summary in
+│       │                         # turn, filling `tau.compaction`
 │       ├── tau-constitution/     # a repository's rules, checked with Jev
 │       ├── tau-direnv/           # agent commands in the repository's
 │       │                         # direnv environment (ADR 0025)

@@ -9696,6 +9696,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-compaction-chain"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tau-agent",
+ "tau-compaction",
+ "tau-fast-compaction",
+ "tau-tree-compaction",
+ "tau-ui-plugin",
+]
+
+[[package]]
 name = "tau-constitution"
 version = "0.1.0"
 dependencies = [
@@ -10066,6 +10078,7 @@ dependencies = [
  "tau-chatgpt",
  "tau-codemode",
  "tau-compaction",
+ "tau-compaction-chain",
  "tau-constitution",
  "tau-direnv",
  "tau-fast-compaction",
@@ -10372,6 +10385,7 @@ dependencies = [
  "tau-chatgpt",
  "tau-codemode",
  "tau-compaction",
+ "tau-compaction-chain",
  "tau-constitution",
  "tau-constitution-host",
  "tau-direnv",

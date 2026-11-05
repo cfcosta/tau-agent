@@ -579,10 +579,22 @@ impl Host {
         self
     }
 
-    /// `services`, what a test gave ([`Host::with_service`]), and what
-    /// each plugin provides now (`HostHalf::provide`).
+    /// `services`, what a test gave ([`Host::with_service`]), the
+    /// rewriters `tau.compaction` names, and what each plugin provides
+    /// now (`HostHalf::provide`).
     pub(super) fn provided(&self, services: Services) -> Services {
-        crate::hosted::provided(&self.hosted, services.and(&self.given))
+        let mut services = services.and(&self.given);
+        let compaction = self
+            .slots
+            .lock()
+            .expect("not poisoned")
+            .get(&tau_ui_plugin::compaction::COMPACTION);
+        if let Some(compaction) = compaction {
+            services = services.with(tau_ui_plugin::compaction::Rewriters(
+                compaction.rewriters(),
+            ));
+        }
+        crate::hosted::provided(&self.hosted, services)
     }
 
     /// Reaches models, the plan's refusals and when caches lapse through

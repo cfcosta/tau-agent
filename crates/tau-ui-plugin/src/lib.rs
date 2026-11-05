@@ -27,6 +27,7 @@
 //!   its pages, the points it declares, and its contributions to points,
 //!   `tau-ui`'s ([`points`]) or other plugins'.
 
+pub mod compaction;
 pub mod declare;
 pub mod forge;
 pub mod gate;

@@ -421,6 +421,14 @@ Each step lands on main by itself and leaves tau working.
    window still comes from tau-ai's table, in the runner and the views.
 8. **`tau.compaction`**, with the chain as its default; idle compaction
    moves into it.
+   As built: `tau_ui_plugin::compaction` (`COMPACTION`, `Compaction`:
+   the plugins whose rewrites run). tau-compaction-chain fills it with
+   fast pruning, the tree and the summary, in their declared turn, and
+   is the slot's default; tau-compaction fills it with the summary
+   alone. The host gives each run the filler's list (`Rewriters`, a
+   kernel value), and the gate turns off the rewrite, and the idle
+   part, of a plugin that rewrites and is not named. When an idle chat
+   compacts is still the kernel's (`idle.rs`).
 9. **App and repository seams.** `tau-phones`, repository kinds for
    agents and the plugins repository, onboarding stages.
 10. **Luau parity.** The binding implements every seam and slot; the

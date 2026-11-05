@@ -390,6 +390,32 @@ fn the_store_is_opened_by_what_fills_its_slot() {
     assert!(runtime.block_on(store.recent_runs(1)).unwrap().is_empty());
 }
 
+/// `tau.compaction` is the chain's unless the person picks the summary
+/// alone: fast pruning, the tree and the summary rewrite, in that turn,
+/// or only the summary.
+#[test]
+fn the_chain_compacts_unless_the_summary_is_picked() {
+    use tau_ui_plugin::compaction::COMPACTION;
+    let runtime = runtime();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let llm = ScriptedModel::new();
+    let (host, _events) = host_in(&own_dir(), runtime, store, Agent::new(llm));
+    let rewriters = || {
+        host.slots()
+            .lock()
+            .unwrap()
+            .get(&COMPACTION)
+            .expect("something fills tau.compaction")
+            .rewriters()
+    };
+    assert_eq!(rewriters(), tau_compaction_chain::CHAIN);
+    host.slots()
+        .lock()
+        .unwrap()
+        .pick(COMPACTION.name(), Some(tau_compaction::NAME));
+    assert_eq!(rewriters(), [tau_compaction::NAME]);
+}
+
 /// The end of first-run setup reaches every plugin's host half, with the
 /// repositories the person picked.
 #[test]

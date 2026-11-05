@@ -15,6 +15,7 @@ pub fn plugins() -> Registry {
         .with(tau_chatgpt::ChatGptUi)
         .with(tau_codemode::CodemodeUi)
         .with(tau_compaction::ui::CompactionUi)
+        .with(tau_compaction_chain::ChainUi)
         .with(tau_constitution::ui::ConstitutionUi)
         .with(tau_direnv::DirenvUi)
         .with(tau_fast_compaction::ui::FastCompactionUi)
@@ -39,4 +40,8 @@ pub fn plugins() -> Registry {
         .slot_order(&tau_ui_plugin::vcs::VCS, &[tau_vcs::ui::NAME])
         .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_github::NAME])
         .slot_order(&tau_ui_plugin::provider::PROVIDER, &[tau_chatgpt::NAME])
+        .slot_order(
+            &tau_ui_plugin::compaction::COMPACTION,
+            &[tau_compaction_chain::NAME, tau_compaction::NAME],
+        )
 }

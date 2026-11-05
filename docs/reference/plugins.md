@@ -533,7 +533,9 @@ change (tau-jev gives `tau.jev` only while a key is saved);
 `hosted::early_fills`; the rest by `HostHalf::fill`. The slots so far:
 `tau.vcs` (tau-vcs), `tau.forge` (tau-github), `tau.notify`
 (tau-notify), `tau.title` (tau-titles), `tau.store` (tau-sqlite) and
-`tau.provider` (tau-chatgpt). A plugin's setup step may come first
+`tau.provider` (tau-chatgpt) and `tau.compaction` (tau-compaction-chain,
+or tau-compaction for the summary alone; the gate turns off the
+rewrites of a plugin it does not name). A plugin's setup step may come first
 (`SetupAt::Model`), be `required`, and say how its link to a service
 stands (`SetupView::link`), which the handshake above it draws.
 

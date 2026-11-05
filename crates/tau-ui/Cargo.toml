@@ -40,6 +40,7 @@ tau-notify.workspace = true
 tau-titles.workspace = true
 tau-sqlite.workspace = true
 tau-chatgpt.workspace = true
+tau-compaction-chain.workspace = true
 tau-schedule.workspace = true
 tau-goal = { workspace = true, features = ["demo"] }
 tau-agents.workspace = true
