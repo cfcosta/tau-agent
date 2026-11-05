@@ -16,278 +16,28 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+#[path = "common/sync.rs"]
+mod sync;
+
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
-    path::Path,
+    collections::{HashMap, HashSet},
+    ops::{Deref, DerefMut},
     rc::Rc,
-    sync::{
-        Arc,
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant},
 };
 
-use futures_util::{FutureExt as _, StreamExt as _, future::BoxFuture, stream};
-use gpui::{Entity, TestAppContext, VisualTestContext};
 use hegel::{HealthCheck, TestCase, generators as gs};
-use serde_json::Value;
-use tau_agent::{agent::Agent, tool::RunId};
-use tau_ai::{
-    llm::{EventStream, Llm, LlmError, LlmSession},
-    message::{Message, Timestamp},
-    responses::request::Settings,
-};
-use tau_remote::{
-    Down,
-    Up,
-    feed::{Feed, Joined},
-    outbox::{self, Outbox},
-};
-use tau_testing::{git::git, scripted::ScriptedModel};
-use tau_ui::{
-    accounts::Credentials,
-    host::{Host, HostConfig},
-    phone_server,
-};
+use sync::{Keep, Net, Reply, Who, assert_synced, models, pick};
+use tau_agent::tool::RunId;
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
     models::{Effort, ModelChoice},
-    phones::PhoneUp,
-    remote,
     route::Route,
     update::HostUpdate,
     view::{Item, Origin, RunView},
     workspace::Synced,
 };
-use tau_vcs_host::{Identity, Project};
-use tokio::sync::oneshot;
-
-/// The models people show, hide and pick: the plan's.
-fn models() -> Vec<String> {
-    let offered = tau_ai::model::plan_models();
-    offered
-        .iter()
-        .take(3)
-        .map(|model| model.id.clone())
-        .collect()
-}
-
-/// The repositories the host lists.
-const REPOS: [&str; 2] = ["repo", "other"];
-/// How long the host has to settle before the test fails.
-const SETTLE: Duration = Duration::from_secs(30);
-
-/// What the model answers a request with.
-#[derive(Debug, Clone, PartialEq)]
-enum Reply {
-    /// It is done: the turn ends, and so does the run.
-    Text,
-    /// It writes `content` to `path`: the chat has changes to land.
-    Write { path: String, content: String },
-    /// It hands `task` to a sub-agent, which only a main chat can, and
-    /// goes on without waiting for it.
-    Delegate { task: String },
-}
-
-/// A model that answers each request only when [`Gate::answer`] says,
-/// and with what it says.
-#[derive(Clone, Default)]
-struct Gate {
-    model: ScriptedModel,
-    waiting: Arc<Mutex<Vec<oneshot::Sender<Reply>>>>,
-    /// Sessions open: one per run going on.
-    sessions: Arc<AtomicUsize>,
-}
-
-impl Gate {
-    /// The requests still waiting: a cancelled run's went away.
-    fn waiting(&self) -> usize {
-        let mut waiting = self.waiting.lock().unwrap();
-        waiting.retain(|answer| !answer.is_closed());
-        waiting.len()
-    }
-
-    /// Answers the `n`th waiting request with `reply`.
-    fn answer(&self, n: usize, reply: Reply) {
-        let answer = self.waiting.lock().unwrap().remove(n);
-        let _ = answer.send(reply);
-    }
-}
-
-impl Llm for Gate {
-    fn open(
-        &self,
-        settings: Settings,
-    ) -> BoxFuture<'static, Result<Box<dyn LlmSession>, LlmError>> {
-        // A plugin's side request, such as a commit message, has no
-        // tools; a run's turns always do. Side requests are answered at
-        // once: the test steers runs, not what plugins ask on the side.
-        let side = settings.tools.is_empty();
-        let (gate, open) = (self.clone(), self.model.open(settings));
-        if !side {
-            gate.sessions.fetch_add(1, Ordering::SeqCst);
-        }
-        async move {
-            let inner = Arc::new(Mutex::new(open.await?));
-            let settings = inner.lock().unwrap().settings().clone();
-            let session = GatedSession {
-                gate,
-                inner,
-                settings,
-                side,
-            };
-            Ok(Box::new(session) as Box<dyn LlmSession>)
-        }
-        .boxed()
-    }
-}
-
-struct GatedSession {
-    gate: Gate,
-    /// The scripted session, answered once the test says how.
-    inner: Arc<Mutex<Box<dyn LlmSession>>>,
-    /// Its settings, as the inner session has them.
-    settings: Settings,
-    /// A plugin's side request, answered at once.
-    side: bool,
-}
-
-impl Drop for GatedSession {
-    fn drop(&mut self) {
-        if !self.side {
-            self.gate.sessions.fetch_sub(1, Ordering::SeqCst);
-        }
-    }
-}
-
-impl LlmSession for GatedSession {
-    fn settings(&self) -> &Settings {
-        &self.settings
-    }
-
-    fn set_reasoning(
-        &mut self,
-        effort: Option<tau_ai::responses::request::ReasoningEffort>,
-    ) {
-        self.settings.reasoning = effort;
-        self.inner.lock().unwrap().set_reasoning(effort);
-    }
-
-    fn respond(
-        &mut self,
-        transcript: &[Message],
-        timestamp: Timestamp,
-    ) -> EventStream {
-        if self.side {
-            let _ = self.gate.model.clone().turn(|turn| turn.text("Notes."));
-            return self.inner.lock().unwrap().respond(transcript, timestamp);
-        }
-        let (answer, answered) = oneshot::channel();
-        self.gate.waiting.lock().unwrap().push(answer);
-        let (model, inner, transcript) = (
-            self.gate.model.clone(),
-            self.inner.clone(),
-            transcript.to_vec(),
-        );
-        // The turn is scripted once the test answers, as it answers.
-        let reply = async move {
-            let reply = answered.await.unwrap_or(Reply::Text);
-            let _ = model.turn(|turn| match reply {
-                Reply::Text => turn.text("Done."),
-                Reply::Write { path, content } => turn.tool_call(
-                    "write",
-                    serde_json::json!({ "path": path, "content": content }),
-                ),
-                Reply::Delegate { task } => {
-                    turn.tool_call("spawn", serde_json::json!({ "task": task }))
-                }
-            });
-            inner.lock().unwrap().respond(&transcript, timestamp)
-        };
-        stream::once(reply).flatten().boxed()
-    }
-}
-
-/// A phone's end of the network.
-struct Link {
-    /// Its connection, while it has one.
-    conn: Option<u32>,
-    /// What the computer sent that has not arrived, answers included.
-    down: VecDeque<Down>,
-    /// What the phone sent on its connection that has not arrived.
-    up: VecDeque<Up>,
-    /// What the person asked on the phone that the computer has not
-    /// taken, as `remote` keeps it.
-    outbox: Outbox,
-    /// The last request the computer took from it, as `phone_server`
-    /// keeps it.
-    taken: Option<u64>,
-    /// The last message's number it applied.
-    last: Option<u64>,
-    /// It needs a snapshot the computer has not sent.
-    waiting: bool,
-}
-
-/// The network between the computer and its phones.
-struct Wire {
-    feed: Feed<u32>,
-    links: Vec<Link>,
-    next_conn: u32,
-}
-
-impl Wire {
-    fn broadcast(&mut self, body: Value) {
-        let (down, to) = self.feed.broadcast(body);
-        for link in &mut self.links {
-            if link.conn.is_some_and(|conn| to.contains(&conn)) {
-                link.down.push_back(down.clone());
-            }
-        }
-    }
-
-    fn connect(&mut self, phone: usize) {
-        let conn = self.next_conn;
-        self.next_conn += 1;
-        let link = &mut self.links[phone];
-        link.conn = Some(conn);
-        match self.feed.join(conn, link.last) {
-            Joined::Replay(missed) => link.down.extend(missed),
-            Joined::NeedSnapshot => link.waiting = true,
-        }
-        // What the computer did not take yet goes again, in order.
-        let pending: Vec<Up> = link.outbox.pending().collect();
-        link.up.extend(pending);
-    }
-
-    fn settled(&self) -> bool {
-        self.links.iter().all(|link| {
-            link.conn.is_some()
-                && link.down.is_empty()
-                && link.up.is_empty()
-                && link.outbox.is_empty()
-                && !link.waiting
-        })
-    }
-}
-
-struct Device {
-    workspace: Entity<Workspace>,
-    cx: VisualTestContext,
-}
-
-impl Device {
-    fn synced(&mut self) -> Synced {
-        self.workspace.read_with(&self.cx, |ws, _| ws.synced())
-    }
-
-    fn runs(&mut self) -> Vec<RunView> {
-        self.workspace
-            .read_with(&self.cx, |ws, _| ws.runs().to_vec())
-    }
-}
 
 /// What the person asked for, in the order the host got it from any
 /// device: what the computer must show once everything arrived.
@@ -592,149 +342,50 @@ impl Asked {
 }
 
 struct Tau {
-    /// The computer's host, to ask whether it is still at work.
-    host: Arc<Host>,
-    /// Keeps the app the windows are in.
-    _app: TestAppContext,
-    computer: Device,
-    phones: Vec<Device>,
-    wire: Rc<RefCell<Wire>>,
-    gate: Gate,
+    net: Net,
     /// What the host got, from any device.
     asked: Rc<RefCell<Asked>>,
     /// The last prompt's number: each is told apart.
     prompts: usize,
 }
 
-/// Who acts: the computer, or a phone.
-#[derive(Debug, Clone, Copy)]
-enum Who {
-    Computer,
-    Phone(usize),
+impl Deref for Tau {
+    type Target = Net;
+
+    fn deref(&self) -> &Net {
+        &self.net
+    }
+}
+
+impl DerefMut for Tau {
+    fn deref_mut(&mut self) -> &mut Net {
+        &mut self.net
+    }
 }
 
 impl Tau {
     fn new(phones: usize) -> Self {
-        let app = TestAppContext::single();
-        app.executor().allow_parking();
-        app.update(tau_ui_remote::init);
-        let gate = Gate::default();
-        let (host, events) = host(&gate);
-        let catalog = host.block_on(host.catalog());
-        let mut cx = app.clone();
-        let window = cx.add_window(|window, cx| {
-            Workspace::new("tau", Vec::new(), catalog, window, cx)
-        });
-        let workspace = window.root(&mut cx).unwrap();
-        let mut computer_cx =
-            VisualTestContext::from_window(window.into(), &cx);
-        let host =
-            computer_cx.update(|_, cx| host.attach(&workspace, events, cx));
+        let mut net = Net::new(phones, Keep::Memory);
         // What the host gets: the computer's own requests, and phones'
-        // as they arrive.
+        // as they arrive; and what it answers.
         let asked = Rc::new(RefCell::new(Asked::default()));
-        let arrived = asked.clone();
-        computer_cx.update(|_, cx| {
+        let (arrived, answered) = (asked.clone(), asked.clone());
+        let workspace = net.computer.workspace.clone();
+        net.computer.cx.update(|_, cx| {
             cx.subscribe(&workspace, move |_, event: &WorkspaceEvent, _| {
                 arrived.borrow_mut().arrived(event)
             })
             .detach();
-        });
-
-        let wire = Rc::new(RefCell::new(Wire {
-            feed: Feed::new(1_000),
-            links: (0..phones)
-                .map(|_| Link {
-                    conn: None,
-                    down: VecDeque::new(),
-                    up: VecDeque::new(),
-                    outbox: Outbox::new(0),
-                    taken: None,
-                    last: None,
-                    waiting: false,
-                })
-                .collect(),
-            next_conn: 0,
-        }));
-        // What the host applies goes out, as `phone_server` sends it.
-        let out = wire.clone();
-        computer_cx.update(|_, cx| {
-            workspace.update(cx, |ws, _| ws.set_mirrored(true));
-            cx.subscribe(&workspace, move |_, update, _| {
-                if let Some(body) = phone_server::to_phones(update) {
-                    out.borrow_mut().broadcast(body);
-                }
-            })
-            .detach();
-            let answered = asked.clone();
             cx.subscribe(&workspace, move |_, update: &HostUpdate, _| {
                 answered.borrow_mut().answered(update)
             })
             .detach();
         });
-        let computer = Device {
-            workspace,
-            cx: computer_cx,
-        };
-
-        let phones = (0..phones)
-            .map(|phone| {
-                let mut cx = app.clone();
-                let window = cx.add_window(|window, cx| {
-                    Workspace::new(
-                        "phone",
-                        Vec::new(),
-                        Default::default(),
-                        window,
-                        cx,
-                    )
-                });
-                let workspace = window.root(&mut cx).unwrap();
-                let mut phone_cx =
-                    VisualTestContext::from_window(window.into(), &cx);
-                // What the person asks for goes up, as `remote` sends it.
-                let up = wire.clone();
-                phone_cx.update(|_, cx| {
-                    cx.subscribe(
-                        &workspace,
-                        move |_, event: &WorkspaceEvent, _| {
-                            if !event.from_phone() {
-                                return;
-                            }
-                            let up_event = PhoneUp::Event(event.clone());
-                            let Some(body) = remote::to_computer(&up_event)
-                            else {
-                                return;
-                            };
-                            // Sent now if connected, and kept until taken.
-                            let mut wire = up.borrow_mut();
-                            let link = &mut wire.links[phone];
-                            let request = link.outbox.push(body);
-                            if link.conn.is_some() {
-                                link.up.push_back(request);
-                            }
-                        },
-                    )
-                    .detach();
-                });
-                wire.borrow_mut().connect(phone);
-                Device {
-                    workspace,
-                    cx: phone_cx,
-                }
-            })
-            .collect();
         let mut tau = Self {
-            _app: app,
-            computer,
-            phones,
-            wire,
-            host,
-            gate,
+            net,
             asked,
             prompts: 0,
         };
-        tau.settle();
         // The first repository's main chat has a turn, which new chats
         // can start from.
         let main = tau.computer.runs()[0].id.clone();
@@ -745,250 +396,16 @@ impl Tau {
         tau
     }
 
-    fn device(&mut self, who: Who) -> &mut Device {
-        match who {
-            Who::Computer => &mut self.computer,
-            Who::Phone(phone) => &mut self.phones[phone],
-        }
-    }
-
-    /// Someone who can act: the computer, or a connected phone.
+    /// Someone who can act: phones mostly, as what crosses the network
+    /// is what can go wrong.
     fn who(&self, tc: &TestCase) -> Who {
-        // Phones mostly: what crosses the network is what can go wrong.
-        if !tc.draw(gs::weighted_booleans(0.75)) {
-            return Who::Computer;
-        }
-        // Connected or not: what it asks goes once it reaches the
-        // computer.
-        let last = self.phones.len() - 1;
-        Who::Phone(tc.draw(gs::integers().min_value(0).max_value(last)))
+        self.net.who(tc, 0.75)
     }
 
     fn prompt(&mut self) -> String {
         self.prompts += 1;
         format!("prompt {}", self.prompts)
     }
-
-    /// Runs the computer until its host has nothing left to do: every
-    /// run it shows going on waits for the model, and nothing changes a
-    /// while.
-    fn host_settles(&mut self) {
-        let deadline = Instant::now() + SETTLE;
-        let mut last = None;
-        let mut still = 0;
-        while still < 2 {
-            assert!(Instant::now() < deadline, "the host never settled");
-            self.computer.cx.run_until_parked();
-            let synced = self.computer.synced();
-            // Every live run, sub-agents included, waits for the model:
-            // nothing waits for a sub-agent (ADR 0026).
-            let live = synced
-                .runs
-                .iter()
-                .filter(|run| run.status.is_live())
-                .count();
-            let sessions = self.gate.sessions.load(Ordering::SeqCst);
-            let idle = sessions == live
-                && self.gate.waiting() == live
-                && !self.host.busy();
-            let now =
-                (synced, self.wire.borrow().feed.seq(), self.gate.waiting());
-            if idle && last.as_ref() == Some(&now) {
-                still += 1;
-            } else {
-                still = 0;
-                last = Some(now);
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
-
-    /// Delivers the next message for `phone`: from the computer when
-    /// `down`, else to it. Returns whether there was one.
-    fn deliver(&mut self, phone: usize, down: bool) -> bool {
-        if down {
-            let next = self.wire.borrow_mut().links[phone].down.pop_front();
-            let Some(next) = next else { return false };
-            if let Down::Ack { up } = next {
-                self.wire.borrow_mut().links[phone].outbox.taken(up);
-                return true;
-            }
-            let seq = next.seq();
-            let device = &mut self.phones[phone];
-            for update in remote::updates(next) {
-                device
-                    .workspace
-                    .update(&mut device.cx, |ws, cx| ws.apply(update, cx));
-            }
-            device.cx.run_until_parked();
-            self.wire.borrow_mut().links[phone].last = seq;
-        } else {
-            let next = self.wire.borrow_mut().links[phone].up.pop_front();
-            let Some(Up::Up { id, body }) = next else {
-                return false;
-            };
-            // Taken once, and answered each time, as the server does.
-            let taken = {
-                let mut wire = self.wire.borrow_mut();
-                let link = &mut wire.links[phone];
-                link.down.push_back(Down::Ack { up: id });
-                let new = outbox::is_new(link.taken, id);
-                if new {
-                    link.taken = Some(id);
-                }
-                new
-            };
-            if !taken {
-                return true;
-            }
-            match phone_server::from_phone(body) {
-                Some(PhoneUp::Event(event)) => {
-                    let computer = &mut self.computer;
-                    computer
-                        .workspace
-                        .update(&mut computer.cx, |_, cx| cx.emit(event));
-                }
-                Some(PhoneUp::Name(_)) | None => {}
-            }
-            self.host_settles();
-        }
-        true
-    }
-
-    /// The computer sends the snapshot `phone` waits for.
-    fn send_snapshot(&mut self, phone: usize) {
-        let bodies = self
-            .computer
-            .workspace
-            .read_with(&self.computer.cx, |ws, _| phone_server::snapshot(ws));
-        let mut wire = self.wire.borrow_mut();
-        let conn = wire.links[phone].conn.unwrap();
-        let down = wire.feed.snapshot(conn, bodies).unwrap();
-        let link = &mut wire.links[phone];
-        link.waiting = false;
-        link.down.push_back(down);
-    }
-
-    /// Everything arrives, phones that dropped come back, and the host
-    /// settles.
-    fn settle(&mut self) {
-        self.host_settles();
-        loop {
-            let mut moved = false;
-            for phone in 0..self.phones.len() {
-                let (conn, waiting) = {
-                    let wire = self.wire.borrow();
-                    let link = &wire.links[phone];
-                    (link.conn, link.waiting)
-                };
-                if conn.is_none() {
-                    self.wire.borrow_mut().connect(phone);
-                    moved = true;
-                    continue;
-                }
-                if waiting {
-                    self.send_snapshot(phone);
-                    moved = true;
-                }
-                while self.deliver(phone, false) {
-                    moved = true;
-                }
-                while self.deliver(phone, true) {
-                    moved = true;
-                }
-            }
-            if !moved {
-                break;
-            }
-            self.host_settles();
-        }
-        assert!(self.wire.borrow().settled());
-    }
-
-    /// The person's message to `run`, typed on `who`.
-    fn say_to(&mut self, who: Who, run: &RunId, text: String) {
-        let device = self.device(who);
-        device.workspace.update(&mut device.cx, |ws, cx| {
-            ws.navigate(Route::Run(run.clone()), cx);
-            ws.submit_prompt(text, cx);
-        });
-        device.cx.run_until_parked();
-    }
-
-    fn after_action(&mut self, who: Who) {
-        if let Who::Computer = who {
-            self.host_settles();
-        }
-    }
-}
-
-/// One of `runs`, which are not empty.
-fn pick(tc: &TestCase, runs: &[RunView]) -> RunId {
-    let n = tc.draw(gs::integers().min_value(0).max_value(runs.len() - 1));
-    runs[n].id.clone()
-}
-
-/// A host on `gate`, listing two repositories.
-fn host(
-    gate: &Gate,
-) -> (
-    Host,
-    tokio::sync::mpsc::UnboundedReceiver<tau_agent::event::RunEvent>,
-) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .unwrap();
-    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
-    let dir = tempfile::tempdir().unwrap().keep();
-    let config = HostConfig {
-        credentials: Credentials::new(dir.join("config")),
-        model: Some("gpt-6-luna".into()),
-        store: dir.join("unused.db"),
-        repos: dir.join("repos"),
-        settings: dir.join("models.json"),
-        repo_list: dir.join("repos.json"),
-        skills: std::env::temp_dir().join("tau-test-skills-none"),
-        home: None,
-        identity: Identity::default(),
-    };
-    let agent = Agent::new(gate.clone()).name("coder");
-    let (host, events) = Host::with_agent(runtime, agent, store, config);
-    // Memory's pass after each run asks the model once more: these
-    // scripts answer only the requests they write.
-    let host = host.with_plugin_settings(
-        tau_memory::NAME,
-        serde_json::json!({ "after_each_run": false }),
-    );
-    // Forecasts start at once: no person's burst of changes to wait out.
-    let host = host.with_forecast_wait(Duration::from_millis(1));
-    let host = REPOS.iter().fold(host, |host, repo| {
-        host.with_repository(
-            repo,
-            std::sync::Arc::new(tau_vcs_host::JjRepository::new(
-                project(&dir.join(repo).join("checkout")),
-                Identity::default(),
-            )),
-        )
-    });
-    (host, events)
-}
-
-fn project(checkout: &Path) -> Project {
-    std::fs::create_dir_all(checkout).unwrap();
-    git(checkout, &["init", "--quiet"]);
-    git(
-        checkout,
-        &["commit", "--quiet", "--allow-empty", "-m", "first"],
-    );
-    tau_vcs_host::ProjectRepo::import(
-        checkout.to_str().unwrap(),
-        checkout.with_file_name("project"),
-        Identity::default(),
-    )
-    .map(Project::from)
-    .unwrap()
 }
 
 #[hegel::state_machine]
@@ -1412,43 +829,10 @@ impl Tau {
         }
         for (phone, device) in self.phones.iter_mut().enumerate() {
             let theirs = device.synced();
-            assert_synced(phone, &computer, &theirs);
+            assert_synced(&format!("phone {phone}"), &computer, &theirs);
         }
         self.asked.borrow().shown_by(&computer);
     }
-}
-
-/// Fails with the first field the phone shows otherwise.
-fn assert_synced(phone: usize, computer: &Synced, theirs: &Synced) {
-    if computer == theirs {
-        return;
-    }
-    macro_rules! field {
-        ($($name:ident),*) => {$(
-            assert_eq!(
-                theirs.$name, computer.$name,
-                "phone {phone} shows another `{}` than the computer",
-                stringify!($name)
-            );
-        )*};
-    }
-    for (ours, phone_run) in computer.runs.iter().zip(&theirs.runs) {
-        assert_eq!(phone_run, ours, "phone {phone} shows the run otherwise");
-    }
-    field!(
-        runs,
-        catalog,
-        queued,
-        resuming,
-        closed,
-        kept_branch,
-        pushes,
-        proposed,
-        pull_requests,
-        branch_code,
-        query_result
-    );
-    unreachable!("Synced compared unequal with every field equal");
 }
 
 // A real host per case, so generating is slow by nature.
