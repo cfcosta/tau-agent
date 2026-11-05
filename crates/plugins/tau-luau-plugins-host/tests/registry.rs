@@ -634,3 +634,50 @@ fn a_forge_reads_its_own_urls() {
         assert_eq!(repository_of("git.home.lan", url), None, "{url}");
     }
 }
+
+const ASKS_THE_MODEL: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "greet",
+  uses = { infer = true },
+  fills = { "tau.title" },
+  title = function(run, ctx)
+    local answer = tools.infer({ task = "A title for this task", context = run.task })
+    if answer.ok then return answer.value end
+  end,
+}
+"#;
+
+/// A hook outside any run asks the person's model with `infer`: the
+/// title hook, with the run's own model, as a run's `infer` answers.
+#[test]
+fn a_title_hook_asks_the_persons_model() {
+    use tau_luau_plugins_host::slots::LuauTitle;
+    use tau_ui_plugin::title::Title;
+    let home = tempfile::tempdir().unwrap();
+    let llm = tau_testing::scripted::ScriptedModel::new()
+        .turn(|t| t.text("Fix the login"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let reached = llm.clone();
+    let model = tau_ui_plugin::Model::new(
+        move || Some(std::sync::Arc::new(reached.clone()) as _),
+        store,
+    );
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    )
+    .with_model(model);
+    let (v1, trunk) = project(home.path(), 1, ASKS_THE_MODEL, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    block_on_io(registry.allow("greet")).unwrap();
+    let title =
+        block_on_io(LuauTitle(registry).write("fix the login bug", "m-run"))
+            .unwrap();
+    assert_eq!(title.as_deref(), Some("Fix the login"));
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].settings.model, "m-run");
+}

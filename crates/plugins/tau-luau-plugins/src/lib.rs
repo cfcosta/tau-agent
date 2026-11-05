@@ -61,6 +61,10 @@ pub struct Uses {
     /// The secrets those requests may name, kept for the plugin alone.
     #[serde(default)]
     pub secrets: Vec<String>,
+    /// The model `infer` asks in hooks outside any run; `title` asks the
+    /// run's own when it names none.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 impl Uses {
@@ -525,6 +529,7 @@ mod tests {
                 change_args: false,
                 network: Vec::new(),
                 secrets: Vec::new(),
+                model: None,
             },
             settings: None,
             tools: Vec::new(),

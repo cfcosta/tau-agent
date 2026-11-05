@@ -520,6 +520,7 @@ function tau._describe(plugin)
 			change_args = uses.change_args == true,
 			network = uses.network or array({}),
 			secrets = uses.secrets or array({}),
+			model = uses.model or json.null,
 		},
 		-- What can be set; `view` draws the settings page, on the host.
 		settings = plugin.settings and {

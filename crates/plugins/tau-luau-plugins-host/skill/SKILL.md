@@ -183,6 +183,16 @@ one, its `card`.
 - Hooks run each in a fresh VM: keep what must last in `ctx.state`, not
   in local variables.
 
+### The model
+
+A plugin with `uses.infer` asks the person's model one task:
+`tools.infer({ task, context, schema? })` answers `{ ok, value, error? }`,
+`value` the answer's text, or JSON that holds to `schema`. In a run it
+asks the run's model, booked to the run. In a hook outside any run
+(`title`, `notify`, the forge's) it asks the model `uses.model` names,
+or for `title` the run's own when it names none, booked to the
+Plugins screen's tau-luau-plugins.
+
 ### HTTP
 
 A plugin that names hosts in `uses.network` sends requests to them, from

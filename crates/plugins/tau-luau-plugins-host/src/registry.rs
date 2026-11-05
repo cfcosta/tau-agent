@@ -72,6 +72,8 @@ struct Shared {
     config: Option<PathBuf>,
     /// The host's runtime, for hooks called from outside it.
     runtime: Option<tokio::runtime::Handle>,
+    /// The person's model, for `infer` in hooks outside any run.
+    model: Option<tau_ui_plugin::Model>,
 }
 
 #[derive(Default)]
@@ -105,6 +107,10 @@ impl PluginHost for Registry {
             None => registry,
         }
         .with_runtime(cx.runtime.clone());
+        let registry = match cx.services.get::<tau_ui_plugin::Model>() {
+            Some(model) => registry.with_model(model.clone()),
+            None => registry,
+        };
         let watcher = registry.clone();
         cx.runtime.spawn(async move { watcher.watch().await });
         Ok(registry)
@@ -131,7 +137,25 @@ impl Registry {
             settings: Box::new(Default::default),
             config: None,
             runtime: None,
+            model: None,
         }))
+    }
+
+    /// The registry, asking `model` for `infer` in hooks outside any run.
+    pub fn with_model(self, model: tau_ui_plugin::Model) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("the model is given before the registry is shared");
+        Self(Arc::new(Shared {
+            model: Some(model),
+            ..shared
+        }))
+    }
+
+    /// The person's model as the Luau plugins ask it outside any run,
+    /// booked to tau-luau-plugins.
+    pub fn model(&self) -> Option<tau_ui_plugin::PluginModel> {
+        let model = self.0.model.as_ref()?;
+        model.signed_in().then(|| model.of(crate::NAME))
     }
 
     /// The registry, calling hooks asked from outside the host's runtime

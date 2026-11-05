@@ -494,6 +494,7 @@ impl UiPlugin for LuauPluginsUi {
             .services(&[
                 tau_ui_plugin::services::names::WORKSPACE_DIR,
                 tau_ui_plugin::services::names::IDENTITY,
+                tau_ui_plugin::services::names::MODEL,
                 tau_jev::SERVICE,
             ])
     }

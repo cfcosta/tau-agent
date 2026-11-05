@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     registry::Registry,
-    runtime::{Context, Hook, NoReach},
+    runtime::{Context, Hook},
 };
 
 /// What a hook outside any run has as its `ctx`: no run, no state.
@@ -25,6 +25,96 @@ fn context(registry: &Registry, active: &crate::agent::Active) -> Context {
         settings: active.settings.clone(),
         state: json!({}),
         secrets: registry.secrets_of(&active.loaded.declaration.name),
+    }
+}
+
+/// What a hook outside any run reaches: `infer`, through the person's
+/// model, asking `model` with it.
+struct ModelReach {
+    model: Option<tau_ui_plugin::PluginModel>,
+    name: Option<String>,
+}
+
+impl ModelReach {
+    /// What `active`'s hooks outside a run reach in `registry`: the model
+    /// `uses.model` names, else `fallback`.
+    fn of(
+        registry: &Registry,
+        active: &crate::agent::Active,
+        fallback: Option<&str>,
+    ) -> std::sync::Arc<Self> {
+        let named = active.loaded.declaration.uses.model.clone();
+        std::sync::Arc::new(Self {
+            model: registry.model(),
+            name: named.or_else(|| fallback.map(str::to_owned)),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::runtime::Reach for ModelReach {
+    fn tools(&self) -> Vec<tau_codemode_host::ToolEntry> {
+        vec![tau_codemode_host::ToolEntry {
+            name: "infer".into(),
+            description: "Asks the person's model one task.".into(),
+            input_schema:
+                tau_codemode_host::inference::InferRequest::parameters(),
+            output_schema: None,
+            namespace: None,
+            sequential: false,
+        }]
+    }
+
+    async fn call(
+        &self,
+        call: tau_codemode_host::ToolCall,
+    ) -> Result<tau_codemode_host::ToolReply, String> {
+        if call.name != "infer" {
+            return Err(format!(
+                "`{}` cannot be called outside a run",
+                call.name
+            ));
+        }
+        // As `infer` answers in a run: `{ ok, value }`, or `{ ok, error }`.
+        let reply = match self.infer(call.args).await {
+            Ok(value) => json!({ "ok": true, "value": value }),
+            Err(error) => json!({ "ok": false, "error": error }),
+        };
+        Ok(tau_codemode_host::ToolReply::success(reply))
+    }
+}
+
+impl ModelReach {
+    async fn infer(
+        &self,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        use tau_ai::message::{Message, UserContent, UserMessage};
+        let request = tau_codemode_host::inference::InferRequest::parse(args)?;
+        let model = self
+            .model
+            .as_ref()
+            .ok_or("there is no model to ask: the person is signed out")?;
+        let name = self
+            .name
+            .clone()
+            .ok_or("name the model `infer` asks in `uses.model`")?;
+        let mut settings = tau_ui_plugin::AskSettings::new(name, None);
+        if let Some(format) = request.text_format() {
+            settings = settings.text_format(format);
+        }
+        let input = [Message::User(UserMessage {
+            content: UserContent::Text(request.input_text()),
+            timestamp: 0,
+        })];
+        let answer = model
+            .ask(&settings, &input, &[], &CancellationToken::new())
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(error) = &answer.error_message {
+            return Err(error.clone());
+        }
+        request.decode_answer(&answer.text())
     }
 }
 
@@ -49,7 +139,7 @@ impl Title for LuauTitle {
                     &Hook::Title,
                     json!({ "task": task, "model": run_model }),
                     &context(&self.0, &active),
-                    std::sync::Arc::new(NoReach),
+                    ModelReach::of(&self.0, &active, Some(run_model)),
                     CancellationToken::new(),
                 )
                 .await;
@@ -97,7 +187,7 @@ impl Notify for LuauNotify {
                     &Hook::Notify,
                     json!({ "title": notice.title, "body": notice.body }),
                     &context(&registry, &active),
-                    std::sync::Arc::new(NoReach),
+                    ModelReach::of(&registry, &active, None),
                     CancellationToken::new(),
                 )
                 .await;
@@ -219,7 +309,7 @@ impl LuauForge {
                 &hook,
                 input,
                 &context(&self.0, &active),
-                std::sync::Arc::new(NoReach),
+                ModelReach::of(&self.0, &active, None),
                 CancellationToken::new(),
             )
             .await;
