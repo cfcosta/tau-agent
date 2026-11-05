@@ -22,7 +22,6 @@ use tau_ai::{
     },
     client::OpenAi,
     llm::Llm,
-    refusal::Refusal,
 };
 use tau_ui_plugin::{
     Group,
@@ -31,7 +30,7 @@ use tau_ui_plugin::{
     PluginHost,
     PluginInfo,
     RunCtx,
-    provider::{Lapse, ModelOption, PROVIDER, Provider},
+    provider::{Lapse, ModelOption, PROVIDER, Provider, Stopped},
     slots::Fills,
 };
 use tokio::sync::oneshot;
@@ -414,8 +413,8 @@ impl Provider for Plan {
         plan_models()
     }
 
-    fn refusal(&self) -> Option<Refusal> {
-        self.client()?.refusal()
+    fn stopped(&self) -> Option<Stopped> {
+        crate::plan_usage::stopped(&self.client()?.refusal()?)
     }
 
     fn cache_lapse<'a>(&'a self, path: &'a str) -> Lapse<'a> {
@@ -446,8 +445,8 @@ impl Provider for Over {
         plan_models()
     }
 
-    fn refusal(&self) -> Option<Refusal> {
-        self.0.refusal()
+    fn stopped(&self) -> Option<Stopped> {
+        crate::plan_usage::stopped(&self.0.refusal()?)
     }
 
     fn cache_lapse<'a>(&'a self, path: &'a str) -> Lapse<'a> {

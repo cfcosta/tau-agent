@@ -1,6 +1,8 @@
 //! Onboarding and accounts: the ChatGPT sign-in and plan, plugins'
 //! steps around the repositories and the first run.
 
+use tau_ui_plugin::provider::{StopAction, Stopped};
+
 use super::*;
 
 impl Workspace {
@@ -208,78 +210,67 @@ impl Workspace {
         Some(text)
     }
 
-    /// Opens ChatGPT Settings → Usage, where the user reviews and limits
-    /// what apps use of their plan.
-    pub fn manage_usage(&mut self, cx: &mut Context<Self>) {
-        cx.open_url(USAGE_SETTINGS_URL);
+    /// A run stopped on the provider: says what to do next, as the
+    /// provider words it (`Provider::stopped`).
+    pub fn show_stopped(&mut self, stopped: Stopped, cx: &mut Context<Self>) {
+        self.plan_alert = Some(stopped);
+        cx.notify();
     }
 
-    /// A run stopped on the ChatGPT plan: says what to do next. A
-    /// temporary refusal, which the run already retried, says nothing
-    /// more than the run's error.
-    pub fn show_plan_refusal(
-        &mut self,
-        refusal: &tau_ai::refusal::Refusal,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(alert) = PlanAlert::of(refusal) {
-            self.plan_alert = Some(alert);
-            cx.notify();
-        }
-    }
-
-    pub fn plan_alert(&self) -> Option<&PlanAlert> {
+    pub fn plan_alert(&self) -> Option<&Stopped> {
         self.plan_alert.as_ref()
     }
 
-    /// Carries out a button of the plan alert, and closes it.
-    pub fn plan_action(&mut self, action: PlanAction, cx: &mut Context<Self>) {
+    /// Carries out the alert's button, `action`, or closes it with none.
+    pub fn plan_action(
+        &mut self,
+        action: Option<StopAction>,
+        cx: &mut Context<Self>,
+    ) {
         self.plan_alert = None;
         match action {
-            PlanAction::ManageUsage => self.manage_usage(cx),
+            Some(StopAction::Open(url)) => cx.open_url(&url),
             // The provider's section of the Models screen signs in.
-            PlanAction::SignInAgain | PlanAction::EnablePlanUsage => {
-                self.navigate(Route::Models, cx)
-            }
-            PlanAction::Close => {}
+            Some(StopAction::Models) => self.navigate(Route::Models, cx),
+            None => {}
         }
         cx.notify();
     }
 
-    /// The plan alert, over the app.
+    /// The provider's alert, over the app.
     pub(super) fn plan_alert_view(
         &self,
-        alert: &PlanAlert,
+        alert: &Stopped,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let (secondary, other) = alert.secondary();
         let actions = div()
             .flex()
             .gap(sp(2.))
             .child(
                 div()
                     .id("plan-alert-secondary")
-                    .child(ui::button(secondary, ButtonKind::Secondary, t))
+                    .child(ui::button("Close", ButtonKind::Secondary, t))
                     .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.plan_action(other, cx)
+                        ws.plan_action(None, cx)
                     })),
             )
-            .children(alert.primary().map(|(label, action)| {
+            .children(alert.action.clone().map(|(label, action)| {
                 div()
                     .id("plan-alert-primary")
                     .child(ui::button(label, ButtonKind::Primary, t))
                     .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.plan_action(action, cx)
+                        ws.plan_action(Some(action.clone()), cx)
                     }))
             }));
-        let glyph = match alert {
-            PlanAlert::UsageLimit => {
-                ui::icon(Icon::Warning, IconSize::LARGE, t.accent)
-            }
-            _ => ui::icon(Icon::Chat, IconSize::LARGE, t.muted),
-        };
-        ui::modal(glyph, alert.title(), alert.message(), None, actions, t)
+        ui::modal(
+            ui::icon(Icon::Warning, IconSize::LARGE, t.accent),
+            alert.title.clone(),
+            alert.message.clone(),
+            None,
+            actions,
+            t,
+        )
     }
 
     /// Shows every repository in the picker, or only the first ones.

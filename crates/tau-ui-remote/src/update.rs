@@ -43,8 +43,8 @@ pub enum HostUpdate {
         title: String,
         message: String,
     },
-    /// A run the ChatGPT plan stopped, and what to do next.
-    PlanRefusal(tau_ai::refusal::Refusal),
+    /// A run the provider stopped, and what to do next, in its words.
+    Stopped(tau_ui_plugin::provider::Stopped),
     QueryResult(Result<tau_store::Table, String>),
     PullRequest {
         run: RunId,

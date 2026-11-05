@@ -4,6 +4,7 @@
 
 #[cfg(feature = "host")]
 mod half;
+pub mod plan_usage;
 pub mod ui;
 
 use std::path::Path;

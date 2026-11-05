@@ -2065,7 +2065,7 @@ fn models_follow_the_sign_in_and_settings_persist() {
     assert_eq!(accounts[0].id, account.to_string());
     assert!(accounts[0].active);
     assert_eq!(accounts[0].state, tau_chatgpt::ui::AccountState::Plan);
-    assert_eq!(host.refusal(), None);
+    assert_eq!(host.stopped(), None);
 }
 
 /// Scopes of a sign-in that allows plan usage.

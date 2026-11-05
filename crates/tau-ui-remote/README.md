@@ -22,7 +22,7 @@ take one path.
 | `attention`                      | Whether a chat needs the person: `Attention::of` over a run's `Facts`                        |
 | `setup`, `pairing`, `phones`     | Onboarding (with plugins' steps), a phone's pairing, and the computer's list of phones       |
 | `pull_request`, `push`, `queue`  | Pull requests, pushing main, and the landing queue, labelled with `Catalog::forge`           |
-| `models`, `picker`, `plan_usage` | Choosing models and effort, and what a ChatGPT plan error says                               |
+| `models`, `picker`               | Choosing models and effort; a provider's stop shows as it words it (`Stopped`)                |
 | `route`, `search`, `slash`       | The screens, the search palette (Ctrl K), and slash commands in the composer                 |
 | `titles`                         | A run's title until the `tau.title` slot writes one: its prompt's first line                 |
 | `ui`                             | The pieces screens are built from, and the screens themselves (`ui::screens`)                |

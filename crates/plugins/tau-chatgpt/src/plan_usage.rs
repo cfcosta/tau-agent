@@ -1,6 +1,6 @@
 //! What the interface says about using a ChatGPT plan, in the words
 //! OpenAI's Sign in with ChatGPT guidelines ask for: what a run that
-//! stopped on the plan says next.
+//! stopped on the plan says next (`Provider::stopped`).
 //!
 //! A plan error stops the run; the plan is the only way tau reaches a
 //! model. The alert says what to do instead: manage usage, sign in
@@ -8,9 +8,31 @@
 
 use serde::{Deserialize, Serialize};
 use tau_ai::{refusal::Refusal, retry::Recovery};
+use tau_ui_plugin::provider::{StopAction, Stopped};
+
+use crate::ui::USAGE_SETTINGS_URL;
 
 /// The link to ChatGPT Settings → Usage, wherever it shows.
 pub const MANAGE_USAGE: &str = "Manage usage";
+
+/// What the interface says once the plan refused a run as `refusal`;
+/// none for a temporary refusal, which the run's retries went through.
+pub fn stopped(refusal: &Refusal) -> Option<Stopped> {
+    let alert = PlanAlert::of(refusal)?;
+    Some(Stopped {
+        title: alert.title().to_owned(),
+        message: alert.message(),
+        action: alert.primary().map(|(label, action)| {
+            let action = match action {
+                PlanAction::ManageUsage => {
+                    StopAction::Open(USAGE_SETTINGS_URL.to_owned())
+                }
+                _ => StopAction::Models,
+            };
+            (label.to_owned(), action)
+        }),
+    })
+}
 
 /// What a run that stopped on the plan asks of the user.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,8 +57,6 @@ pub enum PlanAction {
     SignInAgain,
     /// Signs the active account in again, asking for plan usage.
     EnablePlanUsage,
-    /// Closes the alert.
-    Close,
 }
 
 impl PlanAlert {
@@ -94,16 +114,36 @@ impl PlanAlert {
             Self::Stopped { .. } => None,
         }
     }
-
-    /// The other button.
-    pub fn secondary(&self) -> (&'static str, PlanAction) {
-        ("Close", PlanAction::Close)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the interface is told: the alert's words, and its button as
+    /// a page to open or the Models screen.
+    #[test]
+    fn a_stop_is_worded_and_offers_what_to_do() {
+        let limit = stopped(&refusal(Recovery::UsageLimit)).unwrap();
+        assert_eq!(limit.title, "Usage limit reached");
+        assert_eq!(
+            limit.action,
+            Some((
+                MANAGE_USAGE.to_owned(),
+                StopAction::Open(USAGE_SETTINGS_URL.to_owned())
+            ))
+        );
+        let again = stopped(&refusal(Recovery::SignInAgain)).unwrap();
+        assert_eq!(
+            again.action,
+            Some(("Sign in again".to_owned(), StopAction::Models))
+        );
+        assert_eq!(stopped(&refusal(Recovery::RetryLater)), None);
+        assert_eq!(
+            stopped(&refusal(Recovery::Restricted)).unwrap().action,
+            None
+        );
+    }
 
     fn refusal(recovery: Recovery) -> Refusal {
         Refusal {
@@ -139,7 +179,6 @@ mod tests {
         let enable =
             PlanAlert::of(&refusal(Recovery::EnablePlanUsage)).unwrap();
         assert_eq!(enable.primary().unwrap().1, PlanAction::EnablePlanUsage);
-        assert_eq!(enable.secondary().1, PlanAction::Close);
         assert!(!enable.message().contains("API key"));
         for recovery in [
             Recovery::Restricted,

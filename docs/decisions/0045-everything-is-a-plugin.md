@@ -406,9 +406,11 @@ Each step lands on main by itself and leaves tau working.
    the browser through `HostCx::open_url`, and a phone cannot ask it
    anything (`Declaration::computer_only`). The kernel's model step,
    `ModelAccess`, its four ChatGPT events and the account list in
-   `AccessInfo` went. Left for later: the plan refusal's wording
-   (`PlanAlert`), the neutral `Settings`, and the picker's catalog
-   outside the provider.
+   `AccessInfo` went. A run the provider stopped shows as it words it
+   (`Provider::stopped`, `HostUpdate::Stopped`): tau-chatgpt's
+   `plan_usage` turns the plan's refusal into a title, a message and
+   one action, a page to open or the Models screen. Left for later: the
+   neutral `Settings`, and the picker's catalog outside the provider.
 8. **`tau.compaction`**, with the chain as its default; idle compaction
    moves into it.
 9. **App and repository seams.** `tau-phones`, repository kinds for

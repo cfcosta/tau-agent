@@ -1,14 +1,15 @@
 //! What runs reach models with, as the host tells the interface: the
-//! provider's label, refusal and models (ADR 0045), and the person's
+//! provider's label, why it stopped a run and its models (ADR 0045),
+//! and the person's
 //! choices.
 
 use super::*;
 
 impl Host {
-    /// Why the provider last refused a run, while runs use it: a usage
-    /// limit, a sign-in it no longer takes, a restriction.
-    pub fn refusal(&self) -> Option<Refusal> {
-        self.provider()?.refusal()
+    /// Why the provider last stopped a run, in its words, while runs use
+    /// it: a usage limit, a sign-in it no longer takes, a restriction.
+    pub fn stopped(&self) -> Option<tau_ui_plugin::provider::Stopped> {
+        self.provider()?.stopped()
     }
 
     pub(super) fn access_label(&self) -> String {

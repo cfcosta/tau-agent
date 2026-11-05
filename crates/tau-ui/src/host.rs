@@ -33,7 +33,7 @@ use tau_agent::{
     plugin::{Plugin, PluginCtx, PluginRun, RunPlan},
     tool::RunId,
 };
-use tau_ai::{message::Message, model::find, refusal::Refusal};
+use tau_ai::{message::Message, model::find};
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_ui_plugin::{
     By,

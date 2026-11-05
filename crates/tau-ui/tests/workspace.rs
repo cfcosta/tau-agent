@@ -2316,31 +2316,33 @@ fn search_opens_again_after_escape(cx: &mut TestAppContext) {
     assert!(searching(&mut cx), "ctrl+k works after the picker");
 }
 
-/// A run stopped on the plan's usage limit says so, with "Manage usage"
-/// first; a temporary refusal, already retried, says nothing more.
 #[gpui::test]
 fn a_usage_limit_offers_to_manage_usage(cx: &mut TestAppContext) {
-    use tau_ui_remote::plan_usage::{PlanAction, PlanAlert};
+    use tau_chatgpt::plan_usage::stopped;
     let (workspace, mut cx, events) = open_demo(cx);
+    let mut busy = demo::usage_limit();
+    busy.recovery = tau_ai::retry::Recovery::RetryLater;
+    assert_eq!(stopped(&busy), None, "a retried refusal says nothing");
     workspace.update(&mut cx, |ws, cx| {
-        let mut busy = demo::usage_limit();
-        busy.recovery = tau_ai::retry::Recovery::RetryLater;
-        ws.show_plan_refusal(&busy, cx);
-        assert_eq!(ws.plan_alert(), None);
-        ws.show_plan_refusal(&demo::usage_limit(), cx);
+        ws.apply(
+            tau_ui_remote::update::HostUpdate::Stopped(
+                stopped(&demo::usage_limit()).unwrap(),
+            ),
+            cx,
+        );
         let alert = ws.plan_alert().unwrap();
-        assert_eq!(alert, &PlanAlert::UsageLimit);
-        assert_eq!(alert.title(), "Usage limit reached");
+        assert_eq!(alert.title, "Usage limit reached");
     });
     // Drawn over the app.
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
-        ws.plan_action(PlanAction::ManageUsage, cx);
+        let action = ws.plan_alert().unwrap().action.clone().map(|(_, a)| a);
+        ws.plan_action(action, cx);
         assert_eq!(ws.plan_alert(), None);
     });
     assert_eq!(
         cx.opened_url().as_deref(),
-        Some(tau_ui_remote::models::USAGE_SETTINGS_URL)
+        Some(tau_chatgpt::ui::USAGE_SETTINGS_URL)
     );
     // Never a silent switch: nothing asked the provider to use another
     // way to pay.
@@ -2351,26 +2353,29 @@ fn a_usage_limit_offers_to_manage_usage(cx: &mut TestAppContext) {
 /// Models screen, where the provider's section does it.
 #[gpui::test]
 fn plan_alerts_lead_to_signing_in(cx: &mut TestAppContext) {
-    use tau_ui_remote::plan_usage::{PlanAction, PlanAlert};
+    use tau_chatgpt::plan_usage::stopped;
+    use tau_ui_plugin::provider::StopAction;
     let (workspace, mut cx, _) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        let mut refusal = demo::usage_limit();
-        refusal.recovery = tau_ai::retry::Recovery::SignInAgain;
-        ws.show_plan_refusal(&refusal, cx);
-        assert!(matches!(
-            ws.plan_alert(),
-            Some(PlanAlert::SignInAgain { .. })
-        ));
-        ws.plan_action(PlanAction::SignInAgain, cx);
-        assert_eq!(ws.route(), &Route::Models);
-        ws.navigate(Route::Home, cx);
-        let mut refusal = demo::usage_limit();
-        refusal.recovery = tau_ai::retry::Recovery::EnablePlanUsage;
-        ws.show_plan_refusal(&refusal, cx);
-        assert_eq!(ws.plan_alert(), Some(&PlanAlert::EnablePlanUsage));
-        ws.plan_action(PlanAction::EnablePlanUsage, cx);
-        assert_eq!(ws.route(), &Route::Models);
-    });
+    for recovery in [
+        tau_ai::retry::Recovery::SignInAgain,
+        tau_ai::retry::Recovery::EnablePlanUsage,
+    ] {
+        workspace.update(&mut cx, |ws, cx| {
+            ws.navigate(Route::Home, cx);
+            let mut refusal = demo::usage_limit();
+            refusal.recovery = recovery;
+            let alert = stopped(&refusal).unwrap();
+            assert_eq!(
+                alert.action.as_ref().map(|(_, action)| action),
+                Some(&StopAction::Models)
+            );
+            ws.show_stopped(alert, cx);
+            let action =
+                ws.plan_alert().unwrap().action.clone().map(|(_, a)| a);
+            ws.plan_action(action, cx);
+            assert_eq!(ws.route(), &Route::Models);
+        });
+    }
 }
 
 fn computer() -> tau_ui_remote::pairing::Computer {

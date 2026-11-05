@@ -1547,12 +1547,12 @@ impl Host {
                         }
                     });
                 }
-                // A run the ChatGPT plan stopped says what to do next.
-                let refusal = match &event {
+                // A run the provider stopped says what to do next.
+                let stopped = match &event {
                     RunEvent::RunEnd {
                         stop: StopReason::Error(_),
                         ..
-                    } => host.refusal(),
+                    } => host.stopped(),
                     _ => None,
                 };
                 // What it read was sent with images: they show under it.
@@ -1637,8 +1637,8 @@ impl Host {
                     if let Some(pictures) = steered {
                         ws.apply(pictures, cx);
                     }
-                    if let Some(refusal) = &refusal {
-                        ws.apply(HostUpdate::PlanRefusal(refusal.clone()), cx);
+                    if let Some(stopped) = &stopped {
+                        ws.apply(HostUpdate::Stopped(stopped.clone()), cx);
                     }
                 });
                 if applied.is_err() {

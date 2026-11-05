@@ -14,7 +14,6 @@ use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use tau_ai::{
     llm::{Llm, LlmError, LlmSession},
-    refusal::Refusal,
     responses::request::Settings,
     ws::io::driver::CacheLapse,
 };
@@ -54,6 +53,25 @@ impl ModelOption {
     }
 }
 
+/// What the interface says once the provider stopped a run, and what it
+/// offers to do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stopped {
+    pub title: String,
+    pub message: String,
+    /// The button that does something about it, with its label.
+    pub action: Option<(String, StopAction)>,
+}
+
+/// What a [`Stopped`]'s button does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StopAction {
+    /// Opens a page in the person's browser: the plan's usage.
+    Open(String),
+    /// Opens the Models screen, where the provider's section signs in.
+    Models,
+}
+
 /// When a conversation's prompt cache lapses, as the provider knows it.
 pub type Lapse<'a> =
     Pin<Box<dyn Future<Output = Option<CacheLapse>> + Send + 'a>>;
@@ -71,9 +89,11 @@ pub trait Provider: Send + Sync {
     /// The models the picker offers now: none while signed out.
     fn models(&self) -> Vec<ModelOption>;
 
-    /// Why the provider last refused a run, while runs use it: a usage
-    /// limit, a sign-in it no longer takes, a restriction.
-    fn refusal(&self) -> Option<Refusal>;
+    /// Why the provider last stopped a run, in its words, while runs
+    /// use it: a usage limit, a sign-in it no longer takes, a
+    /// restriction. None for nothing, or a temporary refusal the run
+    /// already retried.
+    fn stopped(&self) -> Option<Stopped>;
 
     /// When the prompt cache of the conversation `path` lapses, when the
     /// provider can tell: what idle compaction waits for.

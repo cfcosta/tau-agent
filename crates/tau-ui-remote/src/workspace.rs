@@ -43,10 +43,9 @@ use crate::{
     assets::Icon,
     catalog::{Catalog, PluginInfo},
     input::{InputEvent, TextInput},
-    models::{ModelChoice, USAGE_SETTINGS_URL},
+    models::ModelChoice,
     pairing::{PairRequest, PairStep, Pairing, PairingUpdate, Progress},
     phones::{Phones, PhonesRequest},
-    plan_usage::{PlanAction, PlanAlert},
     pull_request::{PrState, PullRequest},
     push::PushState,
     route::{self, Route},
@@ -575,7 +574,7 @@ pub struct Workspace {
     /// The code of each comparison opened, by (run, fork).
     pub(crate) branch_code: HashMap<(RunId, RunId), CodeState>,
     /// What a run that stopped on the ChatGPT plan asks of the user.
-    pub(crate) plan_alert: Option<PlanAlert>,
+    pub(crate) plan_alert: Option<tau_ui_plugin::provider::Stopped>,
     pub(crate) repo_filter: Entity<TextInput>,
     /// The repository picker shows every match, not only the first
     /// [`crate::setup::SHOWN_REPOS`].
@@ -1026,9 +1025,7 @@ impl Workspace {
             HostUpdate::Alert { title, message } => {
                 self.show_alert(title, message, cx)
             }
-            HostUpdate::PlanRefusal(refusal) => {
-                self.show_plan_refusal(&refusal, cx)
-            }
+            HostUpdate::Stopped(stopped) => self.show_stopped(stopped, cx),
             HostUpdate::QueryResult(result) => {
                 self.set_query_result(result, cx)
             }

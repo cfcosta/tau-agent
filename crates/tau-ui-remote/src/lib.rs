@@ -44,7 +44,6 @@ pub mod pairing;
 pub mod phones;
 pub mod picker;
 pub mod pictures;
-pub mod plan_usage;
 pub mod plugins;
 pub mod pull_request;
 pub mod push;

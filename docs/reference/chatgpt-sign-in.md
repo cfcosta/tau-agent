@@ -366,7 +366,9 @@ never a token.
 - `crates/tau-ai/tests/plan_models.rs`: a Hegel property that, for any
   table, `newest_per_family` keeps at most one model per plan family,
   in family order, at its highest version; and today's four pinned.
-- tau-ui: `plan_usage` and `models` unit tests, and workspace tests for
+- tau-chatgpt: `plan_usage` unit tests (what a plan refusal says, as the
+  `Stopped` the kernel shows); tau-ui-remote: `models` unit tests, and
+  workspace tests for
   the composer line, the alerts, the account picker, the
   plan's models in the picker and on the model step, and the not
   eligible state.

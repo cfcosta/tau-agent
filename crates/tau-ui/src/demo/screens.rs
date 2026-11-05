@@ -592,7 +592,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // screen with plan use not enabled.
     ("usage-limit", |ws, _, cx| {
         ws.navigate(Route::Run(run_id()), cx);
-        ws.apply(HostUpdate::PlanRefusal(usage_limit()), cx);
+        let stopped = tau_chatgpt::plan_usage::stopped(&usage_limit())
+            .expect("a usage limit stops the run");
+        ws.apply(HostUpdate::Stopped(stopped), cx);
     }),
     ("plan-disabled", |ws, host, cx| {
         let mut catalog = ws.catalog().clone();

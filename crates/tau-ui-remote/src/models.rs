@@ -201,10 +201,6 @@ impl ModelSettings {
     }
 }
 
-/// Where ChatGPT users review and limit what apps use of their plan
-/// (ChatGPT Settings → Usage).
-pub const USAGE_SETTINGS_URL: &str = tau_ai::chatgpt::USAGE_SETTINGS_URL;
-
 /// How the host reaches models, for the picker's footer: what fills
 /// `tau.provider` says (ADR 0045).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
