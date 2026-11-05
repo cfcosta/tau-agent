@@ -10,9 +10,11 @@ publish.workspace = true
 [dependencies]
 
 [dev-dependencies]
+futures-util.workspace = true
 hegeltest.workspace = true
 serde_json.workspace = true
 tau-luau-plugins.workspace = true
 tau-luau-plugins-host.workspace = true
 tau-testing.workspace = true
+tempfile.workspace = true
 tokio-util.workspace = true

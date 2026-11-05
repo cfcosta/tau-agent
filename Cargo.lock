@@ -10361,11 +10361,13 @@ dependencies = [
 name = "tau-todo"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "hegeltest",
  "serde_json",
  "tau-luau-plugins",
  "tau-luau-plugins-host",
  "tau-testing",
+ "tempfile",
  "tokio-util",
 ]
 

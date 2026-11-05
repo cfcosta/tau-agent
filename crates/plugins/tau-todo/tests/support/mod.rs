@@ -5,6 +5,8 @@
 
 #![allow(dead_code, reason = "each test file uses its own part")]
 
+pub mod store;
+
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use hegel::{TestCase, generators as gs};
@@ -279,4 +281,116 @@ pub fn texts(value: &Value) -> Vec<String> {
         Value::Object(map) if map.is_empty() => Vec::new(),
         other => panic!("not a list: {other}"),
     }
+}
+
+/// The plugin, loaded, to call its hooks on a store as tau does: each
+/// call in its own session, kept whole when it ends or not at all.
+pub struct Plugin {
+    loaded: tau_luau_plugins_host::runtime::Loaded,
+}
+
+impl Plugin {
+    pub fn new() -> Self {
+        let paths: Vec<(String, Vec<u8>)> = tau_todo::FILES
+            .iter()
+            .map(|(path, source)| {
+                ((*path).to_owned(), source.as_bytes().to_vec())
+            })
+            .collect();
+        let files = Files::from_paths(&paths, PLUGIN).unwrap();
+        Self {
+            loaded: block_on_io(tau_luau_plugins_host::runtime::load(
+                tau_todo::NAME,
+                files,
+            ))
+            .unwrap(),
+        }
+    }
+
+    /// `hook` with `input`, by the run `run` at `now`, on `store`: its
+    /// answer, or why it failed.
+    pub async fn call(
+        &self,
+        store: &Arc<tau_luau_plugins_host::store::Kv>,
+        run: &str,
+        now: i64,
+        hook: tau_luau_plugins_host::runtime::Hook,
+        input: Value,
+    ) -> Result<Value, String> {
+        use tau_luau_plugins_host::runtime::{Context, NoReach, StoreRef};
+        let context = Context {
+            run: json!({ "id": run, "kind": "chat", "repo": "home", "model": "m", "turn": 1 }),
+            now: json!({ "unix": now, "iso": "", "weekday": "Monday" }),
+            settings: json!({}),
+            state: json!({}),
+            secrets: None,
+            store: Some(StoreRef(store.clone())),
+        };
+        let outcome = self
+            .loaded
+            .call(
+                &hook,
+                input,
+                &context,
+                Arc::new(NoReach),
+                CancellationToken::new(),
+            )
+            .await;
+        match outcome.error {
+            Some(error) => Err(error),
+            None => Ok(outcome.value),
+        }
+    }
+
+    pub async fn tool(
+        &self,
+        store: &Arc<tau_luau_plugins_host::store::Kv>,
+        run: &str,
+        now: i64,
+        name: &str,
+        args: Value,
+    ) -> Result<Value, String> {
+        self.call(
+            store,
+            run,
+            now,
+            tau_luau_plugins_host::runtime::Hook::Tool(name.into()),
+            args,
+        )
+        .await
+    }
+}
+
+/// `value` with every number a float and every empty table an empty
+/// list: as the plugin reads it, whichever way Luau wrote it.
+pub fn plain(value: &Value) -> Value {
+    match value {
+        Value::Object(map) if map.is_empty() => json!([]),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), plain(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(plain).collect()),
+        Value::Number(n) => json!(n.as_f64().unwrap()),
+        other => other.clone(),
+    }
+}
+
+/// What `store` keeps of issues: each issue by id, and the ids retired.
+pub async fn kept(
+    store: &tau_luau_plugins_host::store::Kv,
+) -> (BTreeMap<String, Value>, Vec<String>) {
+    let all = store.everything().await.unwrap();
+    let issues = all
+        .iter()
+        .filter_map(|(key, value)| {
+            Some((key.strip_prefix("issue/")?.to_owned(), plain(value)))
+        })
+        .collect();
+    let retired = all
+        .keys()
+        .filter_map(|key| Some(key.strip_prefix("retired/")?.to_owned()))
+        .collect();
+    (issues, retired)
 }
