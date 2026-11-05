@@ -5,7 +5,7 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use tau_ui::{demo, phone_server};
+use tau_ui::{demo, mirror, phone_server};
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
@@ -70,6 +70,7 @@ fn a_phone_pairs_and_steers_the_computer(cx: &mut TestAppContext) {
         phone_server::serve(
             runtime.handle().clone(),
             computer_dir.path().to_owned(),
+            mirror::app(&desktop, cx),
             &desktop,
             cx,
         );
@@ -178,7 +179,7 @@ fn a_phone_pairs_and_steers_the_computer(cx: &mut TestAppContext) {
     until(&mut phone_cx, "the picture", |cx| {
         phone.update(cx, |ws, _| ws.has_picture(&picture.key))
     });
-    assert!(phone_server::transient(&HostUpdate::Picture {
+    assert!(mirror::transient(&HostUpdate::Picture {
         picture,
         data: None,
         error: None,
@@ -212,7 +213,7 @@ fn a_computer_only_plugin_s_data_and_views_stay_on_the_computer() {
         tau_github::NAME.into(),
         tau_ui_plugin::PluginValue::from_json(serde_json::json!({})),
     );
-    let sent = phone_server::to_phones(&HostUpdate::catalog(catalog)).unwrap();
+    let sent = mirror::to_phones(&HostUpdate::catalog(catalog)).unwrap();
     let data = &sent["Catalog"]["plugin_data"];
     assert!(data.get(tau_chatgpt::NAME).is_none(), "{data}");
     assert!(data.get(tau_github::NAME).is_some(), "{data}");

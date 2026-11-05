@@ -875,10 +875,17 @@ impl Host {
         }
         // Finished forks say whether they would land cleanly.
         super::forecast::follow(&host, workspace, cx);
-        // Phones reach this host once allowed.
+        // The window as phones mirror it, and phones reach this host
+        // once allowed.
+        if let Some(mirrored) =
+            host.mirrored.lock().expect("not poisoned").take()
+        {
+            mirrored.attach(workspace, cx);
+        }
         crate::phone_server::serve(
             host.runtime.handle().clone(),
             host.config.credentials.dir.join("phones"),
+            host.mirror.clone(),
             workspace,
             cx,
         );

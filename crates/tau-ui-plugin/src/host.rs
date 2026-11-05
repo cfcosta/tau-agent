@@ -899,6 +899,12 @@ impl HostCx {
         self.services.get::<Arc<dyn Conversations>>().cloned()
     }
 
+    /// The computer's window, as phones mirror it, when the host has
+    /// one (ADR 0046).
+    pub fn app(&self) -> Option<Arc<dyn crate::app::App>> {
+        self.services.get::<Arc<dyn crate::app::App>>().cloned()
+    }
+
     /// The tools a host half may call outside any run, when the host
     /// keeps them.
     pub fn outside_tools(&self) -> Option<&OutsideTools> {

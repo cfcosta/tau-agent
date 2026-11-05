@@ -80,7 +80,7 @@ use tau_remote::{
     ServerEvent,
     ServerHandle,
 };
-use tau_ui::{demo, phone_server};
+use tau_ui::{demo, mirror, phone_server};
 use tau_ui_kit::assets::Icon;
 use tau_ui_plugin::{
     Link,
@@ -343,6 +343,7 @@ impl Computer {
             phone_server::serve(
                 runtime.handle().clone(),
                 dir.path().to_owned(),
+                mirror::app(&workspace, cx),
                 &workspace,
                 cx,
             );

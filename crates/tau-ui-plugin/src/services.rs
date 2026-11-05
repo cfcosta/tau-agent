@@ -39,6 +39,9 @@ pub mod names {
     pub const MODEL: &str = "tau.model";
     /// Who the person is, for the commits made for them.
     pub const IDENTITY: &str = "tau.identity";
+    /// The computer's window, as phones mirror it
+    /// (`Arc<dyn crate::app::App>`).
+    pub const APP: &str = "tau.app";
 }
 
 /// Values by type, cheap to clone.

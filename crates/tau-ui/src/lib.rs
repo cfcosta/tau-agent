@@ -15,6 +15,7 @@ pub mod accounts;
 pub mod demo;
 pub mod host;
 pub mod hosted;
+pub mod mirror;
 pub mod notify;
 pub mod phone_server;
 

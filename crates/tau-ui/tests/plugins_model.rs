@@ -63,7 +63,7 @@ use tau_remote::{
     feed::{Feed, Joined},
     outbox::{self, Outbox},
 };
-use tau_ui::{hosted, phone_server};
+use tau_ui::{hosted, mirror};
 use tau_ui_kit::assets::Icon;
 use tau_ui_plugin::{
     Fold,
@@ -509,10 +509,10 @@ impl Wire {
     /// Sends what the computer applied, as the phone server does: kept
     /// and numbered, or only to the phones there now.
     fn send(&mut self, update: &HostUpdate) {
-        let Some(body) = phone_server::to_phones(update) else {
+        let Some(body) = mirror::to_phones(update) else {
             return;
         };
-        let (down, to) = if phone_server::transient(update) {
+        let (down, to) = if mirror::transient(update) {
             self.feed.transient(body)
         } else {
             self.feed.broadcast(body)
@@ -946,8 +946,7 @@ impl Tau {
             if !taken {
                 return true;
             }
-            if let Some(PhoneUp::Event(event)) = phone_server::from_phone(body)
-            {
+            if let Some(PhoneUp::Event(event)) = mirror::from_phone(body) {
                 self.inbox.borrow_mut().push_back((Some(phone), event));
             }
             self.host_settles();
@@ -959,7 +958,7 @@ impl Tau {
         let bodies = self
             .computer
             .workspace
-            .read_with(&self.computer.cx, |ws, _| phone_server::snapshot(ws));
+            .read_with(&self.computer.cx, |ws, _| mirror::snapshot(ws));
         let mut wire = self.wire.borrow_mut();
         let conn = wire.links[phone].conn.unwrap();
         let down = wire.feed.snapshot(conn, bodies).unwrap();

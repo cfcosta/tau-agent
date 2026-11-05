@@ -43,7 +43,7 @@ use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
     host::{Host, HostConfig},
-    phone_server,
+    mirror,
 };
 use tau_ui_remote::{
     Workspace,
@@ -214,7 +214,7 @@ pub struct Link {
     /// What the person asked on the phone that the computer has not
     /// taken, as `remote` keeps it.
     pub outbox: Outbox,
-    /// The last request the computer took from it, as `phone_server`
+    /// The last request the computer took from it, as the server
     /// keeps it: saved with the paired devices, so it outlives a
     /// restart of the computer.
     pub taken: Option<u64>,
@@ -591,9 +591,9 @@ impl Net {
         true
     }
 
-    /// The computer takes what a phone sent, as `phone_server` does.
+    /// The computer takes what a phone sent, as the mirror does.
     pub fn take(&mut self, body: Value) {
-        match phone_server::from_phone(body) {
+        match mirror::from_phone(body) {
             Some(PhoneUp::Event(event)) => {
                 let computer = &mut self.computer;
                 computer
@@ -610,7 +610,7 @@ impl Net {
         let bodies = self
             .computer
             .workspace
-            .read_with(&self.computer.cx, |ws, _| phone_server::snapshot(ws));
+            .read_with(&self.computer.cx, |ws, _| mirror::snapshot(ws));
         let mut wire = self.wire.borrow_mut();
         let conn = wire.links[phone].conn.unwrap();
         let down = wire.feed.snapshot(conn, bodies).unwrap();
@@ -723,7 +723,7 @@ impl Net {
 }
 
 /// The computer's window over a host started on `disk`: what the host
-/// applies goes out, as `phone_server` sends it.
+/// applies goes out, as the mirror sends it.
 fn computer(
     app: &TestAppContext,
     disk: &Disk,
@@ -743,7 +743,7 @@ fn computer(
     computer_cx.update(|_, cx| {
         workspace.update(cx, |ws, _| ws.set_mirrored(true));
         cx.subscribe(&workspace, move |_, update, _| {
-            if let Some(body) = phone_server::to_phones(update) {
+            if let Some(body) = mirror::to_phones(update) {
                 out.borrow_mut().broadcast(body);
             }
         })

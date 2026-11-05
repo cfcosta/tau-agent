@@ -1,6 +1,7 @@
 //! The computer's side of phones (decision 0013): once "Allow phones"
-//! is on, tau listens for them, passes on what its host applies to the
-//! Workspace, and hands the host what they ask for, as if asked here.
+//! is on, tau listens for them and carries the window's mirror
+//! ([`crate::mirror`]) both ways, reaching it only as the [`App`]
+//! service.
 
 use std::{
     cell::RefCell,
@@ -13,7 +14,6 @@ use std::{
 
 use gpui::{App, Entity, Task};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tau_remote::{
     Address,
     Server,
@@ -23,11 +23,11 @@ use tau_remote::{
     SystemClock,
     devices::SECRET_LIFETIME,
 };
+use tau_ui_plugin::app::{App as Window, Feed, Up};
 use tokio::runtime::Handle;
 
 use crate::{
-    phones::{LocalAddress, PhoneUp, Phones, PhonesRequest, ShownCode},
-    update::HostUpdate,
+    phones::{LocalAddress, Phones, PhonesRequest, ShownCode},
     workspace::{Workspace, WorkspaceEvent},
 };
 
@@ -98,6 +98,8 @@ impl Keeper {
 
 struct Bridge {
     runtime: Handle,
+    /// The window phones mirror.
+    window: Arc<dyn Window>,
     /// Where the certificate, the paired phones and the settings are.
     dir: PathBuf,
     host: String,
@@ -112,17 +114,15 @@ struct Bridge {
     /// Bumped by every start and stop: a server that finishes starting
     /// after a later one asked for is stopped, not kept.
     generation: u64,
-    /// Phones' views wait to be built again after what the host applied
-    /// (ADR 0046): one rebuild for a burst of updates.
-    refreshing: bool,
 }
 
-/// Serves phones for `workspace` from `dir` (usually
+/// Serves phones the mirror of `window` from `dir` (usually
 /// `~/.config/tau/phones`), starting as soon as the settings are read
-/// if phones were allowed.
+/// if phones were allowed; `workspace` shows the Phones screen.
 pub fn serve(
     runtime: Handle,
     dir: PathBuf,
+    window: Arc<dyn Window>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
@@ -138,7 +138,7 @@ pub fn serve(
         let Some(workspace) = workspace.upgrade() else {
             return;
         };
-        cx.update(|cx| serving(runtime, dir, settings, &workspace, cx));
+        cx.update(|cx| serving(runtime, dir, window, settings, &workspace, cx));
     })
     .detach();
 }
@@ -146,12 +146,14 @@ pub fn serve(
 fn serving(
     runtime: Handle,
     dir: PathBuf,
+    window: Arc<dyn Window>,
     settings: Settings,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
     let bridge = Rc::new(RefCell::new(Bridge {
         runtime,
+        window,
         dir,
         host: host_name(),
         phones: Phones {
@@ -167,136 +169,18 @@ fn serving(
         listening: None,
         countdown: None,
         generation: 0,
-        refreshing: false,
     }));
     if bridge.borrow().settings.allow {
         start(&bridge, workspace, cx);
     }
     show(&bridge, workspace, cx);
 
-    // What the host applies goes to every phone; an answer to a request
-    // goes to the phones there now, unnumbered and not kept. After it,
-    // the views phones asked for are built again (ADR 0046).
-    let echo = bridge.clone();
-    cx.subscribe(workspace, move |workspace, update: &HostUpdate, cx| {
-        let Some(server) = echo.borrow().server.clone() else {
-            return;
-        };
-        if let Some(body) = to_phones(update) {
-            if transient(update) {
-                server.broadcast_transient(body);
-            } else {
-                server.broadcast(body);
-            }
-        }
-        if !matches!(update, HostUpdate::Views { .. }) {
-            refresh_views(&echo, &workspace, cx);
-        }
-    })
-    .detach();
-
-    let requests = bridge;
     cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
-        match event {
-            WorkspaceEvent::Phones(request) => {
-                handle(&requests, request.clone(), &workspace, cx);
-            }
-            // A phone's click, command or key: carried out here, and
-            // what is for its window goes back to it (ADR 0046).
-            WorkspaceEvent::PluginCall {
-                id,
-                plugin,
-                origin,
-                layout,
-                call,
-            } => workspace.update(cx, |ws, cx| {
-                ws.answer_call(*id, plugin, origin, *layout, call, cx)
-            }),
-            _ => {}
+        if let WorkspaceEvent::Phones(request) = event {
+            handle(&bridge, request.clone(), &workspace, cx);
         }
     })
     .detach();
-}
-
-/// Builds the views phones asked for again once what the host applies
-/// now is in, and sends those that changed.
-fn refresh_views(
-    bridge: &Rc<RefCell<Bridge>>,
-    workspace: &Entity<Workspace>,
-    cx: &mut App,
-) {
-    if std::mem::replace(&mut bridge.borrow_mut().refreshing, true) {
-        return;
-    }
-    let (bridge, workspace) = (bridge.clone(), workspace.downgrade());
-    cx.defer(move |cx| {
-        bridge.borrow_mut().refreshing = false;
-        let Some(server) = bridge.borrow().server.clone() else {
-            return;
-        };
-        let changed = workspace
-            .update(cx, |ws, _| ws.refresh_views())
-            .ok()
-            .flatten();
-        if let Some(body) = changed.as_ref().and_then(to_phones) {
-            server.broadcast_transient(body);
-        }
-    });
-}
-
-/// What phones are sent of `update`: all but onboarding, which stays
-/// on the computer, and what plugins only the computer may reach keep
-/// (`HostUpdate::for_phones`).
-pub fn to_phones(update: &HostUpdate) -> Option<Value> {
-    if matches!(update, HostUpdate::Setup(_)) {
-        return None;
-    }
-    serde_json::to_value(update.clone().for_phones())
-        .inspect_err(|error| {
-            eprintln!("tau-ui: cannot send an update: {error}")
-        })
-        .ok()
-}
-
-/// Whether `update` answers a request, which a phone that missed it
-/// asks again: an image's bytes, a plugin's reply. Not kept for phones
-/// that come back, so the feed holds no image.
-pub fn transient(update: &HostUpdate) -> bool {
-    matches!(
-        update,
-        HostUpdate::Picture { .. }
-            | HostUpdate::PluginReply { .. }
-            | HostUpdate::PluginFetched { .. }
-            | HostUpdate::Views { .. }
-            | HostUpdate::Called { .. }
-    )
-}
-
-/// What a phone that needs everything is sent: what `workspace` shows.
-pub fn snapshot(workspace: &Workspace) -> Vec<Value> {
-    to_phones(&workspace.snapshot()).into_iter().collect()
-}
-
-/// What a phone sent, if it is something a phone may ask.
-pub fn from_phone(body: Value) -> Option<PhoneUp> {
-    match serde_json::from_value::<PhoneUp>(body) {
-        Ok(PhoneUp::Event(event)) if !event.from_phone() => None,
-        // A plugin that only the computer may ask (`computer_only`).
-        Ok(PhoneUp::Event(
-            WorkspaceEvent::PluginAct { plugin, .. }
-            | WorkspaceEvent::PluginCall { plugin, .. },
-        )) if tau_ui_remote::plugins::registry()
-            .get(&plugin)
-            .is_some_and(|erased| erased.declaration().reach.computer_only) =>
-        {
-            None
-        }
-        Ok(up) => Some(up),
-        Err(error) => {
-            eprintln!("tau-ui: a phone sent what tau cannot read: {error}");
-            None
-        }
-    }
 }
 
 fn handle(
@@ -312,14 +196,14 @@ fn handle(
             if allow {
                 start(bridge, workspace, cx);
             } else {
-                stop(bridge, workspace, cx);
+                stop(bridge);
             }
         }
         PhonesRequest::ListenOn(ip) => {
             bridge.borrow_mut().settings.listen = Some(ip);
             save(bridge, workspace, cx);
             if bridge.borrow().server.is_some() {
-                stop(bridge, workspace, cx);
+                stop(bridge);
                 start(bridge, workspace, cx);
             }
         }
@@ -512,7 +396,14 @@ fn take_up(
     state.phones.fingerprint = Some(server.fingerprint());
     state.phones.paired = server.paired();
     state.server = Some(server.clone());
-    workspace.update(cx, |ws, _| ws.set_mirrored(true));
+    let sink = server.clone();
+    state.window.mirror(Some(Arc::new(move |feed: Feed| {
+        if feed.transient {
+            sink.broadcast_transient(feed.body);
+        } else {
+            sink.broadcast(feed.body);
+        }
+    })));
 
     let (bridge_for_events, workspace_for_events) =
         (bridge.clone(), workspace.downgrade());
@@ -528,11 +419,7 @@ fn take_up(
     }));
 }
 
-fn stop(
-    bridge: &Rc<RefCell<Bridge>>,
-    workspace: &Entity<Workspace>,
-    cx: &mut App,
-) {
+fn stop(bridge: &Rc<RefCell<Bridge>>) {
     let mut state = bridge.borrow_mut();
     state.generation += 1;
     if let Some(server) = state.server.take() {
@@ -542,10 +429,7 @@ fn stop(
     state.countdown = None;
     state.phones.listening = None;
     state.phones.code = None;
-    workspace.update(cx, |ws, _| {
-        ws.set_mirrored(false);
-        ws.forget_views();
-    });
+    state.window.mirror(None);
 }
 
 fn on_event(
@@ -557,38 +441,25 @@ fn on_event(
 ) {
     match event {
         ServerEvent::NeedSnapshot { conn, .. } => {
-            server.snapshot(conn, snapshot(workspace.read(cx)));
+            let server = server.clone();
+            bridge.borrow().window.snapshot(Box::new(move |bodies| {
+                server.snapshot(conn, bodies)
+            }));
         }
-        ServerEvent::Up { device, body, .. } => match from_phone(body) {
-            // The plugins' views a phone draws, built here for it, and
-            // those it stopped drawing (ADR 0046).
-            Some(PhoneUp::Event(WorkspaceEvent::AskViews(keys))) => {
-                let answers = workspace
-                    .update(cx, |ws, _| ws.ask_views(&device.id, keys));
-                if let Some(body) = to_phones(&answers) {
-                    server.broadcast_transient(body);
-                }
-            }
-            Some(PhoneUp::Event(WorkspaceEvent::DropViews(keys))) => {
-                workspace.update(cx, |ws, _| ws.drop_views(&device.id, &keys));
-            }
-            // The host acts on it as on its own interface's.
-            Some(PhoneUp::Event(event)) => {
-                workspace.update(cx, |_, cx| cx.emit(event));
-            }
-            Some(PhoneUp::Name(name)) => {
+        ServerEvent::Up { device, body, .. } => {
+            let state = bridge.borrow();
+            if let Up::Renamed(name) = state.window.up(&device.id, body) {
                 let server = server.clone();
-                bridge.borrow().runtime.spawn(async move {
+                state.runtime.spawn(async move {
                     if let Err(error) = server.rename(&device.id, &name).await {
                         eprintln!("tau-ui: cannot rename a phone: {error}");
                     }
                 });
             }
-            None => {}
-        },
+        }
         // Its views are built for it no more.
         ServerEvent::Left { device } => {
-            workspace.update(cx, |ws, _| ws.forget_phone(&device));
+            bridge.borrow().window.left(&device);
         }
         ServerEvent::DevicesChanged(paired) => {
             let mut state = bridge.borrow_mut();

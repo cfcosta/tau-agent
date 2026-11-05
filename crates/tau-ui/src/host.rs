@@ -292,6 +292,10 @@ pub struct Host {
     /// 0037), and its receiving end until [`Self::attach`] takes it.
     asks: mpsc::UnboundedSender<conversations::Ask>,
     asked: Mutex<Option<mpsc::UnboundedReceiver<conversations::Ask>>>,
+    /// The window as phones mirror it, which plugins are given
+    /// ([`crate::mirror`]), and its window's half until attached.
+    mirror: Arc<crate::mirror::Mirror>,
+    mirrored: Mutex<Option<crate::mirror::Mirrored>>,
 }
 
 /// What the host knows of one run of this session: the repository it
@@ -496,6 +500,7 @@ impl Host {
         let (pushes, pushed) = mpsc::unbounded_channel();
         let (wakes, woken) = mpsc::unbounded_channel();
         let (asks, asked) = mpsc::unbounded_channel();
+        let (mirror, mirrored) = crate::mirror::Mirror::new();
         // Runs the last tau left running were cut off as it closed: this
         // one runs none of them.
         if let Err(error) = runtime.block_on(store.interrupt_running()) {
@@ -561,6 +566,8 @@ impl Host {
             woken: Mutex::new(Some(woken)),
             asks,
             asked: Mutex::new(Some(asked)),
+            mirror,
+            mirrored: Mutex::new(Some(mirrored)),
         };
         (host, receiver)
     }

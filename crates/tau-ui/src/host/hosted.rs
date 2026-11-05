@@ -151,8 +151,12 @@ impl Host {
                 list: self.list.clone(),
                 asks: self.asks.clone(),
             });
-        services =
-            self.provided(services.offer(names::CONVERSATIONS, conversations));
+        let app: Arc<dyn tau_ui_plugin::app::App> = self.mirror.clone();
+        services = self.provided(
+            services
+                .offer(names::CONVERSATIONS, conversations)
+                .offer(names::APP, app),
+        );
         let repos = self
             .repos
             .lock()
