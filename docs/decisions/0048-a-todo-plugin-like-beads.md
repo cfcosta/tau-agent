@@ -1,6 +1,6 @@
 # 0048: Issues runs can pick up: a todo plugin like beads
 
-- Status: proposed. Design canvas:
+- Status: accepted. Design canvas:
   <https://claude.ai/artifact/4XyXyNm5R3ZE99EjFAwZvf> (the board, a run
   working an issue, an epic's graph, and two phone screens).
 - Date: 2026-11-04

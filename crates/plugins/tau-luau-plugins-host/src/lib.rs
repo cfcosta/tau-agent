@@ -11,6 +11,13 @@
 pub mod agent;
 mod half;
 pub mod jobs;
+
+/// The Luau plugins tau comes with (ADR 0048's tau-todo).
+pub const BUILT_IN: &[registry::BuiltIn] = &[registry::BuiltIn {
+    name: tau_todo::NAME,
+    files: tau_todo::FILES,
+}];
+
 pub mod parity;
 pub mod registry;
 pub mod rewrite;

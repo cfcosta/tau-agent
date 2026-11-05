@@ -762,3 +762,74 @@ fn a_job_runs_at_most_every_minute() {
     let error = block_on_io(load("greet", files)).unwrap_err();
     assert!(error.contains("`fast`"), "{error}");
 }
+
+const BUILT_IN: &[tau_luau_plugins_host::registry::BuiltIn] = &[
+    tau_luau_plugins_host::registry::BuiltIn {
+        name: "shipped",
+        files: &[(
+            "plugin.luau",
+            r#"return require("tau").plugin { name = "shipped", before_tool = function() end }"#,
+        )],
+    },
+];
+
+/// A plugin tau comes with is active once loaded, with no Allow, even
+/// one reaching what a repository plugin would wait for; the repository
+/// cannot have a plugin of its name.
+#[test]
+fn a_built_in_plugin_is_active_and_its_name_is_its_own() {
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    )
+    .with_built_in(BUILT_IN);
+    block_on_io(registry.load_built_in());
+    let names = |registry: &Registry| -> Vec<String> {
+        block_on_io(registry.active())
+            .iter()
+            .map(|active| active.loaded.declaration.name.clone())
+            .collect()
+    };
+    assert_eq!(names(&registry), ["shipped"]);
+    // The repository's `greet` loads beside it; one named `shipped` does
+    // not.
+    let repo = ProjectRepo::init(
+        home.path().join("v1"),
+        Identity::default(),
+        &[
+            ("greet/plugin.luau".to_owned(), TOOL_ONLY.to_owned()),
+            (
+                "shipped/plugin.luau".to_owned(),
+                r#"return require("tau").plugin { name = "shipped" }"#
+                    .to_owned(),
+            ),
+        ],
+    )
+    .unwrap();
+    let trunk = repo.trunk().unwrap();
+    block_on_io(registry.reload(&Project::from(repo), &trunk));
+    assert_eq!(names(&registry), ["shipped", "greet"]);
+    let overview = block_on_io(registry.overview());
+    let entries: Vec<(&str, bool, bool)> = overview
+        .plugins
+        .iter()
+        .map(|entry| {
+            (
+                entry.name.as_str(),
+                entry.built_in,
+                matches!(entry.standing, Standing::Broken { .. }),
+            )
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            ("shipped", true, false),
+            ("greet", false, false),
+            ("shipped", false, true)
+        ]
+    );
+}

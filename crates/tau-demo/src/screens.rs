@@ -931,6 +931,7 @@ fn yours(
             ..Default::default()
         }),
         tests,
+        built_in: false,
     };
     let overview = Overview {
         commit: Some("4f2a9c1".into()),

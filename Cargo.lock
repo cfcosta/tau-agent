@@ -9938,6 +9938,7 @@ dependencies = [
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
+ "tau-todo",
  "tau-tools-host",
  "tau-ui-kit",
  "tau-ui-plugin",
@@ -10352,6 +10353,18 @@ dependencies = [
  "tau-agent",
  "tau-ai",
  "tau-ui-plugin",
+ "tokio-util",
+]
+
+[[package]]
+name = "tau-todo"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "serde_json",
+ "tau-luau-plugins",
+ "tau-luau-plugins-host",
+ "tau-testing",
  "tokio-util",
 ]
 

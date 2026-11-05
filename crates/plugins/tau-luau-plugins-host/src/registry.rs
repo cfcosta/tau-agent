@@ -68,6 +68,8 @@ struct Shared {
     refresh: Box<dyn Fn() + Send + Sync>,
     /// The person's settings, as they are now.
     settings: Box<dyn Fn() -> tau_luau_plugins::LuauSettings + Send + Sync>,
+    /// The Luau plugins tau comes with.
+    built_in: &'static [BuiltIn],
     /// tau's configuration directory, where each plugin's secrets are.
     config: Option<PathBuf>,
     /// The host's runtime, for hooks called from outside it.
@@ -85,6 +87,16 @@ struct State {
     /// Each plugin's files on trunk, by their digest, whatever its
     /// standing: what a workspace's plugins are told apart from.
     trunk: BTreeMap<String, String>,
+    /// The Luau plugins tau comes with, loaded: always active.
+    built_in: Vec<(Entry, Active)>,
+}
+
+/// A Luau plugin tau comes with: its name, and its files by their paths
+/// in its folder.
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltIn {
+    pub name: &'static str,
+    pub files: &'static [(&'static str, &'static str)],
 }
 
 impl PluginHost for Registry {
@@ -101,7 +113,8 @@ impl PluginHost for Registry {
             cx.services.get::<Identity>().cloned().unwrap_or_default(),
             move || refresher.refresh(),
         )
-        .with_settings(move || reader.settings(crate::NAME));
+        .with_settings(move || reader.settings(crate::NAME))
+        .with_built_in(crate::BUILT_IN);
         let registry = match cx.config_dir() {
             Some(config) => registry.with_config(config.to_owned()),
             None => registry,
@@ -111,6 +124,7 @@ impl PluginHost for Registry {
             Some(model) => registry.with_model(model.clone()),
             None => registry,
         };
+        registry.load_built_in().await;
         let watcher = registry.clone();
         cx.runtime.spawn(async move { watcher.watch().await });
         Ok(registry)
@@ -133,6 +147,7 @@ impl Registry {
             allowed_path: allowed,
             state: RwLock::default(),
             tried: tokio::sync::Mutex::default(),
+            built_in: &[],
             refresh: Box::new(refresh),
             settings: Box::new(Default::default),
             config: None,
@@ -175,6 +190,68 @@ impl Registry {
             .runtime
             .clone()
             .or_else(|| tokio::runtime::Handle::try_current().ok())
+    }
+
+    /// The registry, with the Luau plugins tau comes with, `built_in`:
+    /// active once [`Self::load_built_in`] loaded them.
+    pub fn with_built_in(self, built_in: &'static [BuiltIn]) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("built-in plugins are given before the registry is shared");
+        Self(Arc::new(Shared { built_in, ..shared }))
+    }
+
+    /// Loads the Luau plugins tau comes with and makes them active. One
+    /// that does not load is listed as broken, with why: a bug in tau.
+    pub async fn load_built_in(&self) {
+        let mut loaded = Vec::new();
+        for built_in in self.0.built_in {
+            let paths: Vec<(String, Vec<u8>)> = built_in
+                .files
+                .iter()
+                .map(|(path, source)| {
+                    ((*path).to_owned(), source.as_bytes().to_vec())
+                })
+                .collect();
+            let plugin = match Files::from_paths(&paths, crate::runtime::PLUGIN)
+            {
+                Ok(files) => load(built_in.name, files).await,
+                Err(error) => Err(error),
+            };
+            let entry = |standing, declaration| Entry {
+                name: built_in.name.to_owned(),
+                description: String::new(),
+                standing,
+                declaration,
+                tests: Vec::new(),
+                keeps_earlier: false,
+                built_in: true,
+            };
+            match plugin {
+                Ok(plugin) => {
+                    let declaration = plugin.declaration.clone();
+                    let settings = declaration.default_settings();
+                    let mut entry =
+                        entry(Standing::Active, Some(declaration.clone()));
+                    entry.description = declaration.description;
+                    loaded.push((
+                        entry,
+                        Active {
+                            loaded: plugin,
+                            settings,
+                        },
+                    ));
+                }
+                Err(error) => eprintln!(
+                    "tau-luau-plugins: the built-in {} does not load: {error}",
+                    built_in.name
+                ),
+            }
+        }
+        let mut state = self.0.state.write().await;
+        state.built_in = loaded;
+        merge_built_in(&mut state);
+        drop(state);
+        (self.0.refresh)();
     }
 
     /// The registry, keeping each plugin's secrets in tau's configuration
@@ -464,7 +541,30 @@ impl Registry {
             },
             ..State::default()
         };
+        let built_in: Vec<&str> = self
+            .0
+            .built_in
+            .iter()
+            .map(|built_in| built_in.name)
+            .collect();
         for (name, paths) in folders {
+            // A name tau's own plugins have is theirs.
+            if built_in.contains(&name.as_str()) {
+                state.overview.plugins.push(Entry {
+                    name: name.clone(),
+                    description: String::new(),
+                    standing: Standing::Broken {
+                        error: format!(
+                            "`{name}` is the name of a plugin tau comes with"
+                        ),
+                    },
+                    declaration: None,
+                    tests: Vec::new(),
+                    keeps_earlier: false,
+                    built_in: false,
+                });
+                continue;
+            }
             let earlier = before.get(&name).cloned();
             let loaded = match Files::from_paths(&paths, crate::runtime::PLUGIN)
             {
@@ -484,6 +584,7 @@ impl Registry {
                         declaration: None,
                         tests: Vec::new(),
                         keeps_earlier: earlier.is_some(),
+                        built_in: false,
                     });
                     state.active.extend(earlier);
                     continue;
@@ -511,6 +612,7 @@ impl Registry {
                 declaration: Some(declaration.clone()),
                 tests,
                 keeps_earlier: !active && earlier.is_some(),
+                built_in: false,
             });
             if active {
                 allowed.insert(
@@ -528,7 +630,11 @@ impl Registry {
             }
         }
         write_allowed(&path, &allowed).await;
-        *self.0.state.write().await = state;
+        let mut held = self.0.state.write().await;
+        state.built_in = std::mem::take(&mut held.built_in);
+        merge_built_in(&mut state);
+        *held = state;
+        drop(held);
         (self.0.refresh)();
     }
 
@@ -756,5 +862,25 @@ async fn write_allowed(path: &Path, allowed: &BTreeMap<String, Allowed>) {
     .await;
     if let Ok(Err(error)) = written {
         eprintln!("{}: cannot keep what was allowed: {error}", crate::NAME);
+    }
+}
+
+/// Puts the built-in plugins first among `state`'s, once each.
+fn merge_built_in(state: &mut State) {
+    let names: Vec<String> = state
+        .built_in
+        .iter()
+        .map(|(entry, _)| entry.name.clone())
+        .collect();
+    state
+        .overview
+        .plugins
+        .retain(|entry| !(entry.built_in && names.contains(&entry.name)));
+    state
+        .active
+        .retain(|active| !names.contains(&active.loaded.declaration.name));
+    for (entry, active) in state.built_in.iter().rev() {
+        state.overview.plugins.insert(0, entry.clone());
+        state.active.insert(0, active.clone());
     }
 }

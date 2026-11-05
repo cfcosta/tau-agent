@@ -401,6 +401,10 @@ pub struct Entry {
     pub tests: Vec<TestResult>,
     /// An earlier version is active while this one is not.
     pub keeps_earlier: bool,
+    /// It comes with tau, not from the plugins repository: always active,
+    /// and its name is no repository plugin's.
+    #[serde(default)]
+    pub built_in: bool,
 }
 
 /// The plugins repository as the host last read it.

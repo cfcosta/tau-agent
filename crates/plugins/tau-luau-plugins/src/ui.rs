@@ -1441,6 +1441,7 @@ mod tests {
             }),
             tests: Vec::new(),
             keeps_earlier: false,
+            built_in: false,
         };
         let overview = Overview {
             plugins: vec![
@@ -1471,6 +1472,7 @@ mod tests {
                 }),
                 tests: Vec::new(),
                 keeps_earlier: false,
+                built_in: false,
             };
         let nav = |label: &str| {
             Some(crate::Nav {
