@@ -275,22 +275,26 @@ function graph.fnv(text)
 end
 
 -- A new issue's id: `td-` and the first four hex digits of `hash(seed)`,
--- more when those are taken, and a counter past eight; never one in
--- `taken` (the ids there are and were). `hash` is `graph.fnv` but in
--- tests.
+-- more when those are taken, then of the seed hashed again, and past
+-- that the whole digest and a counter; never one in `taken` (the ids
+-- there are and were). `hash` is `graph.fnv` but in tests.
 function graph.new_id(taken, seed, hash)
 	hash = hash or graph.fnv
-	local round = 0
-	while true do
-		local digest = hash(round == 0 and seed or (seed .. "#" .. round))
+	local digest
+	for round = 0, 3 do
+		digest = hash(round == 0 and seed or (seed .. "#" .. round))
 		for length = 4, #digest do
 			local id = "td-" .. string.sub(digest, 1, length)
 			if not taken[id] then
 				return id
 			end
 		end
-		round += 1
 	end
+	local n = 1
+	while taken["td-" .. digest .. string.format("%x", n)] do
+		n += 1
+	end
+	return "td-" .. digest .. string.format("%x", n)
 end
 
 -- The id of `parent`'s next child: its id, a dot, and one past the
