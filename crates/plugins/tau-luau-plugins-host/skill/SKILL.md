@@ -69,6 +69,8 @@ return tau.plugin {
   before_tool = function(call, ctx) end,
   before_request = function(request, ctx) end,
   after_tool_result = function(result, ctx) end,
+  rewrite_context = function(view, ctx) end,
+  rewritten = function(info, ctx) end,
   before_stop = function(stop, ctx) end,
   turn_end = function(turn, ctx) end,
   events = { "tool_end" },   -- what `on_event` hears
@@ -92,6 +94,8 @@ one, its `card`.
 | `before_tool` | `{ id, name, args }`                       | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
 | `before_request` | `{ model, effort, turn, messages }`    | `nil`, or `tau.effort(level)`              | 200 ms |
 | `after_tool_result` | `{ id, name, args, ok, text, truncated }` | `nil`, or `tau.result(text)`  | 2 s    |
+| `rewrite_context` | `{ trigger, turn, tokens, window, messages }` | `nil`, or `tau.rewrite{ keep, insert, drops_conversation }` | 10 s |
+| `rewritten`   | `{ plugin, before, after, drops_conversation }` | nothing                               | 2 s    |
 | `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
 | `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
 | `on_event`    | `{ kind, turn, ... }`, for each of `events` | nothing                                    | 200 ms |
@@ -116,6 +120,19 @@ one, its `card`.
   `text` is the result's text, cut at 256 KiB (`truncated` says so).
   Having `after_tool_result` at all is new reach, which the person
   allows: it changes what the model reads.
+- `rewrite_context` is offered the run's context between turns, when a
+  request overflowed, and while the run is idle: `messages` holds each
+  message's `index` (from 1), `role` (`user`, `assistant`,
+  `toolResult`), `text` (its first 2,000 characters) and `size`; an
+  answer's `calls` (`id`, `name`); a result's `call`, `name` and `ok`.
+  `tau.rewrite{ keep = { 1, 4 }, insert = { { before = 4, text = "..." } },
+  drops_conversation = true }` keeps those messages and puts the texts
+  before them as the person's. The last message always stays, and so
+  does every call with its results. The first plugin that rewrites
+  wins; which plugins may rewrite at all is the person's pick on the
+  Plugins screen. Having `rewrite_context` at all is new reach.
+- `rewritten` hears that a rewrite replaced the context, whoever made
+  it: how many messages there were `before` and are `after`.
 - `tau.effort(level)` sends the turn's request with that reasoning
   effort (`"low"`, `"medium"`, `"high"`…), and the ones after it; the
   first plugin that picks one sets it. `messages` counts the transcript.
@@ -152,7 +169,8 @@ JSON has no empty array: use `array({})` for one that must stay a list.
 ### `tau`
 
 - `tau.plugin(table)`, `tau.block(why)`, `tau.flag(why)`,
-  `tau.start(plan)`, `tau.change(args)`, `tau.result(text)`, `tau.effort(level)`,
+  `tau.start(plan)`, `tau.change(args)`, `tau.result(text)`,
+  `tau.rewrite(rewrite)`, `tau.effort(level)`,
   `tau.continue(message)`.
 - `tau.contains(list, value)`: whether `list` holds `value`.
 

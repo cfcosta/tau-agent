@@ -82,6 +82,20 @@ function tau.start(plan)
 	}
 end
 
+-- What `rewrite_context` answers to rewrite the context: `keep`, the
+-- messages to keep by their `index`; `insert`, texts to put `before` a
+-- message; `drops_conversation`, whether it drops what was said.
+function tau.rewrite(rewrite)
+	return {
+		rewrite = {
+			keep = rewrite.keep or array({}),
+			insert = rewrite.insert or array({}),
+			drops_conversation = rewrite.drops_conversation == true,
+			details = rewrite.details or json.null,
+		},
+	}
+end
+
 -- What `after_tool_result` answers to have the model read `text` in
 -- place of the call's result.
 function tau.result(text)
@@ -471,6 +485,8 @@ function tau._describe(plugin)
 			before_tool = plugin.before_tool ~= nil,
 			before_request = plugin.before_request ~= nil,
 			after_tool_result = plugin.after_tool_result ~= nil,
+			rewrite_context = plugin.rewrite_context ~= nil,
+			rewritten = plugin.rewritten ~= nil,
 			before_stop = plugin.before_stop ~= nil,
 			turn_end = plugin.turn_end ~= nil,
 			on_event = plugin.on_event ~= nil,

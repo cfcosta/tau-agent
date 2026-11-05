@@ -150,6 +150,8 @@ async fn a_plugin_declares_what_it_is() {
             before_tool: true,
             before_request: false,
             after_tool_result: false,
+            rewrite_context: false,
+            rewritten: false,
             before_stop: true,
             turn_end: true,
             on_event: false,

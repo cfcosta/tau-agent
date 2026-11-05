@@ -28,12 +28,14 @@ use tau_agent::{
     error::{PluginError, ToolError},
     event::RunEvent,
     plugin::{
+        ContextView,
         Decision,
         FinishedRun,
         Plugin,
         PluginCtx,
         PluginRun,
         RequestView,
+        Rewrite,
         RunPlan,
         StopDecision,
         ToolCall,
@@ -498,6 +500,8 @@ fn hook_name(hook: &Hook) -> String {
         Hook::BeforeTool => "before_tool".into(),
         Hook::BeforeRequest => "before_request".into(),
         Hook::AfterToolResult => "after_tool_result".into(),
+        Hook::RewriteContext => "rewrite_context".into(),
+        Hook::Rewritten => "rewritten".into(),
         Hook::BeforeStop => "before_stop".into(),
         Hook::TurnEnd => "turn_end".into(),
         Hook::OnEvent => "on_event".into(),
@@ -534,19 +538,7 @@ impl Plugin for LuauPlugins {
         let shared = self.0.run_state(&ctx.run);
         {
             let mut state = shared.lock().await;
-            // The state a fork or a resumed run inherits: each plugin's
-            // last.
-            for record in plan.records() {
-                let Ok(Record::State {
-                    plugin,
-                    state: kept,
-                }) = serde_json::from_value::<Record>(record.clone())
-                else {
-                    continue;
-                };
-                state.stored.insert(plugin.clone(), kept.clone());
-                state.states.insert(plugin, kept);
-            }
+            inherit(plan, &mut state);
             for active in self.0.active().iter() {
                 self.0.draw(active, &mut state, ctx).await;
             }
@@ -579,6 +571,45 @@ impl Plugin for LuauPlugins {
             plugins: self.clone(),
             state: shared,
         }))
+    }
+
+    /// An idle run's compaction takes the plugins in when one of them
+    /// rewrites the context.
+    async fn start_idle(
+        &self,
+        plan: &RunPlan,
+        ctx: &PluginCtx,
+    ) -> Result<Option<Box<dyn PluginRun>>, PluginError> {
+        if !self
+            .0
+            .active()
+            .iter()
+            .any(|active| active.loaded.declaration.hooks.rewrite_context)
+        {
+            return Ok(None);
+        }
+        let shared = self.0.run_state(&ctx.run);
+        inherit(plan, &mut *shared.lock().await);
+        Ok(Some(Box::new(LuauRun {
+            plugins: self.clone(),
+            state: shared,
+        })))
+    }
+}
+
+/// The state a fork, a resumed or an idle run inherits: each plugin's
+/// last.
+fn inherit(plan: &RunPlan, state: &mut RunState) {
+    for record in plan.records() {
+        let Ok(Record::State {
+            plugin,
+            state: kept,
+        }) = serde_json::from_value::<Record>(record.clone())
+        else {
+            continue;
+        };
+        state.stored.insert(plugin.clone(), kept.clone());
+        state.states.insert(plugin, kept);
     }
 }
 
@@ -651,6 +682,96 @@ impl PluginRun for LuauRun {
             }
         }
         Ok(Decision::Allow)
+    }
+
+    async fn rewrite_context(
+        &mut self,
+        view: &ContextView<'_>,
+        ctx: &PluginCtx,
+    ) -> Result<Option<Rewrite>, PluginError> {
+        let inner = &self.plugins.0;
+        if !inner
+            .active()
+            .iter()
+            .any(|active| active.loaded.declaration.hooks.rewrite_context)
+        {
+            return Ok(None);
+        }
+        let input = json!({
+            "trigger": view.trigger,
+            "turn": view.turn,
+            "tokens": view.tokens,
+            "window": view.window,
+            "messages": crate::rewrite::summary(view.transcript),
+        });
+        let mut state = self.state.lock().await;
+        // The first plugin that rewrites wins.
+        for active in inner.active().iter() {
+            let Some(answer) = inner
+                .call(
+                    active,
+                    Hook::RewriteContext,
+                    input.clone(),
+                    &mut state,
+                    ctx,
+                    Arc::new(NoReach),
+                )
+                .await
+            else {
+                continue;
+            };
+            if answer["rewrite"].is_null() {
+                continue;
+            }
+            let name = &active.loaded.declaration.name;
+            match crate::rewrite::rebuild(
+                view.transcript,
+                &answer["rewrite"],
+                name,
+                ctx.now(),
+            ) {
+                Ok(Some(rewrite)) => return Ok(Some(rewrite)),
+                Ok(None) => {}
+                Err(error) => {
+                    ctx.publish(&Record::Error {
+                        plugin: name.clone(),
+                        hook: hook_name(&Hook::RewriteContext),
+                        error,
+                    })
+                    .await;
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    async fn rewritten(
+        &mut self,
+        replaced: &[tau_ai::message::Message],
+        rewrite: &Rewrite,
+        ctx: &PluginCtx,
+    ) -> Result<(), PluginError> {
+        let inner = &self.plugins.0;
+        let input = json!({
+            "plugin": rewrite.details["plugin"],
+            "before": replaced.len(),
+            "after": rewrite.messages.len(),
+            "drops_conversation": rewrite.drops_conversation,
+        });
+        let mut state = self.state.lock().await;
+        for active in inner.active().iter() {
+            inner
+                .call(
+                    active,
+                    Hook::Rewritten,
+                    input.clone(),
+                    &mut state,
+                    ctx,
+                    Arc::new(NoReach),
+                )
+                .await;
+        }
+        Ok(())
     }
 
     async fn after_tool_result(

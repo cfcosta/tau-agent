@@ -26,12 +26,11 @@ pub fn seam(seam: Seam) -> Luau {
         Seam::BeforeTool => Luau::Hook("before_tool"),
         Seam::BeforeRequest => Luau::Hook("before_request"),
         Seam::AfterTool => Luau::Hook("after_tool_result"),
+        Seam::Rewrite | Seam::StartIdle => Luau::Hook("rewrite_context"),
+        Seam::Rewritten => Luau::Hook("rewritten"),
         Seam::OnEvent => Luau::Hook("on_event"),
         Seam::BeforeStop => Luau::Hook("before_stop"),
         Seam::Finish => Luau::Hook("run_end"),
-        Seam::StartIdle | Seam::Rewrite | Seam::Rewritten => {
-            Luau::Excluded(NOT_YET)
-        }
     }
 }
 

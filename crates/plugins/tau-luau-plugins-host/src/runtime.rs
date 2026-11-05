@@ -236,6 +236,12 @@ pub enum Hook {
     BeforeRequest,
     /// After a call, with `{ id, name, args, ok, text, truncated }`.
     AfterToolResult,
+    /// Offered the context, with `{ trigger, turn, tokens, window,
+    /// messages }` ([`crate::rewrite::summary`]).
+    RewriteContext,
+    /// A rewrite replaced the context, with `{ plugin, before, after,
+    /// drops_conversation }`.
+    Rewritten,
     BeforeStop,
     TurnEnd,
     /// One of the run's events it names in `events`, as
@@ -262,9 +268,10 @@ impl Hook {
             Self::Start
             | Self::BeforeTool
             | Self::AfterToolResult
+            | Self::Rewritten
             | Self::TurnEnd
             | Self::Action(_) => 2_000,
-            Self::BeforeStop | Self::RunEnd => 10_000,
+            Self::BeforeStop | Self::RunEnd | Self::RewriteContext => 10_000,
         })
     }
 
@@ -279,6 +286,8 @@ impl Hook {
             Self::BeforeTool => "p.before_tool(input, ctx)".into(),
             Self::BeforeRequest => "p.before_request(input, ctx)".into(),
             Self::AfterToolResult => "p.after_tool_result(input, ctx)".into(),
+            Self::RewriteContext => "p.rewrite_context(input, ctx)".into(),
+            Self::Rewritten => "p.rewritten(input, ctx)".into(),
             Self::BeforeStop => "p.before_stop(input, ctx)".into(),
             Self::TurnEnd => "p.turn_end(input, ctx)".into(),
             Self::OnEvent => "p.on_event(input, ctx)".into(),
@@ -300,6 +309,8 @@ impl Hook {
             Self::BeforeTool => declaration.hooks.before_tool,
             Self::BeforeRequest => declaration.hooks.before_request,
             Self::AfterToolResult => declaration.hooks.after_tool_result,
+            Self::RewriteContext => declaration.hooks.rewrite_context,
+            Self::Rewritten => declaration.hooks.rewritten,
             Self::BeforeStop => declaration.hooks.before_stop,
             Self::TurnEnd => declaration.hooks.turn_end,
             Self::OnEvent => declaration.hooks.on_event,

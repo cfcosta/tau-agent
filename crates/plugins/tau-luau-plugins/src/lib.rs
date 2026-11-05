@@ -106,6 +106,10 @@ pub struct Hooks {
     #[serde(default)]
     pub after_tool_result: bool,
     #[serde(default)]
+    pub rewrite_context: bool,
+    #[serde(default)]
+    pub rewritten: bool,
+    #[serde(default)]
     pub before_stop: bool,
     #[serde(default)]
     pub turn_end: bool,
@@ -137,6 +141,9 @@ impl Hooks {
         }
         if self.start && !before.start {
             grown.push("`start`".into());
+        }
+        if self.rewrite_context && !before.rewrite_context {
+            grown.push("`rewrite_context`".into());
         }
         grown
     }
@@ -196,6 +203,9 @@ impl Declaration {
             (hooks.before_tool, Seam::BeforeTool),
             (hooks.before_request, Seam::BeforeRequest),
             (hooks.after_tool_result, Seam::AfterTool),
+            (hooks.rewrite_context, Seam::Rewrite),
+            (hooks.rewrite_context, Seam::StartIdle),
+            (hooks.rewritten, Seam::Rewritten),
             (hooks.before_stop, Seam::BeforeStop),
             (hooks.turn_end || hooks.on_event, Seam::OnEvent),
             (hooks.run_end, Seam::Finish),
@@ -442,6 +452,8 @@ mod tests {
             before_tool: true,
             before_request: true,
             after_tool_result: true,
+            rewrite_context: true,
+            rewritten: true,
             before_stop: true,
             turn_end: true,
             on_event: true,
@@ -456,6 +468,9 @@ mod tests {
                 Seam::BeforeTool,
                 Seam::BeforeRequest,
                 Seam::AfterTool,
+                Seam::Rewrite,
+                Seam::StartIdle,
+                Seam::Rewritten,
                 Seam::BeforeStop,
                 Seam::OnEvent,
                 Seam::Finish

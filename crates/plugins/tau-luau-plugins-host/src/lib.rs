@@ -12,6 +12,7 @@ pub mod agent;
 mod half;
 pub mod parity;
 pub mod registry;
+pub mod rewrite;
 pub mod runtime;
 pub mod skill;
 pub mod testing;

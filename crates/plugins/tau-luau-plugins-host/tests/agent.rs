@@ -966,3 +966,72 @@ fn a_plugin_adds_to_what_a_run_starts_with() {
     let input = text.find("build it").expect(&text);
     assert!(rules < input, "{text}");
 }
+
+const FORGETFUL: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "forgetful",
+  rewrite_context = function(view, ctx)
+    -- Once a call came back, keep the person's words and the last one.
+    for _, message in ipairs(view.messages) do
+      if message.role == "toolResult" then
+        local keep = {}
+        for _, m in ipairs(view.messages) do
+          if m.role == "user" then table.insert(keep, m.index) end
+        end
+        return tau.rewrite({
+          keep = keep,
+          insert = { { before = #view.messages, text = "Calls were dropped." } },
+          drops_conversation = true,
+        })
+      end
+    end
+  end,
+  rewritten = function(info, ctx)
+    ctx.state.rewritten = info.before .. "->" .. info.after
+  end,
+}
+"#;
+
+/// `rewrite_context` rewrites a run's context from its answer, and every
+/// plugin's `rewritten` hears how it went.
+#[test]
+fn a_plugin_rewrites_a_runs_context() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "ls" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("forgetful", FORGETFUL)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let (outcome, events) = block_on_io(async {
+        let mut run = agent.start("look", &store);
+        let events: Vec<RunEvent> = run.events().collect().await;
+        (run.outcome().await.unwrap(), events)
+    });
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            RunEvent::ContextRewritten { plugin, .. } if plugin.as_ref() == NAME
+        )),
+        "{events:?}"
+    );
+    // The second request went with the rewritten context: the note
+    // before the last message, which keeps the call it answers.
+    let second = &llm.requests()[1].transcript;
+    let roles: Vec<&str> =
+        second.iter().map(|message| message.role()).collect();
+    assert_eq!(roles, ["user", "user", "assistant", "toolResult"]);
+    let last_state =
+        records(&store, &outcome.run)
+            .into_iter()
+            .rev()
+            .find_map(|record| match record {
+                Record::State { state, .. } => Some(state),
+                _ => None,
+            });
+    assert_eq!(last_state, Some(json!({ "rewritten": "3->4" })));
+}
