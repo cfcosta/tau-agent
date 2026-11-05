@@ -249,6 +249,8 @@ pub enum Hook {
     OnEvent,
     /// A run's title, for `tau.title`, with `{ task, model }`.
     Title,
+    /// One of tau's notices, for `tau.notify`, with `{ title, body }`.
+    Notify,
     RunEnd,
     View,
     /// Its settings page, with the settings shown as input (ADR 0029).
@@ -274,7 +276,10 @@ impl Hook {
             | Self::Rewritten
             | Self::TurnEnd
             | Self::Action(_) => 2_000,
-            Self::BeforeStop | Self::RunEnd | Self::RewriteContext => 10_000,
+            Self::BeforeStop
+            | Self::RunEnd
+            | Self::RewriteContext
+            | Self::Notify => 10_000,
         })
     }
 
@@ -295,6 +300,7 @@ impl Hook {
             Self::TurnEnd => "p.turn_end(input, ctx)".into(),
             Self::OnEvent => "p.on_event(input, ctx)".into(),
             Self::Title => "p.title(input, ctx)".into(),
+            Self::Notify => "p.notify(input, ctx)".into(),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
             Self::View => "p.view(ctx.state, ctx)".into(),
             Self::SettingsView => "p.settings.view(input, ctx)".into(),
@@ -319,6 +325,7 @@ impl Hook {
             Self::TurnEnd => declaration.hooks.turn_end,
             Self::OnEvent => declaration.hooks.on_event,
             Self::Title => declaration.hooks.title,
+            Self::Notify => declaration.hooks.notify,
             Self::RunEnd => declaration.hooks.run_end,
             Self::View => declaration.hooks.view,
             Self::SettingsView => declaration.hooks.settings_view,
@@ -441,6 +448,9 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
         let missing = match slot.as_str() {
             s if s == tau_ui_plugin::title::TITLE.name() => {
                 (!declaration.hooks.title).then_some("a `title` hook")
+            }
+            s if s == tau_ui_plugin::notify::NOTIFY.name() => {
+                (!declaration.hooks.notify).then_some("a `notify` hook")
             }
             s if s == tau_ui_plugin::compaction::COMPACTION.name() => {
                 declaration

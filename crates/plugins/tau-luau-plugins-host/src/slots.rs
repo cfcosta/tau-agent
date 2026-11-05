@@ -5,7 +5,11 @@
 //! hook that fails or runs out of time answers nothing.
 
 use serde_json::json;
-use tau_ui_plugin::{compaction::Compaction, title::Title};
+use tau_ui_plugin::{
+    compaction::Compaction,
+    notify::{Notice, Notify},
+    title::Title,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -67,6 +71,43 @@ impl Title for LuauTitle {
                         .collect()
                 }))
         })
+    }
+}
+
+/// `tau.notify` from the active plugin that fills it: each notice goes
+/// to its `notify`, on the host's runtime. Opening one is the person's
+/// own, wherever the plugin sent it.
+pub struct LuauNotify(pub Registry);
+
+impl Notify for LuauNotify {
+    fn show(&self, notice: Notice, _opened: Box<dyn FnOnce() + Send>) {
+        let Some(runtime) = self.0.runtime() else {
+            return;
+        };
+        let registry = self.0.clone();
+        runtime.spawn(async move {
+            let Some(active) =
+                registry.filler(tau_ui_plugin::notify::NOTIFY.name()).await
+            else {
+                return;
+            };
+            let outcome = active
+                .loaded
+                .call(
+                    &Hook::Notify,
+                    json!({ "title": notice.title, "body": notice.body }),
+                    &context(&registry, &active),
+                    std::sync::Arc::new(NoReach),
+                    CancellationToken::new(),
+                )
+                .await;
+            if let Some(error) = outcome.error {
+                eprintln!(
+                    "tau-luau-plugins: {}'s notify: {error}",
+                    active.loaded.declaration.name
+                );
+            }
+        });
     }
 }
 

@@ -80,6 +80,7 @@ return tau.plugin {
   view = function(state, ctx) end,
   fills = { "tau.title" },  -- the slots it fills
   title = function(run, ctx) end,
+  notify = function(notice, ctx) end,
   compaction = { rewriters = { "tau-fast-compaction" } },
 }
 ```
@@ -105,6 +106,7 @@ one, its `card`.
 | `on_event`    | `{ kind, turn, ... }`, for each of `events` | nothing                                    | 200 ms |
 | `run_end`     | `{ stop, turns, cost }`                    | nothing                                    | 10 s   |
 | `title`       | `{ task, model }`, outside any run         | a title, or `nil`                          | 2 s    |
+| `notify`      | `{ title, body }`, outside any run         | nothing                                    | 10 s   |
 | `view`        | the run's state                            | `{ status?, note?, page? }`, or `{}`       | 200 ms |
 | `actions[x]`  | a button's or an input's arguments         | nothing; what it does to `ctx.state` stays | 2 s    |
 
@@ -136,12 +138,15 @@ one, its `card`.
   does every call with its results. The first plugin that rewrites
   wins; which plugins may rewrite at all is the person's pick on the
   Plugins screen. Having `rewrite_context` at all is new reach.
-- A plugin may fill two of tau's slots, named in `fills`. Filling one
+- A plugin may fill three of tau's slots, named in `fills`. Filling one
   is new reach, and tau-luau-plugins must be the slot's pick on the
   Plugins screen; the first active plugin by name that fills it does.
   - `tau.title`: `title` writes a run's title from its `task` (at most
     36 characters; `nil` leaves the prompt's first line). It runs
     outside any run: `ctx.run` and `ctx.state` are empty.
+  - `tau.notify`: `notify` gets each notice tau would show while its
+    window is not in front, and sends it where the plugin reaches over
+    HTTP, such as a push service.
   - `tau.compaction`: which plugins' rewrites run. The Luau plugins'
     own always do; the `compaction` table's `rewriters` names the
     others, such as `tau-fast-compaction`.

@@ -54,11 +54,10 @@ pub fn slot(name: &str) -> Option<Luau> {
         n if n == tau_ui_plugin::compaction::COMPACTION.name() => {
             return Some(Luau::Hook("compaction"));
         }
-        n if n == tau_ui_plugin::forge::FORGE.name()
-            || n == tau_ui_plugin::notify::NOTIFY.name() =>
-        {
-            "not yet: it needs a hook to reach the network"
+        n if n == tau_ui_plugin::notify::NOTIFY.name() => {
+            return Some(Luau::Hook("notify"));
         }
+        n if n == tau_ui_plugin::forge::FORGE.name() => NOT_YET,
         _ => return None,
     };
     debug_assert!(slots::ALL.contains(&name));

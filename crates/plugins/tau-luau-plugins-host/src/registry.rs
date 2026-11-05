@@ -70,6 +70,8 @@ struct Shared {
     settings: Box<dyn Fn() -> tau_luau_plugins::LuauSettings + Send + Sync>,
     /// tau's configuration directory, where each plugin's secrets are.
     config: Option<PathBuf>,
+    /// The host's runtime, for hooks called from outside it.
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 #[derive(Default)]
@@ -101,7 +103,8 @@ impl PluginHost for Registry {
         let registry = match cx.config_dir() {
             Some(config) => registry.with_config(config.to_owned()),
             None => registry,
-        };
+        }
+        .with_runtime(cx.runtime.clone());
         let watcher = registry.clone();
         cx.runtime.spawn(async move { watcher.watch().await });
         Ok(registry)
@@ -127,7 +130,27 @@ impl Registry {
             refresh: Box::new(refresh),
             settings: Box::new(Default::default),
             config: None,
+            runtime: None,
         }))
+    }
+
+    /// The registry, calling hooks asked from outside the host's runtime
+    /// on `runtime`.
+    pub fn with_runtime(self, runtime: tokio::runtime::Handle) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("the runtime is given before the registry is shared");
+        Self(Arc::new(Shared {
+            runtime: Some(runtime),
+            ..shared
+        }))
+    }
+
+    /// The host's runtime, once given, else the one this runs on.
+    pub fn runtime(&self) -> Option<tokio::runtime::Handle> {
+        self.0
+            .runtime
+            .clone()
+            .or_else(|| tokio::runtime::Handle::try_current().ok())
     }
 
     /// The registry, keeping each plugin's secrets in tau's configuration

@@ -136,6 +136,9 @@ pub struct Hooks {
     /// `title`: a run's title, for `tau.title`.
     #[serde(default)]
     pub title: bool,
+    /// `notify`: where tau's notices go, for `tau.notify`.
+    #[serde(default)]
+    pub notify: bool,
     #[serde(default)]
     pub run_end: bool,
     #[serde(default)]
@@ -183,9 +186,10 @@ pub const EVENTS: [&str; 8] = [
 ];
 
 /// The slots a Luau plugin may fill (ADR 0045), as `fills` names them.
-pub const SLOTS: [&str; 2] = [
+pub const SLOTS: [&str; 3] = [
     tau_ui_plugin::title::TITLE.name(),
     tau_ui_plugin::compaction::COMPACTION.name(),
+    tau_ui_plugin::notify::NOTIFY.name(),
 ];
 
 /// What a plugin that fills `tau.compaction` says: the plugins whose
@@ -517,6 +521,7 @@ mod tests {
             turn_end: true,
             on_event: true,
             title: true,
+            notify: true,
             run_end: true,
             view: true,
             settings_view: true,

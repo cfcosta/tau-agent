@@ -459,3 +459,65 @@ fn a_plugin_fills_only_what_it_may() {
     );
     assert!(no_hook.contains("a `title` hook"), "{no_hook}");
 }
+
+/// A plugin that fills `tau.notify` sends each notice where it reaches:
+/// here, a server on this computer that hears the notice's words.
+#[test]
+fn a_plugin_sends_tau_s_notices_on() {
+    use std::io::{Read, Write};
+
+    use tau_luau_plugins_host::slots::LuauNotify;
+    use tau_ui_plugin::notify::{Notice, Notify};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let heard = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buffer = vec![0u8; 4096];
+        let read = stream.read(&mut buffer).unwrap();
+        let _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        );
+        String::from_utf8_lossy(&buffer[..read]).into_owned()
+    });
+    let source = format!(
+        r#"
+local tau = require("tau")
+return tau.plugin {{
+  name = "greet",
+  uses = {{ network = {{ "127.0.0.1" }} }},
+  fills = {{ "tau.notify" }},
+  notify = function(notice, ctx)
+    http.request({{ method = "POST", url = "http://127.0.0.1:{port}/", body = notice.title .. ": " .. notice.body }})
+  end,
+}}
+"#
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    )
+    .with_runtime(runtime.handle().clone());
+    let (v1, trunk) = project(home.path(), 1, &source, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    block_on_io(registry.allow("greet")).unwrap();
+    LuauNotify(registry).show(
+        Notice {
+            title: "Ready to land".into(),
+            body: "fix the login".into(),
+        },
+        Box::new(|| {}),
+    );
+    let request = heard.join().unwrap();
+    assert!(
+        request.ends_with("Ready to land: fix the login"),
+        "{request}"
+    );
+}

@@ -493,6 +493,7 @@ function tau._describe(plugin)
 			turn_end = plugin.turn_end ~= nil,
 			on_event = plugin.on_event ~= nil,
 			title = plugin.title ~= nil,
+			notify = plugin.notify ~= nil,
 			run_end = plugin.run_end ~= nil,
 			view = plugin.view ~= nil,
 			settings_view = plugin.settings ~= nil and plugin.settings.view ~= nil,
