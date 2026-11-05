@@ -73,7 +73,9 @@ return tau.plugin {
 }
 ```
 
-Every field but `name` is optional.
+Every field but `name` is optional. `tools` adds tools the model can
+call, each with its arguments' JSON Schema, its `call` and, if it draws
+one, its `card`.
 
 ### Hooks
 

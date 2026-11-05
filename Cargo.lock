@@ -9884,6 +9884,7 @@ dependencies = [
  "tau-codemode-host",
  "tau-jev",
  "tau-luau-plugins",
+ "tau-plugins",
  "tau-skills",
  "tau-store",
  "tau-store-sqlite",

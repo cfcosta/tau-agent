@@ -42,6 +42,23 @@ pub mod names {
     /// The computer's window, as phones mirror it
     /// (`Arc<dyn crate::app::App>`).
     pub const APP: &str = "tau.app";
+
+    /// Every service the host offers by name.
+    pub const ALL: [&str; 13] = [
+        WORKSPACE_DIR,
+        TURN_HOOKS,
+        RUN_COMMANDS,
+        RUN_WAKE,
+        AGENT_REPO,
+        REPO_LAUNCHER,
+        CONVERSATIONS,
+        OUTSIDE_TOOLS,
+        OUTSIDE_RESOURCES,
+        UNATTENDED,
+        MODEL,
+        IDENTITY,
+        APP,
+    ];
 }
 
 /// Values by type, cheap to clone.

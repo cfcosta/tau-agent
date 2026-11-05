@@ -463,8 +463,14 @@ pub const SETUP: Point<AtSetup, SetupView> = Point::new("tau.setup.step");
 pub const PANE: Point<AtRun, PaneView> = Point::new("tau.run.pane");
 
 /// Every point `tau-ui` declares.
-pub const ALL: [&str; 28] = [
+pub const ALL: [&str; 34] = [
     CARD.name,
+    CARD_STAT.name,
+    CHANGES.name,
+    REPO_KIND.name,
+    KIND_ROW_END.name,
+    KIND_ROW_LINE.name,
+    WAITING.name,
     TRANSCRIPT.name,
     REWRITE.name,
     CONTEXT.name,

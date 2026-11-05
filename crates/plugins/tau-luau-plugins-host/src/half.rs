@@ -11,14 +11,7 @@ use tau_luau_plugins::{
     ui::PAGE,
 };
 use tau_ui_kit::theme::Tone;
-use tau_ui_plugin::{
-    HostCx,
-    HostHalf,
-    Link,
-    PluginInfo,
-    RepoCtx,
-    RunCtx,
-};
+use tau_ui_plugin::{HostCx, HostHalf, Link, PluginInfo, RepoCtx, RunCtx};
 
 /// tau-luau-plugins on the host.
 #[derive(Debug, Clone, Copy, Default)]

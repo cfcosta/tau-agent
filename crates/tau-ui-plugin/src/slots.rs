@@ -27,10 +27,21 @@ impl<T: ?Sized> Slot<T> {
     }
 
     /// Its name, such as `tau.vcs`.
-    pub fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         self.name
     }
 }
+
+/// Every slot the kernel asks plugins to fill, by name.
+pub const ALL: [&str; 7] = [
+    crate::store::STORE.name(),
+    crate::vcs::VCS.name(),
+    crate::forge::FORGE.name(),
+    crate::provider::PROVIDER.name(),
+    crate::compaction::COMPACTION.name(),
+    crate::title::TITLE.name(),
+    crate::notify::NOTIFY.name(),
+];
 
 /// The plugin key the interface's state keeps the person's picks under
 /// (ADR 0045): for each slot by name, the plugin they picked to fill it.

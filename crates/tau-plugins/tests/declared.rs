@@ -51,15 +51,7 @@ fn the_kernels_slots_are_ones_a_plugin_declares_it_fills() {
         .flat_map(|plugin| plugin.declaration().reach.fills.iter())
         .map(String::as_str)
         .collect();
-    for slot in [
-        tau_ui_plugin::vcs::VCS.name(),
-        tau_ui_plugin::forge::FORGE.name(),
-        tau_ui_plugin::notify::NOTIFY.name(),
-        tau_ui_plugin::title::TITLE.name(),
-        tau_ui_plugin::store::STORE.name(),
-        tau_ui_plugin::provider::PROVIDER.name(),
-        tau_ui_plugin::compaction::COMPACTION.name(),
-    ] {
+    for slot in tau_ui_plugin::slots::ALL {
         assert!(filled.contains(slot), "nobody declares it fills {slot}");
     }
 }
