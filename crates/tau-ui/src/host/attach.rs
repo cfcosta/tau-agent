@@ -1428,10 +1428,14 @@ impl Host {
                 }
                 WorkspaceEvent::Ui(event) => {
                     // Every interface shows it: this one did already, and
-                    // applying it again leaves it as it is.
-                    let (saved, shown) = (event.clone(), event.clone());
+                    // applying it again leaves it as it is. The host
+                    // applies it here, in the order the window made it,
+                    // and is at work until it is saved.
+                    handler.apply_ui(event);
+                    let (counted, shown) = (handler.job(), event.clone());
                     handler.spawn(async move |host| {
-                        if let Err(error) = host.set_ui(&saved).await {
+                        let _counted = counted;
+                        if let Err(error) = host.save_ui().await {
                             eprintln!(
                                 "tau-ui: cannot save the interface's state: {error:#}"
                             );

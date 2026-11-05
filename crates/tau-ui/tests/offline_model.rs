@@ -844,3 +844,28 @@ fn a_phone_whose_clock_went_back_is_still_heard() {
     net.settle();
     assert_eq!(draft(&mut net), Some(json!("after the clock went back")));
 }
+
+/// Words typed one after another on the computer: the host keeps, saves
+/// and starts again with the last, as the window shows it.
+#[test]
+fn the_host_keeps_the_last_of_quick_edits() {
+    let mut net = Net::new(1, Keep::Disk);
+    let computer = &mut net.computer;
+    computer.workspace.update(&mut computer.cx, |ws, cx| {
+        for n in 0..200 {
+            ws.set_plugin_ui(
+                PLUGIN,
+                DRAFTS[0],
+                Some(json!(format!("w{n}"))),
+                cx,
+            );
+        }
+    });
+    net.settle();
+    let last = Some(json!("w199"));
+    assert_eq!(draft(&mut net), last, "the window shows the last word");
+    let kept = net.host.ui_state().get(PLUGIN, DRAFTS[0]).cloned();
+    assert_eq!(kept, last, "the host keeps the last word");
+    net.restart();
+    assert_eq!(draft(&mut net), last, "the last word outlives a restart");
+}

@@ -28,6 +28,13 @@ impl Host {
 
     /// Applies `event` and saves the result (ADR 0028).
     pub async fn set_ui(&self, event: &UiEvent) -> anyhow::Result<()> {
+        self.apply_ui(event);
+        self.save_ui().await
+    }
+
+    /// Applies `event` to the UI state the host keeps, at once: events
+    /// applied in the order the window made them end as the window does.
+    pub fn apply_ui(&self, event: &UiEvent) {
         self.ui_state.lock().expect("not poisoned").apply(event);
         // A pick of who fills a slot holds from now on (ADR 0045).
         if event.plugin == tau_ui_plugin::slots::PICKS {
@@ -37,6 +44,10 @@ impl Host {
             );
             self.catalog_changed();
         }
+    }
+
+    /// Saves the UI state as it is now.
+    pub async fn save_ui(&self) -> anyhow::Result<()> {
         let path = Self::ui_state_path(&self.config);
         self.ui_saving
             .save(
