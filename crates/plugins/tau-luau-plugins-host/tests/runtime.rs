@@ -578,3 +578,43 @@ async fn every_ui_piece_reads_as_a_tree() {
     let written = node.value().to_string();
     assert!(!written.contains(r#""piece":"invalid""#), "{written}");
 }
+
+const ECHO: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "echo",
+  tools = {
+    echo = {
+      description = "Gives its arguments back.",
+      call = function(args, ctx) return args end,
+    },
+  },
+}
+"#;
+
+/// What a hook is given reaches it whole, whatever it holds: brackets
+/// that would close a long string, and text up to near the megabyte
+/// `json.decode` reads.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hook_is_given_its_input_whole() {
+    let echo = Files {
+        source: ECHO.into(),
+        ..Files::default()
+    };
+    let loaded = load("echo", echo).await.unwrap();
+    let long = "x]]".repeat(100_000);
+    for text in ["]]", "]=]", "a]==]b[[c", long.as_str()] {
+        let input = json!({ "text": text, "nested": [text, { "k": text }] });
+        let out = loaded
+            .call(
+                &Hook::Tool("echo".into()),
+                input.clone(),
+                &context("Monday"),
+                no_reach(),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(out.error, None);
+        assert_eq!(out.value, input);
+    }
+}

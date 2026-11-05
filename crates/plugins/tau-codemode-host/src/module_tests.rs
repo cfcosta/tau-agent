@@ -246,6 +246,7 @@ pub(crate) async fn run_test(
             },
             store: Default::default(),
             cancel,
+            inputs: Vec::new(),
         },
     )
     .await;

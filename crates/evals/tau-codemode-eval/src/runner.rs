@@ -328,6 +328,7 @@ pub(crate) async fn grade_case(
                 .map_err(|error| error.to_string())?,
             store: Snapshot::new(),
             cancel: CancellationToken::new(),
+            inputs: Vec::new(),
         },
     )
     .await;

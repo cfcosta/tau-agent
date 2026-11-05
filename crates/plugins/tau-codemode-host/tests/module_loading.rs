@@ -80,6 +80,7 @@ impl ModuleHost {
                 source: options::parse(source).unwrap(),
                 store: Snapshot::new(),
                 cancel,
+                inputs: Vec::new(),
             },
         )
         .await
@@ -229,6 +230,7 @@ async fn a_module_whose_version_does_not_match_its_content_never_runs() {
             source: options::parse("require('cycle')").unwrap(),
             store: Snapshot::new(),
             cancel: CancellationToken::new(),
+            inputs: Vec::new(),
         },
     )
     .await;

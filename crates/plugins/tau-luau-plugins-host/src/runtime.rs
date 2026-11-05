@@ -427,24 +427,29 @@ impl Loaded {
                 wall: Duration::ZERO,
             };
         }
+        // The input and the context are globals, read as JSON: never
+        // source for the compiler, however large a transcript is.
         let script = format!(
             "local tau = require(\"tau\")\n\
              local p = require(\"plugin\")\n\
-             local input = json.decode({input})\n\
-             local ctx = tau._ctx(json.decode({context}))\n\
+             local input = json.decode(__input)\n\
+             local ctx = tau._ctx(json.decode(__context))\n\
              local value = {call}\n\
              if value == nil then value = json.null end\n\
              return {{ value = value, state = ctx.state, logs = ctx._logs }}\n",
-            input = long_string(&input.to_string()),
-            context = long_string(&json!(context).to_string()),
             call = hook.expression(),
         );
+        let inputs = vec![
+            ("__input".to_owned(), input.to_string()),
+            ("__context".to_owned(), json!(context).to_string()),
+        ];
         let started = std::time::Instant::now();
         let (value, error) = run(
             self.modules.clone(),
             reach,
             Reaches::of(&self.declaration),
             script,
+            inputs,
             hook.limit(),
             cancel,
         )
@@ -525,6 +530,7 @@ pub async fn run_tests(
             Arc::new(NoReach),
             Reaches::none(name),
             script,
+            Vec::new(),
             TEST_LIMIT,
             cancel.clone(),
         )
@@ -580,6 +586,7 @@ pub async fn evaluate(
         Arc::new(NoReach),
         Reaches::none(name),
         script,
+        Vec::new(),
         limit,
         cancel,
     )
@@ -620,13 +627,14 @@ impl Reaches {
     }
 }
 
-/// Runs `script` and gives back the table it returned, or why it
-/// failed.
+/// Runs `script`, with `inputs` as its string globals, and gives back
+/// the table it returned, or why it failed.
 async fn run(
     modules: Arc<Modules>,
     reach: Arc<dyn Reach>,
     reaches: Reaches,
     script: String,
+    inputs: Vec<(String, String)>,
     limit: Duration,
     cancel: CancellationToken,
 ) -> (Value, Option<String>) {
@@ -648,6 +656,7 @@ async fn run(
         },
         store: Default::default(),
         cancel,
+        inputs,
     };
     let outcome = tau_codemode_host::run(host, request).await;
     if let Some(failure) = outcome.failure {

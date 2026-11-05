@@ -144,6 +144,9 @@ pub struct Request {
     /// The store as the run's records fold it.
     pub store: Snapshot,
     pub cancel: CancellationToken,
+    /// Strings the script reads as globals, by name: what a caller hands
+    /// it without the compiler reading it as source.
+    pub inputs: Vec<(String, String)>,
 }
 
 /// Runs `request` against `host` to its end.
@@ -161,12 +164,13 @@ pub async fn run(host: Arc<dyn Host>, request: Request) -> Outcome {
         request.cancel,
         deadline,
     ));
-    let failure = match drive(&state, &request.source.code).await {
-        Ok(items) => items
-            .into_iter()
-            .find_map(|item| state.push(item).err().map(Failure::Error)),
-        Err(failure) => Some(failure),
-    };
+    let failure =
+        match drive(&state, &request.source.code, &request.inputs).await {
+            Ok(items) => items
+                .into_iter()
+                .find_map(|item| state.push(item).err().map(Failure::Error)),
+            Err(failure) => Some(failure),
+        };
     state.finish(
         failure,
         started.elapsed(),
@@ -175,11 +179,18 @@ pub async fn run(host: Arc<dyn Host>, request: Request) -> Outcome {
 }
 
 /// Runs the script; `Ok` holds the items its return values make.
-async fn drive(state: &Arc<State>, code: &str) -> Result<Vec<Item>, Failure> {
+async fn drive(
+    state: &Arc<State>,
+    code: &str,
+    inputs: &[(String, String)],
+) -> Result<Vec<Item>, Failure> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())
         .map_err(|error| Failure::Sandbox(error.to_string()))?;
     let setup = (|| -> mlua::Result<Thread> {
         install(&lua, state)?;
+        for (name, text) in inputs {
+            lua.globals().set(name.as_str(), lua.create_string(text)?)?;
+        }
         lua.sandbox(true)?;
         lua.set_memory_limit(MEMORY_LIMIT)?;
         set_interrupt(&lua, state);

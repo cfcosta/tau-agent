@@ -672,6 +672,7 @@ async fn script(host: &Arc<CardHost>, code: &str) -> Outcome {
             source: options::parse(code).expect("the source parses"),
             store: store::Snapshot::new(),
             cancel: CancellationToken::new(),
+            inputs: Vec::new(),
         },
     )
     .await

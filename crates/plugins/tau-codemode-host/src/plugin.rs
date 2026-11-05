@@ -768,6 +768,7 @@ impl AgentTool for CodemodeTool {
                 source,
                 store: snapshot,
                 cancel: ctx.cancel.clone(),
+                inputs: Vec::new(),
             },
         )
         .await;

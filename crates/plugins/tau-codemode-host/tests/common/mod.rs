@@ -196,6 +196,7 @@ pub async fn script_with(
             source,
             store,
             cancel,
+            inputs: Vec::new(),
         },
     )
     .await

@@ -54,6 +54,7 @@ async fn on(agent: &Arc<Agent>, code: &str) -> Outcome {
             source: options::parse(code).expect("the source parses"),
             store: Snapshot::new(),
             cancel: CancellationToken::new(),
+            inputs: Vec::new(),
         },
     )
     .await
