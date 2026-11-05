@@ -1,5 +1,6 @@
-//! Onboarding and accounts: the ChatGPT sign-in and plan, plugins'
-//! steps around the repositories and the first run.
+//! Onboarding: plugins' steps (the provider's sign-in first, others
+//! around the repositories), the repositories, and the first run; and
+//! the alert of a run the provider stopped.
 
 use tau_ui_plugin::provider::{StopAction, Stopped};
 

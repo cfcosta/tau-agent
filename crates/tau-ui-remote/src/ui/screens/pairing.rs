@@ -111,7 +111,7 @@ fn welcome(t: &Theme, cx: &mut Context<Workspace>) -> Div {
         .child(heading_block(
             "tau, from your phone".into(),
             "Connect to the tau running on your computer. Your runs work \
-             there, with your repositories, tools and ChatGPT sign-in. This \
+             there, with your repositories, tools and sign-ins. This \
              phone shows and steers them.",
             t,
         ))

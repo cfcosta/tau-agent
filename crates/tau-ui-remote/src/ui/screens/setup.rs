@@ -1342,7 +1342,7 @@ fn welcome(
 ) -> Div {
     let motion = &ws.setup_motion;
     let steps = [
-        ("Connect ChatGPT", "Runs use your ChatGPT plan."),
+        ("Connect a model", "Sign in to what your runs go to."),
         (
             "Sign in where your code is",
             "Plugins ask what they need, such as a sign-in to clone from.",
@@ -1390,9 +1390,8 @@ fn welcome(
                 0,
                 (
                     "Coding agents on your repositories",
-                    "tau runs agents on the repositories you choose, on your \
-                     ChatGPT plan. Every turn is a change you can go back to, \
-                     fork or compare.",
+                    "tau runs agents on the repositories you choose. Every \
+                     turn is a change you can go back to, fork or compare.",
                 ),
                 Type::HERO_LARGE,
                 560.,
@@ -2109,11 +2108,14 @@ fn ready(
                 .child(chip(repo))
                 .child(chip(model.unwrap_or_else(|| "no model yet".to_owned())))
                 .when(on_plan, |row| {
+                    // What runs use, as the provider says it.
                     row.child(
-                        div()
-                            .typeset(Type::CAPTION)
-                            .text_color(t.green)
-                            .child("· on your ChatGPT plan"),
+                        div().typeset(Type::CAPTION).text_color(t.green).child(
+                            format!(
+                                "· on your {}",
+                                ws.catalog().models.access.label
+                            ),
+                        ),
                     )
                 })
                 .child(div().flex_1())

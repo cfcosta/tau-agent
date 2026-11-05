@@ -384,7 +384,7 @@ impl Workspace {
                     .child(ui::icon(Icon::Search, IconSize::BASE, t.dim))
                     .child(self.model_search.clone())
                     .child(ui::mono(
-                        "on your ChatGPT plan",
+                        format!("on your {}", models.access.label),
                         Type::MICRO,
                         t.dim,
                     )),
@@ -402,8 +402,8 @@ impl Workspace {
                             if signed_in {
                                 "No model matches."
                             } else {
-                                "Sign in with ChatGPT and enable plan use to \
-                                 see your models."
+                                "Sign in on the Models screen to see your \
+                                 models."
                             },
                             t,
                         ))
