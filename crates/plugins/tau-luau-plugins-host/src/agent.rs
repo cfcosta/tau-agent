@@ -360,6 +360,7 @@ fn hook_name(hook: &Hook) -> String {
         Hook::Tool(name) => format!("tool {name}"),
         Hook::Card(name) => format!("card of {name}"),
         Hook::BeforeTool => "before_tool".into(),
+        Hook::BeforeRequest => "before_request".into(),
         Hook::BeforeStop => "before_stop".into(),
         Hook::TurnEnd => "turn_end".into(),
         Hook::RunEnd => "run_end".into(),
@@ -538,7 +539,7 @@ impl PluginRun for LuauRun {
     /// the view of each plugin whose version changed or that is new.
     async fn before_request(
         &mut self,
-        _view: &RequestView<'_>,
+        view: &RequestView<'_>,
         ctx: &PluginCtx,
     ) -> Result<Option<ReasoningEffort>, PluginError> {
         let inner = &self.plugins.0;
@@ -548,6 +549,33 @@ impl PluginRun for LuauRun {
             let name = &active.loaded.declaration.name;
             if state.drawn.get(name) != Some(&active.loaded.digest) {
                 inner.draw(active, &mut state, ctx).await;
+            }
+        }
+        // The first plugin that picks an effort sets it.
+        let input = json!({
+            "model": view.model,
+            "effort": view.effort,
+            "turn": view.turn,
+            "messages": view.transcript.len(),
+        });
+        for active in inner.active().iter() {
+            let Some(answer) = inner
+                .call(
+                    active,
+                    Hook::BeforeRequest,
+                    input.clone(),
+                    &mut state,
+                    ctx,
+                    Arc::new(NoReach),
+                )
+                .await
+            else {
+                continue;
+            };
+            if let Ok(effort) = serde_json::from_value::<ReasoningEffort>(
+                answer["effort"].clone(),
+            ) {
+                return Ok(Some(effort));
             }
         }
         Ok(None)

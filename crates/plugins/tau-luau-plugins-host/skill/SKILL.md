@@ -66,6 +66,7 @@ return tau.plugin {
   settings = { schema = { ... }, default = { ... }, view = function(settings, ctx) end },
   tools = { name = { description, parameters, call, card } },
   before_tool = function(call, ctx) end,
+  before_request = function(request, ctx) end,
   before_stop = function(stop, ctx) end,
   turn_end = function(turn, ctx) end,
   run_end = function(run, ctx) end,
@@ -84,6 +85,7 @@ one, its `card`.
 | tool `call`   | the arguments, as `parameters` describes   | a JSON value, or `error(message)`          | 60 s   |
 | tool `card`   | the call's arguments and the result        | a view piece, drawn on the call's card     | 200 ms |
 | `before_tool` | `{ id, name, args }`                       | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
+| `before_request` | `{ model, effort, turn, messages }`    | `nil`, or `tau.effort(level)`              | 200 ms |
 | `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
 | `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
 | `run_end`     | `{ stop, turns, cost }`                    | nothing                                    | 10 s   |
@@ -96,6 +98,9 @@ one, its `card`.
   for review too; it needs `uses.change_args = true`, which the person
   allows as they allow new tools. The tool checks the new arguments as
   it would the model's, and the plugins after it see them.
+- `tau.effort(level)` sends the turn's request with that reasoning
+  effort (`"low"`, `"medium"`, `"high"`…), and the ones after it; the
+  first plugin that picks one sets it. `messages` counts the transcript.
 - `tau.continue(message)` keeps the run going with `message` as the
   next thing the model reads; a run continues at most three times.
 - A hook that errors or runs out of time counts as `nil`, and its error
@@ -122,7 +127,7 @@ JSON has no empty array: use `array({})` for one that must stay a list.
 ### `tau`
 
 - `tau.plugin(table)`, `tau.block(why)`, `tau.flag(why)`,
-  `tau.change(args)`, `tau.continue(message)`.
+  `tau.change(args)`, `tau.effort(level)`, `tau.continue(message)`.
 - `tau.contains(list, value)`: whether `list` holds `value`.
 
 ### `tau.ui`: what views are made of

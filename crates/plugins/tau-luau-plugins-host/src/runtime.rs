@@ -230,6 +230,8 @@ pub enum Hook {
     /// A tool's card, with `{ call, result }` as input.
     Card(String),
     BeforeTool,
+    /// Before each turn's request, with `{ model, effort, turn, messages }`.
+    BeforeRequest,
     BeforeStop,
     TurnEnd,
     RunEnd,
@@ -245,7 +247,10 @@ impl Hook {
     pub fn limit(&self) -> Duration {
         Duration::from_millis(match self {
             Self::Tool(_) => 60_000,
-            Self::Card(_) | Self::View | Self::SettingsView => 200,
+            Self::Card(_)
+            | Self::View
+            | Self::SettingsView
+            | Self::BeforeRequest => 200,
             Self::BeforeTool | Self::TurnEnd | Self::Action(_) => 2_000,
             Self::BeforeStop | Self::RunEnd => 10_000,
         })
@@ -259,6 +264,7 @@ impl Hook {
                 "p.tools[\"{name}\"].card(input.call, input.result, ctx)"
             ),
             Self::BeforeTool => "p.before_tool(input, ctx)".into(),
+            Self::BeforeRequest => "p.before_request(input, ctx)".into(),
             Self::BeforeStop => "p.before_stop(input, ctx)".into(),
             Self::TurnEnd => "p.turn_end(input, ctx)".into(),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
@@ -276,6 +282,7 @@ impl Hook {
             Self::Tool(name) => tool(name).is_some(),
             Self::Card(name) => tool(name).is_some_and(|t| t.card),
             Self::BeforeTool => declaration.hooks.before_tool,
+            Self::BeforeRequest => declaration.hooks.before_request,
             Self::BeforeStop => declaration.hooks.before_stop,
             Self::TurnEnd => declaration.hooks.turn_end,
             Self::RunEnd => declaration.hooks.run_end,

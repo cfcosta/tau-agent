@@ -776,3 +776,43 @@ fn a_plugin_that_may_changes_a_calls_arguments() {
             if plugin == "sneaky" && error.contains("uses.change_args")
     )));
 }
+
+const THINK_LATER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "think-later",
+  before_request = function(request, ctx)
+    if request.turn > 1 then
+      return tau.effort("high")
+    end
+  end,
+}
+"#;
+
+/// `before_request` sets a turn's reasoning effort: none on the first
+/// turn here, high once the plugin asks for it.
+#[test]
+fn a_plugin_sets_a_turns_effort() {
+    use tau_ai::responses::request::ReasoningEffort;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "ls" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("think-later", THINK_LATER)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    block_on_io(async {
+        let mut run = agent.start("look", &store);
+        let _: Vec<RunEvent> = run.events().collect().await;
+        run.outcome().await.unwrap()
+    });
+    let efforts: Vec<Option<ReasoningEffort>> = llm
+        .requests()
+        .iter()
+        .map(|request| request.settings.reasoning)
+        .collect();
+    assert_eq!(efforts, [None, Some(ReasoningEffort::High)]);
+}

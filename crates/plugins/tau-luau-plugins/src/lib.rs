@@ -100,6 +100,8 @@ pub struct Hooks {
     #[serde(default)]
     pub before_tool: bool,
     #[serde(default)]
+    pub before_request: bool,
+    #[serde(default)]
     pub before_stop: bool,
     #[serde(default)]
     pub turn_end: bool,
@@ -163,6 +165,7 @@ impl Declaration {
         [
             (!self.tools.is_empty(), Seam::Tools),
             (hooks.before_tool, Seam::BeforeTool),
+            (hooks.before_request, Seam::BeforeRequest),
             (hooks.before_stop, Seam::BeforeStop),
             (hooks.turn_end, Seam::OnEvent),
             (hooks.run_end, Seam::Finish),
@@ -405,6 +408,7 @@ mod tests {
         assert!(declaration.seams().is_empty());
         declaration.hooks = Hooks {
             before_tool: true,
+            before_request: true,
             before_stop: true,
             turn_end: true,
             run_end: true,
@@ -415,6 +419,7 @@ mod tests {
             declaration.seams(),
             [
                 Seam::BeforeTool,
+                Seam::BeforeRequest,
                 Seam::BeforeStop,
                 Seam::OnEvent,
                 Seam::Finish
