@@ -60,7 +60,6 @@ use tau_ui_plugin::{
         WORKSPACE_PLUGIN,
     },
 };
-use tau_vcs_host::Identity;
 use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
@@ -186,7 +185,6 @@ pub struct Host {
     given: Services,
     /// How tau-memory searches notes: by meaning in the app, by keywords
     /// in tests, where no model is loaded.
-    memory_search: tau_memory_host::Search,
     /// The tools plugins offer outside any run: an agent's polls call
     /// them (ADR 0037).
     outside_tools: tau_ui_plugin::OutsideTools,
@@ -375,12 +373,6 @@ const LEAD: &str = "You are tau, a coding agent working in the user's \
 const CLOSING: &str = "Be concise, and say which tests you ran.";
 
 impl Host {
-    /// Who the host's commits are by, under the person's jj config when
-    /// the app started it ([`HostConfig::identity`]).
-    fn identity(&self) -> Identity {
-        self.config.identity.clone()
-    }
-
     /// What the host knows of `run` this session.
     fn session_of(&self, run: &RunId) -> SessionRun {
         let sessions = self.sessions.lock().expect("not poisoned");
@@ -428,9 +420,6 @@ impl Host {
             Self::without_plugins(runtime, agent, store, config);
         host.slots = slots;
         host.given_llm = false;
-        // The app searches memory with docbert's model; hosts built
-        // elsewhere, as in tests, by keywords alone.
-        host.memory_search = tau_memory_host::Search::Semantic;
         host.host_plugins();
         host.runtime.block_on(host.list_kinds());
         let host = host.with_listed_repos()?;
@@ -523,7 +512,6 @@ impl Host {
             given_llm: true,
             provider_override: Arc::default(),
             given: Services::default(),
-            memory_search: tau_memory_host::Search::Keywords,
             outside_tools: tau_ui_plugin::OutsideTools::default(),
             outside_resources: tau_ui_plugin::OutsideResources::default(),
             unattended: tau_ui_plugin::Unattended::default(),

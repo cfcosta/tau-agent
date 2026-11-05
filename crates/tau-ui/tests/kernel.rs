@@ -32,36 +32,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "the demo's own data for each plugin's screens",
     ),
     (
-        "tau-ui/src/host.rs",
-        "tau_vcs_host",
-        "the person's identity for commits, which the host gives tau-vcs",
-    ),
-    (
-        "tau-ui/src/host.rs",
-        "tau_memory_host",
-        "how memory searches, which the host picks once it has a model",
-    ),
-    (
-        "tau-ui/src/host/hosted.rs",
-        "tau_memory_host",
-        "the memory search, offered as a service",
-    ),
-    (
-        "tau-ui/src/host/hosted.rs",
-        "tau_skills",
-        "the skills directory, offered as a service",
-    ),
-    (
-        "tau-ui/src/host/config.rs",
-        "tau_skills",
-        "where the skills directory is",
-    ),
-    (
-        "tau-ui/src/accounts.rs",
-        "tau_chatgpt",
-        "the ChatGPT plan account the sign-in keeps",
-    ),
-    (
         "tau-ui/src/host/artifacts.rs",
         "tau_tools",
         "the artifacts tau-tools grants, which the host keeps",

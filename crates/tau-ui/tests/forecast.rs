@@ -127,9 +127,8 @@ fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
         repos: dir.path().join("repos"),
         settings: dir.path().join("models.json"),
         repo_list: dir.path().join("repos.json"),
-        skills: std::env::temp_dir().join("tau-test-skills-none"),
         home: None,
-        identity: Identity::default(),
+        services: Default::default(),
     };
     let agent = tau_agent::agent::Agent::new(llm.clone()).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);

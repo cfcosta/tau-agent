@@ -128,18 +128,17 @@ impl Host {
                 })
             },
         );
-        let mut services = Services::default()
-            .offer(tau_memory_host::SEARCH, self.memory_search)
+        // What the app gives (`HostConfig::services`), then the host's
+        // own.
+        let mut services = self
+            .config
+            .services
+            .clone()
             .offer(names::OUTSIDE_TOOLS, self.outside_tools.clone())
             .offer(names::OUTSIDE_RESOURCES, self.outside_resources.clone())
             .offer(names::UNATTENDED, self.unattended.clone())
             .with(saved)
             .with(ConfigDir(self.config.credentials.dir.clone()))
-            .offer(names::IDENTITY, self.identity())
-            .offer(
-                tau_skills::DIR_SERVICE,
-                tau_skills::SkillsDir(self.config.skills.clone()),
-            )
             .offer(names::MODEL, self.plugin_model())
             .with(self.plugin_jobs.clone());
         if let Some(home) = &self.config.home {

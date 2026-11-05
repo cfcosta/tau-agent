@@ -107,6 +107,7 @@ fn main() {
     tau::install();
     let args = args();
     let credentials = Credentials::default_dir();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let config = HostConfig {
         model: args.model.clone(),
         credentials: credentials.clone(),
@@ -114,9 +115,8 @@ fn main() {
         repos: HostConfig::default_repos(),
         settings: HostConfig::default_settings(),
         repo_list: HostConfig::default_repo_list(),
-        skills: HostConfig::default_skills(),
-        home: std::env::var_os("HOME").map(std::path::PathBuf::from),
-        identity: HostConfig::default_identity(),
+        home: home.clone(),
+        services: tau_ui::hosted::app_services(home.as_deref()),
     };
     // The host starts signed out or in: what fills `tau.provider` says
     // whether there is a model to run on, and setup opens when there is

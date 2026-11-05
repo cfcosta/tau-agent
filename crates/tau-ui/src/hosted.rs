@@ -55,6 +55,24 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_compaction_chain::ChainHost)
 }
 
+/// What the app gives its plugins beside the host's own services
+/// (`HostConfig::services`): the person's identity for commits, under
+/// their jj config; their skills in `home`'s `~/.agents/skills`; memory
+/// searching by meaning, with docbert's model.
+pub fn app_services(home: Option<&std::path::Path>) -> tau_ui_plugin::Services {
+    use tau_ui_plugin::services::names;
+    let services = tau_ui_plugin::Services::default()
+        .offer(names::IDENTITY, tau_vcs_host::Identity::from_environment())
+        .offer(tau_memory_host::SEARCH, tau_memory_host::Search::Semantic);
+    match home {
+        Some(home) => services.offer(
+            tau_skills::DIR_SERVICE,
+            tau_skills::SkillsDir(home.join(tau_skills::SKILLS_DIR)),
+        ),
+        None => services,
+    }
+}
+
 /// Gives the plugins the host halves tau-ui has ([`halves`]), unless the
 /// process installed its own: what a host does before it makes any
 /// plugin's host state. The `tau` app installs every half first.

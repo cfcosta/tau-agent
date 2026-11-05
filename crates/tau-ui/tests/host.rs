@@ -137,9 +137,8 @@ fn host_of(
         // The test's own: a test that saves settings leaves others be.
         settings: fresh_repo_list().with_extension("models"),
         repo_list: fresh_repo_list(),
-        skills: std::env::temp_dir().join("tau-test-skills-none"),
         home: None,
-        identity: Identity::default(),
+        services: Default::default(),
     };
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     // Memory's pass after each run asks the model once more: these
@@ -182,9 +181,11 @@ fn host_with_skills(
         repos: own.join("repos"),
         settings: fresh_repo_list().with_extension("models"),
         repo_list: fresh_repo_list(),
-        skills: skills.to_owned(),
         home: None,
-        identity: Identity::default(),
+        services: tau_ui_plugin::Services::default().offer(
+            tau_skills::DIR_SERVICE,
+            tau_skills::SkillsDir(skills.to_owned()),
+        ),
     };
     let agent = Agent::new(llm).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
@@ -2029,9 +2030,8 @@ fn config_on(data: &Path) -> HostConfig {
         repos: data.join("repos"),
         settings: data.join("models.json"),
         repo_list: data.join("repos.json"),
-        skills: std::env::temp_dir().join("tau-test-skills-none"),
         home: None,
-        identity: Identity::default(),
+        services: Default::default(),
     }
 }
 
@@ -2097,9 +2097,10 @@ fn sign_in_saved(
         scopes: scopes.iter().map(|scope| (*scope).to_owned()).collect(),
         saved_at: String::new(),
     };
-    let chatgpt = credentials.chatgpt().unwrap();
-    chatgpt.store().save(&record).unwrap();
-    chatgpt.store().set_active(&record.id()).unwrap();
+    let store =
+        tau_ai::chatgpt::Store::open(credentials.dir.join("chatgpt")).unwrap();
+    store.save(&record).unwrap();
+    store.set_active(&record.id()).unwrap();
     record.id()
 }
 
@@ -2112,7 +2113,7 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     std::fs::create_dir_all(&credentials.dir).unwrap();
     std::fs::write(credentials.dir.join("openai-key"), "sk-saved").unwrap();
     let plan = sign_in_saved(&credentials, "a@example.com", PLAN);
-    let account = credentials.plan_account().unwrap();
+    let account = tau_chatgpt::plan_account(&credentials.dir).unwrap();
     assert_eq!(account, plan);
     let (host, _events) = Host::new(config).unwrap();
     let host = host.with_repository(
@@ -2127,7 +2128,7 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     // Switching to an account that declined plan usage leaves nothing
     // to run on: no model is offered and runs do not start.
     let declined = sign_in_saved(&credentials, "b@example.com", &["openid"]);
-    let left = credentials.plan_account();
+    let left = tau_chatgpt::plan_account(&credentials.dir);
     assert_eq!(left, None);
     let models = host.models();
     assert!(!models.access.signed_in);
@@ -2142,7 +2143,10 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     assert!(error.to_string().contains("no ChatGPT plan"), "{error}");
 
     // Back on the plan account, runs use the plan again.
-    credentials.switch(plan.as_str()).unwrap();
+    tau_ai::chatgpt::Store::open(credentials.dir.join("chatgpt"))
+        .unwrap()
+        .set_active(&plan)
+        .unwrap();
     assert!(host.models().access.signed_in);
 }
 
@@ -4083,9 +4087,8 @@ fn agents_live_in_a_repository_each_beside_the_plugins_repository() {
         repos: root.path().join("repos"),
         settings: root.path().join("models.json"),
         repo_list: root.path().join("repos.json"),
-        skills: root.path().join("skills"),
         home: None,
-        identity: Identity::default(),
+        services: Default::default(),
     };
     // Agents' repositories are the kind tau-agents keeps, one per folder
     // of its directory; the plugins repository is tau-luau-plugins'.
@@ -4348,9 +4351,8 @@ fn the_interfaces_state_comes_back_after_a_restart() {
             repos: repo_list.with_file_name("repos"),
             settings: fresh_repo_list().with_extension("models"),
             repo_list: repo_list.clone(),
-            skills: std::env::temp_dir().join("tau-test-skills-none"),
             home: None,
-            identity: Identity::default(),
+            services: Default::default(),
         };
         let agent = Agent::new(ScriptedModel::new()).name("coder");
         Host::with_agent(runtime, agent, store, config).0

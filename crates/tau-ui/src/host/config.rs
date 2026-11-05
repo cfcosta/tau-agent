@@ -18,16 +18,15 @@ pub struct HostConfig {
     pub settings: PathBuf,
     /// The repositories tau lists, usually `$XDG_DATA_HOME/tau/repos.json`.
     pub repo_list: PathBuf,
-    /// The person's skills, usually `~/.agents/skills` (tau-skills).
-    pub skills: PathBuf,
     /// The person's home, where plugins find the other tools' files they
     /// say they read (`Manifest::reads`): `$HOME` in the app. `None`
     /// gives plugins no home, as in tests.
     pub home: Option<PathBuf>,
-    /// Who tau's commits are by, and where the jj config they follow
-    /// is: the app's is [`Identity::from_environment`], the person's
-    /// own; the default reads no config.
-    pub identity: Identity,
+    /// What the app gives its plugins beside the host's own services:
+    /// the person's identity for commits, their skills, how memory
+    /// searches ([`crate::hosted::app_services`]). None, as in tests,
+    /// gives them their defaults.
+    pub services: tau_ui_plugin::Services,
 }
 
 impl HostConfig {
@@ -36,12 +35,6 @@ impl HostConfig {
     /// ([`Host::default_model`]).
     pub fn default_model(&self) -> String {
         self.model.clone().unwrap_or_default()
-    }
-
-    /// tau's identity under the person's jj config, as this process
-    /// finds it ([`Identity::from_environment`]).
-    pub fn default_identity() -> Identity {
-        Identity::from_environment()
     }
 
     /// `$XDG_DATA_HOME/tau`, or `~/.local/share/tau`.
@@ -55,15 +48,6 @@ impl HostConfig {
             })
             .unwrap_or_else(|| PathBuf::from("."))
             .join("tau")
-    }
-
-    /// `~/.agents/skills`: where other agents keep the person's skills
-    /// too.
-    pub fn default_skills() -> PathBuf {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(tau_skills::SKILLS_DIR)
     }
 
     pub fn default_store() -> PathBuf {

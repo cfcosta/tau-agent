@@ -273,9 +273,11 @@ impl Disk {
             repos: self.root.join("data/repos"),
             settings: self.root.join("models.json"),
             repo_list: self.repo_list(),
-            skills: std::env::temp_dir().join("tau-test-skills-none"),
             home: None,
-            identity: self.identity(),
+            services: tau_ui_plugin::Services::default().offer(
+                tau_ui_plugin::services::names::IDENTITY,
+                self.identity(),
+            ),
         };
         let agent = tau_agent::agent::Agent::new(llm).name("coder");
         let (host, events) = Host::with_agent(runtime, agent, store, config);

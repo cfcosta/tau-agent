@@ -20,3 +20,6 @@ tau-agent.workspace = true
 tau-ai.workspace = true
 tau-ui-plugin.workspace = true
 tokio = { workspace = true, optional = true, features = ["sync", "macros", "rt"] }
+
+[dev-dependencies]
+tempfile.workspace = true

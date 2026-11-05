@@ -797,9 +797,8 @@ impl Life {
             repos: root.join("repos"),
             settings: root.join("models.json"),
             repo_list: list,
-            skills: std::env::temp_dir().join("tau-test-skills-none"),
             home: None,
-            identity: Identity::default(),
+            services: Default::default(),
         };
         let agent = Agent::new(Coder::default()).name("coder");
         let (host, events) = Host::with_agent(runtime, agent, store, config);

@@ -9605,6 +9605,7 @@ dependencies = [
  "tau-agent",
  "tau-ai",
  "tau-ui-plugin",
+ "tempfile",
  "tokio",
 ]
 

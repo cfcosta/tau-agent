@@ -114,9 +114,8 @@ fn host(
         repos: data.join("repos"),
         settings: data.join("models.json"),
         repo_list: data.join("repos.json"),
-        skills: std::env::temp_dir().join("tau-test-skills-none"),
         home: None,
-        identity: tau_vcs_host::Identity::default(),
+        services: Default::default(),
     };
     let token = Token {
         token: "ghu_token".into(),
