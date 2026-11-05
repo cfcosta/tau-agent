@@ -10491,6 +10491,7 @@ dependencies = [
  "tau-ai",
  "tau-store",
  "tau-store-sqlite",
+ "tau-testing",
  "tau-ui-kit",
  "tokio",
  "tokio-util",

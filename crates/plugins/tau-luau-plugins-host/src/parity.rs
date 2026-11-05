@@ -45,6 +45,10 @@ pub fn slot(name: &str) -> Option<Luau> {
             "landing, lanes and the sweep hold workspaces open for longer \
              than a hook may run"
         }
+        n if n == tau_ui_plugin::loop_::LOOP.name() => {
+            "the loop streams the model's replies and holds a turn's tool \
+             calls running, which a hook cannot"
+        }
         n if n == tau_ui_plugin::provider::PROVIDER.name() => {
             "a provider streams the model's replies, which a hook cannot"
         }

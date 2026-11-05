@@ -35,6 +35,7 @@ pub mod gate;
 pub mod host;
 pub mod jobs;
 pub mod kinds;
+pub mod loop_;
 pub mod manifest;
 pub mod model;
 pub mod notify;

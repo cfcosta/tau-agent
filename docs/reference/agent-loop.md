@@ -7,6 +7,13 @@ pi, a note says so.
 
 ## One run
 
+What follows, from step 1 to the end, is what tau-agent's own loop
+does (`runner::driver::Kernel`). An agent can be given another
+(`Agent::with_loop`; tau's host takes whatever fills `tau.loop`): it
+drives the same steps, `begin` (1), `turn` (each pass of 2) and `end`
+(3 on), in its own order, and checks itself against the runner's model
+(`tau_agent::testing::loop_model`).
+
 0. Before the run: store it as `running`, start each plugin in
    registration order (`Plugin::start` may change the input, the
    context before it, the instructions and the reasoning effort), then

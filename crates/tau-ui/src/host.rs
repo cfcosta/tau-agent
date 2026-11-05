@@ -362,6 +362,8 @@ fn coder(
         // cap themselves: the constitution by its holds, a goal by its
         // continuations.
         .limits(Limits::default().max_continuations(u32::MAX))
+        // Driven by what fills `tau.loop`, else tau-agent's own loop.
+        .with_loop(Arc::new(tau_ui_plugin::loop_::SlotLoop::new(slots.clone())))
 }
 
 /// What every run's instructions start with, before the plugins' parts

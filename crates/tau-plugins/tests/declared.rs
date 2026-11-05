@@ -51,7 +51,12 @@ fn the_kernels_slots_are_ones_a_plugin_declares_it_fills() {
         .flat_map(|plugin| plugin.declaration().reach.fills.iter())
         .map(String::as_str)
         .collect();
-    for slot in tau_ui_plugin::slots::ALL {
+    // `tau.loop` has tau-agent's own loop when nothing fills it.
+    let kernel_default = [tau_ui_plugin::loop_::LOOP.name()];
+    for slot in tau_ui_plugin::slots::ALL
+        .into_iter()
+        .filter(|slot| !kernel_default.contains(slot))
+    {
         assert!(filled.contains(slot), "nobody declares it fills {slot}");
     }
 }

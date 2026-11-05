@@ -487,6 +487,25 @@ Each step lands on main by itself and leaves tau working.
     Luau plugin adds to the prompt through `start`.
 11. **`tau.loop`**, with the runner's invariant tests run against any
     filler.
+    As built: `tau_agent::runner::driver::Loop` drives a run once the
+    kernel assembled it (tools, plugins started, session opened with its
+    lineage) and until its outcome: `run` and `compact_idle`, over a
+    `LoopRun` whose steps (`begin`, `turn`, `end`) keep the runner's
+    invariants whole, so a filler orders them and decides between them,
+    but cannot store, emit or drop a tool call outside them. `Kernel`
+    is tau-agent's runner; an `Agent` drives with it unless given
+    another (`Agent::with_loop`), and a run's sub-agents with its
+    agent's. `tau_ui_plugin::loop_::LOOP` is the slot, and the host
+    builds its agent over `SlotLoop`, which asks the slot as each run
+    starts and takes `Kernel` while nothing fills it: the slot has no
+    filler plugin and no order. A filler gets what is left of a run's
+    plan, not `RunPlan` itself, which the plugins' starts use up. The
+    runner's model is `tau_agent::testing::loop_model` (the `testing`
+    feature): `check(tc, filler, steps)` and `regressions(filler)` run
+    it against any loop, and `testing::Stepwise`, a loop put together
+    from the steps alone, keeps to it beside `Kernel`. The other run
+    suites (store failures, rewrites, nested calls, workflows) still run
+    against the kernel only. Luau does not fill it.
 12. **The kernel test**: no non-test source in `tau-ui` or
     `tau-ui-remote` names a plugin.
 

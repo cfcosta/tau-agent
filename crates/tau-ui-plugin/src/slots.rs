@@ -33,8 +33,9 @@ impl<T: ?Sized> Slot<T> {
 }
 
 /// Every slot the kernel asks plugins to fill, by name.
-pub const ALL: [&str; 7] = [
+pub const ALL: [&str; 8] = [
     crate::store::STORE.name(),
+    crate::loop_::LOOP.name(),
     crate::vcs::VCS.name(),
     crate::forge::FORGE.name(),
     crate::provider::PROVIDER.name(),
