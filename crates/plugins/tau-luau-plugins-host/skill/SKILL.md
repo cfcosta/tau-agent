@@ -69,6 +69,8 @@ return tau.plugin {
   before_request = function(request, ctx) end,
   before_stop = function(stop, ctx) end,
   turn_end = function(turn, ctx) end,
+  events = { "tool_end" },   -- what `on_event` hears
+  on_event = function(event, ctx) end,
   run_end = function(run, ctx) end,
   view = function(state, ctx) end,
 }
@@ -88,6 +90,7 @@ one, its `card`.
 | `before_request` | `{ model, effort, turn, messages }`    | `nil`, or `tau.effort(level)`              | 200 ms |
 | `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
 | `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
+| `on_event`    | `{ kind, turn, ... }`, for each of `events` | nothing                                    | 200 ms |
 | `run_end`     | `{ stop, turns, cost }`                    | nothing                                    | 10 s   |
 | `view`        | the run's state                            | `{ status?, note?, page? }`, or `{}`       | 200 ms |
 | `actions[x]`  | a button's or an input's arguments         | nothing; what it does to `ctx.state` stays | 2 s    |
@@ -106,6 +109,13 @@ one, its `card`.
 - A hook that errors or runs out of time counts as `nil`, and its error
   shows on the Plugins screen. After three failures in a run the plugin
   is off for the rest of it. Never rely on an error to block.
+- `on_event` hears the run's events that `events` names, each with its
+  `kind` and `turn`: `turn_start`; `tool_start` (`id`, `name`, `args`);
+  `tool_end` (`id`, `name`, `ok`); `retry` (`attempt`, `error`);
+  `steered` (`text`); `continued` (`plugin`, `message`);
+  `context_rewritten` (`plugin`, `tokens_before`, `tokens_after`);
+  `plugin_error` (`plugin`, `message`). A name not among them keeps the
+  plugin from loading.
 - Hooks run each in a fresh VM: keep what must last in `ctx.state`, not
   in local variables.
 

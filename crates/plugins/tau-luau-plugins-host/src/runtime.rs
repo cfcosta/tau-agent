@@ -234,6 +234,9 @@ pub enum Hook {
     BeforeRequest,
     BeforeStop,
     TurnEnd,
+    /// One of the run's events it names in `events`, as
+    /// `{ kind, turn, ... }`.
+    OnEvent,
     RunEnd,
     View,
     /// Its settings page, with the settings shown as input (ADR 0029).
@@ -250,7 +253,8 @@ impl Hook {
             Self::Card(_)
             | Self::View
             | Self::SettingsView
-            | Self::BeforeRequest => 200,
+            | Self::BeforeRequest
+            | Self::OnEvent => 200,
             Self::BeforeTool | Self::TurnEnd | Self::Action(_) => 2_000,
             Self::BeforeStop | Self::RunEnd => 10_000,
         })
@@ -267,6 +271,7 @@ impl Hook {
             Self::BeforeRequest => "p.before_request(input, ctx)".into(),
             Self::BeforeStop => "p.before_stop(input, ctx)".into(),
             Self::TurnEnd => "p.turn_end(input, ctx)".into(),
+            Self::OnEvent => "p.on_event(input, ctx)".into(),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
             Self::View => "p.view(ctx.state, ctx)".into(),
             Self::SettingsView => "p.settings.view(input, ctx)".into(),
@@ -285,6 +290,7 @@ impl Hook {
             Self::BeforeRequest => declaration.hooks.before_request,
             Self::BeforeStop => declaration.hooks.before_stop,
             Self::TurnEnd => declaration.hooks.turn_end,
+            Self::OnEvent => declaration.hooks.on_event,
             Self::RunEnd => declaration.hooks.run_end,
             Self::View => declaration.hooks.view,
             Self::SettingsView => declaration.hooks.settings_view,
@@ -384,6 +390,16 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
         return Err(format!(
             "{PLUGIN_FILE}: the plugin is named `{}`, but its folder is `{folder}`",
             declaration.name
+        ));
+    }
+    if let Some(unknown) = declaration
+        .events
+        .iter()
+        .find(|event| !tau_luau_plugins::EVENTS.contains(&event.as_str()))
+    {
+        return Err(format!(
+            "{PLUGIN_FILE}: `events` names `{unknown}`, which is not one of {}",
+            tau_luau_plugins::EVENTS.join(", ")
         ));
     }
     for tool in &declaration.tools {

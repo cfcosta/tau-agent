@@ -355,6 +355,77 @@ impl Inner {
     }
 }
 
+/// `event` as `on_event` hears it, by the kind `events` names: the
+/// run's own events, not its sub-agents'; what streams in pieces and
+/// tools' output stay out.
+fn luau_event(
+    event: &RunEvent,
+    state: &RunState,
+) -> Option<(&'static str, Value)> {
+    let turn = state.turn;
+    Some(match event {
+        RunEvent::TurnStart { turn, .. } => {
+            ("turn_start", json!({ "kind": "turn_start", "turn": turn }))
+        }
+        RunEvent::ToolStart {
+            call_id,
+            tool,
+            args,
+            parent: None,
+            ..
+        } => (
+            "tool_start",
+            json!({ "kind": "tool_start", "turn": turn, "id": call_id,
+                    "name": tool.as_ref(), "args": args }),
+        ),
+        RunEvent::ToolEnd {
+            call_id,
+            is_error,
+            parent: None,
+            ..
+        } => (
+            "tool_end",
+            json!({ "kind": "tool_end", "turn": turn, "id": call_id,
+                    "name": state.names.get(call_id), "ok": !is_error }),
+        ),
+        RunEvent::Retry { attempt, error, .. } => (
+            "retry",
+            json!({ "kind": "retry", "turn": turn, "attempt": attempt,
+                    "error": error }),
+        ),
+        RunEvent::Steered { text, .. } => (
+            "steered",
+            json!({ "kind": "steered", "turn": turn, "text": text }),
+        ),
+        RunEvent::Continued {
+            plugin, message, ..
+        } => (
+            "continued",
+            json!({ "kind": "continued", "turn": turn,
+                    "plugin": plugin.as_ref(), "message": message }),
+        ),
+        RunEvent::ContextRewritten {
+            plugin,
+            tokens_before,
+            tokens_after,
+            ..
+        } => (
+            "context_rewritten",
+            json!({ "kind": "context_rewritten", "turn": turn,
+                    "plugin": plugin.as_ref(), "tokens_before": tokens_before,
+                    "tokens_after": tokens_after }),
+        ),
+        RunEvent::PluginError {
+            plugin, message, ..
+        } => (
+            "plugin_error",
+            json!({ "kind": "plugin_error", "turn": turn,
+                    "plugin": plugin.as_ref(), "message": message }),
+        ),
+        _ => return None,
+    })
+}
+
 fn hook_name(hook: &Hook) -> String {
     match hook {
         Hook::Tool(name) => format!("tool {name}"),
@@ -363,6 +434,7 @@ fn hook_name(hook: &Hook) -> String {
         Hook::BeforeRequest => "before_request".into(),
         Hook::BeforeStop => "before_stop".into(),
         Hook::TurnEnd => "turn_end".into(),
+        Hook::OnEvent => "on_event".into(),
         Hook::RunEnd => "run_end".into(),
         Hook::View => "view".into(),
         Hook::SettingsView => "settings.view".into(),
@@ -584,6 +656,23 @@ impl PluginRun for LuauRun {
     async fn on_event(&mut self, event: &RunEvent, ctx: &PluginCtx) {
         let inner = &self.plugins.0;
         let mut state = self.state.lock().await;
+        if let Some((kind, input)) = luau_event(event, &state) {
+            for active in inner.active().iter() {
+                if !active.loaded.declaration.events.iter().any(|e| e == kind) {
+                    continue;
+                }
+                inner
+                    .call(
+                        active,
+                        Hook::OnEvent,
+                        input.clone(),
+                        &mut state,
+                        ctx,
+                        Arc::new(NoReach),
+                    )
+                    .await;
+            }
+        }
         match event {
             RunEvent::TurnStart { turn, .. } => {
                 state.turn = *turn;

@@ -24,7 +24,7 @@ pub fn seam(seam: Seam) -> Luau {
         Seam::Tools => Luau::Hook("tools"),
         Seam::BeforeTool => Luau::Hook("before_tool"),
         Seam::BeforeRequest => Luau::Hook("before_request"),
-        Seam::OnEvent => Luau::Hook("turn_end"),
+        Seam::OnEvent => Luau::Hook("on_event"),
         Seam::BeforeStop => Luau::Hook("before_stop"),
         Seam::Finish => Luau::Hook("run_end"),
         Seam::Start

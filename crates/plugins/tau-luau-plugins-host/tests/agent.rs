@@ -816,3 +816,64 @@ fn a_plugin_sets_a_turns_effort() {
         .collect();
     assert_eq!(efforts, [None, Some(ReasoningEffort::High)]);
 }
+
+const TALLY: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "tally",
+  events = { "tool_start", "tool_end" },
+  on_event = function(event, ctx)
+    ctx.state.seen = ctx.state.seen or {}
+    table.insert(ctx.state.seen, event.kind .. ":" .. event.name)
+  end,
+}
+"#;
+
+/// `on_event` hears the events `events` names, in order, and no other.
+#[test]
+fn a_plugin_hears_the_events_it_names() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "ls" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("tally", TALLY)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let outcome = block_on_io(async {
+        let mut run = agent.start("look", &store);
+        let _: Vec<RunEvent> = run.events().collect().await;
+        run.outcome().await.unwrap()
+    });
+    let last_state =
+        records(&store, &outcome.run)
+            .into_iter()
+            .rev()
+            .find_map(|record| match record {
+                Record::State { state, .. } => Some(state),
+                _ => None,
+            });
+    assert_eq!(
+        last_state,
+        Some(
+            json!({ "seen": ["tool_start:exec_command", "tool_end:exec_command"] })
+        )
+    );
+}
+
+/// A plugin that names an event `on_event` never hears does not load.
+#[test]
+fn an_unknown_event_keeps_a_plugin_from_loading() {
+    let source = r#"
+local tau = require("tau")
+return tau.plugin { name = "odd", events = { "text_delta" }, on_event = function() end }
+"#;
+    let files = Files {
+        source: source.into(),
+        ..Files::default()
+    };
+    let error = block_on_io(load("odd", files)).unwrap_err();
+    assert!(error.contains("`text_delta`"), "{error}");
+}

@@ -106,6 +106,8 @@ pub struct Hooks {
     #[serde(default)]
     pub turn_end: bool,
     #[serde(default)]
+    pub on_event: bool,
+    #[serde(default)]
     pub run_end: bool,
     #[serde(default)]
     pub view: bool,
@@ -129,6 +131,18 @@ impl Hooks {
     }
 }
 
+/// The run's events `on_event` may hear, as `events` names them.
+pub const EVENTS: [&str; 8] = [
+    "turn_start",
+    "tool_start",
+    "tool_end",
+    "retry",
+    "steered",
+    "continued",
+    "context_rewritten",
+    "plugin_error",
+];
+
 /// What a plugin declares, read without running its hooks.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Declaration {
@@ -146,6 +160,9 @@ pub struct Declaration {
     pub hooks: Hooks,
     #[serde(default)]
     pub actions: Vec<String>,
+    /// The run's events `on_event` hears, of [`EVENTS`].
+    #[serde(default)]
+    pub events: Vec<String>,
 }
 
 impl Declaration {
@@ -167,7 +184,7 @@ impl Declaration {
             (hooks.before_tool, Seam::BeforeTool),
             (hooks.before_request, Seam::BeforeRequest),
             (hooks.before_stop, Seam::BeforeStop),
-            (hooks.turn_end, Seam::OnEvent),
+            (hooks.turn_end || hooks.on_event, Seam::OnEvent),
             (hooks.run_end, Seam::Finish),
         ]
         .into_iter()
@@ -383,6 +400,7 @@ mod tests {
                 ..Hooks::default()
             },
             actions: Vec::new(),
+            events: Vec::new(),
         }
     }
 
@@ -411,6 +429,7 @@ mod tests {
             before_request: true,
             before_stop: true,
             turn_end: true,
+            on_event: true,
             run_end: true,
             view: true,
             settings_view: true,
