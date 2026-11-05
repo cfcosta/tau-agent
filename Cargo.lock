@@ -9444,6 +9444,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tau-agent",
  "tau-ai",
  "tau-store",
  "tau-store-sqlite",

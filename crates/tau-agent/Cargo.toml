@@ -11,6 +11,9 @@ publish.workspace = true
 # Serialize and deserialize run events, for interfaces that carry them
 # over a wire (decision 0013).
 serde = ["serde/rc"]
+# What a loop is held to (`testing`): the runner's model, for any filler
+# of `tau.loop` to check itself against.
+testing = ["dep:hegeltest", "dep:tau-store-sqlite"]
 
 [dependencies]
 async-trait.workspace = true
@@ -25,8 +28,11 @@ tokio-util.workspace = true
 uuid.workspace = true
 tau-ai.workspace = true
 tau-store.workspace = true
+hegeltest = { workspace = true, optional = true }
+tau-store-sqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
+tau-agent = { workspace = true, features = ["testing"] }
 tau-store-sqlite.workspace = true
 tempfile.workspace = true
 hegeltest.workspace = true

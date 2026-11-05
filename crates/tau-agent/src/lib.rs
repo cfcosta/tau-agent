@@ -11,5 +11,7 @@ pub mod output;
 pub mod plugin;
 pub mod runner;
 pub mod schema;
+#[cfg(feature = "testing")]
+pub mod testing;
 pub mod tool;
 pub mod validation;
