@@ -107,6 +107,7 @@ use crate::{
 };
 
 mod batch;
+pub mod driver;
 pub(crate) mod respond;
 mod seams;
 mod toolbox;

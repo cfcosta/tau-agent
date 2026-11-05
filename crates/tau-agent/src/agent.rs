@@ -307,6 +307,8 @@ struct AgentInner {
     retry: RetryPolicy,
     warmup: bool,
     clock: Clock,
+    /// What drives its runs ([`crate::runner::driver::Loop`]).
+    driver: Arc<dyn crate::runner::driver::Loop>,
 }
 
 /// An agent: what to run, not a running thing.
@@ -346,6 +348,7 @@ impl Agent {
             retry: RetryPolicy::default(),
             warmup: false,
             clock: system_clock(),
+            driver: Arc::new(crate::runner::driver::Kernel),
         }))
     }
 
@@ -420,6 +423,15 @@ impl Agent {
     /// that. Off by default.
     pub fn warmup(self, on: bool) -> Self {
         self.with(|a| a.warmup = on)
+    }
+
+    /// Drives its runs, its sub-agents' among them, with `driver` in
+    /// place of tau-agent's own loop ([`crate::runner::driver::Kernel`]).
+    pub fn with_loop(
+        self,
+        driver: Arc<dyn crate::runner::driver::Loop>,
+    ) -> Self {
+        self.with(|a| a.driver = driver)
     }
 
     /// Replaces the clock that stamps messages, for deterministic tests.
@@ -792,7 +804,11 @@ impl Resumed {
             turns_before: u32::try_from(record.turns).unwrap_or(u32::MAX),
             preempted: None,
         };
-        Ok(runner.compact_idle().await?)
+        Ok(agent
+            .0
+            .driver
+            .compact_idle(crate::runner::driver::LoopRun(runner))
+            .await?)
     }
 }
 
@@ -1247,9 +1263,12 @@ async fn run_task(
         warmup: agent.0.warmup,
         turns_before,
         preempted: None,
-    }
-    .run(first)
-    .await?;
+    };
+    let result = agent
+        .0
+        .driver
+        .run(crate::runner::driver::LoopRun(result), first)
+        .await?;
     Ok(Outcome {
         run: id,
         text: result.text,
