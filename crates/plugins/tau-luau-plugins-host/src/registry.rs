@@ -80,6 +80,8 @@ struct Shared {
     stores: Arc<crate::store::Stores>,
     /// What runs' tools ask the person to allow, waiting for an answer.
     allows: crate::chats::Allows,
+    /// The host's chats, which what the person allows starts or steers.
+    chats: Option<Arc<dyn tau_ui_plugin::Conversations>>,
 }
 
 #[derive(Default)]
@@ -134,7 +136,8 @@ impl PluginHost for Registry {
             move || refresher.refresh(),
         )
         .with_settings(move || reader.settings(crate::NAME))
-        .with_built_in(crate::BUILT_IN);
+        .with_built_in(crate::BUILT_IN)
+        .with_chats(cx.conversations());
         let registry = match cx.config_dir() {
             Some(config) => registry.with_config(config.to_owned()),
             None => registry,
@@ -181,7 +184,23 @@ impl Registry {
             model: None,
             stores: Arc::new(crate::store::Stores::memory()),
             allows: crate::chats::Allows::default(),
+            chats: None,
         }))
+    }
+
+    /// The registry, starting and steering the host's `chats`.
+    pub fn with_chats(
+        self,
+        chats: Option<Arc<dyn tau_ui_plugin::Conversations>>,
+    ) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("the chats are given before the registry is shared");
+        Self(Arc::new(Shared { chats, ..shared }))
+    }
+
+    /// The host's chats, when it has them.
+    pub fn chats(&self) -> Option<Arc<dyn tau_ui_plugin::Conversations>> {
+        self.0.chats.clone()
     }
 
     /// The registry, keeping each plugin's stores in `stores`.
@@ -451,7 +470,15 @@ impl Registry {
             let Some(active) = self.plugin(&name).await else {
                 continue;
             };
-            for repo in repos {
+            // Every repository it keeps a store in, listed now or not
+            // yet, as tau starts before it lists them.
+            let mut all: Vec<String> = repos.to_vec();
+            for kept in self.0.stores.repos_of(&name).await {
+                if !all.contains(&kept) {
+                    all.push(kept);
+                }
+            }
+            for repo in &all {
                 let context = self.repo_context(&active, repo).await;
                 let outcome = active
                     .loaded

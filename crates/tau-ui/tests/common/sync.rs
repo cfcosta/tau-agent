@@ -82,14 +82,22 @@ pub enum Reply {
     /// It hands `task` to a sub-agent, which only a main chat can, and
     /// goes on without waiting for it.
     Delegate { task: String },
+    /// It calls the tool `name` with `args`.
+    Tool { name: String, args: Value },
 }
+
+/// A request waiting for the model: the first message of its run's
+/// conversation, and where its answer goes.
+type Waiting = (String, oneshot::Sender<Reply>);
 
 /// A model that answers each request only when [`Gate::answer`] says,
 /// and with what it says.
 #[derive(Clone, Default)]
 pub struct Gate {
     model: ScriptedModel,
-    waiting: Arc<Mutex<Vec<oneshot::Sender<Reply>>>>,
+    /// Each request waiting, with the first message of its run's
+    /// conversation.
+    waiting: Arc<Mutex<Vec<Waiting>>>,
     /// Sessions open: one per run going on.
     pub sessions: Arc<AtomicUsize>,
 }
@@ -98,14 +106,35 @@ impl Gate {
     /// The requests still waiting: a cancelled run's went away.
     pub fn waiting(&self) -> usize {
         let mut waiting = self.waiting.lock().unwrap();
-        waiting.retain(|answer| !answer.is_closed());
+        waiting.retain(|(_, answer)| !answer.is_closed());
         waiting.len()
     }
 
     /// Answers the `n`th waiting request with `reply`.
     pub fn answer(&self, n: usize, reply: Reply) {
-        let answer = self.waiting.lock().unwrap().remove(n);
+        let (_, answer) = self.waiting.lock().unwrap().remove(n);
         let _ = answer.send(reply);
+    }
+
+    /// Answers the request of the run whose conversation starts with a
+    /// message holding `mark`, if one waits.
+    pub fn answer_for(&self, mark: &str, reply: Reply) -> bool {
+        let mut waiting = self.waiting.lock().unwrap();
+        waiting.retain(|(_, answer)| !answer.is_closed());
+        let Some(at) =
+            waiting.iter().position(|(first, _)| first.contains(mark))
+        else {
+            return false;
+        };
+        let (_, answer) = waiting.remove(at);
+        answer.send(reply).is_ok()
+    }
+
+    /// Whether the run marked `mark` waits for the model.
+    pub fn waits_for(&self, mark: &str) -> bool {
+        let mut waiting = self.waiting.lock().unwrap();
+        waiting.retain(|(_, answer)| !answer.is_closed());
+        waiting.iter().any(|(first, _)| first.contains(mark))
     }
 }
 
@@ -178,7 +207,14 @@ impl LlmSession for GatedSession {
             return self.inner.lock().unwrap().respond(transcript, timestamp);
         }
         let (answer, answered) = oneshot::channel();
-        self.gate.waiting.lock().unwrap().push(answer);
+        let first = transcript
+            .iter()
+            .find_map(|message| match message {
+                Message::User(user) => Some(user.content.text()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        self.gate.waiting.lock().unwrap().push((first, answer));
         let (model, inner, transcript) = (
             self.gate.model.clone(),
             self.inner.clone(),
@@ -196,6 +232,7 @@ impl LlmSession for GatedSession {
                 Reply::Delegate { task } => {
                     turn.tool_call("spawn", serde_json::json!({ "task": task }))
                 }
+                Reply::Tool { name, args } => turn.tool_call(&name, args),
             });
             inner.lock().unwrap().respond(&transcript, timestamp)
         };
@@ -479,6 +516,11 @@ impl Net {
         };
         net.settle();
         net
+    }
+
+    /// Where the computer keeps what outlives it.
+    pub fn dir(&self) -> &Path {
+        &self.disk.dir
     }
 
     pub fn device(&mut self, who: Who) -> &mut Device {

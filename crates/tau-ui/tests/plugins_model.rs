@@ -598,7 +598,8 @@ impl Device {
     /// every click, so none is open.
     fn click(&mut self, bounds: Bounds<Pixels>) {
         let dialog = self.read(|ws| {
-            ws.alert().map(|(title, message)| format!("{title}: {message}"))
+            ws.alert()
+                .map(|(title, message)| format!("{title}: {message}"))
         });
         assert_eq!(dialog, None, "a dialog covers what is clicked");
         self.cx.simulate_click(bounds.center(), Modifiers::none());

@@ -104,10 +104,7 @@ impl HostHalf for LuauPluginsHost {
         let luau = luau.with_dispatch(crate::agent::Dispatch {
             allows: host.allows(),
             registry: host.clone(),
-            chats: run
-                .services
-                .get::<std::sync::Arc<dyn tau_ui_plugin::Conversations>>()
-                .cloned(),
+            chats: host.chats(),
         });
         let luau = match run.services.get::<tau_ui_plugin::ConfigDir>() {
             Some(config) => luau.with_config(config.0.clone()),
@@ -278,11 +275,15 @@ impl HostHalf for LuauPluginsHost {
                 call,
                 allowed,
                 reason,
-            } => host.allows().answer(
-                &run,
-                &call,
-                crate::chats::Answer { allowed, reason },
-            )?,
+            } => {
+                // From whichever device answers first; a later answer, or
+                // one for a run that ended, finds nothing to take.
+                let _ = host.allows().answer(
+                    &run,
+                    &call,
+                    crate::chats::Answer { allowed, reason },
+                );
+            }
             Act::SetSecret {
                 plugin,
                 name,

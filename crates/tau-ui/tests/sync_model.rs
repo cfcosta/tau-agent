@@ -748,6 +748,7 @@ impl Tau {
             Reply::Text => "the model is done",
             Reply::Write { .. } => "the model writes a file",
             Reply::Delegate { .. } => "the model hands off a task",
+            Reply::Tool { .. } => "the model calls a tool",
         });
         self.gate.answer(n, reply);
         self.host_settles();

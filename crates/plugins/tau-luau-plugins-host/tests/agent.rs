@@ -1035,3 +1035,39 @@ fn a_plugin_rewrites_a_runs_context() {
             });
     assert_eq!(last_state, Some(json!({ "rewritten": "3->4" })));
 }
+
+const ON_END: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "on-end",
+  uses = { store = true },
+  run_end = function(run, ctx)
+    ctx.store.put("ended", run.stop)
+  end,
+}
+"#;
+
+/// A run the person stops still runs `run_end`, store and all: what a
+/// plugin holds for the run, it lets go of however the run ended.
+#[test]
+fn a_stopped_run_still_ends_for_its_plugins() {
+    let llm = ScriptedModel::new().turn(|t| t.text("never read"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let stores =
+        std::sync::Arc::new(tau_luau_plugins_host::store::Stores::memory());
+    let plugins = LuauPlugins::new(
+        vec![active("on-end", ON_END)],
+        json!({ "kind": "chat", "repo": "home", "model": "m" }),
+        None,
+    )
+    .with_stores(stores.clone());
+    let agent = Agent::new(llm).plugin(plugins);
+    block_on_io(async {
+        let run = agent.start("go", &store);
+        run.cancel();
+        let _ = run.outcome().await;
+    });
+    let kv = block_on_io(stores.of("on-end", "home")).unwrap();
+    let kept = block_on_io(kv.everything()).unwrap();
+    assert_eq!(kept.get("ended"), Some(&json!("Cancelled")), "{kept:?}");
+}

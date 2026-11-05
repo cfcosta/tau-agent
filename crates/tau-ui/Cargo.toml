@@ -28,6 +28,9 @@ tau-github.workspace = true
 tau-mcp.workspace = true
 tau-memory.workspace = true
 tau-vcs.workspace = true
+# tau-todo's store, which its model reads.
+tau-luau-plugins-host.workspace = true
+tau-todo.workspace = true
 
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }

@@ -355,10 +355,54 @@ impl Stores {
         Ok(kv)
     }
 
+    /// The repositories `plugin` keeps a store in: on disk, and opened.
+    pub async fn repos_of(&self, plugin: &str) -> Vec<String> {
+        let mut repos: Vec<String> = self
+            .open
+            .lock()
+            .await
+            .keys()
+            .filter(|(of, _)| of == plugin)
+            .map(|(_, repo)| repo.clone())
+            .collect();
+        if let Some(dir) = &self.dir
+            && let Ok(mut files) = tokio::fs::read_dir(dir.join(plugin)).await
+        {
+            while let Ok(Some(file)) = files.next_entry().await {
+                let name = file.file_name().to_string_lossy().into_owned();
+                if let Some(repo) =
+                    name.strip_suffix(".db").and_then(unsafe_name)
+                    && !repos.contains(&repo)
+                {
+                    repos.push(repo);
+                }
+            }
+        }
+        repos.sort();
+        repos
+    }
+
     /// Forgets the stores opened, as a new process would.
     pub async fn close(&self) {
         self.open.lock().await.clear();
     }
+}
+
+/// The repository a file's name `safe` stands for: [`safe`] read back.
+fn unsafe_name(safe: &str) -> Option<String> {
+    let mut bytes = Vec::new();
+    let mut rest = safe.bytes();
+    while let Some(byte) = rest.next() {
+        if byte == b'%' {
+            let hex = [rest.next()?, rest.next()?];
+            bytes.push(
+                u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?,
+            );
+        } else {
+            bytes.push(byte);
+        }
+    }
+    String::from_utf8(bytes).ok()
 }
 
 /// `repo` as a file's name: what is not a letter, a digit, `-`, `_` or

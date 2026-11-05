@@ -311,9 +311,15 @@ impl Inner {
         }
         let mut context = self.context(&ctx.run, state, active);
         context.store = self.store_of(active).await;
+        // `run_end` runs however the run ended, stopped by the person
+        // too: what it lets go of goes, the run's cancel or not.
+        let cancel = match hook {
+            Hook::RunEnd => tokio_util::sync::CancellationToken::new(),
+            _ => ctx.cancel.child_token(),
+        };
         let outcome = active
             .loaded
-            .call(&hook, input, &context, reach, ctx.cancel.child_token())
+            .call(&hook, input, &context, reach, cancel)
             .await;
         self.apply(active, &hook, outcome, state, ctx).await
     }

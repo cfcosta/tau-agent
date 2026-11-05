@@ -15,7 +15,7 @@ use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_luau_plugins_host::{
     runtime::{Context, Files, Hook, NoReach, StoreRef, load},
-    store::{Fuse, Kv},
+    store::{Fuse, Kv, Stores},
 };
 use tau_testing::block_on_io;
 use tokio_util::sync::CancellationToken;
@@ -204,4 +204,23 @@ fn hooks_take_turns_with_the_store_and_a_failing_one_writes_nothing() {
         assert!(failed.error.is_some());
         assert_eq!(kv.everything().await.unwrap()["n"], json!(20));
     });
+}
+
+/// The repositories a plugin keeps a store in are read back from their
+/// files' names, as tau starts again, odd names and all.
+#[test]
+fn a_plugins_repositories_are_read_back_from_its_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let names = ["home", "owner/repo", "a b%c"];
+    {
+        let stores = Stores::at(dir.path().to_owned());
+        for name in names {
+            block_on_io(stores.of("todo", name)).unwrap();
+        }
+    }
+    let again = Stores::at(dir.path().to_owned());
+    let mut want: Vec<&str> = names.to_vec();
+    want.sort();
+    assert_eq!(block_on_io(again.repos_of("todo")), want);
+    assert!(block_on_io(again.repos_of("other")).is_empty());
 }
