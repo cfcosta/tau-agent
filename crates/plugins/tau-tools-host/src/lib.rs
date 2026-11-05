@@ -17,6 +17,7 @@
 //! goes on with it (`docs/decisions/0038-commands-run-in-the-background.md`).
 
 pub mod artifact_grant;
+pub mod artifact_prune;
 pub mod artifact_read;
 pub mod edit;
 pub mod errno;

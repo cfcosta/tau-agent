@@ -30,6 +30,7 @@ tau-artifacts.workspace = true
 tau-ai.workspace = true
 tau-terminal.workspace = true
 tau-tools.workspace = true
+tau-store.workspace = true
 tau-ui-plugin.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "process"] }

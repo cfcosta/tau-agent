@@ -10,10 +10,9 @@ use anyhow::{Context as _, bail};
 use serde_json::Value;
 use tau_artifacts::{Artifact, Bytes, PruneReport, Quotas};
 use tau_store::{RunKind, RunRecord, Store};
-use tau_tools_host::artifact_grant::{ArtifactRecord, fold_grants};
 use tau_ui_plugin::{HOST_RECORD, HostRecord};
 
-use super::Host;
+use crate::artifact_grant::{ArtifactRecord, fold_grants};
 
 /// Largest reachable message sequence per run. A selected fork contributes
 /// its own complete history and each ancestor only through its fork prefix.
@@ -175,26 +174,19 @@ async fn retained_roots(
     Ok(roots)
 }
 
-impl Host {
-    /// Explicit trusted maintenance. The host inventories the complete store
-    /// while holding the publication lock through marking and sweeping.
-    pub async fn prune_artifacts(
-        &self,
-        repo: &str,
-    ) -> anyhow::Result<PruneReport> {
-        let slot = self.slot(repo).context("repository is unavailable")?;
-        // The project must be there, but its artifacts are in tau's
-        // directory for the repository: a local one's root is the
-        // person's folder.
-        slot.repository()
-            .await
-            .context("repository is unavailable")?;
-        let dir = self.repo_ctx(&slot).dir.join("artifacts");
-        let (store, repo) = (self.store.clone(), repo.to_owned());
-        let runtime = tokio::runtime::Handle::current();
-        tokio::task::spawn_blocking(move || prune(dir, &store, &repo, &runtime))
-            .await?
-    }
+/// Explicit trusted maintenance of `repo`'s artifacts, kept in `dir`:
+/// every one no run still reaches goes. It inventories the complete
+/// store while holding the publication lock through marking and
+/// sweeping.
+pub async fn prune_artifacts(
+    store: &Store,
+    dir: PathBuf,
+    repo: &str,
+) -> anyhow::Result<PruneReport> {
+    let (store, repo) = (store.clone(), repo.to_owned());
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || prune(dir, &store, &repo, &runtime))
+        .await?
 }
 
 /// Prunes `repo`'s artifacts under the publication lock, which it holds

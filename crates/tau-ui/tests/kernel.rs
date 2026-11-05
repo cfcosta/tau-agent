@@ -31,16 +31,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "*",
         "the demo's own data for each plugin's screens",
     ),
-    (
-        "tau-ui/src/host/artifacts.rs",
-        "tau_tools",
-        "the artifacts tau-tools grants, which the host keeps",
-    ),
-    (
-        "tau-ui/src/host/artifacts.rs",
-        "tau_tools_host",
-        "the artifacts tau-tools grants, which the host keeps",
-    ),
 ];
 
 fn crates() -> PathBuf {
