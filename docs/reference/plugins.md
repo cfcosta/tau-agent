@@ -120,7 +120,9 @@ and opens the session. Nothing changes them afterwards.
 ### `PluginRun`: one per plugin per run
 
 Every method has a default that does nothing, so a plugin implements
-only what it uses. The loop calls plugins in registration order.
+only what it uses. The loop calls plugins in registration order; in
+tau, that is the registry's order, which each plugin declares (below,
+"Declarations").
 
 ```rust
 #[async_trait]
@@ -324,7 +326,8 @@ pub struct Rewrite {
 - **On overflow,** plugins are asked in order, and the first rewrite
   wins, as between turns. The request is then retried once. Plugins are
   offered the context in the order they were added, so add cheap ones
-  (pruning) before compaction; one that cannot free enough should
+  (pruning) before compaction (in tau, `tau-fast-compaction` declares
+  it comes before the tree and the summary); one that cannot free enough should
   decline and leave the overflow to the summary. The loop does not re-estimate after a rewrite: the
   estimate anchors on the last reported usage, which a kept message can
   still carry, so "fits the window" would not be reliable.
@@ -468,6 +471,46 @@ Roles; picking another plugin there sets the UI state's
 `slots::PICKS` key for the slot, which the host applies at once
 (`Fills::pick`) and again from `ui.json` as it starts, and which phones
 show like any UI state.
+
+### Declarations
+
+Each plugin declares itself in one place, `UiPlugin::declaration`
+(`tau_ui_plugin::Declaration`, ADR 0045):
+
+- `after` / `before`: the plugins it comes after or before. The
+  registry puts plugins in that order, the rest by name
+  (`declare::order`), so the order `tau-plugins` lists them in never
+  counts; a cycle panics as the registry is built, naming two plugins
+  in it. A name not in the registry orders nothing.
+  `tau-plugins/tests/declared.rs` checks that every name is one of
+  tau's and that the order keeps them all. That order is the order of
+  every hook, of each plugin's part of a prompt, and of contributions
+  among equals.
+- `seams`: where it steps into a run (`Seam`: `tools`, `start`,
+  `start_idle`, `before_request`, `before_tool`, `after_tool`,
+  `on_event`, `rewrite`, `rewritten`, `before_stop`, `finish`). The
+  registry wraps every agent plugin a host half gives
+  (`HostHalf::agent_plugins`, `run_tools`) in the kernel's gate
+  (`gate::gate`), which calls only those. `start` is always called, for
+  the plugin's part in the run; what it changes of the plan counts only
+  with `Seam::Start`.
+- `fills`: the slots it can fill. `Fills::fill` refuses any other, and
+  says so.
+- `services`: the host services it takes, by name
+  (`services::names`, such as `tau.jev` or `tau.workspace-dir`). The
+  host offers each named service with `Services::offer`; the registry
+  hands each plugin's host half a view (`Services::scoped`, through
+  `RunCtx` and `HostCx`) without the services it did not declare, and
+  says once which one it reached. The kernel's own values
+  (`Services::with`: the home and config directories, saved settings,
+  jobs) go to every plugin.
+- `provides`, `tools`, `store`, `network`, `secrets`, `reads`: what else
+  it reaches. For a plugin built into tau these are statements, not
+  fences.
+
+The registry puts the declaration's reach in the plugin's catalog
+entry (`PluginInfo::reach`), and the Plugins screen shows it on the
+plugin's About tab: its seams, then each kind of reach it declares.
 
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,
@@ -737,10 +780,10 @@ settings)` gives what commands in a repository start through: a
 
 - **Declared reach**
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
-  `Manifest::reads(&["~/.claude", "~/.codex"])` lists the paths a plugin
-  reads outside repositories, as the person knows them, `~` their home.
-  The Plugins screen shows them on the plugin's About tab ("What it reads
-  outside repositories"), and setup under the plugin's step; the
+  `Declaration::reads(&["~/.claude", "~/.codex"])` lists the paths a
+  plugin reads outside repositories, as the person knows them, `~` their
+  home. The Plugins screen shows them on the plugin's About tab ("What it
+  reads outside repositories"), and setup under the plugin's step; the
   registry gives them as `ErasedPlugin::reads`. Rust plugins are not
   sandboxed: it is a statement, not a fence, and the page says so. The
   host says where `~` is with the `HomeDir` service (`HostCx::home`),

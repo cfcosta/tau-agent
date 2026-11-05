@@ -15,6 +15,7 @@ use tau_ui_plugin::{
     RunKind,
     SavedSettings,
     Services,
+    services::names,
 };
 
 use super::*;
@@ -122,18 +123,21 @@ impl Host {
             },
         );
         let mut services = Services::default()
-            .with(self.memory_search)
-            .with(self.outside_tools.clone())
-            .with(self.outside_resources.clone())
-            .with(self.unattended.clone())
+            .offer(tau_memory_host::SEARCH, self.memory_search)
+            .offer(names::OUTSIDE_TOOLS, self.outside_tools.clone())
+            .offer(names::OUTSIDE_RESOURCES, self.outside_resources.clone())
+            .offer(names::UNATTENDED, self.unattended.clone())
             .with(saved)
             .with(ConfigDir(self.config.credentials.dir.clone()))
-            .with(self.identity())
-            .with(tau_skills::SkillsDir(self.config.skills.clone()))
-            .with(self.plugin_model())
+            .offer(names::IDENTITY, self.identity())
+            .offer(
+                tau_skills::DIR_SERVICE,
+                tau_skills::SkillsDir(self.config.skills.clone()),
+            )
+            .offer(names::MODEL, self.plugin_model())
             .with(self.plugin_jobs.clone());
         if let Some(jev) = self.jev() {
-            services = services.with(jev);
+            services = services.offer(names::JEV, jev);
         }
         if let Some(home) = &self.config.home {
             services = services.with(tau_ui_plugin::HomeDir(home.clone()));
@@ -144,7 +148,7 @@ impl Host {
                 list: self.list.clone(),
                 asks: self.asks.clone(),
             });
-        services = services.with(conversations);
+        services = services.offer(names::CONVERSATIONS, conversations);
         let repos = self
             .repos
             .lock()
@@ -179,7 +183,7 @@ impl Host {
     ) -> RunCtx {
         let mut services = Services::default();
         if let Some(jev) = self.jev() {
-            services = services.with(jev);
+            services = services.offer(names::JEV, jev);
         }
         RunCtx {
             kind,
@@ -525,10 +529,10 @@ impl Registered {
         mut services: Services,
     ) -> RunCtx {
         if let Some(jev) = &self.jev {
-            services = services.with(jev.clone());
+            services = services.offer(names::JEV, jev.clone());
         }
         if let Some(launcher) = &self.repo_launcher {
-            services = services.with(launcher.clone());
+            services = services.offer(names::REPO_LAUNCHER, launcher.clone());
         }
         RunCtx {
             kind,

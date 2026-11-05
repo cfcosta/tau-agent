@@ -179,6 +179,20 @@ impl UiPlugin for VcsUi {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .fills(&[tau_ui_plugin::vcs::VCS.name()])
+            .seams(&[
+                tau_ui_plugin::Seam::Tools,
+                tau_ui_plugin::Seam::Start,
+                tau_ui_plugin::Seam::AfterTool,
+                tau_ui_plugin::Seam::OnEvent,
+                tau_ui_plugin::Seam::BeforeStop,
+                tau_ui_plugin::Seam::Finish,
+            ])
+            .services(&[tau_ui_plugin::services::names::IDENTITY])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::CARD, card)

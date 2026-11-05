@@ -388,6 +388,18 @@ impl UiPlugin for AgentsUi {
             .map(|purpose| purpose.trim().to_owned())
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[tau_ui_plugin::Seam::Tools, tau_ui_plugin::Seam::Start])
+            .services(&[
+                tau_ui_plugin::services::names::CONVERSATIONS,
+                tau_ui_plugin::services::names::OUTSIDE_TOOLS,
+                tau_ui_plugin::services::names::OUTSIDE_RESOURCES,
+                tau_ui_plugin::services::names::UNATTENDED,
+                tau_ui_plugin::services::names::IDENTITY,
+            ])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(

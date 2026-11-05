@@ -37,6 +37,10 @@ impl UiPlugin for Tidy {
         "tidy"
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new().contribute(points::REPO_ACTIONS, action)
     }

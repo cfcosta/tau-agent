@@ -188,6 +188,11 @@ impl UiPlugin for AskUi {
         panel::act(action, args, view);
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[tau_ui_plugin::Seam::Tools, tau_ui_plugin::Seam::Start])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::COMPOSER, panel::panel)

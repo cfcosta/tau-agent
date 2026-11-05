@@ -54,7 +54,7 @@ plugin list; the host half builds the agent plugin for each run:
 use tau_agent::plugin::Plugin;
 use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{
-    Group, HostCx, HostHalf, Manifest, PluginInfo, PluginStatus, RunCtx,
+    Declaration, Group, HostCx, HostHalf, Manifest, PluginInfo, PluginStatus, RunCtx,
     Seam, UiPlugin, points::{self, AtRun},
 };
 
@@ -69,6 +69,11 @@ impl UiPlugin for CompactionUi {
 
     fn name(&self) -> &'static str {
         "tau-compaction"
+    }
+
+    // Where it steps into a run; the host calls no other seam.
+    fn declaration(&self) -> Declaration {
+        Declaration::new().seams(&[Seam::Start, Seam::Rewrite])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -103,7 +108,6 @@ impl HostHalf for CompactionHost {
             group: Group::Context,
             description: "Summarizes the context when it nears the window"
                 .into(),
-            seams: vec![Seam::Start, Seam::Rewrite],
             ..Default::default()
         }
     }

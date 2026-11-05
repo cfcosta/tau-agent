@@ -511,6 +511,12 @@ Every string in the error table of [`tools.md`](tools.md#error-strings)
 has an example test. Tests that rely on `chmod` skip themselves when
 running as root, because root ignores file modes.
 
+### `tau-ui-plugin`
+
+| Property                                                                                                                                                                                                                      | Oracle |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `declare::the_order_keeps_every_edge_whatever_order_plugins_came_in`: for any acyclic set of `after` edges, the registry's order keeps every edge, holds each plugin once, and is the same whatever order the plugins came in | Model  |
+
 ### `tau-ui`
 
 | Property                                                                                                                                                                                                                                                                                                                                                                                                     | Oracle |

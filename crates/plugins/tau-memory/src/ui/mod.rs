@@ -277,9 +277,27 @@ impl UiPlugin for MemoryUi {
         }
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[
+                tau_ui_plugin::Seam::Tools,
+                tau_ui_plugin::Seam::Start,
+                tau_ui_plugin::Seam::StartIdle,
+                tau_ui_plugin::Seam::BeforeRequest,
+                tau_ui_plugin::Seam::AfterTool,
+                tau_ui_plugin::Seam::Rewritten,
+                tau_ui_plugin::Seam::Finish,
+            ])
+            .services(&[
+                tau_ui_plugin::services::names::TURN_HOOKS,
+                crate::SEARCH,
+                tau_ui_plugin::services::names::MODEL,
+            ])
+            .reads(READS)
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
-            .reads(READS)
             .page(Page::new("notes", page::render).title(page::title).framed())
             .page(
                 Page::new("import", review::render)

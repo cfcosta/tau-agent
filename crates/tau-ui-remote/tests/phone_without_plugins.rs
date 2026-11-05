@@ -39,7 +39,10 @@ fn catalog() -> Catalog {
         plugins: vec![PluginInfo {
             name: GOAL.into(),
             description: "Goals".into(),
-            seams: Vec::new(),
+            reach: tau_ui_plugin::Reach {
+                seams: Vec::new(),
+                ..Default::default()
+            },
             spend: 0.0,
             page: None,
             group: Default::default(),

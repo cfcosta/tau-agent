@@ -271,7 +271,9 @@ pub use tau_ui_plugin::Seam;
 pub struct PluginInfo {
     pub name: String,
     pub description: String,
-    pub seams: Vec<Seam>,
+    /// What it declares it reaches (ADR 0045).
+    #[serde(default)]
+    pub reach: tau_ui_plugin::Reach,
     /// What the plugin cost over the store's recent window.
     pub spend: f64,
     /// The page that explains its work, for a plugin with its UI (ADR

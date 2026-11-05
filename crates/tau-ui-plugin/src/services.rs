@@ -5,30 +5,153 @@
 
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
-    sync::Arc,
+    collections::{BTreeSet, HashMap},
+    sync::{Arc, Mutex},
 };
 
+/// The names of the services the host offers ([`Services::offer`]),
+/// which a plugin declares to be given them.
+pub mod names {
+    /// A run's workspace ([`crate::WorkspaceDir`]).
+    pub const WORKSPACE_DIR: &str = "tau.workspace-dir";
+    /// What a run's turns leave in its workspace ([`crate::TurnHooks`]).
+    pub const TURN_HOOKS: &str = "tau.turn-hooks";
+    /// The commands a run leaves running ([`crate::RunCommands`]).
+    pub const RUN_COMMANDS: &str = "tau.run-commands";
+    /// Wakes a run that waits ([`crate::RunWake`]).
+    pub const RUN_WAKE: &str = "tau.run-wake";
+    /// That the run is an agent's, in its own repository
+    /// ([`crate::AgentRepo`]).
+    pub const AGENT_REPO: &str = "tau.agent-repo";
+    /// What a repository's agent commands start through
+    /// ([`crate::RepoLauncher`]).
+    pub const REPO_LAUNCHER: &str = "tau.repo-launcher";
+    /// The host's conversations ([`crate::Conversations`]).
+    pub const CONVERSATIONS: &str = "tau.conversations";
+    /// Tools outside any run ([`crate::OutsideTools`]).
+    pub const OUTSIDE_TOOLS: &str = "tau.outside-tools";
+    /// MCP resources outside any run ([`crate::OutsideResources`]).
+    pub const OUTSIDE_RESOURCES: &str = "tau.outside-resources";
+    /// Repositories no person attends ([`crate::Unattended`]).
+    pub const UNATTENDED: &str = "tau.unattended";
+    /// The person's model, outside any run ([`crate::Model`]).
+    pub const MODEL: &str = "tau.model";
+    /// The metered Jev, when there is a key.
+    pub const JEV: &str = "tau.jev";
+    /// Who the person is, for the commits made for them.
+    pub const IDENTITY: &str = "tau.identity";
+}
+
 /// Values by type, cheap to clone.
+///
+/// A value is the kernel's, given to every plugin ([`Services::with`]:
+/// its directories, saved settings and jobs), or a named service
+/// ([`Services::offer`]), given only to the plugins that declare its
+/// name ([`crate::Declaration::services`]). The registry hands each
+/// plugin its own view ([`Services::scoped`]).
 #[derive(Clone, Default)]
-pub struct Services(Arc<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>);
+pub struct Services {
+    values: Arc<HashMap<TypeId, Value>>,
+    /// Whose view this is, and the names it declared; every name when
+    /// none.
+    scope: Option<Arc<Scope>>,
+}
+
+#[derive(Clone)]
+struct Value {
+    /// The service's name; none for the kernel's own.
+    name: Option<&'static str>,
+    value: Arc<dyn Any + Send + Sync>,
+}
+
+struct Scope {
+    plugin: &'static str,
+    names: Vec<String>,
+}
 
 impl Services {
-    /// These services and `value`, which replaces one of its type.
-    pub fn with<T: Send + Sync + 'static>(mut self, value: T) -> Self {
-        Arc::make_mut(&mut self.0).insert(TypeId::of::<T>(), Arc::new(value));
+    /// These services and `value`, the kernel's own, which every plugin
+    /// is given; it replaces one of its type.
+    pub fn with<T: Send + Sync + 'static>(self, value: T) -> Self {
+        self.put(None, value)
+    }
+
+    /// These services and `value`, the service named `name`, which only
+    /// plugins that declare `name` are given; it replaces one of its
+    /// type.
+    pub fn offer<T: Send + Sync + 'static>(
+        self,
+        name: &'static str,
+        value: T,
+    ) -> Self {
+        self.put(Some(name), value)
+    }
+
+    fn put<T: Send + Sync + 'static>(
+        mut self,
+        name: Option<&'static str>,
+        value: T,
+    ) -> Self {
+        Arc::make_mut(&mut self.values).insert(
+            TypeId::of::<T>(),
+            Value {
+                name,
+                value: Arc::new(value),
+            },
+        );
         self
     }
 
-    /// The service of type `T`, if the host has one.
+    /// The service of type `T`, if the host has one and this view may
+    /// have it. A plugin that reaches a service it did not declare gets
+    /// none, and the kernel says so once, naming both.
     pub fn get<T: 'static>(&self) -> Option<&T> {
-        self.0.get(&TypeId::of::<T>())?.downcast_ref()
+        let value = self.values.get(&TypeId::of::<T>())?;
+        if let (Some(name), Some(scope)) = (value.name, &self.scope)
+            && !scope.names.iter().any(|declared| declared == name)
+        {
+            undeclared(scope.plugin, name);
+            return None;
+        }
+        value.value.downcast_ref()
+    }
+
+    /// The view of `plugin`, which declared `names`: the kernel's values
+    /// and the services it named.
+    pub fn scoped(&self, plugin: &'static str, names: &[String]) -> Self {
+        Self {
+            values: Arc::clone(&self.values),
+            scope: Some(Arc::new(Scope {
+                plugin,
+                names: names.to_vec(),
+            })),
+        }
+    }
+
+    /// The names of the services here, the kernel's own left out.
+    pub fn names(&self) -> BTreeSet<&'static str> {
+        self.values
+            .values()
+            .filter_map(|value| value.name)
+            .collect()
+    }
+}
+
+/// Says once that `plugin` reached the service `name` it did not
+/// declare.
+fn undeclared(plugin: &'static str, name: &'static str) {
+    static SAID: Mutex<BTreeSet<(&str, &str)>> = Mutex::new(BTreeSet::new());
+    if SAID.lock().expect("not poisoned").insert((plugin, name)) {
+        eprintln!(
+            "tau-ui-plugin: {plugin} reached the service {name}, which it \
+             does not declare; it is not given it"
+        );
     }
 }
 
 impl std::fmt::Debug for Services {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Services({} values)", self.0.len())
+        write!(f, "Services({} values)", self.values.len())
     }
 }
 
@@ -46,6 +169,22 @@ mod tests {
 
     #[derive(Debug, PartialEq)]
     struct Missing;
+
+    #[test]
+    fn a_plugin_is_given_the_kernels_values_and_the_services_it_declares() {
+        let services = Services::default()
+            .with(Number(1))
+            .offer("text", Text("named".to_owned()));
+        let declared = services.scoped("reader", &["text".to_owned()]);
+        let undeclared = services.scoped("other", &[]);
+
+        assert_eq!(declared.get::<Number>(), Some(&Number(1)));
+        assert_eq!(declared.get::<Text>(), Some(&Text("named".to_owned())));
+        assert_eq!(undeclared.get::<Number>(), Some(&Number(1)));
+        assert_eq!(undeclared.get::<Text>(), None);
+        assert_eq!(services.get::<Text>(), Some(&Text("named".to_owned())));
+        assert_eq!(services.names(), BTreeSet::from(["text"]));
+    }
 
     fn assert_snapshot_matches_model(
         snapshot: &Services,

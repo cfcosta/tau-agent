@@ -32,4 +32,4 @@ pub use half::{
 pub use memory::Memory;
 pub use plugin::{MemoryPlugin, Scopes, Writer};
 // What it keeps and publishes, from the interface half.
-pub use tau_memory::{NAME, note, record};
+pub use tau_memory::{NAME, SEARCH, note, record};

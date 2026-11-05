@@ -233,8 +233,12 @@ pub trait ErasedPlugin: Send + Sync {
     ) -> Option<Node>;
     /// The keys it binds, in its manifest's order ([`Manifest::key`]).
     fn keys(&self) -> Vec<&'static str>;
-    /// What it reads outside repositories ([`Manifest::reads`]).
-    fn reads(&self) -> &'static [&'static str];
+    /// What it declares of itself ([`UiPlugin::declaration`]).
+    fn declaration(&self) -> &crate::Declaration;
+    /// What it reads outside repositories ([`crate::Declaration::reads`]).
+    fn reads(&self) -> &[String] {
+        &self.declaration().reach.reads
+    }
     /// Runs what its `key` does, pressed `at`; false when it binds none.
     fn press_key(&self, key: &str, at: &crate::KeyAt, env: Env<'_>) -> bool;
     /// What a run on `prompt` is about, when the plugin reads it as its
@@ -290,9 +294,38 @@ struct Typed<P: UiPlugin, H: HostHalf<Plugin = P>> {
     plugin: P,
     half: H,
     manifest: Manifest<P>,
+    declaration: crate::Declaration,
 }
 
 impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
+    /// `cx` as this plugin is given it: the services it declared.
+    fn scope_host(&self, cx: &HostCx) -> HostCx {
+        cx.scoped(self.plugin.name(), &self.declaration.reach.services)
+    }
+
+    /// `run` as this plugin is given it: the services it declared.
+    fn scope_run(&self, run: &RunCtx) -> RunCtx {
+        RunCtx {
+            services: run
+                .services
+                .scoped(self.plugin.name(), &self.declaration.reach.services),
+            ..run.clone()
+        }
+    }
+
+    /// `plugins`, called only at the seams this plugin declared.
+    fn gate(
+        &self,
+        plugins: anyhow::Result<Vec<Box<dyn Plugin>>>,
+    ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
+        Ok(plugins?
+            .into_iter()
+            .map(|plugin| {
+                crate::gate::gate(plugin, &self.declaration.reach.seams)
+            })
+            .collect())
+    }
+
     fn host_of<'h>(&self, host: &'h HostState) -> &'h H::Host {
         host.downcast_ref()
             .expect("a host state is made by its own plugin")
@@ -339,8 +372,9 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         cx: &'a HostCx,
     ) -> HostFuture<'a, anyhow::Result<HostState>> {
         Box::pin(async move {
+            let cx = self.scope_host(cx);
             let host =
-                <H::Host as PluginHost>::new(cx).await.map_err(|error| {
+                <H::Host as PluginHost>::new(&cx).await.map_err(|error| {
                     error.context(format!("plugin {}", self.plugin.name()))
                 })?;
             Ok(Box::new(host) as HostState)
@@ -357,11 +391,14 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         run: &'a RunCtx,
         settings: &'a PluginValue,
     ) -> HostFuture<'a, anyhow::Result<Vec<Box<dyn Plugin>>>> {
-        Box::pin(self.half.agent_plugins(
-            self.host_of(host),
-            run,
-            settings.get(),
-        ))
+        Box::pin(async move {
+            let run = self.scope_run(run);
+            self.gate(
+                self.half
+                    .agent_plugins(self.host_of(host), &run, settings.get())
+                    .await,
+            )
+        })
     }
 
     fn run_tools<'a>(
@@ -370,7 +407,14 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         run: &'a RunCtx,
         settings: &'a PluginValue,
     ) -> HostFuture<'a, anyhow::Result<Vec<Box<dyn Plugin>>>> {
-        Box::pin(self.half.run_tools(self.host_of(host), run, settings.get()))
+        Box::pin(async move {
+            let run = self.scope_run(run);
+            self.gate(
+                self.half
+                    .run_tools(self.host_of(host), &run, settings.get())
+                    .await,
+            )
+        })
     }
 
     fn workspace_closed<'a>(
@@ -398,9 +442,10 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         settings: &'a PluginValue,
     ) -> HostFuture<'a, Vec<Value>> {
         Box::pin(async move {
+            let run = self.scope_run(run);
             let records: Vec<RecordOf<P>> = self
                 .half
-                .starting(self.host_of(host), run, settings.get())
+                .starting(self.host_of(host), &run, settings.get())
                 .await;
             records
                 .iter()
@@ -419,15 +464,17 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         settings: &'a PluginValue,
     ) -> HostFuture<'a, PluginInfo> {
         Box::pin(async move {
+            let cx = self.scope_host(cx);
             PluginInfo {
                 name: self.plugin.name().to_owned(),
                 settings: self.manifest.settings.is_some(),
                 rewrites_keep_transcript: self
                     .plugin
                     .rewrites_keep_transcript(),
+                reach: self.declaration.reach.clone(),
                 ..self
                     .half
-                    .catalog(self.host_of(host), cx, settings.get())
+                    .catalog(self.host_of(host), &cx, settings.get())
                     .await
             }
         })
@@ -439,7 +486,8 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         cx: &'a HostCx,
     ) -> HostFuture<'a, PluginValue> {
         Box::pin(async move {
-            PluginValue::typed(self.half.data(self.host_of(host), cx).await)
+            let cx = self.scope_host(cx);
+            PluginValue::typed(self.half.data(self.host_of(host), &cx).await)
         })
     }
 
@@ -460,8 +508,9 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         cx: &'a HostCx,
     ) -> HostFuture<'a, PluginValue> {
         Box::pin(async move {
+            let cx = self.scope_host(cx);
             PluginValue::typed(
-                self.half.repo_data(self.host_of(host), repo, cx).await,
+                self.half.repo_data(self.host_of(host), repo, &cx).await,
             )
         })
     }
@@ -489,7 +538,10 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         action: Value,
         cx: &'a HostCx,
     ) -> HostFuture<'a, anyhow::Result<Option<Value>>> {
-        Box::pin(self.half.act(self.host_of(host), action, cx))
+        Box::pin(async move {
+            let cx = self.scope_host(cx);
+            self.half.act(self.host_of(host), action, &cx).await
+        })
     }
 
     fn resume<'a>(
@@ -497,7 +549,10 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         host: &'a HostState,
         cx: &'a HostCx,
     ) -> HostFuture<'a, ()> {
-        Box::pin(self.half.resume(self.host_of(host), cx))
+        Box::pin(async move {
+            let cx = self.scope_host(cx);
+            self.half.resume(self.host_of(host), &cx).await
+        })
     }
 
     fn setup_finished<'a>(
@@ -506,11 +561,16 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         repos: &'a [crate::points::SetupRepo],
         cx: &'a HostCx,
     ) -> HostFuture<'a, ()> {
-        Box::pin(self.half.setup_finished(self.host_of(host), repos, cx))
+        Box::pin(async move {
+            let cx = self.scope_host(cx);
+            self.half
+                .setup_finished(self.host_of(host), repos, &cx)
+                .await
+        })
     }
 
     fn fill(&self, host: &HostState, fills: &mut crate::slots::Fills) {
-        fills.filling(self.plugin.name());
+        fills.filling(self.plugin.name(), &self.declaration.reach.fills);
         self.half.fill(self.host_of(host), fills);
     }
 
@@ -674,8 +734,8 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         self.manifest.keys.iter().map(|key| key.key).collect()
     }
 
-    fn reads(&self) -> &'static [&'static str] {
-        self.manifest.reads
+    fn declaration(&self) -> &crate::Declaration {
+        &self.declaration
     }
 
     fn press_key(&self, key: &str, at: &crate::KeyAt, env: Env<'_>) -> bool {
@@ -694,9 +754,10 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
     }
 }
 
-/// The plugins an interface has, in the order they were added: the
-/// order the host adds them to a run's agent, and the order their
-/// contributions sit in among equals.
+/// The plugins an interface has, in their declared order
+/// ([`crate::Declaration::after`]), the rest by name: the order the host
+/// adds them to a run's agent, and the order their contributions sit in
+/// among equals.
 #[derive(Default)]
 pub struct Registry {
     plugins: Vec<Arc<dyn ErasedPlugin>>,
@@ -714,14 +775,50 @@ impl Registry {
 
     /// Adds `plugin`, with its UI and without its host half: what an
     /// interface has. A host gives it its half with [`Self::host`].
+    ///
+    /// # Panics
+    ///
+    /// When its `after` and `before` make a cycle with the plugins here,
+    /// naming two in it ([`crate::declare::order`]).
     pub fn with<P: UiPlugin>(mut self, plugin: P) -> Self {
         let manifest = plugin.manifest();
+        let declaration = plugin.declaration();
         self.plugins.push(Arc::new(Typed {
             plugin,
             half: NoHost::<P>::default(),
             manifest,
+            declaration,
         }));
+        self.order();
         self
+    }
+
+    /// Puts the plugins in their declared order: every `after` and
+    /// `before` kept, the rest by name. The order they were added in
+    /// never decides.
+    fn order(&mut self) {
+        let order = {
+            let plugins: Vec<(&str, &crate::Declaration)> = self
+                .plugins
+                .iter()
+                .map(|plugin| (plugin.name(), plugin.declaration()))
+                .collect();
+            crate::declare::order(&plugins).unwrap_or_else(|(first, second)| {
+                panic!(
+                    "the plugins {first} and {second} are each declared to \
+                     come after the other"
+                )
+            })
+        };
+        let mut plugins: Vec<Option<Arc<dyn ErasedPlugin>>> =
+            std::mem::take(&mut self.plugins)
+                .into_iter()
+                .map(Some)
+                .collect();
+        self.plugins = order
+            .into_iter()
+            .map(|at| plugins[at].take().expect("each plugin once"))
+            .collect();
     }
 
     /// Gives `half` to the plugin it is the host half of, in its place.
@@ -756,6 +853,7 @@ impl Registry {
                 plugin: typed.plugin,
                 half,
                 manifest: typed.manifest,
+                declaration: typed.declaration,
             }),
         );
         self
@@ -884,6 +982,10 @@ mod tests {
             "counter"
         }
 
+        fn declaration(&self) -> crate::Declaration {
+            crate::Declaration::new()
+        }
+
         fn manifest(&self) -> Manifest<Self> {
             Manifest::new()
                 .point(MINE)
@@ -960,6 +1062,10 @@ mod tests {
             "other"
         }
 
+        fn declaration(&self) -> crate::Declaration {
+            crate::Declaration::new()
+        }
+
         fn manifest(&self) -> Manifest<Self> {
             Manifest::new()
         }
@@ -991,7 +1097,7 @@ mod tests {
             Registry::new().with(Other).with(Counter).host(CounterHost);
         let names: Vec<&str> =
             registry.plugins().map(|plugin| plugin.name()).collect();
-        assert_eq!(names, ["other", "counter"]);
+        assert_eq!(names, ["counter", "other"]);
         let counter = registry.get("counter").unwrap();
         assert!(runtime.block_on(counter.host(&cx)).is_ok());
         let other = registry.get("other").unwrap();

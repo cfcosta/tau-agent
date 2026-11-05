@@ -16,7 +16,6 @@ use tau_ui_plugin::{
     PluginStatus,
     RunCtx,
     RunCx,
-    Seam,
     UiPlugin,
     ViewCx,
     points::{self, AtRun},
@@ -91,6 +90,13 @@ impl UiPlugin for TreeCompactionUi {
 
     fn name(&self) -> &'static str {
         NAME
+    }
+
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        // The tree folds before the summary, which steps in when it fails.
+        tau_ui_plugin::Declaration::new()
+            .before(&["tau-compaction"])
+            .seams(&[tau_ui_plugin::Seam::Start, tau_ui_plugin::Seam::Rewrite])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -190,7 +196,6 @@ impl HostHalf for TreeCompactionHost {
             } else {
                 format!("{what} (off)")
             },
-            seams: vec![Seam::Start, Seam::Rewrite],
             page: None,
             ..Default::default()
         }

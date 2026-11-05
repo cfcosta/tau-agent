@@ -1376,7 +1376,7 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     skills.sort();
     let listed = skills.len();
     let mut expected: Vec<String> =
-        ["/goal", "/plugin", "/agent"].map(String::from).to_vec();
+        ["/agent", "/goal", "/plugin"].map(String::from).to_vec();
     expected.extend(skills);
     expected.extend(["/model", "/attach"].map(String::from));
     assert_eq!(names(composer_slash(&workspace, &mut cx, "/")), expected);

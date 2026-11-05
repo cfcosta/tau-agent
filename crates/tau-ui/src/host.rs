@@ -48,6 +48,7 @@ use tau_ui_plugin::{
     HostRecord,
     RepoId,
     Services,
+    services::names,
     sub_agents::{ChildModel, RefusingSpawn, Spawn, SubAgents},
     vcs::{
         Discard,
@@ -773,7 +774,10 @@ impl Host {
             description: "A jj workspace per run, and a commit per \
                               turn to fork from"
                 .into(),
-            seams: vec![Seam::Start],
+            reach: tau_ui_plugin::Reach {
+                seams: vec![Seam::Start],
+                ..Default::default()
+            },
             spend: 0.0,
             page: None,
             group: tau_ui_plugin::Group::Environment,
@@ -950,14 +954,18 @@ impl Host {
             move |workspace: &dyn RunWorkspace,
                   wake: Option<tau_ui_plugin::RunWake>| {
                 let mut services = Services::default()
-                    .with(workspace.turns())
-                    .with(tau_ui_plugin::WorkspaceDir(workspace.dir()))
-                    .with(commands.clone());
+                    .offer(names::TURN_HOOKS, workspace.turns())
+                    .offer(
+                        names::WORKSPACE_DIR,
+                        tau_ui_plugin::WorkspaceDir(workspace.dir()),
+                    )
+                    .offer(names::RUN_COMMANDS, commands.clone());
                 if agent_repo {
-                    services = services.with(tau_ui_plugin::AgentRepo);
+                    services = services
+                        .offer(names::AGENT_REPO, tau_ui_plugin::AgentRepo);
                 }
                 if let Some(wake) = wake {
-                    services = services.with(wake);
+                    services = services.offer(names::RUN_WAKE, wake);
                 }
                 services
             };

@@ -24,6 +24,13 @@ impl UiPlugin for WatcherUi {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new().seams(&[
+            tau_ui_plugin::Seam::Start,
+            tau_ui_plugin::Seam::BeforeRequest,
+        ])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::TRANSCRIPT, view::annotation)

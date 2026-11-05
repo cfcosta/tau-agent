@@ -10,7 +10,6 @@ use tau_ui_plugin::{
     Prompt,
     RunCtx,
     RunKind,
-    Seam,
     slots::Fills,
     vcs::{self, VCS},
 };
@@ -55,7 +54,6 @@ impl HostHalf for VcsHost {
             description: "status diff log show describe commit new restore \
                           resolve undo, on the run's workspace"
                 .into(),
-            seams: vec![Seam::Tools],
             page: None,
             ..Default::default()
         }

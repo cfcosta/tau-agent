@@ -23,7 +23,6 @@ use tau_ui_plugin::{
     PluginInfo,
     RepoCtx,
     RunCtx,
-    Seam,
     needs_jev,
 };
 
@@ -237,7 +236,6 @@ impl HostHalf for ConstitutionHost {
             } else {
                 needs_jev(false, "Checks calls against each repository's rules")
             },
-            seams: vec![Seam::BeforeTool, Seam::BeforeStop],
             page: Some(Link::page("rules").param("repo", "")),
             ..Default::default()
         }

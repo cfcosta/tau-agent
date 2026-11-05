@@ -2463,24 +2463,23 @@ fn plugin_step(
         .get(plugin)
         .map_or(&[][..], |erased| erased.reads());
     // What the plugin says it reads outside repositories.
-    let reach = (!reads.is_empty()).then(|| {
-        div()
-            .debug_selector(|| "setup-reach".to_owned())
-            .w_full()
-            .max_w(rems(STEP_WIDTH))
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(sp(1.5))
-            .typeset(Type::CAPTION)
-            .text_color(t.setup.faint)
-            .child("Reads outside your repositories:")
-            .children(
-                reads
-                    .iter()
-                    .map(|path| mono(*path, Type::CAPTION, t.setup.soft)),
-            )
-    });
+    let reach =
+        (!reads.is_empty()).then(|| {
+            div()
+                .debug_selector(|| "setup-reach".to_owned())
+                .w_full()
+                .max_w(rems(STEP_WIDTH))
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(sp(1.5))
+                .typeset(Type::CAPTION)
+                .text_color(t.setup.faint)
+                .child("Reads outside your repositories:")
+                .children(reads.iter().map(|path| {
+                    mono(path.clone(), Type::CAPTION, t.setup.soft)
+                }))
+        });
     let Some(view) = view else {
         // The step has nothing to ask any more: only the way on.
         return screen.child(

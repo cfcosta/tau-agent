@@ -24,7 +24,6 @@ use tau_ui_plugin::{
     RunCtx,
     RunCx,
     RunInfo,
-    Seam,
     UiPlugin,
     ViewCx,
     needs_jev,
@@ -322,6 +321,19 @@ impl UiPlugin for FastCompactionUi {
         true
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        // Pruning first: it is cheaper than a summary or a tree, and
+        // they follow when pruning cannot help.
+        tau_ui_plugin::Declaration::new()
+            .before(&["tau-tree-compaction", "tau-compaction"])
+            .seams(&[
+                tau_ui_plugin::Seam::Start,
+                tau_ui_plugin::Seam::AfterTool,
+                tau_ui_plugin::Seam::Rewrite,
+            ])
+            .services(&[tau_ui_plugin::services::names::JEV])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(
@@ -398,7 +410,6 @@ impl HostHalf for FastCompactionHost {
                 "Prunes large command outputs as they arrive, and stale tool \
                  history",
             ),
-            seams: vec![Seam::Start, Seam::Rewrite],
             page: Some(ledger_link()),
             ..Default::default()
         }

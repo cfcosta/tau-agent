@@ -41,6 +41,12 @@ impl UiPlugin for DirenvUi {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[tau_ui_plugin::Seam::Start, tau_ui_plugin::Seam::OnEvent])
+            .services(&[tau_ui_plugin::services::names::WORKSPACE_DIR])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::COMPOSER, view::question)

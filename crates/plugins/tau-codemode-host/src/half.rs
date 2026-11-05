@@ -13,7 +13,7 @@ use tau_codemode::{
     ui::{Action, ActionReply, description, validate_selection},
 };
 use tau_jev::Jev;
-use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx, Seam};
+use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx};
 
 /// tau-codemode on the host.
 #[derive(Debug, Clone, Copy, Default)]
@@ -47,7 +47,6 @@ impl HostHalf for CodemodeHost {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
             description: description(jev),
-            seams: vec![Seam::Start, Seam::Tools],
             page: None,
             ..Default::default()
         }

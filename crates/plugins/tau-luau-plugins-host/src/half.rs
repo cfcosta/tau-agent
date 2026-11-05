@@ -155,12 +155,6 @@ impl HostHalf for LuauPluginsHost {
         PluginInfo {
             group: tau_ui_plugin::Group::Yours,
             description,
-            seams: vec![
-                Seam::Tools,
-                Seam::BeforeTool,
-                Seam::BeforeStop,
-                Seam::Finish,
-            ],
             page: Some(Link::page(PAGE)),
             entries,
             ..Default::default()

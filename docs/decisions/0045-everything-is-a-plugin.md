@@ -335,6 +335,20 @@ Each step lands on main by itself and leaves tau working.
 3. **Declarations.** `after` / `before`, `provides` / `uses`,
    capabilities on Rust plugins, the Plugins screen showing reach.
    Delete the hand order in `plugins.rs`.
+   As built: `UiPlugin::declaration` (`tau_ui_plugin::Declaration`)
+   holds `after` / `before` and the plugin's `Reach`: its seams, the
+   slots it fills, the services it provides and uses, and the tools,
+   store, network, secrets and paths it reaches. The registry orders
+   plugins by it, the rest by name, and panics on a cycle; `tau-plugins`
+   lists them in any order. The kernel's gate (`gate::gate`) calls only
+   the declared seams of every agent plugin a host half gives; host
+   services are offered by name (`Services::offer`, `services::names`)
+   and each host half sees only those it declared (`Services::scoped`);
+   `Fills::fill` refuses an undeclared slot. Rust plugins' other reach
+   is a statement, shown on the Plugins screen from
+   `PluginInfo::reach`. `Manifest::reads` moved into the declaration,
+   and `PluginInfo::seams` into its reach. The Seam list grew to every
+   hook of `Plugin` and `PluginRun`.
 4. **Run assembly.** `workspace`, `tools` with per-workspace state,
    `prompt(kind)`; `tau-tools` and `tau-vcs` build their own parts, and
    `agent_for_run` shrinks to the kernel's lifecycle.

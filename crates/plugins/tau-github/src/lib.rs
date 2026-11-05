@@ -188,6 +188,13 @@ impl UiPlugin for GitHubUi {
         }
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .fills(&[tau_ui_plugin::forge::FORGE.name()])
+            .network(&["github.com", "api.github.com"])
+            .secrets(&["github"])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::SETUP, step)

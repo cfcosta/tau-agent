@@ -26,7 +26,10 @@ fn plugin(name: &str, group: Group) -> PluginInfo {
     PluginInfo {
         name: name.into(),
         description: String::new(),
-        seams: Vec::new(),
+        reach: tau_ui_plugin::Reach {
+            seams: Vec::new(),
+            ..Default::default()
+        },
         spend: 0.0,
         page: None,
         group,

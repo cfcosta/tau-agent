@@ -10,7 +10,7 @@ use tau_ai::{
     message::{Message, StopReason, UserContent, UserMessage, text_of},
     responses::request::{ReasoningEffort, Settings as Request},
 };
-use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx, RunKind, Seam};
+use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx, RunKind};
 
 use crate::{
     prompt,
@@ -244,7 +244,6 @@ impl HostHalf for WatcherHost {
             description: "Every 6th step a side request reads the run and, \
                           rarely, offers one note you likely missed"
                 .into(),
-            seams: vec![Seam::Start],
             note: Some(tau_ui_plugin::Note::new(
                 if settings.enabled { "on" } else { "off" },
                 tau_ui_kit::theme::Tone::Quiet,

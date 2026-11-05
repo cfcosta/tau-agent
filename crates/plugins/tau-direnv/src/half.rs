@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
-use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RepoCtx, RunCtx, Seam};
+use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RepoCtx, RunCtx};
 
 use crate::{Act, DirenvUi, RepoData, Settings, host::Host};
 
@@ -62,7 +62,6 @@ impl HostHalf for DirenvHost {
             description: "Runs agent commands in the repository's direnv \
                           environment, once you allow it"
                 .into(),
-            seams: vec![Seam::Start],
             page: None,
             ..Default::default()
         }

@@ -3,7 +3,7 @@
 
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
-use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx, Seam, WorkspaceDir};
+use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx, WorkspaceDir};
 
 use crate::{
     CanvasUi,
@@ -47,7 +47,6 @@ impl HostHalf for CanvasHost {
             description: "Shows you the images and documents the agent \
                           makes, in a pane beside the run"
                 .into(),
-            seams: vec![Seam::Tools],
             ..Default::default()
         }
     }

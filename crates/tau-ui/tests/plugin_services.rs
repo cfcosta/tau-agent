@@ -1,5 +1,6 @@
 //! What the host offers a plugin's host half outside any run (ADR
-//! 0044): the person's model, whose use is booked to the plugin, and
+//! 0044): the person's model, whose use is booked to the plugin and
+//! which only a plugin that declares it is given (ADR 0045), and
 //! jobs the host keeps, which the catalog lists with their progress,
 //! which read the repositories as they are, stop when cancelled, and
 //! start again as the host does; and the end of first-run setup.
@@ -57,6 +58,10 @@ impl UiPlugin for Resumer {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
     }
@@ -83,6 +88,17 @@ impl HostHalf for ResumerHost {
 
     async fn setup_finished(&self, _: &(), repos: &[SetupRepo], _: &HostCx) {
         FINISHED.lock().unwrap().push(repos.to_vec());
+    }
+
+    /// Says whether it is given the person's model, which it does not
+    /// declare it uses.
+    async fn act(
+        &self,
+        _: &(),
+        _: serde_json::Value,
+        cx: &HostCx,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        Ok(Some(serde_json::json!(cx.model(NAME).is_some())))
     }
 
     /// Goes on counting when its checkpoint says it was: until it is
@@ -300,6 +316,13 @@ fn a_host_half_asks_the_model_and_the_plugin_pays() {
     assert!(spend.iter().any(|(plugin, _)| plugin == NAME), "{spend:?}");
     let runs = host.block_on(store.recent_runs(10)).unwrap();
     assert!(runs.is_empty(), "no run: {runs:?}");
+
+    // The resumer does not declare the model: the host has it, and does
+    // not give it.
+    let given = host
+        .block_on(host.plugin_act(NAME, serde_json::Value::Null))
+        .unwrap();
+    assert_eq!(given, Some(serde_json::json!(false)));
 
     host.set_account(None).unwrap();
     assert!(host.host_cx().model(NAME).is_none());

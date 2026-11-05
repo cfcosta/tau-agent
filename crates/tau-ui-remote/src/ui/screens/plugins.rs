@@ -5,7 +5,7 @@
 //! list links to.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
-use tau_ui_plugin::{CatalogEntry, Group, Note, Seam};
+use tau_ui_plugin::{CatalogEntry, Group, Note, Seam, StoreReach};
 
 use crate::{
     catalog::PluginInfo,
@@ -74,7 +74,8 @@ impl Row<'_> {
     }
 
     fn seams(&self) -> &[Seam] {
-        self.entry.map_or(&self.plugin.seams, |entry| &entry.seams)
+        self.entry
+            .map_or(&self.plugin.reach.seams, |entry| &entry.seams)
     }
 
     fn is(&self, selection: &Selection) -> bool {
@@ -793,11 +794,35 @@ fn about(row: &Row<'_>, t: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// What the plugin says it reads outside repositories, when it says
-/// (`Manifest::reads`).
+/// What the plugin declares it reaches beyond its seams, when it
+/// declares any (`Declaration`): the slots it fills, the services it
+/// provides and uses, the tools it calls, the store beyond its own
+/// records, the network, secrets, and paths outside repositories.
 fn reach(row: &Row<'_>, t: &Theme) -> Option<AnyElement> {
-    let reads = crate::plugins::registry().get(&row.plugin.name)?.reads();
-    if reads.is_empty() {
+    if row.entry.is_some() {
+        return None;
+    }
+    let reach = &row.plugin.reach;
+    let store = if reach.store == StoreReach::Read {
+        vec!["every run's records".to_owned()]
+    } else {
+        Vec::new()
+    };
+    let groups: Vec<(&str, &[String])> = vec![
+        ("Slots it fills", &reach.fills),
+        ("Services it gives", &reach.provides),
+        ("Services it uses", &reach.services),
+        ("Tools it calls", &reach.tools),
+        ("The store it reads", &store),
+        ("Where it connects", &reach.network),
+        ("Secrets it keeps", &reach.secrets),
+        ("What it reads outside repositories", &reach.reads),
+    ];
+    let groups: Vec<_> = groups
+        .into_iter()
+        .filter(|(_, names)| !names.is_empty())
+        .collect();
+    if groups.is_empty() {
         return None;
     }
     Some(
@@ -807,18 +832,22 @@ fn reach(row: &Row<'_>, t: &Theme) -> Option<AnyElement> {
             .flex()
             .flex_col()
             .gap(sp(2.))
-            .child(ui::heading("What it reads outside repositories", t))
-            .child(
-                div().flex().flex_wrap().gap(sp(1.5)).children(
-                    reads.iter().map(|path| {
-                        ui::tag(*path, Type::CAPTION, t.text_soft, t)
-                    }),
-                ),
-            )
+            .children(groups.into_iter().map(|(heading, names)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(sp(1.5))
+                    .child(ui::heading(heading, t))
+                    .child(div().flex().flex_wrap().gap(sp(1.5)).children(
+                        names.iter().map(|name| {
+                            ui::tag(name.clone(), Type::CAPTION, t.text_soft, t)
+                        }),
+                    ))
+            }))
             .child(div().typeset(Type::CAPTION).text_color(t.dim).child(
-                "What the plugin says it reads. tau does not fence a \
-                         plugin built into it: this is a statement, not a \
-                         limit.",
+                "What the plugin declares. tau calls only its seams, gives \
+                 it only its services and takes only its slots; the rest \
+                 is a statement, not a limit, for a plugin built into it.",
             ))
             .into_any_element(),
     )
@@ -828,9 +857,13 @@ fn seam_label(seam: Seam) -> &'static str {
     match seam {
         Seam::Start => "as a run starts",
         Seam::Tools => "tools it adds",
+        Seam::StartIdle => "compacting an idle run",
+        Seam::BeforeRequest => "before each request",
         Seam::BeforeTool => "before each call",
         Seam::AfterTool => "after each call",
+        Seam::OnEvent => "every run event",
         Seam::Rewrite => "rewrites the context",
+        Seam::Rewritten => "after a rewrite",
         Seam::BeforeStop => "before a run stops",
         Seam::Finish => "as a run ends",
     }

@@ -11,4 +11,8 @@ pub mod record;
 pub mod ui;
 
 pub use record::NAME;
+
+/// The name of the host service that says how notes are searched:
+/// by meaning, or by keywords alone (`tau_memory_host::Search`).
+pub const SEARCH: &str = "tau.memory-search";
 pub use ui::MemoryUi;

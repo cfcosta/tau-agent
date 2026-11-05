@@ -803,6 +803,15 @@ impl HostCx {
         Ok(())
     }
 
+    /// These services as `plugin`, which declared the services `names`,
+    /// is given them ([`Services::scoped`]).
+    pub fn scoped(&self, plugin: &'static str, names: &[String]) -> Self {
+        Self {
+            services: self.services.scoped(plugin, names),
+            ..self.clone()
+        }
+    }
+
     /// The person's home, when the host says where it is.
     pub fn home(&self) -> Option<&Path> {
         self.services.get::<HomeDir>().map(|dir| dir.0.as_path())

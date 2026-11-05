@@ -345,6 +345,17 @@ impl UiPlugin for ToolsUi {
         }
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[tau_ui_plugin::Seam::Tools])
+            .services(&[
+                tau_ui_plugin::services::names::WORKSPACE_DIR,
+                tau_ui_plugin::services::names::RUN_WAKE,
+                tau_ui_plugin::services::names::RUN_COMMANDS,
+                tau_ui_plugin::services::names::AGENT_REPO,
+            ])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::CARD, card)

@@ -70,8 +70,10 @@ pub struct Fills {
     candidates: HashMap<&'static str, Vec<Candidate>>,
     orders: HashMap<String, Vec<String>>,
     picks: BTreeMap<String, String>,
-    /// The plugin whose fillers [`Fills::fill`] takes now.
+    /// The plugin whose fillers [`Fills::fill`] takes now, and the slots
+    /// it declared it fills.
     filling: String,
+    declared: Vec<String>,
 }
 
 impl Fills {
@@ -83,19 +85,30 @@ impl Fills {
         );
     }
 
-    /// The fillers [`Fills::fill`] takes from now on are `plugin`'s: the
-    /// registry says so before it asks a plugin to fill its slots.
-    pub fn filling(&mut self, plugin: &str) {
+    /// The fillers [`Fills::fill`] takes from now on are `plugin`'s, for
+    /// the slots it declared (`slots`): the registry says so before it
+    /// asks a plugin to fill its slots.
+    pub fn filling(&mut self, plugin: &str, slots: &[String]) {
         self.filling = plugin.to_owned();
+        self.declared = slots.to_vec();
     }
 
     /// The plugin filling now can fill `slot` with `filler`; filled
-    /// again by the same plugin, the last filler counts.
+    /// again by the same plugin, the last filler counts. A slot it did
+    /// not declare it fills is refused, and the kernel says so.
     pub fn fill<T: ?Sized + Send + Sync + 'static>(
         &mut self,
         slot: &Slot<T>,
         filler: Arc<T>,
     ) {
+        if !self.declared.iter().any(|declared| declared == slot.name) {
+            eprintln!(
+                "tau-ui-plugin: {} fills the slot {}, which it does not \
+                 declare; it is refused",
+                self.filling, slot.name
+            );
+            return;
+        }
         // `T` may be unsized, as a trait is: the `Arc` is what is boxed.
         let filler: Arc<dyn Any + Send + Sync> = Arc::new(filler);
         let candidates = self.candidates.entry(slot.name).or_default();
@@ -221,7 +234,7 @@ mod tests {
             let mut fills = Fills::default();
             fills.declare(NAMED.name(), &["second", "first"]);
             for name in order {
-                fills.filling(name);
+                fills.filling(name, &[NAMED.name().to_owned()]);
                 fills.fill(&NAMED, Arc::new(Called(name)) as Arc<dyn Named>);
             }
             fills
@@ -241,5 +254,14 @@ mod tests {
             assert_eq!(fills.get(&NAMED).unwrap().name(), "second");
         }
         assert!(Fills::default().get(&NAMED).is_none());
+    }
+
+    #[test]
+    fn a_filler_for_a_slot_not_declared_is_refused() {
+        let mut fills = Fills::default();
+        fills.filling("quiet", &[]);
+        fills.fill(&NAMED, Arc::new(Called("quiet")) as Arc<dyn Named>);
+        assert!(fills.candidates(NAMED.name()).is_empty());
+        assert!(fills.filler(NAMED.name()).is_none());
     }
 }

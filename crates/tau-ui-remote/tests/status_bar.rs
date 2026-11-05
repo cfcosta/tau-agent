@@ -42,6 +42,10 @@ impl UiPlugin for Worker {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(Page::new("review", |_| Node::stack([])))
@@ -92,7 +96,10 @@ fn open(
             plugins: vec![PluginInfo {
                 name: NAME.into(),
                 description: String::new(),
-                seams: Vec::new(),
+                reach: tau_ui_plugin::Reach {
+                    seams: Vec::new(),
+                    ..Default::default()
+                },
                 spend: 0.,
                 page: Some(Link::page("main")),
                 group: Default::default(),

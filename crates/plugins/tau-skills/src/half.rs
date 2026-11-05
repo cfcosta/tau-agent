@@ -1,7 +1,7 @@
 //! tau-skills's host half (ADR 0030).
 
 use tau_agent::plugin::Plugin;
-use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx, Seam};
+use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx};
 
 use crate::{Skills, SkillsUi, ui::link};
 
@@ -76,7 +76,6 @@ impl HostHalf for SkillsHost {
                      them: {n} skills"
                 ),
             },
-            seams: vec![Seam::Start, Seam::Tools],
             page: Some(link()),
             note: Some(tau_ui_plugin::Note::new(
                 match found {

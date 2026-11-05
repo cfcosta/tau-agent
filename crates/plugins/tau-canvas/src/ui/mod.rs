@@ -122,6 +122,12 @@ impl UiPlugin for CanvasUi {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[tau_ui_plugin::Seam::Tools])
+            .services(&[tau_ui_plugin::services::names::WORKSPACE_DIR])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::PANE, pane::pane)

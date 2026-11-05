@@ -61,7 +61,6 @@ use tau_ui_plugin::{
     PluginInfo,
     RepoCtx,
     RunCtx,
-    Seam,
 };
 
 use crate::{
@@ -1182,7 +1181,6 @@ fn catalog(host: &Host, cx: &HostCx, settings: &Settings) -> PluginInfo {
     };
     PluginInfo {
         description,
-        seams: vec![Seam::Start, Seam::Tools],
         page: Some(Link::page("servers").param("repo", "")),
         ..Default::default()
     }

@@ -75,6 +75,10 @@ impl UiPlugin for Before {
         BEFORE
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new().contribute(
             points::SETUP,
@@ -120,10 +124,12 @@ impl UiPlugin for Stepper {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new().reads(&["~/.stepper"])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
-        Manifest::new()
-            .contribute(points::SETUP, step)
-            .reads(&["~/.stepper"])
+        Manifest::new().contribute(points::SETUP, step)
     }
 
     /// Its one button ends the step.
@@ -422,7 +428,8 @@ fn a_step_before_the_repositories_follows_the_model(cx: &mut TestAppContext) {
 }
 
 /// The plugin's page in the Plugins screen says what it reads outside
-/// repositories; one that reads nothing there says nothing of it.
+/// repositories, as its catalog entry carries its declaration; one that
+/// reads nothing there says nothing of it.
 #[gpui::test]
 fn a_plugin_s_page_says_what_it_reads(cx: &mut TestAppContext) {
     let (workspace, mut cx, _events) = open(true, cx);
@@ -431,7 +438,7 @@ fn a_plugin_s_page_says_what_it_reads(cx: &mut TestAppContext) {
         catalog.plugins.push(tau_ui_remote::catalog::PluginInfo {
             name: NAME.into(),
             description: "Steps.".into(),
-            seams: Vec::new(),
+            reach: Stepper.declaration().reach,
             spend: 0.,
             page: None,
             group: tau_ui_plugin::Group::Context,

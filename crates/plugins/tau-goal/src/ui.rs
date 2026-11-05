@@ -29,7 +29,6 @@ use tau_ui_plugin::{
     RunCx,
     RunInfo,
     RunKind,
-    Seam,
     SlashCommand,
     UiPlugin,
     ViewCx,
@@ -279,6 +278,20 @@ impl UiPlugin for GoalUi {
         set_message(prompt)
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        // The repository's rules hold a stop before a goal does, and the
+        // notes on a tool's result come before the goal's.
+        tau_ui_plugin::Declaration::new()
+            .after(&["tau-constitution", "tau-memory"])
+            .seams(&[
+                tau_ui_plugin::Seam::Start,
+                tau_ui_plugin::Seam::AfterTool,
+                tau_ui_plugin::Seam::OnEvent,
+                tau_ui_plugin::Seam::BeforeStop,
+            ])
+            .services(&[tau_ui_plugin::services::names::JEV])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::RUN_BANNER, banner)
@@ -397,7 +410,6 @@ impl HostHalf for GoalHost {
                 jev,
                 "Keeps a conversation going until its /goal holds",
             ),
-            seams: vec![Seam::Start, Seam::AfterTool, Seam::BeforeStop],
             page: None,
             ..Default::default()
         }

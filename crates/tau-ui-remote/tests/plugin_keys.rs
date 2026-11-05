@@ -32,6 +32,10 @@ impl UiPlugin for Keys {
         "keys"
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new().after(&["tau-memory"])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         let press = |key: &'static str| {
             move |at: &tau_ui_plugin::KeyAt,

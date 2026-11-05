@@ -438,6 +438,17 @@ impl UiPlugin for McpUi {
         page::on_action(action, args, view);
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[tau_ui_plugin::Seam::Tools, tau_ui_plugin::Seam::Start])
+            .services(&[
+                tau_ui_plugin::services::names::OUTSIDE_TOOLS,
+                tau_ui_plugin::services::names::OUTSIDE_RESOURCES,
+                tau_ui_plugin::services::names::UNATTENDED,
+                tau_ui_plugin::services::names::REPO_LAUNCHER,
+            ])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .settings(page::settings_pane)

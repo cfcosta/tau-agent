@@ -140,7 +140,7 @@ pub async fn catalog(
         plugins.push(PluginInfo {
             name: info.name,
             description: info.description,
-            seams: info.seams,
+            reach: info.reach,
             spend: info.spend,
             page: info.page,
             group: info.group,

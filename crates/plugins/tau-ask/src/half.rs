@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 use tau_agent::plugin::Plugin;
-use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx, Seam};
+use tau_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx};
 
 use crate::{
     AskUi,
@@ -48,7 +48,6 @@ impl HostHalf for AskHost {
             description:
                 "Lets the agent ask you questions and waits for your answers"
                     .into(),
-            seams: vec![Seam::Start, Seam::Tools],
             page: None,
             ..Default::default()
         }

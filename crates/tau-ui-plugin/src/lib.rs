@@ -27,7 +27,9 @@
 //!   its pages, the points it declares, and its contributions to points,
 //!   `tau-ui`'s ([`points`]) or other plugins'.
 
+pub mod declare;
 pub mod forge;
+pub mod gate;
 pub mod host;
 pub mod jobs;
 pub mod manifest;
@@ -48,6 +50,7 @@ pub mod view;
 pub mod waiting;
 pub mod wire;
 
+pub use declare::{Declaration, Reach, StoreReach};
 pub use host::{
     AgentRepo,
     By,
@@ -216,25 +219,40 @@ pub fn needs_jev(jev: bool, what: &str) -> String {
 /// no TypeSafe key.
 pub const NO_KEY: &str = "off · no TypeSafe key";
 
-/// The seams a plugin can use, in the order the loop reaches them.
+/// The seams a plugin can use, in the order the loop reaches them: each
+/// a hook of `tau_agent::Plugin` or `PluginRun`. The host calls only
+/// those a plugin declares ([`Declaration::seams`]); `start` itself is
+/// always called, for the plugin's part in the run, but changes to the
+/// run's plan count only with [`Seam::Start`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Seam {
+    /// `start` changing the run's plan: its instructions, context,
+    /// tools or settings.
     Start,
+    /// `tools` and `tool_source`.
     Tools,
+    StartIdle,
+    BeforeRequest,
     BeforeTool,
     AfterTool,
+    OnEvent,
     Rewrite,
+    Rewritten,
     BeforeStop,
     Finish,
 }
 
 impl Seam {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 11] = [
         Self::Start,
         Self::Tools,
+        Self::StartIdle,
+        Self::BeforeRequest,
         Self::BeforeTool,
         Self::AfterTool,
+        Self::OnEvent,
         Self::Rewrite,
+        Self::Rewritten,
         Self::BeforeStop,
         Self::Finish,
     ];
@@ -243,9 +261,13 @@ impl Seam {
         match self {
             Self::Start => "start",
             Self::Tools => "tools",
+            Self::StartIdle => "start_idle",
+            Self::BeforeRequest => "before_request",
             Self::BeforeTool => "before_tool",
             Self::AfterTool => "after_tool",
+            Self::OnEvent => "on_event",
             Self::Rewrite => "rewrite",
+            Self::Rewritten => "rewritten",
             Self::BeforeStop => "before_stop",
             Self::Finish => "finish",
         }
@@ -333,7 +355,10 @@ pub struct CatalogEntry {
 pub struct PluginInfo {
     pub name: String,
     pub description: String,
-    pub seams: Vec<Seam>,
+    /// What it declares it reaches ([`UiPlugin::declaration`]); the
+    /// registry sets it.
+    #[serde(default)]
+    pub reach: Reach,
     /// What the plugin cost over the store's recent window; the host
     /// fills it in.
     pub spend: f64,
@@ -411,6 +436,12 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
     fn read_prompt(&self, _prompt: &str) -> Option<String> {
         None
     }
+
+    /// What it declares of itself, in one place: the plugins it comes
+    /// after or before, and what it reaches (ADR 0045). The kernel calls
+    /// only the seams, gives only the services and takes only the slot
+    /// fillers it names.
+    fn declaration(&self) -> Declaration;
 
     fn manifest(&self) -> Manifest<Self>;
 }

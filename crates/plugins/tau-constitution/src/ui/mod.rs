@@ -394,6 +394,16 @@ impl UiPlugin for ConstitutionUi {
         page::on_action(action, args, view);
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[
+                tau_ui_plugin::Seam::Start,
+                tau_ui_plugin::Seam::BeforeTool,
+                tau_ui_plugin::Seam::BeforeStop,
+            ])
+            .services(&[tau_ui_plugin::services::names::JEV])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(

@@ -466,6 +466,27 @@ impl UiPlugin for LuauPluginsUi {
         page_action(&view.handle, action, args);
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        // The person's plugins come after the rules, the goal and the
+        // effort's pick, so theirs hold first.
+        tau_ui_plugin::Declaration::new()
+            .after(&["tau-constitution", "tau-goal", "tau-reasoning"])
+            .seams(&[
+                tau_ui_plugin::Seam::Tools,
+                tau_ui_plugin::Seam::Start,
+                tau_ui_plugin::Seam::BeforeRequest,
+                tau_ui_plugin::Seam::BeforeTool,
+                tau_ui_plugin::Seam::OnEvent,
+                tau_ui_plugin::Seam::BeforeStop,
+                tau_ui_plugin::Seam::Finish,
+            ])
+            .services(&[
+                tau_ui_plugin::services::names::WORKSPACE_DIR,
+                tau_ui_plugin::services::names::IDENTITY,
+                tau_ui_plugin::services::names::JEV,
+            ])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(

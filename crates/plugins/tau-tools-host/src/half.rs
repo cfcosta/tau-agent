@@ -27,7 +27,6 @@ use tau_ui_plugin::{
     RunCtx,
     RunKind,
     RunWake,
-    Seam,
     WorkspaceDir,
 };
 
@@ -172,7 +171,6 @@ impl HostHalf for ToolsHost {
                 "read, exec_command, write_stdin, edit, write, grep, find \
                           and ls on the run's workspace"
                     .into(),
-            seams: vec![Seam::Tools],
             page: None,
             ..Default::default()
         }

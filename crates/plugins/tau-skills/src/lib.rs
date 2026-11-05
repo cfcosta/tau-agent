@@ -60,8 +60,13 @@ pub const SKILLS_DIR: &str = ".agents/skills";
 /// the person's with the same name is offered instead.
 pub const BUILTIN_DIR: &str = "skills";
 
+/// The name of the host service that says where skills are read from
+/// ([`SkillsDir`]).
+pub const DIR_SERVICE: &str = "tau.skills-dir";
+
 /// Where the host reads skills from: the person's skills folder, or a
-/// test's own. A host service ([`tau_ui_plugin::Services`]).
+/// test's own. A host service ([`tau_ui_plugin::Services`], named
+/// [`DIR_SERVICE`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillsDir(pub PathBuf);
 

@@ -34,6 +34,12 @@ impl UiPlugin for SkillsUi {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[tau_ui_plugin::Seam::Tools, tau_ui_plugin::Seam::Start])
+            .services(&[crate::DIR_SERVICE])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(

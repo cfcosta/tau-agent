@@ -251,6 +251,12 @@ impl<const N: usize> UiPlugin for Probe<N> {
         }
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        let slots: Vec<&str> =
+            SLOTS.get(N).map(Slot::name).into_iter().collect();
+        tau_ui_plugin::Declaration::new().fills(&slots)
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         let name = PROBES[N];
         Manifest::new()
@@ -410,7 +416,10 @@ fn catalog() -> Catalog {
             .map(|plugin| catalog::PluginInfo {
                 name: plugin.name().to_owned(),
                 description: String::new(),
-                seams: Vec::new(),
+                reach: tau_ui_plugin::Reach {
+                    seams: Vec::new(),
+                    ..Default::default()
+                },
                 spend: 0.0,
                 page: None,
                 group: Default::default(),
@@ -1833,6 +1842,10 @@ impl UiPlugin for Rival {
 
     fn name(&self) -> &'static str {
         "rival"
+    }
+
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new().fills(&[SLOTS[0].name()])
     }
 
     fn manifest(&self) -> Manifest<Self> {

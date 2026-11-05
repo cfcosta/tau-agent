@@ -28,6 +28,12 @@ impl UiPlugin for ScheduleUi {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[tau_ui_plugin::Seam::Tools])
+            .services(&[tau_ui_plugin::services::names::CONVERSATIONS])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute_at(points::INSPECTOR, -150, panel)

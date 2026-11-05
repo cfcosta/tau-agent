@@ -25,7 +25,6 @@ use tau_ui_plugin::{
     PluginStatus,
     RunCtx,
     RunCx,
-    Seam,
     UiPlugin,
     ViewCx,
     needs_jev,
@@ -256,6 +255,17 @@ impl UiPlugin for ReasoningPlugin {
         NAME
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new()
+            .seams(&[
+                tau_ui_plugin::Seam::Start,
+                tau_ui_plugin::Seam::BeforeRequest,
+                tau_ui_plugin::Seam::Rewritten,
+                tau_ui_plugin::Seam::Finish,
+            ])
+            .services(&[tau_ui_plugin::services::names::JEV])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(
@@ -381,7 +391,6 @@ impl HostHalf for ReasoningHost {
                 jev,
                 "Picks each message's reasoning effort on auto",
             ),
-            seams: vec![Seam::Start],
             page: Some(Link::page("choices").param("run", "")),
             ..Default::default()
         }

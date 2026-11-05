@@ -531,6 +531,16 @@ impl UiPlugin for CodemodeUi {
         }
     }
 
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        // Its `start` lists the Luau signatures of the tools in the run's
+        // plan, so a plugin that adds tools in its own (tau-mcp, for its
+        // servers' direct tools) comes first.
+        tau_ui_plugin::Declaration::new()
+            .after(&["tau-mcp"])
+            .seams(&[tau_ui_plugin::Seam::Tools, tau_ui_plugin::Seam::Start])
+            .services(&[tau_ui_plugin::services::names::JEV])
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .contribute(points::CARD, card)

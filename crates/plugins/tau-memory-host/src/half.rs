@@ -32,7 +32,6 @@ use tau_ui_plugin::{
     PluginInfo,
     RepoCtx,
     RunCtx,
-    Seam,
     TurnCommit,
     TurnHooks,
 };
@@ -51,7 +50,7 @@ use crate::{
 
 /// How a host searches notes: by meaning, with docbert's model, or by
 /// keywords alone, as in tests, where no model is loaded. The host puts
-/// one in its services; without one, keywords.
+/// one in its services ([`tau_memory::SEARCH`]); without one, keywords.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Search {
     Semantic,
@@ -333,12 +332,6 @@ impl HostHalf for MemoryHost {
             description: "Linked notes each repository's runs keep, and yours \
                           across them; searched at the start of a run"
                 .into(),
-            seams: vec![
-                Seam::Start,
-                Seam::Tools,
-                Seam::AfterTool,
-                Seam::Rewrite,
-            ],
             page: Some(notes_link("")),
             ..Default::default()
         }

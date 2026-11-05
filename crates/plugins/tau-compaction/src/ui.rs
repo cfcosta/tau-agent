@@ -14,7 +14,6 @@ use tau_ui_plugin::{
     PluginInfo,
     PluginStatus,
     RunCtx,
-    Seam,
     UiPlugin,
     ViewCx,
     points::{self, AtRun},
@@ -51,6 +50,14 @@ impl UiPlugin for CompactionUi {
 
     fn name(&self) -> &'static str {
         NAME
+    }
+
+    fn declaration(&self) -> tau_ui_plugin::Declaration {
+        tau_ui_plugin::Declaration::new().seams(&[
+            tau_ui_plugin::Seam::Start,
+            tau_ui_plugin::Seam::StartIdle,
+            tau_ui_plugin::Seam::Rewrite,
+        ])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -135,7 +142,6 @@ impl HostHalf for CompactionHost {
             description: "Summarizes the context when it nears the window, \
                           and an idle chat's before its cache lapses"
                 .into(),
-            seams: vec![Seam::Start, Seam::Rewrite],
             page: None,
             ..Default::default()
         }
