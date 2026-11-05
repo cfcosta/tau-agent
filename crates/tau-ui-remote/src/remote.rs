@@ -106,17 +106,19 @@ pub fn load(dir: &Path) -> Option<Credentials> {
     serde_json::from_str(&text).ok()
 }
 
-/// Keeps `credentials` in `dir`, or forgets them.
+/// Keeps `credentials` in `dir`, or forgets them. They take the old
+/// ones' place in one rename, owner-only: a phone killed while it writes
+/// keeps the old ones or the new, never half of either.
 pub fn store(
     dir: &Path,
     credentials: Option<&Credentials>,
 ) -> std::io::Result<()> {
     let path = credentials_path(dir);
     match credentials {
-        Some(credentials) => {
-            std::fs::create_dir_all(dir)?;
-            std::fs::write(path, serde_json::to_string(credentials)?)
-        }
+        Some(credentials) => tau_ai::files::write_private(
+            &path,
+            serde_json::to_string(credentials)?.as_bytes(),
+        ),
         None => match std::fs::remove_file(path) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                 Err(error)
@@ -627,4 +629,47 @@ fn start_session(
         }
     };
     state.session = Some(state.runtime.spawn(work).abort_handle());
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use tau_remote::Fingerprint;
+
+    use super::*;
+
+    /// What a reader sees while the phone writes its credentials over and
+    /// over is what a kill at that moment leaves: always whole.
+    #[test]
+    fn credentials_are_never_seen_half_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = Credentials {
+            host: "desk".into(),
+            address: "127.0.0.1:7443".parse().unwrap(),
+            fingerprint: Fingerprint([7; 32]),
+            device: "d".repeat(22),
+            token: "t".repeat(43),
+        };
+        store(dir.path(), Some(&credentials)).unwrap();
+        let writing = Arc::new(AtomicBool::new(true));
+        let writer = {
+            let (dir, writing) = (dir.path().to_owned(), writing.clone());
+            let credentials = credentials.clone();
+            std::thread::spawn(move || {
+                while writing.load(Ordering::SeqCst) {
+                    store(&dir, Some(&credentials)).unwrap();
+                }
+            })
+        };
+        let torn = (0..2_000)
+            .filter(|_| load(dir.path()).as_ref() != Some(&credentials))
+            .count();
+        writing.store(false, Ordering::SeqCst);
+        writer.join().unwrap();
+        assert_eq!(torn, 0, "a reader saw credentials half-written");
+    }
 }
