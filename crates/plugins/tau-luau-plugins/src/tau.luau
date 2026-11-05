@@ -73,6 +73,15 @@ function tau.change(args)
 	return { decision = "change", args = args }
 end
 
+-- What `start` answers: `context`, texts the run's first message
+-- starts with, and `instructions`, added to the run's own.
+function tau.start(plan)
+	return {
+		context = plan.context or array({}),
+		instructions = plan.instructions or json.null,
+	}
+end
+
 -- What `after_tool_result` answers to have the model read `text` in
 -- place of the call's result.
 function tau.result(text)
@@ -458,6 +467,7 @@ function tau._describe(plugin)
 		} or json.null,
 		tools = tools,
 		hooks = {
+			start = plugin.start ~= nil,
 			before_tool = plugin.before_tool ~= nil,
 			before_request = plugin.before_request ~= nil,
 			after_tool_result = plugin.after_tool_result ~= nil,

@@ -229,6 +229,8 @@ pub enum Hook {
     Tool(String),
     /// A tool's card, with `{ call, result }` as input.
     Card(String),
+    /// As the run starts, with `{ input, context, instructions }`.
+    Start,
     BeforeTool,
     /// Before each turn's request, with `{ model, effort, turn, messages }`.
     BeforeRequest,
@@ -257,7 +259,8 @@ impl Hook {
             | Self::SettingsView
             | Self::BeforeRequest
             | Self::OnEvent => 200,
-            Self::BeforeTool
+            Self::Start
+            | Self::BeforeTool
             | Self::AfterToolResult
             | Self::TurnEnd
             | Self::Action(_) => 2_000,
@@ -272,6 +275,7 @@ impl Hook {
             Self::Card(name) => format!(
                 "p.tools[\"{name}\"].card(input.call, input.result, ctx)"
             ),
+            Self::Start => "p.start(input, ctx)".into(),
             Self::BeforeTool => "p.before_tool(input, ctx)".into(),
             Self::BeforeRequest => "p.before_request(input, ctx)".into(),
             Self::AfterToolResult => "p.after_tool_result(input, ctx)".into(),
@@ -292,6 +296,7 @@ impl Hook {
         match self {
             Self::Tool(name) => tool(name).is_some(),
             Self::Card(name) => tool(name).is_some_and(|t| t.card),
+            Self::Start => declaration.hooks.start,
             Self::BeforeTool => declaration.hooks.before_tool,
             Self::BeforeRequest => declaration.hooks.before_request,
             Self::AfterToolResult => declaration.hooks.after_tool_result,

@@ -916,3 +916,53 @@ fn a_plugin_changes_what_the_model_reads_of_a_result() {
             if plugin == "short" && reason == "changed what the model reads of it"
     )));
 }
+
+const HOUSE_RULES: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "house-rules",
+  start = function(plan, ctx)
+    return tau.start({
+      context = { "The build is `make`." },
+      instructions = "Never push on your own.",
+    })
+  end,
+}
+"#;
+
+/// `start` adds to what a run starts with: a text before the input in its
+/// first message, and its instructions after the run's own.
+#[test]
+fn a_plugin_adds_to_what_a_run_starts_with() {
+    use tau_ai::message::Message;
+    let llm = ScriptedModel::new().turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("house-rules", HOUSE_RULES)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).plugin(plugins);
+    block_on_io(async {
+        let mut run = agent.start("build it", &store);
+        let _: Vec<RunEvent> = run.events().collect().await;
+        run.outcome().await.unwrap()
+    });
+    let request = &llm.requests()[0];
+    let instructions =
+        request.settings.instructions.clone().unwrap_or_default();
+    assert!(
+        instructions.ends_with("Never push on your own."),
+        "{instructions}"
+    );
+    let Some(Message::User(first)) = request.transcript.first() else {
+        panic!("{:?}", request.transcript);
+    };
+    let text = match &first.content {
+        UserContent::Text(text) => text.clone(),
+        UserContent::Blocks(blocks) => self::text(blocks),
+    };
+    let rules = text.find("The build is `make`.").expect(&text);
+    let input = text.find("build it").expect(&text);
+    assert!(rules < input, "{text}");
+}

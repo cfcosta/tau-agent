@@ -98,6 +98,8 @@ pub struct ToolSpec {
 )]
 pub struct Hooks {
     #[serde(default)]
+    pub start: bool,
+    #[serde(default)]
     pub before_tool: bool,
     #[serde(default)]
     pub before_request: bool,
@@ -129,9 +131,12 @@ impl Hooks {
         if self.before_stop && !before.before_stop {
             grown.push("`before_stop`".into());
         }
-        // It changes what the model reads.
+        // They change what the model reads.
         if self.after_tool_result && !before.after_tool_result {
             grown.push("`after_tool_result`".into());
+        }
+        if self.start && !before.start {
+            grown.push("`start`".into());
         }
         grown
     }
@@ -187,6 +192,7 @@ impl Declaration {
         let hooks = &self.hooks;
         [
             (!self.tools.is_empty(), Seam::Tools),
+            (hooks.start, Seam::Start),
             (hooks.before_tool, Seam::BeforeTool),
             (hooks.before_request, Seam::BeforeRequest),
             (hooks.after_tool_result, Seam::AfterTool),
@@ -432,6 +438,7 @@ mod tests {
         let mut declaration = declaring(&[], false, false);
         assert!(declaration.seams().is_empty());
         declaration.hooks = Hooks {
+            start: true,
             before_tool: true,
             before_request: true,
             after_tool_result: true,
@@ -445,6 +452,7 @@ mod tests {
         assert_eq!(
             declaration.seams(),
             [
+                Seam::Start,
                 Seam::BeforeTool,
                 Seam::BeforeRequest,
                 Seam::AfterTool,

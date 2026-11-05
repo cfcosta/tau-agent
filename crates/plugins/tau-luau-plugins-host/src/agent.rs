@@ -362,6 +362,25 @@ impl Inner {
     }
 }
 
+/// Adds what a plugin's `start` answered to `plan`: its texts after the
+/// context's, its instructions after the run's.
+fn apply_start(plan: &mut RunPlan, answer: &Value) {
+    plan.context.extend(
+        answer["context"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned),
+    );
+    if let Some(added) = answer["instructions"].as_str() {
+        plan.instructions = Some(match plan.instructions.take() {
+            Some(own) => format!("{own}\n\n{added}"),
+            None => added.to_owned(),
+        });
+    }
+}
+
 /// The most of a result's text `after_tool_result` is given, well inside
 /// what a hook's input may hold.
 const RESULT_TEXT: usize = 256 * 1024;
@@ -475,6 +494,7 @@ fn hook_name(hook: &Hook) -> String {
     match hook {
         Hook::Tool(name) => format!("tool {name}"),
         Hook::Card(name) => format!("card of {name}"),
+        Hook::Start => "start".into(),
         Hook::BeforeTool => "before_tool".into(),
         Hook::BeforeRequest => "before_request".into(),
         Hook::AfterToolResult => "after_tool_result".into(),
@@ -529,6 +549,30 @@ impl Plugin for LuauPlugins {
             }
             for active in self.0.active().iter() {
                 self.0.draw(active, &mut state, ctx).await;
+            }
+            // What each plugin adds to what the run starts with; the
+            // ones after it see it.
+            for active in self.0.active().iter() {
+                let input = json!({
+                    "input": plan.input,
+                    "context": plan.context,
+                    "instructions": plan.instructions,
+                });
+                let Some(answer) = self
+                    .0
+                    .call(
+                        active,
+                        Hook::Start,
+                        input,
+                        &mut state,
+                        ctx,
+                        Arc::new(NoReach),
+                    )
+                    .await
+                else {
+                    continue;
+                };
+                apply_start(plan, &answer);
             }
         }
         Ok(Box::new(LuauRun {

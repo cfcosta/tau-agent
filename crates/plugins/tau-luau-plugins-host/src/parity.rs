@@ -22,13 +22,14 @@ const NOT_YET: &str = "not yet";
 pub fn seam(seam: Seam) -> Luau {
     match seam {
         Seam::Tools => Luau::Hook("tools"),
+        Seam::Start => Luau::Hook("start"),
         Seam::BeforeTool => Luau::Hook("before_tool"),
         Seam::BeforeRequest => Luau::Hook("before_request"),
         Seam::AfterTool => Luau::Hook("after_tool_result"),
         Seam::OnEvent => Luau::Hook("on_event"),
         Seam::BeforeStop => Luau::Hook("before_stop"),
         Seam::Finish => Luau::Hook("run_end"),
-        Seam::Start | Seam::StartIdle | Seam::Rewrite | Seam::Rewritten => {
+        Seam::StartIdle | Seam::Rewrite | Seam::Rewritten => {
             Luau::Excluded(NOT_YET)
         }
     }

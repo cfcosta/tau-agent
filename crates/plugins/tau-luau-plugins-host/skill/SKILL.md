@@ -65,6 +65,7 @@ return tau.plugin {
   uses = { tools = { "exec_command" }, jev = false, infer = false },
   settings = { schema = { ... }, default = { ... }, view = function(settings, ctx) end },
   tools = { name = { description, parameters, call, card } },
+  start = function(plan, ctx) end,
   before_tool = function(call, ctx) end,
   before_request = function(request, ctx) end,
   after_tool_result = function(result, ctx) end,
@@ -87,6 +88,7 @@ one, its `card`.
 | ------------- | ------------------------------------------ | ------------------------------------------ | ------ |
 | tool `call`   | the arguments, as `parameters` describes   | a JSON value, or `error(message)`          | 60 s   |
 | tool `card`   | the call's arguments and the result        | a view piece, drawn on the call's card     | 200 ms |
+| `start`       | `{ input, context, instructions }`         | `nil`, or `tau.start{ context, instructions }` | 2 s |
 | `before_tool` | `{ id, name, args }`                       | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
 | `before_request` | `{ model, effort, turn, messages }`    | `nil`, or `tau.effort(level)`              | 200 ms |
 | `after_tool_result` | `{ id, name, args, ok, text, truncated }` | `nil`, or `tau.result(text)`  | 2 s    |
@@ -103,6 +105,12 @@ one, its `card`.
   for review too; it needs `uses.change_args = true`, which the person
   allows as they allow new tools. The tool checks the new arguments as
   it would the model's, and the plugins after it see them.
+- `tau.start{ context = { ... }, instructions = "..." }` adds to what
+  the run starts with: `context`'s texts open its first message, after
+  the ones already there, and `instructions` follow the run's own. The
+  plugins after it see what it added. Instructions are sent with every
+  request: keep them the same from run to run, or each run pays to
+  send them in full. Having `start` at all is new reach.
 - `tau.result(text)` has the model read `text` in place of the call's
   result, marked for review; the plugins after it read it as changed.
   `text` is the result's text, cut at 256 KiB (`truncated` says so).
@@ -144,7 +152,7 @@ JSON has no empty array: use `array({})` for one that must stay a list.
 ### `tau`
 
 - `tau.plugin(table)`, `tau.block(why)`, `tau.flag(why)`,
-  `tau.change(args)`, `tau.result(text)`, `tau.effort(level)`,
+  `tau.start(plan)`, `tau.change(args)`, `tau.result(text)`, `tau.effort(level)`,
   `tau.continue(message)`.
 - `tau.contains(list, value)`: whether `list` holds `value`.
 

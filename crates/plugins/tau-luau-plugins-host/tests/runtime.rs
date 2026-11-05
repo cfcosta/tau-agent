@@ -146,6 +146,7 @@ async fn a_plugin_declares_what_it_is() {
     assert_eq!(
         declared.hooks,
         Hooks {
+            start: false,
             before_tool: true,
             before_request: false,
             after_tool_result: false,
