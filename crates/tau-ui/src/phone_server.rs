@@ -20,6 +20,7 @@ use tau_remote::{
     ServerConfig,
     ServerEvent,
     ServerHandle,
+    SystemClock,
     devices::SECRET_LIFETIME,
 };
 use tokio::runtime::Handle;
@@ -429,6 +430,7 @@ fn start(
         listen: SocketAddr::new(parsed, state.settings.port),
         dir: state.dir.clone(),
         host: state.host.clone(),
+        clock: Arc::new(SystemClock),
     };
     state.generation += 1;
     let generation = state.generation;

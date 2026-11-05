@@ -12,6 +12,7 @@ connection. It has no GPUI in it, so a host without a window could serve it.
 | --------- | --------------------------------------------------------------------------------------------------------------- |
 | `pairing` | `PairingCode`, the `tau-pair://` URI the computer shows as a QR code; `Address`, `Fingerprint`, `PairingSecret` |
 | `tls`     | `Identity`, the computer's self-signed certificate, and `fingerprint_of`                                        |
+| `clock`   | `Clock`, the time both sides go by, `SystemClock`, and `count_from`, where numbering starts                     |
 | `devices` | `Device`, a paired phone; `phones.json` keeps each one's token as a SHA-256, never the token itself             |
 | `wire`    | The JSON frames: `Hello`, `Answer`, `Refusal`, `Down` (computer to phone) and `Up` (phone to computer)          |
 | `feed`    | `Feed`, the numbered messages, kept so a phone that comes back gets what it missed                              |
@@ -46,13 +47,18 @@ tokio, rustls and tungstenite. `tau-ui` runs the server
 The computer starts a server and shows a code; the phone pairs with it:
 
 ```rust
+use std::sync::Arc;
+
 use serde_json::json;
-use tau_remote::{Address, Server, ServerConfig, ServerEvent, client};
+use tau_remote::{
+    Address, Server, ServerConfig, ServerEvent, SystemClock, client,
+};
 
 let (handle, mut events) = Server::start(ServerConfig {
     listen: "0.0.0.0:7443".parse()?,
     dir: config_dir.clone(),
     host: "desk".into(),
+    clock: Arc::new(SystemClock),
 })
 .await?;
 let address = Address {
@@ -88,8 +94,16 @@ cargo nextest run --release -p tau-remote
 
 `tests/remote.rs` runs a host and phones in one process, over real TLS and
 WebSockets on the loopback. `tests/feed.rs` checks the feed with Hegel,
-in process. Unit tests in `src/` cover pairing codes, TLS, devices and
-frames.
+in process. `tests/network_model.rs` is a Hegel state machine over the real
+server and client, through a proxy that cuts and holds connections, with
+pairing, revoking, restarts of either side and wall clocks moved either
+way; a test sets the computer's time through `ServerConfig::clock`. Unit
+tests in `src/` cover pairing codes, TLS, devices and frames.
+
+Both sides number from their wall clock (`clock::count_from`): messages on
+the computer, requests on the phone. A clock moved back can reuse numbers;
+the ignored regressions in `tests/network_model.rs` show how; the CRDT sync
+of ADR 0047 fixes them.
 
 ## Further reading
 

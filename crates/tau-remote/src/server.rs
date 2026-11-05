@@ -17,7 +17,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use futures_util::{SinkExt as _, StreamExt as _};
@@ -32,6 +32,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 pub use crate::feed::REPLAY;
 use crate::{
+    clock::{Clock, count_from},
     devices::{Device, Devices, DevicesError, DevicesFile},
     feed::{Feed, Joined},
     pairing::{Address, Fingerprint, PairingCode},
@@ -50,6 +51,8 @@ pub struct ServerConfig {
     pub dir: PathBuf,
     /// The computer's name, as phones show it.
     pub host: String,
+    /// What time it is: [`SystemClock`](crate::SystemClock) but in tests.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// One phone's connection.
@@ -97,13 +100,18 @@ impl Server {
         let identity =
             Identity::load_or_create(&config.dir, &config.host).await?;
         let acceptor = TlsAcceptor::from(identity.server_config()?);
-        let devices = Arc::new(DevicesFile::load(&config.dir).await?);
+        let devices = Arc::new(
+            DevicesFile::load(&config.dir, config.clock.clone()).await?,
+        );
         let listener = TcpListener::bind(config.listen).await?;
         let local_addr = listener.local_addr()?;
         let (commands, receiver) = mpsc::unbounded_channel();
         let (events, events_out) = mpsc::unbounded_channel();
         let state = State {
-            feed: Feed::new(first_seq()),
+            // Numbers start from the clock, so they only grow across
+            // restarts, and a phone's old number is never taken for a
+            // new message.
+            feed: Feed::new(count_from(config.clock.now())),
             conns: HashMap::new(),
             devices: devices.clone(),
             host: config.host.clone(),
@@ -123,15 +131,6 @@ impl Server {
         };
         Ok((handle, events_out))
     }
-}
-
-/// Numbers start from the clock, so they only grow across restarts,
-/// and a phone's old number is never taken for a new message.
-fn first_seq() -> u64 {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis());
-    u64::try_from(millis).unwrap_or(u64::MAX >> 12) << 10
 }
 
 /// Drives a running server. Clones drive the same one.

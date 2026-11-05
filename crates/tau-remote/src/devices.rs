@@ -5,6 +5,7 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -12,7 +13,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{pairing::PairingSecret, wire::Refusal};
+use crate::{clock::Clock, pairing::PairingSecret, wire::Refusal};
 
 const FILE: &str = "phones.json";
 
@@ -49,11 +50,11 @@ pub enum DevicesError {
     Json(#[from] serde_json::Error),
 }
 
-#[derive(Debug)]
 pub(crate) struct Devices {
     path: PathBuf,
     list: Vec<Stored>,
     secret: Option<(PairingSecret, Instant)>,
+    clock: Arc<dyn Clock>,
 }
 
 /// The devices, as the server keeps them, and their file: each change
@@ -66,9 +67,12 @@ pub(crate) struct DevicesFile {
 }
 
 impl DevicesFile {
-    pub(crate) async fn load(dir: &Path) -> Result<Self, DevicesError> {
+    pub(crate) async fn load(
+        dir: &Path,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, DevicesError> {
         Ok(Self {
-            devices: std::sync::Mutex::new(Devices::load(dir).await?),
+            devices: std::sync::Mutex::new(Devices::load(dir, clock).await?),
             saving: tokio::sync::Mutex::new(()),
         })
     }
@@ -96,7 +100,10 @@ impl DevicesFile {
 }
 
 impl Devices {
-    pub(crate) async fn load(dir: &Path) -> Result<Self, DevicesError> {
+    pub(crate) async fn load(
+        dir: &Path,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, DevicesError> {
         let path = dir.join(FILE);
         let list = match tokio::fs::read(&path).await {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
@@ -107,6 +114,7 @@ impl Devices {
             path,
             list,
             secret: None,
+            clock,
         })
     }
 
@@ -120,7 +128,7 @@ impl Devices {
     /// A new pairing secret, in place of any open one.
     pub(crate) fn open_secret(&mut self) -> PairingSecret {
         let secret = PairingSecret::random();
-        self.secret = Some((secret.clone(), Instant::now()));
+        self.secret = Some((secret.clone(), self.clock.instant()));
         secret
     }
 
@@ -137,7 +145,8 @@ impl Devices {
         name: &str,
     ) -> Result<(Device, String), Refusal> {
         let open = self.secret.as_ref().is_some_and(|(open, at)| {
-            at.elapsed() < SECRET_LIFETIME
+            self.clock.instant().saturating_duration_since(*at)
+                < SECRET_LIFETIME
                 && PairingSecret::typed(secret).as_ref() == Ok(open)
         });
         if !open {
@@ -242,7 +251,9 @@ mod tests {
     /// The devices kept in `dir`, after `change` and a save.
     fn changed<T>(dir: &Path, change: impl FnOnce(&mut Devices) -> T) -> T {
         run(async {
-            let file = DevicesFile::load(dir).await.unwrap();
+            let file = DevicesFile::load(dir, Arc::new(crate::SystemClock))
+                .await
+                .unwrap();
             let made = change(&mut file.lock());
             file.save().await.unwrap();
             made
@@ -252,7 +263,9 @@ mod tests {
     #[test]
     fn a_secret_pairs_once_and_the_token_resumes() {
         let dir = tempfile::tempdir().unwrap();
-        let file = run(DevicesFile::load(dir.path())).unwrap();
+        let file =
+            run(DevicesFile::load(dir.path(), Arc::new(crate::SystemClock)))
+                .unwrap();
         let mut devices = file.lock();
         let secret = devices.open_secret();
         assert_eq!(

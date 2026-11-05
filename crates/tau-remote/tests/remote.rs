@@ -19,6 +19,7 @@ use tau_remote::{
     ServerConfig,
     ServerEvent,
     ServerHandle,
+    SystemClock,
     client,
     outbox::Outbox,
     server::REPLAY,
@@ -38,6 +39,7 @@ async fn host() -> Host {
         listen: "127.0.0.1:0".parse().unwrap(),
         dir: dir.path().to_owned(),
         host: "desk".into(),
+        clock: std::sync::Arc::new(SystemClock),
     })
     .await
     .unwrap();

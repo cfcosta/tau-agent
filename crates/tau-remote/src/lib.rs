@@ -2,6 +2,7 @@
 //! 0013). This crate carries what crosses between the two, with no GPUI
 //! in it:
 //!
+//! - [`clock`]: the time both sides go by, which tests set;
 //! - [`pairing`]: the code the computer shows as a QR code;
 //! - [`tls`]: the computer's self-signed certificate, trusted by its
 //!   fingerprint;
@@ -16,6 +17,7 @@
 //! - [`client`]: the phone's side.
 
 pub mod client;
+pub mod clock;
 pub mod devices;
 pub mod feed;
 pub mod outbox;
@@ -25,6 +27,7 @@ pub mod tls;
 pub mod wire;
 
 pub use client::{ClientError, Connection, Credentials, Sender};
+pub use clock::{Clock, SystemClock};
 pub use devices::Device;
 pub use pairing::{
     Address,

@@ -125,10 +125,7 @@ fn store(dir: &Path, credentials: Option<&Credentials>) -> std::io::Result<()> {
 /// phone's restarts, and the computer never takes a new one for one it
 /// had.
 fn clock() -> u64 {
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis());
-    u64::try_from(millis).unwrap_or(u64::MAX >> 12) << 10
+    tau_remote::clock::count_from(std::time::SystemTime::now())
 }
 
 fn computer(credentials: &Credentials) -> Computer {
