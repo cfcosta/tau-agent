@@ -431,7 +431,7 @@ impl State {
 
     /// A phone's request: taken once, however often it comes, and
     /// answered each time, so the phone stops sending it. Taking it is
-    /// saved before it is answered.
+    /// saved before it is answered. One from a phone revoked is neither.
     async fn up(&self, conn: ConnId, up: u64, body: Value) {
         let Some(Conn { device: id, out }) = self.conns.get(&conn) else {
             return;
@@ -444,11 +444,16 @@ impl State {
                 devices.list().into_iter().find(|device| &device.id == id),
             )
         };
+        // Revoked since it connected, its connection about to close: not
+        // answered, so the phone keeps it rather than lose it.
+        let Some(device) = device else {
+            return;
+        };
         if taken && self.devices.save().await.is_err() {
             // Not saved: not answered, so the phone sends it again.
             return;
         }
-        if let (true, Some(device)) = (taken, device) {
+        if taken {
             let _ = self.events.send(ServerEvent::Up { conn, device, body });
         }
         let _ = out.send(Out::Frame(to_frame(&Down::Ack { up })));

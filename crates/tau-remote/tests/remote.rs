@@ -286,3 +286,29 @@ async fn nothing_listening_is_unreachable() {
     let error = client::probe(&address).await.unwrap_err();
     assert!(error.is_unreachable(), "{error}");
 }
+
+/// A request that comes while the computer revokes its phone is not
+/// answered unless taken: the phone keeps what was not taken, rather
+/// than lose it. The model found it (`network_model.rs`): the request
+/// came while the computer saved the phone's revoking.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_from_a_phone_being_revoked_is_not_answered_untaken() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    recv(&mut phone).await;
+    let mut outbox = Outbox::new(0);
+    phone.sender().send(outbox.push(json!("late"))).unwrap();
+    assert!(host.handle.revoke(&credentials.device).await.unwrap());
+    let mut taken = false;
+    while let Ok(Some(event)) =
+        tokio::time::timeout(Duration::from_millis(200), host.events.recv())
+            .await
+    {
+        taken |= matches!(event, ServerEvent::Up { .. });
+    }
+    while let Ok(Some(down)) = phone.recv().await {
+        if let Down::Ack { up } = down {
+            assert!(taken, "request {up} answered, and never taken");
+        }
+    }
+}
