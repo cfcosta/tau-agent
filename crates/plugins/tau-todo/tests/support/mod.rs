@@ -307,6 +307,11 @@ impl Plugin {
         }
     }
 
+    /// The tools it declares.
+    pub fn tools(&self) -> Vec<tau_luau_plugins::ToolSpec> {
+        self.loaded.declaration.tools.clone()
+    }
+
     /// `hook` with `input`, by the run `run` at `now`, on `store`: its
     /// answer, or why it failed.
     pub async fn call(

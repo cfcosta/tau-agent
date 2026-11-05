@@ -12,7 +12,9 @@ publish.workspace = true
 [dev-dependencies]
 futures-util.workspace = true
 hegeltest.workspace = true
+jsonschema.workspace = true
 serde_json.workspace = true
+tau-agent.workspace = true
 tau-luau-plugins.workspace = true
 tau-luau-plugins-host.workspace = true
 tau-testing.workspace = true

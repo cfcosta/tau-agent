@@ -10363,7 +10363,9 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "hegeltest",
+ "jsonschema",
  "serde_json",
+ "tau-agent",
  "tau-luau-plugins",
  "tau-luau-plugins-host",
  "tau-testing",
