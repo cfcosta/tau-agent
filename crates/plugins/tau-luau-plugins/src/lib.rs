@@ -115,6 +115,9 @@ pub struct Hooks {
     pub turn_end: bool,
     #[serde(default)]
     pub on_event: bool,
+    /// `title`: a run's title, for `tau.title`.
+    #[serde(default)]
+    pub title: bool,
     #[serde(default)]
     pub run_end: bool,
     #[serde(default)]
@@ -161,6 +164,20 @@ pub const EVENTS: [&str; 8] = [
     "plugin_error",
 ];
 
+/// The slots a Luau plugin may fill (ADR 0045), as `fills` names them.
+pub const SLOTS: [&str; 2] = [
+    tau_ui_plugin::title::TITLE.name(),
+    tau_ui_plugin::compaction::COMPACTION.name(),
+];
+
+/// What a plugin that fills `tau.compaction` says: the plugins whose
+/// rewrites run, besides the Luau plugins' own.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionFill {
+    #[serde(default)]
+    pub rewriters: Vec<String>,
+}
+
 /// What a plugin declares, read without running its hooks.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Declaration {
@@ -181,6 +198,12 @@ pub struct Declaration {
     /// The run's events `on_event` hears, of [`EVENTS`].
     #[serde(default)]
     pub events: Vec<String>,
+    /// The slots it fills, of [`SLOTS`].
+    #[serde(default)]
+    pub fills: Vec<String>,
+    /// What it fills `tau.compaction` with.
+    #[serde(default)]
+    pub compaction: Option<CompactionFill>,
 }
 
 impl Declaration {
@@ -190,6 +213,13 @@ impl Declaration {
     pub fn grown_from(&self, before: &Declaration) -> Vec<String> {
         let mut grown = self.uses.grown_from(&before.uses);
         grown.extend(self.hooks.grown_from(&before.hooks));
+        // Filling a slot is always new reach.
+        grown.extend(
+            self.fills
+                .iter()
+                .filter(|slot| !before.fills.contains(slot))
+                .map(|slot| format!("filling `{slot}`")),
+        );
         grown
     }
 
@@ -424,6 +454,8 @@ mod tests {
             },
             actions: Vec::new(),
             events: Vec::new(),
+            fills: Vec::new(),
+            compaction: None,
         }
     }
 
@@ -457,6 +489,7 @@ mod tests {
             before_stop: true,
             turn_end: true,
             on_event: true,
+            title: true,
             run_end: true,
             view: true,
             settings_view: true,

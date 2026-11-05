@@ -381,3 +381,81 @@ return tau.plugin {
         assert_eq!(hook, format!("actions.{action}"));
     }
 }
+
+const TITLES: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "greet",
+  description = "Titles runs, and keeps the tree's rewrites.",
+  fills = { "tau.title", "tau.compaction" },
+  title = function(run, ctx)
+    return "Asked: " .. run.task
+  end,
+  compaction = { rewriters = { "tau-tree-compaction" } },
+}
+"#;
+
+/// A plugin that fills slots waits for the person, as any new reach does;
+/// once allowed, tau's stand-ins ask it: a run's title from its `title`,
+/// cut to a title's length, and the rewriters it names beside the Luau
+/// plugins' own. Before, they answer as an empty filler would.
+#[test]
+fn a_plugin_fills_the_title_and_compaction_slots() {
+    use tau_luau_plugins_host::slots::{LuauCompaction, LuauTitle};
+    use tau_ui_plugin::{compaction::Compaction, title::Title};
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    );
+    let title = LuauTitle(registry.clone());
+    let compaction = LuauCompaction(registry.clone());
+    let (v1, trunk) = project(home.path(), 1, TITLES, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    match standing(&registry) {
+        Standing::Waiting { grown } => assert_eq!(
+            grown,
+            ["filling `tau.title`", "filling `tau.compaction`"]
+        ),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(block_on_io(title.write("fix it", "m")).unwrap(), None);
+    assert_eq!(compaction.rewriters(), [tau_luau_plugins::NAME]);
+
+    block_on_io(registry.allow("greet")).unwrap();
+    assert_eq!(
+        block_on_io(title.write("fix it", "m")).unwrap().as_deref(),
+        Some("Asked: fix it")
+    );
+    let long = "x".repeat(100);
+    let written = block_on_io(title.write(&long, "m")).unwrap().unwrap();
+    assert_eq!(written.chars().count(), tau_ui_plugin::title::MAX_CHARS);
+    assert_eq!(
+        compaction.rewriters(),
+        [tau_luau_plugins::NAME, "tau-tree-compaction"]
+    );
+}
+
+/// A plugin fills only the slots a Luau plugin may, and only with what
+/// each needs.
+#[test]
+fn a_plugin_fills_only_what_it_may() {
+    use tau_luau_plugins_host::runtime::{Files, load};
+    let refused = |source: &str| {
+        let files = Files {
+            source: source.into(),
+            ..Files::default()
+        };
+        block_on_io(load("greet", files)).unwrap_err()
+    };
+    let vcs = refused(
+        r#"return require("tau").plugin { name = "greet", fills = { "tau.vcs" } }"#,
+    );
+    assert!(vcs.contains("`tau.vcs`"), "{vcs}");
+    let no_hook = refused(
+        r#"return require("tau").plugin { name = "greet", fills = { "tau.title" } }"#,
+    );
+    assert!(no_hook.contains("a `title` hook"), "{no_hook}");
+}

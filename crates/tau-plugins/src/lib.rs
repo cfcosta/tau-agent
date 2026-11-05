@@ -41,6 +41,8 @@ pub fn plugins() -> Registry {
         .slot_order(&tau_ui_plugin::vcs::VCS, &[tau_vcs::ui::NAME])
         .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_github::NAME])
         .slot_order(&tau_ui_plugin::provider::PROVIDER, &[tau_chatgpt::NAME])
+        .slot_order(&tau_ui_plugin::title::TITLE, &[tau_titles::NAME])
+        .slot_order(&tau_ui_plugin::notify::NOTIFY, &[tau_notify::NAME])
         .slot_order(
             &tau_ui_plugin::compaction::COMPACTION,
             &[tau_compaction_chain::NAME, tau_compaction::NAME],

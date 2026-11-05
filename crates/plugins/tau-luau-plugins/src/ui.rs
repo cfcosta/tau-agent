@@ -487,6 +487,7 @@ impl UiPlugin for LuauPluginsUi {
                 tau_ui_plugin::Seam::BeforeStop,
                 tau_ui_plugin::Seam::Finish,
             ])
+            .fills(&crate::SLOTS)
             .services(&[
                 tau_ui_plugin::services::names::WORKSPACE_DIR,
                 tau_ui_plugin::services::names::IDENTITY,

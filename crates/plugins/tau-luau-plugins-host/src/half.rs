@@ -102,6 +102,21 @@ impl HostHalf for LuauPluginsHost {
         Ok(plugins)
     }
 
+    /// Fills the slots a Luau plugin may fill with stand-ins that ask
+    /// the active one that does.
+    fn fill(&self, host: &Self::Host, fills: &mut tau_ui_plugin::slots::Fills) {
+        fills.fill(
+            &tau_ui_plugin::title::TITLE,
+            std::sync::Arc::new(crate::slots::LuauTitle(host.clone()))
+                as std::sync::Arc<dyn tau_ui_plugin::title::Title>,
+        );
+        fills.fill(
+            &tau_ui_plugin::compaction::COMPACTION,
+            std::sync::Arc::new(crate::slots::LuauCompaction(host.clone()))
+                as std::sync::Arc<dyn tau_ui_plugin::compaction::Compaction>,
+        );
+    }
+
     /// A chat in the plugins repository lands by itself once its
     /// plugins pass and want nothing new (ADR 0034).
     async fn lands_itself(

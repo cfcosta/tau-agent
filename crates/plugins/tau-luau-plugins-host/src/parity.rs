@@ -48,12 +48,16 @@ pub fn slot(name: &str) -> Option<Luau> {
         n if n == tau_ui_plugin::provider::PROVIDER.name() => {
             "a provider streams the model's replies, which a hook cannot"
         }
+        n if n == tau_ui_plugin::title::TITLE.name() => {
+            return Some(Luau::Hook("title"));
+        }
+        n if n == tau_ui_plugin::compaction::COMPACTION.name() => {
+            return Some(Luau::Hook("compaction"));
+        }
         n if n == tau_ui_plugin::forge::FORGE.name()
-            || n == tau_ui_plugin::compaction::COMPACTION.name()
-            || n == tau_ui_plugin::title::TITLE.name()
             || n == tau_ui_plugin::notify::NOTIFY.name() =>
         {
-            NOT_YET
+            "not yet: it needs a hook to reach the network"
         }
         _ => return None,
     };

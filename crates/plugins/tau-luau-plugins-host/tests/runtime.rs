@@ -155,6 +155,7 @@ async fn a_plugin_declares_what_it_is() {
             before_stop: true,
             turn_end: true,
             on_event: false,
+            title: false,
             run_end: false,
             view: true,
             settings_view: false,

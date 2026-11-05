@@ -66,6 +66,8 @@ struct Shared {
     tried: tokio::sync::Mutex<BTreeMap<String, Option<Loaded>>>,
     /// Asks the interface to draw the catalog again.
     refresh: Box<dyn Fn() + Send + Sync>,
+    /// The person's settings, as they are now.
+    settings: Box<dyn Fn() -> tau_luau_plugins::LuauSettings + Send + Sync>,
 }
 
 #[derive(Default)]
@@ -86,12 +88,14 @@ impl PluginHost for Registry {
         tokio::task::spawn_blocking(move || crate::skill::install(&skills))
             .await??;
         let refresher = cx.clone();
+        let reader = cx.clone();
         let registry = Self::at(
             cx.dir.join(ROOT),
             cx.plugin_dir(crate::NAME).join("allowed.json"),
             cx.services.get::<Identity>().cloned().unwrap_or_default(),
             move || refresher.refresh(),
-        );
+        )
+        .with_settings(move || reader.settings(crate::NAME));
         let watcher = registry.clone();
         cx.runtime.spawn(async move { watcher.watch().await });
         Ok(registry)
@@ -115,7 +119,51 @@ impl Registry {
             state: RwLock::default(),
             tried: tokio::sync::Mutex::default(),
             refresh: Box::new(refresh),
+            settings: Box::new(Default::default),
         }))
+    }
+
+    /// The registry, reading the person's settings with `settings`.
+    pub fn with_settings(
+        self,
+        settings: impl Fn() -> tau_luau_plugins::LuauSettings
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("settings are given before the registry is shared");
+        Self(Arc::new(Shared {
+            settings: Box::new(settings),
+            ..shared
+        }))
+    }
+
+    /// The active plugin that fills `slot`, with the person's settings
+    /// for it: the first by name.
+    pub async fn filler(&self, slot: &str) -> Option<Active> {
+        let active = self.active().await;
+        self.filler_of(slot, active)
+    }
+
+    /// [`Self::filler`] without waiting: none while trunk's plugins are
+    /// being read again.
+    pub fn filler_now(&self, slot: &str) -> Option<Active> {
+        let active = self.0.state.try_read().ok()?.active.clone();
+        self.filler_of(slot, active)
+    }
+
+    fn filler_of(&self, slot: &str, active: Vec<Active>) -> Option<Active> {
+        let mut active = active.into_iter().find(|active| {
+            active.loaded.declaration.fills.iter().any(|s| s == slot)
+        })?;
+        let settings = (self.0.settings)();
+        active.settings = tau_luau_plugins::settings::effective(
+            &active.loaded.declaration,
+            settings.plugins.get(&active.loaded.declaration.name),
+        )
+        .0;
+        Some(active)
     }
 
     /// The plugins every new run gets.

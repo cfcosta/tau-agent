@@ -247,6 +247,8 @@ pub enum Hook {
     /// One of the run's events it names in `events`, as
     /// `{ kind, turn, ... }`.
     OnEvent,
+    /// A run's title, for `tau.title`, with `{ task, model }`.
+    Title,
     RunEnd,
     View,
     /// Its settings page, with the settings shown as input (ADR 0029).
@@ -266,6 +268,7 @@ impl Hook {
             | Self::BeforeRequest
             | Self::OnEvent => 200,
             Self::Start
+            | Self::Title
             | Self::BeforeTool
             | Self::AfterToolResult
             | Self::Rewritten
@@ -291,6 +294,7 @@ impl Hook {
             Self::BeforeStop => "p.before_stop(input, ctx)".into(),
             Self::TurnEnd => "p.turn_end(input, ctx)".into(),
             Self::OnEvent => "p.on_event(input, ctx)".into(),
+            Self::Title => "p.title(input, ctx)".into(),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
             Self::View => "p.view(ctx.state, ctx)".into(),
             Self::SettingsView => "p.settings.view(input, ctx)".into(),
@@ -314,6 +318,7 @@ impl Hook {
             Self::BeforeStop => declaration.hooks.before_stop,
             Self::TurnEnd => declaration.hooks.turn_end,
             Self::OnEvent => declaration.hooks.on_event,
+            Self::Title => declaration.hooks.title,
             Self::RunEnd => declaration.hooks.run_end,
             Self::View => declaration.hooks.view,
             Self::SettingsView => declaration.hooks.settings_view,
@@ -414,6 +419,30 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
             "{PLUGIN_FILE}: the plugin is named `{}`, but its folder is `{folder}`",
             declaration.name
         ));
+    }
+    for slot in &declaration.fills {
+        let missing = match slot.as_str() {
+            s if s == tau_ui_plugin::title::TITLE.name() => {
+                (!declaration.hooks.title).then_some("a `title` hook")
+            }
+            s if s == tau_ui_plugin::compaction::COMPACTION.name() => {
+                declaration
+                    .compaction
+                    .is_none()
+                    .then_some("a `compaction` table")
+            }
+            _ => {
+                return Err(format!(
+                    "{PLUGIN_FILE}: `fills` names `{slot}`; a plugin may fill {}",
+                    tau_luau_plugins::SLOTS.join(", ")
+                ));
+            }
+        };
+        if let Some(missing) = missing {
+            return Err(format!(
+                "{PLUGIN_FILE}: it fills `{slot}`, which needs {missing}"
+            ));
+        }
     }
     if let Some(unknown) = declaration
         .events

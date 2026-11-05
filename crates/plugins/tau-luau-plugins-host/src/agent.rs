@@ -505,6 +505,7 @@ fn hook_name(hook: &Hook) -> String {
         Hook::BeforeStop => "before_stop".into(),
         Hook::TurnEnd => "turn_end".into(),
         Hook::OnEvent => "on_event".into(),
+        Hook::Title => "title".into(),
         Hook::RunEnd => "run_end".into(),
         Hook::View => "view".into(),
         Hook::SettingsView => "settings.view".into(),
