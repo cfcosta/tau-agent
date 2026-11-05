@@ -1349,6 +1349,10 @@ impl Machine {
         assert!(started.len() <= 1, "{started:?}");
         let Some(child) = started.first().cloned() else {
             assert!(!whole || self.main_dirty, "main spawned no sub-agent");
+            // Its turn ended all the same: what waits on main may land.
+            if whole && !self.blown() {
+                self.main_ended();
+            }
             self.maybe_on_trunk.insert(file);
             return;
         };
@@ -1356,9 +1360,12 @@ impl Machine {
             id: child.clone(),
             file: file.clone(),
         });
+        // The interface's order: main's end, then the sub-agent's. Main's
+        // turn ended whatever its sub-agent does: the interface says so
+        // as it does, and what waits on main's queue may land then.
+        let main_ended = whole && !self.blown() && self.main_ended();
         let ended = self.life().wait(&child);
-        // The interface's order: main's end, then the sub-agent's.
-        let landed = whole && ended && !self.blown() && self.main_ended() && {
+        let landed = main_ended && ended && !self.blown() && {
             let life = self.life();
             let report = life
                 .host
