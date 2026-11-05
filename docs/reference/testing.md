@@ -541,6 +541,28 @@ It runs in about 6 s; its nightly twin (`nightly_slow`, 40 steps) in
 about 17 minutes. The layout check reads gpui's debug bounds in the test
 window, so it needs no GPU; the window draws a frame before each read.
 
+`phone_model.rs` (state machine) is the phone's own state: the real
+phone `Workspace` and `remote::connect`, with its credentials directory
+kept across restarts, against two real computers (`Workspace`
+and `phone_server` over loopback TLS), each behind a proxy that stands
+for the network. Rules: pair from the screens that offer it (how a
+phone goes from one computer to another, or back), pair and close
+before the credentials are kept, revoke, move the computer, give it a
+new certificate, put an impostor with a copy of its paired phones at
+its address, the network going and coming back, restarts, a kill while
+the credentials are written, the computer saying something, and
+requests. After each step: the credentials file is whole and is the
+model's pairing; no impostor took the token; a request reaches only its
+computer, at most once, and one made while away reaches it once back
+while the phone neither paired again nor restarted; a connected phone
+shows what its computer shows and draws its views; a revoked phone says
+so, offers pairing and stops knocking. It runs in about 27 s; its
+nightly twin (`nightly_slow`, 40 steps) in about 12 minutes. Two
+`#[ignore]` tests in it wait for ADR 0047's CRDT sync (requests across a
+restart, and across a re-pair), and one asks whether a changed
+certificate is said so.
+`PHONE_MODEL_TRACE=1` prints each step.
+
 ## ScriptedModel
 
 `ScriptedModel` is ported from pi's faux provider

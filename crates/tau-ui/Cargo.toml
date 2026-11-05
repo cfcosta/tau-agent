@@ -16,6 +16,8 @@ hegeltest.workspace = true
 # Stores for tests; the host opens its own through tau-sqlite.
 tau-store-sqlite.workspace = true
 tau-testing.workspace = true
+# The phone model's network: a proxy on the loopback.
+tokio = { workspace = true, features = ["io-util", "net"] }
 tokio-util.workspace = true
 
 [dependencies]
