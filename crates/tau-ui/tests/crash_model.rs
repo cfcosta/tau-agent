@@ -2094,3 +2094,34 @@ fn every_write_is_a_place_to_close() {
         }
     }
 }
+
+/// The threads this process has.
+fn threads() -> usize {
+    std::fs::read_dir("/proc/self/task").unwrap().count()
+}
+
+/// tau closing lets go of all it opened: the store's connections and
+/// their threads too (found by `a_crash_anywhere_loses_nothing_nightly`:
+/// tau-mcp's tools outside runs, among the host's services, kept a
+/// `HostCx`, which carries those services, and the host's model, also
+/// among them, kept the slots, whose fillers keep a `HostCx`: so every
+/// start's store outlived it, until no thread could be made).
+#[test]
+fn closing_lets_go_of_what_tau_opened() {
+    let mut machine = Machine::new();
+    machine.reopen();
+    let before = threads();
+    for _ in 0..8 {
+        machine.reopen();
+    }
+    // A connection's thread ends a moment after its store is dropped.
+    let mut after = threads();
+    for _ in 0..50 {
+        if after <= before + 4 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        after = threads();
+    }
+    assert!(after <= before + 4, "{before} threads, then {after}");
+}

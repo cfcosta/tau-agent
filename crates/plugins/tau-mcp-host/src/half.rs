@@ -994,7 +994,7 @@ impl PluginHost for Host {
                 cx.config_dir().map(Path::to_owned),
             )
             .with_unattended(unattended.clone()),
-            cx: cx.clone(),
+            saved: cx.services.get::<tau_ui_plugin::SavedSettings>().cloned(),
         });
         if let Some(tools) = cx.outside_tools() {
             tools.offer(outside.clone());
@@ -1015,7 +1015,10 @@ impl PluginHost for Host {
 /// connections are not the runs'.
 struct Outside {
     host: Host,
-    cx: HostCx,
+    /// The plugins' saved settings, not a [`HostCx`]: what it offers is
+    /// among the host's services, which a `HostCx` carries, so one here
+    /// would keep itself, and the host's store, alive past the host.
+    saved: Option<tau_ui_plugin::SavedSettings>,
 }
 
 impl tau_ui_plugin::ToolSource for Outside {
@@ -1030,7 +1033,7 @@ impl tau_ui_plugin::ToolSource for Outside {
             return None;
         }
         Some(Box::pin(async move {
-            let settings: Settings = self.cx.settings(NAME);
+            let settings = self.settings();
             let plugin = self.host.plugin(Some(checkout), &settings);
             // A server that only now started lists its tools once it
             // connects.
@@ -1048,6 +1051,15 @@ impl tau_ui_plugin::ToolSource for Outside {
 }
 
 impl Outside {
+    /// tau-mcp's settings as they are saved now.
+    fn settings(&self) -> Settings {
+        self.saved
+            .as_ref()
+            .and_then(|saved| saved.read(NAME, None))
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
     /// The connection to `server` for the repository at `checkout`, if
     /// it has one.
     fn connection(
@@ -1055,7 +1067,7 @@ impl Outside {
         checkout: &Path,
         server: &str,
     ) -> Option<Arc<crate::connection::Connection>> {
-        let settings: Settings = self.cx.settings(NAME);
+        let settings = self.settings();
         self.host
             .plugin(Some(checkout), &settings)
             .connections()

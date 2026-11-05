@@ -63,14 +63,20 @@ impl Host {
 
     /// The person's model as plugins' host halves ask it outside any run
     /// (ADR 0044): the plan's client while an account is signed in.
+    ///
+    /// It holds the slots weakly: what fills them, such as tau-titles'
+    /// titler, keeps a [`HostCx`] with this model, and a strong hold
+    /// would keep the slots, the store and its connections' threads
+    /// alive past the host.
     fn plugin_model(&self) -> tau_ui_plugin::Model {
         let (slots, over) =
-            (self.slots.clone(), self.provider_override.clone());
+            (Arc::downgrade(&self.slots), self.provider_override.clone());
         tau_ui_plugin::Model::new(
             move || {
                 let over = over.lock().expect("not poisoned").clone();
                 over.or_else(|| {
                     slots
+                        .upgrade()?
                         .lock()
                         .expect("not poisoned")
                         .get(&tau_ui_plugin::provider::PROVIDER)
