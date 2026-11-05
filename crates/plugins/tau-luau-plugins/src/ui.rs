@@ -19,15 +19,17 @@ use tau_ui_plugin::{
     KindPlace,
     Link,
     Manifest,
+    NavEntry,
     Page,
     RepoKind,
+    RowNote,
     RunCx,
     RunInfo,
     SCOPE,
     SlashCommand,
     UiPlugin,
     ViewCx,
-    points::{self, AtAnchor, AtApp, AtCard, CardView},
+    points::{self, AtAnchor, AtApp, AtCard, AtRun, CardView},
     tree::{Kind, Node, Tab, Tone},
 };
 
@@ -509,7 +511,7 @@ impl UiPlugin for LuauPluginsUi {
     }
 
     fn manifest(&self) -> Manifest<Self> {
-        Manifest::new()
+        let manifest = Manifest::new()
             .page(
                 Page::new(PAGE, page)
                     .title(|view| {
@@ -542,6 +544,27 @@ impl UiPlugin for LuauPluginsUi {
                     empty: String::new(),
                     place: KindPlace::Plugins,
                 })
+            })
+            // What each plugin's `view` draws at the run's places.
+            .contribute(points::RUN_BANNER, |_: &AtRun, view| {
+                drawn(view.state?, "banner")
+            })
+            .contribute(points::INSPECTOR, |_: &AtRun, view| {
+                drawn(view.state?, "inspector")
+            })
+            .contribute(points::COMPOSER_BAND, |_: &AtRun, view| {
+                drawn(view.state?, "band")
+            })
+            .contribute(points::RUN_ROW, |_: &AtRun, view| row(view.state?))
+            .contribute(points::ASKS, |_: &AtRun, view| {
+                let asks: Vec<&str> = view
+                    .state?
+                    .plugins
+                    .values()
+                    .filter(|plugin| plugin.off.is_none())
+                    .filter_map(|plugin| plugin.view["asks"].as_str())
+                    .collect();
+                (!asks.is_empty()).then(|| asks.join(" "))
             })
             .contribute(points::CARD, |at: &AtCard, _| {
                 let details = at.data.result.as_ref()?.details.as_ref()?;
@@ -583,8 +606,34 @@ impl UiPlugin for LuauPluginsUi {
                     text: format!("flagged by {plugin}: {reason}"),
                     tone: Tone::Warn,
                 })
+            });
+        // The plugins that ask for one, in the sidebar: the first few.
+        (0..NAV_ENTRIES).fold(manifest, |manifest, at| {
+            manifest.contribute(points::SIDEBAR, move |_: &AtApp, view| {
+                nav_entries(view.data).nth(at)
             })
+        })
     }
+}
+
+/// The most of the person's plugins the sidebar lists.
+const NAV_ENTRIES: usize = 8;
+
+/// The active plugins' sidebar entries, by name, each opening its page.
+fn nav_entries(overview: &Overview) -> impl Iterator<Item = NavEntry> + '_ {
+    overview
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .filter_map(|entry| {
+            let nav = entry.declaration.as_ref()?.nav.as_ref()?;
+            let icon = Icon::named(&nav.icon).unwrap_or(Icon::Plug);
+            Some(NavEntry::new(
+                nav.label.clone(),
+                icon,
+                entry_link(&entry.name),
+            ))
+        })
 }
 
 /// The page of the person's own plugins (ADR 0036): each plugin of the
@@ -768,6 +817,51 @@ fn reaches(uses: &Uses) -> Vec<String> {
         reach.push("infer".to_owned());
     }
     reach
+}
+
+/// What every plugin on in the run drew as `key` of its view, each in
+/// its own actions; one under the other when several did.
+fn drawn(state: &State, key: &str) -> Option<Node> {
+    let mut trees: Vec<Node> = state
+        .plugins
+        .iter()
+        .filter(|(_, plugin)| plugin.off.is_none())
+        .filter_map(|(name, plugin)| {
+            let piece =
+                plugin.view.get(key).filter(|piece| !piece.is_null())?;
+            Some(embed(piece, name))
+        })
+        .collect();
+    match trees.len() {
+        0 => None,
+        1 => trees.pop(),
+        _ => Some(Node::stack(trees)),
+    }
+}
+
+/// The run's row in the sidebar, from the first plugin whose view says
+/// `row = { line, count?, tone? }`.
+fn row(state: &State) -> Option<RowNote> {
+    state
+        .plugins
+        .values()
+        .filter(|plugin| plugin.off.is_none())
+        .find_map(|plugin| {
+            let row = plugin.view.get("row")?;
+            let line = row["line"].as_str()?.to_owned();
+            Some(RowNote {
+                phone_line: Some(line.clone()),
+                line: Some(line),
+                count: row["count"].as_str().map(str::to_owned),
+                icon: Icon::Plug,
+                tone: match row["tone"].as_str() {
+                    Some("good") => tau_ui_kit::theme::Tone::Good,
+                    Some("warn") => tau_ui_kit::theme::Tone::Warn,
+                    Some("bad") => tau_ui_kit::theme::Tone::Danger,
+                    _ => tau_ui_kit::theme::Tone::Quiet,
+                },
+            })
+        })
 }
 
 /// The link to `entry`'s own page.
@@ -1113,6 +1207,93 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn with_views(views: &[(&str, Value)]) -> State {
+        State {
+            plugins: views
+                .iter()
+                .map(|(name, view)| {
+                    let part = PluginState {
+                        view: view.clone(),
+                        ..PluginState::default()
+                    };
+                    ((*name).to_owned(), part)
+                })
+                .collect(),
+            ..State::default()
+        }
+    }
+
+    /// What plugins' views draw at a run's place is each plugin's, in its
+    /// own actions, one under the other; a plugin that is off draws
+    /// nothing, and none drawn is nothing.
+    #[test]
+    fn a_runs_places_hold_what_its_plugins_drew() {
+        let banner = |text: &str| json!({ "piece": "button", "label": text, "action": "go" });
+        let mut state = with_views(&[
+            ("a", json!({ "banner": banner("A") })),
+            (
+                "b",
+                json!({ "banner": banner("B"), "row": { "line": "3 left", "tone": "warn" } }),
+            ),
+        ]);
+        let Some(Node::Stack { children }) = drawn(&state, "banner") else {
+            panic!("{:?}", drawn(&state, "banner"));
+        };
+        let actions: Vec<&str> = children
+            .iter()
+            .map(|child| match child {
+                Node::Button { action, .. } => action.as_str(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(actions, [format!("{LUAU}a/go"), format!("{LUAU}b/go")]);
+        assert_eq!(drawn(&state, "inspector"), None);
+        let drawn_row = row(&state).unwrap();
+        assert_eq!(drawn_row.line.as_deref(), Some("3 left"));
+        assert_eq!(drawn_row.tone, tau_ui_kit::theme::Tone::Warn);
+
+        state.plugins.get_mut("b").unwrap().off = Some("failed".into());
+        assert!(matches!(drawn(&state, "banner"), Some(Node::Button { .. })));
+        assert_eq!(row(&state), None);
+    }
+
+    /// Each active plugin that asks for a sidebar entry has one, opening
+    /// its page; a waiting or broken one has none.
+    #[test]
+    fn active_plugins_with_nav_are_in_the_sidebar() {
+        let entry =
+            |name: &str, standing: Standing, nav: Option<crate::Nav>| Entry {
+                name: name.into(),
+                description: String::new(),
+                standing,
+                declaration: Some(Declaration {
+                    nav,
+                    ..Declaration::named(name)
+                }),
+                tests: Vec::new(),
+                keeps_earlier: false,
+            };
+        let nav = |label: &str| {
+            Some(crate::Nav {
+                label: label.into(),
+                icon: "not-an-icon".into(),
+            })
+        };
+        let overview = Overview {
+            plugins: vec![
+                entry("deploys", Standing::Active, nav("Deploys")),
+                entry("quiet", Standing::Active, None),
+                entry("new", Standing::Failing, nav("New")),
+            ],
+            ..Overview::default()
+        };
+        let entries: Vec<NavEntry> = nav_entries(&overview).collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].label, "Deploys");
+        assert_eq!(entries[0].icon, Icon::Plug);
+        assert_eq!(entries[0].to, entry_link("deploys"));
+    }
 
     /// A view's note is placed in the transcript where the run is when
     /// it first draws, and again only when it changes; each keeps the

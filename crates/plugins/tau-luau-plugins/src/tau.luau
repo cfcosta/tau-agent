@@ -523,6 +523,10 @@ function tau._describe(plugin)
 			rewriters = plugin.compaction.rewriters or array({}),
 		} or json.null,
 		forge = plugin.forge and tau._forge(plugin.forge) or json.null,
+		nav = plugin.nav and {
+			label = tostring(plugin.nav.label or plugin.name),
+			icon = plugin.nav.icon or "",
+		} or json.null,
 	}
 end
 

@@ -78,6 +78,7 @@ return tau.plugin {
   on_event = function(event, ctx) end,
   run_end = function(run, ctx) end,
   view = function(state, ctx) end,
+  nav = { label = "Deploys", icon = "plug" },  -- its sidebar entry
   fills = { "tau.title" },  -- the slots it fills
   title = function(run, ctx) end,
   notify = function(notice, ctx) end,
@@ -277,6 +278,16 @@ read the state: it has no tools. What it returns goes in three places:
   run is then, and the earlier one stays.
 - `page`: pieces shown on the plugin's own page, from its newest run;
   buttons there act on that run.
+- `banner`: pieces across the top of the run.
+- `inspector`: pieces in the run's inspector, beside the transcript.
+- `band`: pieces just above the composer.
+- `row`: `{ line, count?, tone? }`, the run's line under its title in
+  the sidebar; `tone` is `"good"`, `"warn"` or `"bad"`.
+- `asks`: what the run asks the person, in words: its row says so, and
+  a notice shows it while tau's window is not in front.
+
+A plugin with `nav`, `{ label, icon? }`, has an entry in the sidebar that
+opens its page; `icon` names one of the interface's icons.
 
 ### Settings
 

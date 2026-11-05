@@ -193,6 +193,16 @@ pub const SLOTS: [&str; 4] = [
     tau_ui_plugin::forge::FORGE.name(),
 ];
 
+/// Its entry in the sidebar, which opens its page.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Nav {
+    pub label: String,
+    /// One of the interface's icons, by its file's name; a plug when it
+    /// names none it knows.
+    #[serde(default)]
+    pub icon: String,
+}
+
 /// The forge's hooks, as its `forge` table names them.
 pub const FORGE_HOOKS: [&str; 5] =
     ["account", "repos", "can_push", "open_pull", "checks"];
@@ -247,6 +257,9 @@ pub struct Declaration {
     /// What it fills `tau.forge` with.
     #[serde(default)]
     pub forge: Option<ForgeFill>,
+    /// Its entry in the sidebar.
+    #[serde(default)]
+    pub nav: Option<Nav>,
 }
 
 impl Declaration {
@@ -509,6 +522,7 @@ mod tests {
             fills: Vec::new(),
             compaction: None,
             forge: None,
+            nav: None,
         }
     }
 

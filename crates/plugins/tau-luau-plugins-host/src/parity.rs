@@ -69,15 +69,72 @@ pub fn slot(name: &str) -> Option<Luau> {
 /// How a Luau plugin draws at the point `name`; `None` for a point this
 /// table does not know.
 pub fn point(name: &str) -> Option<Luau> {
-    let luau = match name {
-        n if n == points::STATUS.name => Luau::Hook("status"),
-        n if n == points::TRANSCRIPT.name => Luau::Hook("note"),
-        n if n == points::CARD.name => Luau::Hook("card"),
-        n if n == points::CARD_BADGE.name => Luau::Hook("tau.flag(why)"),
-        n if points::ALL.contains(&n) => Luau::Excluded(NOT_YET),
-        _ => return None,
-    };
-    Some(luau)
+    use points::*;
+    let hooks = [
+        (STATUS.name, "status"),
+        (TRANSCRIPT.name, "note"),
+        (CARD.name, "card"),
+        (CARD_BADGE.name, "tau.flag(why)"),
+        (RUN_BANNER.name, "banner"),
+        (INSPECTOR.name, "inspector"),
+        (COMPOSER_BAND.name, "band"),
+        (RUN_ROW.name, "row"),
+        (ASKS.name, "asks"),
+        (SIDEBAR.name, "nav"),
+    ];
+    if let Some((_, hook)) = hooks.iter().find(|(point, _)| *point == name) {
+        return Some(Luau::Hook(hook));
+    }
+    let outside = "drawn outside any run, where a Luau plugin has no view; \
+                   its place there is its sidebar entry (`nav`)";
+    let excluded = [
+        (CARD_BODY.name, "a tool's `card` draws its whole card"),
+        (CARD_STAT.name, "a tool's `card` draws its whole card"),
+        (
+            REPO_KIND.name,
+            "tau-luau-plugins' own: the plugins repository",
+        ),
+        (
+            KIND_ROW_END.name,
+            "a repository kind's, which a Rust plugin keeps",
+        ),
+        (
+            KIND_ROW_LINE.name,
+            "a repository kind's, which a Rust plugin keeps",
+        ),
+        (PLAN.name, "a typed answer the kernel reads, not a tree"),
+        (
+            CONTEXT_TRIGGER.name,
+            "a typed answer the kernel reads, not a tree",
+        ),
+        (
+            PICKER_AUTO.name,
+            "a typed answer the kernel reads, not a tree",
+        ),
+        (
+            SETUP.name,
+            "onboarding runs before the person's plugins load",
+        ),
+        (COMPOSER.name, "the composer's place is tau-ask's"),
+        (EVERYWHERE.name, outside),
+        (SEARCH.name, outside),
+        (SIDEBAR_REPO.name, outside),
+        (REPO_MENU.name, outside),
+        (REPO_ACTIONS.name, outside),
+        (ACTIVITY.name, outside),
+        (MODELS.name, outside),
+        (WAITING.name, outside),
+        (REWRITE.name, NOT_YET),
+        (CONTEXT.name, NOT_YET),
+        (CHANGES.name, NOT_YET),
+        (USER_MESSAGE.name, NOT_YET),
+        (PLAN_STEPS.name, NOT_YET),
+        (PANE.name, NOT_YET),
+    ];
+    excluded
+        .iter()
+        .find(|(point, _)| *point == name)
+        .map(|(_, why)| Luau::Excluded(why))
 }
 
 /// How a Luau plugin is given the service `name`; `None` for a service
