@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tau_ui_plugin::Seam;
 pub use ui::LuauPluginsUi;
 
 /// The host plugin's name, for both its halves.
@@ -147,6 +148,22 @@ impl Declaration {
         let mut grown = self.uses.grown_from(&before.uses);
         grown.extend(self.hooks.grown_from(&before.hooks));
         grown
+    }
+
+    /// The seams its tools and hooks step in at, as the Plugins screen
+    /// lists them.
+    pub fn seams(&self) -> Vec<Seam> {
+        let hooks = &self.hooks;
+        [
+            (!self.tools.is_empty(), Seam::Tools),
+            (hooks.before_tool, Seam::BeforeTool),
+            (hooks.before_stop, Seam::BeforeStop),
+            (hooks.turn_end, Seam::OnEvent),
+            (hooks.run_end, Seam::Finish),
+        ]
+        .into_iter()
+        .filter_map(|(has, seam)| has.then_some(seam))
+        .collect()
     }
 
     /// A plugin named `name` that declares nothing: what one never
@@ -371,5 +388,30 @@ mod tests {
             ["the `read` tool", "Jev", "`before_tool`"]
         );
         assert!(before.grown_from(&after).is_empty());
+    }
+
+    /// Each hook is the seam it steps in at, and a plugin's tools are
+    /// `Tools`: `turn_end` hears the run's events.
+    #[test]
+    fn its_seams_are_its_tools_and_hooks() {
+        let mut declaration = declaring(&[], false, false);
+        assert!(declaration.seams().is_empty());
+        declaration.hooks = Hooks {
+            before_tool: true,
+            before_stop: true,
+            turn_end: true,
+            run_end: true,
+            view: true,
+            settings_view: true,
+        };
+        assert_eq!(
+            declaration.seams(),
+            [
+                Seam::BeforeTool,
+                Seam::BeforeStop,
+                Seam::OnEvent,
+                Seam::Finish
+            ]
+        );
     }
 }

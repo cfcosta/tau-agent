@@ -18,7 +18,6 @@ use tau_ui_plugin::{
     PluginInfo,
     RepoCtx,
     RunCtx,
-    Seam,
 };
 
 /// tau-luau-plugins on the host.
@@ -215,21 +214,11 @@ impl HostHalf for LuauPluginsHost {
 fn entry_row(entry: &crate::Entry) -> tau_ui_plugin::CatalogEntry {
     use tau_ui_plugin::{CatalogEntry, Note};
 
-    let mut seams = Vec::new();
-    if let Some(declaration) = &entry.declaration {
-        if !declaration.tools.is_empty() {
-            seams.push(Seam::Tools);
-        }
-        if declaration.hooks.before_tool {
-            seams.push(Seam::BeforeTool);
-        }
-        if declaration.hooks.before_stop {
-            seams.push(Seam::BeforeStop);
-        }
-        if declaration.hooks.run_end {
-            seams.push(Seam::Finish);
-        }
-    }
+    let seams = entry
+        .declaration
+        .as_ref()
+        .map(tau_luau_plugins::Declaration::seams)
+        .unwrap_or_default();
     let note = match &entry.standing {
         Standing::Active => None,
         Standing::Waiting { .. } => {
