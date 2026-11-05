@@ -611,8 +611,31 @@ fn setup_leaves_the_persons_git_as_it_was(tc: TestCase) {
         for name in after.refs.keys() {
             assert!(before.refs.contains_key(name) || tracked(name), "{name}");
         }
+        // A tracked branch `HEAD` was on, which jj moved, leaves `HEAD`
+        // detached on the commit the person has checked out, as jj's
+        // export does: their files stay as they were. Any other `HEAD`
+        // stays as written.
+        let moved_head = std::str::from_utf8(&before.head)
+            .ok()
+            .and_then(|head| head.trim().strip_prefix("ref: "))
+            .filter(|branch| {
+                tracked(branch)
+                    && after.refs.get(*branch) != before.refs.get(*branch)
+            })
+            .is_some();
+        let head = match (&before.head_commit, moved_head) {
+            (Some(commit), true) => format!("{commit}\n").into_bytes(),
+            _ => before.head.clone(),
+        };
+        assert_eq!(
+            after.head,
+            head,
+            "{}",
+            String::from_utf8_lossy(&after.head)
+        );
         let after = GitView {
             refs: before.refs.clone(),
+            head: before.head.clone(),
             ..after
         };
         assert_eq!(after, before);

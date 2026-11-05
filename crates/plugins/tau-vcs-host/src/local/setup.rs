@@ -5,7 +5,10 @@
 //! The steps are `jj git init --colocate`'s in a Git checkout (jj-cli
 //! 0.46.0's `commands/git/init.rs`), with tau's operations, and with
 //! one difference: the jj CLI resets Git's index in the folder after its
-//! snapshot, and tau never moves Git's `HEAD` or index there. A folder
+//! snapshot, and tau never moves Git's `HEAD` or index there: when the
+//! person's `auto-track-bookmarks` moves the branch `HEAD` is on to the
+//! remote's, jj's export leaves `HEAD` detached on the commit they have
+//! checked out, so their files stay as they were. A folder
 //! that is a colocated jj repository already keeps its repository as it
 //! is: only tau's workspace and state are added.
 //!
@@ -274,6 +277,9 @@ struct Journal<'a> {
     logs_before: HashMap<String, Vec<u8>>,
     /// The folders in the Git store, its objects' aside.
     git_dirs_before: BTreeSet<PathBuf>,
+    /// Git's `HEAD` as the folder had it, as written: on a branch
+    /// (`ref: refs/heads/…`), or detached.
+    head_before: Option<Vec<u8>>,
     /// The branches and tags tau's exports made, as full ref names with
     /// their targets: the bookmarks an import made for remote branches
     /// the person's `auto-track-bookmarks` matches.
@@ -327,6 +333,7 @@ impl<'a> Journal<'a> {
             logs_before: logs(&git_dir, &refs_before),
             refs_before,
             git_dirs_before: git_dirs(&git_dir),
+            head_before: std::fs::read(git_dir.join("HEAD")).ok(),
             git_dir,
             had_jj,
             made_jj: false,
@@ -682,6 +689,20 @@ impl<'a> Journal<'a> {
         Ok(repo)
     }
 
+    /// Puts Git's `HEAD` back as it was, once the refs are: an export
+    /// may have detached it.
+    fn undo_head(&self) -> Result<(), VcsError> {
+        let Some(before) = &self.head_before else {
+            return Ok(());
+        };
+        let path = self.git_dir.join("HEAD");
+        if std::fs::read(&path).ok().as_ref() != Some(before) {
+            std::fs::write(&path, before)
+                .map_err(|source| VcsError::Create { path, source })?;
+        }
+        Ok(())
+    }
+
     /// Notes the branches and tags `tx`'s export will make in Git: the
     /// bookmarks and tags it made that Git did not have before the setup,
     /// and those Git had that it moves.
@@ -766,6 +787,7 @@ impl<'a> Journal<'a> {
             let _ = std::fs::remove_dir(dir);
         }
         self.undo_refs()?;
+        self.undo_head()?;
         self.undo_git_dirs();
         if self.made_jj {
             remove_repo_config(&self.identity.env, &repo_path)?;
