@@ -10,12 +10,48 @@ use async_trait::async_trait;
 use tau_ai::message::UserContent;
 use tau_store::StoreError;
 
-use super::{RunResult, Runner};
-use crate::agent::Compacted;
+use super::{RunResult, Runner, Turns};
+use crate::{agent::Compacted, event::StopReason};
 
 /// One run, assembled: its tools, plugins, session and store, ready to
 /// take its first message. What a [`Loop`] drives.
 pub struct LoopRun(pub(crate) Runner);
+
+/// The run's steps, each keeping the runner's invariants whole: a
+/// filler drives them in its own order and between them decides when
+/// the run goes on.
+impl LoopRun {
+    /// Starts the run: `RunStart`, the first message stored, an inherited
+    /// transcript offered for a rewrite.
+    pub async fn begin(
+        &mut self,
+        input: UserContent,
+    ) -> Result<Turns, StoreError> {
+        self.0.begin(input).await
+    }
+
+    /// One turn, whole; the run's stop once it stops.
+    pub async fn turn(
+        &mut self,
+        turns: &mut Turns,
+    ) -> Result<Option<StopReason>, StoreError> {
+        self.0.turn(turns).await
+    }
+
+    /// Ends the run with `stop`, storing its outcome.
+    pub async fn end(
+        self,
+        turns: Turns,
+        stop: StopReason,
+    ) -> Result<RunResult, StoreError> {
+        self.0.end(turns, stop).await
+    }
+
+    /// Offers the idle run's transcript for a rewrite, and stops.
+    pub async fn compact_idle(self) -> Result<Option<Compacted>, StoreError> {
+        self.0.compact_idle().await
+    }
+}
 
 /// Drives runs. A filler must keep the runner's invariants: one stored
 /// write per turn, every tool call answered, nothing asked after a

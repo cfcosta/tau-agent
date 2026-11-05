@@ -200,11 +200,51 @@ pub struct RunResult {
     pub request: Settings,
 }
 
+/// Where a run's turns are: what [`Runner::begin`] gives and each
+/// [`Runner::turn`] carries on.
+pub struct Turns {
+    started: Instant,
+    own: Usage,
+    transcript: Vec<Message>,
+    turn: u32,
+    /// The turns of this start, for limits: a resumed run gets a fresh
+    /// budget.
+    taken: u32,
+    continuations: u32,
+}
+
+impl Turns {
+    /// The last turn taken, counting the turns before this start.
+    pub fn turn(&self) -> u32 {
+        self.turn
+    }
+
+    /// The working transcript as the last step left it.
+    pub fn transcript(&self) -> &[Message] {
+        &self.transcript
+    }
+}
+
 impl Runner {
     pub(crate) async fn run(
         mut self,
         input: UserContent,
     ) -> Result<RunResult, StoreError> {
+        let mut turns = self.begin(input).await?;
+        loop {
+            if let Some(stop) = self.turn(&mut turns).await? {
+                return self.end(turns, stop).await;
+            }
+        }
+    }
+
+    /// Starts the run: `RunStart`, the warm-up, the first message stored,
+    /// and an inherited transcript offered for a rewrite. What it gives
+    /// back is where the run's turns go on from.
+    pub(crate) async fn begin(
+        &mut self,
+        input: UserContent,
+    ) -> Result<Turns, StoreError> {
         let started = Instant::now();
         self.emit(RunEvent::RunStart {
             run: self.run.clone(),
@@ -249,147 +289,173 @@ impl Runner {
                 )
                 .await?;
         }
-        let mut turn = self.turns_before;
-        // The turns of this start, for limits: a resumed run gets a
-        // fresh budget.
-        let mut taken = 0;
-        let mut continuations = 0;
 
-        let stop = loop {
-            turn += 1;
-            taken += 1;
-            self.emit(RunEvent::TurnStart {
-                run: self.run.clone(),
-                turn,
-            })
-            .await;
+        Ok(Turns {
+            started,
+            own,
+            transcript,
+            turn: self.turns_before,
+            taken: 0,
+            continuations: 0,
+        })
+    }
 
-            self.choose_effort(&transcript, turn).await;
-            let (mut message, class) = self.respond(&transcript, turn).await;
-            let overflow = class == Class::ContextOverflow
-                || is_context_overflow(&message);
-            if overflow {
-                // Rewrite once and retry once; a second overflow fails
-                // the run.
-                match self
-                    .rewrite_context(&mut transcript, Trigger::Overflow, turn)
-                    .await?
-                {
-                    Ok(_) => message = self.respond(&transcript, turn).await.0,
-                    Err(failures) => {
-                        if !failures.is_empty() {
-                            let original = message
-                                .error_message
-                                .take()
-                                .unwrap_or_default();
-                            let failures: Vec<String> = failures
-                                .iter()
-                                .map(|(plugin, error)| {
-                                    format!("{plugin} failed: {error}")
-                                })
-                                .collect();
-                            message.error_message = Some(format!(
-                                "{original}; {}",
-                                failures.join("; ")
-                            ));
-                        }
+    /// One turn, whole: the request, its tool calls, the turn stored,
+    /// `TurnEnd`, then a steer, a continuation and a rewrite. The run's
+    /// stop, once it stops.
+    pub(crate) async fn turn(
+        &mut self,
+        turns: &mut Turns,
+    ) -> Result<Option<StopReason>, StoreError> {
+        turns.turn += 1;
+        turns.taken += 1;
+        let (started, turn, taken) = (turns.started, turns.turn, turns.taken);
+        let Turns {
+            own,
+            transcript,
+            continuations,
+            ..
+        } = turns;
+        self.emit(RunEvent::TurnStart {
+            run: self.run.clone(),
+            turn,
+        })
+        .await;
+
+        self.choose_effort(transcript, turn).await;
+        let (mut message, class) = self.respond(transcript, turn).await;
+        let overflow =
+            class == Class::ContextOverflow || is_context_overflow(&message);
+        if overflow {
+            // Rewrite once and retry once; a second overflow fails
+            // the run.
+            match self
+                .rewrite_context(transcript, Trigger::Overflow, turn)
+                .await?
+            {
+                Ok(_) => message = self.respond(transcript, turn).await.0,
+                Err(failures) => {
+                    if !failures.is_empty() {
+                        let original =
+                            message.error_message.take().unwrap_or_default();
+                        let failures: Vec<String> = failures
+                            .iter()
+                            .map(|(plugin, error)| {
+                                format!("{plugin} failed: {error}")
+                            })
+                            .collect();
+                        message.error_message = Some(format!(
+                            "{original}; {}",
+                            failures.join("; ")
+                        ));
                     }
                 }
             }
-            own += &message.usage;
-            let failed = matches!(
-                message.stop_reason,
-                MessageStop::Error | MessageStop::Aborted
-            );
-            let calls: Vec<MessageToolCall> =
-                message.tool_calls().cloned().collect();
-            let results = if failed || calls.is_empty() {
-                Vec::new()
-            } else if message.stop_reason == MessageStop::Length {
-                self.fail_truncated(&calls).await
-            } else {
-                self.execute(&calls, &transcript, &message).await
-            };
-
-            // A response cut short before anything in it finished leaves
-            // nothing to keep.
-            let mut new = Vec::new();
-            if self.preempted.is_none() || !message.content.is_empty() {
-                new.push(Message::Assistant(message.clone()));
-            }
-            new.extend(results.into_iter().map(Message::ToolResult));
-            self.persist_turn(&new, &message.usage).await?;
-            transcript.extend(new);
-
-            let verdict = if failed {
-                Some(StopReason::from_message(
-                    message.stop_reason,
-                    message.error_message.as_deref(),
-                ))
-            } else if self.cancel.is_cancelled() {
-                Some(StopReason::Cancelled)
-            } else {
-                self.limits
-                    .reached(taken, &self.total(&own), started.elapsed())
-                    .map(StopReason::Limit)
-            };
-            self.emit(RunEvent::TurnEnd {
-                run: self.run.clone(),
-                turn,
-                usage: message.usage.clone(),
-            })
-            .await;
-            if let Some(stop) = verdict {
-                break stop;
-            }
-
-            // One steering message per drain, after the tool batch: the
-            // one that cut the response short first.
-            let steered = self
-                .preempted
-                .take()
-                .or_else(|| self.steering.try_recv().ok());
-            // Read once stored: a steer the run could not store stays
-            // unread, for the host to hand on.
-            if let Some(prompt) = steered.clone() {
-                let text = prompt.text.clone();
-                let message = self.said(prompt);
-                self.persist(std::slice::from_ref(&message), &Usage::default())
-                    .await?;
-                self.emit(RunEvent::Steered {
-                    run: self.run.clone(),
-                    text,
-                })
-                .await;
-                transcript.push(message);
-            }
-            if calls.is_empty() && steered.is_none() {
-                if continuations >= self.limits.max_continuations {
-                    break StopReason::Stop;
-                }
-                let Some((plugin, text)) = self.before_stop(&message).await
-                else {
-                    break StopReason::Stop;
-                };
-                continuations += 1;
-                let message = self.user(text.clone());
-                self.persist(std::slice::from_ref(&message), &Usage::default())
-                    .await?;
-                self.emit(RunEvent::Continued {
-                    run: self.run.clone(),
-                    plugin,
-                    message: text,
-                })
-                .await;
-                transcript.push(message);
-            }
-            // Failures were reported as events; the run goes on with the
-            // transcript as it is.
-            let _ = self
-                .rewrite_context(&mut transcript, Trigger::TurnEnd, turn)
-                .await?;
+        }
+        *own += &message.usage;
+        let failed = matches!(
+            message.stop_reason,
+            MessageStop::Error | MessageStop::Aborted
+        );
+        let calls: Vec<MessageToolCall> =
+            message.tool_calls().cloned().collect();
+        let results = if failed || calls.is_empty() {
+            Vec::new()
+        } else if message.stop_reason == MessageStop::Length {
+            self.fail_truncated(&calls).await
+        } else {
+            self.execute(&calls, transcript, &message).await
         };
 
+        // A response cut short before anything in it finished leaves
+        // nothing to keep.
+        let mut new = Vec::new();
+        if self.preempted.is_none() || !message.content.is_empty() {
+            new.push(Message::Assistant(message.clone()));
+        }
+        new.extend(results.into_iter().map(Message::ToolResult));
+        self.persist_turn(&new, &message.usage).await?;
+        transcript.extend(new);
+
+        let verdict = if failed {
+            Some(StopReason::from_message(
+                message.stop_reason,
+                message.error_message.as_deref(),
+            ))
+        } else if self.cancel.is_cancelled() {
+            Some(StopReason::Cancelled)
+        } else {
+            self.limits
+                .reached(taken, &self.total(own), started.elapsed())
+                .map(StopReason::Limit)
+        };
+        self.emit(RunEvent::TurnEnd {
+            run: self.run.clone(),
+            turn,
+            usage: message.usage.clone(),
+        })
+        .await;
+        if let Some(stop) = verdict {
+            return Ok(Some(stop));
+        }
+
+        // One steering message per drain, after the tool batch: the
+        // one that cut the response short first.
+        let steered = self
+            .preempted
+            .take()
+            .or_else(|| self.steering.try_recv().ok());
+        // Read once stored: a steer the run could not store stays
+        // unread, for the host to hand on.
+        if let Some(prompt) = steered.clone() {
+            let text = prompt.text.clone();
+            let message = self.said(prompt);
+            self.persist(std::slice::from_ref(&message), &Usage::default())
+                .await?;
+            self.emit(RunEvent::Steered {
+                run: self.run.clone(),
+                text,
+            })
+            .await;
+            transcript.push(message);
+        }
+        if calls.is_empty() && steered.is_none() {
+            if *continuations >= self.limits.max_continuations {
+                return Ok(Some(StopReason::Stop));
+            }
+            let Some((plugin, text)) = self.before_stop(&message).await else {
+                return Ok(Some(StopReason::Stop));
+            };
+            *continuations += 1;
+            let message = self.user(text.clone());
+            self.persist(std::slice::from_ref(&message), &Usage::default())
+                .await?;
+            self.emit(RunEvent::Continued {
+                run: self.run.clone(),
+                plugin,
+                message: text,
+            })
+            .await;
+            transcript.push(message);
+        }
+        // Failures were reported as events; the run goes on with the
+        // transcript as it is.
+        let _ = self
+            .rewrite_context(transcript, Trigger::TurnEnd, turn)
+            .await?;
+        Ok(None)
+    }
+
+    /// Ends the run with `stop`: `RunEnd`, its outcome stored, each
+    /// plugin's `finish`.
+    pub(crate) async fn end(
+        mut self,
+        turns: Turns,
+        stop: StopReason,
+    ) -> Result<RunResult, StoreError> {
+        let Turns {
+            own, transcript, ..
+        } = turns;
         let total = self.total(&own);
         self.emit(RunEvent::RunEnd {
             run: self.run.clone(),
