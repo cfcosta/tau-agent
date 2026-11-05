@@ -508,6 +508,15 @@ Each step lands on main by itself and leaves tau working.
     against the kernel only. Luau does not fill it.
 12. **The kernel test**: no non-test source in `tau-ui` or
     `tau-ui-remote` names a plugin.
+    As built: `crates/tau-ui/tests/kernel.rs` reads every source of
+    both crates, their test modules and comment lines apart, for a
+    plugin crate's path (`tau_skills::`). What still names one is
+    listed there with why, and the list only shrinks: a new name fails
+    the test, and so does a listed one the source dropped. Listed now:
+    the host halves tau-ui composes (`hosted.rs`) and the demo's data,
+    which name every plugin by design; and in the host, the person's
+    identity for tau-vcs, memory's search mode and service, the skills
+    directory, ChatGPT's plan account and tau-tools' artifact grants.
 
 ## Alternatives considered
 
