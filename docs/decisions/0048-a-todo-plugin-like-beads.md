@@ -461,6 +461,61 @@ are injected, so every run is deterministic for its seed.
 | phones show the board and the band as the computer     | board model                        |
 | the export is beads' format, and round-trips           | graph laws; beads oracle           |
 
+## As built
+
+What landed differs from the text above where the seams or the tests
+showed a better way, or where the kernel had no piece for it:
+
+- **One key an issue.** The store keeps each issue, its links with it,
+  under one key (`issue/<id>`), and a deleted id under `retired/<id>`:
+  a change is one write, and a hook's writes go in one transaction
+  when it ends (seam 1). The crash model's fault "an issue's row and
+  its links written in two transactions" became "each write of a hook
+  committed alone", which fails both crash tests.
+- **A hook never waits on a chat.** Starting or steering a chat (seam
+  3) is what an action answers, `tau.start_chat` or `tau.steer_chat`;
+  the host carries it out once the action ended and its store is
+  written, then calls the action it names next with the chat's run. A
+  tool asks the person with `tau.allow`: the host shows the Allow card
+  and waits outside any hook, so no store is held while a chat starts
+  whose own hooks may want it. Starting a chat on an issue holds it as
+  `starting` until the chat's run takes it; `recover` lets go of that
+  too.
+- **`recover` covers every repository with a store**, not only those
+  listed as tau starts: tau lists them after its plugins resume.
+- **`run_end` runs however a run ended**: the run's cancel no longer
+  cuts it off, so a stopped run's claims end too.
+- **Landing.** A claim ends when its run ends, landed or not: the run
+  ends before tau lands it, so "keeps it in progress if it landed
+  without closing it" is not built.
+- **The board.** The kernel's `board` widget shows its columns as tabs
+  when too narrow for them, as on a phone, where each ready card has
+  "Start a run" and the issue's panel the rest. To Done and to Blocked
+  ask in a modal whose question the store keeps, so every device shows
+  it. A move names the column it was dragged from, and is refused when
+  the card moved elsewhere first. The Graph view's widget has no dashed
+  edges: `found_while` is listed on the issue rather than drawn, and
+  the critical way is in the accent.
+- **beads' JSONL.** No Luau plugin names a path, and there is no file
+  picker a plugin reaches: the board's beads view shows the export to
+  copy, and takes pasted JSONL to import. "Done when" criteria are
+  beads' `acceptance_criteria` as a Markdown checklist, and a stored
+  blocked status its `notes`.
+- **Modules.** A Luau plugin's `lib/` modules may require each other,
+  out of a cycle; tau-todo's are `graph`, `issues`, `beads`, `time` and
+  `steps`.
+- **Tests.** Every layer above landed: the graph laws, the store and
+  crash models, the claims and dispatch model in the real host
+  (`crates/tau-ui/tests/todo_model.rs`), the board sync model
+  (`todo_sync_model.rs`), the schema checks, and the beads_rust oracle,
+  skipped where `br` is missing (it was, where this was built). Forks
+  are not in the claims model: a claim is keyed by its run's id, which
+  a fork does not share, and steps follow the fork chain as every
+  plugin's records do. Each fault probe is listed, with what failed it,
+  in the commit that added its model; one survived as the same as the
+  plugin (a claim refused for an issue another run holds is refused
+  anyway, as that issue is in progress).
+
 ## Alternatives considered
 
 - **Issues in the repository, like beads.** They would follow forks

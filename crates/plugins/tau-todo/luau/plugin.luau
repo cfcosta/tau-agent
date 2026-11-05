@@ -562,7 +562,7 @@ local function header(params, ready)
 	end
 	local view = params.view or "board"
 	local links = {}
-	for _, name in ipairs({ "board", "list", "graph" }) do
+	for _, name in ipairs({ "board", "list", "graph", "beads" }) do
 		local label = name:sub(1, 1):upper() .. name:sub(2)
 		if name == view then
 			table.insert(links, ui.badge(label, "info"))
@@ -847,7 +847,15 @@ local function board_page(params, ctx)
 	local ready = #graph.ready(all, at)
 	local view = params.view or "board"
 	local body
-	if view == "list" then
+	if view == "beads" then
+		body = ui.stack({
+			ui.text("The issues in beads' JSONL, for git or beads' own tools."),
+			ui.code("json", beads.export(all)),
+			ui.heading("Import"),
+			ui.text("Paste beads' JSONL: each issue goes in, in place of one with its id."),
+			ui.input("import", { placeholder = "beads' JSONL", multiline = true, submit = "import" }),
+		})
+	elseif view == "list" then
 		body = list_view(all, at, params)
 	elseif view == "graph" then
 		body = graph_view(all, at, params)
@@ -877,6 +885,14 @@ local function move(args, ctx)
 	local id, to = args.card, args.to
 	local all = issues.all(store)
 	local issue = issues.find(all, id)
+	-- Moved on another device first: this move is refused, not lost.
+	local now_in = column_of(all, id, at)
+	if args.from and now_in ~= args.from then
+		error(id .. " is in " .. (now_in or "no column") .. " now: it moved elsewhere first", 0)
+	end
+	if to == now_in then
+		return nil
+	end
 	if to == "in_progress" then
 		return start_chat(store, at, id)
 	elseif to == "done" then

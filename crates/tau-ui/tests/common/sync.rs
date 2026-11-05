@@ -373,15 +373,22 @@ pub enum Keep {
 struct Disk {
     dir: PathBuf,
     keep: Keep,
+    /// Removes `dir` once the test is done with it.
+    _temp: tempfile::TempDir,
 }
 
 impl Disk {
     fn new(keep: Keep) -> Self {
-        let dir = tempfile::tempdir().unwrap().keep();
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().to_owned();
         for repo in REPOS {
             new_project(&dir.join(repo).join("checkout"));
         }
-        Self { dir, keep }
+        Self {
+            dir,
+            keep,
+            _temp: temp,
+        }
     }
 
     /// A host started on what is on disk, as tau starts.

@@ -1,5 +1,17 @@
 local tau = require("tau")
 local t = tau.test
+local beads = require("beads")
+
+-- The JSONL a run's store exports.
+local function beads_text(run)
+	local all = {}
+	for key, value in pairs(run.store) do
+		if string.sub(key, 1, 6) == "issue/" then
+			all[value.id] = value
+		end
+	end
+	return beads.export(all)
+end
 
 local function ids(list)
 	local out = {}
@@ -187,4 +199,27 @@ t.case("the board's columns hold what the model says, and a move is its action",
 	run:action("close", { text = "not needed" })
 	t.equal(run:tool("todo_show", { id = b }).issue.close_reason, "not needed")
 	t.equal(run:repo_data().ready, 0)
+end)
+
+t.case("a card moved on another device first is refused where it was moved second", function()
+	local run = t.run({ id = "r1" })
+	local a = run:tool("todo_create", { title = "a" }).issue.id
+	run:action("move", { card = a, from = "ready", to = "done" })
+	run:action("close", { text = "done" })
+	local ok, why = pcall(function()
+		run:action("move", { card = a, from = "ready", to = "blocked" })
+	end)
+	t.equal(ok, false)
+	t.equal(string.find(tostring(why), "is in done now", 1, true) ~= nil, true, tostring(why))
+end)
+
+t.case("the beads view shows the export and takes an import", function()
+	local run = t.run({})
+	run:tool("todo_create", { title = "a" })
+	local page = run:page("board", { view = "beads" })
+	local text = json.encode(page)
+	t.equal(string.find(text, "issue_type", 1, true) ~= nil, true)
+	local other = t.run({})
+	local exported = beads_text(run)
+	t.equal(other:action("import", { text = exported }), "Imported 1 issues.")
 end)
