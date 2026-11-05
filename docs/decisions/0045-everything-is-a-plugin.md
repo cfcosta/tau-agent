@@ -504,8 +504,10 @@ Each step lands on main by itself and leaves tau working.
     feature): `check(tc, filler, steps)` and `regressions(filler)` run
     it against any loop, and `testing::Stepwise`, a loop put together
     from the steps alone, keeps to it beside `Kernel`. The other run
-    suites (store failures, rewrites, nested calls, workflows) still run
-    against the kernel only. Luau does not fill it.
+    suites' property tests (store failures, generated scripts, hook
+    folding, grouped calls, plugin charges and records, nested calls,
+    workflows and sub-agents) drive each case with a loop drawn from
+    `testing::fillers`. Luau does not fill it.
 12. **The kernel test**: no non-test source in `tau-ui` or
     `tau-ui-remote` names a plugin.
     As built: `crates/tau-ui/tests/kernel.rs` reads every source of

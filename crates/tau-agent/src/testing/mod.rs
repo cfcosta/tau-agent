@@ -17,6 +17,27 @@ use crate::{
     },
 };
 
+/// Every loop tau-agent checks its run suites against: its own, and one
+/// put together from the run's steps.
+pub fn fillers() -> [std::sync::Arc<dyn Loop>; 2] {
+    [
+        std::sync::Arc::new(crate::runner::driver::Kernel),
+        std::sync::Arc::new(Stepwise),
+    ]
+}
+
+/// One of [`fillers`], drawn: what a property test drives its runs with,
+/// so each case holds of any loop.
+pub fn filler(tc: &hegel::TestCase) -> std::sync::Arc<dyn Loop> {
+    use hegel::generators as gs;
+    let [kernel, stepwise] = fillers();
+    if tc.draw(gs::booleans()) {
+        stepwise
+    } else {
+        kernel
+    }
+}
+
 /// A loop put together from the run's steps ([`LoopRun::begin`],
 /// [`LoopRun::turn`], [`LoopRun::end`]), apart from
 /// [`crate::runner::driver::Kernel`]'s own: what the model checks of any

@@ -181,6 +181,7 @@ fn loop_over_generated_scripts_nightly(tc: TestCase) {
 }
 
 fn loop_over_generated_scripts_body(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let turns: Vec<Vec<ScriptedCall>> = tc
         // A turn without tool calls ends the run, so every turn before the
         // final text turn calls at least one tool.
@@ -223,6 +224,7 @@ fn loop_over_generated_scripts_body(tc: TestCase) {
         let log = Arc::new(Mutex::new(Vec::new()));
         let recorder = Recorder::default();
         let agent = Agent::new(llm.clone())
+            .with_loop(driver.clone())
             .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
             .tool(Probe::new("serial", ExecutionMode::Sequential, log.clone()))
             .plugin(recorder.clone())
@@ -898,6 +900,7 @@ enum Ends {
 /// never reaches a later hook or the tool.
 #[hegel::test(test_cases = 60)]
 fn before_tool_hooks_fold_in_order_and_the_first_stop_wins(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let calls = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
     let names = ["first", "second", "third"];
     let plugins = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
@@ -955,11 +958,9 @@ fn before_tool_hooks_fold_in_order_and_the_first_stop_wins(tc: TestCase) {
         let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let mut agent = Agent::new(llm).tool(Probe::new(
-            "probe",
-            ExecutionMode::Parallel,
-            log.clone(),
-        ));
+        let mut agent = Agent::new(llm)
+            .with_loop(driver.clone())
+            .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()));
         for (name, script) in names.iter().zip(&scripts) {
             agent = agent.plugin(Hook {
                 name,
@@ -1313,6 +1314,7 @@ fn tools_adds_several_in_order() {
 /// one group overlaps another.
 #[hegel::test(test_cases = 60)]
 fn grouped_calls_run_together_and_apart(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     // Each call's duration is unique, so its interval names it.
     let tools: Vec<&'static str> = tc.draw(
         gs::vecs(gs::sampled_from(vec!["a", "b", "g", "h"]))
@@ -1335,6 +1337,7 @@ fn grouped_calls_run_together_and_apart(tc: TestCase) {
         let store = tau_store_sqlite::memory().await.unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let agent = Agent::new(llm.clone())
+            .with_loop(driver.clone())
             .tool(Probe::new("a", ExecutionMode::Parallel, log.clone()))
             .tool(Probe::new("b", ExecutionMode::Parallel, log.clone()))
             .tool(Probe::new("g", ExecutionMode::Grouped, log.clone()))

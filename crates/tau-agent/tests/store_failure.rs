@@ -106,6 +106,7 @@ impl AgentTool for Echo {
 /// turn's messages and usage were written together or not at all.
 #[hegel::test(test_cases = 20)]
 fn a_failed_turn_write_leaves_no_partial_turn(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let widths: Vec<usize> = tc.draw(
         gs::vecs(gs::integers::<usize>().min_value(1).max_value(3)).max_size(3),
     );
@@ -129,10 +130,13 @@ fn a_failed_turn_write_leaves_no_partial_turn(tc: TestCase) {
     block_on_io(async {
         let store = tau_store_sqlite::open(&path).await.unwrap();
         let schema = json!({"type": "object"});
-        let agent = Agent::new(llm).tool(Echo(schema.clone())).tool(Sabotage {
-            path: path.clone(),
-            schema,
-        });
+        let agent = Agent::new(llm)
+            .with_loop(driver.clone())
+            .tool(Echo(schema.clone()))
+            .tool(Sabotage {
+                path: path.clone(),
+                schema,
+            });
         let run = agent.start("go", &store);
         let id = run.id();
         let error = run.outcome().await.unwrap_err();

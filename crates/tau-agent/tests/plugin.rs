@@ -520,6 +520,7 @@ fn charged_usage_counts() {
 /// made while it finishes, after `RunEnd`, are only stored.
 #[hegel::test(test_cases = 40)]
 fn charges_are_kept_per_plugin(tc: hegel::TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     use hegel::generators::{self as gs, Generator as _};
     let names = tc.draw(gs::subsequences(vec!["judge", "pruner", "goal"]));
     // Costs are multiples of 1/1024, so sums are exact.
@@ -555,7 +556,7 @@ fn charges_are_kept_per_plugin(tc: hegel::TestCase) {
     }
     block_on(async {
         let model = ScriptedModel::new().turn(|t| t.text("done").cost(0.5));
-        let mut agent = Agent::new(model);
+        let mut agent = Agent::new(model).with_loop(driver.clone());
         for probe in &probes {
             agent = agent.plugin(probe.clone());
         }
@@ -637,6 +638,7 @@ fn charges_are_kept_per_plugin(tc: hegel::TestCase) {
 /// same bodies in the same order.
 #[hegel::test(test_cases = 30)]
 fn published_bodies_are_reported_and_recorded(tc: hegel::TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     use hegel::generators as gs;
     let bodies: Vec<Value> = tc
         .draw(gs::vecs(gs::integers::<u32>()).max_size(5))
@@ -650,7 +652,10 @@ fn published_bodies_are_reported_and_recorded(tc: hegel::TestCase) {
             ..Probe::named("publisher")
         };
         let store = tau_store_sqlite::memory().await.unwrap();
-        let mut run = Agent::new(model).plugin(probe).start("go", &store);
+        let mut run = Agent::new(model)
+            .with_loop(driver.clone())
+            .plugin(probe)
+            .start("go", &store);
         let mut events = Vec::new();
         {
             use futures_util::StreamExt;

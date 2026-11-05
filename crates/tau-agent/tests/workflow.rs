@@ -118,12 +118,14 @@ fn changes() -> impl PrintableGenerator<Changes> {
 /// fields as `null` included).
 #[hegel::test(test_cases = 60)]
 fn typed_run_round_trips_the_final_message(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let value = tc.draw(changes());
     let message = serde_json::to_string(&value).unwrap();
     let llm = ScriptedModel::new().turn(|t| t.text(message.clone()));
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         let typed = Agent::new(llm.clone())
+            .with_loop(driver.clone())
             .run_typed::<Changes>("scan", &store)
             .await
             .unwrap();
@@ -304,6 +306,7 @@ fn project(message: &Message) -> (String, String) {
 /// transcript changes when it is forked.
 #[hegel::test(test_cases = 40)]
 fn forks_continue_from_their_checkpoint(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let plan: Vec<(usize, u8)> = {
         let root_calls = tc.draw(gs::integers::<u8>().max_value(2));
         let forks = tc.draw(gs::integers::<usize>().max_value(4));
@@ -325,7 +328,9 @@ fn forks_continue_from_their_checkpoint(tc: TestCase) {
     }
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(llm.clone()).tool(typed(Echo));
+        let agent = Agent::new(llm.clone())
+            .with_loop(driver.clone())
+            .tool(typed(Echo));
         // Per run: its outcome and the model's transcript for it.
         let mut runs: Vec<(tau_agent::agent::Outcome, Vec<(String, String)>)> =
             Vec::new();
@@ -439,6 +444,7 @@ fn run_of(event: &RunEvent) -> &RunId {
 /// and each child runs inside one of the supervisor's tool batches.
 #[hegel::test(test_cases = 40)]
 fn supervisor_with_sub_agents(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let batches: Vec<usize> = tc.draw(
         gs::vecs(gs::integers::<usize>().min_value(1).max_value(3)).max_size(3),
     );
@@ -459,8 +465,11 @@ fn supervisor_with_sub_agents(tc: TestCase) {
     }
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let researcher = Agent::new(child_llm.clone()).name("researcher");
+        let researcher = Agent::new(child_llm.clone())
+            .with_loop(driver.clone())
+            .name("researcher");
         let lead = Agent::new(lead_llm.clone())
+            .with_loop(driver.clone())
             .name("lead")
             .tool(researcher.as_tool("research", "Investigates."));
         let mut run = lead.start(Input::new("task").workflow("wf"), &store);
@@ -694,6 +703,7 @@ fn a_sub_agent_tool_outside_a_run_fails() {
 /// normally after its last turn.
 #[hegel::test(test_cases = 60)]
 fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let costs = || gs::sampled_from(vec![0.0, 0.25, 0.5]);
     let turns: Vec<(usize, f64, u64)> = tc.draw(
         gs::vecs(hegel::tuples!(
@@ -749,8 +759,13 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         let lead = Agent::new(lead_llm)
+            .with_loop(driver.clone())
             .tool(typed(Echo))
-            .tool(Agent::new(child_llm).as_tool("helper", "Helps."))
+            .tool(
+                Agent::new(child_llm)
+                    .with_loop(driver.clone())
+                    .as_tool("helper", "Helps."),
+            )
             .limits(limits);
         let mut run = lead.start("go", &store);
         let lead_id = run.id();
@@ -1015,6 +1030,7 @@ fn a_fork_counts_turns_from_its_fork_point() {
 /// had stored up to.
 #[hegel::test(test_cases = 40)]
 fn forking_sub_agents_start_from_their_callers_turn(tc: TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let batches: Vec<Vec<bool>> = tc.draw(
         gs::vecs(gs::vecs(gs::booleans()).min_size(1).max_size(4)).max_size(3),
     );
@@ -1042,8 +1058,11 @@ fn forking_sub_agents_start_from_their_callers_turn(tc: TestCase) {
     }
     block_on(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let researcher = Agent::new(child_llm.clone()).name("researcher");
+        let researcher = Agent::new(child_llm.clone())
+            .with_loop(driver.clone())
+            .name("researcher");
         let lead = Agent::new(lead_llm.clone())
+            .with_loop(driver.clone())
             .name("lead")
             .tool(typed(Echo))
             .tool(researcher.as_tool("research", "Investigates.").forking());

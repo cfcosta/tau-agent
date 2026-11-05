@@ -779,6 +779,7 @@ fn a_sequential_tools_nested_calls_run_one_at_a_time() {
 /// in order, and the transcript holds only the outer call's result.
 #[hegel::test(test_cases = 60)]
 fn nested_calls_are_numbered_in_order(tc: hegel::TestCase) {
+    let driver = tau_agent::testing::filler(&tc);
     let names: Vec<&str> = tc.draw(
         gs::vecs(gs::sampled_from(vec![
             "echo", "hidden", "missing", "caller", "invalid",
@@ -803,6 +804,7 @@ fn nested_calls_are_numbered_in_order(tc: hegel::TestCase) {
             "calls": calls,
             "parallel": parallel
         })))
+        .with_loop(driver.clone())
         .tool(Caller {
             exposure: Exposure::ModelOnly,
             ..Caller::default()
