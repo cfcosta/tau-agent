@@ -70,6 +70,9 @@ pub struct State {
     /// in the transcript: the plugin, and the note's tree.
     #[serde(default)]
     pub notes: BTreeMap<String, (String, Value)>,
+    /// What calls asked the person to allow, by call id.
+    #[serde(default)]
+    pub asks: BTreeMap<String, crate::Ask>,
 }
 
 /// One plugin's part in a run, as its records leave it.
@@ -128,6 +131,29 @@ impl Fold for State {
                 self.of(plugin).flags.insert(call_id, reason);
             }
             Record::Off { plugin, why } => self.of(plugin).off = Some(why),
+            Record::Asked {
+                plugin,
+                call_id,
+                title,
+                text,
+            } => {
+                self.asks.insert(
+                    call_id,
+                    crate::Ask {
+                        plugin,
+                        title,
+                        text,
+                        outcome: crate::Outcome::Waiting,
+                    },
+                );
+            }
+            Record::Answered {
+                call_id, outcome, ..
+            } => {
+                if let Some(ask) = self.asks.get_mut(&call_id) {
+                    ask.outcome = outcome;
+                }
+            }
         }
     }
 }
@@ -179,6 +205,10 @@ const LUAU_PAGE: &str = "luau-page/";
 /// What the actions of a Luau plugin's page of a repository start with
 /// ([`embed_repo`]): carried out in the repository the page shows.
 const LUAU_REPO: &str = "luau-repo/";
+
+/// The action of an Allow card's buttons: the person's answer to what a
+/// call asked them to allow, with `{ run, call, allowed }`.
+const ANSWER: &str = "luau-answer";
 
 /// The page parameter naming which of a plugin's pages it shows.
 pub const PAGE_PARAM: &str = "page";
@@ -267,6 +297,23 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
                 })
                 .collect(),
         },
+        Node::Board { action, columns } => Node::Board {
+            action,
+            columns: columns
+                .into_iter()
+                .map(|column| tau_ui_plugin::tree::BoardColumn {
+                    cards: column
+                        .cards
+                        .into_iter()
+                        .map(|card| tau_ui_plugin::tree::BoardCard {
+                            id: card.id,
+                            children: each(card.children, &mut *f),
+                        })
+                        .collect(),
+                    ..column
+                })
+                .collect(),
+        },
         other => other,
     };
     f(node)
@@ -304,6 +351,10 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             children,
         },
         Node::Tabs { id, tabs } => Node::Tabs { id: own(id), tabs },
+        Node::Board { action, columns } => Node::Board {
+            action: act(action),
+            columns,
+        },
         Node::Input {
             id,
             placeholder,
@@ -432,6 +483,62 @@ fn kernel_action(
     true
 }
 
+/// What a call asked the person to allow: what it would do, and while
+/// it waits and its run goes on, Allow and Deny; then what came of it.
+fn allow_card(ask: &crate::Ask, at: &AtCard) -> Node {
+    use crate::Outcome;
+    let mut children = vec![Node::row([
+        Node::Icon {
+            name: "shield".into(),
+            tone: Tone::Warn,
+        },
+        Node::Title {
+            text: ask.title.clone(),
+            subtitle: Some(ask.plugin.clone()),
+        },
+    ])];
+    if !ask.text.is_empty() {
+        children.push(Node::Rich {
+            text: ask.text.clone(),
+        });
+    }
+    let answer = |allowed: bool| json!({ "run": at.run.id.0.as_ref(), "call": at.call_id, "allowed": allowed });
+    let outcome = match ask.outcome {
+        Outcome::Waiting if at.run.live => {
+            children.push(Node::row([
+                Node::Button {
+                    label: "Allow".into(),
+                    action: ANSWER.into(),
+                    args: answer(true),
+                    kind: Kind::Primary,
+                    icon: None,
+                },
+                Node::Button {
+                    label: "Deny".into(),
+                    action: ANSWER.into(),
+                    args: answer(false),
+                    kind: Kind::Secondary,
+                    icon: None,
+                },
+            ]));
+            None
+        }
+        Outcome::Waiting | Outcome::Withdrawn => {
+            Some(("Withdrawn: the run ended first", Tone::Neutral))
+        }
+        Outcome::Allowed => Some(("Allowed", Tone::Good)),
+        Outcome::Denied => Some(("Denied", Tone::Bad)),
+    };
+    if let Some((text, tone)) = outcome {
+        children.push(Node::Status {
+            text: text.into(),
+            detail: None,
+            tone,
+        });
+    }
+    Node::stack(children)
+}
+
 fn luau_action(
     plugin: &str,
     action: &str,
@@ -499,6 +606,16 @@ impl UiPlugin for LuauPluginsUi {
         args: &Value,
         view: &mut ViewCx<'_, Self>,
     ) {
+        if action == ANSWER {
+            let text = |key: &str| args[key].as_str().unwrap_or_default();
+            view.handle.act(Act::Answer {
+                run: text("run").to_owned(),
+                call: text("call").to_owned(),
+                allowed: args["allowed"].as_bool().unwrap_or(false),
+                reason: text("reason").to_owned(),
+            });
+            return;
+        }
         if let Some((plugin, own)) = action
             .strip_prefix(LUAU)
             .and_then(|rest| rest.split_once('/'))
@@ -576,6 +693,7 @@ impl UiPlugin for LuauPluginsUi {
                 tau_ui_plugin::services::names::WORKSPACE_DIR,
                 tau_ui_plugin::services::names::IDENTITY,
                 tau_ui_plugin::services::names::MODEL,
+                tau_ui_plugin::services::names::CONVERSATIONS,
                 tau_jev::SERVICE,
             ])
     }
@@ -650,7 +768,15 @@ impl UiPlugin for LuauPluginsUi {
                     .collect();
                 (!asks.is_empty()).then(|| asks.join(" "))
             })
-            .contribute(points::CARD, |at: &AtCard, _| {
+            .contribute(points::CARD, |at: &AtCard, view| {
+                if let Some(ask) =
+                    view.state.and_then(|state| state.asks.get(&at.call_id))
+                {
+                    return Some(CardView {
+                        body: Some(allow_card(ask, at)),
+                        ..CardView::default()
+                    });
+                }
                 let details = at.data.result.as_ref()?.details.as_ref()?;
                 let plugin = details.get("plugin")?.as_str()?;
                 let card =
@@ -1449,6 +1575,90 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// A call that asks the person to allow shows Allow and Deny while
+    /// it waits and its run goes on, each sending the person's answer;
+    /// then what came of it, and a run that ended withdraws it.
+    #[test]
+    fn an_ask_draws_its_buttons_while_it_waits() {
+        use crate::Outcome;
+        let mut state = State::default();
+        let mut run_cx = tau_ui_plugin::testing::FakeRun::default();
+        state.apply(
+            Record::Asked {
+                plugin: "todo".into(),
+                call_id: "c1".into(),
+                title: "Start a chat on td-1".into(),
+                text: String::new(),
+            },
+            &mut run_cx,
+        );
+        let at = |live: bool| AtCard {
+            run: RunInfo {
+                id: RunId("r1".into()),
+                repo: "home".into(),
+                live,
+                title: String::new(),
+                answer: None,
+                context: 0,
+                window: None,
+            },
+            call_id: "c1".into(),
+            tool: "todo_dispatch".into(),
+            keys: Vec::new(),
+            data: Default::default(),
+            summary: String::new(),
+            cut: None,
+        };
+        let buttons = |node: &Node| -> Vec<(String, Value)> {
+            let text = serde_json::to_value(node).unwrap();
+            let mut found = Vec::new();
+            fn walk(value: &Value, found: &mut Vec<(String, Value)>) {
+                if value["piece"] == "button" {
+                    found.push((
+                        value["label"].as_str().unwrap().to_owned(),
+                        value["args"].clone(),
+                    ));
+                }
+                for child in value["children"].as_array().into_iter().flatten()
+                {
+                    walk(child, found);
+                }
+            }
+            walk(&text, &mut found);
+            found
+        };
+        let ask = &state.asks["c1"];
+        assert_eq!(
+            buttons(&allow_card(ask, &at(true))),
+            [
+                (
+                    "Allow".to_owned(),
+                    json!({ "run": "r1", "call": "c1", "allowed": true })
+                ),
+                (
+                    "Deny".to_owned(),
+                    json!({ "run": "r1", "call": "c1", "allowed": false })
+                ),
+            ]
+        );
+        // The run ended: no one can answer any more.
+        assert!(buttons(&allow_card(ask, &at(false))).is_empty());
+        state.apply(
+            Record::Answered {
+                plugin: "todo".into(),
+                call_id: "c1".into(),
+                outcome: Outcome::Allowed,
+            },
+            &mut run_cx,
+        );
+        let drawn = allow_card(&state.asks["c1"], &at(true));
+        assert!(buttons(&drawn).is_empty());
+        assert!(
+            serde_json::to_string(&drawn).unwrap().contains("Allowed"),
+            "{drawn:?}"
+        );
+    }
 
     /// A tree's `tau.` actions ask the interface, on the run the tree is
     /// drawn in; the plugin's own are not, and an unknown one says so.

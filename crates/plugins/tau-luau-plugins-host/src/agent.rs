@@ -108,6 +108,8 @@ struct Inner {
     config: Option<std::path::PathBuf>,
     /// Each plugin's store in each repository (`uses.store`).
     stores: Option<Arc<crate::store::Stores>>,
+    /// What carries out what a tool asked once the person allows it.
+    dispatch: Option<Dispatch>,
     /// The state of each run going on, by run.
     runs: Mutex<HashMap<RunId, Arc<tokio::sync::Mutex<RunState>>>>,
 }
@@ -130,6 +132,16 @@ struct RunState {
     calls: Vec<Value>,
 }
 
+/// What a run's tool reaches once the person allows what it asked: the
+/// asks waiting for them, the registry whose actions carry it out, as
+/// the person's own, and the chats those actions ask of.
+#[derive(Clone)]
+pub struct Dispatch {
+    pub allows: crate::chats::Allows,
+    pub registry: crate::registry::Registry,
+    pub chats: Option<Arc<dyn tau_ui_plugin::Conversations>>,
+}
+
 impl LuauPlugins {
     /// The plugins `active`, always. `run` is `{ kind, repo, model }`;
     /// `jev` is what plugins that use Jev ask.
@@ -145,6 +157,7 @@ impl LuauPlugins {
             jev,
             config: None,
             stores: None,
+            dispatch: None,
             runs: Mutex::default(),
         }))
     }
@@ -154,6 +167,15 @@ impl LuauPlugins {
         Arc::get_mut(&mut self.0)
             .expect("the stores are given before the plugins are shared")
             .stores = Some(stores);
+        self
+    }
+
+    /// The plugins, their tools asking the person through `dispatch`
+    /// (`tau.allow`).
+    pub fn with_dispatch(mut self, dispatch: Dispatch) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("the dispatch is given before the plugins are shared")
+            .dispatch = Some(dispatch);
         self
     }
 
@@ -181,6 +203,7 @@ impl LuauPlugins {
             jev,
             config: None,
             stores: None,
+            dispatch: None,
             runs: Mutex::default(),
         }))
     }
@@ -1049,6 +1072,7 @@ impl PluginRun for LuauRun {
                 "stop": format!("{:?}", run.stop),
                 "turns": state.turn,
                 "cost": run.usage.cost.total,
+                "text": run.text,
             });
             for active in inner.active().iter() {
                 inner
@@ -1169,6 +1193,10 @@ impl AgentTool for LuauTool {
             )
             .into());
         };
+        if let Some(asked) = crate::chats::ask(&value) {
+            drop(state);
+            return self.ask_first(asked?, &ctx, &plugin).await;
+        }
         let card = if self.spec.card {
             let input = json!({ "call": args, "result": value });
             inner
@@ -1194,6 +1222,89 @@ impl AgentTool for LuauTool {
                 "value": value,
                 "card": card,
             })),
+            ..ToolOutput::text(text)
+        })
+    }
+}
+
+impl LuauTool {
+    /// Asks the person to allow what the call asked (`tau.allow`), with
+    /// no hook going meanwhile: a card in the run and on phones, which
+    /// the first answer takes. Allowed, the plugin's action carries it
+    /// out as the person's own, and the model reads what it answered;
+    /// denied, the model reads why; the run ending first withdraws it.
+    async fn ask_first(
+        &self,
+        ask: crate::chats::Ask,
+        ctx: &ToolCtx,
+        plugin: &PluginCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        use tau_luau_plugins::Outcome;
+        let inner = &self.plugins.0;
+        let dispatch = inner
+            .dispatch
+            .as_ref()
+            .ok_or("this host asks the person nothing")?;
+        let repo = inner.run["repo"]
+            .as_str()
+            .ok_or("this run works in no repository")?
+            .to_owned();
+        let call = ctx.call_id().to_owned();
+        let waiting = dispatch.allows.wait(&ctx.run.0, &call);
+        plugin
+            .publish(&Record::Asked {
+                plugin: self.plugin.clone(),
+                call_id: call.clone(),
+                title: ask.title.clone(),
+                text: ask.text.clone(),
+            })
+            .await;
+        // A run that ended takes no answer, even one that came as it did.
+        let answer = tokio::select! {
+            biased;
+            () = ctx.cancel.cancelled() => None,
+            answer = waiting.answer() => answer,
+        }
+        .filter(|_| !ctx.cancel.is_cancelled());
+        let outcome = match &answer {
+            Some(answer) if answer.allowed => Outcome::Allowed,
+            Some(_) => Outcome::Denied,
+            None => Outcome::Withdrawn,
+        };
+        plugin
+            .publish(&Record::Answered {
+                plugin: self.plugin.clone(),
+                call_id: call,
+                outcome,
+            })
+            .await;
+        let answer =
+            answer.ok_or("the run ended before the person answered")?;
+        if !answer.allowed {
+            return Ok(ToolOutput::text(if answer.reason.is_empty() {
+                "The person did not allow it.".to_owned()
+            } else {
+                format!("The person did not allow it: {}", answer.reason)
+            }));
+        }
+        let value = dispatch
+            .registry
+            .repo_action(
+                &self.plugin,
+                &repo,
+                &ask.action,
+                ask.args,
+                dispatch.chats.as_deref(),
+            )
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        let text = match &value {
+            Value::String(text) => text.clone(),
+            Value::Null => "The person allowed it, and it is done.".to_owned(),
+            other => other.to_string(),
+        };
+        Ok(ToolOutput {
+            details: Some(json!({ "plugin": self.plugin, "value": value })),
             ..ToolOutput::text(text)
         })
     }

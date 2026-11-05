@@ -79,6 +79,10 @@ return tau.plugin {
   run_end = function(run, ctx) end,
   view = function(state, ctx) end,
   nav = { label = "Deploys", icon = "plug" },  -- its sidebar entry
+  pages = { board = function(params, ctx) end },  -- its pages of a repository
+  repo_nav = { label = "Todo", page = "board", icon = "list" },
+  repo_data = function(ctx) end,   -- what its entry under a repository shows
+  recover = function(input, ctx) end,  -- as tau starts: the runs cut off
   commands = { name = { description, args, run = function(text, ctx) end } },
   jobs = { name = { every = 3600, label = "...", run = function(ctx) end } },
   fills = { "tau.title" },  -- the slots it fills
@@ -107,7 +111,7 @@ one, its `card`.
 | `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
 | `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
 | `on_event`    | `{ kind, turn, ... }`, for each of `events` | nothing                                    | 200 ms |
-| `run_end`     | `{ stop, turns, cost }`                    | nothing                                    | 10 s   |
+| `run_end`     | `{ stop, turns, cost, text }`, `text` its last reply | nothing                          | 10 s   |
 | `title`       | `{ task, model }`, outside any run         | a title, or `nil`                          | 2 s    |
 | `notify`      | `{ title, body }`, outside any run         | nothing                                    | 10 s   |
 | `view`        | the run's state                            | `{ status?, note?, page? }`, or `{}`       | 200 ms |
@@ -218,6 +222,7 @@ new reach.
 | `ctx.tools`    | in a tool's `call` only: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })` |
 | `ctx.jev`      | Jev, when `uses.jev`                                                                              |
 | `ctx.log`      | `ctx.log(text)`: a line on the plugin's page, never for the model                                 |
+| `ctx.store`    | with `uses.store`: the plugin's store in the repository the hook works in (below)                 |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
 JSON has no empty array: use `array({})` for one that must stay a list.
@@ -228,6 +233,8 @@ JSON has no empty array: use `array({})` for one that must stay a list.
   `tau.start(plan)`, `tau.change(args)`, `tau.result(text)`,
   `tau.rewrite(rewrite)`, `tau.effort(level)`,
   `tau.continue(message)`.
+- `tau.start_chat`, `tau.steer_chat` and `tau.allow`: what an action
+  or a tool answers to start or steer a chat (below).
 - `tau.contains(list, value)`: whether `list` holds `value`.
 
 ### `tau.ui`: what views are made of
@@ -262,6 +269,11 @@ Plain tables, drawn by tau on the computer and on the phone:
 - `ui.graph(nodes, edges, height)`: a small map of nodes
   (`{ id, label, x, y, tone, focus, page }`, `x` and `y` from 0 to 1)
   joined by `{ from, to }` edges
+- `ui.board({ { id, title, cards = { { id = "td-1", children = { ... } } } } }, action)`:
+  columns of cards; dragging a card to another column carries out
+  `actions[action]` with `{ card, from, to }`, the card's id and the
+  two columns'. Too narrow for its columns, as on a phone, it shows
+  them as tabs, so give each card a button for what a drag would do
 - `ui.section(id, title, { ... }, { open = true })`: a heading that
   opens and closes what is under it
 - `ui.tabs(id, { { "label", { ... } }, ... })`: one tab shown at a
@@ -322,6 +334,46 @@ hosts, and `infer` with `uses.model`. A new job is new reach. In tests,
 
 A plugin with `nav`, `{ label, icon? }`, has an entry in the sidebar that
 opens its page; `icon` names one of the interface's icons.
+
+### A repository's store, pages and chats
+
+With `uses = { store = true }`, a plugin keeps a store in each
+repository, apart from tau's and from every other plugin's: keys and
+JSON values, through `ctx.store.get(key)`, `ctx.store.put(key,
+value)`, `ctx.store.delete(key)` and `ctx.store.list(prefix)` (each
+`{ key, value }`, in key order). A hook reads back what it wrote at
+once, and hooks on one store take turns: what a hook wrote is kept
+when it ends, all of it or, when it fails, none. So a hook that reads,
+then writes, as claiming something does, is one step. A store is new
+reach.
+
+`pages` are the plugin's pages of a repository: each `page(params,
+ctx)` returns a view tree, `params.repo` the repository, its store in
+`ctx.store`. `repo_nav`, `{ label, page, icon? }`, is its entry under
+each repository in the sidebar, opening that page; `repo_data(ctx)`
+returns what the entry shows, `{ nav = { detail?, badge?, tone? } }`
+among it. A page's buttons carry out the plugin's `actions` in that
+repository, on its store there.
+
+`recover(input, ctx)` is called once as tau starts, in each
+repository, with `input.runs`, the runs tau found cut off when it last
+closed: what the plugin keeps for them it lets go of there.
+
+An action never waits on a chat: it answers what it asks, and tau
+carries it out once the action ended and its store is kept.
+`tau.start_chat{ repo?, text, ["then"] = "claimed", args = { ... } }`
+starts a chat in `repo` (the action's own when it names none) on the
+person's `text`; `tau.steer_chat{ run, text, ["then"], args }` says
+`text` to the chat `run`, cutting into a turn going on. Then
+`actions[then]` is called with `args` and the chat's `run` (and
+`repo`), or with `error` when it could not be done.
+
+A tool asks the person first: it answers `tau.allow{ title, text?,
+action, args }`, and the run shows a card, on phones too, saying what it
+would do, with Allow and Deny. The first answer takes it. Allowed,
+`actions[action]` is carried out with `args` as the person's own, and
+the model reads what it answered; denied, the model reads why; a run
+that ends first withdraws it. A person's own click never asks.
 
 ### Settings
 

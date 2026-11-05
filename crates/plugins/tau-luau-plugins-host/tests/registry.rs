@@ -363,6 +363,7 @@ return tau.plugin {
                 repo: None,
                 state: &state,
                 settings: Some(&serde_json::json!({ "step": 5 })),
+                chats: None,
             },
         ))
     };
@@ -884,6 +885,7 @@ fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
             "home",
             "add",
             serde_json::json!({ "text": text }),
+            None,
         ))
         .unwrap();
     }
@@ -906,6 +908,7 @@ fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
         "home",
         "drop",
         serde_json::json!({ "key": "item/milk" }),
+        None,
     ))
     .unwrap();
     assert_eq!(
@@ -957,6 +960,7 @@ fn recover_lets_go_of_what_dead_runs_held() {
             repo,
             "claim",
             serde_json::json!({ "issue": issue, "run": run }),
+            None,
         ))
         .unwrap();
     }

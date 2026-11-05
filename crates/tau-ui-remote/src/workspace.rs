@@ -2065,14 +2065,15 @@ impl Workspace {
     /// Sends `text` to `run`, with the model picked for it or the one it
     /// was on, should it go on. It shows once the host takes it
     /// ([`HostUpdate::Steered`] or [`HostUpdate::Resumed`]), on every
-    /// interface alike.
-    pub(crate) fn say(
+    /// interface alike. Whether it went: a chat that landed or was
+    /// dropped takes no more messages.
+    pub fn say(
         &mut self,
         run: &RunId,
         text: String,
         cx: &mut Context<Self>,
-    ) {
-        self.say_with(run, text, Vec::new(), cx);
+    ) -> bool {
+        self.say_with(run, text, Vec::new(), cx)
     }
 
     /// [`Self::say`], with `images` going with the text.
@@ -2082,14 +2083,13 @@ impl Workspace {
         text: String,
         images: Vec<tau_ai::message::ImageContent>,
         cx: &mut Context<Self>,
-    ) {
-        // A chat that landed or was dropped takes no more messages.
+    ) -> bool {
         let Some(on) = self
             .run(run)
             .filter(|view| view.ending.is_none())
             .map(|view| self.default_of(view))
         else {
-            return;
+            return false;
         };
         let model = self.run_models.remove(run).unwrap_or(on);
         self.follow = true;
@@ -2099,6 +2099,7 @@ impl Workspace {
             model,
             images,
         });
+        true
     }
 
     /// The host took `prompt` for `run`: it shows, the run moves to the

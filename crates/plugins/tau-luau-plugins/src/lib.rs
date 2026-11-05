@@ -492,6 +492,15 @@ pub enum Act {
         action: String,
         args: Value,
     },
+    /// The person's answer to what the call `call` of `run` asked them
+    /// to allow (`tau.allow`): from whichever device answers first.
+    Answer {
+        run: String,
+        call: String,
+        allowed: bool,
+        #[serde(default)]
+        reason: String,
+    },
     /// Carries out `plugin`'s `actions[action]` with `args`, on the state
     /// it has in `run`, under the person's `settings` for it; the answer
     /// is an [`ActionDone`], which the interface records with the run.
@@ -596,6 +605,41 @@ pub enum Record {
     },
     /// The plugin is off for the rest of the run, and why.
     Off { plugin: String, why: String },
+    /// A call of its tool asks the person to allow what it would do
+    /// (`tau.allow`): a card says `title` and `text`.
+    Asked {
+        plugin: String,
+        call_id: String,
+        title: String,
+        text: String,
+    },
+    /// What came of the ask.
+    Answered {
+        plugin: String,
+        call_id: String,
+        outcome: Outcome,
+    },
+}
+
+/// What came of what a call asked the person to allow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Outcome {
+    /// Still waiting for them.
+    Waiting,
+    Allowed,
+    Denied,
+    /// No one can answer it any more: its run ended first.
+    Withdrawn,
+}
+
+/// A call's ask, as its records leave it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ask {
+    pub plugin: String,
+    pub title: String,
+    pub text: String,
+    pub outcome: Outcome,
 }
 
 #[cfg(test)]

@@ -132,6 +132,49 @@ function tau._forge(forge)
 	}
 end
 
+-- What an action answers to start a chat in `repo` (the action's own
+-- when it names none) on the person's `text`, once the action ended and
+-- its store is written: then `actions[then]` is called with `args` and
+-- the chat's `run` and `repo`, or the `error` that kept it from
+-- starting.
+function tau.start_chat(chat)
+	return {
+		tau_chat = {
+			start = { repo = chat.repo, text = tostring(chat.text) },
+			["then"] = chat["then"],
+			args = chat.args or {},
+		},
+	}
+end
+
+-- What an action answers to say the person's `text` to the chat `run`,
+-- steering a turn going or starting one; `then` and `args` as
+-- `tau.start_chat`'s.
+function tau.steer_chat(chat)
+	return {
+		tau_chat = {
+			steer = { run = tostring(chat.run), text = tostring(chat.text) },
+			["then"] = chat["then"],
+			args = chat.args or {},
+		},
+	}
+end
+
+-- What a tool answers to ask the person first: a card in the run, and
+-- on phones, says `title` and `text`. Allowed, `actions[action]` is
+-- carried out with `args` as the person's own, and the model reads what
+-- it answered; denied, the model reads why.
+function tau.allow(ask)
+	return {
+		tau_allow = {
+			title = tostring(ask.title),
+			text = ask.text and tostring(ask.text) or "",
+			action = tostring(ask.action),
+			args = ask.args or {},
+		},
+	}
+end
+
 -- What `before_tool` answers.
 function tau.block(reason)
 	return { decision = "block", reason = tostring(reason) }
@@ -437,6 +480,21 @@ function ui.graph(nodes, edges, height)
 		table.insert(lines, { tostring(edge[1]), tostring(edge[2]) })
 	end
 	return { piece = "graph", nodes = out, edges = lines, height = tonumber(height) or 12.5 }
+end
+
+-- Columns of cards: a list of `{ id, title, cards = { { id, pieces } } }`.
+-- Dragging a card to another column carries out the plugin's `action`
+-- with `{ card, from, to }`: the card's id and the two columns'.
+function ui.board(columns, action)
+	local out = array({})
+	for _, column in ipairs(columns or {}) do
+		local cards = array({})
+		for _, card in ipairs(column.cards or {}) do
+			table.insert(cards, { id = tostring(card.id or card[1]), children = pieces(card.children or card[2]) })
+		end
+		table.insert(out, { id = tostring(column.id), title = tostring(column.title or column.id), cards = cards })
+	end
+	return { piece = "board", action = tostring(action), columns = out }
 end
 
 -- Tabs, one shown at a time: a list of `{ label, { pieces } }`. `id`

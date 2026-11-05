@@ -476,9 +476,13 @@ impl Workspace {
                     body,
                 });
             }
-            Request::Steer { run, text } => self.say(&run, text, cx),
+            Request::Steer { run, text } => {
+                self.say(&run, text, cx);
+            }
             Request::Send { run, text } => match run {
-                Some(run) => self.say(&run, text, cx),
+                Some(run) => {
+                    self.say(&run, text, cx);
+                }
                 None => self.send(text, cx),
             },
             Request::Start { repo, text } => {

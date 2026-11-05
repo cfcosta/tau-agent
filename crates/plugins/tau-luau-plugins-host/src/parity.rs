@@ -164,7 +164,7 @@ pub fn service(name: &str) -> Option<Luau> {
             "carrying the window to phones is the phones plugin's",
         ),
         names::MODEL => Luau::Hook("infer"),
-        names::CONVERSATIONS => Luau::Excluded(NOT_YET),
+        names::CONVERSATIONS => Luau::Hook("tau.start_chat"),
         // tau-memory's search and tau-skills' directory.
         "tau.memory-search" | "tau.skills-dir" => {
             Luau::Excluded("a plugin's own, given to the plugin that reads it")

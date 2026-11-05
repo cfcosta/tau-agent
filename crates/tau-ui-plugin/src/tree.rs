@@ -383,6 +383,16 @@ pub enum Node {
         #[serde(default)]
         edges: Vec<(String, String)>,
     },
+    /// Columns of cards. Dragging a card to another column carries out
+    /// `action` with `{ card, from, to }`, the card's id and the two
+    /// columns': what the move stands for is the plugin's to do. Too
+    /// narrow for its columns, as on a phone, it shows one at a time, as
+    /// tabs.
+    Board {
+        action: String,
+        #[serde(default)]
+        columns: Vec<BoardColumn>,
+    },
     /// Tabs, one shown at a time. Which is chosen is the interface's
     /// state, under the plugin's `id`; until the person picks, the first.
     Tabs {
@@ -433,6 +443,23 @@ pub enum Node {
     },
 }
 
+/// A column of [`Node::Board`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoardColumn {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub cards: Vec<BoardCard>,
+}
+
+/// A card of a [`BoardColumn`]: its id, and what it shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoardCard {
+    pub id: String,
+    #[serde(default, deserialize_with = "nodes")]
+    pub children: Vec<Node>,
+}
+
 /// One tab of [`Node::Tabs`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tab {
@@ -453,6 +480,63 @@ pub fn tab_key(id: &str) -> String {
 
 fn default_graph_height() -> f32 {
     12.5
+}
+
+/// The narrowest a board's column is, in pixels: a board too narrow for
+/// all of them shows them as tabs.
+const BOARD_COLUMN: f32 = 200.;
+
+/// A board's card while it is dragged, drawn under the pointer: which
+/// board and column it came from, and what it is called.
+#[derive(Clone)]
+struct DraggedCard {
+    board: String,
+    card: String,
+    from: String,
+    title: String,
+    /// Its background, border and text.
+    colors: (gpui::Hsla, gpui::Hsla, gpui::Hsla),
+}
+
+impl gpui::Render for DraggedCard {
+    fn render(
+        &mut self,
+        _: &mut gpui::Window,
+        _: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let (bg, border, text) = self.colors;
+        div()
+            .w(gpui::px(BOARD_COLUMN))
+            .px(sp(3.))
+            .py(sp(2.5))
+            .rounded(radius::CARD)
+            .bg(bg)
+            .border_1()
+            .border_color(border)
+            .shadow_lg()
+            .text_color(text)
+            .typeset(Type::SMALL)
+            .truncate()
+            .child(self.title.clone())
+    }
+}
+
+/// The first text a card shows, to name it while it is dragged.
+fn card_title(children: &[Node]) -> String {
+    children
+        .iter()
+        .find_map(|node| match node {
+            Node::Text { text }
+            | Node::Rich { text }
+            | Node::Mono { text }
+            | Node::Heading { text }
+            | Node::Title { text, .. } => Some(text.clone()),
+            Node::Row { children } | Node::Stack { children } => {
+                Some(card_title(children)).filter(|title| !title.is_empty())
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// A node of [`Node::Graph`]: where it is, from 0 to 1 across and down,
@@ -773,6 +857,162 @@ impl<'a> Draw<'a> {
             drawn.push(self.at(child, depth + 1, &format!("{path}.{n}"), cx));
         }
         drawn
+    }
+
+    /// A board: its columns side by side, each card draggable to another
+    /// column, which carries out `action`; too narrow for them, its
+    /// columns as tabs.
+    fn board(
+        &self,
+        action: &str,
+        columns: &[BoardColumn],
+        depth: usize,
+        path: &str,
+        cx: &mut App,
+    ) -> AnyElement {
+        let t = self.theme;
+        let columns = &columns[..columns.len().min(MAX_CHILDREN)];
+        if self.width < BOARD_COLUMN * columns.len().max(1) as f32 {
+            let tabs = Node::Tabs {
+                id: format!("{path}:board"),
+                tabs: columns
+                    .iter()
+                    .map(|column| Tab {
+                        label: format!(
+                            "{} {}",
+                            column.title,
+                            column.cards.len()
+                        ),
+                        children: column
+                            .cards
+                            .iter()
+                            .map(|card| Node::Card {
+                                children: card.children.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            };
+            return self.piece(&tabs, depth, path, cx);
+        }
+        let drawn: Vec<AnyElement> = columns
+            .iter()
+            .enumerate()
+            .map(|(c, column)| {
+                let cards: Vec<AnyElement> = column
+                    .cards
+                    .iter()
+                    .take(MAX_CHILDREN)
+                    .enumerate()
+                    .map(|(n, card)| {
+                        let at = format!("{path}.{c}.{n}");
+                        let dragged = DraggedCard {
+                            board: path.to_owned(),
+                            card: card.id.clone(),
+                            from: column.id.clone(),
+                            title: card_title(&card.children),
+                            colors: (t.panel, t.border_strong, t.text),
+                        };
+                        tau_ui_kit::components::card(t)
+                            .id(SharedString::from(format!("{at}:card")))
+                            .debug_selector(selector("board-card", &card.id))
+                            .w_full()
+                            .flex()
+                            .flex_col()
+                            .gap(sp(1.5))
+                            .px(sp(3.))
+                            .py(sp(2.5))
+                            .children(self.children(
+                                &card.children,
+                                depth + 1,
+                                &at,
+                                cx,
+                            ))
+                            .when(self.on_act.is_some(), |card| {
+                                card.cursor_grab().on_drag(
+                                    dragged,
+                                    |dragged, _, _, cx| {
+                                        cx.new(|_| dragged.clone())
+                                    },
+                                )
+                            })
+                            .into_any_element()
+                    })
+                    .collect();
+                let dropped = self.on_act.clone().map(|on_act| {
+                    let (board, action, to) =
+                        (path.to_owned(), action.to_owned(), column.id.clone());
+                    move |dragged: &DraggedCard,
+                          _: &mut gpui::Window,
+                          cx: &mut App| {
+                        if dragged.board != board || dragged.from == to {
+                            return;
+                        }
+                        on_act(
+                            Act::Plugin {
+                                action: action.clone(),
+                                args: serde_json::json!({
+                                    "card": dragged.card,
+                                    "from": dragged.from,
+                                    "to": to,
+                                }),
+                            },
+                            cx,
+                        );
+                    }
+                });
+                let accent = t.accent;
+                div()
+                    .id(SharedString::from(format!("{path}.{c}:column")))
+                    .debug_selector(selector("board-column", &column.id))
+                    .flex_1()
+                    .min_w(gpui::px(BOARD_COLUMN))
+                    .flex()
+                    .flex_col()
+                    .gap(sp(2.))
+                    .p(sp(2.))
+                    .rounded(radius::CARD)
+                    .bg(t.raised)
+                    .border_1()
+                    .border_color(t.border)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(sp(2.))
+                            .px(sp(1.))
+                            .child(
+                                div()
+                                    .typeset(Type::SMALL)
+                                    .font_weight(
+                                        tau_ui_kit::theme::weight::STRONG,
+                                    )
+                                    .child(column.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .typeset(Type::MICRO)
+                                    .text_color(t.dim)
+                                    .child(column.cards.len().to_string()),
+                            ),
+                    )
+                    .children(cards)
+                    .drag_over::<DraggedCard>(move |style, _, _, _| {
+                        style.border_color(accent)
+                    })
+                    .when_some(dropped, |column, dropped| {
+                        column.on_drop(dropped)
+                    })
+                    .into_any_element()
+            })
+            .collect();
+        div()
+            .w_full()
+            .flex()
+            .items_start()
+            .gap(sp(3.))
+            .children(drawn)
+            .into_any_element()
     }
 
     /// A graph: its edges painted under its nodes, each node a dot with
@@ -1493,6 +1733,9 @@ impl<'a> Draw<'a> {
                 nodes,
                 edges,
             } => self.graph(*height, nodes, edges, path),
+            Node::Board { action, columns } => {
+                self.board(action, columns, depth, path, cx)
+            }
             Node::Modal {
                 title,
                 children,

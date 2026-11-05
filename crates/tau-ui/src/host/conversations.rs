@@ -28,6 +28,18 @@ pub(super) enum Ask {
         text: String,
         done: oneshot::Sender<anyhow::Result<Waking>>,
     },
+    /// A chat started in `repo` on the person's `text`; its id answers.
+    Start {
+        repo: String,
+        text: String,
+        done: oneshot::Sender<anyhow::Result<RunId>>,
+    },
+    /// The person's `text` said to `run`.
+    Steer {
+        run: RunId,
+        text: String,
+        done: oneshot::Sender<anyhow::Result<()>>,
+    },
 }
 
 /// [`Conversations`] on this host.
@@ -40,10 +52,10 @@ pub(super) struct HostConversations {
 impl HostConversations {
     /// Sends what `ask` makes of `done` to the interface, and waits for
     /// its answer.
-    fn ask(
+    fn ask<T: Send + 'static>(
         &self,
-        ask: impl FnOnce(oneshot::Sender<anyhow::Result<()>>) -> Ask,
-    ) -> HostFuture<'_, anyhow::Result<()>> {
+        ask: impl FnOnce(oneshot::Sender<anyhow::Result<T>>) -> Ask,
+    ) -> HostFuture<'_, anyhow::Result<T>> {
         let (done, answer) = oneshot::channel();
         let sent = self.asks.send(ask(done));
         Box::pin(async move {
@@ -107,5 +119,24 @@ impl Conversations for HostConversations {
                 anyhow::anyhow!("tau's window closed before it answered")
             })?
         })
+    }
+
+    fn start(
+        &self,
+        repo: &str,
+        text: String,
+    ) -> HostFuture<'_, anyhow::Result<String>> {
+        let repo = repo.to_owned();
+        let started = self.ask(move |done| Ask::Start { repo, text, done });
+        Box::pin(async move { Ok(started.await?.0.to_string()) })
+    }
+
+    fn steer(
+        &self,
+        run: &str,
+        text: String,
+    ) -> HostFuture<'_, anyhow::Result<()>> {
+        let run = RunId(run.into());
+        self.ask(move |done| Ask::Steer { run, text, done })
     }
 }

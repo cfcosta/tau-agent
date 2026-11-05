@@ -100,6 +100,15 @@ impl HostHalf for LuauPluginsHost {
         // Their HTTP requests name secrets kept for each in tau's
         // configuration directory.
         let luau = luau.with_stores(host.stores());
+        // What their tools ask the person, carried out once allowed.
+        let luau = luau.with_dispatch(crate::agent::Dispatch {
+            allows: host.allows(),
+            registry: host.clone(),
+            chats: run
+                .services
+                .get::<std::sync::Arc<dyn tau_ui_plugin::Conversations>>()
+                .cloned(),
+        });
         let luau = match run.services.get::<tau_ui_plugin::ConfigDir>() {
             Some(config) => luau.with_config(config.0.clone()),
             None => luau,
@@ -243,9 +252,11 @@ impl HostHalf for LuauPluginsHost {
         &self,
         host: &Self::Host,
         action: Value,
-        _cx: &HostCx,
+        cx: &HostCx,
     ) -> anyhow::Result<Option<Value>> {
         let action: Act = serde_json::from_value(action)?;
+        let chats = cx.conversations();
+        let chats = chats.as_deref();
         match action {
             Act::Allow { plugin } => host.allow(&plugin).await?,
             Act::Page {
@@ -258,7 +269,20 @@ impl HostHalf for LuauPluginsHost {
                 repo,
                 action,
                 args,
-            } => host.repo_action(&plugin, &repo, &action, args).await?,
+            } => {
+                host.repo_action(&plugin, &repo, &action, args, chats)
+                    .await?;
+            }
+            Act::Answer {
+                run,
+                call,
+                allowed,
+                reason,
+            } => host.allows().answer(
+                &run,
+                &call,
+                crate::chats::Answer { allowed, reason },
+            )?,
             Act::SetSecret {
                 plugin,
                 name,
@@ -293,6 +317,7 @@ impl HostHalf for LuauPluginsHost {
                         repo: repo.as_deref(),
                         state: &state,
                         settings: settings.as_ref(),
+                        chats,
                     })
                     .await;
                 return Ok(Some(serde_json::to_value(done)?));

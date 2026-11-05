@@ -9,6 +9,7 @@
 //! - `registry`: the repository's plugins, as the host keeps them.
 
 pub mod agent;
+pub mod chats;
 mod half;
 pub mod jobs;
 

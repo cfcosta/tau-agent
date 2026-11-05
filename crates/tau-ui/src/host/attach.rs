@@ -536,7 +536,51 @@ fn answer(
         conversations::Ask::Wake { run, text, done } => {
             wake_chat(host, run, text, done, workspace, cx);
         }
+        conversations::Ask::Start { repo, text, done } => {
+            start_for_plugin(host, repo, text, Answer::new(done), workspace, cx)
+        }
+        conversations::Ask::Steer { run, text, done } => {
+            let said = workspace.update(cx, |ws, cx| ws.say(&run, text, cx));
+            let _ = done.send(if said {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("That chat landed or was dropped"))
+            });
+        }
     }
+}
+
+/// Starts a chat in `repo` on the person's `text`, on the model they
+/// picked for new chats, as the composer would, then answers its id.
+fn start_for_plugin(
+    host: &Arc<Host>,
+    repo: String,
+    text: String,
+    done: Answer<RunId>,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    let model = workspace.read(cx).next_model().clone();
+    let (titler, prompt, failed) = (host.clone(), text.clone(), done.clone());
+    on_host(
+        host,
+        workspace,
+        async move |host| host.start(Prompt::new(text), &model, &repo).await,
+        move |ws, view, cx| {
+            let run = view.id.clone();
+            ws.apply(HostUpdate::Run(Box::new(view)), cx);
+            for event in titler.take_unshown(&run) {
+                ws.apply_streamed(event, cx);
+            }
+            done.send(Ok(run.clone()));
+            let workspace = cx.entity();
+            cx.defer(move |cx| {
+                title_in_background(&titler, &run, &prompt, &workspace, cx)
+            });
+        },
+        move |_, error, _| failed.send(Err(anyhow::anyhow!(error))),
+        cx,
+    );
 }
 
 /// Starts a turn of `run` on tau's `text`, on the model it last ran on,
@@ -645,21 +689,26 @@ fn start_turn(
 
 /// Where a host half's answer goes, once: from whichever of a job's
 /// outcomes comes.
-#[derive(Clone)]
-struct Answer(
+struct Answer<T = ()>(
     std::rc::Rc<
         std::cell::RefCell<
-            Option<tokio::sync::oneshot::Sender<anyhow::Result<()>>>,
+            Option<tokio::sync::oneshot::Sender<anyhow::Result<T>>>,
         >,
     >,
 );
 
-impl Answer {
-    fn new(done: tokio::sync::oneshot::Sender<anyhow::Result<()>>) -> Self {
+impl<T> Clone for Answer<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> Answer<T> {
+    fn new(done: tokio::sync::oneshot::Sender<anyhow::Result<T>>) -> Self {
         Self(std::rc::Rc::new(std::cell::RefCell::new(Some(done))))
     }
 
-    fn send(&self, result: anyhow::Result<()>) {
+    fn send(&self, result: anyhow::Result<T>) {
         if let Some(done) = self.0.borrow_mut().take() {
             let _ = done.send(result);
         }

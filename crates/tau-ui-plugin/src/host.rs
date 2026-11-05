@@ -437,6 +437,31 @@ pub trait Conversations: Send + Sync {
         let _ = (run, text);
         Box::pin(async { anyhow::bail!("This host wakes no chats") })
     }
+
+    /// Starts a chat in `repo` on the person's message `text`, on the
+    /// model they picked for new chats, as if they had written it, and
+    /// answers its id once its message is stored. A host that starts no
+    /// chats refuses.
+    fn start(
+        &self,
+        repo: &str,
+        text: String,
+    ) -> crate::registry::HostFuture<'_, anyhow::Result<String>> {
+        let _ = (repo, text);
+        Box::pin(async { anyhow::bail!("This host starts no chats") })
+    }
+
+    /// Gives the chat `run` the person's message `text`, as if they had
+    /// written it: it steers a turn going, else starts one. It refuses a
+    /// chat that landed or was dropped.
+    fn steer(
+        &self,
+        run: &str,
+        text: String,
+    ) -> crate::registry::HostFuture<'_, anyhow::Result<()>> {
+        let _ = (run, text);
+        Box::pin(async { anyhow::bail!("This host steers no chats") })
+    }
 }
 
 /// One plugin's tools that run outside any run: what an agent's polls

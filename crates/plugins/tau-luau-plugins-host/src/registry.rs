@@ -78,6 +78,8 @@ struct Shared {
     model: Option<tau_ui_plugin::Model>,
     /// Each plugin's store in each repository.
     stores: Arc<crate::store::Stores>,
+    /// What runs' tools ask the person to allow, waiting for an answer.
+    allows: crate::chats::Allows,
 }
 
 #[derive(Default)]
@@ -96,7 +98,7 @@ struct State {
 /// One of a plugin's actions to carry out ([`Registry::action`]): on the
 /// `state` the plugin has in `run`, which works in `repo`, under the
 /// person's `settings` for it.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ActionCall<'a> {
     pub plugin: &'a str,
     pub action: &'a str,
@@ -105,6 +107,8 @@ pub struct ActionCall<'a> {
     pub repo: Option<&'a str>,
     pub state: &'a serde_json::Value,
     pub settings: Option<&'a serde_json::Value>,
+    /// What it asks of the chats goes to.
+    pub chats: Option<&'a dyn tau_ui_plugin::Conversations>,
 }
 
 /// A Luau plugin tau comes with: its name, and its files by their paths
@@ -176,6 +180,7 @@ impl Registry {
             runtime: None,
             model: None,
             stores: Arc::new(crate::store::Stores::memory()),
+            allows: crate::chats::Allows::default(),
         }))
     }
 
@@ -189,6 +194,11 @@ impl Registry {
     /// Each plugin's store in each repository.
     pub fn stores(&self) -> Arc<crate::store::Stores> {
         self.0.stores.clone()
+    }
+
+    /// What runs' tools ask the person to allow, waiting for an answer.
+    pub fn allows(&self) -> crate::chats::Allows {
+        self.0.allows.clone()
     }
 
     /// `plugin`'s store in `repo`, when its declaration uses one.
@@ -501,14 +511,40 @@ impl Registry {
     }
 
     /// Carries out `plugin`'s `actions[action]` with `args` from one of
-    /// its pages of `repo`: on its store there, with no run's state.
+    /// its pages of `repo`: on its store there, with no run's state; then
+    /// what it asks of the chats, through `chats` ([`crate::chats::follow`]).
     pub async fn repo_action(
         &self,
         plugin: &str,
         repo: &str,
         action: &str,
         args: serde_json::Value,
-    ) -> anyhow::Result<()> {
+        chats: Option<&dyn tau_ui_plugin::Conversations>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let value = self.repo_hook(plugin, repo, action, args).await?;
+        crate::chats::follow(
+            value,
+            chats,
+            Some(repo),
+            |next, args| async move {
+                self.repo_hook(plugin, repo, &next, args)
+                    .await
+                    .map_err(|error| format!("{error:#}"))
+            },
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{plugin}'s {action}: {error}"))
+    }
+
+    /// `plugin`'s `actions[action]` with `args` in `repo`: what it
+    /// answered.
+    async fn repo_hook(
+        &self,
+        plugin: &str,
+        repo: &str,
+        action: &str,
+        args: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
         let active = self
             .plugin(plugin)
             .await
@@ -526,7 +562,7 @@ impl Registry {
             .await;
         match outcome.error {
             Some(error) => anyhow::bail!("{plugin}'s {action}: {error}"),
-            None => Ok(()),
+            None => Ok(outcome.value),
         }
     }
 
@@ -900,6 +936,7 @@ impl Registry {
             repo,
             state,
             settings,
+            chats,
         } = call;
 
         let hook = Hook::Action(action.to_owned());
@@ -960,6 +997,35 @@ impl Registry {
             return done;
         }
         done.state = outcome.state;
+        let followed = match repo {
+            Some(repo) => {
+                crate::chats::follow(
+                    outcome.value,
+                    chats,
+                    Some(repo),
+                    |next, args| async move {
+                        self.repo_hook(plugin, repo, &next, args)
+                            .await
+                            .map_err(|error| format!("{error:#}"))
+                    },
+                )
+                .await
+            }
+            None => {
+                crate::chats::follow(
+                    outcome.value,
+                    chats,
+                    None,
+                    |next, _| async move {
+                        Err(format!("`{next}` needs the run's repository"))
+                    },
+                )
+                .await
+            }
+        };
+        if let Err(error) = followed {
+            done.error = Some((format!("actions.{action}"), error));
+        }
         if loaded.declaration.hooks.view {
             context.state = done.state.clone();
             let drawn = loaded
