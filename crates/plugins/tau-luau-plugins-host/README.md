@@ -22,6 +22,9 @@ uses.
 | `registry::Registry`        | The active plugins, read from the repository's trunk             |
 | `testing::PluginTesting`    | Adds the `plugin_test` tool to a run                             |
 | `skill`                     | The `tau-plugins` skill: `render`, `install`, `EXAMPLES`         |
+| `rewrite`                   | A context rewrite from what a plugin keeps and inserts           |
+| `slots`                     | The slots Luau plugins fill: title, notify, compaction, forge    |
+| `parity`                    | How a Luau plugin reaches each seam, slot, point and service     |
 
 `LuauPlugins` applies each hook's answer. A block stops the call, a
 continue keeps the run going (at most `MAX_CONTINUATIONS` times), and
@@ -101,10 +104,16 @@ cargo nextest run --release -p tau-luau-plugins-host
   `ScriptedModel` and an in-memory `tau-store-sqlite` store.
 - `tests/registry.rs`: activation, waiting and fallback against a
   temporary jj repository.
-- `tests/skill.rs`: the skill's three worked plugins in
+- `tests/skill.rs`: the skill's six worked plugins in
   `skill/examples` load and pass their own tests.
+- `tests/parity.rs`: every seam, slot, point and service the kernel has
+  is one a Luau plugin reaches through a hook the skill names, or left
+  out with a reason.
+- `tests/rewrite.rs`: a rewrite built from any answer is one the loop
+  takes.
 
-Nothing needs network or credentials. The first build compiles Luau.
+Nothing needs network or credentials beyond a server the tests start
+on this computer. The first build compiles Luau.
 
 ## Further reading
 

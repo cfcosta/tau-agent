@@ -458,6 +458,33 @@ Each step lands on main by itself and leaves tau working.
 10. **Luau parity.** The binding implements every seam and slot; the
     seam table test; the skill documents all of it, with worked plugins
     for a context rewrite, a slot filler and a page.
+    As built: the seam table (`tau_luau_plugins_host::parity`, checked
+    by `tests/parity.rs` against `Seam::ALL`, `slots::ALL`,
+    `points::ALL` and every service) says how a Luau plugin reaches
+    each, by the hook the skill names, or why not. Every seam is a
+    hook: `tools`, `start` (context and instructions), `before_tool`
+    (with `tau.change`, behind `uses.change_args`), `before_request`
+    (`tau.effort`), `after_tool_result` (`tau.result`), `on_event` (the
+    `events` it names), `rewrite_context` (which messages to keep and
+    what to insert, the rewrite built in Rust so calls keep their
+    results; also an idle run's), `rewritten`, `before_stop`, `run_end`.
+    tau-luau-plugins fills `tau.title`, `tau.notify`, `tau.compaction`
+    and `tau.forge` with stand-ins that ask the active Luau plugin that
+    `fills` it on each call; the person picks tau-luau-plugins for the
+    slot, and tau's own stay the defaults (`slot_order`). `tau.store`,
+    `tau.vcs` and `tau.provider` stay Rust's. Hooks reach the network
+    through `http.request`, only to the hosts `uses.network` names and
+    with only the secrets `uses.secrets` names, from the plugin's own
+    store the person fills on its settings; the forge's token is read
+    by tau's remote alone. A view draws at a run's banner, inspector,
+    composer band, row and asks, and `nav` puts a plugin's page in the
+    sidebar. New reach (a slot, a host, a secret, changed arguments or
+    results, `start`, a rewrite) waits for the person's Allow. A hook's
+    input reaches it as globals, not as source to compile. Left for
+    later: commands, keys and kernel actions from a Luau tree, the
+    points drawn outside a run, the person's model and conversations
+    as services, jobs, and repository kinds of a Luau plugin's own; a
+    Luau plugin adds to the prompt through `start`.
 11. **`tau.loop`**, with the runner's invariant tests run against any
     filler.
 12. **The kernel test**: no non-test source in `tau-ui` or

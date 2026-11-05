@@ -921,6 +921,30 @@ function test.run(spec)
 	function run:run_end(e)
 		return call(need(plugin.run_end, "run_end"), e)
 	end
+	function run:start(plan)
+		return call(need(plugin.start, "start"), plan)
+	end
+	function run:before_request(request)
+		return call(need(plugin.before_request, "before_request"), request)
+	end
+	function run:after_tool_result(result)
+		return call(need(plugin.after_tool_result, "after_tool_result"), result)
+	end
+	function run:rewrite_context(view)
+		return call(need(plugin.rewrite_context, "rewrite_context"), view)
+	end
+	function run:rewritten(info)
+		return call(need(plugin.rewritten, "rewritten"), info)
+	end
+	function run:on_event(event)
+		return call(need(plugin.on_event, "on_event"), event)
+	end
+	function run:title(task)
+		return call(need(plugin.title, "title"), task)
+	end
+	function run:notify(notice)
+		return call(need(plugin.notify, "notify"), notice)
+	end
 	function run:view()
 		local view = need(plugin.view, "view")
 		return call(function(_, ctx)

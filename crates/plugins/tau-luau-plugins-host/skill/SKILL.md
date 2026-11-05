@@ -343,16 +343,20 @@ end)
 ```
 
 - `run:tool(name, args)`, `run:card(name, args, result)`,
-  `run:settings_view(settings)`,
-  `run:before_tool(call)`, `run:before_stop(stop)`,
-  `run:turn_end(turn)`, `run:run_end(run)`, `run:view()`.
+  `run:settings_view(settings)`, `run:action(name, args)`,
+  `run:start(plan)`, `run:before_tool(call)`,
+  `run:before_request(request)`, `run:after_tool_result(result)`,
+  `run:rewrite_context(view)`, `run:rewritten(info)`,
+  `run:on_event(event)`, `run:before_stop(stop)`, `run:turn_end(turn)`,
+  `run:run_end(run)`, `run:title(run)`, `run:notify(notice)`,
+  `run:view()`; each takes what the hook is given.
 - `run.state` is the state the last hook left; `run.logs` its log lines.
 - `t.equal(got, want, what)` compares tables by what they hold.
 
 Test what the plugin decides, on the days, commands and states where
 its answer changes, and its card and status line.
 
-## Three plugins
+## Six plugins
 
 ### A rule: `before_tool`
 
@@ -365,3 +369,15 @@ its answer changes, and its card and status line.
 ### A stop check: `turn_end` and `before_stop`
 
 {{say-the-tests}}
+
+### A context rewrite: `rewrite_context`
+
+{{forget-old-calls}}
+
+### A slot filler: `tau.title`
+
+{{short-titles}}
+
+### A page with actions: `view.page` and `nav`
+
+{{todo-page}}

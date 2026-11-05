@@ -1,5 +1,5 @@
 //! The `tau-plugins` skill tau ships (ADR 0027): how to write, test and
-//! land a plugin. Its three worked plugins are files of their own, run
+//! land a plugin. Its six worked plugins are files of their own, run
 //! as tests of the host, and inlined into `SKILL.md` as it is installed,
 //! so the skill cannot drift from the interface.
 
@@ -12,7 +12,7 @@ const TEMPLATE: &str = include_str!("../skill/SKILL.md");
 
 /// The worked plugins: each one's name and files, by their paths in its
 /// folder.
-pub const EXAMPLES: [(&str, &[(&str, &str)]); 3] = [
+pub const EXAMPLES: [(&str, &[(&str, &str)]); 6] = [
     (
         "no-friday-deploys",
         &[
@@ -55,6 +55,47 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 3] = [
             (
                 "tests/stop.luau",
                 include_str!("../skill/examples/say-the-tests/tests/stop.luau"),
+            ),
+        ],
+    ),
+    (
+        "forget-old-calls",
+        &[
+            (
+                "plugin.luau",
+                include_str!("../skill/examples/forget-old-calls/plugin.luau"),
+            ),
+            (
+                "tests/rewrite.luau",
+                include_str!(
+                    "../skill/examples/forget-old-calls/tests/rewrite.luau"
+                ),
+            ),
+        ],
+    ),
+    (
+        "short-titles",
+        &[
+            (
+                "plugin.luau",
+                include_str!("../skill/examples/short-titles/plugin.luau"),
+            ),
+            (
+                "tests/title.luau",
+                include_str!("../skill/examples/short-titles/tests/title.luau"),
+            ),
+        ],
+    ),
+    (
+        "todo-page",
+        &[
+            (
+                "plugin.luau",
+                include_str!("../skill/examples/todo-page/plugin.luau"),
+            ),
+            (
+                "tests/page.luau",
+                include_str!("../skill/examples/todo-page/tests/page.luau"),
             ),
         ],
     ),
