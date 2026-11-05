@@ -111,6 +111,10 @@ impl HostHalf for LuauPluginsHost {
     /// Starts the Luau plugins' jobs as they come due, for as long as
     /// tau runs: each through the host's jobs, which show it going.
     async fn resume(&self, host: &Self::Host, cx: &HostCx) {
+        // What the plugins held for runs the last tau left cut off goes.
+        let repos: Vec<String> =
+            cx.repos.iter().map(|repo| repo.name.clone()).collect();
+        host.recover(&repos, cx.interrupted()).await;
         let Some(jobs) = cx.jobs().cloned() else {
             return;
         };

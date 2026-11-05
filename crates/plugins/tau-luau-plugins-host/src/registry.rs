@@ -429,6 +429,37 @@ impl Registry {
         tau_luau_plugins::RepoValues(values)
     }
 
+    /// tau started, having found `runs` cut off: each active plugin's
+    /// `recover` lets go of what it held for them, in each repository of
+    /// `repos`, on its store there.
+    pub async fn recover(&self, repos: &[String], runs: &[String]) {
+        for active in self.active().await {
+            if !active.loaded.declaration.hooks.recover {
+                continue;
+            }
+            let name = active.loaded.declaration.name.clone();
+            let Some(active) = self.plugin(&name).await else {
+                continue;
+            };
+            for repo in repos {
+                let context = self.repo_context(&active, repo).await;
+                let outcome = active
+                    .loaded
+                    .call(
+                        &crate::runtime::Hook::Recover,
+                        serde_json::json!({ "runs": runs }),
+                        &context,
+                        Arc::new(crate::runtime::NoReach),
+                        CancellationToken::new(),
+                    )
+                    .await;
+                if let Some(error) = outcome.error {
+                    eprintln!("{name}'s recover in {repo}: {error}");
+                }
+            }
+        }
+    }
+
     /// Draws `plugin`'s page `page` of `params`, `repo` among them, as a
     /// fetched tree: its actions carried out in that repository.
     pub async fn page(

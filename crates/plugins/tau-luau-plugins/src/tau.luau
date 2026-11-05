@@ -572,6 +572,7 @@ function tau._describe(plugin)
 			title = plugin.title ~= nil,
 			notify = plugin.notify ~= nil,
 			repo_data = plugin.repo_data ~= nil,
+			recover = plugin.recover ~= nil,
 			run_end = plugin.run_end ~= nil,
 			view = plugin.view ~= nil,
 			settings_view = plugin.settings ~= nil and plugin.settings.view ~= nil,

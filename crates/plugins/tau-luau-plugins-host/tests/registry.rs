@@ -913,3 +913,60 @@ fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
         "1 items"
     );
 }
+
+const CLAIMS: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "greet",
+  uses = { store = true },
+  actions = {
+    claim = function(args, ctx) ctx.store.put("claim/" .. args.issue, args.run) end,
+  },
+  recover = function(input, ctx)
+    local dead = {}
+    for _, run in ipairs(input.runs) do dead[run] = true end
+    for _, claim in ipairs(ctx.store.list("claim/")) do
+      if dead[claim.value] then ctx.store.delete(claim.key) end
+    end
+  end,
+}
+"#;
+
+/// As tau starts, `recover` lets go of what a plugin held for the runs
+/// found cut off, in each repository, and keeps what it holds for
+/// others.
+#[test]
+fn recover_lets_go_of_what_dead_runs_held() {
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    );
+    let (v1, trunk) = project(home.path(), 1, CLAIMS, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    block_on_io(registry.allow("greet")).unwrap();
+    for (repo, issue, run) in [
+        ("a", "td-1", "r-dead"),
+        ("a", "td-2", "r-live"),
+        ("b", "td-3", "r-dead"),
+    ] {
+        block_on_io(registry.repo_action(
+            "greet",
+            repo,
+            "claim",
+            serde_json::json!({ "issue": issue, "run": run }),
+        ))
+        .unwrap();
+    }
+    block_on_io(
+        registry.recover(&["a".into(), "b".into()], &["r-dead".into()]),
+    );
+    let held = |repo: &str| -> Vec<String> {
+        let kv = block_on_io(registry.stores().of("greet", repo)).unwrap();
+        block_on_io(kv.everything()).unwrap().into_keys().collect()
+    };
+    assert_eq!(held("a"), ["claim/td-2"]);
+    assert!(held("b").is_empty());
+}

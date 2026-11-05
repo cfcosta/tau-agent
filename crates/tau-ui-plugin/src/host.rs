@@ -208,6 +208,13 @@ impl std::fmt::Debug for TurnHooks {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HomeDir(pub PathBuf);
 
+/// The runs tau found cut off as it started this time, by id: the last
+/// tau closed while they ran, and none of them runs again by itself. A
+/// kernel value ([`HostCx::interrupted`]): what a plugin that holds
+/// something for a run, such as a claim, lets go of.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Interrupted(pub Vec<String>);
+
 /// tau's configuration directory, `~/.config/tau`: files the user
 /// writes by hand, such as tau-mcp's `mcp.json`. A host service
 /// ([`HostCx::config_dir`]).
@@ -814,6 +821,13 @@ impl HostCx {
             services: self.services.scoped(plugin, names),
             ..self.clone()
         }
+    }
+
+    /// The runs tau found cut off as it started.
+    pub fn interrupted(&self) -> &[String] {
+        self.services
+            .get::<Interrupted>()
+            .map_or(&[], |interrupted| interrupted.0.as_slice())
     }
 
     /// The person's home, when the host says where it is.

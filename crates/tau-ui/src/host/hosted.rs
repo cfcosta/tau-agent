@@ -145,6 +145,7 @@ impl Host {
             .offer(names::UNATTENDED, self.unattended.clone())
             .with(saved)
             .with(ConfigDir(self.config.credentials.dir.clone()))
+            .with(tau_ui_plugin::Interrupted(self.interrupted.clone()))
             .offer(names::MODEL, self.plugin_model())
             .with(self.plugin_jobs.clone());
         if let Some(home) = &self.config.home {

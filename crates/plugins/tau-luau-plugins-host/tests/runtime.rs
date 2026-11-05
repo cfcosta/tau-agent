@@ -164,6 +164,7 @@ async fn a_plugin_declares_what_it_is() {
             title: false,
             notify: false,
             repo_data: false,
+            recover: false,
             run_end: false,
             view: true,
             settings_view: false,

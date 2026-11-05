@@ -291,6 +291,8 @@ pub struct Host {
     /// The window as phones mirror it, which plugins are given
     /// ([`crate::mirror`]), and its window's half until attached.
     mirror: Arc<crate::mirror::Mirror>,
+    /// The runs found cut off as this host started.
+    interrupted: Vec<String>,
     mirrored: Mutex<Option<crate::mirror::Mirrored>>,
 }
 
@@ -492,9 +494,13 @@ impl Host {
         let (mirror, mirrored) = crate::mirror::Mirror::new();
         // Runs the last tau left running were cut off as it closed: this
         // one runs none of them.
-        if let Err(error) = runtime.block_on(store.interrupt_running()) {
-            eprintln!("tau-ui: cannot mark interrupted runs: {error:#}");
-        }
+        let interrupted = match runtime.block_on(store.interrupt_running()) {
+            Ok(runs) => runs,
+            Err(error) => {
+                eprintln!("tau-ui: cannot mark interrupted runs: {error:#}");
+                Vec::new()
+            }
+        };
         let (settings, list, ui_state) = runtime.block_on(async {
             (
                 load_settings(&config.settings, &config.default_model()).await,
@@ -556,6 +562,7 @@ impl Host {
             asked: Mutex::new(Some(asked)),
             mirror,
             mirrored: Mutex::new(Some(mirrored)),
+            interrupted,
         };
         (host, receiver)
     }

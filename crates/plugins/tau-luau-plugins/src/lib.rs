@@ -153,6 +153,10 @@ pub struct Hooks {
     /// and pages there.
     #[serde(default)]
     pub repo_data: bool,
+    /// `recover`: what it lets go of for runs tau found cut off as it
+    /// started.
+    #[serde(default)]
+    pub recover: bool,
     #[serde(default)]
     pub run_end: bool,
     #[serde(default)]
@@ -664,6 +668,7 @@ mod tests {
             title: true,
             notify: true,
             repo_data: true,
+            recover: true,
             run_end: true,
             view: true,
             settings_view: true,

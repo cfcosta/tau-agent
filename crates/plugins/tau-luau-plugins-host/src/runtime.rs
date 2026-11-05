@@ -259,6 +259,8 @@ pub enum Hook {
     RepoData,
     /// One of its pages of a repository, by name, with the page's params.
     Page(String),
+    /// tau started, with the runs it found cut off as `{ runs }`.
+    Recover,
     RunEnd,
     View,
     /// Its settings page, with the settings shown as input (ADR 0029).
@@ -290,6 +292,7 @@ impl Hook {
             Self::BeforeStop
             | Self::RunEnd
             | Self::RewriteContext
+            | Self::Recover
             | Self::Notify => 10_000,
         })
     }
@@ -314,6 +317,7 @@ impl Hook {
             Self::Notify => "p.notify(input, ctx)".into(),
             Self::Job(name) => format!("p.jobs[\"{name}\"].run(ctx)"),
             Self::RepoData => "p.repo_data(ctx)".into(),
+            Self::Recover => "p.recover(input, ctx)".into(),
             Self::Page(name) => format!("p.pages[\"{name}\"](input, ctx)"),
             Self::Forge(name) => format!("p.forge[\"{name}\"](input, ctx)"),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
@@ -345,6 +349,7 @@ impl Hook {
                 declaration.jobs.iter().any(|job| &job.name == name)
             }
             Self::RepoData => declaration.hooks.repo_data,
+            Self::Recover => declaration.hooks.recover,
             Self::Page(name) => declaration.pages.contains(name),
             Self::Forge(name) => declaration
                 .forge
