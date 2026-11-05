@@ -84,6 +84,26 @@ function tau._commands(commands)
 	return list
 end
 
+-- A plugin's jobs as the host reads them: each by name, with how often
+-- it runs and what it does, in name order.
+function tau._jobs(jobs)
+	local list = array({})
+	for name, job in pairs(jobs or {}) do
+		if type(job) ~= "table" or type(job.run) ~= "function" then
+			error("job `" .. tostring(name) .. "` needs a `run`", 2)
+		end
+		table.insert(list, {
+			name = name,
+			every = math.floor(tonumber(job.every) or 0),
+			label = job.label or name,
+		})
+	end
+	table.sort(list, function(a, b)
+		return a.name < b.name
+	end)
+	return list
+end
+
 -- A `forge` table as the host reads it: what it names, and which of its
 -- hooks it has.
 function tau._forge(forge)
@@ -547,6 +567,7 @@ function tau._describe(plugin)
 		actions = actions,
 		events = plugin.events or array({}),
 		commands = tau._commands(plugin.commands),
+		jobs = tau._jobs(plugin.jobs),
 		fills = plugin.fills or array({}),
 		compaction = plugin.compaction and {
 			rewriters = plugin.compaction.rewriters or array({}),
@@ -973,6 +994,12 @@ function test.run(spec)
 	end
 	function run:notify(notice)
 		return call(need(plugin.notify, "notify"), notice)
+	end
+	function run:job(name)
+		local job = need((plugin.jobs or {})[name], "job " .. name)
+		return call(function(_, ctx)
+			return job.run(ctx)
+		end, nil)
 	end
 	function run:view()
 		local view = need(plugin.view, "view")

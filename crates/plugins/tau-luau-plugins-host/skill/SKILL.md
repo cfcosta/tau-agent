@@ -80,6 +80,7 @@ return tau.plugin {
   view = function(state, ctx) end,
   nav = { label = "Deploys", icon = "plug" },  -- its sidebar entry
   commands = { name = { description, args, run = function(text, ctx) end } },
+  jobs = { name = { every = 3600, label = "...", run = function(ctx) end } },
   fills = { "tau.title" },  -- the slots it fills
   title = function(run, ctx) end,
   notify = function(notice, ctx) end,
@@ -303,6 +304,14 @@ with its `description` and what follows it (`args`, such as
 that chat's state, as an action does; in tests, `run:action("/name",
 { text = "..." })`.
 
+A plugin's `jobs` are work it does by itself while tau runs: each
+`run(ctx)` once `every` seconds passed since it last ran (at least 60),
+tau's restarts or not, shown with the person's other jobs. Its
+`ctx.state` is its own, kept from run to run; `ctx.run` is empty. A job
+reaches what the plugin's other hooks outside a run do: HTTP to its
+hosts, and `infer` with `uses.model`. A new job is new reach. In tests,
+`run:job(name)`.
+
 A plugin with `nav`, `{ label, icon? }`, has an entry in the sidebar that
 opens its page; `icon` names one of the interface's icons.
 
@@ -366,6 +375,7 @@ end)
   `run:rewrite_context(view)`, `run:rewritten(info)`,
   `run:on_event(event)`, `run:before_stop(stop)`, `run:turn_end(turn)`,
   `run:run_end(run)`, `run:title(run)`, `run:notify(notice)`,
+  `run:job(name)`,
   `run:view()`; each takes what the hook is given.
 - `run.state` is the state the last hook left; `run.logs` its log lines.
 - `t.equal(got, want, what)` compares tables by what they hold.

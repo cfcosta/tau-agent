@@ -209,6 +209,20 @@ pub struct CommandSpec {
     pub args: String,
 }
 
+/// One of its jobs: work it does by itself, every `every` seconds, while
+/// tau runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobSpec {
+    pub name: String,
+    pub every: u64,
+    /// What it does, as the jobs it shows say.
+    #[serde(default)]
+    pub label: String,
+}
+
+/// The shortest a job may wait between runs, in seconds.
+pub const SHORTEST_EVERY: u64 = 60;
+
 /// Its entry in the sidebar, which opens its page.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Nav {
@@ -279,6 +293,9 @@ pub struct Declaration {
     /// Its slash commands.
     #[serde(default)]
     pub commands: Vec<CommandSpec>,
+    /// Its jobs.
+    #[serde(default)]
+    pub jobs: Vec<JobSpec>,
 }
 
 impl Declaration {
@@ -288,6 +305,13 @@ impl Declaration {
     pub fn grown_from(&self, before: &Declaration) -> Vec<String> {
         let mut grown = self.uses.grown_from(&before.uses);
         grown.extend(self.hooks.grown_from(&before.hooks));
+        // A job works with no one watching: always new reach.
+        grown.extend(
+            self.jobs
+                .iter()
+                .filter(|job| !before.jobs.iter().any(|b| b.name == job.name))
+                .map(|job| format!("the job `{}`", job.name)),
+        );
         // Filling a slot is always new reach.
         grown.extend(
             self.fills
@@ -544,6 +568,7 @@ mod tests {
             forge: None,
             nav: None,
             commands: Vec::new(),
+            jobs: Vec::new(),
         }
     }
 

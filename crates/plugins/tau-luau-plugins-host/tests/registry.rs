@@ -681,3 +681,84 @@ fn a_title_hook_asks_the_persons_model() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].settings.model, "m-run");
 }
+
+const COUNTS: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "greet",
+  jobs = {
+    count = {
+      every = 3600,
+      label = "Counts",
+      run = function(ctx) ctx.state.n = (ctx.state.n or 0) + 1 end,
+    },
+  },
+}
+"#;
+
+/// A plugin's job is due once its time came, keeps what its `ctx.state`
+/// left from run to run, and once run waits for its next time. A new job
+/// waits for the person's Allow, as any new reach does.
+#[test]
+fn a_plugins_job_runs_when_due_and_keeps_its_state() {
+    use tau_luau_plugins_host::jobs;
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    );
+    let (v1, trunk) = project(home.path(), 1, COUNTS, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    match standing(&registry) {
+        Standing::Waiting { grown } => assert_eq!(grown, ["the job `count`"]),
+        other => panic!("{other:?}"),
+    }
+    block_on_io(registry.allow("greet")).unwrap();
+    let dir = home.path().join("jobs");
+    let due = block_on_io(jobs::due_now(&registry, &dir));
+    assert_eq!(due, [("greet".into(), "count".into(), "Counts".into())]);
+    for _ in 0..2 {
+        block_on_io(jobs::run(
+            &registry,
+            "greet",
+            "count",
+            &dir,
+            Default::default(),
+        ))
+        .unwrap();
+    }
+    let kept: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("greet.count.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(kept["state"], serde_json::json!({ "n": 2 }));
+    assert!(block_on_io(jobs::due_now(&registry, &dir)).is_empty());
+}
+
+/// A job is due once `every` seconds passed since it last ran, and not
+/// before; one that never ran is due.
+#[test]
+fn a_job_is_due_after_its_interval() {
+    use tau_luau_plugins_host::jobs::due;
+    assert!(due(0, 60, 60));
+    assert!(due(100, 60, 160));
+    assert!(!due(100, 60, 159));
+    assert!(!due(100, 60, 50), "a clock that went back waits");
+}
+
+/// A job that runs more often than every minute keeps its plugin from
+/// loading.
+#[test]
+fn a_job_runs_at_most_every_minute() {
+    use tau_luau_plugins_host::runtime::{Files, load};
+    let source = r#"return require("tau").plugin { name = "greet",
+      jobs = { fast = { every = 5, run = function() end } } }"#;
+    let files = Files {
+        source: source.into(),
+        ..Files::default()
+    };
+    let error = block_on_io(load("greet", files)).unwrap_err();
+    assert!(error.contains("`fast`"), "{error}");
+}

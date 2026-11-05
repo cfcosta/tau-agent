@@ -252,6 +252,22 @@ impl Registry {
         self.filler_of(slot, active)
     }
 
+    /// The active version of `plugin`, with the person's settings for it.
+    pub async fn plugin(&self, plugin: &str) -> Option<Active> {
+        let mut active = self
+            .active()
+            .await
+            .into_iter()
+            .find(|active| active.loaded.declaration.name == plugin)?;
+        let settings = (self.0.settings)();
+        active.settings = tau_luau_plugins::settings::effective(
+            &active.loaded.declaration,
+            settings.plugins.get(plugin),
+        )
+        .0;
+        Some(active)
+    }
+
     fn filler_of(&self, slot: &str, active: Vec<Active>) -> Option<Active> {
         let mut active = active.into_iter().find(|active| {
             active.loaded.declaration.fills.iter().any(|s| s == slot)

@@ -107,6 +107,43 @@ impl HostHalf for LuauPluginsHost {
         Ok(plugins)
     }
 
+    /// Starts the Luau plugins' jobs as they come due, for as long as
+    /// tau runs: each through the host's jobs, which show it going.
+    async fn resume(&self, host: &Self::Host, cx: &HostCx) {
+        let Some(jobs) = cx.jobs().cloned() else {
+            return;
+        };
+        let dir = cx.plugin_dir(crate::NAME).join("jobs");
+        let registry = host.clone();
+        cx.runtime.spawn(async move {
+            loop {
+                for (plugin, job, label) in
+                    crate::jobs::due_now(&registry, &dir).await
+                {
+                    let (registry, dir) = (registry.clone(), dir.clone());
+                    let (named, what) = (plugin.clone(), job.clone());
+                    // One already going waits for its next turn.
+                    let _ = jobs.start(
+                        crate::NAME,
+                        &format!("{plugin}/{job}"),
+                        format!("{plugin}: {label}"),
+                        move |job_cx| async move {
+                            crate::jobs::run(
+                                &registry,
+                                &named,
+                                &what,
+                                &dir,
+                                job_cx.cancel_token().clone(),
+                            )
+                            .await
+                        },
+                    );
+                }
+                tokio::time::sleep(crate::jobs::LOOK).await;
+            }
+        });
+    }
+
     /// Fills the slots a Luau plugin may fill with stand-ins that ask
     /// the active one that does.
     fn fill(&self, host: &Self::Host, fills: &mut tau_ui_plugin::slots::Fills) {

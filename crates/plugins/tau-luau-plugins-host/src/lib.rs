@@ -10,6 +10,7 @@
 
 pub mod agent;
 mod half;
+pub mod jobs;
 pub mod parity;
 pub mod registry;
 pub mod rewrite;

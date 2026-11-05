@@ -253,6 +253,8 @@ pub enum Hook {
     Notify,
     /// One of the forge's hooks, for `tau.forge`, by name.
     Forge(String),
+    /// One of its jobs, by name.
+    Job(String),
     RunEnd,
     View,
     /// Its settings page, with the settings shown as input (ADR 0029).
@@ -265,7 +267,7 @@ impl Hook {
     /// How long it may run (ADR 0027).
     pub fn limit(&self) -> Duration {
         Duration::from_millis(match self {
-            Self::Tool(_) => 60_000,
+            Self::Tool(_) | Self::Job(_) => 60_000,
             Self::Forge(_) => 30_000,
             Self::Card(_)
             | Self::View
@@ -304,6 +306,7 @@ impl Hook {
             Self::OnEvent => "p.on_event(input, ctx)".into(),
             Self::Title => "p.title(input, ctx)".into(),
             Self::Notify => "p.notify(input, ctx)".into(),
+            Self::Job(name) => format!("p.jobs[\"{name}\"].run(ctx)"),
             Self::Forge(name) => format!("p.forge[\"{name}\"](input, ctx)"),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
             Self::View => "p.view(ctx.state, ctx)".into(),
@@ -330,6 +333,9 @@ impl Hook {
             Self::OnEvent => declaration.hooks.on_event,
             Self::Title => declaration.hooks.title,
             Self::Notify => declaration.hooks.notify,
+            Self::Job(name) => {
+                declaration.jobs.iter().any(|job| &job.name == name)
+            }
             Self::Forge(name) => declaration
                 .forge
                 .as_ref()
@@ -496,6 +502,18 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
                 "{PLUGIN_FILE}: it fills `{slot}`, which needs {missing}"
             ));
         }
+    }
+    if let Some(job) = declaration
+        .jobs
+        .iter()
+        .find(|job| job.every < tau_luau_plugins::SHORTEST_EVERY)
+    {
+        return Err(format!(
+            "{PLUGIN_FILE}: job `{}` runs `every` {} seconds; the shortest is {}",
+            job.name,
+            job.every,
+            tau_luau_plugins::SHORTEST_EVERY
+        ));
     }
     if let Some(unknown) = declaration
         .events

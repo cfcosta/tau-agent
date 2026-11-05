@@ -525,6 +525,7 @@ fn hook_name(hook: &Hook) -> String {
         Hook::Title => "title".into(),
         Hook::Notify => "notify".into(),
         Hook::Forge(name) => format!("forge.{name}"),
+        Hook::Job(name) => format!("jobs.{name}"),
         Hook::RunEnd => "run_end".into(),
         Hook::View => "view".into(),
         Hook::SettingsView => "settings.view".into(),

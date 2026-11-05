@@ -18,7 +18,10 @@ use crate::{
 };
 
 /// What a hook outside any run has as its `ctx`: no run, no state.
-fn context(registry: &Registry, active: &crate::agent::Active) -> Context {
+pub(crate) fn context(
+    registry: &Registry,
+    active: &crate::agent::Active,
+) -> Context {
     Context {
         run: json!({}),
         now: crate::agent::now(),
@@ -30,7 +33,7 @@ fn context(registry: &Registry, active: &crate::agent::Active) -> Context {
 
 /// What a hook outside any run reaches: `infer`, through the person's
 /// model, asking `model` with it.
-struct ModelReach {
+pub(crate) struct ModelReach {
     model: Option<tau_ui_plugin::PluginModel>,
     name: Option<String>,
 }
@@ -38,7 +41,7 @@ struct ModelReach {
 impl ModelReach {
     /// What `active`'s hooks outside a run reach in `registry`: the model
     /// `uses.model` names, else `fallback`.
-    fn of(
+    pub(crate) fn of(
         registry: &Registry,
         active: &crate::agent::Active,
         fallback: Option<&str>,
