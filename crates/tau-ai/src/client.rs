@@ -22,7 +22,7 @@ use crate::{
     refusal::Refusal,
     responses::{
         input::InputCache,
-        request::{ReasoningEffort, Settings, fields},
+        request::{ReasoningEffort, Settings, Wire, fields_on},
     },
     ws::{
         io::{
@@ -71,13 +71,20 @@ impl OpenAi {
     /// for a fork, its parent's (see [`crate::ws::proto::pool`]).
     pub async fn session(
         &self,
-        mut settings: Settings,
+        settings: Settings,
+    ) -> Result<Session, Stopped> {
+        self.session_on(settings, Wire::of_settings).await
+    }
+
+    /// [`Self::session`], with what the route needs beyond the settings
+    /// as `wire` makes it from them: for a service tier of its own.
+    pub async fn session_on(
+        &self,
+        settings: Settings,
+        wire: impl FnOnce(&Settings) -> Wire,
     ) -> Result<Session, Stopped> {
         let model = find(&settings.model);
-        if let Some(model) = model {
-            settings.reasoning_model = model.reasoning;
-            settings.lite = model.lite;
-        }
+        let wire = wire(&settings);
         let affinity = match &settings.lineage {
             Some(lineage) => Affinity::new(
                 lineage.path.as_str(),
@@ -87,8 +94,9 @@ impl OpenAi {
         };
         Ok(Session {
             lane: self.transport.open_lane(affinity).await?,
-            fields: Arc::new(session_fields(&settings)),
+            fields: Arc::new(session_fields(&settings, &wire)),
             settings,
+            wire,
             model,
             input: InputCache::new(),
         })
@@ -119,8 +127,8 @@ impl OpenAi {
 
 /// The request fields of a session: without the fields the plan route
 /// does not take, whatever the settings asked for.
-fn session_fields(settings: &Settings) -> Fields {
-    let mut fields = fields(settings);
+fn session_fields(settings: &Settings, wire: &Wire) -> Fields {
+    let mut fields = fields_on(settings, wire);
     for name in UNSUPPORTED_FIELDS {
         fields.remove(name);
     }
@@ -132,6 +140,8 @@ fn session_fields(settings: &Settings) -> Fields {
 pub struct Session {
     lane: LaneHandle,
     settings: Settings,
+    /// What the route needs beyond them, from the model.
+    wire: Wire,
     /// The request fields, built once: every request of the session
     /// shares them.
     fields: Arc<Fields>,
@@ -156,7 +166,7 @@ impl Session {
                 timestamp,
             ),
             model: self.model,
-            tier: service_tier(self.settings.service_tier.as_deref()),
+            tier: service_tier(self.wire.service_tier.as_deref()),
         }
     }
 
@@ -175,12 +185,17 @@ impl Session {
                 timestamp,
             ),
             model: self.model,
-            tier: service_tier(self.settings.service_tier.as_deref()),
+            tier: service_tier(self.wire.service_tier.as_deref()),
         }
     }
 
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    /// What the route needs beyond the settings, as the session made it.
+    pub fn wire(&self) -> &Wire {
+        &self.wire
     }
 
     /// Sets the reasoning effort of the requests that follow. The fields
@@ -191,7 +206,7 @@ impl Session {
             return;
         }
         self.settings.reasoning = effort;
-        self.fields = Arc::new(session_fields(&self.settings));
+        self.fields = Arc::new(session_fields(&self.settings, &self.wire));
     }
 }
 

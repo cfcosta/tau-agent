@@ -14,7 +14,7 @@ use tau_ai::{
     client::OpenAi,
     event::AssistantEvent,
     message::{Message, UserContent, UserMessage},
-    responses::request::{Lineage, Settings, ToolDefinition},
+    responses::request::{Lineage, Settings, ToolDefinition, Wire},
     retry::{Class, Recovery},
 };
 use tau_testing::{
@@ -183,10 +183,18 @@ const NOT_TAKEN: [&str; 15] = [
 /// does not (whose reasoning and Lite flags are then the caller's), and
 /// every optional field, the output ceiling most often set.
 #[hegel::composite]
-fn any_settings(tc: &TestCase) -> Settings {
+fn any_settings(tc: &TestCase) -> (Settings, Wire) {
     use tau_ai::responses::request::ReasoningEffort;
     let tools = tc.draw(gs::integers::<usize>().max_value(2));
-    Settings {
+    let wire = Wire {
+        reasoning_model: tc.draw(gs::booleans()),
+        lite: tc.draw(gs::booleans()),
+        service_tier: tc.draw(gs::optional(gs::sampled_from(vec![
+            "flex".to_owned(),
+            "priority".to_owned(),
+        ]))),
+    };
+    let settings = Settings {
         model: tc.draw(gs::sampled_from(vec![
             "gpt-5.5".to_owned(),
             "gpt-6-sol".to_owned(),
@@ -201,8 +209,6 @@ fn any_settings(tc: &TestCase) -> Settings {
                 strict: tc.draw(gs::booleans()),
             })
             .collect(),
-        reasoning_model: tc.draw(gs::booleans()),
-        lite: tc.draw(gs::booleans()),
         reasoning: tc.draw(
             gs::optional(gs::sampled_from(vec![
                 ReasoningEffort::Low,
@@ -217,14 +223,11 @@ fn any_settings(tc: &TestCase) -> Settings {
             gs::integers::<u32>().min_value(1).max_value(8192).map(Some),
             gs::just(None),
         )),
-        service_tier: tc.draw(gs::optional(gs::sampled_from(vec![
-            "flex".to_owned(),
-            "priority".to_owned(),
-        ]))),
         lineage: tc
             .draw(gs::optional(gs::text().min_size(1).max_size(80)))
             .map(|path| Lineage { path, parent: None }),
-    }
+    };
+    (settings, wire)
 }
 
 /// Whatever the settings ask for, the plan route's request holds none of
@@ -234,19 +237,21 @@ fn any_settings(tc: &TestCase) -> Settings {
 fn the_plan_route_gets_every_field_but_those_it_does_not_take(tc: TestCase) {
     use std::{cell::RefCell, rc::Rc};
 
-    use tau_ai::responses::request::fields;
-    let settings = tc.draw(any_settings().print_as_debug());
+    use tau_ai::responses::request::fields_on;
+    let (settings, wire) = tc.draw(any_settings().print_as_debug());
     let api = FakeOpenAi::new(vec![completed("resp_1")]);
     let seen = api.clone();
-    let effective: Rc<RefCell<Option<Settings>>> = Rc::default();
+    let effective: Rc<RefCell<Option<(Settings, Wire)>>> = Rc::default();
     let kept = effective.clone();
     simulate(
         FakeChatGpt::new(),
         api,
         |_, _, chatgpt, account| async move {
             let client = OpenAi::chatgpt(chatgpt, account);
-            let mut session = client.session(settings).await.unwrap();
-            *kept.borrow_mut() = Some(session.settings().clone());
+            let mut session =
+                client.session_on(settings, move |_| wire).await.unwrap();
+            *kept.borrow_mut() =
+                Some((session.settings().clone(), session.wire().clone()));
             let mut response = session.respond(&hello(), 0);
             let mut last = None;
             while let Some(event) = response.next().await {
@@ -263,7 +268,7 @@ fn the_plan_route_gets_every_field_but_those_it_does_not_take(tc: TestCase) {
         assert!(!body.contains_key(field), "{field} went out: {body:?}");
     }
     assert!(body.remove("input").is_some());
-    let mut expected = fields(&effective);
+    let mut expected = fields_on(&effective.0, &effective.1);
     for field in NOT_TAKEN {
         expected.remove(field);
     }

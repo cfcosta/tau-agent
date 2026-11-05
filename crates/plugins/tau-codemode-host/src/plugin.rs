@@ -462,7 +462,6 @@ impl AgentTool for InferTool {
             model: self.model.clone(),
             instructions: Some("Answer only the user's independent inference request. Do not assume prior conversation, access tools, or request tool execution.".into()),
             tools: Vec::new(),
-            reasoning_model: tau_ai::model::find(&self.model).is_some_and(|model| model.reasoning),
             reasoning: self.reasoning,
             text_format: request.text_format(),
             max_output_tokens: output_limit.then_some(2048),

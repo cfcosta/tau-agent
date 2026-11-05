@@ -26,7 +26,7 @@ use tau_ai::{
     model::{ServiceTier, find},
     responses::{
         input::response_items,
-        request::{ReasoningEffort, Settings},
+        request::{ReasoningEffort, Settings, Wire},
     },
     ws::{io::connection::Connector, proto::pool::Limits},
 };
@@ -63,6 +63,7 @@ fn hello() -> Vec<Message> {
 fn one_response(
     tc: &TestCase,
     settings: Settings,
+    wire: Wire,
     usage: Usage,
 ) -> (AssistantEvent, serde_json::Value) {
     let mut message = tc.draw(openai::wire_assistant_message());
@@ -86,13 +87,10 @@ fn one_response(
     sim.client("client", async move {
         let client = OpenAi::with_connector(SimConnector, Limits::default());
         assert!(!client.supports_output_token_limit());
-        let mut session = client.session(settings).await.unwrap();
-        // The session keeps the caller's settings, with whether the model
-        // reasons taken from the model table.
+        let mut session =
+            client.session_on(settings, move |_| wire).await.unwrap();
+        // The session keeps the caller's settings.
         assert_eq!(session.settings().model, model_name);
-        if let Some(model) = find(&session.settings().model) {
-            assert_eq!(session.settings().reasoning_model, model.reasoning);
-        }
         let mut response = session.respond(&hello(), 0);
         while let Some(event) = response.next().await {
             *seen.borrow_mut() = Some(event);
@@ -135,10 +133,13 @@ fn done_usage_gets_its_cost(tc: TestCase) {
     };
     let settings = Settings {
         model: model.into(),
-        service_tier: tier.map(str::to_owned),
         ..Settings::default()
     };
-    let (event, _) = one_response(&tc, settings, usage.clone());
+    let wire = Wire {
+        service_tier: tier.map(str::to_owned),
+        ..Wire::of(model)
+    };
+    let (event, _) = one_response(&tc, settings, wire, usage.clone());
     let AssistantEvent::Done {
         usage: got, reason, ..
     } = event
@@ -306,10 +307,9 @@ fn llm_trait_streams_the_response(tc: TestCase) {
             })
             .await
             .unwrap();
+        // Through `Llm`, what the route needs beyond the settings stays
+        // the client's.
         assert_eq!(session.settings().model, model_name);
-        let reasons =
-            find(&session.settings().model).is_some_and(|m| m.reasoning);
-        assert_eq!(session.settings().reasoning_model, reasons);
         let mut events = session.respond(&hello(), label.1);
         let mut accumulator = tau_ai::event::Accumulator::new();
         while let Some(event) = events.next().await {
@@ -330,6 +330,7 @@ fn llm_trait_streams_the_response(tc: TestCase) {
 /// recorded output item before the next user item.
 fn send_reasoning_history(
     settings: Settings,
+    wire: Wire,
     transitions: Vec<Option<ReasoningEffort>>,
 ) -> (
     Vec<tau_testing::fake_openai::Received>,
@@ -392,7 +393,8 @@ fn send_reasoning_history(
     fake.install(&mut sim, "api");
     sim.client("client", async move {
         let client = OpenAi::with_connector(SimConnector, Limits::default());
-        let mut session = client.session(settings).await.unwrap();
+        let mut session =
+            client.session_on(settings, move |_| wire).await.unwrap();
         let mut transcript = Vec::new();
         for (turn, message) in messages.into_iter().enumerate() {
             if turn > 0 {
@@ -470,12 +472,20 @@ fn session_reasoning_history_follows_effective_wire_fields(tc: TestCase) {
     ] {
         let settings = Settings {
             model: model.into(),
-            reasoning_model: caller_reasoning,
             reasoning: initial,
             ..Settings::default()
         };
+        // The model table decides for a model it knows; the caller's
+        // wire for one it does not.
+        let wire = match find(model) {
+            Some(_) => Wire::of(model),
+            None => Wire {
+                reasoning_model: caller_reasoning,
+                ..Wire::default()
+            },
+        };
         let (received, counts, usages) =
-            send_reasoning_history(settings, transitions.clone());
+            send_reasoning_history(settings, wire, transitions.clone());
         assert_eq!(received.len(), transitions.len() + 1, "{model}");
         assert_eq!(usages.len(), received.len(), "{model}");
         let mut previous_wire_effort = None;

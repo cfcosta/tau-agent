@@ -102,40 +102,77 @@ pub struct Lineage {
     pub parent: Option<String>,
 }
 
-/// Everything about a request except its input. Fixed for a run.
+/// Everything about a request except its input, as any provider takes
+/// it (ADR 0045): what the run asks for. Fixed for a run, save the
+/// effort.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Settings {
     pub model: String,
     pub instructions: Option<String>,
     pub tools: Vec<ToolDefinition>,
-    /// Whether the model reasons; decides `include`.
-    pub reasoning_model: bool,
-    /// Whether requests go as Responses Lite, which lets a response be
-    /// stopped on the server (see [`crate::model::is_lite`]).
-    pub lite: bool,
     /// The effort to ask for. `None` leaves it to the server.
     pub reasoning: Option<ReasoningEffort>,
     /// The `text.format` of a typed run.
     pub text_format: Option<Value>,
     /// Optional provider output ceiling. The provider decides how to enforce it.
     pub max_output_tokens: Option<u32>,
-    pub service_tier: Option<String>,
     /// The run's conversation: sent as `prompt_cache_key`, and the
     /// connection the run's requests go on.
     pub lineage: Option<Lineage>,
 }
 
-/// Builds the `response.create` body for `input`.
+/// What OpenAI's route needs of a request beyond its [`Settings`], which
+/// the client derives from the model rather than the run asking.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Wire {
+    /// Whether the model reasons; decides `include`.
+    pub reasoning_model: bool,
+    /// Whether requests go as Responses Lite, which lets a response be
+    /// stopped on the server (see [`crate::model::is_lite`]).
+    pub lite: bool,
+    pub service_tier: Option<String>,
+}
+
+impl Wire {
+    /// What the model table says of the settings' model.
+    pub fn of_settings(settings: &Settings) -> Self {
+        Self::of(&settings.model)
+    }
+
+    /// What the model table says of `model`; nothing for a model it
+    /// does not know.
+    pub fn of(model: &str) -> Self {
+        crate::model::find(model).map_or_else(Self::default, |model| Self {
+            reasoning_model: model.reasoning,
+            lite: model.lite,
+            service_tier: None,
+        })
+    }
+}
+
+/// Builds the `response.create` body for `input`, with what the model
+/// table says of the model ([`Wire::of_settings`]).
 pub fn body(settings: &Settings, input: Vec<Value>) -> Body {
+    body_on(settings, &Wire::of_settings(settings), input)
+}
+
+/// [`body`], with `wire` as given.
+pub fn body_on(settings: &Settings, wire: &Wire, input: Vec<Value>) -> Body {
     Body::new(
-        Arc::new(fields(settings)),
+        Arc::new(fields_on(settings, wire)),
         input.into_iter().map(Arc::new).collect(),
     )
 }
 
-/// Every field of the `response.create` body but `input`. It depends
-/// only on `settings`, so a session builds it once.
+/// Every field of the `response.create` body but `input`, with what the
+/// model table says of the model.
 pub fn fields(settings: &Settings) -> Fields {
+    fields_on(settings, &Wire::of_settings(settings))
+}
+
+/// Every field of the `response.create` body but `input`. It depends
+/// only on `settings` and `wire`, so a session builds it once.
+pub fn fields_on(settings: &Settings, wire: &Wire) -> Fields {
     let mut body = Map::new();
     body.insert("type".into(), json!("response.create"));
     body.insert("model".into(), json!(settings.model));
@@ -160,14 +197,14 @@ pub fn fields(settings: &Settings) -> Fields {
         body.insert("tools".into(), Value::Array(tools));
     }
     let mut reasoning = Map::new();
-    if settings.reasoning_model {
+    if wire.reasoning_model {
         if let Some(effort) = settings.reasoning {
             reasoning.insert("effort".into(), json!(effort.as_str()));
             reasoning.insert("summary".into(), json!("auto"));
         }
         body.insert("include".into(), json!(["reasoning.encrypted_content"]));
     }
-    if settings.lite {
+    if wire.lite {
         reasoning.insert("context".into(), json!("all_turns"));
         body.insert("parallel_tool_calls".into(), json!(false));
         body.insert("client_metadata".into(), json!({ LITE_MARKER: "true" }));
@@ -181,7 +218,7 @@ pub fn fields(settings: &Settings) -> Fields {
     if let Some(max_output_tokens) = settings.max_output_tokens {
         body.insert("max_output_tokens".into(), json!(max_output_tokens));
     }
-    if let Some(tier) = &settings.service_tier {
+    if let Some(tier) = &wire.service_tier {
         body.insert("service_tier".into(), json!(tier));
     }
     if let Some(lineage) = &settings.lineage {

@@ -855,13 +855,20 @@ fn cut_lite_then_ask(
         let transport = Transport::start(SimConnector, Limits::default());
         let settings = Settings {
             model: "gpt-6.1-sol".into(),
-            lite: true,
             ..Settings::default()
+        };
+        let wire = tau_ai::responses::request::Wire {
+            lite: true,
+            ..Default::default()
         };
         let input = to_input(&[user("hi")]);
         let lane = transport.open_lane(Affinity::default()).await.unwrap();
         let mut response = lane.request(
-            body(&settings, input.clone()),
+            tau_ai::responses::request::body_on(
+                &settings,
+                &wire,
+                input.clone(),
+            ),
             "gpt-6.1-sol".into(),
             0,
         );
@@ -870,7 +877,11 @@ fn cut_lite_then_ask(
             Some(AssistantEvent::Start { .. })
         ));
         drop(response);
-        let response = lane.request(body(&settings, input), label.0, label.1);
+        let response = lane.request(
+            tau_ai::responses::request::body_on(&settings, &wire, input),
+            label.0,
+            label.1,
+        );
         *seen.borrow_mut() = Some(collect(response).await);
         Ok(())
     });
