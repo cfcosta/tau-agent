@@ -16,7 +16,6 @@ pub mod demo;
 pub mod host;
 pub mod hosted;
 pub mod interface_runtime;
-pub mod metered;
 pub mod notify;
 pub mod phone_server;
 

@@ -32,7 +32,6 @@ use tau_ui_plugin::{
     SlashCommand,
     UiPlugin,
     ViewCx,
-    needs_jev,
     points::{self, AtAnchor, AtMessage, AtRun},
     tree::{self, KeyValue, Kind, Node, draft_key},
 };
@@ -289,7 +288,7 @@ impl UiPlugin for GoalUi {
                 tau_ui_plugin::Seam::OnEvent,
                 tau_ui_plugin::Seam::BeforeStop,
             ])
-            .services(&[tau_ui_plugin::services::names::JEV])
+            .services(&[tau_jev::SERVICE])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -330,7 +329,9 @@ impl UiPlugin for GoalUi {
                 )
                 .args("<condition>")
                 .icon(Icon::Target)
-                .popover(|_, view| popover_tree(view.jev, view.compact)),
+                .popover(|_, view| {
+                    popover_tree(tau_jev::keyed(view), view.compact)
+                }),
             )
     }
 
@@ -351,7 +352,7 @@ impl UiPlugin for GoalUi {
                 };
                 let goal = view.state.and_then(|state| state.goal.as_ref());
                 if let (Some(run), Some(goal)) = (view.run, goal) {
-                    act(what, run, goal, view.jev, &view.handle);
+                    act(what, run, goal, tau_jev::keyed(view), &view.handle);
                 }
             }
             _ => {
@@ -406,7 +407,7 @@ impl HostHalf for GoalHost {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
             group: tau_ui_plugin::Group::Rules,
-            description: needs_jev(
+            description: tau_jev::needs_jev(
                 jev,
                 "Keeps a conversation going until its /goal holds",
             ),
@@ -558,7 +559,7 @@ const DETAILS: &str = "details";
 fn banner(at: &AtRun, view: &mut ViewCx<'_, GoalUi>) -> Option<Node> {
     let state = view.state?;
     let goal = state.goal.as_ref()?;
-    let why = unchecked(goal, view.jev, at.run.live, state.checks);
+    let why = unchecked(goal, tau_jev::keyed(view), at.run.live, state.checks);
     Some(banner_tree(goal, why, view.compact))
 }
 
@@ -821,7 +822,7 @@ fn run_command(args: &str, view: &mut ViewCx<'_, GoalUi>) {
         }
         return;
     };
-    if !view.jev {
+    if !tau_jev::keyed(view) {
         view.handle.alert(
             "Goals need Jev",
             "tau-goal checks goals with Jev. Add a TypeSafe key on the Models screen, then \

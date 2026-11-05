@@ -1,6 +1,7 @@
 # tau-jev
 
-A client for Jev, TypeSafe's System One model, for tau plugins. Jev does
+A client for Jev, TypeSafe's System One model, and the plugin that gives
+it to tau's plugins (ADR 0045). Jev does
 not write text. It takes a state (text or JSON) and a set of typed
 questions about it, and answers each with a probability, a choice or a
 score. Several plugins ask Jev for small, cheap decisions, so the client
@@ -26,6 +27,13 @@ is one crate they share instead of code copied into each.
 | `DEFAULT_MODEL`            | `jev-latest`                                                         |
 | `SYSTEM_ONE_URL`           | `https://api.typesafe.ai/v1/systemone`                               |
 | `PRICE_PER_MILLION_INPUT`  | US dollars per million input tokens; output tokens are free          |
+| `NAME`, `SERVICE`          | `"tau-jev"`, and the service it gives, `"tau.jev"`                   |
+| `JevUi`, `ui::Data`        | The plugin's UI: its Models section and key page; whether a key is saved, and the session's stats |
+| `JevHost`                  | The host half: keeps the key, gives the counted client while there is one |
+| `Upstream`                 | A Jev given in place of TypeSafe's, as if a key were saved: tests and the demo |
+| `Metered`, `Meter`         | A Jev that counts its requests, cost and latency                     |
+| `keyed`, `key_page`        | Whether a key is saved, as another plugin's view reads it; the page that takes it |
+| `needs_jev`, `NO_KEY`      | What a plugin that asks Jev says of itself without a key             |
 
 `TypeSafe::model`, `url` and `retry` change the model, the endpoint (for a
 proxy or a test server) and the retry policy.

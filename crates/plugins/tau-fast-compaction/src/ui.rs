@@ -17,7 +17,6 @@ use tau_ui_plugin::{
     HostHalf,
     Link,
     Manifest,
-    NO_KEY,
     OutputCut,
     Page,
     PluginInfo,
@@ -26,7 +25,6 @@ use tau_ui_plugin::{
     RunInfo,
     UiPlugin,
     ViewCx,
-    needs_jev,
     points::{self, AtCard, AtRewrite, AtRun},
     tree::{KeyValue, Node, Tone},
 };
@@ -279,7 +277,7 @@ impl State {
         }
         Some(match self.on? {
             true => "pruning large outputs · watching the window".to_owned(),
-            false => NO_KEY.to_owned(),
+            false => tau_jev::NO_KEY.to_owned(),
         })
     }
 
@@ -331,7 +329,7 @@ impl UiPlugin for FastCompactionUi {
                 tau_ui_plugin::Seam::AfterTool,
                 tau_ui_plugin::Seam::Rewrite,
             ])
-            .services(&[tau_ui_plugin::services::names::JEV])
+            .services(&[tau_jev::SERVICE])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -405,7 +403,7 @@ impl HostHalf for FastCompactionHost {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
             group: tau_ui_plugin::Group::Context,
-            description: needs_jev(
+            description: tau_jev::needs_jev(
                 jev,
                 "Prunes large command outputs as they arrive, and stale tool \
                  history",

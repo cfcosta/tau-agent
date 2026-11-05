@@ -9,7 +9,6 @@
 
 use std::{
     cell::RefCell,
-    io,
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -73,31 +72,6 @@ impl Credentials {
         dir.is_dir().then(|| Store::open(dir).ok()).flatten()
     }
 
-    /// Where the TypeSafe key for Jev is kept.
-    pub fn jev(&self) -> PathBuf {
-        self.dir.join("typesafe-key")
-    }
-
-    /// The saved TypeSafe key, which tau-constitution checks with.
-    pub async fn jev_key(&self) -> Option<String> {
-        tokio::fs::read_to_string(self.jev())
-            .await
-            .ok()
-            .map(|key| key.trim().to_owned())
-            .filter(|key| !key.is_empty())
-    }
-
-    /// Saves the TypeSafe key, or forgets it with `None`.
-    pub async fn set_jev_key(&self, key: Option<&str>) -> io::Result<()> {
-        match key.map(str::trim).filter(|key| !key.is_empty()) {
-            Some(key) => {
-                tau_ai::files::write_private_async(&self.jev(), key.as_bytes())
-                    .await
-            }
-            None => remove(&self.jev()).await,
-        }
-    }
-
     /// What runs use: the active ChatGPT account, when it is signed in
     /// with plan usage.
     pub fn plan_account(&self) -> Option<AccountId> {
@@ -152,13 +126,6 @@ impl Credentials {
             .store()
             .set_active(&id)
             .map_err(|error| error.to_string())
-    }
-}
-
-async fn remove(path: &Path) -> io::Result<()> {
-    match tokio::fs::remove_file(path).await {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
     }
 }
 
@@ -500,20 +467,5 @@ mod tests {
         assert_eq!(credentials.plan_account(), None);
         assert_eq!(credentials.accounts()[1].state, AccountState::SignedOut);
         assert!(credentials.switch("../nope").is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn saved_keys_are_private() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let credentials = Credentials::new(dir.path().join("tau"));
-        tau_testing::block_on_io(credentials.set_jev_key(Some("ts-x")))
-            .unwrap();
-        let mode = std::fs::metadata(credentials.jev())
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600);
     }
 }

@@ -12,20 +12,38 @@
 //!
 //! Plugins depend on the [`Jev`] trait, not on the HTTP client, so tests
 //! answer with [`fake::FakeJev`] and production uses [`TypeSafe`].
+//!
+//! It is a plugin too (ADR 0045): [`JevUi`] keeps the TypeSafe key in
+//! the Models screen, and [`JevHost`] gives the plugins that declare the
+//! `tau.jev` service a client, counted ([`Metered`]), while there is
+//! one.
 //! Every answer is checked before a plugin sees it: a missing answer, an
 //! answer of the wrong kind, or a probability outside `[0, 1]` is an
 //! error, never a default.
 
 mod client;
 pub mod fake;
+mod half;
+mod metered;
+pub mod ui;
 
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 pub use client::{API_KEY_VAR, MissingApiKey, TypeSafe, api_key};
+pub use half::{JevHost, Upstream};
+pub use metered::{Meter, Metered};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tau_ai::message::{Usage, UsageCost};
+pub use ui::{JevUi, NO_KEY, key_page, keyed, needs_jev};
+
+/// The plugin's name.
+pub const NAME: &str = "tau-jev";
+
+/// The name of the service it gives: the Jev to ask, counted, while
+/// there is a key (`tau_ui_plugin::Services`).
+pub const SERVICE: &str = "tau.jev";
 
 /// The model most requests should use: TypeSafe's latest stable Jev.
 pub const DEFAULT_MODEL: &str = "jev-latest";

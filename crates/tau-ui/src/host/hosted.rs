@@ -136,9 +136,6 @@ impl Host {
             )
             .offer(names::MODEL, self.plugin_model())
             .with(self.plugin_jobs.clone());
-        if let Some(jev) = self.jev() {
-            services = services.offer(names::JEV, jev);
-        }
         if let Some(home) = &self.config.home {
             services = services.with(tau_ui_plugin::HomeDir(home.clone()));
         }
@@ -148,7 +145,8 @@ impl Host {
                 list: self.list.clone(),
                 asks: self.asks.clone(),
             });
-        services = services.offer(names::CONVERSATIONS, conversations);
+        services =
+            self.provided(services.offer(names::CONVERSATIONS, conversations));
         let repos = self
             .repos
             .lock()
@@ -181,10 +179,7 @@ impl Host {
         repo: &RepoSlot,
         choice: &ModelChoice,
     ) -> RunCtx {
-        let mut services = Services::default();
-        if let Some(jev) = self.jev() {
-            services = services.offer(names::JEV, jev);
-        }
+        let services = self.provided(Services::default());
         RunCtx {
             kind,
             repo: self.repo_ctx(repo),
@@ -336,7 +331,7 @@ impl Host {
         Registered {
             hosted: Arc::new(hosted),
             repo: self.repo_ctx(repo),
-            jev: self.jev(),
+            provided: self.provided(Services::default()),
             repo_launcher,
         }
     }
@@ -515,7 +510,8 @@ impl Host {
 pub(super) struct Registered {
     hosted: Arc<Vec<(Hosted, PluginValue)>>,
     repo: RepoCtx,
-    jev: Option<Arc<dyn tau_jev::Jev>>,
+    /// What the plugins provided as it was made (`HostHalf::provide`).
+    provided: Services,
     repo_launcher: Option<tau_ui_plugin::RepoLauncher>,
 }
 
@@ -528,9 +524,7 @@ impl Registered {
         choice: &ModelChoice,
         mut services: Services,
     ) -> RunCtx {
-        if let Some(jev) = &self.jev {
-            services = services.offer(names::JEV, jev.clone());
-        }
+        services = services.and(&self.provided);
         if let Some(launcher) = &self.repo_launcher {
             services = services.offer(names::REPO_LAUNCHER, launcher.clone());
         }

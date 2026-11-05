@@ -55,7 +55,6 @@ fn with_view<T>(
         None,
         &params,
         false,
-        false,
         1400.,
         handle,
         &list,

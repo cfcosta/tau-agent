@@ -19,6 +19,7 @@ pub fn plugins() -> Registry {
         .with(tau_fast_compaction::ui::FastCompactionUi)
         .with(tau_github::GitHubUi)
         .with(tau_goal::GoalUi)
+        .with(tau_jev::JevUi)
         .with(tau_luau_plugins::LuauPluginsUi)
         .with(tau_mcp::McpUi)
         .with(tau_memory::ui::MemoryUi)

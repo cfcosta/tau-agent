@@ -484,8 +484,9 @@ fn every_jev_plugin_is_listed() {
         reasoning(&catalog).page,
         Some(tau_ui_plugin::Link::page("choices").param("run", ""))
     );
-    let host = host
-        .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.5)));
+    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(
+        tau_jev::fake::FakeJev::nouls(|_| 0.5),
+    )));
     let catalog = host.block_on(host.catalog());
     assert!(
         !reasoning(&catalog).description.contains("needs"),
@@ -2434,8 +2435,9 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     let data = tempfile::tempdir().unwrap();
     let db = data.path().join("runs.db");
     let (host, mut events) = host_with_store(llm, dir.path(), &db);
-    let host = host
-        .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.95)));
+    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(
+        tau_jev::fake::FakeJev::nouls(|_| 0.95),
+    )));
     // What the store holds for the repository, as a run would read it.
     let root = common::project(&host, REPO).root().to_owned();
     let rules_db = host
@@ -2478,7 +2480,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
         "no file is written"
     );
     assert!(catalog.plugins.iter().any(|p| p.name == "tau-constitution"));
-    let stats = catalog.jev.clone().expect("Jev is set up");
+    let stats = jev_stats(&catalog);
     assert_eq!((stats.requests, stats.failed), (0, 0));
 
     let mut view = host
@@ -2497,8 +2499,8 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     };
     assert!(blocked(&view), "the card shows the block live");
     assert_eq!(checks_of(&view).stats.calls, 1);
-    // The Plugins screen counts the check Jev answered.
-    let stats = host.block_on(host.catalog()).jev.expect("Jev is set up");
+    // tau-jev counts the check Jev answered.
+    let stats = jev_stats(&host.block_on(host.catalog()));
     assert!(stats.requests >= 1, "{stats:?}");
     assert!(stats.input_tokens > 0 && stats.spent > 0.0);
     assert_eq!((stats.model.as_str(), stats.failed), ("jev-fake", 0));
@@ -2642,8 +2644,9 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
     );
     // Jev finds every chunk it is asked about disposable: the first
     // and last stay anyway.
-    let host = host
-        .with_jev(std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.0)));
+    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(
+        tau_jev::fake::FakeJev::nouls(|_| 0.0),
+    )));
     let status = host
         .block_on(host.catalog())
         .plugins
@@ -2748,7 +2751,7 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
             .collect();
         Ok(tau_jev::fake::response(answers, request))
     });
-    let host = host.with_jev(std::sync::Arc::new(jev));
+    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev)));
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
     let mut view = host
         .block_on(host.start("track down the race", &auto, REPO))
@@ -2776,7 +2779,8 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
     let llm = ScriptedModel::new().turn(|t| t.text("ok"));
     let (host, mut events) = host_on(llm.clone(), dir.path());
     let jev = tau_jev::fake::FakeJev::nouls(|_| 0.5);
-    let host = host.with_jev(std::sync::Arc::new(jev.clone()));
+    let host =
+        host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev.clone())));
     let low = ModelChoice::new("gpt-5.5", Effort::Low);
     let run = host
         .block_on(host.start("rename a variable", &low, REPO))
@@ -2833,7 +2837,8 @@ fn reasoning_settings_reach_the_plugin() {
             .collect();
         Ok(tau_jev::fake::response(answers, request))
     });
-    let host = host.with_jev(std::sync::Arc::new(jev.clone()));
+    let host =
+        host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev.clone())));
     let mut settings = tau_ui_remote::models::ModelSettings::default();
     settings.plugins.insert(
         tau_reasoning::NAME.into(),
@@ -2888,7 +2893,8 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
             .collect();
         Ok(tau_jev::fake::response(answers, request))
     });
-    let host = host.with_jev(std::sync::Arc::new(jev.clone()));
+    let host =
+        host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev.clone())));
     assert!(
         host.block_on(host.catalog())
             .plugins
@@ -3027,7 +3033,7 @@ fn each_message_is_scored_again() {
             .collect();
         Ok(tau_jev::fake::response(answers, request))
     });
-    let host = host.with_jev(std::sync::Arc::new(jev));
+    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev)));
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
     let mut view = host
         .block_on(host.start("how are you?", &auto, REPO))
@@ -4357,4 +4363,10 @@ fn the_interfaces_state_comes_back_after_a_restart() {
     drop(first);
 
     assert_eq!(make().ui_state(), left);
+}
+
+/// What tau-jev says Jev did this session, from its data in `catalog`.
+fn jev_stats(catalog: &tau_ui_remote::catalog::Catalog) -> tau_jev::ui::Stats {
+    let data = catalog.plugin_data[tau_jev::NAME].json();
+    serde_json::from_value(data["stats"].clone()).expect("Jev is set up")
 }

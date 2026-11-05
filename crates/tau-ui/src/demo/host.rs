@@ -119,6 +119,7 @@ impl DemoHost {
             .with(saved)
             .with(ConfigDir(dir.path().join("config")))
             .with(tau_skills::SkillsDir(skills))
+            .with(tau_jev::Upstream(jev.clone()))
             .with(jev);
         let (pushes, pushed) = mpsc::unbounded_channel();
         let cx = HostCx::new(

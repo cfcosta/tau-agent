@@ -38,7 +38,6 @@ pub struct Env<'a> {
     pub run: Option<&'a RunInfo>,
     pub params: &'a BTreeMap<String, String>,
     pub compact: bool,
-    pub jev: bool,
     /// The window's width, in pixels.
     pub width: f32,
     pub handle: Handle,
@@ -186,6 +185,12 @@ pub trait ErasedPlugin: Send + Sync {
     ) -> HostFuture<'a, ()>;
     /// Fills the slots it fills, from its host state.
     fn fill(&self, host: &HostState, fills: &mut crate::slots::Fills);
+    /// `services` and those it provides now ([`HostHalf::provide`]).
+    fn provide(
+        &self,
+        host: &HostState,
+        services: crate::Services,
+    ) -> crate::Services;
 
     /// Folds `body`, a record the plugin published (or the details of a
     /// rewrite, [`crate::REWRITE`]), into its state in a run.
@@ -346,7 +351,6 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> Typed<P, H> {
             env.run,
             env.params,
             env.compact,
-            env.jev,
             env.width,
             env.handle,
             env.runs,
@@ -572,6 +576,20 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
     fn fill(&self, host: &HostState, fills: &mut crate::slots::Fills) {
         fills.filling(self.plugin.name(), &self.declaration.reach.fills);
         self.half.fill(self.host_of(host), fills);
+    }
+
+    fn provide(
+        &self,
+        host: &HostState,
+        services: crate::Services,
+    ) -> crate::Services {
+        let mut provide = crate::Provide::new(
+            self.plugin.name(),
+            &self.declaration.reach.provides,
+            services,
+        );
+        self.half.provide(self.host_of(host), &mut provide);
+        provide.into_services()
     }
 
     fn apply(

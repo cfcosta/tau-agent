@@ -115,7 +115,7 @@ pub use run::{
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
-pub use services::Services;
+pub use services::{Provide, Services};
 use tau_agent::plugin::Plugin;
 pub use ui_state::{UiEvent, UiState};
 pub use value::PluginValue;
@@ -206,20 +206,6 @@ impl<T: Default + Send + Sync + 'static> PluginHost for T {
 
 /// A plugin's record, the record type of its state's fold.
 pub type RecordOf<P> = <<P as UiPlugin>::State as Fold>::Record;
-
-/// What a plugin that asks Jev says of itself on the Plugins screen:
-/// `what` it does, and that it needs a TypeSafe key when there is none.
-pub fn needs_jev(jev: bool, what: &str) -> String {
-    if jev {
-        format!("{what}, with Jev")
-    } else {
-        format!("{what}: needs a TypeSafe key (Models)")
-    }
-}
-
-/// What a plugin that asks Jev says in a run's plugin list when there is
-/// no TypeSafe key.
-pub const NO_KEY: &str = "off · no TypeSafe key";
 
 /// The seams a plugin can use, in the order the loop reaches them: each
 /// a hook of `tau_agent::Plugin` or `PluginRun`. The host calls only
@@ -616,6 +602,17 @@ pub trait HostHalf: Send + Sync + 'static {
     /// Fills the slots the plugin fills ([`slots`]) from its host state:
     /// called once, after the host made every plugin's.
     fn fill(&self, _host: &Self::Host, _fills: &mut slots::Fills) {}
+
+    /// Gives other plugins the services it provides
+    /// ([`Declaration::provides`]), as the host builds its context or a
+    /// run's: called each time, so what it gives may change, such as
+    /// once the person saves a key. None by default.
+    fn provide(
+        &self,
+        _host: &Self::Host,
+        _services: &mut services::Provide<'_>,
+    ) {
+    }
 
     /// Carries out what the plugin's UI asked; a reply goes back to its
     /// [`UiPlugin::reply`].

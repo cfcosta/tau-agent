@@ -1111,24 +1111,54 @@ fn a_phone_closes_the_conversation_it_shows(cx: &mut TestAppContext) {
     );
 }
 
+/// The TypeSafe key typed in tau-jev's field goes to its host half, and
+/// its Remove forgets it there: the kernel keeps no key.
 #[gpui::test]
-fn the_typesafe_key_is_asked_for_and_forgotten(cx: &mut TestAppContext) {
+fn the_typesafe_key_goes_to_tau_jev_and_is_forgotten(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
-    workspace.update_in(&mut cx, |ws, window, cx| {
-        ws.ask_for_jev_key(window, cx);
+    let origin = tau_ui_remote::plugins::Origin {
+        run: None,
+        params: Default::default(),
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.plugin_action(
+            tau_jev::NAME,
+            "key",
+            &serde_json::json!({ "text": " ts-secret " }),
+            &origin,
+            cx,
+        );
+        ws.drain_plugin_requests(cx);
     });
-    cx.simulate_input("ts-secret");
-    cx.simulate_keystrokes("enter");
+    let asked = |events: &[WorkspaceEvent]| {
+        events.iter().rev().find_map(|event| match event {
+            WorkspaceEvent::PluginAct { plugin, action, .. }
+                if plugin == tau_jev::NAME =>
+            {
+                serde_json::from_value::<tau_jev::ui::Act>(action.clone()).ok()
+            }
+            _ => None,
+        })
+    };
     assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::JevKey {
+        asked(&events.borrow()),
+        Some(tau_jev::ui::Act::Key {
             key: Some("ts-secret".into())
         })
     );
-    workspace.update(&mut cx, |ws, cx| ws.forget_jev_key(cx));
+    workspace.update(&mut cx, |ws, cx| {
+        ws.plugin_action(
+            tau_jev::NAME,
+            "forget",
+            &serde_json::Value::Null,
+            &origin,
+            cx,
+        );
+        ws.drain_plugin_requests(cx);
+    });
     assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::JevKey { key: None })
+        asked(&events.borrow()),
+        Some(tau_jev::ui::Act::Key { key: None })
     );
 }
 
@@ -1596,9 +1626,8 @@ fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
 
     // Without a TypeSafe key, the goal is not sent: nothing would check it.
     workspace.update(&mut cx, |ws, cx| {
-        let mut catalog = demo::catalog();
-        catalog.models.access.jev = false;
-        ws.set_catalog(catalog, cx);
+        // The demo's bare catalog has no word from tau-jev: no key.
+        ws.set_catalog(demo::catalog(), cx);
         ws.navigate(Route::NewRun, cx);
         ws.submit_prompt("/goal it ships".into(), cx);
     });
@@ -1619,7 +1648,12 @@ fn goal_act(
     workspace.update(cx, |ws, cx| {
         let goal = goal_of(ws, run).goal.unwrap();
         let info = ws.run(run).unwrap().info();
-        let jev = ws.catalog().models.access.jev;
+        let jev = ws
+            .catalog()
+            .plugin_data
+            .get(tau_jev::NAME)
+            .and_then(|data| data.json()["keyed"].as_bool())
+            .unwrap_or(false);
         let handle = ws.plugin_handle(tau_goal::NAME);
         tau_goal::ui::act(act, &info, &goal, jev, &handle);
         ws.drain_plugin_requests(cx);
@@ -1694,7 +1728,10 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
     };
     workspace.update(&mut cx, |ws, cx| {
         let mut catalog = ws.catalog().clone();
-        catalog.models.access.jev = false;
+        catalog.plugin_data.insert(
+            tau_jev::NAME.into(),
+            tau_ui_plugin::PluginValue::typed(tau_jev::ui::Data::default()),
+        );
         ws.set_catalog(catalog, cx);
         ws.navigate(Route::Run(stopped.clone()), cx);
         // A goal still to be met, then paused.
@@ -1714,6 +1751,16 @@ fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
         let live = ws.run(&stopped).unwrap().info().live;
         assert!(tau_goal::ui::unchecked(&goal, false, live, false).is_some());
         assert!(tau_goal::ui::unchecked(&goal, true, live, false).is_none());
+    });
+    // The demo's host answered the pause with its catalog, which has a
+    // key: without one again.
+    workspace.update(&mut cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.plugin_data.insert(
+            tau_jev::NAME.into(),
+            tau_ui_plugin::PluginValue::typed(tau_jev::ui::Data::default()),
+        );
+        ws.set_catalog(catalog, cx);
     });
     goal_act(&workspace, &mut cx, &stopped, Act::KeepGoing);
     workspace.update(&mut cx, |ws, _| {

@@ -87,9 +87,6 @@ impl Render for Workspace {
                 body.child(overlay)
             })
             .when(self.searching, |body| body.child(self.search_view(&t, cx)))
-            .when(self.adding_jev_key, |body| {
-                body.child(self.jev_key_view(&t, cx))
-            })
             .when_some(self.plan_alert.clone(), |body, alert| {
                 body.child(self.plan_alert_view(&alert, &t, cx))
             })

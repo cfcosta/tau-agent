@@ -246,7 +246,7 @@ fn startup_status_and_plugin_presence_follow_key_and_effort() {
                     assert!(status.starts_with("off"), "{status}");
                     assert!(status.ends_with(effort), "{status}");
                 }
-                (false, None) => assert_eq!(status, tau_ui_plugin::NO_KEY),
+                (false, None) => assert_eq!(status, tau_jev::NO_KEY),
                 (true, None) => assert!(!status.starts_with("off"), "{status}"),
             }
 

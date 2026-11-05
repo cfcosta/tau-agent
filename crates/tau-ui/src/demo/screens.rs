@@ -513,7 +513,10 @@ pub static SCREENS: &[(&str, Screen)] = &[
             eprintln!("tau-ui: the demo's rules stay: {error:#}");
         }
         let mut catalog = host.catalog(ws.catalog().clone());
-        catalog.models.access.jev = false;
+        catalog.plugin_data.insert(
+            tau_jev::NAME.into(),
+            tau_ui_plugin::PluginValue::typed(tau_jev::ui::Data::default()),
+        );
         ws.apply(HostUpdate::catalog(catalog), cx);
     }),
     // /goal: the command menu, writing a goal, and a goal's states.

@@ -382,7 +382,7 @@ the sketch above in these places:
   half, answered through `reply`, which gets the UI's context to ask
   for more), `record` (fold and store a change
   the interface makes), `navigate`, `send`, `steer`, `composer`,
-  `alert`, `open_run`, `ask_jev_key`, `refresh`, `focus` (give the
+  `alert`, `open_run`, `refresh`, `focus` (give the
   keys to an element the plugin draws, as the window draws next) and
   `cancel` (a run going on).
 - **Values.** The interface keeps a plugin's state, data and settings

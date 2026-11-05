@@ -9605,6 +9605,7 @@ dependencies = [
  "stylua",
  "tau-agent",
  "tau-ai",
+ "tau-jev",
  "tau-ui-kit",
  "tau-ui-plugin",
  "uuid",
@@ -9688,6 +9689,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tau-agent",
+ "tau-jev",
  "tau-ui-kit",
  "tau-ui-plugin",
  "thiserror 2.0.21",
@@ -9814,12 +9816,15 @@ dependencies = [
 name = "tau-jev"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "hegeltest",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
+ "tau-agent",
  "tau-ai",
+ "tau-ui-plugin",
  "tokio",
 ]
 
@@ -9831,6 +9836,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tau-agent",
+ "tau-jev",
  "tau-ui-kit",
  "tau-ui-plugin",
 ]
@@ -10051,6 +10057,7 @@ dependencies = [
  "tau-fast-compaction",
  "tau-github",
  "tau-goal",
+ "tau-jev",
  "tau-luau-plugins",
  "tau-mcp",
  "tau-memory",

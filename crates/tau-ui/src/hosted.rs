@@ -14,6 +14,7 @@ use tau_ui_plugin::{
     PluginValue,
     Registry,
     RepoCtx,
+    Services,
     registry::HostState,
     slots::Fills,
 };
@@ -47,6 +48,7 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_skills::SkillsHost)
         .host(tau_notify::NotifyHost)
         .host(tau_titles::TitlesHost)
+        .host(tau_jev::JevHost)
 }
 
 /// Gives the plugins the host halves tau-ui has ([`halves`]), unless the
@@ -95,6 +97,14 @@ pub fn fills(hosted: &[Hosted]) -> Fills {
         hosted.plugin.fill(&hosted.state, &mut fills);
     }
     fills
+}
+
+/// `services` and those each plugin provides now
+/// (`HostHalf::provide`), in the registry's order.
+pub fn provided(hosted: &[Hosted], services: Services) -> Services {
+    hosted.iter().fold(services, |services, hosted| {
+        hosted.plugin.provide(&hosted.state, services)
+    })
 }
 
 /// Asks each plugin to start again the jobs a restart cut off, in the

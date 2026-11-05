@@ -1308,7 +1308,6 @@ impl At<'_> {
             self.run,
             self.params,
             self.compact,
-            false,
             if self.compact { 400. } else { 1400. },
             handle,
             &list,

@@ -18,7 +18,6 @@ use tau_ui_plugin::{
     HostHalf,
     Link,
     Manifest,
-    NO_KEY,
     Page,
     PlanField,
     PluginInfo,
@@ -27,7 +26,6 @@ use tau_ui_plugin::{
     RunCx,
     UiPlugin,
     ViewCx,
-    needs_jev,
     points::{self, AtAnchor, AtApp, AtRun},
     tree::{self, KeyValue, Node},
 };
@@ -263,7 +261,7 @@ impl UiPlugin for ReasoningPlugin {
                 tau_ui_plugin::Seam::Rewritten,
                 tau_ui_plugin::Seam::Finish,
             ])
-            .services(&[tau_ui_plugin::services::names::JEV])
+            .services(&[tau_jev::SERVICE])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -294,7 +292,7 @@ impl UiPlugin for ReasoningPlugin {
             })
             .settings(settings_pane)
             .contribute(points::PICKER_AUTO, |_: &AtApp, view| {
-                Some(if view.jev {
+                Some(if tau_jev::keyed(view) {
                     "Auto lets tau-reasoning pick the effort for each message, with Jev.".into()
                 } else {
                     "Auto leaves the effort to the model: tau-reasoning needs a TypeSafe key (Models).".into()
@@ -370,7 +368,7 @@ impl HostHalf for ReasoningHost {
         let jev = run.services.get::<Arc<dyn Jev>>().is_some();
         let status = match (&run.effort, jev) {
             (Some(effort), _) => format!("off · effort set to {effort}"),
-            (None, false) => NO_KEY.to_owned(),
+            (None, false) => tau_jev::NO_KEY.to_owned(),
             (None, true) => "picks the effort as the run starts".to_owned(),
         };
         vec![Record::Starting {
@@ -387,7 +385,7 @@ impl HostHalf for ReasoningHost {
         let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
         PluginInfo {
             group: tau_ui_plugin::Group::Context,
-            description: needs_jev(
+            description: tau_jev::needs_jev(
                 jev,
                 "Picks each message's reasoning effort on auto",
             ),
@@ -616,7 +614,7 @@ const THRESHOLD: &str = "threshold";
 fn settings_pane(view: &mut ViewCx<'_, ReasoningPlugin>) -> Node {
     let settings = *view.settings;
     let mut card = Vec::new();
-    if !view.jev {
+    if !tau_jev::keyed(view) {
         card.push(Node::Status {
             text: "tau-reasoning needs a TypeSafe key (Accounts): until \
                    then, auto is the model's own default."

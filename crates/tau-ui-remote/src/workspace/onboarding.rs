@@ -1,5 +1,5 @@
 //! Onboarding and accounts: the ChatGPT sign-in and plan, plugins'
-//! steps around the repositories, the TypeSafe key, and the first run.
+//! steps around the repositories and the first run.
 
 use super::*;
 
@@ -261,82 +261,6 @@ impl Workspace {
         self.setup.model = ModelAccess::None;
         self.navigate(Route::Setup(SetupStep::Model), cx);
         self.setup_goal = Some(SetupGoal::Model);
-    }
-
-    /// Asks for the TypeSafe key.
-    pub fn ask_for_jev_key(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.adding_jev_key = true;
-        self.jev_key.update(cx, |input, cx| input.clear(cx));
-        self.jev_key.read(cx).focus_handle(cx).focus(window, cx);
-        cx.notify();
-    }
-
-    /// Opens the TypeSafe key prompt from a plugin's click, which has no
-    /// window to focus it in.
-    pub(crate) fn ask_for_jev_key_later(&mut self, cx: &mut Context<Self>) {
-        self.adding_jev_key = true;
-        self.jev_key.update(cx, |input, cx| input.clear(cx));
-        cx.notify();
-    }
-
-    /// Saves the TypeSafe key typed.
-    pub(crate) fn submit_jev_key(&mut self, cx: &mut Context<Self>) {
-        let Some(key) = Self::take_field(&self.jev_key, cx) else {
-            return;
-        };
-        self.adding_jev_key = false;
-        cx.emit(WorkspaceEvent::JevKey { key: Some(key) });
-        cx.notify();
-    }
-
-    pub fn forget_jev_key(&mut self, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::JevKey { key: None });
-    }
-
-    /// The dialog that asks for the TypeSafe key.
-    pub(super) fn jev_key_view(
-        &self,
-        t: &Theme,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let actions = div()
-            .flex()
-            .gap(sp(2.))
-            .child(
-                div()
-                    .id("jev-key-cancel")
-                    .child(ui::button("Cancel", ButtonKind::Secondary, t))
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        ws.adding_jev_key = false;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                div()
-                    .id("jev-key-save")
-                    .child(ui::button("Use this key", ButtonKind::Primary, t))
-                    .on_click(
-                        cx.listener(|ws, _, _, cx| ws.submit_jev_key(cx)),
-                    ),
-            );
-        ui::modal(
-            ui::icon(Icon::Key, IconSize::LARGE, t.muted),
-            "TypeSafe key",
-            "tau-constitution asks Jev, TypeSafe's model, whether calls break \
-             a repository's rules. The key stays in tau's config directory, \
-             readable only by you.",
-            Some(
-                ui::field(&self.jev_key, true, t)
-                    .flex_shrink_0()
-                    .into_any_element(),
-            ),
-            actions,
-            t,
-        )
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {

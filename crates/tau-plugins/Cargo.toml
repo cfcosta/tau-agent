@@ -22,6 +22,7 @@ tau-direnv = { path = "../plugins/tau-direnv", default-features = false }
 tau-notify = { path = "../plugins/tau-notify", default-features = false }
 tau-titles = { path = "../plugins/tau-titles", default-features = false }
 tau-goal.workspace = true
+tau-jev.workspace = true
 tau-schedule = { path = "../plugins/tau-schedule", default-features = false }
 tau-watcher.workspace = true
 tau-luau-plugins.workspace = true

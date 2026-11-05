@@ -12,7 +12,7 @@ use crate::{
     route::Route,
     theme::{Design as _, Theme, Type, radius, sp},
     ui::{self, Material as _, mono},
-    view::{tokens, usd},
+    view::usd,
     workspace::Workspace,
 };
 
@@ -232,7 +232,7 @@ pub fn render(
 }
 
 /// The list: a heading with what plugins charged, then each group's
-/// rows, then Jev's line.
+/// rows.
 fn list(
     ws: &Workspace,
     selection: &Selection,
@@ -278,28 +278,6 @@ fn list(
                 .children(rows)
         })
     });
-    let jev = catalog.jev.as_ref().map(|jev| {
-        div()
-            .px(sp(2.))
-            .flex()
-            .flex_wrap()
-            .gap(sp(1.5))
-            .typeset(Type::CAPTION)
-            .text_color(t.dim)
-            .child(format!("tau-jev on {}", jev.model))
-            .child(format!(
-                "· {} requests, {} tokens in",
-                jev.requests,
-                tokens(jev.input_tokens)
-            ))
-            .when(jev.failed > 0, |line| {
-                line.child(
-                    div()
-                        .text_color(t.red)
-                        .child(format!("· {} failed", jev.failed)),
-                )
-            })
-    });
     div()
         .flex()
         .flex_col()
@@ -322,7 +300,6 @@ fn list(
         .children(roles)
         .children(yours)
         .children(groups)
-        .children(jev)
         .into_any_element()
 }
 

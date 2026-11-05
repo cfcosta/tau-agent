@@ -13,5 +13,6 @@ serde_json.workspace = true
 tau-agent.workspace = true
 thiserror.workspace = true
 # Its UI (ADR 0017).
+tau-jev.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true

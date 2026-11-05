@@ -538,7 +538,7 @@ impl UiPlugin for CodemodeUi {
         tau_ui_plugin::Declaration::new()
             .after(&["tau-mcp"])
             .seams(&[tau_ui_plugin::Seam::Tools, tau_ui_plugin::Seam::Start])
-            .services(&[tau_ui_plugin::services::names::JEV])
+            .services(&[tau_jev::SERVICE])
     }
 
     fn manifest(&self) -> Manifest<Self> {

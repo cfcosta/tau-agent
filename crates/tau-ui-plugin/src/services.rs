@@ -1,5 +1,6 @@
-//! What the host hands plugins by type: the metered Jev, a run's
-//! workspace, anything a host adds later. The set is open: a host puts
+//! What the host hands plugins by type: a run's workspace, the person's
+//! model, what a plugin provides others (such as tau-jev's Jev), anything
+//! a host adds later. The set is open: a host puts
 //! in what it has, and a plugin takes what it needs, so a new service
 //! needs no change to the interface.
 
@@ -36,8 +37,6 @@ pub mod names {
     pub const UNATTENDED: &str = "tau.unattended";
     /// The person's model, outside any run ([`crate::Model`]).
     pub const MODEL: &str = "tau.model";
-    /// The metered Jev, when there is a key.
-    pub const JEV: &str = "tau.jev";
     /// Who the person is, for the commits made for them.
     pub const IDENTITY: &str = "tau.identity";
 }
@@ -128,12 +127,72 @@ impl Services {
         }
     }
 
+    /// These services and all of `other`'s, which replace any of their
+    /// types here.
+    pub fn and(mut self, other: &Services) -> Self {
+        let values = Arc::make_mut(&mut self.values);
+        for (id, value) in other.values.iter() {
+            values.insert(*id, value.clone());
+        }
+        self
+    }
+
     /// The names of the services here, the kernel's own left out.
     pub fn names(&self) -> BTreeSet<&'static str> {
         self.values
             .values()
             .filter_map(|value| value.name)
             .collect()
+    }
+}
+
+/// What a plugin's host half gives other plugins
+/// ([`crate::HostHalf::provide`]): only the services its declaration
+/// names ([`crate::Declaration::provides`]).
+pub struct Provide<'a> {
+    plugin: &'static str,
+    names: &'a [String],
+    services: Services,
+}
+
+impl<'a> Provide<'a> {
+    pub(crate) fn new(
+        plugin: &'static str,
+        names: &'a [String],
+        services: Services,
+    ) -> Self {
+        Self {
+            plugin,
+            names,
+            services,
+        }
+    }
+
+    /// What the host has put in so far, as the plugin is given it.
+    pub fn get<T: 'static>(&self) -> Option<&T> {
+        self.services.get::<T>()
+    }
+
+    /// Gives `value` as the service `name`. A name the plugin does not
+    /// declare it provides is refused, and the kernel says so.
+    pub fn offer<T: Send + Sync + 'static>(
+        &mut self,
+        name: &'static str,
+        value: T,
+    ) {
+        if !self.names.iter().any(|declared| declared == name) {
+            eprintln!(
+                "tau-ui-plugin: {} provides the service {name}, which it \
+                 does not declare; it is refused",
+                self.plugin
+            );
+            return;
+        }
+        self.services = std::mem::take(&mut self.services).offer(name, value);
+    }
+
+    pub(crate) fn into_services(self) -> Services {
+        self.services
     }
 }
 
@@ -184,6 +243,21 @@ mod tests {
         assert_eq!(undeclared.get::<Text>(), None);
         assert_eq!(services.get::<Text>(), Some(&Text("named".to_owned())));
         assert_eq!(services.names(), BTreeSet::from(["text"]));
+    }
+
+    #[test]
+    fn a_plugin_provides_only_the_services_it_declares() {
+        let declared = ["text".to_owned()];
+        let mut provide = Provide::new("giver", &declared, Services::default());
+        provide.offer("text", Text("given".to_owned()));
+        provide.offer("number", Number(2));
+        let services = provide.into_services();
+        assert_eq!(services.get::<Text>(), Some(&Text("given".to_owned())));
+        assert_eq!(services.get::<Number>(), None);
+
+        let joined = Services::default().with(Number(1)).and(&services);
+        assert_eq!(joined.get::<Number>(), Some(&Number(1)));
+        assert_eq!(joined.get::<Text>(), Some(&Text("given".to_owned())));
     }
 
     fn assert_snapshot_matches_model(

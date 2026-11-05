@@ -19,7 +19,6 @@ use tau_ui_plugin::{
     Handle,
     Link,
     Manifest,
-    NO_KEY,
     NavEntry,
     Page,
     RunCx,
@@ -304,7 +303,7 @@ pub struct Flag {
 /// many rules they watch.
 pub fn starting_status(jev: bool, rules: Option<usize>) -> String {
     match (jev, rules) {
-        (false, _) => NO_KEY.into(),
+        (false, _) => tau_jev::NO_KEY.into(),
         (true, None) => "the rules cannot be read".into(),
         (true, Some(0)) => "no rules".into(),
         (true, Some(1)) => "watching 1 rule".into(),
@@ -401,7 +400,7 @@ impl UiPlugin for ConstitutionUi {
                 tau_ui_plugin::Seam::BeforeTool,
                 tau_ui_plugin::Seam::BeforeStop,
             ])
-            .services(&[tau_ui_plugin::services::names::JEV])
+            .services(&[tau_jev::SERVICE])
     }
 
     fn manifest(&self) -> Manifest<Self> {

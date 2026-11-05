@@ -419,7 +419,7 @@ pub fn apply(now: &Snapshot, doing: Do) -> Vec<Request> {
             ]
         }
         Do::OpenRun { run } => vec![Request::OpenRun(RunId(run.into()))],
-        Do::JevKey => vec![Request::AskJevKey],
+        Do::JevKey => vec![Request::Navigate(tau_jev::key_page())],
         Do::Host { act } => vec![host(act)],
         editing => {
             let Some(mut draft) = now.draft.clone() else {
@@ -755,7 +755,7 @@ pub fn tree(view: &ViewCx<'_, ConstitutionUi>, now: &Snapshot) -> Node {
     let focus = view.param("rule").map(str::to_owned);
     let rules = view.repo(&repo).cloned().unwrap_or_default();
     let stats = rules_stats(view, &repo);
-    let jev = view.jev;
+    let jev = tau_jev::keyed(view);
     let empty = rules.rules.is_empty() && rules.error.is_none();
     let resetting = view.ui_value(RESETTING).and_then(Value::as_str);
     let mut page = Vec::new();
@@ -1488,7 +1488,7 @@ fn try_section(
     draft: &Draft,
     trying: &Trying,
 ) -> Node {
-    let jev = view.jev;
+    let jev = tau_jev::keyed(view);
     let (calls, answers) = trial_samples(view, &draft.repo, &draft.places);
     let head = Node::row([
         label_row("Try it", "before it runs for real"),

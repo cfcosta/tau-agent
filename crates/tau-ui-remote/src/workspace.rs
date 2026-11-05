@@ -244,10 +244,6 @@ pub enum WorkspaceEvent {
     UpdateRepo {
         repo: String,
     },
-    /// Save the TypeSafe key tau-constitution checks with, or forget it.
-    JevKey {
-        key: Option<String>,
-    },
     /// A plugin's UI asks its host half to carry out `action`.
     PluginAct {
         plugin: String,
@@ -649,9 +645,6 @@ pub struct Workspace {
     pub(crate) setup_motion: crate::motion::SetupMotion,
     /// The user asked for less motion: no loops, and plain fades.
     reduce_motion: bool,
-    /// The dialog that asks for the TypeSafe key, with its field.
-    pub(crate) adding_jev_key: bool,
-    pub(crate) jev_key: Entity<TextInput>,
     /// The composer popover's selected row, the text it was dismissed
     /// for (Esc), and the text it last saw.
     pub(crate) slash_selected: usize,
@@ -798,8 +791,6 @@ impl Workspace {
             cx.new(|cx| TextInput::new("@reviewer", cx).keep_on_submit());
         let sidebar_filter =
             cx.new(|cx| TextInput::new("Filter repositories and runs", cx));
-        let jev_key =
-            cx.new(|cx| TextInput::new("ts-…", cx).masked().keep_on_submit());
         let subscriptions = vec![
             cx.subscribe_in(
                 &composer,
@@ -839,9 +830,6 @@ impl Workspace {
             cx.subscribe(&query, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(_) = event;
                 ws.run_query(cx);
-            }),
-            cx.subscribe(&jev_key, |ws, _, _: &InputEvent, cx| {
-                ws.submit_jev_key(cx)
             }),
             cx.subscribe(&chatgpt_callback, |ws, _, _: &InputEvent, cx| {
                 ws.submit_chatgpt_callback(cx)
@@ -952,8 +940,6 @@ impl Workspace {
             inspector_everywhere: false,
             composer_replaced: std::cell::Cell::new(false),
             composer_back: std::cell::Cell::new(false),
-            adding_jev_key: false,
-            jev_key,
             slash_selected: 0,
             slash_dismissed: None,
             slash_seen: String::new(),
@@ -2416,9 +2402,6 @@ impl Workspace {
             cx.notify();
         } else if self.searching {
             self.close_search(cx);
-        } else if self.adding_jev_key {
-            self.adding_jev_key = false;
-            cx.notify();
         } else if self.repo_menu.is_some() {
             self.repo_menu = None;
             cx.notify();

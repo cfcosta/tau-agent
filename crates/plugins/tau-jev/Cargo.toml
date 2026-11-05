@@ -1,6 +1,6 @@
 [package]
 name = "tau-jev"
-description = "A client for TypeSafe's Jev (System One) model, for tau plugins."
+description = "A client for TypeSafe's Jev (System One) model, and the plugin that gives it to tau's plugins."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -8,12 +8,15 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 async-trait.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tau-agent.workspace = true
 tau-ai.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tau-ui-plugin.workspace = true
+tokio = { workspace = true, features = ["fs", "time"] }
 
 [dev-dependencies]
 hegeltest.workspace = true

@@ -399,6 +399,17 @@ times. It is built: `crates/plugins/tau-jev`. Plugins take an `impl Jev`
 (the trait), so tests answer with `tau_jev::fake::FakeJev` and
 production uses the HTTP client, `tau_jev::TypeSafe`.
 
+tau-jev is a plugin too (ADR 0045). The kernel names no Jev: tau-jev
+keeps the TypeSafe key (`typesafe-key` in tau's config directory), and
+gives the plugins that declare its service (`tau_jev::SERVICE`,
+`tau.jev`) the client, counted (`Metered`), while there is a key
+(`HostHalf::provide`). Its section of the Models screen, and its own
+page (`tau_jev::key_page`, which other plugins' buttons link to), take
+the key in a secret field and show what Jev did this session. Another
+plugin's view reads whether a key is saved with `tau_jev::keyed`, from
+tau-jev's data. Tests give it a Jev in place of TypeSafe's with
+`Host::with_service(tau_jev::Upstream(jev))`.
+
 - **API.** One call: `POST https://api.typesafe.ai/v1/systemone` with
   `{ model, state, questions }`. The answers come back under the
   question ids, with `usage { input_tokens, output_tokens }`.

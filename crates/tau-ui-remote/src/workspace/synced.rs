@@ -154,8 +154,6 @@ impl Workspace {
             setup_finished: _,
             setup_motion: _,
             reduce_motion: _,
-            adding_jev_key: _,
-            jev_key: _,
             slash_selected: _,
             slash_dismissed: _,
             slash_seen: _,

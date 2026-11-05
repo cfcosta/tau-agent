@@ -40,7 +40,6 @@ use tau_ai::{
     model::find,
     refusal::Refusal,
 };
-use tau_jev::TypeSafe;
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_ui_plugin::{
     By,
@@ -201,11 +200,9 @@ pub struct Host {
     /// (`Recovery::Restricted`): the status, code and request id. `None`
     /// otherwise.
     not_eligible: Arc<Mutex<Option<String>>>,
-    /// Jev for plugins that ask it, in place of TypeSafe's with the
-    /// saved key: for tests.
-    jev: Option<Arc<dyn tau_jev::Jev>>,
-    /// What every plugin's Jev requests did this session.
-    jev_meter: Arc<Mutex<crate::metered::Meter>>,
+    /// Values a test gives every plugin, beside the host's own
+    /// ([`Host::with_service`]).
+    given: Services,
     /// How tau-memory searches notes: by meaning in the app, by keywords
     /// in tests, where no model is loaded.
     memory_search: tau_memory_host::Search,
@@ -275,9 +272,6 @@ pub struct Host {
     /// Held while a run starts, and while a sweep reads what the
     /// projects hold and who owns it, so a sweep never takes a starting
     /// run's workspace.
-    /// The saved TypeSafe key, read once as the host starts and kept as
-    /// it changes ([`Host::set_jev_key`]): Jev is asked for often.
-    jev_key: Mutex<Option<String>>,
     /// The saves of `repos.json`, and of the model settings, in order.
     list_saving: Saving,
     settings_saving: Saving,
@@ -534,11 +528,10 @@ impl Host {
         if let Err(error) = runtime.block_on(store.interrupt_running()) {
             eprintln!("tau-ui: cannot mark interrupted runs: {error:#}");
         }
-        let (settings, list, jev_key, ui_state) = runtime.block_on(async {
+        let (settings, list, ui_state) = runtime.block_on(async {
             (
                 load_settings(&config.settings, &config.default_model()).await,
                 RepoList::load(&config.repo_list).await,
-                config.credentials.jev_key().await,
                 Self::load_ui_state(&config).await,
             )
         });
@@ -550,8 +543,7 @@ impl Host {
             account: Arc::new(Mutex::new(Some(config.account.clone()))),
             client: Arc::default(),
             not_eligible: Arc::default(),
-            jev: None,
-            jev_meter: Arc::default(),
+            given: Services::default(),
             memory_search: tau_memory_host::Search::Keywords,
             outside_tools: tau_ui_plugin::OutsideTools::default(),
             outside_resources: tau_ui_plugin::OutsideResources::default(),
@@ -579,7 +571,6 @@ impl Host {
             hosted: Vec::new(),
             slots: Arc::default(),
             forge_override: None,
-            jev_key: Mutex::new(jev_key),
             list_saving: Saving::default(),
             settings_saving: Saving::default(),
             ui_state: Mutex::new(ui_state),
@@ -607,10 +598,18 @@ impl Host {
         &self.config.credentials
     }
 
-    /// Asks `jev` instead of TypeSafe's, for tests.
-    pub fn with_jev(mut self, jev: Arc<dyn tau_jev::Jev>) -> Self {
-        self.jev = Some(jev);
+    /// Gives every plugin `value` beside the host's own services, as a
+    /// value of the kernel's (`Services::with`): for tests, such as a Jev
+    /// to ask in place of TypeSafe's (`tau_jev::Upstream`).
+    pub fn with_service<T: Send + Sync + 'static>(mut self, value: T) -> Self {
+        self.given = std::mem::take(&mut self.given).with(value);
         self
+    }
+
+    /// `services`, what a test gave ([`Host::with_service`]), and what
+    /// each plugin provides now (`HostHalf::provide`).
+    pub(super) fn provided(&self, services: Services) -> Services {
+        crate::hosted::provided(&self.hosted, services.and(&self.given))
     }
 
     /// Learns what the plan refused and when caches lapse from `client`,
@@ -865,7 +864,6 @@ impl Host {
             agent: "coder".into(),
             agent_source: Some(source.to_owned()),
             plugins,
-            jev: self.jev_stats(),
             repos,
             open_repos: list.open,
             closed_runs: list
@@ -1069,58 +1067,6 @@ impl Host {
         let agent = registered.with_context(agent, kind);
         let agent = registered.agent_plugins(agent, &run).await?;
         Ok((agent, name))
-    }
-
-    /// Jev, when there is a TypeSafe key (or one given for tests).
-    fn jev(&self) -> Option<Arc<dyn tau_jev::Jev>> {
-        let inner = self.jev.clone().or_else(|| {
-            self.jev_key
-                .lock()
-                .expect("not poisoned")
-                .clone()
-                .map(|key| {
-                    Arc::new(TypeSafe::new(key)) as Arc<dyn tau_jev::Jev>
-                })
-        })?;
-        Some(Arc::new(crate::metered::Metered::new(
-            inner,
-            self.jev_meter.clone(),
-        )))
-    }
-
-    /// Whether a TypeSafe key is saved.
-    pub(super) fn has_jev_key(&self) -> bool {
-        self.jev_key.lock().expect("not poisoned").is_some()
-    }
-
-    /// Saves the TypeSafe key, or forgets it with `None`; runs started
-    /// from now on ask Jev with it.
-    pub async fn set_jev_key(&self, key: Option<&str>) -> anyhow::Result<()> {
-        self.config.credentials.set_jev_key(key).await?;
-        *self.jev_key.lock().expect("not poisoned") = key
-            .map(str::trim)
-            .filter(|key| !key.is_empty())
-            .map(str::to_owned);
-        Ok(())
-    }
-
-    /// What Jev did this session, for the Plugins screen, when there is
-    /// a key.
-    fn jev_stats(&self) -> Option<crate::catalog::JevStats> {
-        if self.jev.is_none() && !self.has_jev_key() {
-            return None;
-        }
-        let meter = self.jev_meter.lock().expect("not poisoned").clone();
-        Some(crate::catalog::JevStats {
-            latency_p50_ms: meter.latency_p50_ms(),
-            model: meter.model.unwrap_or_else(|| tau_jev::DEFAULT_MODEL.into()),
-            key_env: "typesafe-key, set on Models".into(),
-            price: format!("${} / M input", tau_jev::PRICE_PER_MILLION_INPUT),
-            requests: meter.requests,
-            input_tokens: meter.input_tokens,
-            spent: meter.spent,
-            failed: meter.failed,
-        })
     }
 
     /// Starts a chat in `repo`, which must be listed: a fork of the

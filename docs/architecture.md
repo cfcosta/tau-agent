@@ -39,7 +39,8 @@ tau-agent/
 │       │                         # direnv environment (ADR 0025)
 │       ├── tau-fast-compaction/  # Jev-driven pruning of tool history
 │       ├── tau-goal/             # keeps a chat going until its /goal holds
-│       ├── tau-jev/              # TypeSafe's Jev client, for plugins
+│       ├── tau-jev/              # TypeSafe's Jev client, and the plugin that
+│       │                         # keeps its key and gives it to plugins
 │       ├── tau-luau-plugins/     # plugins written in Luau, run in codemode's
 │       │                         # sandbox (ADR 0027)
 │       ├── tau-mcp/              # MCP servers' tools (rmcp), the Servers page

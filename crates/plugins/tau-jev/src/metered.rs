@@ -7,7 +7,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use tau_jev::{Jev, JevError, Request, Response};
+
+use crate::{Jev, JevError, Request, Response};
 
 /// What Jev did this session.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -72,9 +73,8 @@ impl Jev for Metered {
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 mod tests {
-    use tau_jev::{JevError, fake::FakeJev};
-
     use super::*;
+    use crate::{JevError, fake::FakeJev};
 
     #[test]
     fn requests_are_counted_answered_or_not() {
@@ -89,8 +89,8 @@ mod tests {
             .build()
             .unwrap();
         runtime.block_on(async {
-            let request = Request::new("state")
-                .question("q", tau_jev::Question::noul("?"));
+            let request =
+                Request::new("state").question("q", crate::Question::noul("?"));
             answering.ask(&request).await.unwrap();
             answering.ask(&request).await.unwrap();
             failing.ask(&request).await.unwrap_err();

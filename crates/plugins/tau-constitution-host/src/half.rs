@@ -23,7 +23,6 @@ use tau_ui_plugin::{
     PluginInfo,
     RepoCtx,
     RunCtx,
-    needs_jev,
 };
 
 use crate::{
@@ -234,7 +233,10 @@ impl HostHalf for ConstitutionHost {
                     "{rules} rules across your repositories, checked with Jev"
                 )
             } else {
-                needs_jev(false, "Checks calls against each repository's rules")
+                tau_jev::needs_jev(
+                    false,
+                    "Checks calls against each repository's rules",
+                )
             },
             page: Some(Link::page("rules").param("repo", "")),
             ..Default::default()

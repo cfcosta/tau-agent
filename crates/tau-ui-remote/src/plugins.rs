@@ -510,7 +510,6 @@ impl Workspace {
             Request::Submit => self.submit_from_button(cx),
             Request::Refresh => {}
             Request::OpenRun(run) => self.navigate(Route::Run(run), cx),
-            Request::AskJevKey => self.ask_for_jev_key_later(cx),
             Request::OpenUrl(url) => cx.open_url(&url),
             Request::Reveal(path) => cx.reveal_path(&path),
             Request::Open(path) => cx.open_with_system(&path),
@@ -753,7 +752,6 @@ impl Workspace {
             params,
             compact: layout
                 .map_or_else(|| self.compact(), |layout| layout.compact),
-            jev: self.catalog.models.access.jev,
             width: layout.map_or_else(
                 || f32::from(self.screen_width()),
                 |layout| layout.width(),

@@ -1068,21 +1068,6 @@ impl Host {
                         cx,
                     );
                 }
-                WorkspaceEvent::JevKey { key } => {
-                    let key = key.clone();
-                    on_host(
-                        &handler,
-                        &workspace,
-                        async move |host| {
-                            let saved = host.set_jev_key(key.as_deref()).await;
-                            host.catalog_changed();
-                            saved
-                        },
-                        |_, (), _| {},
-                        alert("Could not save the TypeSafe key"),
-                        cx,
-                    );
-                }
                 WorkspaceEvent::Picture { run, picture } => {
                     let (job_run, job_picture) = (run.clone(), picture.clone());
                     let (picture, failed) = (picture.clone(), picture.clone());

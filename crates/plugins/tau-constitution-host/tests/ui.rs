@@ -665,6 +665,14 @@ fn with_handle<R>(
     let repos: BTreeMap<String, Rules> = BTreeMap::new();
     let repos = tau_ui_plugin::testing::RepoValues::new(&repos);
     let repos = repos.refs();
+    // A TypeSafe key is saved, as tau-jev's data says.
+    let others = BTreeMap::from([(
+        tau_jev::NAME.to_owned(),
+        PluginValue::typed(tau_jev::ui::Data {
+            keyed: true,
+            stats: None,
+        }),
+    )]);
     let mut view = ViewCx::new(
         &ConstitutionUi,
         None,
@@ -674,12 +682,12 @@ fn with_handle<R>(
         None,
         &params,
         false,
-        true,
         1400.,
         handle,
         &list,
         &cards,
     )
+    .with_others(&others)
     .with_ui_state(ui_state);
     f(&mut view)
 }

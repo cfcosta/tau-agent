@@ -16,6 +16,7 @@ sha2.workspace = true
 stylua.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
+tau-jev.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 uuid.workspace = true

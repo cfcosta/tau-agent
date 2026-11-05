@@ -348,7 +348,6 @@ fn a_read_cards_button_opens_its_key() {
         None,
         &params,
         false,
-        false,
         1400.,
         handle,
         &list,

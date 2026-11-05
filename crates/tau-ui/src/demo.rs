@@ -20,7 +20,7 @@ pub use self::{
 use crate::{
     Workspace,
     WorkspaceEvent,
-    catalog::{Catalog, JevStats, Repo, StoreInfo},
+    catalog::{Catalog, Repo, StoreInfo},
     models::{AccountState, ChatGptAccount},
     pairing::{
         Computer,
@@ -1259,10 +1259,6 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                     ws.apply(HostUpdate::catalog(catalog), cx);
                 });
             }
-            WorkspaceEvent::JevKey { key } => {
-                let saved = key.is_some();
-                recatalog(&|catalog| catalog.models.access.jev = saved, cx);
-            }
             // The demo's store answers every query with its runs' costs.
             WorkspaceEvent::Query { .. } => {
                 let table = tau_store::Table {
@@ -1453,16 +1449,6 @@ pub fn catalog() -> Catalog {
         plugins: Vec::new(),
         agent: "coder".into(),
         agent_source: Some("src/agents.rs:14".into()),
-        jev: Some(JevStats {
-            model: "Jev 1.13".into(),
-            key_env: "typesafe-key, set on Models".into(),
-            price: "$0.042 / M input".into(),
-            requests: 412,
-            input_tokens: 1_940_000,
-            spent: 0.081,
-            latency_p50_ms: 180,
-            failed: 3,
-        }),
         repos: vec![
             // Its main chat has changes GitHub does not have yet.
             Repo {
@@ -1562,7 +1548,6 @@ pub fn models() -> crate::models::Models {
         access: AccessInfo {
             label: "ChatGPT plan".into(),
             chatgpt: true,
-            jev: true,
             accounts: chatgpt_accounts(),
         },
         agents: vec![

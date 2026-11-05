@@ -183,7 +183,7 @@ fn it_says_whether_it_is_on() {
         }
         assert_eq!(state.on, Some(jev));
         let status = state.status().unwrap();
-        assert_eq!(status == tau_ui_plugin::NO_KEY, !jev, "{status}");
+        assert_eq!(status == tau_jev::NO_KEY, !jev, "{status}");
         let plugins = tau_testing::block_on(FastCompactionHost.agent_plugins(
             &(),
             &run,

@@ -239,8 +239,6 @@ pub enum Request {
     Refresh,
     /// Opens a run's conversation.
     OpenRun(RunId),
-    /// Asks for the TypeSafe key plugins that ask Jev need.
-    AskJevKey,
     /// Opens a page of the web in the person's browser.
     OpenUrl(String),
     /// Shows a file or folder in the system's file manager.
@@ -288,7 +286,6 @@ impl Request {
                 | Self::Submit
                 | Self::Refresh
                 | Self::OpenRun(_)
-                | Self::AskJevKey
                 | Self::OpenUrl(_)
                 | Self::Reveal(_)
                 | Self::Open(_)
@@ -460,10 +457,6 @@ impl Handle {
         self.request(Request::Copy(text.into()));
     }
 
-    pub fn ask_jev_key(&self) {
-        self.request(Request::AskJevKey);
-    }
-
     pub fn cancel(&self, run: &RunId) {
         self.request(Request::Cancel(run.clone()));
     }
@@ -499,8 +492,6 @@ pub struct ViewCx<'a, P: UiPlugin> {
     pub params: &'a BTreeMap<String, String>,
     /// Whether the window has the phone's layout.
     pub compact: bool,
-    /// Whether a TypeSafe key is saved, so plugins that ask Jev run.
-    pub jev: bool,
     /// The window's width, in pixels: where a table no longer fits.
     pub width: f32,
     pub handle: Handle,
@@ -528,7 +519,6 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
         run: Option<&'a RunInfo>,
         params: &'a BTreeMap<String, String>,
         compact: bool,
-        jev: bool,
         width: f32,
         handle: Handle,
         runs: &'a dyn Fn() -> Vec<(RunInfo, crate::PluginValue)>,
@@ -543,7 +533,6 @@ impl<'a, P: UiPlugin> ViewCx<'a, P> {
             run,
             params,
             compact,
-            jev,
             width,
             handle,
             runs,

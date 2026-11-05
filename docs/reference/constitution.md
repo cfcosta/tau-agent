@@ -97,8 +97,10 @@ whether it was sent back (`held`).
     them, so the banner offers to remove them, once confirmed
     (`Act::Reset`, which the host answers by storing an empty
     constitution), to start again.
-- Checks need a TypeSafe key, added on the Models screen and kept in
-  tau's config directory (`typesafe-key`), readable only by the user.
+- Checks need a TypeSafe key, added in tau-jev's section of the Models
+  screen (or its own page, which the Constitution screen links to) and
+  kept by tau-jev in tau's config directory (`typesafe-key`), readable
+  only by the user.
   Without one, runs are not checked and the screen says so.
 - Blocked and flagged calls show on their cards in the transcript, live
   and in history, and every call checked shows each rule's score; a

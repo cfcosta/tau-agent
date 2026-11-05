@@ -14,7 +14,6 @@ pub struct Catalog {
     pub agent_source: Option<String>,
     /// In registration order.
     pub plugins: Vec<PluginInfo>,
-    pub jev: Option<JevStats>,
     /// The repositories runs work on, in the sidebar's order. Each has
     /// its own notes and rules. tau's own are among them, but only
     /// [`Catalog::listed`] are the person's.
@@ -298,20 +297,6 @@ pub struct PluginInfo {
     /// Whether its context rewrites keep the transcript.
     #[serde(default)]
     pub rewrites_keep_transcript: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct JevStats {
-    pub model: String,
-    /// Where the key comes from.
-    pub key_env: String,
-    pub price: String,
-    pub requests: u64,
-    pub input_tokens: u64,
-    pub spent: f64,
-    pub latency_p50_ms: u32,
-    /// Requests that got no answer.
-    pub failed: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

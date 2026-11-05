@@ -158,7 +158,7 @@ pub struct RunCtx {
     pub model: String,
     /// The reasoning effort picked by hand; `None` is auto.
     pub effort: Option<String>,
-    /// What the host has for this run: the metered Jev when there is a
+    /// What the host has for this run, and what plugins provide: the Jev when there is a
     /// key, the run's workspace, and so on.
     pub services: Services,
 }

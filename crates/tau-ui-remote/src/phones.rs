@@ -73,7 +73,6 @@ impl WorkspaceEvent {
             Self::Pair(_)
                 | Self::Phones(_)
                 | Self::OpenRepos(_)
-                | Self::JevKey { .. }
                 | Self::ChatGptSignIn { .. }
                 | Self::ChatGptCallback { .. }
                 | Self::SwitchChatGpt { .. }
@@ -275,9 +274,6 @@ mod tests {
             WorkspaceEvent::Pair(PairRequest::Scan),
             WorkspaceEvent::Phones(PhonesRequest::ShowCode),
             WorkspaceEvent::OpenRepos(vec!["tau".into()]),
-            WorkspaceEvent::JevKey {
-                key: Some("ts-x".into()),
-            },
             WorkspaceEvent::ChatGptSignIn {
                 account: None,
                 consent: false,
