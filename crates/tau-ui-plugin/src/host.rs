@@ -324,6 +324,8 @@ pub enum Push {
         title: String,
         message: String,
     },
+    /// Opens a page in the person's browser on the computer: a sign-in.
+    OpenUrl(String),
 }
 
 /// The plugin name under which the host records how each run started
@@ -930,6 +932,12 @@ impl HostCx {
     /// Asks the interface to draw the catalog again.
     pub fn refresh(&self) {
         (self.push)(Push::Catalog);
+    }
+
+    /// Opens `url` in the person's browser on the computer, as a sign-in
+    /// that waits for the browser does.
+    pub fn open_url(&self, url: impl Into<String>) {
+        (self.push)(Push::OpenUrl(url.into()));
     }
 
     pub fn alert(&self, title: impl Into<String>, message: impl Into<String>) {

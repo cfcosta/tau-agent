@@ -394,6 +394,21 @@ Each step lands on main by itself and leaves tau working.
    before Repositories (`SetupAt`) and a Models section.
 7. **`tau.provider`.** A neutral `Settings` and catalog in `tau-ai`;
    `tau-chatgpt` with sign-in, models and plan usage.
+   As built so far: `tau_ui_plugin::provider` (`PROVIDER`, `Provider`:
+   its label, the client runs open sessions with, the picker's models,
+   the last refusal and when a conversation's cache lapses), filled by
+   tau-chatgpt from the saved sign-ins as each run opens. The host
+   builds its agent once over `ProviderLlm`, which asks the slot each
+   time, and always starts, signed out or in; setup opens while there
+   is no model. tau-chatgpt's sign-in is setup's first step
+   (`SetupAt::Model`, `SetupView::required`, its `SetupLink` driving the
+   handshake), its accounts a section of the Models screen; it opens
+   the browser through `HostCx::open_url`, and a phone cannot ask it
+   anything (`Declaration::computer_only`). The kernel's model step,
+   `ModelAccess`, its four ChatGPT events and the account list in
+   `AccessInfo` went. Left for later: the plan refusal's wording
+   (`PlanAlert`), the neutral `Settings`, and the picker's catalog
+   outside the provider.
 8. **`tau.compaction`**, with the chain as its default; idle compaction
    moves into it.
 9. **App and repository seams.** `tau-phones`, repository kinds for

@@ -87,6 +87,13 @@ impl Declaration {
         self
     }
 
+    /// Only the computer may ask its host half: what a phone asks it is
+    /// refused, as a sign-in that opens the computer's browser.
+    pub fn computer_only(mut self) -> Self {
+        self.reach.computer_only = true;
+        self
+    }
+
     /// Reads `paths` outside repositories, as the person knows them, `~`
     /// their home (ADR 0044): another tool's directory, such as
     /// `~/.claude`. The Plugins screen shows them on the plugin's page,
@@ -117,6 +124,9 @@ pub struct Reach {
     pub network: Vec<String>,
     pub secrets: Vec<String>,
     pub reads: Vec<String>,
+    /// Only the computer may ask its host half ([`Declaration::computer_only`]).
+    #[serde(default)]
+    pub computer_only: bool,
 }
 
 impl Reach {

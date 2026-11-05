@@ -217,6 +217,8 @@ pub fn step(
                  in tau's config directory, readable only by you."
             .into(),
         body: form(sign_in, token_open(view), true),
+        required: false,
+        link: None,
     })
 }
 

@@ -30,7 +30,7 @@ use tau_ui_remote::{
     catalog::Catalog,
     plugins,
     route::Route,
-    setup::{ModelAccess, RepoChoice, Setup, SetupStep},
+    setup::{RepoChoice, Setup, SetupStep},
     workspace::WorkspaceEvent,
 };
 
@@ -175,7 +175,6 @@ fn at_repositories(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
     workspace.update(cx, |ws, cx| {
         ws.set_setup(
             Setup {
-                model: ModelAccess::Connected { label: "m".into() },
                 repos: vec![RepoChoice {
                     name: "octocat/hello".into(),
                     description: String::new(),

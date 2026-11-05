@@ -279,6 +279,16 @@ pub fn snapshot(workspace: &Workspace) -> Vec<Value> {
 pub fn from_phone(body: Value) -> Option<PhoneUp> {
     match serde_json::from_value::<PhoneUp>(body) {
         Ok(PhoneUp::Event(event)) if !event.from_phone() => None,
+        // A plugin that only the computer may ask (`computer_only`).
+        Ok(PhoneUp::Event(
+            WorkspaceEvent::PluginAct { plugin, .. }
+            | WorkspaceEvent::PluginCall { plugin, .. },
+        )) if tau_ui_remote::plugins::registry()
+            .get(&plugin)
+            .is_some_and(|erased| erased.declaration().reach.computer_only) =>
+        {
+            None
+        }
         Ok(up) => Some(up),
         Err(error) => {
             eprintln!("tau-ui: a phone sent what tau cannot read: {error}");

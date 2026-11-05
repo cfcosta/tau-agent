@@ -68,16 +68,7 @@ impl WorkspaceEvent {
     /// Whether a phone may ask for this. Signing in and out, keys,
     /// pairing and paths on the computer stay with the computer.
     pub fn from_phone(&self) -> bool {
-        !matches!(
-            self,
-            Self::Pair(_)
-                | Self::Phones(_)
-                | Self::OpenRepos(_)
-                | Self::ChatGptSignIn { .. }
-                | Self::ChatGptCallback { .. }
-                | Self::SwitchChatGpt { .. }
-                | Self::SignOut
-        )
+        !matches!(self, Self::Pair(_) | Self::Phones(_) | Self::OpenRepos(_))
     }
 }
 
@@ -274,17 +265,6 @@ mod tests {
             WorkspaceEvent::Pair(PairRequest::Scan),
             WorkspaceEvent::Phones(PhonesRequest::ShowCode),
             WorkspaceEvent::OpenRepos(vec!["tau".into()]),
-            WorkspaceEvent::ChatGptSignIn {
-                account: None,
-                consent: false,
-            },
-            WorkspaceEvent::ChatGptCallback {
-                url: "http://localhost/cb".into(),
-            },
-            WorkspaceEvent::SwitchChatGpt {
-                account: "a".into(),
-            },
-            WorkspaceEvent::SignOut,
         ];
         for event in &kept {
             assert!(!event.from_phone(), "{event:?} stays on the computer");
@@ -303,7 +283,6 @@ mod tests {
                 repo: "tau".into(),
                 fetch: true,
             },
-            WorkspaceEvent::ChatGptCancel,
         ];
         for event in &asked {
             assert!(event.from_phone(), "{event:?} is a phone's to ask");

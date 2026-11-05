@@ -50,15 +50,7 @@ use crate::{
     pull_request::{PrState, PullRequest},
     push::PushState,
     route::{self, Route},
-    setup::{
-        CloneState,
-        ModelAccess,
-        RepoClone,
-        Setup,
-        SetupStep,
-        SetupUpdate,
-        Stage,
-    },
+    setup::{CloneState, RepoClone, Setup, SetupStep, SetupUpdate, Stage},
     theme::{
         Design as _,
         IconSize,
@@ -383,26 +375,6 @@ pub enum WorkspaceEvent {
     ResumeCutOff {
         run: RunId,
     },
-    /// Sign in with ChatGPT in the browser: `account` again (its id), or
-    /// a new account with `None`. `consent` asks again for plan usage.
-    ChatGptSignIn {
-        account: Option<String>,
-        consent: bool,
-    },
-    /// The redirect URL of the ChatGPT sign-in in progress, pasted from
-    /// the browser, for when the browser cannot reach tau.
-    ChatGptCallback {
-        url: String,
-    },
-    /// Give up on the ChatGPT sign-in waiting for the browser.
-    ChatGptCancel,
-    /// Sign in with this saved ChatGPT account (its id) from now on.
-    SwitchChatGpt {
-        account: String,
-    },
-    /// Sign out of the active ChatGPT account, revoking its session;
-    /// runs use what is left, if anything.
-    SignOut,
     /// Clone these repositories (`owner/name`) into tau's storage.
     CloneRepos {
         repos: Vec<String>,
@@ -461,8 +433,6 @@ fn inherited_items(run: &RunView, turn: u32) -> Vec<crate::view::Item> {
 /// What an onboarding step opened from the app is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupGoal {
-    /// Sign in to ChatGPT.
-    Model,
     /// Clone repositories from where they are hosted.
     Repos,
 }
@@ -604,8 +574,6 @@ pub struct Workspace {
     pub(crate) pull_requests: HashMap<RunId, PullRequest>,
     /// The code of each comparison opened, by (run, fork).
     pub(crate) branch_code: HashMap<(RunId, RunId), CodeState>,
-    /// Where the ChatGPT sign-in's redirect URL can be pasted.
-    pub(crate) chatgpt_callback: Entity<TextInput>,
     /// What a run that stopped on the ChatGPT plan asks of the user.
     pub(crate) plan_alert: Option<PlanAlert>,
     pub(crate) repo_filter: Entity<TextInput>,
@@ -764,11 +732,6 @@ impl Workspace {
         let model_search = cx.new(|cx| TextInput::new("Search models", cx));
         // Fields whose Enter submits through `take_field`, which reads
         // and clears them: they keep their text through Enter.
-        let chatgpt_callback = cx.new(|cx| {
-            TextInput::new("http://127.0.0.1:1455/auth/callback?code=…", cx)
-                .masked()
-                .keep_on_submit()
-        });
         let repo_filter =
             cx.new(|cx| TextInput::new("Filter your repositories", cx));
         let pair_address = cx
@@ -830,9 +793,6 @@ impl Workspace {
             cx.subscribe(&query, |ws, _, event: &InputEvent, cx| {
                 let InputEvent::Submit(_) = event;
                 ws.run_query(cx);
-            }),
-            cx.subscribe(&chatgpt_callback, |ws, _, _: &InputEvent, cx| {
-                ws.submit_chatgpt_callback(cx)
             }),
             // Enter in either pairing field connects.
             cx.subscribe(&pair_address, |ws, _, _: &InputEvent, cx| {
@@ -907,7 +867,6 @@ impl Workspace {
             phone_name,
             pull_requests: HashMap::new(),
             branch_code: HashMap::new(),
-            chatgpt_callback,
             plan_alert: None,
             repo_filter,
             repos_expanded: false,

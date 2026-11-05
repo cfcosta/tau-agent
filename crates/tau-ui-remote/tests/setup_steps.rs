@@ -26,17 +26,34 @@ use tau_ui_remote::{
     catalog::Catalog,
     plugins,
     route::Route,
-    setup::{
-        CloneState,
-        ModelAccess,
-        RepoChoice,
-        RepoClone,
-        Setup,
-        SetupStep,
-        SetupUpdate,
-    },
+    setup::{CloneState, RepoChoice, RepoClone, Setup, SetupStep, SetupUpdate},
     workspace::WorkspaceEvent,
 };
+
+/// The provider's sign-in, setup's first step (tau-chatgpt's).
+const MODEL_STEP: SetupStep = SetupStep::Plugin {
+    plugin: tau_chatgpt::NAME,
+    step: tau_chatgpt::ui::STEP,
+};
+
+/// The provider says runs have a model, and its step ends, as its
+/// Continue does.
+fn connect(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
+    workspace.update(cx, |ws, cx| {
+        let mut catalog = ws.catalog().clone();
+        catalog.plugin_data.insert(
+            tau_chatgpt::NAME.into(),
+            PluginValue::typed(tau_chatgpt::ui::Data {
+                sign_in: tau_chatgpt::ui::SignIn::Connected {
+                    account: "a@example.com".into(),
+                },
+                accounts: Vec::new(),
+            }),
+        );
+        ws.set_catalog(catalog, cx);
+        ws.plugin_setup_step_done(tau_chatgpt::NAME, cx);
+    });
+}
 
 const NAME: &str = "stepper";
 
@@ -96,6 +113,8 @@ impl UiPlugin for Before {
                         kind: Kind::Primary,
                         icon: None,
                     },
+                    required: false,
+                    link: None,
                 })
             },
         )
@@ -164,6 +183,8 @@ fn step(at: &AtSetup, view: &mut ViewCx<'_, Stepper>) -> Option<SetupView> {
         heading: "Bring what you had".into(),
         detail: "A step of a plugin's own.".into(),
         body,
+        required: false,
+        link: None,
     })
 }
 
@@ -212,7 +233,6 @@ fn at_repositories(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
     workspace.update(cx, |ws, cx| {
         ws.set_setup(
             Setup {
-                model: ModelAccess::Connected { label: "m".into() },
                 repos: vec![RepoChoice {
                     name: "octocat/hello".into(),
                     description: String::new(),
@@ -362,14 +382,11 @@ fn without_repositories_the_model_leads_to_the_plugin_s_step(
     workspace.update(&mut cx, |ws, cx| {
         ws.set_setup(Setup::default(), cx);
         ws.start_setup(SetupStep::Welcome, cx);
-        // What "Get started" does.
-        ws.navigate(Route::Setup(SetupStep::Model), cx);
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
-            cx,
-        );
-        ws.continue_from_model(cx);
+        // What "Get started" does: the provider's sign-in first.
+        ws.start_setup_steps(cx);
     });
+    assert_eq!(route(&workspace, &mut cx), Route::Setup(MODEL_STEP));
+    connect(&workspace, &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(STEP));
     click("button:Bring them", &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::NewRun);
@@ -391,19 +408,13 @@ fn a_step_before_the_repositories_follows_the_model(cx: &mut TestAppContext) {
         );
         ws.set_catalog(catalog, cx);
         ws.set_setup(Setup::default(), cx);
-        ws.start_setup(SetupStep::Model, cx);
+        ws.start_setup(MODEL_STEP, cx);
     });
     assert_eq!(
         stage_names(&workspace, &mut cx),
         ["Model", "Sign in", "Repositories", "Ready"]
     );
-    workspace.update(&mut cx, |ws, cx| {
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
-            cx,
-        );
-        ws.continue_from_model(cx);
-    });
+    connect(&workspace, &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(BEFORE_STEP));
     // Signed in: the forge lists repositories.
     workspace.update(&mut cx, |ws, cx| {

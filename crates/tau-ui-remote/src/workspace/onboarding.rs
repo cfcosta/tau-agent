@@ -28,20 +28,8 @@ impl Workspace {
         update: SetupUpdate,
         cx: &mut Context<Self>,
     ) {
-        let connected =
-            matches!(update, SetupUpdate::Model(ModelAccess::Connected { .. }));
         self.setup.update(update);
-        let goal = self.setup_goal;
-        match self.route {
-            Route::Setup(SetupStep::Model)
-                if connected && goal == Some(SetupGoal::Model) =>
-            {
-                self.leave_setup(cx)
-            }
-            // Onboarding stays to show the account and pick the default
-            // model; "Continue" moves on.
-            _ => cx.notify(),
-        }
+        cx.notify();
     }
 
     /// What onboarding showed when last drawn, and what changed.
@@ -49,14 +37,10 @@ impl Workspace {
         &self.setup_motion
     }
 
-    /// Leaves the model step once signed in: on through plugins' steps
-    /// and the repositories to a new run.
-    pub fn continue_from_model(&mut self, cx: &mut Context<Self>) {
-        if self.setup_goal == Some(SetupGoal::Model) {
-            self.leave_setup(cx);
-        } else {
-            self.setup_next(SetupStep::Model, cx);
-        }
+    /// Leaves the welcome for setup's first step: the provider's
+    /// sign-in, when a plugin offers one.
+    pub fn start_setup_steps(&mut self, cx: &mut Context<Self>) {
+        self.setup_next(SetupStep::Welcome, cx);
     }
 
     /// Plugins' steps of first-run setup for the setup at hand
@@ -79,8 +63,8 @@ impl Workspace {
             .collect()
     }
 
-    /// The step bar's stages: tau's, with plugins' steps around the
-    /// repositories.
+    /// The step bar's stages: tau's, with plugins' steps first and
+    /// around the repositories.
     pub fn setup_stages(&self) -> Vec<Stage> {
         Stage::all(
             self.plugin_setup_steps()
@@ -89,13 +73,13 @@ impl Workspace {
         )
     }
 
-    /// Setup's steps after the model, in order: plugins' before the
-    /// repositories, the repositories, plugins' after them.
+    /// Setup's steps, in order: plugins' first (the model's), plugins'
+    /// before the repositories, the repositories, plugins' after them.
     fn setup_sequence(&self) -> Vec<SetupStep> {
         self.setup_stages()
             .into_iter()
             .map(|stage| stage.step)
-            .filter(|step| !matches!(step, SetupStep::Model | SetupStep::Ready))
+            .filter(|step| *step != SetupStep::Ready)
             .collect()
     }
 
@@ -107,16 +91,7 @@ impl Workspace {
             || self.setup_goal == Some(SetupGoal::Repos)
     }
 
-    /// Whether leaving the model step reaches another step before the
-    /// end of setup: a plugin's, or repositories to pick.
-    pub fn setup_has_steps_after_model(&self) -> bool {
-        let repos_to_pick = self.repos_to_pick();
-        self.setup_sequence()
-            .iter()
-            .any(|step| *step != SetupStep::Repos || repos_to_pick)
-    }
-
-    /// Goes on from `from`, the model, the repositories or a plugin's
+    /// Goes on from `from`, the welcome, the repositories or a plugin's
     /// step: to the next step, skipping the repositories when there are
     /// none to pick, else to the end of setup. A plugin's step that is
     /// gone goes on from after the repositories.
@@ -127,7 +102,7 @@ impl Workspace {
             .position(|step| *step == SetupStep::Repos)
             .map_or(0, |n| n + 1);
         let start = match from {
-            SetupStep::Model | SetupStep::Welcome => 0,
+            SetupStep::Welcome => 0,
             _ => sequence
                 .iter()
                 .position(|step| *step == from)
@@ -176,33 +151,6 @@ impl Workspace {
         }
     }
 
-    /// Makes model `id`, one of the account's, the one runs start with:
-    /// the coder's default, as the picker sets it.
-    pub fn pick_setup_model(&mut self, id: &str, cx: &mut Context<Self>) {
-        let Some(option) = self.catalog.models.find(id).cloned() else {
-            return;
-        };
-        let choice = ModelChoice {
-            model: option.id.clone(),
-            ..self.catalog.models.settings.default_for("coder")
-        }
-        .fitted();
-        if let ModelAccess::Connected { label } = &mut self.setup.model {
-            *label = format!("{} · ChatGPT plan", option.id);
-        }
-        self.set_default_model("coder", choice, cx);
-    }
-
-    /// Stops waiting for the browser, back to the start of the model
-    /// step.
-    pub fn cancel_chatgpt_sign_in(&mut self, cx: &mut Context<Self>) {
-        self.setup.model = ModelAccess::None;
-        self.chatgpt_callback
-            .update(cx, |input, cx| input.clear(cx));
-        cx.emit(WorkspaceEvent::ChatGptCancel);
-        cx.notify();
-    }
-
     /// Goes back to the screen an onboarding step was opened from.
     pub fn leave_setup(&mut self, cx: &mut Context<Self>) {
         let mut route = self.back_stack.pop().unwrap_or(Route::Home);
@@ -217,13 +165,18 @@ impl Workspace {
     /// before the repositories (its sign-in) while the forge is not
     /// signed in, then comes back.
     pub fn pick_repos(&mut self, cx: &mut Context<Self>) {
-        let first = self.setup_sequence().into_iter().next();
+        // The first step placed before the repositories: the model's
+        // sign-in comes before them in setup, but runs are signed in by now.
+        let first =
+            self.plugin_setup_steps()
+                .into_iter()
+                .find_map(|(step, view)| {
+                    (view.at
+                        == tau_ui_plugin::points::SetupAt::BeforeRepositories)
+                        .then_some(step)
+                });
         let step = match first {
-            Some(step @ SetupStep::Plugin { .. })
-                if !self.catalog.pull_requests =>
-            {
-                step
-            }
+            Some(step) if !self.catalog.pull_requests => step,
             _ => SetupStep::Repos,
         };
         self.setup_goal = Some(SetupGoal::Repos);
@@ -255,63 +208,6 @@ impl Workspace {
         Some(text)
     }
 
-    /// Opens the model step of onboarding from the Models screen, to
-    /// sign in to ChatGPT, coming back once done.
-    pub fn connect_model(&mut self, cx: &mut Context<Self>) {
-        self.setup.model = ModelAccess::None;
-        self.navigate(Route::Setup(SetupStep::Model), cx);
-        self.setup_goal = Some(SetupGoal::Model);
-    }
-
-    pub fn sign_out(&mut self, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::SignOut);
-    }
-
-    /// Signs in with ChatGPT in the browser: `account` again, or a new
-    /// account with `None`; `consent` asks again for plan usage.
-    pub fn sign_in_chatgpt(
-        &mut self,
-        account: Option<String>,
-        consent: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.setup.model = ModelAccess::SigningIn { url: None };
-        self.chatgpt_callback
-            .update(cx, |input, cx| input.clear(cx));
-        cx.emit(WorkspaceEvent::ChatGptSignIn { account, consent });
-        cx.notify();
-    }
-
-    /// Finishes the ChatGPT sign-in with a redirect URL pasted from the
-    /// browser.
-    pub(crate) fn submit_chatgpt_callback(&mut self, cx: &mut Context<Self>) {
-        let Some(url) = Self::take_field(&self.chatgpt_callback, cx) else {
-            return;
-        };
-        cx.emit(WorkspaceEvent::ChatGptCallback { url });
-        cx.notify();
-    }
-
-    /// Signs in with this saved ChatGPT account from now on.
-    pub fn switch_chatgpt(&mut self, account: &str, cx: &mut Context<Self>) {
-        cx.emit(WorkspaceEvent::SwitchChatGpt {
-            account: account.to_owned(),
-        });
-    }
-
-    /// Asks again for plan usage on the active ChatGPT account, from the
-    /// model setup, coming back once done.
-    pub fn enable_plan_usage(&mut self, cx: &mut Context<Self>) {
-        let account = self
-            .catalog
-            .models
-            .access
-            .active_account()
-            .map(|account| account.id.clone());
-        self.connect_model(cx);
-        self.sign_in_chatgpt(account, true, cx);
-    }
-
     /// Opens ChatGPT Settings → Usage, where the user reviews and limits
     /// what apps use of their plan.
     pub fn manage_usage(&mut self, cx: &mut Context<Self>) {
@@ -339,19 +235,12 @@ impl Workspace {
     /// Carries out a button of the plan alert, and closes it.
     pub fn plan_action(&mut self, action: PlanAction, cx: &mut Context<Self>) {
         self.plan_alert = None;
-        let active = self
-            .catalog
-            .models
-            .access
-            .active_account()
-            .map(|account| account.id.clone());
         match action {
             PlanAction::ManageUsage => self.manage_usage(cx),
-            PlanAction::SignInAgain => {
-                self.connect_model(cx);
-                self.sign_in_chatgpt(active, false, cx);
+            // The provider's section of the Models screen signs in.
+            PlanAction::SignInAgain | PlanAction::EnablePlanUsage => {
+                self.navigate(Route::Models, cx)
             }
-            PlanAction::EnablePlanUsage => self.enable_plan_usage(cx),
             PlanAction::Close => {}
         }
         cx.notify();

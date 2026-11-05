@@ -18,7 +18,7 @@ use tau_ui_remote::{
     models::{Effort, ModelChoice},
     pull_request::PrState,
     route::Route,
-    setup::{ModelAccess, Setup, SetupStep, SetupUpdate},
+    setup::{Setup, SetupStep, SetupUpdate},
     view::{BranchCode, CodeState, Item, RunStatus},
     workspace::{LandingState, PickerTarget},
 };
@@ -74,8 +74,9 @@ fn github_says(
     ws.set_catalog(catalog, cx);
 }
 
-/// Onboarding goes from the welcome to the model, then through
-/// tau-github's sign-in, before the repositories, to the clones.
+/// Setup's first step is the provider's sign-in; once it says runs have
+/// a model and its Continue ends it, setup goes on to GitHub's step,
+/// the repositories and the clones.
 #[gpui::test]
 fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open(cx);
@@ -83,17 +84,16 @@ fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
         ws.set_setup(demo::setup(SetupStep::Welcome), cx);
         ws.start_setup(SetupStep::Welcome, cx);
         github_says(ws, SignIn::SignedOut, cx);
+        chatgpt_says(ws, tau_chatgpt::ui::SignIn::None, cx);
         // What "Get started" does.
-        ws.navigate(Route::Setup(SetupStep::Model), cx);
-        ws.sign_in_chatgpt(None, false, cx);
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
-            cx,
-        );
-        // Signed in: the step stays, to show the account and pick the
-        // default model, until "Continue".
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-        ws.continue_from_model(cx);
+        ws.start_setup_steps(cx);
+        assert_eq!(ws.route(), &Route::Setup(demo::CHATGPT_STEP));
+        chatgpt_click(ws, chatgpt_sign_in(), cx);
+        // Signed in: the step stays, to show the account, until
+        // "Continue".
+        chatgpt_says(ws, demo::connected(), cx);
+        assert_eq!(ws.route(), &Route::Setup(demo::CHATGPT_STEP));
+        ws.plugin_setup_step_done(tau_chatgpt::NAME, cx);
         assert_eq!(ws.route(), &Route::Setup(demo::GITHUB_STEP));
         // Signed in to GitHub: the plugin ends its step.
         github_says(ws, demo::signed_in(), cx);
@@ -102,28 +102,81 @@ fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
         ws.clone_selected(cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Ready));
     });
+    assert_eq!(
+        chatgpt_acts(&events.borrow()),
+        [tau_chatgpt::ui::Act::SignIn {
+            account: None,
+            consent: false,
+        }]
+    );
     let events = events.borrow();
-    assert!(events.contains(&WorkspaceEvent::ChatGptSignIn {
-        account: None,
-        consent: false,
-    }));
     assert!(events.contains(&WorkspaceEvent::CloneRepos {
         repos: vec!["cfcosta/tau-agent".into(), "cfcosta/docbert".into()],
     }));
 }
 
+/// tau-chatgpt's data says `sign_in`, with no accounts.
+fn chatgpt_says(
+    ws: &mut Workspace,
+    sign_in: tau_chatgpt::ui::SignIn,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let mut catalog = ws.catalog().clone();
+    catalog.plugin_data.insert(
+        tau_chatgpt::NAME.into(),
+        PluginValue::typed(tau_chatgpt::ui::Data {
+            sign_in,
+            accounts: Vec::new(),
+        }),
+    );
+    ws.set_catalog(catalog, cx);
+}
+
+/// What tau-chatgpt's "Continue with ChatGPT" asks.
+fn chatgpt_sign_in() -> serde_json::Value {
+    serde_json::json!({
+        "click": "act",
+        "act": { "do": "sign_in", "account": null, "consent": false },
+    })
+}
+
+/// Clicks a tau-chatgpt button whose arguments are `args`.
+fn chatgpt_click(
+    ws: &mut Workspace,
+    args: serde_json::Value,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let origin = tau_ui_remote::plugins::Origin::default();
+    ws.plugin_action(tau_chatgpt::NAME, "click", &args, &origin, cx);
+    ws.drain_plugin_requests(cx);
+}
+
+/// What the workspace asked tau-chatgpt's host half, in order.
+fn chatgpt_acts(events: &[WorkspaceEvent]) -> Vec<tau_chatgpt::ui::Act> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::PluginAct { plugin, action, .. }
+                if plugin == tau_chatgpt::NAME =>
+            {
+                serde_json::from_value(action.clone()).ok()
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// With nothing after the model's step, ending it leaves setup for a new
+/// run, with nothing to go back to.
 #[gpui::test]
 fn setup_without_repositories_ends_at_a_new_run(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.set_setup(Setup::default(), cx);
-        ws.start_setup(SetupStep::Model, cx);
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
-            cx,
-        );
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-        ws.continue_from_model(cx);
+        ws.start_setup(demo::CHATGPT_STEP, cx);
+        chatgpt_says(ws, demo::connected(), cx);
+        assert_eq!(ws.route(), &Route::Setup(demo::CHATGPT_STEP));
+        ws.plugin_setup_step_done(tau_chatgpt::NAME, cx);
         assert_eq!(ws.route(), &Route::Home);
         assert!(!ws.can_go_back());
     });
@@ -694,38 +747,36 @@ fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
     }));
 }
 
+/// The Models screen's accounts are tau-chatgpt's: switching and signing
+/// out go to its host half, and the screen stays.
 #[gpui::test]
-fn connecting_from_the_models_screen_comes_back_to_it(cx: &mut TestAppContext) {
+fn the_models_screen_s_accounts_ask_tau_chatgpt(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     let work = demo::chatgpt_accounts()[1].id.clone();
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Models, cx);
-        // The account picker asks the host to switch.
-        ws.switch_chatgpt(&work, cx);
-        ws.connect_model(cx);
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-        assert!(ws.can_go_back(), "the Models screen is a step back");
-        // A sign-in without plan usage stays on the step, to say so.
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::PlanDisabled {
-                account: "you@work.example".into(),
+        chatgpt_click(
+            ws,
+            serde_json::json!({
+                "click": "act",
+                "act": { "do": "switch", "account": work },
             }),
             cx,
         );
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
+        chatgpt_click(
+            ws,
+            serde_json::json!({ "click": "act", "act": { "do": "sign_out" } }),
             cx,
         );
         assert_eq!(ws.route(), &Route::Models);
-        ws.sign_out(cx);
     });
-    assert!(
-        events
-            .borrow()
-            .contains(&WorkspaceEvent::SwitchChatGpt { account: work })
+    assert_eq!(
+        chatgpt_acts(&events.borrow()),
+        [
+            tau_chatgpt::ui::Act::Switch { account: work },
+            tau_chatgpt::ui::Act::SignOut
+        ]
     );
-    assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::SignOut));
 }
 
 /// Picking repositories from the app while GitHub is signed out opens
@@ -766,82 +817,43 @@ fn picking_repositories_from_the_app_signs_in_first(cx: &mut TestAppContext) {
     }));
 }
 
-/// Signed in, the model step picks the default model the way the
-/// picker does, and says which one runs start with.
-#[gpui::test]
-fn the_signed_in_model_step_picks_the_default_model(cx: &mut TestAppContext) {
-    let (workspace, mut cx, events) = open_demo(cx);
-    workspace.update(&mut cx, |ws, cx| {
-        ws.set_setup(demo::setup(SetupStep::Model), cx);
-        ws.start_setup(SetupStep::Model, cx);
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::Connected {
-                label: "gpt-6.1-sol · ChatGPT plan".into(),
-            }),
-            cx,
-        );
-    });
-    // The step, with the account's models as pills.
-    cx.run_until_parked();
-    workspace.update(&mut cx, |ws, cx| {
-        ws.pick_setup_model("gpt-6-astra", cx);
-        // One the account does not list changes nothing.
-        ws.pick_setup_model("no-such-model", cx);
-        let settings = &ws.catalog().models.settings;
-        assert_eq!(settings.default_for("coder").model, "gpt-6-astra");
-        assert_eq!(
-            ws.setup().model_label(),
-            Some("gpt-6-astra · ChatGPT plan")
-        );
-    });
-    let saved: Vec<_> = events
-        .borrow()
-        .iter()
-        .filter_map(|event| match event {
-            WorkspaceEvent::SetDefaultModel { choice, .. } => {
-                Some(choice.model.clone())
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(saved, ["gpt-6-astra"]);
-}
-
-/// Cancelling the sign-in waiting for the browser goes back to the start
-/// of the model step and tells the host to stop listening.
+/// A sign-in waiting for the browser can be cancelled: the step asks
+/// tau-chatgpt's host half to stop waiting.
 #[gpui::test]
 fn a_waiting_chatgpt_sign_in_can_be_cancelled(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
-        ws.set_setup(demo::setup(SetupStep::Model), cx);
-        ws.start_setup(SetupStep::Model, cx);
-        ws.sign_in_chatgpt(None, false, cx);
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::SigningIn {
-                url: Some(demo::DEMO_AUTHORIZE_URL.into()),
-            }),
-            cx,
-        );
+        ws.set_setup(demo::setup(demo::CHATGPT_STEP), cx);
+        ws.start_setup(demo::CHATGPT_STEP, cx);
+        let url = demo::DEMO_AUTHORIZE_URL.into();
+        chatgpt_says(ws, tau_chatgpt::ui::SignIn::Waiting { url }, cx);
     });
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
-        ws.cancel_chatgpt_sign_in(cx);
-        assert_eq!(ws.setup().model, ModelAccess::None);
+        chatgpt_click(
+            ws,
+            serde_json::json!({ "click": "act", "act": { "do": "cancel" } }),
+            cx,
+        );
     });
-    assert_eq!(events.borrow().last(), Some(&WorkspaceEvent::ChatGptCancel));
+    assert_eq!(
+        chatgpt_acts(&events.borrow()).last(),
+        Some(&tau_chatgpt::ui::Act::Cancel)
+    );
 }
 
-/// A sign-in landing moves the handshake once: the change animates, and
-/// redrawing it starts nothing new.
 #[gpui::test]
 fn a_landing_sign_in_animates_the_handshake_once(cx: &mut TestAppContext) {
     use tau_ui_remote::motion::{Link, Mood};
     let (workspace, mut cx, _) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
-        let mut setup = demo::setup(SetupStep::Model);
-        setup.model = ModelAccess::SigningIn { url: None };
-        ws.set_setup(setup, cx);
-        ws.start_setup(SetupStep::Model, cx);
+        ws.set_setup(demo::setup(demo::CHATGPT_STEP), cx);
+        ws.start_setup(demo::CHATGPT_STEP, cx);
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, cx| {
+        let url = demo::DEMO_AUTHORIZE_URL.into();
+        chatgpt_says(ws, tau_chatgpt::ui::SignIn::Waiting { url }, cx);
     });
     cx.run_until_parked();
     let waited = workspace.read_with(&cx, |ws, _| {
@@ -849,12 +861,7 @@ fn a_landing_sign_in_animates_the_handshake_once(cx: &mut TestAppContext) {
         assert_eq!(motion.link.current, Link::Waiting);
         motion.link.epoch
     });
-    workspace.update(&mut cx, |ws, cx| {
-        ws.update_setup(
-            SetupUpdate::Model(ModelAccess::Connected { label: "m".into() }),
-            cx,
-        )
-    });
+    workspace.update(&mut cx, |ws, cx| chatgpt_says(ws, demo::connected(), cx));
     cx.run_until_parked();
     let landed = workspace.read_with(&cx, |ws, _| {
         let motion = ws.setup_motion();
@@ -879,8 +886,8 @@ fn a_landing_sign_in_animates_the_handshake_once(cx: &mut TestAppContext) {
 fn reduced_motion_stops_onboardings_loops(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
-        ws.set_setup(demo::setup(SetupStep::Model), cx);
-        ws.start_setup(SetupStep::Model, cx);
+        ws.set_setup(demo::setup(demo::CHATGPT_STEP), cx);
+        ws.start_setup(demo::CHATGPT_STEP, cx);
         ws.set_reduce_motion(true, cx);
     });
     cx.run_until_parked();
@@ -889,41 +896,37 @@ fn reduced_motion_stops_onboardings_loops(cx: &mut TestAppContext) {
     });
 }
 
-/// On the model step, whatever the sign-in reports (signed in, waiting,
-/// refused, without plan usage, not eligible, failed) is shown there:
-/// the step stays, to show the account or the refusal, until the person
-/// moves on. (Every onboarding screen draws in `every_demo_screen_opens`.)
 #[gpui::test]
 fn the_model_step_stays_whatever_the_sign_in_reports(cx: &mut TestAppContext) {
+    use tau_chatgpt::ui::SignIn as Plan;
     let (workspace, mut cx, _) = open_demo(cx);
-    let models = [
-        ModelAccess::None,
-        ModelAccess::SigningIn { url: None },
-        ModelAccess::SigningIn {
-            url: Some(demo::DEMO_AUTHORIZE_URL.into()),
+    let states = [
+        Plan::None,
+        Plan::Waiting {
+            url: demo::DEMO_AUTHORIZE_URL.into(),
         },
-        ModelAccess::Connected { label: "m".into() },
-        ModelAccess::PlanDisabled {
+        demo::connected(),
+        Plan::PlanDisabled {
             account: "you@example.com".into(),
         },
-        ModelAccess::NotEligible {
+        Plan::NotEligible {
             account: "you@example.com".into(),
             detail: "403 subscription_sharing_user_not_eligible".into(),
         },
-        ModelAccess::Failed("no".into()),
+        Plan::Failed { error: "no".into() },
     ];
-    for model in &models {
+    for state in &states {
         workspace.update(&mut cx, |ws, cx| {
-            ws.set_setup(demo::setup(SetupStep::Model), cx);
-            ws.start_setup(SetupStep::Model, cx);
-            ws.update_setup(SetupUpdate::Model(model.clone()), cx);
+            ws.set_setup(demo::setup(demo::CHATGPT_STEP), cx);
+            ws.start_setup(demo::CHATGPT_STEP, cx);
+            chatgpt_says(ws, state.clone(), cx);
         });
         cx.run_until_parked();
         workspace.read_with(&cx, |ws, _| {
             assert_eq!(
                 ws.route(),
-                &Route::Setup(SetupStep::Model),
-                "{model:?}"
+                &Route::Setup(demo::CHATGPT_STEP),
+                "{state:?}"
             );
         });
     }
@@ -2339,22 +2342,17 @@ fn a_usage_limit_offers_to_manage_usage(cx: &mut TestAppContext) {
         cx.opened_url().as_deref(),
         Some(tau_ui_remote::models::USAGE_SETTINGS_URL)
     );
-    // Never a silent switch: nothing asked the host to use another way
-    // to pay.
-    assert!(!events.borrow().iter().any(|event| matches!(
-        event,
-        WorkspaceEvent::SwitchChatGpt { .. } | WorkspaceEvent::SignOut
-    )));
+    // Never a silent switch: nothing asked the provider to use another
+    // way to pay.
+    assert!(chatgpt_acts(&events.borrow()).is_empty());
 }
 
-/// A sign-in OpenAI no longer takes asks to sign the active account in
-/// again; one without plan usage asks to enable it, from the model
-/// setup.
+/// A plan refusal that wants a sign-in, or plan use enabled, leads to the
+/// Models screen, where the provider's section does it.
 #[gpui::test]
 fn plan_alerts_lead_to_signing_in(cx: &mut TestAppContext) {
     use tau_ui_remote::plan_usage::{PlanAction, PlanAlert};
-    let (workspace, mut cx, events) = open_demo(cx);
-    let active = demo::chatgpt_accounts()[0].id.clone();
+    let (workspace, mut cx, _) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
         let mut refusal = demo::usage_limit();
         refusal.recovery = tau_ai::retry::Recovery::SignInAgain;
@@ -2364,30 +2362,15 @@ fn plan_alerts_lead_to_signing_in(cx: &mut TestAppContext) {
             Some(PlanAlert::SignInAgain { .. })
         ));
         ws.plan_action(PlanAction::SignInAgain, cx);
-        assert_eq!(ws.route(), &Route::Setup(SetupStep::Model));
-        assert_eq!(ws.setup().model, ModelAccess::SigningIn { url: None });
-    });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::ChatGptSignIn {
-            account: Some(active.clone()),
-            consent: false,
-        })
-    );
-    workspace.update(&mut cx, |ws, cx| {
+        assert_eq!(ws.route(), &Route::Models);
+        ws.navigate(Route::Home, cx);
         let mut refusal = demo::usage_limit();
         refusal.recovery = tau_ai::retry::Recovery::EnablePlanUsage;
         ws.show_plan_refusal(&refusal, cx);
         assert_eq!(ws.plan_alert(), Some(&PlanAlert::EnablePlanUsage));
         ws.plan_action(PlanAction::EnablePlanUsage, cx);
+        assert_eq!(ws.route(), &Route::Models);
     });
-    assert_eq!(
-        events.borrow().last(),
-        Some(&WorkspaceEvent::ChatGptSignIn {
-            account: Some(active),
-            consent: true,
-        })
-    );
 }
 
 fn computer() -> tau_ui_remote::pairing::Computer {

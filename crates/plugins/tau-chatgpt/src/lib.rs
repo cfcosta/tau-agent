@@ -4,13 +4,14 @@
 
 #[cfg(feature = "host")]
 mod half;
+pub mod ui;
 
 use std::path::Path;
 
 #[cfg(feature = "host")]
-pub use half::{ChatGptHost, Over};
+pub use half::{ChatGptHost, Over, not_eligible};
 use tau_ai::chatgpt::{AccountId, AccountStatus, PlanUsage, Store};
-use tau_ui_plugin::{Declaration, Manifest, UiPlugin, provider::PROVIDER};
+pub use ui::ChatGptUi;
 
 pub const NAME: &str = "tau-chatgpt";
 
@@ -25,30 +26,4 @@ pub fn plan_account(config: &Path) -> Option<AccountId> {
     let account = store.active().ok()??;
     let status = store.load(&account).ok()?.status();
     (status == AccountStatus::SignedIn(PlanUsage::Enabled)).then_some(account)
-}
-
-/// tau-chatgpt with its UI: its row on the Plugins screen.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ChatGptUi;
-
-impl UiPlugin for ChatGptUi {
-    type State = ();
-    type Data = ();
-    type RepoData = ();
-    type Settings = ();
-
-    fn name(&self) -> &'static str {
-        NAME
-    }
-
-    fn declaration(&self) -> Declaration {
-        Declaration::new()
-            .fills(&[PROVIDER.name()])
-            .network(&["chatgpt.com", "auth.openai.com"])
-            .secrets(&["chatgpt"])
-    }
-
-    fn manifest(&self) -> Manifest<Self> {
-        Manifest::new()
-    }
 }

@@ -25,7 +25,7 @@ use tau_ui::{
 };
 use tau_ui_plugin::RepoId;
 use tau_ui_remote::{
-    models::{AccountState, Effort, ModelChoice},
+    models::{Effort, ModelChoice},
     view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
 };
 use tau_vcs_host::{Identity, Project};
@@ -2058,13 +2058,13 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let models = host.models();
     assert_eq!(models.settings, settings);
     assert_eq!(models.options, tau_ui_remote::models::plan_models());
-    assert!(models.access.chatgpt);
+    assert!(models.access.signed_in);
     assert_eq!(models.access.label, "ChatGPT plan");
-    let accounts = &models.access.accounts;
+    let accounts = chatgpt_of(&host).accounts;
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0].id, account.to_string());
     assert!(accounts[0].active);
-    assert_eq!(accounts[0].state, AccountState::Plan);
+    assert_eq!(accounts[0].state, tau_chatgpt::ui::AccountState::Plan);
     assert_eq!(host.refusal(), None);
 }
 
@@ -2120,7 +2120,7 @@ fn runs_use_the_plan_and_never_a_declined_one() {
             Identity::default(),
         )),
     );
-    assert!(host.models().access.chatgpt);
+    assert!(host.models().access.signed_in);
 
     // Switching to an account that declined plan usage leaves nothing
     // to run on: no model is offered and runs do not start.
@@ -2128,11 +2128,12 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     let left = credentials.plan_account();
     assert_eq!(left, None);
     let models = host.models();
-    assert!(!models.access.chatgpt);
+    assert!(!models.access.signed_in);
     assert!(models.options.is_empty());
-    let active = models.access.active_account().unwrap();
+    let data = chatgpt_of(&host);
+    let active = data.accounts.iter().find(|a| a.active).unwrap();
     assert_eq!(active.id, declined.to_string());
-    assert_eq!(active.state, AccountState::PlanDisabled);
+    assert_eq!(active.state, tau_chatgpt::ui::AccountState::PlanDisabled);
     let error = host
         .block_on(host.start("hi", &ModelChoice::default(), REPO))
         .unwrap_err();
@@ -2140,7 +2141,7 @@ fn runs_use_the_plan_and_never_a_declined_one() {
 
     // Back on the plan account, runs use the plan again.
     credentials.switch(plan.as_str()).unwrap();
-    assert!(host.models().access.chatgpt);
+    assert!(host.models().access.signed_in);
 }
 
 #[test]
@@ -4357,4 +4358,14 @@ fn the_interfaces_state_comes_back_after_a_restart() {
 fn jev_stats(catalog: &tau_ui_remote::catalog::Catalog) -> tau_jev::ui::Stats {
     let data = catalog.plugin_data[tau_jev::NAME].json();
     serde_json::from_value(data["stats"].clone()).expect("Jev is set up")
+}
+
+/// What tau-chatgpt says of the sign-ins, from its data in the host's
+/// catalog.
+fn chatgpt_of(host: &Host) -> tau_chatgpt::ui::Data {
+    let catalog = host.block_on(host.catalog());
+    serde_json::from_value(
+        catalog.plugin_data[tau_chatgpt::NAME].json().clone(),
+    )
+    .unwrap()
 }

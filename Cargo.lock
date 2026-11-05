@@ -9598,6 +9598,8 @@ name = "tau-chatgpt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde",
+ "serde_json",
  "tau-agent",
  "tau-ai",
  "tau-ui-plugin",
@@ -10473,6 +10475,7 @@ dependencies = [
  "tau-agents",
  "tau-ai",
  "tau-ask",
+ "tau-chatgpt",
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",

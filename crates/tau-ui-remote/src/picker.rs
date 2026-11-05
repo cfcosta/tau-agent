@@ -284,7 +284,7 @@ impl Workspace {
             if self.run(run).is_some_and(|view| view.status.is_live()));
         let models = &self.catalog.models;
         let filter = self.model_search.read(cx).text().to_owned();
-        let signed_in = models.access.chatgpt;
+        let signed_in = models.access.signed_in;
         // What auto does, as the plugin that picks the effort says.
         let auto_caption = self
             .contributions(

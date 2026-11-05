@@ -261,7 +261,8 @@ pub enum Link {
 pub enum Service {
     /// The welcome: no handshake yet.
     None,
-    ChatGpt,
+    /// The provider a step signs in to (`SetupView::link`).
+    Provider,
     Repos,
     /// A plugin's step.
     Plugin,
@@ -591,12 +592,15 @@ mod tests {
     fn only_a_changed_frame_starts_transitions() {
         let waiting = Frame {
             scene: Scene {
-                step: SetupStep::Model,
+                step: SetupStep::Plugin {
+                    plugin: "provider",
+                    step: "sign-in",
+                },
                 state: 1,
             },
             mood: Mood::Acting,
             link: Link::Waiting,
-            service: Service::ChatGpt,
+            service: Service::Provider,
             scale: Scale::Big,
             segments: vec![
                 Segment::Done,

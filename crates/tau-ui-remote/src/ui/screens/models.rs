@@ -1,15 +1,11 @@
 //! Model settings: each agent's default, which models the picker shows,
-//! the accounts tau reaches them with, and plugins' sections: the
-//! forge's sign-in.
+//! and plugins' sections: the provider's accounts, the forge's sign-in.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
 
 use crate::{
-    assets::Icon,
-    models::{AccessInfo, AccountState},
-    plan_usage,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp},
-    ui::{self, ButtonKind, Material as _, heading, mono},
+    theme::{Design as _, Theme, Type, sp},
+    ui::{self, heading, mono},
     workspace::{PickerTarget, Workspace},
 };
 
@@ -97,13 +93,6 @@ pub fn render(
         })
         .collect::<Vec<_>>();
 
-    let access = &models.access;
-    let chatgpt = chatgpt_section(access, t, cx);
-    let access_card = ui::panel(4.5, t)
-        .gap(sp(3.))
-        .child(heading("Accounts", t))
-        .child(chatgpt);
-
     let main = div()
         .flex_1()
         .min_w(rems(0.))
@@ -118,7 +107,8 @@ pub fn render(
         ))
         .child(heading("Defaults", t))
         .child(ui::card(t).children(defaults))
-        // What plugins add to the screen: their settings.
+        // What plugins add to the screen: the provider's accounts, the
+        // forge's sign-in, their settings.
         .children(ws.drawn(
             tau_ui_plugin::points::MODELS,
             &tau_ui_plugin::points::AtApp,
@@ -126,169 +116,5 @@ pub fn render(
         ))
         .child(heading("In the picker", t))
         .child(ui::card(t).child(header).children(rows));
-    let side = div()
-        .flex()
-        .flex_col()
-        .gap(sp(4.))
-        .when(!compact, |side| {
-            side.w(rems(21.25)).flex_shrink_0().pt(sp(14.5))
-        })
-        .child(access_card);
-    ui::screen(
-        "models",
-        compact,
-        div()
-            .flex()
-            .when(compact, |row| row.flex_col())
-            .gap(sp(7.))
-            .child(main)
-            .child(side),
-    )
-    .into_any_element()
-}
-
-/// The ChatGPT sign-ins: each saved account, the active one marked, and
-/// what can be done with it: sign in, switch, enable plan use, sign out.
-fn chatgpt_section(
-    access: &AccessInfo,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> gpui::Div {
-    let active = access.active_account();
-    let status = match active.map(|account| account.state) {
-        _ if access.chatgpt => "Runs use your ChatGPT plan",
-        Some(AccountState::PlanDisabled) => {
-            "Signed in, but plan use isn't enabled · enable it to run tasks"
-        }
-        Some(AccountState::SignedOut) => "Signed out · sign in again",
-        _ => "Not signed in",
-    };
-    let header = div()
-        .flex()
-        .items_center()
-        .gap(sp(2.5))
-        .child(ui::icon(
-            Icon::Chat,
-            IconSize::LARGE,
-            if access.chatgpt { t.green } else { t.dim },
-        ))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems(0.))
-                .flex()
-                .flex_col()
-                .gap(sp(0.5))
-                .child("ChatGPT")
-                .child(ui::text(status, Type::CAPTION, t.muted)),
-        )
-        .child(
-            div()
-                .id("chatgpt-add")
-                .child(ui::button(
-                    if access.accounts.is_empty() {
-                        "Continue with ChatGPT"
-                    } else {
-                        "Add account"
-                    },
-                    ButtonKind::Secondary,
-                    t,
-                ))
-                .on_click(cx.listener(|ws, _, _, cx| {
-                    ws.connect_model(cx);
-                    ws.sign_in_chatgpt(None, false, cx);
-                })),
-        );
-    let rows = access.accounts.iter().map(|account| {
-        let id = account.id.clone();
-        let state = match account.state {
-            AccountState::Plan => "Plan use enabled",
-            AccountState::PlanDisabled => "Plan use not enabled",
-            AccountState::SignedOut => "Signed out",
-        };
-        div()
-            .id(SharedString::from(format!("chatgpt-account-{id}")))
-            .flex()
-            .items_center()
-            .gap(sp(2.))
-            .px(sp(2.5))
-            .py(sp(1.75))
-            .rounded(radius::CONTROL)
-            .when(account.active, |row| row.key(t))
-            .when(!account.active, |row| {
-                row.cursor_pointer()
-                    .hover(|style| style.bg(gpui::white().opacity(0.04)))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.switch_chatgpt(&id, cx)
-                    }))
-            })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(rems(0.))
-                    .flex()
-                    .flex_col()
-                    .gap(sp(0.25))
-                    .child(
-                        div()
-                            .typeset(Type::SMALL)
-                            .truncate()
-                            .child(account.label.clone()),
-                    )
-                    .child(ui::text(state, Type::MICRO, t.dim)),
-            )
-            .child(if account.active {
-                ui::badge("Active", t.green, t.border_strong).into_any_element()
-            } else {
-                ui::text("Switch", Type::CAPTION, t.blue).into_any_element()
-            })
-    });
-    let actions = active.map(|account| {
-        let id = account.id.clone();
-        let main = match account.state {
-            AccountState::Plan => div()
-                .id("chatgpt-manage-usage")
-                .child(ui::button(
-                    plan_usage::MANAGE_USAGE,
-                    ButtonKind::Secondary,
-                    t,
-                ))
-                .on_click(cx.listener(|ws, _, _, cx| ws.manage_usage(cx))),
-            AccountState::PlanDisabled => div()
-                .id("chatgpt-enable")
-                .child(ui::button(
-                    "Enable ChatGPT plan use",
-                    ButtonKind::Primary,
-                    t,
-                ))
-                .on_click(cx.listener(|ws, _, _, cx| ws.enable_plan_usage(cx))),
-            AccountState::SignedOut => div()
-                .id("chatgpt-sign-in-again")
-                .child(ui::button("Sign in again", ButtonKind::Primary, t))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.connect_model(cx);
-                    ws.sign_in_chatgpt(Some(id.clone()), false, cx);
-                })),
-        };
-        div().flex().gap(sp(2.)).child(main).when(
-            account.state != AccountState::SignedOut,
-            |row| {
-                row.child(
-                    div()
-                        .id("account-chatgpt")
-                        .child(ui::button("Sign out", ButtonKind::Secondary, t))
-                        .on_click(cx.listener(|ws, _, _, cx| ws.sign_out(cx))),
-                )
-            },
-        )
-    });
-    div()
-        .flex()
-        .flex_col()
-        .gap(sp(2.))
-        .child(header)
-        .when(!access.accounts.is_empty(), |section| {
-            section.child(div().flex().flex_col().gap(sp(0.5)).children(rows))
-        })
-        .children(actions)
+    ui::screen("models", compact, div().flex().child(main)).into_any_element()
 }

@@ -205,47 +205,14 @@ impl ModelSettings {
 /// (ChatGPT Settings → Usage).
 pub const USAGE_SETTINGS_URL: &str = tau_ai::chatgpt::USAGE_SETTINGS_URL;
 
-/// What a saved ChatGPT sign-in can do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AccountState {
-    /// Signed in, and the plan may be used.
-    Plan,
-    /// Signed in, but the user did not allow plan usage: runs cannot use
-    /// it until they enable it.
-    PlanDisabled,
-    /// Signed out, or the sign-in died: sign in again.
-    SignedOut,
-}
-
-/// A saved ChatGPT sign-in, for the account picker.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChatGptAccount {
-    /// Its id in tau's store of sign-ins.
-    pub id: String,
-    /// Its email, kept distinct from the other accounts' labels.
-    pub label: String,
-    pub state: AccountState,
-    /// The account tau signs in with.
-    pub active: bool,
-}
-
-/// How the host reaches models, for the picker's footer and the
-/// accounts on the Models screen.
+/// How the host reaches models, for the picker's footer: what fills
+/// `tau.provider` says (ADR 0045).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessInfo {
     /// What runs use: `ChatGPT plan`, or `signed out`.
     pub label: String,
-    /// Runs use the active ChatGPT account's plan.
-    pub chatgpt: bool,
-    /// The saved ChatGPT sign-ins, by label.
-    pub accounts: Vec<ChatGptAccount>,
-}
-
-impl AccessInfo {
-    /// The account tau signs in with, if one is saved.
-    pub fn active_account(&self) -> Option<&ChatGptAccount> {
-        self.accounts.iter().find(|account| account.active)
-    }
+    /// Runs have a model to run on.
+    pub signed_in: bool,
 }
 
 /// Everything about models the interface shows.

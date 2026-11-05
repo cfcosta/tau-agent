@@ -648,6 +648,7 @@ pub(super) fn apply_push(
         Push::Alert { title, message } => workspace.update(cx, |ws, cx| {
             ws.apply(HostUpdate::alert(title, message), cx)
         }),
+        Push::OpenUrl(url) => cx.open_url(&url),
     }
 }
 

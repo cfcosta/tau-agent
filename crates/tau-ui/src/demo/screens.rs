@@ -5,7 +5,7 @@ use gpui::Context;
 use tau_ui_plugin::PluginValue;
 
 use super::*;
-use crate::{route::Route, setup::ModelAccess, workspace::PickerTarget};
+use crate::{route::Route, workspace::PickerTarget};
 
 /// Opens a screen of the demo on the workspace, with what it needs from
 /// the demo's host.
@@ -153,46 +153,52 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("github-signed-in", |ws, host, cx| {
         github_step(ws, host, signed_in(), false, cx)
     }),
-    ("model", |ws, _, cx| setup_at(ws, SetupStep::Model, cx)),
+    ("model", |ws, host, cx| {
+        chatgpt_at(ws, host, tau_chatgpt::ui::SignIn::None, cx)
+    }),
     ("repos", |ws, _, cx| setup_at(ws, SetupStep::Repos, cx)),
     ("ready", |ws, _, cx| setup_at(ws, SetupStep::Ready, cx)),
     // The model step's other states: waiting for the ChatGPT sign-in,
     // the wait ending in one after 2.5 s to watch the handshake land,
     // signed in, plan use declined, and an account that cannot share
     // its plan.
-    ("plan-signing-in", |ws, _, cx| {
-        let url = Some(DEMO_AUTHORIZE_URL.into());
-        model_at(ws, ModelAccess::SigningIn { url }, cx)
+    ("plan-signing-in", |ws, host, cx| {
+        let url = DEMO_AUTHORIZE_URL.into();
+        chatgpt_at(ws, host, tau_chatgpt::ui::SignIn::Waiting { url }, cx)
     }),
-    ("plan-connecting", |ws, _, cx| {
-        let url = Some(DEMO_AUTHORIZE_URL.into());
-        model_at(ws, ModelAccess::SigningIn { url }, cx);
+    ("plan-connecting", |ws, host, cx| {
+        let url = DEMO_AUTHORIZE_URL.into();
+        chatgpt_at(ws, host, tau_chatgpt::ui::SignIn::Waiting { url }, cx);
         cx.spawn(async |workspace, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(2500))
                 .await;
-            let connected = ModelAccess::Connected {
-                label: "gpt-6.1-sol · ChatGPT plan".into(),
-            };
-            let update = HostUpdate::Setup(SetupUpdate::Model(connected));
-            let _ = workspace.update(cx, |ws, cx| ws.apply(update, cx));
+            let _ = workspace.update(cx, |ws, cx| {
+                let mut catalog = ws.catalog().clone();
+                catalog.plugin_data.insert(
+                    tau_chatgpt::NAME.into(),
+                    tau_ui_plugin::PluginValue::typed(chatgpt(connected())),
+                );
+                ws.set_catalog(catalog, cx);
+            });
         })
         .detach();
     }),
-    ("model-signed-in", |ws, _, cx| {
-        let label = "gpt-6.1-sol · ChatGPT plan".into();
-        model_at(ws, ModelAccess::Connected { label }, cx)
+    ("model-signed-in", |ws, host, cx| {
+        chatgpt_at(ws, host, connected(), cx)
     }),
-    ("plan-declined", |ws, _, cx| {
+    ("plan-declined", |ws, host, cx| {
         let account = chatgpt_accounts()[0].label.clone();
-        model_at(ws, ModelAccess::PlanDisabled { account }, cx)
+        let sign_in = tau_chatgpt::ui::SignIn::PlanDisabled { account };
+        chatgpt_at(ws, host, sign_in, cx)
     }),
-    ("not-eligible", |ws, _, cx| {
+    ("not-eligible", |ws, host, cx| {
         let account = chatgpt_accounts()[0].label.clone();
         let detail = "403 subscription_sharing_user_not_eligible · request \
                       req_7f3a9c01"
             .into();
-        model_at(ws, ModelAccess::NotEligible { account, detail }, cx)
+        let sign_in = tau_chatgpt::ui::SignIn::NotEligible { account, detail };
+        chatgpt_at(ws, host, sign_in, cx)
     }),
     // A phone pairing, which starts at its welcome so the others can
     // go back; and the computer's Phones screen.
@@ -588,15 +594,18 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.navigate(Route::Run(run_id()), cx);
         ws.apply(HostUpdate::PlanRefusal(usage_limit()), cx);
     }),
-    ("plan-disabled", |ws, _, cx| {
+    ("plan-disabled", |ws, host, cx| {
         let mut catalog = ws.catalog().clone();
         let access = &mut catalog.models.access;
-        access.chatgpt = false;
+        access.signed_in = false;
         access.label = "signed out".into();
-        for account in &mut access.accounts {
-            account.active = account.state == AccountState::PlanDisabled;
-        }
         ws.apply(HostUpdate::catalog(catalog), cx);
+        let mut data = chatgpt(tau_chatgpt::ui::SignIn::None);
+        for account in &mut data.accounts {
+            account.active =
+                account.state == tau_chatgpt::ui::AccountState::PlanDisabled;
+        }
+        chatgpt_data(ws, host, data, cx);
         ws.navigate(Route::Models, cx);
     }),
     // Dialogs: a sample one, and a long one on New run.
@@ -1580,20 +1589,17 @@ fn github_step(
     setup_at(workspace, GITHUB_STEP, cx);
 }
 
-/// Onboarding's model step with the model reached as `model`.
-fn model_at(
+/// Onboarding's first step, tau-chatgpt's sign-in, standing as
+/// `sign_in`.
+fn chatgpt_at(
     workspace: &mut Workspace,
-    model: ModelAccess,
+    host: &DemoHost,
+    sign_in: tau_chatgpt::ui::SignIn,
     cx: &mut Context<Workspace>,
 ) {
-    workspace.set_setup(
-        Setup {
-            model,
-            ..setup(SetupStep::Model)
-        },
-        cx,
-    );
-    workspace.navigate(Route::Setup(SetupStep::Model), cx);
+    chatgpt_data(workspace, host, chatgpt(sign_in), cx);
+    workspace.set_setup(setup(CHATGPT_STEP), cx);
+    workspace.navigate(Route::Setup(CHATGPT_STEP), cx);
 }
 
 fn pair_at(

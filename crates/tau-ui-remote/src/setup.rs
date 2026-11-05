@@ -1,6 +1,7 @@
-//! What onboarding shows: the model, the repositories to clone from the
-//! forge and how their clones are going. Plugins add their own steps
-//! (`points::SETUP`): the forge's sign-in before the repositories.
+//! What onboarding shows: the repositories to clone from the forge and
+//! how their clones are going. Plugins add their own steps
+//! (`points::SETUP`): the provider's sign-in first, the forge's before
+//! the repositories.
 //!
 //! The host fills it in as sign-ins and clones progress, through
 //! [`Workspace::update_setup`](crate::Workspace::update_setup).
@@ -12,7 +13,6 @@ use tau_ui_plugin::points::{SetupAt, SetupClone, SetupRepo};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupStep {
     Welcome,
-    Model,
     Repos,
     /// A plugin's step (`points::SETUP`), before the repositories or
     /// after them as it says: `step` is the plugin's name for it.
@@ -34,9 +34,9 @@ pub struct Stage {
 
 impl Stage {
     /// tau's stages around the plugins' `steps`, each a step, what the
-    /// bar calls it and where it sits: Model, the plugins' before the
-    /// repositories, Repositories, the plugins' after them, then Ready;
-    /// plugins' in the order given.
+    /// bar calls it and where it sits: the plugins' model steps, the
+    /// plugins' before the repositories, Repositories, the plugins'
+    /// after them, then Ready; plugins' in the order given.
     pub fn all(
         steps: impl IntoIterator<Item = (SetupStep, String, SetupAt)>,
     ) -> Vec<Self> {
@@ -44,16 +44,19 @@ impl Stage {
             name: name.to_owned(),
             step,
         };
-        let (before, after): (Vec<_>, Vec<_>) = steps
-            .into_iter()
-            .partition(|(_, _, at)| *at == SetupAt::BeforeRepositories);
-        let plugins = |steps: Vec<(SetupStep, String, SetupAt)>| {
-            steps.into_iter().map(|(step, name, _)| Self { name, step })
+        let steps: Vec<_> = steps.into_iter().collect();
+        let at = |place: SetupAt| {
+            steps.iter().filter(move |(_, _, at)| *at == place).map(
+                |(step, name, _)| Self {
+                    name: name.clone(),
+                    step: *step,
+                },
+            )
         };
-        let mut stages = vec![stage("Model", SetupStep::Model)];
-        stages.extend(plugins(before));
+        let mut stages: Vec<Self> = at(SetupAt::Model).collect();
+        stages.extend(at(SetupAt::BeforeRepositories));
         stages.push(stage("Repositories", SetupStep::Repos));
-        stages.extend(plugins(after));
+        stages.extend(at(SetupAt::AfterRepositories));
         stages.push(stage("Ready", SetupStep::Ready));
         stages
     }
@@ -78,42 +81,11 @@ impl SetupStep {
     pub fn title(self) -> &'static str {
         match self {
             Self::Welcome => "Welcome",
-            Self::Model => "Connect a model",
             Self::Repos => "Pick repositories",
             Self::Plugin { .. } => "Set up",
             Self::Ready => "First run",
         }
     }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ModelAccess {
-    #[default]
-    None,
-    /// A ChatGPT sign-in is open in the browser at `url`, once known;
-    /// its redirect can also be pasted.
-    SigningIn {
-        url: Option<String>,
-    },
-    /// Runs can start. `label` reads like `gpt-6.1-sol · ChatGPT plan`.
-    Connected {
-        label: String,
-    },
-    /// Signed in to ChatGPT as `account`, but without plan usage: runs
-    /// cannot use the plan until it is enabled.
-    PlanDisabled {
-        account: String,
-    },
-    /// Signed in, but OpenAI says plan use is not available to this
-    /// account or workspace (`subscription_sharing_user_not_eligible`,
-    /// `tau_ai`'s `Recovery::Restricted`). Signing in again with the same
-    /// account will not help. `detail` is the refusal as OpenAI sent it:
-    /// status, code and request id.
-    NotEligible {
-        account: String,
-        detail: String,
-    },
-    Failed(String),
 }
 
 /// A repository on the forge the user can pick.
@@ -158,7 +130,6 @@ pub struct RepoClone {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Setup {
-    pub model: ModelAccess,
     pub repos: Vec<RepoChoice>,
     pub clones: Vec<RepoClone>,
     /// Where clones go, as the user reads it: `~/.local/share/tau/repos/`.
@@ -170,7 +141,6 @@ pub struct Setup {
 impl Default for Setup {
     fn default() -> Self {
         Self {
-            model: ModelAccess::default(),
             repos: Vec::new(),
             clones: Vec::new(),
             storage: "~/.local/share/tau/repos/".into(),
@@ -182,7 +152,6 @@ impl Default for Setup {
 /// What the host learned while the user set up.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SetupUpdate {
-    Model(ModelAccess),
     /// The repositories on the forge the user can pick from.
     Repos(Vec<RepoChoice>),
     Clone(RepoClone),
@@ -191,7 +160,6 @@ pub enum SetupUpdate {
 impl Setup {
     pub fn update(&mut self, update: SetupUpdate) {
         match update {
-            SetupUpdate::Model(model) => self.model = model,
             SetupUpdate::Repos(repos) => self.repos = repos,
             SetupUpdate::Clone(clone) => {
                 match self.clones.iter_mut().find(|c| c.name == clone.name) {
@@ -291,14 +259,6 @@ impl Setup {
         let hidden = matching.len() - shown.len();
         (shown, hidden)
     }
-
-    /// The model label for the first run's chips.
-    pub fn model_label(&self) -> Option<&str> {
-        match &self.model {
-            ModelAccess::Connected { label } => Some(label),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -385,16 +345,18 @@ mod tests {
         );
     }
 
-    /// Plugins' steps sit before the repositories or between them and
-    /// Ready, as each says, in the order given; each step marks its own
-    /// stage, and the welcome none.
+    /// Plugins' steps sit first, before the repositories or between
+    /// them and Ready, as each says, in the order given; each step marks
+    /// its own stage, and the welcome none.
     #[test]
     fn plugins_steps_sit_around_the_repositories() {
         let step = |step| SetupStep::Plugin { plugin: "p", step };
-        let (sign_in, one, two) = (step("sign-in"), step("one"), step("two"));
+        let (model, sign_in, one, two) =
+            (step("model"), step("sign-in"), step("one"), step("two"));
         let stages = Stage::all([
             (one, "One".to_owned(), SetupAt::AfterRepositories),
             (sign_in, "Sign in".to_owned(), SetupAt::BeforeRepositories),
+            (model, "Model".to_owned(), SetupAt::Model),
             (two, "Two".to_owned(), SetupAt::AfterRepositories),
         ]);
         let names: Vec<&str> =
@@ -406,11 +368,11 @@ mod tests {
         assert_eq!(sign_in.stage(&stages), Some(1));
         assert_eq!(one.stage(&stages), Some(3));
         assert_eq!(SetupStep::Ready.stage(&stages), Some(5));
-        assert_eq!(SetupStep::Model.stage(&stages), Some(0));
+        assert_eq!(model.stage(&stages), Some(0));
         assert_eq!(SetupStep::Welcome.stage(&stages), None);
         let gone = step("gone");
         assert_eq!(gone.stage(&stages), Some(2), "where it would follow");
-        assert_eq!(Stage::all([]).len(), 3);
+        assert_eq!(Stage::all([]).len(), 2);
     }
 
     /// What plugins' steps see: the picked repositories with their

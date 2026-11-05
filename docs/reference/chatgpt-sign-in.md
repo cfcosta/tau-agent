@@ -2,8 +2,9 @@
 
 - Status: implemented. `tau_ai::chatgpt` signs in, keeps tokens, signs
   out and lists models; `OpenAi::chatgpt` runs inference on the plan
-  over `wss://api.openai.com/v1/responses`; tau-ui signs in, switches
-  accounts and shows the plan's state. It replaces the Codex backend
+  over `wss://api.openai.com/v1/responses`; the tau-chatgpt plugin signs
+  in, switches accounts and shows the plan's state, and fills the
+  `tau.provider` slot runs reach models through (ADR 0045). It replaces the Codex backend
   route (decision 0008, superseded), which is gone, and it is the only
   way tau reaches OpenAI: there are no API keys (decision 0012).
 - Source: OpenAI, "ChatGPT plan usage for open-source apps",
@@ -188,7 +189,7 @@ its client id and the host id stay for the next sign-in.
 
 `ChatGpt::models` sends `GET /v1/models` with the access token and keeps
 the `models` entries with `visibility: "list"`, in the server's order,
-as `ModelInfo { slug, display_name }`. tau-ui calls it once per sign-in
+as `ModelInfo { slug, display_name }`. tau-chatgpt calls it once per sign-in
 as the eligibility check only, and does not show what it lists: the
 account's catalog leaves out models the plan route runs (`gpt-6-sol`,
 `gpt-6.1-sol` and `gpt-6-luna` completed on 2026-09-29 without being
@@ -290,29 +291,35 @@ response completes; tau-ui reads it when a run ends in an error.
 
 Nothing moves a run to another way of paying after a plan error.
 
-## tau-ui
+## tau-chatgpt
 
 - Runs use the active account's plan when it is signed in with plan
-  usage (`accounts::Credentials::access`), and nothing else.
-- The Models screen lists every saved account (label, state, the
+  usage (`tau_chatgpt::plan_account`), and nothing else: tau-chatgpt's
+  provider reads the saved sign-ins as each run opens, so a sign-in, a
+  switch or a sign-out counts for the runs after it.
+- Its section of the Models screen lists every saved account (label, state, the
   active one marked): "Continue with ChatGPT" / "Add account", switch,
   "Sign out" (revokes; says so when OpenAI did not confirm), "Manage
   usage", and for a sign-in without plan usage "Enable ChatGPT plan use"
   (signs in again with `prompt=consent`).
-- Onboarding's model step: "Continue with ChatGPT" opens the browser;
-  while it waits, the page can be opened again or the redirect pasted.
+- Setup's first step, tau-chatgpt's (`SetupAt::Model`, required):
+  "Continue with ChatGPT" opens the browser on the computer
+  (`HostCx::open_url`); while it waits, the page can be opened again or
+  the redirect pasted. The step's link drives the handshake above it
+  (`SetupView::link`). A phone cannot ask it anything
+  (`Declaration::computer_only`).
 - A run stopped by a usage limit: "Usage limit reached — Review your
   plan or this app's limit in ChatGPT settings." with "Manage usage";
   a dead sign-in asks to sign in again; a sign-in without plan usage
   offers "Enable ChatGPT plan use", the only way forward; a restriction
   shows its message.
-- The picker, and onboarding's signed-in model step, offer
-  `tau_ai::model::plan_models()` while signed in (the table's names, in
+- The picker offers the provider's models, `tau_ai::model::plan_models()`
+  while signed in (the table's names, in
   family order), without prices. `DEFAULT_MODEL` is the first of them;
   a saved default the plan no longer offers falls back to it.
 - Each sign-in or switch of account calls `ChatGpt::models` once as the
-  eligibility check: a restricted refusal (`Recovery::Restricted`) keeps
-  onboarding on the model step as not eligible. Its listing is not
+  eligibility check: a restricted refusal (`Recovery::Restricted`) shows
+  the step as not eligible. Its listing is not
   shown.
 - "Manage usage" opens `USAGE_SETTINGS_URL`
   (`https://chatgpt.com/#settings/Usage`): the docs name the page but

@@ -21,7 +21,6 @@ use crate::{
     Workspace,
     WorkspaceEvent,
     catalog::{Catalog, Repo, StoreInfo},
-    models::{AccountState, ChatGptAccount},
     pairing::{
         Computer,
         PairRequest,
@@ -31,15 +30,7 @@ use crate::{
         Progress,
     },
     pull_request::{Checks, PrCommit, PrState, PullRequest},
-    setup::{
-        CloneState,
-        ModelAccess,
-        RepoChoice,
-        RepoClone,
-        Setup,
-        SetupStep,
-        SetupUpdate,
-    },
+    setup::{CloneState, RepoChoice, RepoClone, Setup, SetupStep, SetupUpdate},
     update::HostUpdate,
     view::{
         BranchCode,
@@ -769,21 +760,17 @@ pub fn setup(step: SetupStep) -> Setup {
         repos: repos(),
         ..Setup::default()
     };
-    // The model comes first; tau-github's step before the repositories,
-    // other plugins' steps after the clones start.
-    let (model, clones) = match step {
-        SetupStep::Welcome | SetupStep::Model => (false, false),
-        SetupStep::Plugin { plugin, .. } if plugin == tau_github::NAME => {
-            (true, false)
+    // The model comes first, then tau-github's step before the
+    // repositories, other plugins' steps after the clones start.
+    let clones = match step {
+        SetupStep::Plugin { plugin, .. }
+            if plugin == tau_github::NAME || plugin == tau_chatgpt::NAME =>
+        {
+            false
         }
-        SetupStep::Repos => (true, false),
-        SetupStep::Plugin { .. } | SetupStep::Ready => (true, true),
+        SetupStep::Welcome | SetupStep::Repos => false,
+        SetupStep::Plugin { .. } | SetupStep::Ready => true,
     };
-    if model {
-        setup.model = ModelAccess::Connected {
-            label: "gpt-6.1-sol · ChatGPT plan".into(),
-        };
-    }
     if clones {
         setup.clones = vec![
             RepoClone {
@@ -810,6 +797,51 @@ pub const GITHUB_STEP: SetupStep = SetupStep::Plugin {
     plugin: tau_github::NAME,
     step: tau_github::STEP,
 };
+
+/// tau-chatgpt's sign-in step.
+pub const CHATGPT_STEP: SetupStep = SetupStep::Plugin {
+    plugin: tau_chatgpt::NAME,
+    step: tau_chatgpt::ui::STEP,
+};
+
+/// Shows tau-chatgpt as `data` says from now on, in place of what its
+/// host half says: the demo reaches no ChatGPT.
+pub fn chatgpt_data(
+    ws: &mut Workspace,
+    host: &DemoHost,
+    data: tau_chatgpt::ui::Data,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let mut catalog = ws.catalog().clone();
+    let value = tau_ui_plugin::PluginValue::typed(data);
+    catalog
+        .plugin_data
+        .insert(tau_chatgpt::NAME.into(), value.clone());
+    if let Some(info) = catalog
+        .plugins
+        .iter()
+        .find(|plugin| plugin.name == tau_chatgpt::NAME)
+        .cloned()
+    {
+        host.pin(info, value);
+    }
+    ws.set_catalog(catalog, cx);
+}
+
+/// tau-chatgpt's data as `sign_in`, with the demo's accounts.
+pub fn chatgpt(sign_in: tau_chatgpt::ui::SignIn) -> tau_chatgpt::ui::Data {
+    tau_chatgpt::ui::Data {
+        sign_in,
+        accounts: chatgpt_accounts(),
+    }
+}
+
+/// The demo's ChatGPT plan, connected.
+pub fn connected() -> tau_chatgpt::ui::SignIn {
+    tau_chatgpt::ui::SignIn::Connected {
+        account: chatgpt_accounts()[0].label.clone(),
+    }
+}
 
 /// Shows tau-github's sign-in as `sign_in` from now on, in place of what
 /// its host half says: the demo reaches no GitHub.
@@ -927,8 +959,9 @@ pub fn start(workspace: &Entity<Workspace>, cx: &mut App) -> Arc<DemoHost> {
     workspace.update(cx, |ws, cx| {
         let catalog = host.catalog(ws.catalog().clone());
         ws.apply(HostUpdate::catalog(catalog), cx);
-        // Signed in to GitHub, as the demo's catalog says.
+        // Signed in to GitHub and ChatGPT, as the demo's catalog says.
         github_sign_in(ws, &host, signed_in(), cx);
+        chatgpt_data(ws, &host, chatgpt(connected()), cx);
     });
     respond(workspace, host.clone(), cx);
     host
@@ -956,6 +989,8 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                     Push::Alert { title, message } => {
                         HostUpdate::alert(title, message)
                     }
+                    // The demo opens no browser.
+                    Push::OpenUrl(_) => continue,
                 };
                 if workspace.update(cx, |ws, cx| ws.apply(update, cx)).is_err()
                 {
@@ -979,6 +1014,9 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                         Answer::Pair(update) => ws.update_pairing(update, cx),
                         Answer::GitHub(sign_in) => {
                             github_sign_in(ws, &host, sign_in, cx)
+                        }
+                        Answer::ChatGpt(data) => {
+                            chatgpt_data(ws, &host, data, cx)
                         }
                     });
                     if done.is_err() {
@@ -1073,38 +1111,84 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 };
                 later(steps, cx)
             }
-            // The browser never opens in the demo: the page waits, and a
-            // pasted redirect finishes it.
-            WorkspaceEvent::ChatGptSignIn { .. } => {
-                let pending = ModelAccess::SigningIn {
-                    url: Some(DEMO_AUTHORIZE_URL.into()),
-                };
-                later(vec![(300, setup(SetupUpdate::Model(pending)))], cx)
-            }
-            WorkspaceEvent::ChatGptCallback { .. } => {
-                let connected = ModelAccess::Connected {
-                    label: "gpt-6.1-sol · ChatGPT plan".into(),
-                };
-                later(vec![(600, setup(SetupUpdate::Model(connected)))], cx)
-            }
-            WorkspaceEvent::SwitchChatGpt { account } => recatalog(
-                &|catalog| {
-                    let access = &mut catalog.models.access;
-                    for known in &mut access.accounts {
-                        known.active = known.id == *account;
+            // The demo reaches no ChatGPT: the browser never opens, the
+            // page waits, and a pasted redirect finishes it.
+            WorkspaceEvent::PluginAct { plugin, action, .. }
+                if plugin == tau_chatgpt::NAME =>
+            {
+                use tau_chatgpt::ui::{AccountState, Act, SignIn};
+                let mut data = workspace
+                    .read(cx)
+                    .catalog()
+                    .plugin_data
+                    .get(tau_chatgpt::NAME)
+                    .and_then(|value| {
+                        serde_json::from_value::<tau_chatgpt::ui::Data>(
+                            value.json().clone(),
+                        )
+                        .ok()
+                    })
+                    .unwrap_or_else(|| chatgpt(SignIn::None));
+                let delay = match serde_json::from_value(action.clone()) {
+                    Ok(Act::SignIn { .. }) => {
+                        data.sign_in = SignIn::Waiting {
+                            url: DEMO_AUTHORIZE_URL.into(),
+                        };
+                        300
                     }
-                    access.chatgpt =
-                        access.active_account().is_some_and(|active| {
-                            active.state == AccountState::Plan
-                        });
-                    access.label = if access.chatgpt {
-                        "ChatGPT plan".into()
-                    } else {
-                        "signed out".into()
-                    };
-                },
-                cx,
-            ),
+                    Ok(Act::Callback { .. }) => {
+                        data.sign_in = connected();
+                        600
+                    }
+                    Ok(Act::Cancel) => {
+                        data.sign_in = SignIn::None;
+                        0
+                    }
+                    Ok(Act::Switch { account }) => {
+                        for known in &mut data.accounts {
+                            known.active = known.id == account;
+                        }
+                        let active = data.accounts.iter().find(|a| a.active);
+                        data.sign_in = match active {
+                            Some(active)
+                                if active.state == AccountState::Plan =>
+                            {
+                                SignIn::Connected {
+                                    account: active.label.clone(),
+                                }
+                            }
+                            _ => SignIn::None,
+                        };
+                        0
+                    }
+                    // Signing out leaves the active account signed out.
+                    Ok(Act::SignOut) => {
+                        for account in &mut data.accounts {
+                            if account.active {
+                                account.state = AccountState::SignedOut;
+                            }
+                        }
+                        data.sign_in = SignIn::None;
+                        0
+                    }
+                    Err(_) => return,
+                };
+                let signed_in =
+                    matches!(data.sign_in, SignIn::Connected { .. });
+                recatalog(
+                    &|catalog| {
+                        let access = &mut catalog.models.access;
+                        access.signed_in = signed_in;
+                        access.label = if signed_in {
+                            "ChatGPT plan".into()
+                        } else {
+                            "signed out".into()
+                        };
+                    },
+                    cx,
+                );
+                later(vec![(delay, Answer::ChatGpt(data))], cx)
+            }
             WorkspaceEvent::CloneRepos { repos } => {
                 let steps = (1..=10)
                     .flat_map(|tenth| {
@@ -1327,20 +1411,6 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                     ws.replay(run.clone(), steps, cx);
                 });
             }
-            // Signing out leaves the active account signed out.
-            WorkspaceEvent::SignOut => recatalog(
-                &|catalog| {
-                    let access = &mut catalog.models.access;
-                    access.chatgpt = false;
-                    access.label = "signed out".into();
-                    for account in &mut access.accounts {
-                        if account.active {
-                            account.state = AccountState::SignedOut;
-                        }
-                    }
-                },
-                cx,
-            ),
             WorkspaceEvent::CompareCode { main, fork } => {
                 let code = HostUpdate::BranchCode {
                     main: main.clone(),
@@ -1360,6 +1430,8 @@ enum Answer {
     Pair(PairingUpdate),
     /// tau-github's sign-in, as its host half would say it.
     GitHub(tau_github::SignIn),
+    /// tau-chatgpt's, as its host half would say it.
+    ChatGpt(tau_chatgpt::ui::Data),
 }
 
 /// The code of `retry-after`, tau-agent's main chat, and its `backoff`
@@ -1507,15 +1579,16 @@ pub fn usage_limit() -> tau_ai::refusal::Refusal {
 
 /// The demo's ChatGPT sign-ins: a personal account whose plan runs use,
 /// and a work one.
-pub fn chatgpt_accounts() -> Vec<ChatGptAccount> {
+pub fn chatgpt_accounts() -> Vec<tau_chatgpt::ui::Account> {
+    use tau_chatgpt::ui::{Account, AccountState};
     vec![
-        ChatGptAccount {
+        Account {
             id: "oaiapp_demo1-1a2b3c".into(),
             label: "you@example.com".into(),
             state: AccountState::Plan,
             active: true,
         },
-        ChatGptAccount {
+        Account {
             id: "oaiapp_demo2-4d5e6f".into(),
             label: "you@work.example".into(),
             state: AccountState::PlanDisabled,
@@ -1547,8 +1620,7 @@ pub fn models() -> crate::models::Models {
         settings,
         access: AccessInfo {
             label: "ChatGPT plan".into(),
-            chatgpt: true,
-            accounts: chatgpt_accounts(),
+            signed_in: true,
         },
         agents: vec![
             ("coder".into(), "Runs you start from the composer.".into()),

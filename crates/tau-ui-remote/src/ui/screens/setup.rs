@@ -38,6 +38,7 @@ use gpui::{
     size as area,
     svg,
 };
+use tau_ui_plugin::points::{LinkState, SetupLink};
 
 use crate::{
     assets::{Brand, Icon},
@@ -58,17 +59,12 @@ use crate::{
         loop_of,
         mix,
         pop,
-        stagger,
     },
-    route::Route,
-    setup::{CloneState, ModelAccess, SetupStep, Stage},
+    setup::{CloneState, SetupStep, Stage},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{Material as _, bar, icon, icon_button, link, mono, text_link},
+    ui::{Material as _, bar, icon, icon_button, link, mono},
     workspace::Workspace,
 };
-
-/// Where ChatGPT explains plan use and who can share it.
-const PLAN_HELP_URL: &str = "https://help.openai.com";
 
 /// The waiting dot's halo, when the comet does not run; the dot is half
 /// as wide.
@@ -141,25 +137,6 @@ fn frame(ws: &Workspace, step: SetupStep, stages: &[Stage]) -> Frame {
         SetupStep::Welcome => {
             (0, Mood::Acting, Link::Idle, Service::None, Scale::Big)
         }
-        SetupStep::Model => {
-            let (state, mood, link) = match &ws.setup.model {
-                ModelAccess::None => (0, Mood::Acting, Link::Idle),
-                ModelAccess::Failed(_) => (5, Mood::Acting, Link::Idle),
-                ModelAccess::SigningIn { .. } => {
-                    (1, Mood::Acting, Link::Waiting)
-                }
-                ModelAccess::Connected { .. } => {
-                    (2, Mood::Done, Link::Connected)
-                }
-                ModelAccess::PlanDisabled { .. } => {
-                    (3, Mood::Acting, Link::Declined)
-                }
-                ModelAccess::NotEligible { .. } => {
-                    (4, Mood::Refused, Link::Blocked)
-                }
-            };
-            (state, mood, link, Service::ChatGpt, Scale::Big)
-        }
         SetupStep::Repos => (
             0,
             Mood::Acting,
@@ -167,13 +144,28 @@ fn frame(ws: &Workspace, step: SetupStep, stages: &[Stage]) -> Frame {
             Service::Repos,
             Scale::Small,
         ),
-        SetupStep::Plugin { .. } => (
-            0,
-            Mood::Acting,
-            Link::Connected,
-            Service::Plugin,
-            Scale::Small,
-        ),
+        SetupStep::Plugin { .. } => match plugin_link(ws, step) {
+            // A step that connects tau to a service: the provider's
+            // sign-in, drawn big as it stands.
+            Some(link) => {
+                let (state, mood, link) = match link.state {
+                    LinkState::Idle => (0, Mood::Acting, Link::Idle),
+                    LinkState::Waiting => (1, Mood::Acting, Link::Waiting),
+                    LinkState::Connected => (2, Mood::Done, Link::Connected),
+                    LinkState::Declined => (3, Mood::Acting, Link::Declined),
+                    LinkState::Blocked => (4, Mood::Refused, Link::Blocked),
+                    LinkState::Failed => (5, Mood::Acting, Link::Idle),
+                };
+                (state, mood, link, Service::Provider, Scale::Big)
+            }
+            None => (
+                0,
+                Mood::Acting,
+                Link::Connected,
+                Service::Plugin,
+                Scale::Small,
+            ),
+        },
         SetupStep::Ready => (
             0,
             Mood::Acting,
@@ -198,6 +190,15 @@ fn frame(ws: &Workspace, step: SetupStep, stages: &[Stage]) -> Frame {
         scale,
         segments,
     }
+}
+
+/// How the link of `step`, a plugin's, stands, when the step connects
+/// tau to a service (`SetupView::link`).
+fn plugin_link(ws: &Workspace, step: SetupStep) -> Option<SetupLink> {
+    ws.plugin_setup_steps()
+        .into_iter()
+        .find_map(|(found, view)| (found == step).then_some(view.link))
+        .flatten()
 }
 
 /// Records what this frame of onboarding shows, before it is drawn, so
@@ -282,7 +283,6 @@ pub fn render(
     let stages = ws.setup_stages();
     let body = match step {
         SetupStep::Welcome => welcome(ws, compact, t, cx),
-        SetupStep::Model => model(ws, compact, t, cx),
         SetupStep::Repos => repos(ws, compact, t, cx),
         SetupStep::Plugin { plugin, step } => {
             plugin_step(ws, plugin, step, compact, t, cx)
@@ -699,7 +699,7 @@ fn service_icon(
             .into_any_element()
     };
     match service {
-        Service::ChatGpt | Service::None => {
+        Service::Provider | Service::None => {
             brand_mark(Brand::ChatGpt, tile * 0.57 * scale, t.text, turn, t)
         }
         Service::Repos => glyph(Icon::Repo, 0.42),
@@ -715,7 +715,7 @@ fn service_tile(size: f32, beat: Beat, t: &Theme) -> AnyElement {
     let look = &t.setup;
     let edge = match beat.link {
         Link::Waiting | Link::Declined => t.accent_border,
-        Link::Connected if beat.service == Service::ChatGpt => look.green_edge,
+        Link::Connected if beat.service == Service::Provider => look.green_edge,
         Link::Blocked => t.red_border,
         _ => t.border,
     };
@@ -914,7 +914,7 @@ fn medallion(size: Size, beat: Beat, color: Hsla, t: &Theme) -> AnyElement {
 }
 
 /// The words over and under the line.
-type Words = (Option<&'static str>, Option<&'static str>);
+type Words = (Option<SharedString>, Option<SharedString>);
 
 /// The line between the tiles, with a word above it and one under it.
 fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
@@ -1089,7 +1089,7 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
         }
     };
     let inset = if size.tile < 100. { 4. } else { 16. };
-    let word = |text: &'static str, color: Hsla| {
+    let word = |text: SharedString, color: Hsla| {
         div()
             .absolute()
             .left_0()
@@ -1158,7 +1158,7 @@ fn handshake(
                 slot.child(handshake_at(
                     Size::between(from, to, e),
                     beat,
-                    words,
+                    words.clone(),
                     &theme,
                 ))
             },
@@ -1294,53 +1294,6 @@ fn light_button(
         })
 }
 
-/// "Continue with ChatGPT": the light button with ChatGPT's mark.
-fn chatgpt_button(
-    label: &'static str,
-    width: f32,
-    compact: bool,
-    t: &Theme,
-) -> Div {
-    light_button(
-        label,
-        Some(brand_mark(Brand::ChatGpt, 22., t.setup.on_light, 0., t)),
-        false,
-        compact,
-        t,
-    )
-    .when(!compact, |button| button.w(rems((width) / 16.)))
-}
-
-/// A quiet action on a dark chip.
-fn ghost_button(
-    label: impl Into<SharedString>,
-    trailing: Option<Icon>,
-    compact: bool,
-    t: &Theme,
-) -> Div {
-    div()
-        .h(rems(2.75))
-        .when(compact, |button| button.w_full())
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(sp(2.))
-        .px(sp(4.))
-        .flex_shrink_0()
-        .rounded(radius::LARGE)
-        .border_1()
-        .border_color(t.border)
-        .bevel(t.setup.surface_top, t.setup.surface, t)
-        .text_color(t.text_soft)
-        .typeset(Type::BODY.weighted(weight::EMPHASIS))
-        .cursor_pointer()
-        .hover(|style| style.border_color(t.border_strong))
-        .child(label.into())
-        .children(
-            trailing.map(|glyph| icon(glyph, IconSize::SMALL, t.text_soft)),
-        )
-}
-
 /// Words that act, without a box.
 fn text_button(label: impl Into<SharedString>, t: &Theme) -> Div {
     div()
@@ -1354,15 +1307,6 @@ fn text_button(label: impl Into<SharedString>, t: &Theme) -> Div {
         .cursor_pointer()
         .hover(|style| style.text_color(t.text))
         .child(label.into())
-}
-
-/// A link that leaves tau, with its arrow.
-fn external_link(label: &'static str, t: &Theme) -> Div {
-    text_link(label, Type::BODY, t)
-        .flex()
-        .items_center()
-        .gap(sp(1.5))
-        .child(icon(Icon::External, IconSize::SMALL, t.blue))
 }
 
 /// A row of actions, or a column of them on a phone.
@@ -1386,52 +1330,6 @@ fn glass(t: &Theme) -> Div {
         .lifted(t)
         .border_1()
         .border_color(t.setup.surface_border)
-}
-
-/// Who is signed in to ChatGPT, and whether the plan may be used.
-fn account_chip(
-    account: &str,
-    state: &'static str,
-    color: Hsla,
-    t: &Theme,
-) -> Div {
-    let look = &t.setup;
-    let initial = account
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_default();
-    div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .justify_center()
-        .gap(sp(3.))
-        .py(sp(2.5))
-        .pl(sp(2.5))
-        .pr(sp(4.))
-        .rounded(radius::FULL)
-        .bevel(look.surface_top, look.surface, t)
-        .border_1()
-        .border_color(look.surface_border)
-        .child(
-            div()
-                .size(rems(1.875))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(radius::FULL)
-                .sunk(look.field, t)
-                .typeset(Type::SMALL)
-                .child(initial),
-        )
-        .child(div().text_color(t.text).child(account.to_owned()))
-        .child(
-            div()
-                .typeset(Type::CAPTION)
-                .text_color(color)
-                .child(format!("· {state}")),
-        )
 }
 
 // The screens.
@@ -1540,7 +1438,7 @@ fn welcome(
                                 t,
                             ))
                             .on_click(cx.listener(|ws, _, _, cx| {
-                                ws.navigate(Route::Setup(SetupStep::Model), cx)
+                                ws.start_setup_steps(cx)
                             })),
                     ),
                 ))
@@ -1655,545 +1553,6 @@ fn orbit(t: &Theme) -> Div {
                 .top(rems((cy - 60.) / 16.))
                 .child(tau_tile(120., t)),
         )
-}
-
-/// The model step, in whichever state the ChatGPT sign-in is.
-fn model(
-    ws: &Workspace,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let motion = &ws.setup_motion;
-    // Once connected, the words wait for the line to draw.
-    let (words, words_at, title, sub, below) = match &ws.setup.model {
-        ModelAccess::None | ModelAccess::Failed(_) => (
-            (Some("plan usage"), Some("not connected")),
-            0,
-            "Connect tau to ChatGPT",
-            "Runs use your ChatGPT plan through OpenAI's Responses API. One \
-             sign-in in the browser; nothing to paste, no key to keep.",
-            model_start(ws, compact, t, cx),
-        ),
-        ModelAccess::SigningIn { url } => (
-            (Some("plan usage"), Some("waiting for the browser")),
-            0,
-            "Finish in your browser",
-            "A ChatGPT page just opened. Allow plan use there and this screen \
-             moves on by itself.",
-            model_waiting(ws, url.clone(), compact, t, cx),
-        ),
-        ModelAccess::Connected { .. } => (
-            (None, Some("connected")),
-            350,
-            "You're using your ChatGPT plan",
-            "Eligible usage in tau now counts toward your plan. Pick the model \
-             runs start with; you can change it per run.",
-            model_signed_in(ws, compact, t, cx),
-        ),
-        ModelAccess::PlanDisabled { account } => (
-            (None, Some("plan use off")),
-            0,
-            "Allow tau to use your plan",
-            "You're signed in, but plan use wasn't allowed. tau runs only on \
-             your ChatGPT plan, so it can't start a run without it.",
-            model_declined(motion, account, compact, t, cx),
-        ),
-        ModelAccess::NotEligible { account, detail } => (
-            (None, Some("not eligible")),
-            0,
-            "This account can't share its plan",
-            "OpenAI says ChatGPT plan use isn't available for this account or \
-             workspace. Usually because:",
-            model_not_eligible(motion, account, detail, compact, t, cx),
-        ),
-    };
-    div()
-        .child(handshake(ws, words, compact, t))
-        .child(
-            headline(
-                motion,
-                words_at,
-                (title, sub),
-                Type::HERO,
-                560.,
-                compact,
-                t,
-            )
-            .mt(sp(if compact { 8. } else { 18. })),
-        )
-        .child(
-            below
-                .mt(sp(if compact { 7. } else { 11. }))
-                .w_full()
-                .flex()
-                .flex_col()
-                .items_center(),
-        )
-        .when(ws.setup_goal.is_some(), |body| {
-            body.child(
-                div()
-                    .id("setup-back")
-                    .mt(sp(4.))
-                    .child(text_button("Back", t))
-                    .on_click(cx.listener(|ws, _, _, cx| ws.leave_setup(cx))),
-            )
-        })
-}
-
-fn model_start(
-    ws: &Workspace,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let motion = &ws.setup_motion;
-    let steps = [
-        "Sign in to ChatGPT",
-        "Pick a workspace",
-        "Keep the name “tau”",
-        "Allow plan use",
-    ];
-    let timeline = div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(sp(4.))
-        .when(compact, |row| row.flex_col().items_start().gap(sp(2.)))
-        .children(steps.iter().enumerate().flat_map(|(n, step)| {
-            let item = div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .child(mono(format!("0{}", n + 1), Type::MICRO, t.accent))
-                .child(
-                    div()
-                        .typeset(Type::SMALL)
-                        .text_color(t.setup.soft)
-                        .child(*step),
-                )
-                .into_any_element();
-            let rule = (n + 1 < steps.len() && !compact).then(|| {
-                div()
-                    .w(rems(1.75))
-                    .h(rems(0.0625))
-                    .bg(t.border)
-                    .into_any_element()
-            });
-            [Some(item), rule].into_iter().flatten()
-        }));
-    let failed = match &ws.setup.model {
-        ModelAccess::Failed(error) => Some(error.clone()),
-        _ => None,
-    };
-    div()
-        .gap(sp(6.5))
-        .when_some(failed, |col, error| {
-            col.child(
-                div()
-                    .max_w(rems(35.))
-                    .text_center()
-                    .typeset(Type::SMALL)
-                    .text_color(t.red)
-                    .child(error),
-            )
-        })
-        .child(rise(
-            motion,
-            "sign-in",
-            80,
-            div()
-                .id("chatgpt-sign-in")
-                .when(compact, |button| button.w_full())
-                .child(
-                    chatgpt_button("Continue with ChatGPT", 380., compact, t)
-                        .h(rems(3.375)),
-                )
-                .on_click(cx.listener(|ws, _, _, cx| {
-                    ws.sign_in_chatgpt(None, false, cx)
-                })),
-        ))
-        .child(rise(motion, "timeline", 120, timeline))
-        .child(rise(
-            motion,
-            "note",
-            160,
-            footnote(
-                "Needs ChatGPT Plus or Pro · tau can't read your \
-                 conversations",
-                t,
-            ),
-        ))
-}
-
-fn model_waiting(
-    ws: &Workspace,
-    url: Option<String>,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let motion = &ws.setup_motion;
-    let look = &t.setup;
-    let again = match url {
-        Some(url) => div()
-            .id("chatgpt-open-again")
-            .when(compact, |button| button.w_full())
-            .child(ghost_button(
-                "Open the page again",
-                Some(Icon::External),
-                compact,
-                t,
-            ))
-            .on_click(move |_, _, cx| cx.open_url(&url))
-            .into_any_element(),
-        None => div()
-            .typeset(Type::BODY)
-            .text_color(t.muted)
-            .child("Opening the sign-in page…")
-            .into_any_element(),
-    };
-    let paste = glass(t)
-        .w_full()
-        .max_w(rems(35.))
-        .gap(sp(2.5))
-        .px(sp(4.5))
-        .py(sp(4.))
-        .child(div().typeset(Type::SMALL).text_color(t.muted).child(
-            "Signing in on another device? Paste the address the browser \
-             ended on.",
-        ))
-        .child(
-            div()
-                .flex()
-                .gap(sp(2.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .flex()
-                        .items_center()
-                        .h(rems(2.625))
-                        .px(sp(3.))
-                        .rounded(radius::LARGE)
-                        .border_1()
-                        .border_color(t.border)
-                        .sunk(look.field, t)
-                        .typeset(Type::CAPTION.mono())
-                        .child(ws.chatgpt_callback.clone()),
-                )
-                .child(
-                    div()
-                        .id("chatgpt-paste")
-                        .h(rems(2.625))
-                        .flex()
-                        .items_center()
-                        .px(sp(3.5))
-                        .rounded(radius::LARGE)
-                        .border_1()
-                        .border_color(t.border)
-                        .bg(t.panel)
-                        .typeset(Type::SMALL)
-                        .text_color(t.text)
-                        .cursor_pointer()
-                        .hover(|style| style.bg(t.raised))
-                        .child("Finish")
-                        .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.submit_chatgpt_callback(cx)
-                        })),
-                ),
-        );
-    div()
-        .gap(sp(5.))
-        .child(rise(
-            motion,
-            "actions",
-            80,
-            actions(compact).child(again).child(
-                div()
-                    .id("chatgpt-cancel")
-                    .child(text_button("Cancel", t))
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        ws.cancel_chatgpt_sign_in(cx)
-                    })),
-            ),
-        ))
-        .child(rise(motion, "paste", 120, paste))
-        .child(rise(
-            motion,
-            "note",
-            160,
-            mono(
-                "listening on this machine · nothing is saved until the \
-                 browser comes back",
-                Type::CAPTION,
-                look.faint,
-            )
-            .text_center(),
-        ))
-}
-
-fn model_signed_in(
-    ws: &Workspace,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let motion = &ws.setup_motion;
-    let look = &t.setup;
-    let models = &ws.catalog().models;
-    let current = models.settings.default_for("coder").model;
-    let shown = models.shown("");
-    let pills: Vec<_> = shown
-        .iter()
-        .enumerate()
-        .map(|(n, option)| {
-            let picked = option.id == current;
-            let id = option.id.clone();
-            let pill = div()
-                .id(SharedString::from(format!("setup-model-{id}")))
-                .relative()
-                .px(sp(3.))
-                .py(sp(1.75))
-                .rounded(radius::FULL)
-                .border_1()
-                .border_color(if picked { t.accent } else { t.border })
-                .when(picked, |chip| chip.bg(t.accent.opacity(0.08)))
-                .when(!picked, |chip| {
-                    chip.bevel(look.surface_top, look.surface, t)
-                })
-                .cursor_pointer()
-                .hover(|style| {
-                    style.border_color(t.accent_border).top(rems(-0.0625))
-                })
-                .child(mono(
-                    option.id.clone(),
-                    Type::CODE,
-                    if picked { t.accent } else { look.soft },
-                ))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.pick_setup_model(&id, cx)
-                }));
-            // Rising one after another, 60 ms apart.
-            let reduce = motion.reduce;
-            div()
-                .child(pill)
-                .with_animation(
-                    SharedString::from(format!(
-                        "pill-{}-{n}",
-                        motion.scene.epoch
-                    )),
-                    entrance(stagger(550, 60, n), reduce),
-                    move |slot, e| {
-                        let slot = slot.opacity(e.clamp(0., 1.));
-                        if reduce {
-                            slot
-                        } else {
-                            slot.relative().top(rems((12. * (1. - e)) / 16.))
-                        }
-                    },
-                )
-                .into_any_element()
-        })
-        .collect();
-    let listing = if !pills.is_empty() {
-        div()
-            .flex()
-            .flex_wrap()
-            .justify_center()
-            .gap(sp(2.))
-            .max_w(rems(43.75))
-            .children(pills)
-    } else {
-        div()
-            .max_w(rems(35.))
-            .text_center()
-            .typeset(Type::SMALL)
-            .text_color(look.faint)
-            .child("Every model is hidden; the Models screen shows them again.")
-    };
-    let next = if ws.setup_goal.is_some() {
-        "Done"
-    } else if ws.setup_has_steps_after_model() {
-        "Continue"
-    } else {
-        "Start your first run"
-    };
-    div()
-        .gap(sp(6.5))
-        .children(models.access.active_account().map(|account| {
-            rise(
-                motion,
-                "account",
-                450,
-                account_chip(&account.label, "plan use allowed", t.green, t),
-            )
-        }))
-        .child(listing)
-        .child(rise(
-            motion,
-            "actions",
-            900,
-            actions(compact)
-                .gap(sp(4.5))
-                .child(
-                    div()
-                        .id("model-continue")
-                        .when(compact, |button| button.w_full())
-                        .child(light_button(next, None, true, compact, t))
-                        .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.continue_from_model(cx)
-                        })),
-                )
-                .child(
-                    div()
-                        .id("manage-usage")
-                        .child(external_link("Manage usage", t))
-                        .on_click(
-                            cx.listener(|ws, _, _, cx| ws.manage_usage(cx)),
-                        ),
-                ),
-        ))
-}
-
-fn model_declined(
-    motion: &SetupMotion,
-    account: &str,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    div()
-        .gap(sp(6.5))
-        .child(rise(
-            motion,
-            "account",
-            80,
-            account_chip(account, "plan use off", t.accent, t),
-        ))
-        .child(rise(
-            motion,
-            "actions",
-            120,
-            actions(compact)
-                .child(
-                    div()
-                        .id("chatgpt-enable")
-                        .when(compact, |button| button.w_full())
-                        .child(light_button(
-                            "Enable ChatGPT plan use",
-                            None,
-                            false,
-                            compact,
-                            t,
-                        ))
-                        .on_click(
-                            cx.listener(|ws, _, _, cx| {
-                                ws.enable_plan_usage(cx)
-                            }),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("chatgpt-other")
-                        .child(text_button("Use another account", t))
-                        .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.sign_in_chatgpt(None, false, cx)
-                        })),
-                ),
-        ))
-        .child(rise(
-            motion,
-            "note",
-            160,
-            footnote(
-                "Opens the same ChatGPT page, asking only for plan use · take \
-                 it back any time in ChatGPT settings",
-                t,
-            ),
-        ))
-}
-
-fn model_not_eligible(
-    motion: &SetupMotion,
-    account: &str,
-    detail: &str,
-    compact: bool,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let look = &t.setup;
-    let reasons = [
-        "The plan isn't Plus or Pro",
-        "A workspace admin turned app access off",
-        "Plan use isn't offered in your region yet",
-    ];
-    div()
-        .gap(sp(6.))
-        .when(!account.is_empty(), |col| {
-            col.child(rise(
-                motion,
-                "account",
-                80,
-                account_chip(account, "not eligible", t.red, t),
-            ))
-        })
-        .child(rise(
-            motion,
-            "reasons",
-            120,
-            div()
-                .flex()
-                .flex_wrap()
-                .justify_center()
-                .gap(sp(2.))
-                .max_w(rems(47.5))
-                .children(reasons.map(|reason| {
-                    div()
-                        .px(sp(3.))
-                        .py(sp(1.75))
-                        .rounded(radius::FULL)
-                        .bevel(look.surface_top, look.surface, t)
-                        .border_1()
-                        .border_color(look.surface_border)
-                        .typeset(Type::SMALL)
-                        .text_color(look.soft)
-                        .child(reason)
-                })),
-        ))
-        .child(rise(
-            motion,
-            "actions",
-            160,
-            actions(compact)
-                .gap(sp(3.5))
-                .child(
-                    div()
-                        .id("chatgpt-other")
-                        .when(compact, |button| button.w_full())
-                        .child(chatgpt_button(
-                            "Use another ChatGPT account",
-                            340.,
-                            compact,
-                            t,
-                        ))
-                        .on_click(cx.listener(|ws, _, _, cx| {
-                            ws.sign_in_chatgpt(None, false, cx)
-                        })),
-                )
-                .child(
-                    div()
-                        .id("plan-help")
-                        .child(external_link("Learn more", t))
-                        .on_click(|_, _, cx| cx.open_url(PLAN_HELP_URL)),
-                ),
-        ))
-        .child(rise(
-            motion,
-            "refusal",
-            200,
-            mono(detail.to_owned(), Type::CAPTION, look.refusal).text_center(),
-        ))
 }
 
 /// A checkbox: 18 px, a little smaller while empty, filling with a small
@@ -2444,6 +1803,16 @@ fn plugin_step(
         .plugin_setup_steps()
         .into_iter()
         .find_map(|(found, view)| (found == this).then_some(view));
+    let required = view.as_ref().is_some_and(|view| view.required);
+    let words: Words = view
+        .as_ref()
+        .and_then(|view| view.link.as_ref())
+        .map_or((None, None), |link| {
+            (
+                link.above.clone().map(SharedString::from),
+                link.below.clone().map(SharedString::from),
+            )
+        });
     let skip = div()
         .id("setup-skip")
         .debug_selector(|| "setup-skip".to_owned())
@@ -2458,7 +1827,7 @@ fn plugin_step(
         .on_click(cx.listener(move |ws, _, _, cx| {
             ws.plugin_setup_step_done(plugin, cx)
         }));
-    let screen = div().child(handshake(ws, (None, None), compact, t));
+    let screen = div().child(handshake(ws, words, compact, t));
     let reads = crate::plugins::registry()
         .get(plugin)
         .map_or(&[][..], |erased| erased.reads());
@@ -2527,7 +1896,9 @@ fn plugin_step(
                     ),
                 ))
                 .children(reach.map(|reach| rise(motion, "reach", 600, reach)))
-                .child(rise(motion, "skip", 800, skip)),
+                .when(!required, |body| {
+                    body.child(rise(motion, "skip", 800, skip))
+                }),
         )
 }
 
@@ -2682,10 +2053,11 @@ fn ready(
             .rounded(radius::BOX)
             .bg(t.panel)
     };
-    let model = ws
-        .setup
-        .model_label()
-        .map(|label| label.split(" · ").next().unwrap_or(label).to_owned());
+    let models = &ws.catalog().models;
+    let model = models
+        .access
+        .signed_in
+        .then(|| models.settings.default_for("coder").model);
     let on_plan = model.is_some();
     // The ring grows while the field has the keyboard.
     let ring = |focused: bool| if focused { 7. } else { 4. };

@@ -887,34 +887,9 @@ impl Host {
         let slots = host.repos.lock().expect("not poisoned").clone();
         recover_in_background(&host, slots, workspace, cx);
         let handler = host.clone();
-        // A sign-in, a switch of account or a sign-out from the Models
-        // screen changes what new runs use.
-        let connected: accounts::Connected = {
-            let (host, entity) = (host.clone(), workspace.downgrade());
-            // What fills `tau.provider` reads the saved sign-ins as each
-            // run opens: only the catalog changes.
-            std::rc::Rc::new(move |_account, cx| {
-                let Some(workspace) = entity.upgrade() else {
-                    return;
-                };
-                check_eligibility(&host, &workspace, cx);
-                host.catalog_changed();
-            })
-        };
-        let sign_ins = accounts::SignIns::default();
         cx.subscribe(
             workspace,
             move |workspace, event: &WorkspaceEvent, cx| {
-                if sign_ins.handle(
-                    event,
-                    &workspace,
-                    &handler.config.credentials,
-                    handler.config.model.as_deref(),
-                    &connected,
-                    cx,
-                ) {
-                    return;
-                }
                 match event {
                 WorkspaceEvent::UpdateRepo { repo } => {
                     update_in_background(&handler, repo, &workspace, true, cx)

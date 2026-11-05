@@ -11,14 +11,13 @@ It is a library: the `tau` app (`crates/tau`) is the binary.
 
 | Module              | What it holds                                                                                     |
 | ------------------- | ------------------------------------------------------------------------------------------------- |
-| `host`              | `Host`, the wiring for a real coding agent, `HostConfig`, and `onboard` when no one is signed in  |
+| `host`              | `Host`, the wiring for a real coding agent, and `HostConfig`; it starts signed out or in          |
 | `host::queue`       | A main chat's landing queue: `Lane` decides, the host acts                                        |
 | `hosted`            | The plugins' host halves: `halves` gives them to `tau-ui-remote`'s plugins, `install` once        |
-| `accounts`          | Sign in with ChatGPT: `Credentials` (where sign-ins are kept) and `SignIns`                       |
+| `accounts`          | `Credentials`: where sign-ins are kept; tau-chatgpt signs in                                       |
 | `phone_server`      | The computer's side of phones: `serve`, once "Allow phones" is on                                 |
 | `notify`            | When to notify while the window is not focused (`Notifier`), through the `tau.notify` slot (`Slotted`) |
 | `metered`           | Jev requests counted for the Plugins screen: `Metered`                                            |
-| `interface_runtime` | A tokio runtime for the interface's own async work, such as signing in                            |
 | `demo`              | A scripted session, for running the interface without an agent                                    |
 
 `Host` owns a tokio runtime beside GPUI's executor. A new run starts on that

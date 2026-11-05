@@ -33,12 +33,7 @@ use tau_agent::{
     plugin::{Plugin, PluginCtx, PluginRun, RunPlan},
     tool::RunId,
 };
-use tau_ai::{
-    chatgpt::AccountId,
-    message::Message,
-    model::find,
-    refusal::Refusal,
-};
+use tau_ai::{message::Message, model::find, refusal::Refusal};
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_ui_plugin::{
     By,
@@ -69,7 +64,7 @@ use tau_vcs_host::Identity;
 use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
-    accounts::{self, Credentials},
+    accounts::Credentials,
     catalog::{Catalog, Own, PluginInfo, ProjectStatus, Repo, Seam, StoreInfo},
     models::{
         AccessInfo,
@@ -81,8 +76,7 @@ use crate::{
         plan_models,
     },
     pull_request::{PrCommit, PrState, PullRequest},
-    route::Route,
-    setup::{CloneState, ModelAccess, RepoClone, SetupStep, SetupUpdate},
+    setup::{CloneState, RepoClone, SetupUpdate},
     update::HostUpdate,
     view::{
         BranchCode,
@@ -194,11 +188,6 @@ pub struct Host {
     /// plugins were given before it was set reads it too.
     provider_override:
         Arc<Mutex<Option<Arc<dyn tau_ui_plugin::provider::Provider>>>>,
-    /// Why OpenAI refused the eligibility check at the last sign-in
-    /// because plan use is not available to the account
-    /// (`Recovery::Restricted`): the status, code and request id. `None`
-    /// otherwise.
-    not_eligible: Arc<Mutex<Option<String>>>,
     /// Values a test gives every plugin, beside the host's own
     /// ([`Host::with_service`]).
     given: Services,
@@ -355,7 +344,6 @@ use self::{
     config::*,
     history::*,
     instructions::{PluginContext, RepoInstructions},
-    onboarding::*,
     pull_request::*,
     repos::*,
 };
@@ -535,7 +523,6 @@ impl Host {
             base: Mutex::new(agent),
             given_llm: true,
             provider_override: Arc::default(),
-            not_eligible: Arc::default(),
             given: Services::default(),
             memory_search: tau_memory_host::Search::Keywords,
             outside_tools: tau_ui_plugin::OutsideTools::default(),
@@ -2235,14 +2222,17 @@ mod tests {
             r#"{"error":{"code":"subscription_sharing_user_not_eligible"}}"#,
         );
         assert_eq!(
-            super::not_eligible(&not_eligible).as_deref(),
+            tau_chatgpt::not_eligible(&not_eligible).as_deref(),
             Some("403 subscription_sharing_user_not_eligible · request req_1")
         );
         let limit = refusal(
             429,
             r#"{"error":{"code":"subscription_sharing_usage_limit_exceeded"}}"#,
         );
-        assert_eq!(super::not_eligible(&limit), None);
-        assert_eq!(super::not_eligible(&ChatGptError::PlanUsageDisabled), None);
+        assert_eq!(tau_chatgpt::not_eligible(&limit), None);
+        assert_eq!(
+            tau_chatgpt::not_eligible(&ChatGptError::PlanUsageDisabled),
+            None
+        );
     }
 }

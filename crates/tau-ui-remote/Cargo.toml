@@ -14,6 +14,7 @@ hegeltest.workspace = true
 tempfile.workspace = true
 # Every plugin, for the tests that draw them.
 tau-plugins.workspace = true
+tau-chatgpt = { path = "../plugins/tau-chatgpt", default-features = false }
 tau-codemode.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true

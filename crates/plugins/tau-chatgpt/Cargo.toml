@@ -14,7 +14,9 @@ host = ["dep:tokio"]
 
 [dependencies]
 anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
 tau-ui-plugin.workspace = true
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["sync", "macros", "rt"] }

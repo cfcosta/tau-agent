@@ -83,10 +83,13 @@ pub enum SetupClone {
     Failed(String),
 }
 
-/// Where a plugin's step sits in first-run setup ([`SETUP`]): around
-/// the Repositories step, after the model's.
+/// Where a plugin's step sits in first-run setup ([`SETUP`]): first,
+/// or around the Repositories step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SetupAt {
+    /// First: connecting tau to a model, which what follows runs on
+    /// (the provider's sign-in, ADR 0045).
+    Model,
     /// Before the person picks repositories: a sign-in the list of
     /// repositories comes from.
     BeforeRepositories,
@@ -108,8 +111,41 @@ pub struct SetupView {
     pub heading: String,
     pub detail: String,
     /// Under the headline: what the person chooses. It ends the step
-    /// with [`crate::Handle::setup_done`]; tau draws a way to skip it.
+    /// with [`crate::Handle::setup_done`]; tau draws a way to skip it,
+    /// unless it is `required`.
     pub body: Node,
+    /// Whether setup cannot go on without it: the model's step.
+    pub required: bool,
+    /// How tau's link to the service the step connects stands, for the
+    /// handshake drawn above it; none draws it plain.
+    pub link: Option<SetupLink>,
+}
+
+/// How tau's link to a service stands in a setup step ([`SetupView`]):
+/// what the handshake above it shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupLink {
+    pub state: LinkState,
+    /// What the line between tau and the service says, above it and
+    /// below: `plan usage`, `connected`.
+    pub above: Option<String>,
+    pub below: Option<String>,
+}
+
+/// The link's state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkState {
+    /// Not connected yet.
+    Idle,
+    /// Waiting on the person elsewhere, such as in the browser.
+    Waiting,
+    Connected,
+    /// Connected, but the service holds back what tau needs.
+    Declined,
+    /// The service refuses this account outright.
+    Blocked,
+    /// The last attempt failed.
+    Failed,
 }
 
 /// A run.

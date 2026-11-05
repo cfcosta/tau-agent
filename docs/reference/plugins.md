@@ -532,7 +532,10 @@ change (tau-jev gives `tau.jev` only while a key is saved);
 `HostHalf::fill_early`, from the half alone, and read with
 `hosted::early_fills`; the rest by `HostHalf::fill`. The slots so far:
 `tau.vcs` (tau-vcs), `tau.forge` (tau-github), `tau.notify`
-(tau-notify), `tau.title` (tau-titles) and `tau.store` (tau-sqlite).
+(tau-notify), `tau.title` (tau-titles), `tau.store` (tau-sqlite) and
+`tau.provider` (tau-chatgpt). A plugin's setup step may come first
+(`SetupAt::Model`), be `required`, and say how its link to a service
+stands (`SetupView::link`), which the handshake above it draws.
 
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,

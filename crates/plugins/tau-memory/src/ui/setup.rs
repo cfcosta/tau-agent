@@ -81,6 +81,8 @@ pub fn step(
              every note before it is kept."
         ),
         body,
+        required: false,
+        link: None,
     })
 }
 
