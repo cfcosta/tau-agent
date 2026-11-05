@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 use gpui::{Context, Window};
 use tau_agent::tool::RunId;
 use tau_ui_plugin::{
+    KindPlace,
     Link,
     RepoKind,
     Waiting,
@@ -272,19 +273,30 @@ impl Workspace {
             .collect()
     }
 
-    /// The chats of tau's own repository, which the sidebar lists under
-    /// Plugins: open while Plugins is.
-    pub fn own_rows(&self) -> Option<RepoRows<'_>> {
-        let repo = self.catalog.own_repo()?;
+    /// The repository whose chats the sidebar lists under Plugins: the
+    /// one of a kind placed there (ADR 0027).
+    pub fn plugins_repo(&self) -> Option<&Repo> {
+        let kinds = self.repo_kinds();
+        self.catalog.repos.iter().find(|repo| {
+            kinds.iter().any(|(_, kind)| {
+                kind.place == KindPlace::Plugins
+                    && repo.kind.as_deref() == Some(kind.kind.as_str())
+            })
+        })
+    }
+
+    /// The chats of the plugins repository, which the sidebar lists
+    /// under Plugins: open while Plugins is.
+    pub fn plugins_rows(&self) -> Option<RepoRows<'_>> {
+        let repo = self.plugins_repo()?;
         self.rows_of(repo, self.plugins_open, "")
     }
 
-    /// The runs of the agent `name`'s repository, which its row lists
-    /// while it is open (ADR 0037).
-    pub fn agent_rows(&self, name: &str) -> Option<RepoRows<'_>> {
-        let repo = self.catalog.repo(name).filter(|repo| {
-            repo.kind.as_deref() == Some(crate::catalog::kinds::AGENT)
-        })?;
+    /// The runs of `name`'s repository, of a kind a plugin makes, which
+    /// its row lists while it is open: an agent's (ADR 0037).
+    pub fn kind_rows(&self, name: &str) -> Option<RepoRows<'_>> {
+        let repo =
+            self.catalog.repo(name).filter(|repo| repo.kind.is_some())?;
         self.rows_of(repo, self.open_agents.contains(name), "")
     }
 

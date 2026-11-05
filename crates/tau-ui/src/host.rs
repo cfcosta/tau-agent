@@ -1882,13 +1882,9 @@ mod tests {
                 listed(
                     "tau-plugins",
                     None,
-                    Some(crate::catalog::kinds::PLUGINS.to_owned()),
+                    Some(tau_luau_plugins::KIND.to_owned()),
                 ),
-                listed(
-                    "triage",
-                    None,
-                    Some(crate::catalog::kinds::AGENT.to_owned()),
-                ),
+                listed("triage", None, Some(tau_agents::KIND.to_owned())),
             ],
             open: vec![
                 "tau-agent".into(),
@@ -1931,7 +1927,7 @@ mod tests {
         for name in &names {
             list.list_as(
                 &dir.path().join(name),
-                Some(crate::catalog::kinds::AGENT.to_owned()),
+                Some(tau_agents::KIND.to_owned()),
             );
         }
         let ids: Vec<RepoId> =
@@ -1996,7 +1992,7 @@ mod tests {
             hidden: tc.draw(gs::booleans()),
             forge: (kind == 0).then(|| format!("o/{n}")),
             main: tc.draw(gs::optional(text())),
-            kind: (kind == 1).then(|| crate::catalog::kinds::AGENT.to_owned()),
+            kind: (kind == 1).then(|| tau_agents::KIND.to_owned()),
             local,
         }
     }

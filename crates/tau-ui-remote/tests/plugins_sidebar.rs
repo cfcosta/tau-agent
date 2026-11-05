@@ -73,7 +73,7 @@ fn catalog() -> Catalog {
             Repo {
                 name: OWN.into(),
                 main: Some(id("plugins-main")),
-                kind: Some(tau_ui_remote::catalog::kinds::PLUGINS.to_owned()),
+                kind: Some(tau_luau_plugins::KIND.to_owned()),
                 ..Default::default()
             },
             Repo {
@@ -117,7 +117,7 @@ fn open(
 
 /// The titles of the plugins repository's chats the sidebar lists.
 fn own_chats(ws: &Workspace) -> Vec<String> {
-    let Some(rows) = ws.own_rows() else {
+    let Some(rows) = ws.plugins_rows() else {
         return Vec::new();
     };
     if !rows.open {

@@ -17,6 +17,7 @@ use gpui::{
     rems,
 };
 use tau_ui_plugin::{
+    KindPlace,
     RepoKind,
     points::{self, AtRepo},
 };
@@ -310,7 +311,7 @@ fn plugins_tree(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         ));
     let yours = ws.catalog.yours();
     if let (Some(yours), Some(route)) = (yours, ws.yours_route(None)) {
-        let label = match ws.catalog.own_repo() {
+        let label = match ws.plugins_repo() {
             Some(repo) => format!("Yours, in {}", repo.name),
             None => "Yours".to_owned(),
         };
@@ -322,7 +323,7 @@ fn plugins_tree(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         ));
     }
     // The chats in the plugins repository, as a repository lists its own.
-    if let Some(rows) = ws.own_rows() {
+    if let Some(rows) = ws.plugins_rows() {
         let tree = ws.repo_tree(&rows);
         if !tree.is_empty() {
             body = body.child(
@@ -383,6 +384,7 @@ fn kind_sections(
 ) -> Vec<Div> {
     ws.repo_kinds()
         .into_iter()
+        .filter(|(_, kind)| kind.place == KindPlace::Section)
         .map(|(plugin, kind)| kind_section(ws, plugin, &kind, t, cx))
         .collect()
 }
@@ -530,7 +532,7 @@ fn kind_section(
         );
         // Its row stands for its main chat: what is under it is the
         // agent's crew.
-        if let Some(rows) = ws.agent_rows(&name) {
+        if let Some(rows) = ws.kind_rows(&name) {
             let tree: Vec<TreeRow<'_>> = ws
                 .repo_tree(&rows)
                 .into_iter()
@@ -1543,6 +1545,7 @@ fn phone_kinds(
 ) -> Vec<Div> {
     ws.repo_kinds()
         .into_iter()
+        .filter(|(_, kind)| kind.place == KindPlace::Section)
         .filter_map(|(_, kind)| phone_kind(ws, &kind, t, cx))
         .collect()
 }

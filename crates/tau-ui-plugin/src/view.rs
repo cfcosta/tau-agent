@@ -145,6 +145,21 @@ pub struct RepoKind {
     pub new: Option<Link>,
     /// What the section says while there are none.
     pub empty: String,
+    /// Where the sidebar lists them.
+    #[serde(default)]
+    pub place: KindPlace,
+}
+
+/// Where the sidebar lists a kind's repositories.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize,
+)]
+pub enum KindPlace {
+    /// A section of their own, with a row each: the agents'.
+    #[default]
+    Section,
+    /// Their chats under Plugins: the plugins repository's (ADR 0027).
+    Plugins,
 }
 
 /// What waits on the person among the plugin's things, as the interface

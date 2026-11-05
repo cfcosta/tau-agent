@@ -1029,11 +1029,11 @@ fn yours(
         .insert(tau_luau_plugins::NAME.into(), data.clone());
     host.pin(info, data);
     let chat = RunId("plugins-commit-style".into());
-    if catalog.own_repo().is_none() {
+    if catalog.of_kind(tau_luau_plugins::KIND).next().is_none() {
         catalog.repos.push(crate::catalog::Repo {
             name: tau_luau_plugins::REPO.into(),
             main: Some(chat.clone()),
-            kind: Some(crate::catalog::kinds::PLUGINS.to_owned()),
+            kind: Some(tau_luau_plugins::KIND.to_owned()),
             ..Default::default()
         });
     }
@@ -1381,7 +1381,7 @@ fn agents(
             catalog.repos.push(crate::catalog::Repo {
                 name: agent.name.clone(),
                 main: Some(main(&agent.name)),
-                kind: Some(crate::catalog::kinds::AGENT.to_owned()),
+                kind: Some(tau_agents::KIND.to_owned()),
                 ..Default::default()
             });
         }

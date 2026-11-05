@@ -29,7 +29,7 @@ fn catalog() -> Catalog {
             Repo {
                 name: OWN.into(),
                 main: Some(id("plugins-main")),
-                kind: Some(tau_ui_remote::catalog::kinds::PLUGINS.to_owned()),
+                kind: Some(tau_luau_plugins::KIND.to_owned()),
                 ..Default::default()
             },
             Repo {
@@ -99,7 +99,7 @@ fn with_agents() -> Catalog {
     for name in ["triage", "digest"] {
         catalog.repos.push(Repo {
             name: name.into(),
-            kind: Some(tau_ui_remote::catalog::kinds::AGENT.to_owned()),
+            kind: Some(tau_agents::KIND.to_owned()),
             ..Default::default()
         });
     }
@@ -109,24 +109,16 @@ fn with_agents() -> Catalog {
 #[test]
 fn agents_are_tau_s_own_and_neither_the_person_s_nor_the_plugins_repository() {
     let catalog = with_agents();
+    let names = |kind: &str| -> Vec<String> {
+        catalog
+            .of_kind(kind)
+            .map(|repo| repo.name.clone())
+            .collect()
+    };
     let listed: Vec<&str> =
         catalog.listed().map(|repo| repo.name.as_str()).collect();
     assert_eq!(listed, [REPO]);
-    assert_eq!(catalog.own_repo().map(|repo| repo.name.as_str()), Some(OWN));
-    let agents: Vec<&str> = catalog
-        .of_kind("agent")
-        .map(|repo| repo.name.as_str())
-        .collect();
-    assert_eq!(agents, ["digest", "triage"]);
-    assert!(catalog.is_agent("triage"));
-    assert!(!catalog.is_agent(OWN));
-    assert!(!catalog.is_agent(REPO));
+    assert_eq!(names(tau_luau_plugins::KIND), [OWN]);
+    assert_eq!(names(tau_agents::KIND), ["digest", "triage"]);
     assert!(!catalog.is_listed("triage"));
-    // Agents are not the plugins repository: without it, there is none.
-    let mut catalog = catalog;
-    catalog.repos.retain(|repo| {
-        repo.kind.as_deref() != Some(tau_ui_remote::catalog::kinds::PLUGINS)
-    });
-    assert!(catalog.own_repo().is_none());
-    assert_eq!(catalog.of_kind("agent").count(), 2);
 }

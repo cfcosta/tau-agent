@@ -37,7 +37,7 @@ fn catalog() -> Catalog {
             Repo {
                 name: AGENT.into(),
                 main: Some(id("agent-main")),
-                kind: Some(tau_ui_remote::catalog::kinds::AGENT.to_owned()),
+                kind: Some(tau_agents::KIND.to_owned()),
                 model: Some(agents_model()),
                 ..Default::default()
             },

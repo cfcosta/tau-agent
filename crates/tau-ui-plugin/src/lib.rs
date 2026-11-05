@@ -126,6 +126,7 @@ pub use value::PluginValue;
 pub use view::{
     ENTRY,
     Handle,
+    KindPlace,
     Link,
     NavEntry,
     PlanField,

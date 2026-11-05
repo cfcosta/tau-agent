@@ -16,16 +16,18 @@ use tau_ui_plugin::{
     ENTRY,
     Fold,
     Handle,
+    KindPlace,
     Link,
     Manifest,
     Page,
+    RepoKind,
     RunCx,
     RunInfo,
     SCOPE,
     SlashCommand,
     UiPlugin,
     ViewCx,
-    points::{self, AtAnchor, AtCard, CardView},
+    points::{self, AtAnchor, AtApp, AtCard, CardView},
     tree::{Kind, Node, Tab, Tone},
 };
 
@@ -34,6 +36,7 @@ use crate::{
     ActionDone,
     Declaration,
     Entry,
+    KIND,
     LuauSettings,
     NAME,
     Overview,
@@ -523,6 +526,18 @@ impl UiPlugin for LuauPluginsUi {
                 .icon(Icon::Plug),
             )
             .status(State::status)
+            // The plugins repository, whose chats the sidebar lists under
+            // Plugins (ADR 0027).
+            .contribute(points::REPO_KIND, |_: &AtApp, _| {
+                Some(RepoKind {
+                    kind: KIND.into(),
+                    title: "Plugins".into(),
+                    page: Link::page(PAGE),
+                    new: None,
+                    empty: String::new(),
+                    place: KindPlace::Plugins,
+                })
+            })
             .contribute(points::CARD, |at: &AtCard, _| {
                 let details = at.data.result.as_ref()?.details.as_ref()?;
                 let plugin = details.get("plugin")?.as_str()?;

@@ -87,12 +87,12 @@ fn catalog() -> Catalog {
             Repo {
                 name: AGENT.into(),
                 main: Some(id("agent-main")),
-                kind: Some(tau_ui_remote::catalog::kinds::AGENT.to_owned()),
+                kind: Some(tau_agents::KIND.to_owned()),
                 ..Default::default()
             },
             Repo {
                 name: NEW.into(),
-                kind: Some(tau_ui_remote::catalog::kinds::AGENT.to_owned()),
+                kind: Some(tau_agents::KIND.to_owned()),
                 ..Default::default()
             },
         ],
@@ -162,7 +162,7 @@ fn an_agent_s_row_opens_its_conversation(cx: &mut TestAppContext) {
 fn an_agent_s_row_folds_over_its_crew(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
     let crew = |ws: &Workspace| -> Option<Vec<String>> {
-        let rows = ws.agent_rows(AGENT)?;
+        let rows = ws.kind_rows(AGENT)?;
         rows.open.then(|| {
             ws.repo_tree(&rows)
                 .into_iter()
@@ -183,7 +183,7 @@ fn an_agent_s_row_folds_over_its_crew(cx: &mut TestAppContext) {
         ws.toggle_agent_open(AGENT, cx);
         assert_eq!(crew(ws), None);
         // The person's repository has no agent's rows.
-        assert!(ws.agent_rows(REPO).is_none());
+        assert!(ws.kind_rows(REPO).is_none());
     });
 }
 

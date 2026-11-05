@@ -20,6 +20,7 @@ use tau_agent::tool::RunId;
 use tau_ui_kit::{assets::Icon, theme::Tone};
 use tau_ui_plugin::{
     Handle,
+    KindPlace,
     Link,
     ListedCommand,
     Manifest,
@@ -457,6 +458,7 @@ impl UiPlugin for AgentsUi {
                     new: Some(Link::page(NEW)),
                     empty: "None yet. /agent and what it should do makes one."
                         .into(),
+                    place: KindPlace::Section,
                 })
             })
             .contribute(points::KIND_ROW_END, |at: &AtRepo, view| {

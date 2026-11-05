@@ -110,14 +110,6 @@ impl Catalog {
         self.repo(name).is_some_and(|repo| repo.kind.is_none())
     }
 
-    /// tau's own repository, where the person's plugins are written
-    /// (ADR 0027): the sidebar lists its chats under Plugins.
-    pub fn own_repo(&self) -> Option<&Repo> {
-        self.repos.iter().find(|repo| {
-            repo.kind.as_deref() == Some(crate::catalog::kinds::PLUGINS)
-        })
-    }
-
     /// The repositories of the kind `kind` (`RepoKind`), such as the
     /// agents' (ADR 0037), by name.
     pub fn of_kind(&self, kind: &str) -> impl Iterator<Item = &Repo> {
@@ -128,13 +120,6 @@ impl Catalog {
             .collect();
         agents.sort_by(|a, b| a.name.cmp(&b.name));
         agents.into_iter()
-    }
-
-    /// Whether `name` is an agent's repository.
-    pub fn is_agent(&self, name: &str) -> bool {
-        self.repo(name).is_some_and(|repo| {
-            repo.kind.as_deref() == Some(crate::catalog::kinds::AGENT)
-        })
     }
 
     /// The plugins tau has built in: every one but the person's own.
@@ -215,13 +200,6 @@ pub struct Repo {
 
 /// The kinds of tau's own repositories, as plugins name them
 /// (`RepoKind::kind`).
-pub mod kinds {
-    /// The plugins repository (ADR 0027).
-    pub const PLUGINS: &str = "plugins";
-    /// An agent's (ADR 0037).
-    pub const AGENT: &str = "agent";
-}
-
 impl Repo {
     pub fn new(name: impl Into<String>, path: impl Into<String>) -> Self {
         Self {
