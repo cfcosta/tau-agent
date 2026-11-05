@@ -40,6 +40,7 @@ pub mod registry;
 pub mod run;
 pub mod services;
 pub mod slots;
+pub mod store;
 pub mod sub_agents;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -602,6 +603,12 @@ pub trait HostHalf: Send + Sync + 'static {
     /// Fills the slots the plugin fills ([`slots`]) from its host state:
     /// called once, after the host made every plugin's.
     fn fill(&self, _host: &Self::Host, _fills: &mut slots::Fills) {}
+
+    /// Fills the slots needed before any plugin's host state is made,
+    /// from the half alone: [`store::STORE`], which the host opens the
+    /// store with that every host state is made with. Called once, as
+    /// the host starts.
+    fn fill_early(&self, _fills: &mut slots::Fills) {}
 
     /// Gives other plugins the services it provides
     /// ([`Declaration::provides`]), as the host builds its context or a

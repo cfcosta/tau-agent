@@ -56,6 +56,7 @@ fn the_kernels_slots_are_ones_a_plugin_declares_it_fills() {
         tau_ui_plugin::forge::FORGE.name(),
         tau_ui_plugin::notify::NOTIFY.name(),
         tau_ui_plugin::title::TITLE.name(),
+        tau_ui_plugin::store::STORE.name(),
     ] {
         assert!(filled.contains(slot), "nobody declares it fills {slot}");
     }

@@ -365,6 +365,19 @@ Each step lands on main by itself and leaves tau working.
    give tau-vcs its host half, and the person's `Identity`.
 5. **Slots, the easy ones.** The slot table and the Plugins screen's
    choice; `tau.title`, `tau.notify`, `tau.store`, `tau.side-model`.
+   As built: `tau.notify` (`tau_ui_plugin::notify`) is filled by
+   tau-notify, the desktop's notifications, whose settings switch them
+   off; the kernel still decides when a notice is due. `tau.title`
+   (`tau_ui_plugin::title`) is filled by tau-titles, one request to the
+   person's model booked to the plugin; the kernel keeps the
+   placeholder. `tau.store` (`tau_ui_plugin::store`) is filled by
+   tau-sqlite before any host state is made (`HostHalf::fill_early`),
+   and the host opens its store through it. The side model is not a
+   slot: the kernel never calls it, plugins do. tau-jev is a plugin
+   that keeps the TypeSafe key and gives the service `tau.jev` to those
+   that declare it, through `HostHalf::provide` (only services the
+   declaration names); its Models section and page take the key, and
+   other plugins read whether there is one from its data.
 6. **`tau.vcs`.** A `Vcs` trait the kernel's landing, lanes, queue and
    sweep call, implemented by `tau-vcs`. Then `tau-github`.
    As built: `tau_ui_plugin::slots` (`Slot`, `Fills`, offered by

@@ -523,6 +523,17 @@ The registry puts the declaration's reach in the plugin's catalog
 entry (`PluginInfo::reach`), and the Plugins screen shows it on the
 plugin's About tab: its seams, then each kind of reach it declares.
 
+A plugin gives other plugins a service with `HostHalf::provide`, called
+each time the host builds its context or a run's, so what it gives can
+change (tau-jev gives `tau.jev` only while a key is saved);
+`Provide::offer` refuses a name the declaration does not list in
+`provides`. A slot the host needs before any host state is made
+(`tau.store`, which every host state is made with) is filled by
+`HostHalf::fill_early`, from the half alone, and read with
+`hosted::early_fills`; the rest by `HostHalf::fill`. The slots so far:
+`tau.vcs` (tau-vcs), `tau.forge` (tau-github), `tau.notify`
+(tau-notify), `tau.title` (tau-titles) and `tau.store` (tau-sqlite).
+
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,
   `tau-<plugin>-host`: tau-codemode (Luau), tau-luau-plugins, tau-vcs

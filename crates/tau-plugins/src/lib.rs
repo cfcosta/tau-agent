@@ -27,6 +27,7 @@ pub fn plugins() -> Registry {
         .with(tau_reasoning::ReasoningPlugin)
         .with(tau_schedule::ScheduleUi)
         .with(tau_skills::SkillsUi)
+        .with(tau_sqlite::SqliteUi)
         .with(tau_titles::TitlesUi)
         .with(tau_tools::ui::ToolsUi)
         .with(tau_tree_compaction::ui::TreeCompactionUi)

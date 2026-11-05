@@ -10065,6 +10065,7 @@ dependencies = [
  "tau-reasoning",
  "tau-schedule",
  "tau-skills",
+ "tau-sqlite",
  "tau-titles",
  "tau-tools",
  "tau-tree-compaction",
@@ -10172,6 +10173,16 @@ dependencies = [
  "tau-ui-plugin",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "tau-sqlite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tau-agent",
+ "tau-store-sqlite",
+ "tau-ui-plugin",
 ]
 
 [[package]]
@@ -10365,6 +10376,7 @@ dependencies = [
  "tau-remote",
  "tau-schedule",
  "tau-skills",
+ "tau-sqlite",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",

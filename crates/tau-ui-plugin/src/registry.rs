@@ -185,6 +185,8 @@ pub trait ErasedPlugin: Send + Sync {
     ) -> HostFuture<'a, ()>;
     /// Fills the slots it fills, from its host state.
     fn fill(&self, host: &HostState, fills: &mut crate::slots::Fills);
+    /// Fills the slots needed before any host state is made.
+    fn fill_early(&self, fills: &mut crate::slots::Fills);
     /// `services` and those it provides now ([`HostHalf::provide`]).
     fn provide(
         &self,
@@ -576,6 +578,11 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
     fn fill(&self, host: &HostState, fills: &mut crate::slots::Fills) {
         fills.filling(self.plugin.name(), &self.declaration.reach.fills);
         self.half.fill(self.host_of(host), fills);
+    }
+
+    fn fill_early(&self, fills: &mut crate::slots::Fills) {
+        fills.filling(self.plugin.name(), &self.declaration.reach.fills);
+        self.half.fill_early(fills);
     }
 
     fn provide(

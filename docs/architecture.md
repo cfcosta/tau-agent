@@ -52,6 +52,7 @@ tau-agent/
 │       │                         # clock agents' schedules go by (ADR 0039)
 │       ├── tau-skills/           # instructions an agent loads when a task
 │       │                         # calls for them
+│       ├── tau-sqlite/           # the store in SQLite, filling `tau.store`
 │       ├── tau-titles/           # a run's title from the person's model,
 │       │                         # filling `tau.title`
 │       ├── tau-tools/            # read, exec_command, write_stdin, edit, ...
@@ -68,7 +69,8 @@ Dependency direction:
 - `tau-agent` depends on `tau-ai` and `tau-store`, which has no
   database driver: the agent loop and the plugins build while
   `tau-store-sqlite` compiles SQLite. Whoever opens a store depends
-  on `tau-store-sqlite`: `tau-ui`, the evaluations and tests.
+  on `tau-store-sqlite`: the tau-sqlite plugin, which fills `tau.store`
+  for the host, the evaluations and tests.
 - `tau-testing` depends on `tau-ai`.
 - `tau-ui-kit` depends on GPUI and `tau-terminal` (the theme's terminal
   palette), and on no other tau crate.

@@ -371,6 +371,27 @@ fn titles_are_written_with_the_persons_model_and_booked_to_tau_titles() {
     assert_eq!(booked.rows, [[tau_titles::NAME]]);
 }
 
+/// The host's store is opened by what fills `tau.store`, tau-sqlite, at
+/// the path the host asks, before any plugin's host state is made.
+#[test]
+fn the_store_is_opened_by_what_fills_its_slot() {
+    install();
+    let dir = own_dir();
+    let path = dir.join("runs.db");
+    let runtime = runtime();
+    let ui = tau_ui_plugin::UiState::default();
+    assert_eq!(
+        tau_ui::hosted::early_fills(&ui)
+            .filler(tau_ui_plugin::store::STORE.name()),
+        Some(tau_sqlite::NAME.to_owned())
+    );
+    let store = runtime
+        .block_on(tau_ui::hosted::open_store(&path, &ui))
+        .unwrap();
+    assert!(path.exists(), "the store is kept where the host asked");
+    assert!(runtime.block_on(store.recent_runs(1)).unwrap().is_empty());
+}
+
 /// The end of first-run setup reaches every plugin's host half, with the
 /// repositories the person picked.
 #[test]

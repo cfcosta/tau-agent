@@ -438,7 +438,11 @@ impl Host {
         if let Some(parent) = config.store.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let store = runtime.block_on(tau_store_sqlite::open(&config.store))?;
+        // What fills `tau.store` opens it, as the person picked.
+        let store = runtime.block_on(async {
+            let ui = Self::load_ui_state(&config).await;
+            crate::hosted::open_store(&config.store, &ui).await
+        })?;
         let (agent, client) = coder(
             &runtime,
             &config.account,

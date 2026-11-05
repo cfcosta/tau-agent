@@ -1,0 +1,19 @@
+[package]
+name = "tau-sqlite"
+description = "Keeps every tau run in SQLite, as a plugin filling the tau.store slot."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The host half: opening the store with tau-store-sqlite.
+host = ["dep:tau-store-sqlite"]
+
+[dependencies]
+anyhow.workspace = true
+tau-agent.workspace = true
+tau-store-sqlite = { workspace = true, optional = true }
+tau-ui-plugin.workspace = true

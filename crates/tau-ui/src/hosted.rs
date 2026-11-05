@@ -49,6 +49,7 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_notify::NotifyHost)
         .host(tau_titles::TitlesHost)
         .host(tau_jev::JevHost)
+        .host(tau_sqlite::SqliteHost)
 }
 
 /// Gives the plugins the host halves tau-ui has ([`halves`]), unless the
@@ -97,6 +98,36 @@ pub fn fills(hosted: &[Hosted]) -> Fills {
         hosted.plugin.fill(&hosted.state, &mut fills);
     }
     fills
+}
+
+/// What each plugin can fill of the slots needed before any host state
+/// is made (`HostHalf::fill_early`), with each slot's declared order and
+/// the person's picks in `ui`.
+pub fn early_fills(ui: &tau_ui_plugin::UiState) -> Fills {
+    let mut fills = registry().fills();
+    for plugin in registry().plugins() {
+        plugin.fill_early(&mut fills);
+    }
+    fills.picks_from(ui);
+    fills
+}
+
+/// Opens the store at `path` with what fills `tau.store`
+/// (`tau_ui_plugin::store::STORE`), picked as `ui` says.
+pub async fn open_store(
+    path: &std::path::Path,
+    ui: &tau_ui_plugin::UiState,
+) -> anyhow::Result<tau_store::Store> {
+    install();
+    let opener = early_fills(ui)
+        .get(&tau_ui_plugin::store::STORE)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No plugin fills {}: tau has nowhere to keep its runs",
+                tau_ui_plugin::store::STORE.name()
+            )
+        })?;
+    opener.open(path).await
 }
 
 /// `services` and those each plugin provides now

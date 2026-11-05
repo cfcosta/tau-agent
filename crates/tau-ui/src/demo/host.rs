@@ -78,8 +78,10 @@ impl DemoHost {
             .worker_threads(1)
             .enable_all()
             .build()?;
-        let store = runtime
-            .block_on(tau_store_sqlite::open(dir.path().join("runs.db")))?;
+        let store = runtime.block_on(crate::hosted::open_store(
+            &dir.path().join("runs.db"),
+            &tau_ui_plugin::UiState::default(),
+        ))?;
         let repos = catalog
             .repos
             .iter()
