@@ -118,35 +118,8 @@ impl Default for ModelChoice {
 /// plan's models, [`tau_ai::model::plan_models`].
 pub const DEFAULT_MODEL: &str = "gpt-6.1-sol";
 
-/// One model the picker can offer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ModelOption {
-    pub id: String,
-    /// What the picker shows: the model table's name for it; `None`
-    /// shows the id.
-    pub name: Option<String>,
-    pub context: u64,
-    /// Whether it accepts a reasoning effort.
-    pub reasoning: bool,
-}
-
-impl ModelOption {
-    /// What the picker shows for it.
-    pub fn label(&self) -> &str {
-        self.name.as_deref().unwrap_or(&self.id)
-    }
-
-    /// `1.05M`, `400k`.
-    pub fn context_label(&self) -> String {
-        if self.context >= 1_000_000 {
-            let millions = self.context as f64 / 1e6;
-            let text = format!("{millions:.2}");
-            format!("{}M", text.trim_end_matches('0').trim_end_matches('.'))
-        } else {
-            format!("{}k", self.context / 1000)
-        }
-    }
-}
+/// One model the picker can offer: the provider's (ADR 0045).
+pub use tau_ui_plugin::provider::ModelOption;
 
 /// What the user decided about models. Saved by the host.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

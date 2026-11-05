@@ -36,6 +36,7 @@ pub mod manifest;
 pub mod model;
 pub mod notify;
 pub mod points;
+pub mod provider;
 pub mod registry;
 pub mod run;
 pub mod services;

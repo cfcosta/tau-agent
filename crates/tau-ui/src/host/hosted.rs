@@ -64,12 +64,18 @@ impl Host {
     /// The person's model as plugins' host halves ask it outside any run
     /// (ADR 0044): the plan's client while an account is signed in.
     fn plugin_model(&self) -> tau_ui_plugin::Model {
-        let (account, client) = (self.account.clone(), self.client.clone());
+        let (slots, over) =
+            (self.slots.clone(), self.provider_override.clone());
         tau_ui_plugin::Model::new(
             move || {
-                account.lock().expect("not poisoned").as_ref()?;
-                let client = client.lock().expect("not poisoned").clone()?;
-                Some(Arc::new(client) as Arc<dyn tau_ai::llm::Llm>)
+                let over = over.lock().expect("not poisoned").clone();
+                over.or_else(|| {
+                    slots
+                        .lock()
+                        .expect("not poisoned")
+                        .get(&tau_ui_plugin::provider::PROVIDER)
+                })?
+                .llm()
             },
             self.store.clone(),
         )

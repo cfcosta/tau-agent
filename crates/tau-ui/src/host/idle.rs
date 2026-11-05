@@ -8,11 +8,7 @@
 use std::time::Duration;
 
 use tau_agent::agent::Compacted;
-use tau_ai::{
-    client::OpenAi,
-    responses::request::Settings,
-    ws::io::driver::CacheLapse,
-};
+use tau_ai::{responses::request::Settings, ws::io::driver::CacheLapse};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -160,9 +156,7 @@ impl Host {
         {
             return None;
         }
-        let client: OpenAi =
-            self.client.lock().expect("not poisoned").clone()?;
-        client.cache_lapse(&run.0).await.ok()?
+        self.provider()?.cache_lapse(&run.0).await
     }
 
     /// Compacts `run`, an idle chat, in its own conversation, sent as its

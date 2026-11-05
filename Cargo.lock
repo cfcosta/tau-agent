@@ -9594,6 +9594,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-chatgpt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tau-agent",
+ "tau-ai",
+ "tau-ui-plugin",
+ "tokio",
+]
+
+[[package]]
 name = "tau-codemode"
 version = "0.1.0"
 dependencies = [
@@ -10050,6 +10061,7 @@ dependencies = [
  "tau-agents",
  "tau-ask",
  "tau-canvas",
+ "tau-chatgpt",
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",
@@ -10355,6 +10367,7 @@ dependencies = [
  "tau-artifacts",
  "tau-ask",
  "tau-canvas",
+ "tau-chatgpt",
  "tau-codemode",
  "tau-compaction",
  "tau-constitution",

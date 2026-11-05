@@ -1,0 +1,20 @@
+[package]
+name = "tau-chatgpt"
+description = "Runs tau's agents on the person's ChatGPT plan, as a plugin filling the tau.provider slot."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The host half: the plan's client, from the saved sign-ins.
+host = ["dep:tokio"]
+
+[dependencies]
+anyhow.workspace = true
+tau-agent.workspace = true
+tau-ai.workspace = true
+tau-ui-plugin.workspace = true
+tokio = { workspace = true, optional = true }

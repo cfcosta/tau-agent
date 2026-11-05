@@ -2137,7 +2137,6 @@ fn runs_use_the_plan_and_never_a_declined_one() {
     let declined = sign_in_saved(&credentials, "b@example.com", &["openid"]);
     let left = credentials.plan_account();
     assert_eq!(left, None);
-    host.set_account(left).unwrap();
     let models = host.models();
     assert!(!models.access.chatgpt);
     assert!(models.options.is_empty());
@@ -2151,7 +2150,6 @@ fn runs_use_the_plan_and_never_a_declined_one() {
 
     // Back on the plan account, runs use the plan again.
     credentials.switch(plan.as_str()).unwrap();
-    host.set_account(credentials.plan_account()).unwrap();
     assert!(host.models().access.chatgpt);
 }
 
@@ -4021,7 +4019,9 @@ fn a_long_idle_chat_compacts_before_its_cache_lapses() {
     let agent = Agent::new(client.clone()).name("coder");
     let root = tempfile::tempdir().unwrap().keep();
     let (host, mut events) = host_of(runtime, store, agent, &root);
-    let host = std::sync::Arc::new(host.with_client(client));
+    let host = std::sync::Arc::new(
+        host.with_provider(std::sync::Arc::new(tau_chatgpt::Over::new(client))),
+    );
 
     // More than half the window, and a last turn longer than what
     // compaction keeps.

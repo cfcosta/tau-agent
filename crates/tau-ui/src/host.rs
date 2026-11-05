@@ -35,7 +35,6 @@ use tau_agent::{
 };
 use tau_ai::{
     chatgpt::AccountId,
-    client::OpenAi,
     message::Message,
     model::find,
     refusal::Refusal,
@@ -188,13 +187,13 @@ pub struct Host {
     runtime: Runtime,
     /// The agent every run starts from; each run adds its own tools.
     base: Mutex<Agent>,
-    /// The ChatGPT account runs reach models with; `None` after
-    /// signing out, or on an account without plan use.
-    account: Arc<Mutex<Option<AccountId>>>,
-    /// The client `base` reaches models with, for what it learns on the
-    /// way: why the ChatGPT plan refused a run, and when a chat's prompt
-    /// cache lapses. `None` for an agent built elsewhere, as in tests.
-    client: Arc<Mutex<Option<OpenAi>>>,
+    /// Whether `base` was given ([`Host::with_agent`], as in tests): its
+    /// client is its own, so runs start whatever fills `tau.provider`.
+    given_llm: bool,
+    /// A provider in place of the slot's: for tests. Shared, so what
+    /// plugins were given before it was set reads it too.
+    provider_override:
+        Arc<Mutex<Option<Arc<dyn tau_ui_plugin::provider::Provider>>>>,
     /// Why OpenAI refused the eligibility check at the last sign-in
     /// because plan use is not available to the account
     /// (`Recovery::Restricted`): the status, code and request id. `None`
@@ -365,26 +364,20 @@ use self::{
 /// How many past runs history shows.
 const HISTORY: u32 = 50;
 
-/// The agent runs start from, reaching models on `account`'s ChatGPT
-/// plan, and the client it reaches them through.
+/// The agent runs start from, reaching models through whatever fills
+/// `slots`' `tau.provider` as each run opens.
 fn coder(
-    runtime: &Runtime,
-    account: &AccountId,
-    credentials: &Credentials,
+    slots: &Arc<Mutex<tau_ui_plugin::slots::Fills>>,
     model: &str,
-) -> anyhow::Result<(Agent, OpenAi)> {
-    // Clients must be created inside the runtime.
-    let _guard = runtime.enter();
-    let client = OpenAi::chatgpt(credentials.chatgpt()?, account.clone());
-    let agent = Agent::new(client.clone())
+) -> Agent {
+    Agent::new(tau_ui_plugin::provider::ProviderLlm::new(slots.clone()))
         .name("coder")
         .model(model)
         // No cap on turns, as in Codex and pi: compaction keeps a long
         // run going, and the person stops it. Plugins that hold a stop
         // cap themselves: the constitution by its holds, a goal by its
         // continuations.
-        .limits(Limits::default().max_continuations(u32::MAX));
-    Ok((agent, client))
+        .limits(Limits::default().max_continuations(u32::MAX))
 }
 
 /// What every run's instructions start with, before the plugins' parts
@@ -443,15 +436,12 @@ impl Host {
             let ui = Self::load_ui_state(&config).await;
             crate::hosted::open_store(&config.store, &ui).await
         })?;
-        let (agent, client) = coder(
-            &runtime,
-            &config.account,
-            &config.credentials,
-            &config.default_model(),
-        )?;
+        let slots = Arc::default();
+        let agent = coder(&slots, &config.default_model());
         let (mut host, events) =
             Self::without_plugins(runtime, agent, store, config);
-        *host.client.lock().expect("not poisoned") = Some(client);
+        host.slots = slots;
+        host.given_llm = false;
         // The app searches memory with docbert's model; hosts built
         // elsewhere, as in tests, by keywords alone.
         host.memory_search = tau_memory_host::Search::Semantic;
@@ -544,8 +534,8 @@ impl Host {
         let host = Self {
             runtime,
             base: Mutex::new(agent),
-            account: Arc::new(Mutex::new(Some(config.account.clone()))),
-            client: Arc::default(),
+            given_llm: true,
+            provider_override: Arc::default(),
             not_eligible: Arc::default(),
             given: Services::default(),
             memory_search: tau_memory_host::Search::Keywords,
@@ -616,11 +606,33 @@ impl Host {
         crate::hosted::provided(&self.hosted, services.and(&self.given))
     }
 
-    /// Learns what the plan refused and when caches lapse from `client`,
-    /// the one the agent was built with: for tests.
-    pub fn with_client(self, client: OpenAi) -> Self {
-        *self.client.lock().expect("not poisoned") = Some(client);
+    /// Reaches models, the plan's refusals and when caches lapse through
+    /// `provider`, in place of what fills `tau.provider`: for tests.
+    pub fn with_provider(
+        self,
+        provider: Arc<dyn tau_ui_plugin::provider::Provider>,
+    ) -> Self {
+        *self.provider_override.lock().expect("not poisoned") = Some(provider);
         self
+    }
+
+    /// What fills `tau.provider` now, or a test's in its place.
+    pub(crate) fn provider(
+        &self,
+    ) -> Option<Arc<dyn tau_ui_plugin::provider::Provider>> {
+        let over = self.provider_override.lock().expect("not poisoned").clone();
+        over.or_else(|| {
+            self.slots
+                .lock()
+                .expect("not poisoned")
+                .get(&tau_ui_plugin::provider::PROVIDER)
+        })
+    }
+
+    /// Whether runs have a model to run on now.
+    pub(crate) fn signed_in(&self) -> bool {
+        self.provider()
+            .is_some_and(|provider| provider.llm().is_some())
     }
 
     /// Reaches repositories' forge through `forge`, in place of the
@@ -912,7 +924,7 @@ impl Host {
         main: bool,
         resolving: bool,
     ) -> anyhow::Result<(Agent, String)> {
-        if self.account().is_none() {
+        if !self.given_llm && !self.signed_in() {
             anyhow::bail!(
                 "tau has no ChatGPT plan to run on. Sign in with ChatGPT and \
                  enable plan use on the Models screen."
@@ -1603,7 +1615,7 @@ impl Host {
         view.set_base_plan(
             &choice.model,
             choice.effort.label(),
-            self.access_label(),
+            &self.access_label(),
             dir.as_deref().or(workspace.as_ref().map(|_| "")),
         );
         view

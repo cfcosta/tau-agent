@@ -75,11 +75,7 @@ impl Credentials {
     /// What runs use: the active ChatGPT account, when it is signed in
     /// with plan usage.
     pub fn plan_account(&self) -> Option<AccountId> {
-        let store = self.saved_store()?;
-        let account = store.active().ok()??;
-        let status = store.load(&account).ok()?.status();
-        (status == AccountStatus::SignedIn(PlanUsage::Enabled))
-            .then_some(account)
+        tau_chatgpt::plan_account(&self.dir)
     }
 
     /// The active ChatGPT account, whatever its state.

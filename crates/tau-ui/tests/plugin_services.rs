@@ -285,7 +285,8 @@ fn a_host_half_asks_the_model_and_the_plugin_pays() {
     };
     let agent = Agent::new(client.clone()).name("coder");
     let (host, _events) = host_in(&own_dir(), runtime, store.clone(), agent);
-    let host = host.with_client(client);
+    let host =
+        host.with_provider(std::sync::Arc::new(tau_chatgpt::Over::new(client)));
 
     let model = host.host_cx().model(NAME).expect("signed in");
     let input = [Message::User(UserMessage {
@@ -323,9 +324,6 @@ fn a_host_half_asks_the_model_and_the_plugin_pays() {
         .block_on(host.plugin_act(NAME, serde_json::Value::Null))
         .unwrap();
     assert_eq!(given, Some(serde_json::json!(false)));
-
-    host.set_account(None).unwrap();
-    assert!(host.host_cx().model(NAME).is_none());
 }
 
 /// What fills `tau.title` writes a run's title with the person's model,
@@ -349,7 +347,8 @@ fn titles_are_written_with_the_persons_model_and_booked_to_tau_titles() {
     };
     let agent = Agent::new(client.clone()).name("coder");
     let (host, _events) = host_in(&own_dir(), runtime, store.clone(), agent);
-    let host = host.with_client(client);
+    let host =
+        host.with_provider(std::sync::Arc::new(tau_chatgpt::Over::new(client)));
 
     let titler = host
         .slots()

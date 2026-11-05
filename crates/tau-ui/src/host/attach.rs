@@ -891,24 +891,14 @@ impl Host {
         // screen changes what new runs use.
         let connected: accounts::Connected = {
             let (host, entity) = (host.clone(), workspace.downgrade());
-            std::rc::Rc::new(move |account, cx| {
-                let applied = host.set_account(account);
+            // What fills `tau.provider` reads the saved sign-ins as each
+            // run opens: only the catalog changes.
+            std::rc::Rc::new(move |_account, cx| {
                 let Some(workspace) = entity.upgrade() else {
                     return;
                 };
                 check_eligibility(&host, &workspace, cx);
                 host.catalog_changed();
-                if let Err(error) = applied {
-                    workspace.update(cx, |ws, cx| {
-                        ws.apply(
-                            HostUpdate::alert(
-                                "Could not use the new sign-in",
-                                format!("{error:#}"),
-                            ),
-                            cx,
-                        );
-                    });
-                }
             })
         };
         let sign_ins = accounts::SignIns::default();

@@ -147,6 +147,7 @@ tau-direnv = { path = "crates/plugins/tau-direnv", version = "0.1.0" }
 tau-notify = { path = "crates/plugins/tau-notify", version = "0.1.0" }
 tau-titles = { path = "crates/plugins/tau-titles", version = "0.1.0" }
 tau-sqlite = { path = "crates/plugins/tau-sqlite", version = "0.1.0" }
+tau-chatgpt = { path = "crates/plugins/tau-chatgpt", version = "0.1.0" }
 tau-codemode = { path = "crates/plugins/tau-codemode", version = "0.1.0" }
 tau-codemode-host = { path = "crates/plugins/tau-codemode-host", version = "0.1.0" }
 tau-compaction = { path = "crates/plugins/tau-compaction", version = "0.1.0" }

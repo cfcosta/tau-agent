@@ -12,6 +12,7 @@ pub fn plugins() -> Registry {
         .with(tau_agents::AgentsUi)
         .with(tau_ask::AskUi)
         .with(tau_canvas::CanvasUi)
+        .with(tau_chatgpt::ChatGptUi)
         .with(tau_codemode::CodemodeUi)
         .with(tau_compaction::ui::CompactionUi)
         .with(tau_constitution::ui::ConstitutionUi)
@@ -37,4 +38,5 @@ pub fn plugins() -> Registry {
         // person picks another on the Plugins screen (ADR 0045).
         .slot_order(&tau_ui_plugin::vcs::VCS, &[tau_vcs::ui::NAME])
         .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_github::NAME])
+        .slot_order(&tau_ui_plugin::provider::PROVIDER, &[tau_chatgpt::NAME])
 }

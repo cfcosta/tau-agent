@@ -32,6 +32,8 @@ tau-agent/
 │       │                         # composer's place (ADR 0019)
 │       ├── tau-canvas/           # images and documents the agent shows the
 │       │                         # person, in a pane beside the run (ADR 0040)
+│       ├── tau-chatgpt/          # the person's ChatGPT plan, filling
+│       │                         # `tau.provider`
 │       ├── tau-codemode/         # Luau scripts that call tools and Jev
 │       ├── tau-compaction/       # summarizing compaction
 │       ├── tau-constitution/     # a repository's rules, checked with Jev
