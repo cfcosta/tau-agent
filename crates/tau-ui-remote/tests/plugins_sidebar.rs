@@ -9,7 +9,7 @@ use tau_ui_kit::theme::Tone;
 use tau_ui_plugin::{CatalogEntry, Group, Link, Note};
 use tau_ui_remote::{
     Workspace,
-    catalog::{Catalog, Own, PluginInfo, Repo},
+    catalog::{Catalog, PluginInfo, Repo},
     repos::TreeRow,
     route::Route,
     view::{Origin, RunView},
@@ -73,7 +73,7 @@ fn catalog() -> Catalog {
             Repo {
                 name: OWN.into(),
                 main: Some(id("plugins-main")),
-                own: Some(Own::Plugins),
+                kind: Some(tau_ui_remote::catalog::kinds::PLUGINS.to_owned()),
                 ..Default::default()
             },
             Repo {

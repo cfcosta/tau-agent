@@ -1903,8 +1903,8 @@ fn repositories_are_listed_and_remembered() {
     assert_eq!(names(&host), ["tau-plugins"]);
     // tau's own, which the sidebar leaves out.
     assert_eq!(
-        host.block_on(host.catalog()).repos[0].own,
-        Some(tau_ui_remote::catalog::Own::Plugins)
+        host.block_on(host.catalog()).repos[0].kind,
+        Some(tau_ui_remote::catalog::kinds::PLUGINS.to_owned())
     );
     // Two repositories with one name get two names.
     assert_eq!(
@@ -4105,7 +4105,10 @@ fn a_new_agent_is_a_repository_of_tau_s_own_with_a_main_chat() {
     let (host, _events) = host(ScriptedModel::new());
     let repo = host.block_on(host.list_agent("triage")).unwrap();
     assert_eq!(repo.name, "triage");
-    assert_eq!(repo.own, Some(tau_ui_remote::catalog::Own::Agent));
+    assert_eq!(
+        repo.kind,
+        Some(tau_ui_remote::catalog::kinds::AGENT.to_owned())
+    );
     let main = repo.main.clone().expect("a main chat");
 
     let project = common::project(&host, "triage");
@@ -4123,7 +4126,10 @@ fn a_new_agent_is_a_repository_of_tau_s_own_with_a_main_chat() {
 
     let catalog = host.block_on(host.catalog());
     let listed = catalog.repo("triage").expect("listed");
-    assert_eq!(listed.own, Some(tau_ui_remote::catalog::Own::Agent));
+    assert_eq!(
+        listed.kind,
+        Some(tau_ui_remote::catalog::kinds::AGENT.to_owned())
+    );
     assert_eq!(listed.main.as_ref(), Some(&main));
     assert!(catalog.is_agent("triage"));
     assert!(!catalog.is_listed("triage"));

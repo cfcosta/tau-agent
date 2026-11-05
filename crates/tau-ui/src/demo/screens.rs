@@ -1033,7 +1033,7 @@ fn yours(
         catalog.repos.push(crate::catalog::Repo {
             name: tau_luau_plugins::REPO.into(),
             main: Some(chat.clone()),
-            own: Some(crate::catalog::Own::Plugins),
+            kind: Some(crate::catalog::kinds::PLUGINS.to_owned()),
             ..Default::default()
         });
     }
@@ -1381,7 +1381,7 @@ fn agents(
             catalog.repos.push(crate::catalog::Repo {
                 name: agent.name.clone(),
                 main: Some(main(&agent.name)),
-                own: Some(crate::catalog::Own::Agent),
+                kind: Some(crate::catalog::kinds::AGENT.to_owned()),
                 ..Default::default()
             });
         }

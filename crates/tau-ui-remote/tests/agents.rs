@@ -12,7 +12,7 @@ use tau_agents::{Agent, Overview, Status, Trigger, TriggerKind};
 use tau_ui_plugin::{PluginValue, points};
 use tau_ui_remote::{
     Workspace,
-    catalog::{Catalog, Own, Repo},
+    catalog::{Catalog, Repo},
     repos::TreeRow,
     route::Route,
     view::{Origin, RunView},
@@ -87,12 +87,12 @@ fn catalog() -> Catalog {
             Repo {
                 name: AGENT.into(),
                 main: Some(id("agent-main")),
-                own: Some(Own::Agent),
+                kind: Some(tau_ui_remote::catalog::kinds::AGENT.to_owned()),
                 ..Default::default()
             },
             Repo {
                 name: NEW.into(),
-                own: Some(Own::Agent),
+                kind: Some(tau_ui_remote::catalog::kinds::AGENT.to_owned()),
                 ..Default::default()
             },
         ],

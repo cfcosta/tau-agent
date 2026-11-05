@@ -357,7 +357,7 @@ impl Host {
                 hidden: false,
                 forge: None,
                 main,
-                own: None,
+                kind: None,
                 local: None,
             });
             id
@@ -862,7 +862,8 @@ impl Host {
             let mut list = self.list.lock().expect("not poisoned");
             let path = self.config.plugins_repo();
             if list.repos.iter().any(|listed| {
-                listed.own == Some(Own::Plugins) && listed.path == path
+                listed.kind.as_deref() == Some(crate::catalog::kinds::PLUGINS)
+                    && listed.path == path
             }) {
                 return;
             }
@@ -873,7 +874,7 @@ impl Host {
                 hidden: false,
                 forge: None,
                 main: None,
-                own: Some(Own::Plugins),
+                kind: Some(crate::catalog::kinds::PLUGINS.to_owned()),
                 local: None,
             });
         }
@@ -902,11 +903,15 @@ impl Host {
         {
             let mut list = self.list.lock().expect("not poisoned");
             list.repos.retain(|listed| {
-                listed.own != Some(Own::Agent) || found.contains(&listed.path)
+                listed.kind.as_deref() != Some(crate::catalog::kinds::AGENT)
+                    || found.contains(&listed.path)
             });
             for path in &found {
                 if !list.repos.iter().any(|listed| listed.path == *path) {
-                    list.list_as(path, Some(Own::Agent));
+                    list.list_as(
+                        path,
+                        Some(crate::catalog::kinds::AGENT.to_owned()),
+                    );
                 }
             }
         }
@@ -932,7 +937,8 @@ impl Host {
         tokio::fs::create_dir_all(&dir).await?;
         let (name, id) = {
             let mut list = self.list.lock().expect("not poisoned");
-            let name = list.list_as(&dir, Some(Own::Agent));
+            let name = list
+                .list_as(&dir, Some(crate::catalog::kinds::AGENT.to_owned()));
             let id = list.id_of(&name);
             (name, id)
         };
@@ -950,7 +956,7 @@ impl Host {
         let mut repo = Repo::new(&name, dir.display().to_string());
         repo.id = id;
         repo.main = Some(self.main_of(&name).await?);
-        repo.own = Some(Own::Agent);
+        repo.kind = Some(crate::catalog::kinds::AGENT.to_owned());
         Ok(repo)
     }
 

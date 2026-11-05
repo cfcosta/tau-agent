@@ -65,7 +65,7 @@ use tokio::{runtime::Runtime, sync::mpsc};
 
 use crate::{
     accounts::Credentials,
-    catalog::{Catalog, Own, PluginInfo, ProjectStatus, Repo, Seam, StoreInfo},
+    catalog::{Catalog, PluginInfo, ProjectStatus, Repo, Seam, StoreInfo},
     models::{AccessInfo, Effort, ModelChoice, ModelSettings, Models},
     pull_request::{PrCommit, PrState, PullRequest},
     setup::{CloneState, RepoClone, SetupUpdate},
@@ -847,7 +847,7 @@ impl Host {
                 Repo::new(&listed.name, listed.path.display().to_string());
             repo.id = listed.id.clone();
             repo.main = listed.main.as_deref().map(|main| RunId(main.into()));
-            repo.own = listed.own;
+            repo.kind = listed.kind.clone();
             // What the main chat would push, for a repository from the
             // forge (ADR 0023).
             if listed.forge.is_some()
@@ -1863,22 +1863,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("repos.json");
         let listed =
-            |name: &str, forge: Option<&str>, own: Option<Own>| Listed {
+            |name: &str, forge: Option<&str>, kind: Option<String>| Listed {
                 id: new_id(),
                 name: name.to_owned(),
                 path: dir.path().join(name),
                 hidden: false,
                 forge: forge.map(str::to_owned),
                 main: None,
-                own,
+                kind,
                 local: None,
             };
         let saved = RepoList {
             repos: vec![
                 listed("tau-agent", None, None),
                 listed("ascend", Some("cfcosta/ascend"), None),
-                listed("tau-plugins", None, Some(Own::Plugins)),
-                listed("triage", None, Some(Own::Agent)),
+                listed(
+                    "tau-plugins",
+                    None,
+                    Some(crate::catalog::kinds::PLUGINS.to_owned()),
+                ),
+                listed(
+                    "triage",
+                    None,
+                    Some(crate::catalog::kinds::AGENT.to_owned()),
+                ),
             ],
             open: vec![
                 "tau-agent".into(),
@@ -1919,7 +1927,10 @@ mod tests {
         let file = dir.path().join("repos.json");
         let mut list = RepoList::default();
         for name in &names {
-            list.list_as(&dir.path().join(name), Some(Own::Agent));
+            list.list_as(
+                &dir.path().join(name),
+                Some(crate::catalog::kinds::AGENT.to_owned()),
+            );
         }
         let ids: Vec<RepoId> =
             list.repos.iter().map(|listed| listed.id.clone()).collect();
@@ -1983,7 +1994,7 @@ mod tests {
             hidden: tc.draw(gs::booleans()),
             forge: (kind == 0).then(|| format!("o/{n}")),
             main: tc.draw(gs::optional(text())),
-            own: (kind == 1).then_some(Own::Agent),
+            kind: (kind == 1).then(|| crate::catalog::kinds::AGENT.to_owned()),
             local,
         }
     }
@@ -2032,7 +2043,7 @@ mod tests {
             .iter()
             .filter(|listed| {
                 listed.forge.is_some()
-                    || listed.own.is_some()
+                    || listed.kind.is_some()
                     || listed.local.is_some()
             })
             .cloned()
@@ -2075,7 +2086,7 @@ mod tests {
         let mut kept: Vec<Listed> = list
             .repos
             .into_iter()
-            .filter(|listed| listed.forge.is_some() || listed.own.is_some())
+            .filter(|listed| listed.forge.is_some() || listed.kind.is_some())
             .collect();
         assert_eq!(loaded.repos.len(), kept.len());
         for (listed, given) in kept.iter_mut().zip(&loaded.repos) {

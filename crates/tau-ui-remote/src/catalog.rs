@@ -102,20 +102,20 @@ impl Catalog {
     /// The person's repositories, in the sidebar's order: tau's own are
     /// left out.
     pub fn listed(&self) -> impl Iterator<Item = &Repo> {
-        self.repos.iter().filter(|repo| repo.own.is_none())
+        self.repos.iter().filter(|repo| repo.kind.is_none())
     }
 
     /// Whether `name` is one of the person's repositories.
     pub fn is_listed(&self, name: &str) -> bool {
-        self.repo(name).is_some_and(|repo| repo.own.is_none())
+        self.repo(name).is_some_and(|repo| repo.kind.is_none())
     }
 
     /// tau's own repository, where the person's plugins are written
     /// (ADR 0027): the sidebar lists its chats under Plugins.
     pub fn own_repo(&self) -> Option<&Repo> {
-        self.repos
-            .iter()
-            .find(|repo| repo.own == Some(Own::Plugins))
+        self.repos.iter().find(|repo| {
+            repo.kind.as_deref() == Some(crate::catalog::kinds::PLUGINS)
+        })
     }
 
     /// The repositories of the kind `kind` (`RepoKind`), such as the
@@ -124,7 +124,7 @@ impl Catalog {
         let mut agents: Vec<&Repo> = self
             .repos
             .iter()
-            .filter(|repo| repo.own.is_some_and(|own| own.name() == kind))
+            .filter(|repo| repo.kind.as_deref() == Some(kind))
             .collect();
         agents.sort_by(|a, b| a.name.cmp(&b.name));
         agents.into_iter()
@@ -132,8 +132,9 @@ impl Catalog {
 
     /// Whether `name` is an agent's repository.
     pub fn is_agent(&self, name: &str) -> bool {
-        self.repo(name)
-            .is_some_and(|repo| repo.own == Some(Own::Agent))
+        self.repo(name).is_some_and(|repo| {
+            repo.kind.as_deref() == Some(crate::catalog::kinds::AGENT)
+        })
     }
 
     /// The plugins tau has built in: every one but the person's own.
@@ -200,35 +201,25 @@ pub struct Repo {
     /// Trunk's branch, which `origin/<trunk>` names on the forge.
     #[serde(default)]
     pub trunk: Option<String>,
-    /// tau's own, like its plugins repository (ADR 0027) or an agent's
-    /// (ADR 0037): runs work in it, but the sidebar's Repositories,
-    /// search and pickers do not list it.
+    /// The kind of tau's own repository it is, as a plugin names it,
+    /// like the plugins repository (ADR 0027) or an agent's (ADR 0037):
+    /// runs work in it, but the sidebar's Repositories, search and
+    /// pickers do not list it.
     #[serde(default)]
-    pub own: Option<Own>,
+    pub kind: Option<String>,
     /// The model and effort its conversations go to unless the person
     /// picks others, when a plugin sets them: an agent's own (ADR 0037).
     #[serde(default)]
     pub model: Option<crate::models::ModelChoice>,
 }
 
-/// Which of tau's own repositories a repository is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Own {
+/// The kinds of tau's own repositories, as plugins name them
+/// (`RepoKind::kind`).
+pub mod kinds {
     /// The plugins repository (ADR 0027).
-    Plugins,
+    pub const PLUGINS: &str = "plugins";
     /// An agent's (ADR 0037).
-    Agent,
-}
-
-impl Own {
-    /// Its name, as a plugin's repository kind names it (`RepoKind`).
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Plugins => "plugins",
-            Self::Agent => "agent",
-        }
-    }
+    pub const AGENT: &str = "agent";
 }
 
 impl Repo {

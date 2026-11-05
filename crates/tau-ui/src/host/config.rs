@@ -198,7 +198,7 @@ pub(super) struct Listed {
     /// agent's (ADR 0037): made here, not cloned, and listed though it is
     /// not from the forge.
     #[serde(default)]
-    pub(super) own: Option<Own>,
+    pub(super) kind: Option<String>,
     /// A local repository, worked in the person's folder (ADR 0043), at
     /// `path`: what opens it again.
     #[serde(default)]
@@ -258,7 +258,7 @@ impl RepoList {
     pub(super) fn without_old_checkouts(mut self) -> Self {
         self.repos.retain(|listed| {
             listed.forge.is_some()
-                || listed.own.is_some()
+                || listed.kind.is_some()
                 || listed.local.is_some()
         });
         let listed: Vec<String> = self
@@ -299,13 +299,20 @@ impl RepoList {
     }
 
     /// Lists the repository at `path` as [`Self::list`] does, as one of
-    /// tau's own when `own` says which.
-    pub(super) fn list_as(&mut self, path: &Path, own: Option<Own>) -> String {
+    /// tau's own when `kind` says which.
+    pub(super) fn list_as(
+        &mut self,
+        path: &Path,
+        kind: Option<String>,
+    ) -> String {
         let path = path.to_owned();
         if let Some(listed) =
             self.repos.iter_mut().find(|listed| listed.path == path)
         {
             listed.hidden = false;
+            if kind.is_some() {
+                listed.kind = kind;
+            }
             return listed.name.clone();
         }
         let name = self.free_name(&path);
@@ -316,7 +323,7 @@ impl RepoList {
             hidden: false,
             forge: None,
             main: None,
-            own,
+            kind,
             local: None,
         });
         name
@@ -350,7 +357,7 @@ impl RepoList {
             hidden: false,
             forge: None,
             main: None,
-            own: None,
+            kind: None,
             local: Some(local),
         });
         name

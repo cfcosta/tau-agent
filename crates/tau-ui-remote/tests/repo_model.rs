@@ -8,7 +8,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use tau_agent::tool::RunId;
 use tau_ui_remote::{
     Workspace,
-    catalog::{Catalog, Own, Repo},
+    catalog::{Catalog, Repo},
     models::{Effort, ModelChoice},
     route::Route,
     view::RunView,
@@ -37,7 +37,7 @@ fn catalog() -> Catalog {
             Repo {
                 name: AGENT.into(),
                 main: Some(id("agent-main")),
-                own: Some(Own::Agent),
+                kind: Some(tau_ui_remote::catalog::kinds::AGENT.to_owned()),
                 model: Some(agents_model()),
                 ..Default::default()
             },

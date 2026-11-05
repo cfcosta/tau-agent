@@ -9,7 +9,7 @@ use gpui::{TestAppContext, VisualTestContext};
 use tau_agent::tool::RunId;
 use tau_ui_remote::{
     Workspace,
-    catalog::{Catalog, Own, Repo},
+    catalog::{Catalog, Repo},
     route::Route,
     search::Pick,
     view::RunView,
@@ -29,7 +29,7 @@ fn catalog() -> Catalog {
             Repo {
                 name: OWN.into(),
                 main: Some(id("plugins-main")),
-                own: Some(Own::Plugins),
+                kind: Some(tau_ui_remote::catalog::kinds::PLUGINS.to_owned()),
                 ..Default::default()
             },
             Repo {
@@ -99,7 +99,7 @@ fn with_agents() -> Catalog {
     for name in ["triage", "digest"] {
         catalog.repos.push(Repo {
             name: name.into(),
-            own: Some(Own::Agent),
+            kind: Some(tau_ui_remote::catalog::kinds::AGENT.to_owned()),
             ..Default::default()
         });
     }
@@ -124,7 +124,9 @@ fn agents_are_tau_s_own_and_neither_the_person_s_nor_the_plugins_repository() {
     assert!(!catalog.is_listed("triage"));
     // Agents are not the plugins repository: without it, there is none.
     let mut catalog = catalog;
-    catalog.repos.retain(|repo| repo.own != Some(Own::Plugins));
+    catalog.repos.retain(|repo| {
+        repo.kind.as_deref() != Some(tau_ui_remote::catalog::kinds::PLUGINS)
+    });
     assert!(catalog.own_repo().is_none());
     assert_eq!(catalog.of_kind("agent").count(), 2);
 }

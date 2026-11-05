@@ -282,10 +282,9 @@ impl Workspace {
     /// The runs of the agent `name`'s repository, which its row lists
     /// while it is open (ADR 0037).
     pub fn agent_rows(&self, name: &str) -> Option<RepoRows<'_>> {
-        let repo = self
-            .catalog
-            .repo(name)
-            .filter(|repo| repo.own == Some(crate::catalog::Own::Agent))?;
+        let repo = self.catalog.repo(name).filter(|repo| {
+            repo.kind.as_deref() == Some(crate::catalog::kinds::AGENT)
+        })?;
         self.rows_of(repo, self.open_agents.contains(name), "")
     }
 
@@ -455,7 +454,7 @@ impl Workspace {
         let repo = self.catalog.repo(name);
         let main = repo.and_then(|repo| repo.main.clone());
         // Without a conversation yet, its kind's page.
-        let own = repo.and_then(|repo| repo.own);
+        let own = repo.and_then(|repo| repo.kind.clone());
         match main {
             Some(main) => {
                 self.details_open = true;
@@ -464,7 +463,7 @@ impl Workspace {
             None => {
                 let page =
                     self.repo_kinds().into_iter().find_map(|(plugin, kind)| {
-                        (own.map(crate::catalog::Own::name) == Some(&kind.kind))
+                        (own.as_deref() == Some(kind.kind.as_str()))
                             .then(|| self.kind_route(plugin, &kind.page))
                             .flatten()
                     });
