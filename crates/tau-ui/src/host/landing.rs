@@ -481,7 +481,7 @@ impl Host {
         prompt: &str,
     ) -> anyhow::Result<()> {
         let choice = self.session_of(run).choice.unwrap_or_else(|| {
-            ModelChoice::new(self.config.default_model(), Effort::Auto)
+            ModelChoice::new(self.default_model(), Effort::Auto)
         });
         self.resume_as(
             run,

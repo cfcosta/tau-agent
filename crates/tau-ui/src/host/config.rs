@@ -7,8 +7,8 @@ use super::*;
 pub struct HostConfig {
     /// Where sign-ins and keys are kept.
     pub credentials: Credentials,
-    /// The model runs use when nothing else is chosen; `None` takes
-    /// [`DEFAULT_MODEL`].
+    /// The model runs use when nothing else is chosen; `None` takes the
+    /// provider's first (`Models::fit`).
     pub model: Option<String>,
     /// The run store, usually `$XDG_DATA_HOME/tau/runs.db`.
     pub store: PathBuf,
@@ -31,11 +31,11 @@ pub struct HostConfig {
 }
 
 impl HostConfig {
-    /// The model runs use when nothing else is chosen.
+    /// The model runs use when nothing else is chosen, as the person
+    /// said it (`--model`); empty for the provider's first
+    /// ([`Host::default_model`]).
     pub fn default_model(&self) -> String {
-        self.model
-            .clone()
-            .unwrap_or_else(|| DEFAULT_MODEL.to_owned())
+        self.model.clone().unwrap_or_default()
     }
 
     /// tau's identity under the person's jj config, as this process

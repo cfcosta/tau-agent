@@ -457,7 +457,7 @@ impl Provider for Over {
 /// The plan's models, from tau-ai's model table, one per family, in its
 /// order and named as it names them. Not the account's `GET /v1/models`:
 /// that catalog leaves out models the plan runs.
-fn plan_models() -> Vec<ModelOption> {
+pub fn plan_models() -> Vec<ModelOption> {
     tau_ai::model::plan_models()
         .into_iter()
         .map(|model| ModelOption {
@@ -465,6 +465,7 @@ fn plan_models() -> Vec<ModelOption> {
             name: Some(model.name.clone()),
             context: model.context_window,
             reasoning: model.reasoning,
+            efforts: model.efforts.clone(),
         })
         .collect()
 }

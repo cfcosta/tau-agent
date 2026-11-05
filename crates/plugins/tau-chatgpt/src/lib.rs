@@ -10,7 +10,7 @@ pub mod ui;
 use std::path::Path;
 
 #[cfg(feature = "host")]
-pub use half::{ChatGptHost, Over, not_eligible};
+pub use half::{ChatGptHost, Over, not_eligible, plan_models};
 use tau_ai::chatgpt::{AccountId, AccountStatus, PlanUsage, Store};
 pub use ui::ChatGptUi;
 

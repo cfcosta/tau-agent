@@ -66,15 +66,7 @@ use tokio::{runtime::Runtime, sync::mpsc};
 use crate::{
     accounts::Credentials,
     catalog::{Catalog, Own, PluginInfo, ProjectStatus, Repo, Seam, StoreInfo},
-    models::{
-        AccessInfo,
-        DEFAULT_MODEL,
-        Effort,
-        ModelChoice,
-        ModelSettings,
-        Models,
-        plan_models,
-    },
+    models::{AccessInfo, Effort, ModelChoice, ModelSettings, Models},
     pull_request::{PrCommit, PrState, PullRequest},
     setup::{CloneState, RepoClone, SetupUpdate},
     update::HostUpdate,
@@ -156,15 +148,16 @@ fn for_model(base: Agent, choice: &ModelChoice, start: HostRecord) -> Agent {
 /// else its caller's. An effort the model does not take is refused;
 /// the caller's, on another model that does not take it, goes to auto.
 fn child_choice(
+    models: &Models,
     caller: &ModelChoice,
     asked: &ChildModel,
 ) -> Result<ModelChoice, tau_agent::tool::ToolError> {
     let model = asked.model.clone().unwrap_or_else(|| caller.model.clone());
     let Some(effort) = asked.effort else {
-        return Ok(ModelChoice::new(model, caller.effort).fitted());
+        return Ok(models.fit(ModelChoice::new(model, caller.effort)));
     };
     let effort = Effort::of(effort);
-    let offered = Effort::offered(&model);
+    let offered = models.efforts(&model);
     if !offered.contains(&effort) {
         let offered: Vec<&str> = offered.iter().map(|e| e.label()).collect();
         return Err(format!(
@@ -615,6 +608,16 @@ impl Host {
         })
     }
 
+    /// The model runs use when nothing else is chosen: the one the
+    /// person said (`--model`), else the coder's default among the
+    /// provider's models.
+    pub(crate) fn default_model(&self) -> String {
+        match self.config.model.clone() {
+            Some(model) => model,
+            None => self.models().default_for("coder").model,
+        }
+    }
+
     /// Whether runs have a model to run on now.
     pub fn signed_in(&self) -> bool {
         self.provider()
@@ -996,8 +999,12 @@ impl Host {
             })
             .await?;
         let agent = for_model(choice, workspace.as_ref());
-        let models: Vec<String> =
-            plan_models().into_iter().map(|model| model.id).collect();
+        let offered = self.models();
+        let models: Vec<String> = offered
+            .options
+            .iter()
+            .map(|model| model.id.clone())
+            .collect();
         // Main's sub-agents, and every other run's refusing `spawn`, in
         // the same place, so all declare the same tools (ADR 0022).
         let agent = if main {
@@ -1005,6 +1012,7 @@ impl Host {
             let child_services = services_of.clone();
             let registered = registered.clone();
             let caller = choice.clone();
+            let offered = offered.clone();
             let refused = models.clone();
             let child_notes = notes.clone();
             let spawn = Spawn::new(
@@ -1013,7 +1021,7 @@ impl Host {
                 &notes,
                 &models,
                 move |child, asked| {
-                    let choice = match child_choice(&caller, asked) {
+                    let choice = match child_choice(&offered, &caller, asked) {
                         Ok(choice) => choice,
                         Err(error) => {
                             return Box::pin(std::future::ready(Err(error)));
@@ -1151,8 +1159,9 @@ impl Host {
         self.keep_uploads(&prompt.images).await;
         let state = self.repo_state(&repo.name);
         let starting = state.starting.lock().await;
-        // An effort the model does not take falls back to auto.
-        let choice = &choice.clone().fitted();
+        // No model named takes the default; an effort the model does not
+        // take falls back to auto.
+        let choice = &self.models().fit(choice.clone());
         // Named after what it was asked, so the workspace says what it is
         // for.
         let name = workspace_name(&branch_slug(&prompt.text));
@@ -1341,8 +1350,9 @@ impl Host {
         if main && let Some(name) = &workspace {
             repo.repository().await?.catch_up(name).await?;
         }
-        // An effort the model does not take falls back to auto.
-        let choice = &choice.clone().fitted();
+        // No model named takes the default; an effort the model does not
+        // take falls back to auto.
+        let choice = &self.models().fit(choice.clone());
         // A run without a workspace yet gets one, named after the
         // message.
         let workspace = workspace
@@ -1574,7 +1584,7 @@ impl Host {
         repo: &RepoSlot,
     ) -> RunView {
         let choice = self.session_of(&id).choice.unwrap_or_else(|| {
-            ModelChoice::new(self.config.default_model(), Effort::Auto)
+            ModelChoice::new(self.default_model(), Effort::Auto)
         });
         let mut view = RunView::new(
             id,
@@ -1687,7 +1697,7 @@ impl Host {
 
     pub fn choice_of(&self, run: &RunId) -> ModelChoice {
         self.session_of(run).choice.unwrap_or_else(|| {
-            ModelChoice::new(self.config.default_model(), Effort::Auto)
+            ModelChoice::new(self.default_model(), Effort::Auto)
         })
     }
 
@@ -2101,11 +2111,18 @@ mod tests {
     fn a_sub_agent_runs_on_what_its_call_asked(tc: hegel::TestCase) {
         use hegel::generators::{self as gs, Generator as _};
         use tau_ai::responses::request::ReasoningEffort;
-        let ids: Vec<String> =
-            plan_models().into_iter().map(|model| model.id).collect();
+        let models = Models {
+            options: tau_chatgpt::plan_models(),
+            ..Models::default()
+        };
+        let ids: Vec<String> = models
+            .options
+            .iter()
+            .map(|model| model.id.clone())
+            .collect();
         let caller_model: String = tc.draw(gs::sampled_from(ids.clone()));
         let caller_effort = tc.draw(
-            gs::sampled_from(Effort::offered(&caller_model)).print_as_debug(),
+            gs::sampled_from(models.efforts(&caller_model)).print_as_debug(),
         );
         let caller = ModelChoice::new(caller_model, caller_effort);
         let asked = ChildModel {
@@ -2116,8 +2133,8 @@ mod tests {
             )),
         };
         let model = asked.model.clone().unwrap_or(caller.model.clone());
-        let offered = Effort::offered(&model);
-        match (child_choice(&caller, &asked), asked.effort) {
+        let offered = models.efforts(&model);
+        match (child_choice(&models, &caller, &asked), asked.effort) {
             (Ok(choice), Some(effort)) => {
                 assert_eq!(choice.model, model);
                 assert_eq!(choice.effort, Effort::of(effort));

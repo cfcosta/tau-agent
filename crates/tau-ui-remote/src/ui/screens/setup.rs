@@ -2057,7 +2057,7 @@ fn ready(
     let model = models
         .access
         .signed_in
-        .then(|| models.settings.default_for("coder").model);
+        .then(|| models.default_for("coder").model);
     let on_plan = model.is_some();
     // The ring grows while the field has the keyboard.
     let ring = |focused: bool| if focused { 7. } else { 4. };

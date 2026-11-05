@@ -14,7 +14,7 @@ use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use tau_ai::{
     llm::{Llm, LlmError, LlmSession},
-    responses::request::Settings,
+    responses::request::{ReasoningEffort, Settings},
     ws::io::driver::CacheLapse,
 };
 
@@ -33,6 +33,9 @@ pub struct ModelOption {
     pub context: u64,
     /// Whether it accepts a reasoning effort.
     pub reasoning: bool,
+    /// The efforts it takes, lowest first: none when it does not reason.
+    #[serde(default)]
+    pub efforts: Vec<ReasoningEffort>,
 }
 
 impl ModelOption {

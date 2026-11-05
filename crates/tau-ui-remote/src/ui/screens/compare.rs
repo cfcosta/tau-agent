@@ -378,7 +378,7 @@ fn branch(
     let keep_id = run.id.clone();
     // A branch on another model than coder's default can make it one.
     let make_default = Some(Workspace::model_of(run)).filter(|choice| {
-        ws.catalog.models.settings.default_for("coder").model != choice.model
+        ws.catalog.models.default_for("coder").model != choice.model
     });
     let diff = run.last_diff().map(|(card, lines)| {
         ui::card(t)

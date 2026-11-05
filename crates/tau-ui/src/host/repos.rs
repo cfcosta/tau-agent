@@ -406,7 +406,7 @@ impl Host {
                     workflow_id: None,
                     agent: "coder",
                     kind: RunKind::Root,
-                    model: &self.config.default_model(),
+                    model: &self.default_model(),
                     turns: 0,
                 })
                 .await?;

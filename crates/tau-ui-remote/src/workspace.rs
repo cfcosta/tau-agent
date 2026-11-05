@@ -809,7 +809,7 @@ impl Workspace {
         ];
         composer.read(cx).focus_handle(cx).focus(window, cx);
         let current = runs.first().map(|run| run.id.clone());
-        let next_model = catalog.models.settings.default_for("coder");
+        let next_model = catalog.models.default_for("coder");
         let mut workspace = Self {
             name: name.into(),
             runs,
@@ -971,7 +971,7 @@ impl Workspace {
         self.catalog = catalog;
         self.restore_repos();
         if !self.next_model_picked {
-            self.next_model = self.catalog.models.settings.default_for("coder");
+            self.next_model = self.catalog.models.default_for("coder");
         }
         cx.notify();
     }

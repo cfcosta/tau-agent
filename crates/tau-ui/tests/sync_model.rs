@@ -329,7 +329,13 @@ impl Asked {
             assert_eq!(settings.is_hidden(id), *hidden, "{id} hidden");
         }
         if let Some(choice) = &self.default {
-            assert_eq!(&settings.default_for("coder"), choice, "coder's model");
+            let coder = tau_ui_remote::models::Models {
+                options: tau_chatgpt::plan_models(),
+                settings: settings.clone(),
+                ..Default::default()
+            }
+            .default_for("coder");
+            assert_eq!(&coder, choice, "coder's model");
         }
         for run in &self.cancelled {
             let view = computer.runs.iter().find(|view| &view.id == run);

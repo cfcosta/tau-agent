@@ -828,7 +828,9 @@ fn forks_start_from_a_turn_and_come_back_in_history() {
         last.reasoning,
         Some(tau_ai::responses::request::ReasoningEffort::High)
     );
-    assert_eq!(asked[0].settings.model, "gpt-6.1-sol");
+    // Main named no model: it took the coder's default, the model the
+    // host was given.
+    assert_eq!(asked[0].settings.model, "gpt-6-luna");
     assert_eq!(
         std::fs::read_to_string(fork_dir.join("a.txt")).unwrap(),
         "one\n"
@@ -2040,7 +2042,7 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
     let models = host.models();
     // No settings yet: coder runs on the model the host was given.
-    assert_eq!(models.settings.default_for("coder").model, "gpt-6-luna");
+    assert_eq!(models.default_for("coder").model, "gpt-6-luna");
     let mut settings = models.settings.clone();
     settings.set_default("coder", ModelChoice::new("gpt-6-astra", Effort::Low));
     settings.toggle_hidden("gpt-5.6-terra");
@@ -2057,7 +2059,7 @@ fn models_follow_the_sign_in_and_settings_persist() {
     let (host, _events) = Host::new(config).unwrap();
     let models = host.models();
     assert_eq!(models.settings, settings);
-    assert_eq!(models.options, tau_ui_remote::models::plan_models());
+    assert_eq!(models.options, tau_chatgpt::plan_models());
     assert!(models.access.signed_in);
     assert_eq!(models.access.label, "ChatGPT plan");
     let accounts = chatgpt_of(&host).accounts;
@@ -2974,6 +2976,9 @@ fn an_effort_the_model_does_not_take_runs_at_auto() {
     let dir = tempfile::tempdir().unwrap();
     let llm = ScriptedModel::new().turn(|t| t.text("ok"));
     let (host, mut events) = host_on(llm.clone(), dir.path());
+    // The provider offers gpt-5.5 at the efforts it takes.
+    let host = host
+        .with_provider(std::sync::Arc::new(Offers(vec![offered("gpt-5.5")])));
     // gpt-5.5 stops at xhigh; the API would reject max.
     let max = ModelChoice::new("gpt-5.5", Effort::Max);
     let run = host
@@ -4368,4 +4373,45 @@ fn chatgpt_of(host: &Host) -> tau_chatgpt::ui::Data {
         catalog.plugin_data[tau_chatgpt::NAME].json().clone(),
     )
     .unwrap()
+}
+
+/// A provider that offers `models` and runs nothing: what a host given
+/// its own agent fits choices to.
+struct Offers(Vec<tau_ui_plugin::provider::ModelOption>);
+
+impl tau_ui_plugin::provider::Provider for Offers {
+    fn label(&self) -> Option<String> {
+        None
+    }
+
+    fn llm(&self) -> Option<std::sync::Arc<dyn tau_ai::llm::Llm>> {
+        None
+    }
+
+    fn models(&self) -> Vec<tau_ui_plugin::provider::ModelOption> {
+        self.0.clone()
+    }
+
+    fn stopped(&self) -> Option<tau_ui_plugin::provider::Stopped> {
+        None
+    }
+
+    fn cache_lapse<'a>(
+        &'a self,
+        _: &'a str,
+    ) -> tau_ui_plugin::provider::Lapse<'a> {
+        Box::pin(std::future::ready(None))
+    }
+}
+
+/// `id` as the model table has it, offered.
+fn offered(id: &str) -> tau_ui_plugin::provider::ModelOption {
+    let model = tau_ai::model::find(id).expect("in the model table");
+    tau_ui_plugin::provider::ModelOption {
+        id: model.id.clone(),
+        name: Some(model.name.clone()),
+        context: model.context_window,
+        reasoning: model.reasoning,
+        efforts: model.efforts.clone(),
+    }
 }

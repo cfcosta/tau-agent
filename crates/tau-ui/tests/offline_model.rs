@@ -161,7 +161,15 @@ fn shown(synced: &Synced, reg: &Reg) -> Value {
             .cloned()
             .unwrap_or(Value::Null),
         Reg::Goal(run) => goal(synced, run).map_or(Value::Null, Value::from),
-        Reg::Default => json!(settings.default_for("coder").model),
+        Reg::Default => json!(
+            tau_ui_remote::models::Models {
+                options: tau_chatgpt::plan_models(),
+                settings: settings.clone(),
+                ..Default::default()
+            }
+            .default_for("coder")
+            .model
+        ),
         Reg::Hidden(id) => json!(settings.is_hidden(id)),
         Reg::Open(run) => json!(!synced.closed.contains(run)),
         Reg::Queued(run) => json!(waits(synced, run)),

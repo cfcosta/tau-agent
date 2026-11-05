@@ -218,10 +218,10 @@ pub(super) fn title_in_background(
     let Some(titler) = titler else {
         return;
     };
-    let model = host.session_of(run).choice.map_or_else(
-        || host.config.default_model(),
-        |choice| choice.model.clone(),
-    );
+    let model = host
+        .session_of(run)
+        .choice
+        .map_or_else(|| host.default_model(), |choice| choice.model.clone());
     let job = {
         let (run, task) = (run.clone(), crate::titles::task(prompt));
         host.spawn(async move |writer| {

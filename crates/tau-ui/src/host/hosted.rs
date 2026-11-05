@@ -403,11 +403,10 @@ impl Host {
         hosted::conversation_model(&self.hosted, &self.repo_ctx(slot))
             .await
             .map(|pick| {
-                ModelChoice::new(
+                self.models().fit(ModelChoice::new(
                     pick.model,
                     Effort::parse(&pick.effort).unwrap_or(Effort::Auto),
-                )
-                .fitted()
+                ))
             })
     }
 

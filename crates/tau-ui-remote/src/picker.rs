@@ -63,7 +63,7 @@ impl Workspace {
                 })
             }
             PickerTarget::Default(agent) => {
-                self.catalog.models.settings.default_for(agent)
+                self.catalog.models.default_for(agent)
             }
         }
     }
@@ -136,7 +136,7 @@ impl Workspace {
             model: option.id.clone(),
             ..self.choice_for(&target)
         }
-        .fitted();
+        .fitted(&option.efforts);
         self.apply_choice(target, choice, cx);
         self.close_picker(cx);
     }
@@ -302,7 +302,7 @@ impl Workspace {
             .map(|option| model_row(option, &choice, phone, t, cx))
             .collect();
         let empty = rows.is_empty();
-        let offered = Effort::offered(&choice.model);
+        let offered = models.efforts(&choice.model);
         let columns = if phone { 4 } else { offered.len() as u16 };
         let efforts = offered.into_iter().map(|effort| {
             let on = effort == choice.effort;
@@ -326,7 +326,7 @@ impl Workspace {
                     cx.listener(move |ws, _, _, cx| ws.pick_effort(effort, cx)),
                 )
         });
-        let default = models.settings.default_for("coder");
+        let default = models.default_for("coder");
         let footer = div()
             .flex()
             .items_center()

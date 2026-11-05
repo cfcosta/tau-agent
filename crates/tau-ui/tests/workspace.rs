@@ -2160,7 +2160,7 @@ fn the_picker_offers_the_models_own_efforts(cx: &mut TestAppContext) {
         );
     });
     assert_eq!(
-        Effort::offered("gpt-6-sol"),
+        Effort::offered(&tau_ai::model::efforts("gpt-6-sol")),
         [
             Effort::Auto,
             Effort::None,
@@ -2171,7 +2171,7 @@ fn the_picker_offers_the_models_own_efforts(cx: &mut TestAppContext) {
             Effort::Max
         ]
     );
-    assert_eq!(Effort::offered("gpt-4.1"), [Effort::Auto]);
+    assert_eq!(Effort::offered(&[]), [Effort::Auto]);
 }
 
 /// A chat changes model from its next message: no fork, the same run,

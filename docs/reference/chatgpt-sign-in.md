@@ -313,10 +313,12 @@ Nothing moves a run to another way of paying after a plan error.
   a dead sign-in asks to sign in again; a sign-in without plan usage
   offers "Enable ChatGPT plan use", the only way forward; a restriction
   shows its message.
-- The picker offers the provider's models, `tau_ai::model::plan_models()`
-  while signed in (the table's names, in
-  family order), without prices. `DEFAULT_MODEL` is the first of them;
-  a saved default the plan no longer offers falls back to it.
+- The picker offers the provider's models: tau-chatgpt's
+  `plan_models()`, `tau_ai::model::plan_models()` while signed in (the
+  table's names and efforts, in family order), without prices. A run
+  that names no model takes the coder's default, the first of them
+  unless the person chose another; a saved default the plan no longer
+  offers falls back to it (`Models::default_for`).
 - Each sign-in or switch of account calls `ChatGpt::models` once as the
   eligibility check: a restricted refusal (`Recovery::Restricted`) shows
   the step as not eligible. Its listing is not

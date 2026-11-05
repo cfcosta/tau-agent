@@ -1606,7 +1606,6 @@ pub fn models() -> crate::models::Models {
         ModelChoice,
         ModelSettings,
         Models,
-        plan_models,
     };
     let mut settings = ModelSettings::default();
     settings.set_default(
@@ -1616,7 +1615,7 @@ pub fn models() -> crate::models::Models {
     settings
         .set_default("tau-memory", ModelChoice::new("gpt-6-luna", Effort::Low));
     Models {
-        options: plan_models(),
+        options: tau_chatgpt::plan_models(),
         settings,
         access: AccessInfo {
             label: "ChatGPT plan".into(),

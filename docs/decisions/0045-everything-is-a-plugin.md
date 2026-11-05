@@ -409,8 +409,16 @@ Each step lands on main by itself and leaves tau working.
    `AccessInfo` went. A run the provider stopped shows as it words it
    (`Provider::stopped`, `HostUpdate::Stopped`): tau-chatgpt's
    `plan_usage` turns the plan's refusal into a title, a message and
-   one action, a page to open or the Models screen. Left for later: the
-   neutral `Settings`, and the picker's catalog outside the provider.
+   one action, a page to open or the Models screen. tau-ai's `Settings`
+   holds what any provider takes; OpenAI's wire fields (whether the
+   model reasons, Responses Lite, the service tier) are a `Wire` the
+   client derives from the model table. The picker's catalog is the
+   provider's: each `ModelOption` carries the efforts it takes, and
+   `Models` fits a choice, gives an agent's default and the efforts
+   from them (`Models::fit`, `default_for`, `efforts`); with no model
+   named, a run takes the coder's default, the provider's first unless
+   the person chose another. `DEFAULT_MODEL` went. The run's context
+   window still comes from tau-ai's table, in the runner and the views.
 8. **`tau.compaction`**, with the chain as its default; idle compaction
    moves into it.
 9. **App and repository seams.** `tau-phones`, repository kinds for

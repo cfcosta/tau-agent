@@ -59,11 +59,11 @@ impl Effort {
         }
     }
 
-    /// What `model` can run at: auto, then the efforts it takes, lowest
-    /// first. Only auto when it does not reason.
-    pub fn offered(model: &str) -> Vec<Self> {
+    /// What a model that takes `efforts` can run at: auto, then those,
+    /// lowest first. Only auto when it takes none.
+    pub fn offered(efforts: &[ReasoningEffort]) -> Vec<Self> {
         std::iter::once(Self::Auto)
-            .chain(tau_ai::model::efforts(model).into_iter().map(Self::of))
+            .chain(efforts.iter().copied().map(Self::of))
             .collect()
     }
 
@@ -91,11 +91,11 @@ impl ModelChoice {
         }
     }
 
-    /// The same choice, at auto when the model does not take its
-    /// effort: a switch of model, or a saved default, can leave one the
-    /// API would reject.
-    pub fn fitted(self) -> Self {
-        if Effort::offered(&self.model).contains(&self.effort) {
+    /// The same choice, at auto when the model, which takes `efforts`,
+    /// does not take its effort: a switch of model, or a saved default,
+    /// can leave one the API would reject.
+    pub fn fitted(self, efforts: &[ReasoningEffort]) -> Self {
+        if Effort::offered(efforts).contains(&self.effort) {
             self
         } else {
             Self::new(self.model, Effort::Auto)
@@ -108,15 +108,13 @@ impl ModelChoice {
     }
 }
 
+/// No model named, at auto: the provider's first model, once
+/// [`Models::fit`] reads it.
 impl Default for ModelChoice {
     fn default() -> Self {
-        Self::new(DEFAULT_MODEL, Effort::Auto)
+        Self::new(String::new(), Effort::Auto)
     }
 }
-
-/// What agents run on when nothing else is chosen: the first of the
-/// plan's models, [`tau_ai::model::plan_models`].
-pub const DEFAULT_MODEL: &str = "gpt-6.1-sol";
 
 /// One model the picker can offer: the provider's (ADR 0045).
 pub use tau_ui_plugin::provider::ModelOption;
@@ -151,28 +149,6 @@ impl Default for ModelSettings {
 }
 
 impl ModelSettings {
-    /// `agent`'s default, or [`ModelChoice::default`]. A saved model
-    /// the plan no longer offers falls back to the first it does.
-    pub fn default_for(&self, agent: &str) -> ModelChoice {
-        let saved = self
-            .defaults
-            .iter()
-            .find(|(name, _)| name == agent)
-            .map_or_else(ModelChoice::default, |(_, choice)| choice.clone());
-        let offered = tau_ai::model::plan_models();
-        if offered.iter().any(|model| model.id == saved.model) {
-            return saved;
-        }
-        match offered.first() {
-            Some(first) => ModelChoice {
-                model: first.id.clone(),
-                ..saved
-            }
-            .fitted(),
-            None => saved,
-        }
-    }
-
     pub fn set_default(&mut self, agent: &str, choice: ModelChoice) {
         match self.defaults.iter_mut().find(|(name, _)| name == agent) {
             Some((_, current)) => *current = choice,
@@ -226,6 +202,56 @@ impl Models {
         self.options.iter().find(|option| option.id == id)
     }
 
+    /// The efforts `model` takes, as the provider offers it; every one
+    /// for a model it does not list, which nothing here can check.
+    pub fn efforts_of(&self, model: &str) -> &[ReasoningEffort] {
+        self.find(model)
+            .map_or(&ReasoningEffort::ALL, |option| option.efforts.as_slice())
+    }
+
+    /// What `model` can run at: auto, then the efforts it takes.
+    pub fn efforts(&self, model: &str) -> Vec<Effort> {
+        Effort::offered(self.efforts_of(model))
+    }
+
+    /// `choice` as it can run: no model named takes the coder's default,
+    /// and an effort the model does not take goes to auto. A model the
+    /// provider does not list keeps its effort.
+    pub fn fit(&self, choice: ModelChoice) -> ModelChoice {
+        let choice = if choice.model.is_empty() {
+            ModelChoice {
+                effort: choice.effort,
+                ..self.default_for("coder")
+            }
+        } else {
+            choice
+        };
+        let efforts = self.efforts_of(&choice.model).to_vec();
+        choice.fitted(&efforts)
+    }
+
+    /// `agent`'s default, or [`ModelChoice::default`]. A saved model the
+    /// provider no longer offers falls back to the first it does.
+    pub fn default_for(&self, agent: &str) -> ModelChoice {
+        let saved = self
+            .settings
+            .defaults
+            .iter()
+            .find(|(name, _)| name == agent)
+            .map_or_else(ModelChoice::default, |(_, choice)| choice.clone());
+        if self.find(&saved.model).is_some() {
+            return saved;
+        }
+        match self.options.first() {
+            Some(first) => ModelChoice {
+                model: first.id.clone(),
+                ..saved
+            }
+            .fitted(&first.efforts),
+            None => saved,
+        }
+    }
+
     /// The models the picker shows for `filter`, hidden ones left out,
     /// in the plan's order.
     pub fn shown<'a>(&'a self, filter: &str) -> Vec<&'a ModelOption> {
@@ -242,24 +268,6 @@ impl Models {
     }
 }
 
-/// The picker's models: the plan's, from tau-ai's model table
-/// ([`tau_ai::model::plan_models`]), one per family, in its order and
-/// named as it names them.
-///
-/// Not the account's `GET /v1/models`: that catalog leaves out models
-/// the plan runs.
-pub fn plan_models() -> Vec<ModelOption> {
-    tau_ai::model::plan_models()
-        .into_iter()
-        .map(|model| ModelOption {
-            id: model.id.clone(),
-            name: Some(model.name.clone()),
-            context: model.context_window,
-            reasoning: model.reasoning,
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,8 +278,13 @@ mod tests {
     #[hegel::test(test_cases = 200)]
     fn model_settings_round_trip(tc: hegel::TestCase) {
         use hegel::generators::{self as gs, Generator as _};
-        let ids: Vec<String> = tau_ai::model::plan_models()
-            .into_iter()
+        let models = Models {
+            options: table(),
+            ..Models::default()
+        };
+        let ids: Vec<String> = models
+            .options
+            .iter()
             .map(|model| model.id.clone())
             .collect();
         let mut settings = ModelSettings::default();
@@ -292,16 +305,21 @@ mod tests {
         {
             let model = tc.draw(gs::sampled_from(ids.clone()));
             let effort = tc.draw(
-                gs::sampled_from(Effort::offered(&model)).print_as_debug(),
+                gs::sampled_from(models.efforts(&model)).print_as_debug(),
             );
             let choice = ModelChoice::new(model, effort);
             settings.set_default(agent, choice.clone());
             chosen.push((agent, choice));
         }
+        let with = Models {
+            settings: settings.clone(),
+            ..models.clone()
+        };
         for (agent, choice) in &chosen {
-            assert_eq!(&settings.default_for(agent), choice);
+            assert_eq!(&with.default_for(agent), choice);
         }
-        assert_eq!(settings.default_for("nobody"), ModelChoice::default());
+        // An agent with none of its own reads the first model offered.
+        assert_eq!(with.default_for("nobody").model, ids[0]);
         let text = serde_json::to_string(&settings).unwrap();
         let back: ModelSettings = serde_json::from_str(&text).unwrap();
         assert_eq!(back, settings);
@@ -321,7 +339,23 @@ mod tests {
             name: None,
             context: 1_050_000,
             reasoning: true,
+            efforts: vec![ReasoningEffort::Low, ReasoningEffort::High],
         }
+    }
+
+    /// What a provider offers: the plan's models from tau-ai's table, as
+    /// tau-chatgpt gives them.
+    fn table() -> Vec<ModelOption> {
+        tau_ai::model::plan_models()
+            .into_iter()
+            .map(|model| ModelOption {
+                id: model.id.clone(),
+                name: Some(model.name.clone()),
+                context: model.context_window,
+                reasoning: model.reasoning,
+                efforts: model.efforts.clone(),
+            })
+            .collect()
     }
 
     /// A context window reads as the design writes it: under a million,
@@ -369,7 +403,10 @@ mod tests {
                 assert_eq!(label, format!("{}M", context / 1_000_000));
             }
         }
-        assert_eq!(ModelChoice::default().label(), "gpt-6.1-sol · auto");
+        assert_eq!(
+            ModelChoice::new("gpt-6.1-sol", Effort::Auto).label(),
+            "gpt-6.1-sol · auto"
+        );
     }
 
     #[test]
@@ -387,35 +424,47 @@ mod tests {
         assert_eq!(ids(&models, ""), ["mid", "cheap"]);
     }
 
-    /// The picker offers the plan's four, from the model table, by
-    /// the table's names; the default is the first of them.
+    /// The picker's names are searched; with no model named, a choice
+    /// takes the first the provider offers, and an effort its model
+    /// does not take goes to auto.
     #[test]
-    fn plan_models_come_from_the_table() {
-        let options = plan_models();
-        let labels: Vec<&str> = options.iter().map(|o| o.label()).collect();
-        assert_eq!(
-            labels,
-            ["GPT-6.1 Sol", "GPT-6 Luna", "GPT-6 Astra", "GPT-5.6 Terra"]
-        );
-        assert_eq!(options[0].id, DEFAULT_MODEL);
-        assert!(options.iter().all(|o| o.context > 0));
+    fn a_choice_fits_what_the_provider_offers() {
         let models = Models {
-            options,
+            options: table(),
             ..Models::default()
         };
         assert_eq!(models.shown("astra").len(), 1, "names are searched");
+        let first = models.options[0].id.clone();
+        assert_eq!(models.fit(ModelChoice::default()).model, first);
+        let odd = ModelChoice::new(first.clone(), Effort::Max);
+        let fitted = models.fit(odd.clone());
+        assert_eq!(
+            fitted.effort == odd.effort,
+            models.efforts(&first).contains(&odd.effort)
+        );
+        assert_eq!(
+            Models::default().efforts("unlisted"),
+            Effort::offered(&ReasoningEffort::ALL),
+            "a model the provider does not list keeps any effort"
+        );
     }
 
-    /// A saved default the plan no longer offers falls back to the first
-    /// model it does; one it offers stays.
+    /// A saved default the provider no longer offers falls back to the
+    /// first model it does; one it offers stays.
     #[test]
     fn a_default_off_the_plan_falls_back_to_the_first() {
-        let mut settings = ModelSettings::default();
-        settings
+        let mut models = Models {
+            options: table(),
+            ..Models::default()
+        };
+        let first = models.options[0].id.clone();
+        models
+            .settings
             .set_default("coder", ModelChoice::new("gpt-5.5", Effort::Auto));
-        assert_eq!(settings.default_for("coder").model, DEFAULT_MODEL);
-        settings
+        assert_eq!(models.default_for("coder").model, first);
+        models
+            .settings
             .set_default("coder", ModelChoice::new("gpt-6-luna", Effort::Auto));
-        assert_eq!(settings.default_for("coder").model, "gpt-6-luna");
+        assert_eq!(models.default_for("coder").model, "gpt-6-luna");
     }
 }
