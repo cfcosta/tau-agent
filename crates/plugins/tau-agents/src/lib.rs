@@ -29,6 +29,9 @@ pub use ui::AgentsUi;
 /// The host plugin's name, for both its halves.
 pub const NAME: &str = "tau-agents";
 
+/// The kind of tau's own repository an agent's is (`RepoKind::kind`).
+pub const KIND: &str = "agent";
+
 /// The skill tau ships for an agent writing itself.
 pub const SKILL: &str = "tau-agents";
 

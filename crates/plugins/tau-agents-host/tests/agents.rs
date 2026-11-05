@@ -61,7 +61,11 @@ struct Conversation {
 }
 
 impl Conversations for Conversation {
-    fn list_agent(&self, name: &str) -> HostFuture<'_, anyhow::Result<()>> {
+    fn make_repo(
+        &self,
+        _kind: &str,
+        name: &str,
+    ) -> HostFuture<'_, anyhow::Result<()>> {
         self.listed.lock().unwrap().push(name.to_owned());
         Box::pin(async { Ok(()) })
     }

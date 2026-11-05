@@ -30,6 +30,10 @@ pub const NAME: &str = "tau-luau-plugins";
 /// The name the host lists the plugins repository by.
 pub const REPO: &str = "tau-plugins";
 
+/// The kind of tau's own repository the plugins repository is
+/// (`RepoKind::kind`).
+pub const KIND: &str = "plugins";
+
 /// The skill tau ships for writing plugins.
 pub const SKILL: &str = "tau-plugins";
 

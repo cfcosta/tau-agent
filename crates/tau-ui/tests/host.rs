@@ -4087,13 +4087,20 @@ fn agents_live_in_a_repository_each_beside_the_plugins_repository() {
         home: None,
         identity: Identity::default(),
     };
-    let agents = config.agents_dir();
+    // Agents' repositories are the kind tau-agents keeps, one per folder
+    // of its directory; the plugins repository is tau-luau-plugins'.
+    tau_ui::hosted::install();
+    let agents = config.kind_dir(tau_agents::ROOT);
     assert_eq!(agents, root.path().join("agents"));
     let triage = agents.join("triage");
-    assert!(config.is_agent_path(&triage));
-    assert!(!config.is_agent_path(&agents));
-    assert!(!config.is_agent_path(&triage.join("lib")));
-    assert!(!config.is_agent_path(&config.plugins_repo()));
+    let kind = |path: &std::path::Path| {
+        config.kind_of(path).map(|(_, kind)| kind.kind)
+    };
+    assert_eq!(kind(&triage), Some(tau_agents::KIND));
+    assert_eq!(kind(&agents), None);
+    assert_eq!(kind(&triage.join("lib")), None);
+    let plugins = config.kind_dir(tau_luau_plugins::repository::ROOT);
+    assert_eq!(kind(&plugins), Some(tau_luau_plugins::KIND));
     assert_eq!(config.project_dir_of(&triage), triage);
 }
 
@@ -4103,7 +4110,9 @@ fn agents_live_in_a_repository_each_beside_the_plugins_repository() {
 #[test]
 fn a_new_agent_is_a_repository_of_tau_s_own_with_a_main_chat() {
     let (host, _events) = host(ScriptedModel::new());
-    let repo = host.block_on(host.list_agent("triage")).unwrap();
+    let repo = host
+        .block_on(host.make_repo(tau_agents::KIND, "triage"))
+        .unwrap();
     assert_eq!(repo.name, "triage");
     assert_eq!(
         repo.kind,
@@ -4134,8 +4143,14 @@ fn a_new_agent_is_a_repository_of_tau_s_own_with_a_main_chat() {
     assert!(catalog.is_agent("triage"));
     assert!(!catalog.is_listed("triage"));
 
-    assert!(host.block_on(host.list_agent("triage")).is_err());
-    assert!(host.block_on(host.list_agent("Not An Agent")).is_err());
+    assert!(
+        host.block_on(host.make_repo(tau_agents::KIND, "triage"))
+            .is_err()
+    );
+    assert!(
+        host.block_on(host.make_repo(tau_agents::KIND, "Not An Agent"))
+            .is_err()
+    );
 }
 
 /// Calls `http` as a script would, and keeps what came of it.
@@ -4195,7 +4210,8 @@ fn only_an_agent_s_runs_have_http() {
     let agent = Agent::new(llm).name("coder").tool(ProbeHttp(came.clone()));
     let (host, mut events) =
         host_of(runtime, store, agent, &tempfile::tempdir().unwrap().keep());
-    host.block_on(host.list_agent("triage")).unwrap();
+    host.block_on(host.make_repo(tau_agents::KIND, "triage"))
+        .unwrap();
     for repo in ["triage", REPO] {
         let run = host
             .block_on(host.start("probe", &ModelChoice::default(), repo))
@@ -4219,7 +4235,9 @@ fn an_agent_without_a_sandbox_has_no_commands() {
         .turn(|t| t.text("done"))
         .turn(|t| t.text("done"));
     let (host, mut events) = host(llm.clone());
-    let repo = host.block_on(host.list_agent("triage")).unwrap();
+    let repo = host
+        .block_on(host.make_repo(tau_agents::KIND, "triage"))
+        .unwrap();
     let main = repo.main.clone().expect("a main chat");
     host.block_on(host.resume(&main, "hello", &ModelChoice::default()))
         .unwrap();

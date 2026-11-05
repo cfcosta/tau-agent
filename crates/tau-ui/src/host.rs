@@ -426,8 +426,7 @@ impl Host {
         // elsewhere, as in tests, by keywords alone.
         host.memory_search = tau_memory_host::Search::Semantic;
         host.host_plugins();
-        host.runtime.block_on(host.list_plugins_repo());
-        host.runtime.block_on(host.list_agents());
+        host.runtime.block_on(host.list_kinds());
         let host = host.with_listed_repos()?;
         Ok((host, events))
     }
@@ -969,7 +968,10 @@ impl Host {
         // How the run's commands start: through what the plugins give
         // them, an environment. An agent's commands run only in its
         // sandbox: without one, its runs have no commands (ADR 0037).
-        let agent_repo = self.config.is_agent_path(&repo.path);
+        let agent_repo = self
+            .config
+            .kind_of(&repo.path)
+            .is_some_and(|(_, kind)| kind.sandboxed);
         let commands = match self.launcher_of(repo).await {
             Some(launcher) => tau_ui_plugin::RunCommands::Through(launcher),
             None if agent_repo => tau_ui_plugin::RunCommands::Off,

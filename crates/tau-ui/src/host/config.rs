@@ -89,28 +89,27 @@ impl HostConfig {
         Credentials::default_dir().dir.join("interface.json")
     }
 
-    /// Where tau's own plugins repository lives (ADR 0027): beside the
-    /// projects, under the directory every plugin's data shares.
-    pub fn plugins_repo(&self) -> PathBuf {
-        self.repos
-            .parent()
-            .unwrap_or(&self.repos)
-            .join(tau_luau_plugins::repository::ROOT)
+    /// The directory of a kind of tau's own repository whose root is
+    /// `root` (`KindHost::root`): beside the clones', in tau's data
+    /// directory.
+    pub fn kind_dir(&self, root: &str) -> PathBuf {
+        self.repos.parent().unwrap_or(&self.repos).join(root)
     }
 
-    /// Where agents live (ADR 0037): a repository each, named for the
-    /// agent, beside the plugins repository.
-    pub fn agents_dir(&self) -> PathBuf {
-        self.repos
-            .parent()
-            .unwrap_or(&self.repos)
-            .join(tau_agents::ROOT)
-    }
-
-    /// Whether `path` is an agent's repository: a directory right under
-    /// [`Self::agents_dir`].
-    pub fn is_agent_path(&self, path: &Path) -> bool {
-        path.parent() == Some(self.agents_dir().as_path())
+    /// The kind of tau's own repository at `path`, of those the plugins
+    /// keep (`UiPlugin::repo_kinds`), with the plugin that keeps it.
+    pub fn kind_of(
+        &self,
+        path: &Path,
+    ) -> Option<(&'static str, tau_ui_plugin::kinds::KindHost)> {
+        use tau_ui_plugin::kinds::KindList;
+        crate::hosted::repo_kinds().into_iter().find(|(_, kind)| {
+            let dir = self.kind_dir(kind.root);
+            match kind.list {
+                KindList::One { .. } => path == dir,
+                KindList::Each { .. } => path.parent() == Some(dir.as_path()),
+            }
+        })
     }
 
     /// Where clones from the forge `id` (`Forge::id`) live, each a
@@ -138,8 +137,8 @@ impl HostConfig {
     /// the projects (from the forge, [`Self::forge_dir`]), is its
     /// project.
     pub fn project_dir_of(&self, path: &Path) -> PathBuf {
-        if path == self.plugins_repo()
-            || self.is_agent_path(path)
+        // tau's own repositories are projects where they are.
+        if self.kind_of(path).is_some()
             || path.starts_with(&self.repos)
             || path.starts_with(canonical(&self.repos))
         {

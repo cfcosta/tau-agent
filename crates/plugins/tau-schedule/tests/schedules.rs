@@ -48,7 +48,11 @@ struct Chats {
 }
 
 impl Conversations for Chats {
-    fn list_agent(&self, _name: &str) -> HostFuture<'_, anyhow::Result<()>> {
+    fn make_repo(
+        &self,
+        _kind: &str,
+        _name: &str,
+    ) -> HostFuture<'_, anyhow::Result<()>> {
         Box::pin(async { Ok(()) })
     }
 

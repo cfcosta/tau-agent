@@ -9466,6 +9466,7 @@ dependencies = [
  "serde_json",
  "tau-agent",
  "tau-ai",
+ "tau-ask",
  "tau-luau-plugins",
  "tau-ui-kit",
  "tau-ui-plugin",

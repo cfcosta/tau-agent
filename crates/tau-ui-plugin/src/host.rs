@@ -397,10 +397,12 @@ pub enum Waking {
 /// (ADR 0037), and any chat a plugin wakes later (ADR 0039). The host
 /// puts it in [`HostCx::services`] as an `Arc<dyn Conversations>`.
 pub trait Conversations: Send + Sync {
-    /// Makes the agent `name`'s repository, lists it as tau's own and
-    /// makes its main chat.
-    fn list_agent(
+    /// Makes the repository `name` of `kind`, one of those a plugin
+    /// keeps one per folder ([`crate::kinds::KindList::Each`]), lists it
+    /// as tau's own and makes its main chat: an agent's.
+    fn make_repo(
         &self,
+        kind: &str,
         name: &str,
     ) -> crate::registry::HostFuture<'_, anyhow::Result<()>>;
 

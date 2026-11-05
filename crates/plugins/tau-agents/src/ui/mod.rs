@@ -33,7 +33,7 @@ use tau_ui_plugin::{
     tree::{self, Node, draft_key},
 };
 
-use crate::{Act, Agent, COMMAND, NAME, Overview, Settings, Status};
+use crate::{Act, Agent, COMMAND, KIND, NAME, Overview, Settings, Status};
 
 /// The Agents page.
 pub const OVERVIEW: &str = "agents";
@@ -400,6 +400,22 @@ impl UiPlugin for AgentsUi {
             ])
     }
 
+    /// Agents' repositories (ADR 0037): one per agent, kept in: their
+    /// commands start only through tau-agents' sandbox, and they ask
+    /// through tau-agents' own `ask`, not tau-ask's.
+    fn repo_kinds(&self) -> Vec<tau_ui_plugin::kinds::KindHost> {
+        vec![tau_ui_plugin::kinds::KindHost {
+            kind: crate::KIND,
+            root: crate::ROOT,
+            list: tau_ui_plugin::kinds::KindList::Each {
+                valid: crate::valid_name,
+            },
+            first_files: crate::repository::first_files,
+            sandboxed: true,
+            without: &[tau_ask::NAME],
+        }]
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(
@@ -465,9 +481,6 @@ impl UiPlugin for AgentsUi {
             .contribute(points::USER_MESSAGE, run::event_card)
     }
 }
-
-/// The kind an agent's repository has in the catalog (ADR 0037).
-const KIND: &str = "agent";
 
 /// Where an agent stands, on its row's end: what it left the person
 /// first, then whether it works or is paused, else when it wakes next.

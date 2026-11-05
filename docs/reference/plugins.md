@@ -539,6 +539,15 @@ rewrites of a plugin it does not name). A plugin's setup step may come first
 (`SetupAt::Model`), be `required`, and say how its link to a service
 stands (`SetupView::link`), which the handshake above it draws.
 
+A plugin declares the kinds of tau's own repository it keeps
+(`UiPlugin::repo_kinds`, `tau_ui_plugin::kinds::KindHost`): the
+directory beside the clones', one repository or one per folder, the
+files one starts with, whether its runs are kept in (only the plugin's
+own launcher, and no commands without one) and which plugins its runs
+leave out. The host lists them as it starts and makes one on
+`Conversations::make_repo`; tau-agents keeps agents' repositories and
+tau-luau-plugins the plugins repository.
+
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,
   `tau-<plugin>-host`: tau-codemode (Luau), tau-luau-plugins, tau-vcs

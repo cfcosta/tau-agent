@@ -3395,13 +3395,18 @@ fn a_host_half_makes_an_agent_and_starts_its_turns(cx: &mut TestAppContext) {
     }
 
     let listing = conversations.clone();
-    wait(Box::new(move || block_on(listing.list_agent("greet")))).unwrap();
+    wait(Box::new(move || {
+        block_on(listing.make_repo(tau_agents::KIND, "greet"))
+    }))
+    .unwrap();
     assert!(dir.join("agents").join("greet").is_dir());
     let main = host.block_on(host.main_of("greet")).unwrap();
     assert!(!conversations.running("greet"));
     let again = conversations.clone();
-    let error = wait(Box::new(move || block_on(again.list_agent("greet"))))
-        .unwrap_err();
+    let error = wait(Box::new(move || {
+        block_on(again.make_repo(tau_agents::KIND, "greet"))
+    }))
+    .unwrap_err();
     assert!(error.to_string().contains("already"), "{error}");
 
     let text = "[events · 1 · 09:00:00]\n- morning · schedule · morning:1 · 09:00:00\n  {\"due\":1}";
@@ -3519,8 +3524,9 @@ fn a_host_half_wakes_a_chat_that_is_idle(cx: &mut TestAppContext) {
 
     // A chat to wake: the main chat a repository gets.
     let listing = conversations.clone();
-    let listed =
-        std::thread::spawn(move || block_on(listing.list_agent("greet")));
+    let listed = std::thread::spawn(move || {
+        block_on(listing.make_repo(tau_agents::KIND, "greet"))
+    });
     while !listed.is_finished() {
         cx.run_until_parked();
         std::thread::sleep(std::time::Duration::from_millis(5));

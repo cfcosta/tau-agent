@@ -264,11 +264,16 @@ impl Host {
         repo: &RepoSlot,
     ) -> Option<Arc<dyn tau_agent::launch::Launcher>> {
         let ctx = self.repo_ctx(repo);
-        let agent = self.config.is_agent_path(&repo.path);
+        // A kept-in kind's runs start only through its own plugin's.
+        let only = self
+            .config
+            .kind_of(&repo.path)
+            .filter(|(_, kind)| kind.sandboxed)
+            .map(|(plugin, _)| plugin);
         let mut launchers: Vec<Arc<dyn tau_agent::launch::Launcher>> =
             Vec::new();
         for hosted in &self.hosted {
-            if agent && hosted.plugin.name() != tau_agents::NAME {
+            if only.is_some_and(|plugin| hosted.plugin.name() != plugin) {
                 continue;
             }
             let settings =
@@ -307,14 +312,18 @@ impl Host {
     /// Each plugin's part of the agents in `repo`, with its settings
     /// there: what builds a run's agent, and its sub-agents'.
     pub(super) async fn registered(&self, repo: &RepoSlot) -> Registered {
-        // An agent asks through tau-agents' own `ask`, whose answer comes
-        // back as an event: tau-ask's holds the turn open for a person
-        // who is not watching (ADR 0037).
-        let agent = self.config.is_agent_path(&repo.path);
+        // A kind of tau's own repository may leave plugins out of its
+        // runs: an agent asks through tau-agents' own `ask`, not tau-ask's,
+        // which holds the turn open for a person who is not watching
+        // (ADR 0037).
+        let without = self
+            .config
+            .kind_of(&repo.path)
+            .map_or(&[][..], |(_, kind)| kind.without);
         let hosted: Vec<(Hosted, PluginValue)> = self
             .hosted
             .iter()
-            .filter(|hosted| !(agent && hosted.plugin.name() == tau_ask::NAME))
+            .filter(|hosted| !without.contains(&hosted.plugin.name()))
             .map(|hosted| {
                 (
                     hosted.clone(),

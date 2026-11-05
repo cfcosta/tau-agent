@@ -297,13 +297,10 @@ impl Host {
         let dir = self.config.project_dir_of(&slot.path);
         // tau's own repositories are made here the first time, each with
         // what it starts with; a clone is a project from the start.
-        let first_files = if slot.path == self.config.plugins_repo() {
-            Some(tau_luau_plugins::repository::first_files())
-        } else if self.config.is_agent_path(&slot.path) {
-            Some(tau_agents::repository::first_files())
-        } else {
-            None
-        };
+        let first_files = self
+            .config
+            .kind_of(&slot.path)
+            .map(|(_, kind)| (kind.first_files)());
         let how = if let Some(local) = &slot.local {
             Open::Local {
                 folder: local.folder.clone(),
@@ -855,90 +852,105 @@ impl Host {
         repository.update(remote).await
     }
 
-    /// Lists tau's own plugins repository (ADR 0027), the first time
-    /// tau starts: it is made when it is opened.
-    pub(super) async fn list_plugins_repo(&self) {
-        {
-            let mut list = self.list.lock().expect("not poisoned");
-            let path = self.config.plugins_repo();
-            if list.repos.iter().any(|listed| {
-                listed.kind.as_deref() == Some(crate::catalog::kinds::PLUGINS)
-                    && listed.path == path
-            }) {
-                return;
-            }
-            list.repos.push(Listed {
-                id: new_id(),
-                name: tau_luau_plugins::REPO.to_owned(),
-                path,
-                hidden: false,
-                forge: None,
-                main: None,
-                kind: Some(crate::catalog::kinds::PLUGINS.to_owned()),
-                local: None,
-            });
-        }
-        if let Err(error) = self.save_list().await {
-            eprintln!("tau-ui: cannot list the plugins repository: {error:#}");
-        }
-    }
-
-    /// Lists every agent's repository under the agents' directory (ADR
-    /// 0037) that is not listed yet, and forgets the agents whose
-    /// directory is gone.
-    pub(super) async fn list_agents(&self) {
-        let dir = self.config.agents_dir();
-        let mut found = Vec::new();
-        if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                let is_dir =
-                    entry.file_type().await.is_ok_and(|kind| kind.is_dir());
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if is_dir && tau_agents::valid_name(&name) {
-                    found.push(entry.path());
+    /// Lists tau's own repositories of each kind the plugins keep
+    /// (`UiPlugin::repo_kinds`), as tau starts: a kind with one, the
+    /// first time (it is made when it is opened); a kind with one per
+    /// folder, each folder not listed yet, and those whose folder is
+    /// gone forgotten.
+    pub(super) async fn list_kinds(&self) {
+        use tau_ui_plugin::kinds::KindList;
+        for (_, kind) in crate::hosted::repo_kinds() {
+            let dir = self.config.kind_dir(kind.root);
+            match kind.list {
+                KindList::One { name } => {
+                    let mut list = self.list.lock().expect("not poisoned");
+                    let listed = list.repos.iter().any(|listed| {
+                        listed.kind.as_deref() == Some(kind.kind)
+                            && listed.path == dir
+                    });
+                    if !listed {
+                        list.repos.push(Listed {
+                            id: new_id(),
+                            name: name.to_owned(),
+                            path: dir,
+                            hidden: false,
+                            forge: None,
+                            main: None,
+                            kind: Some(kind.kind.to_owned()),
+                            local: None,
+                        });
+                    }
+                }
+                KindList::Each { valid } => {
+                    let mut found = Vec::new();
+                    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+                        while let Ok(Some(entry)) = entries.next_entry().await {
+                            let is_dir = entry
+                                .file_type()
+                                .await
+                                .is_ok_and(|file| file.is_dir());
+                            let name = entry
+                                .file_name()
+                                .to_string_lossy()
+                                .into_owned();
+                            if is_dir && valid(&name) {
+                                found.push(entry.path());
+                            }
+                        }
+                    }
+                    found.sort();
+                    let mut list = self.list.lock().expect("not poisoned");
+                    list.repos.retain(|listed| {
+                        listed.kind.as_deref() != Some(kind.kind)
+                            || found.contains(&listed.path)
+                    });
+                    for path in &found {
+                        if !list.repos.iter().any(|listed| listed.path == *path)
+                        {
+                            list.list_as(path, Some(kind.kind.to_owned()));
+                        }
+                    }
                 }
             }
         }
-        found.sort();
-        {
-            let mut list = self.list.lock().expect("not poisoned");
-            list.repos.retain(|listed| {
-                listed.kind.as_deref() != Some(crate::catalog::kinds::AGENT)
-                    || found.contains(&listed.path)
-            });
-            for path in &found {
-                if !list.repos.iter().any(|listed| listed.path == *path) {
-                    list.list_as(
-                        path,
-                        Some(crate::catalog::kinds::AGENT.to_owned()),
-                    );
-                }
-            }
-        }
         if let Err(error) = self.save_list().await {
-            eprintln!("tau-ui: cannot list the agents: {error:#}");
+            eprintln!("tau-ui: cannot list tau's own repositories: {error:#}");
         }
     }
 
-    /// Makes the repository of a new agent, `name` (ADR 0037), lists it,
-    /// starts opening its project and makes its main chat, the agent's
-    /// conversation. Returns it as the sidebar shows it.
-    pub async fn list_agent(&self, name: &str) -> anyhow::Result<Repo> {
+    /// Makes the repository `name` of `kind`, one a plugin keeps one per
+    /// folder (an agent's, ADR 0037), lists it, starts opening its
+    /// project and makes its main chat. Returns it as the sidebar shows
+    /// it.
+    pub async fn make_repo(
+        &self,
+        kind: &str,
+        name: &str,
+    ) -> anyhow::Result<Repo> {
+        use tau_ui_plugin::kinds::KindList;
+        let Some((_, found)) = crate::hosted::repo_kinds()
+            .into_iter()
+            .find(|(_, known)| known.kind == kind)
+        else {
+            anyhow::bail!("No plugin keeps repositories of the kind {kind}");
+        };
+        let KindList::Each { valid } = found.list else {
+            anyhow::bail!("There is only one repository of the kind {kind}");
+        };
         anyhow::ensure!(
-            tau_agents::valid_name(name),
-            "An agent's name is lower-case letters, digits and dashes, \
-             starting with a letter: {name} is not"
+            valid(name),
+            "A name is lower-case letters, digits and dashes, starting with \
+             a letter: {name} is not"
         );
-        let dir = self.config.agents_dir().join(name);
+        let dir = self.config.kind_dir(found.root).join(name);
         anyhow::ensure!(
             !tokio::fs::try_exists(&dir).await?,
-            "There is an agent named {name} already"
+            "There is one named {name} already"
         );
         tokio::fs::create_dir_all(&dir).await?;
         let (name, id) = {
             let mut list = self.list.lock().expect("not poisoned");
-            let name = list
-                .list_as(&dir, Some(crate::catalog::kinds::AGENT.to_owned()));
+            let name = list.list_as(&dir, Some(kind.to_owned()));
             let id = list.id_of(&name);
             (name, id)
         };
@@ -956,7 +968,7 @@ impl Host {
         let mut repo = Repo::new(&name, dir.display().to_string());
         repo.id = id;
         repo.main = Some(self.main_of(&name).await?);
-        repo.kind = Some(crate::catalog::kinds::AGENT.to_owned());
+        repo.kind = Some(kind.to_owned());
         Ok(repo)
     }
 

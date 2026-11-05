@@ -1041,7 +1041,7 @@ impl Agents {
             .env
             .conversations()
             .ok_or_else(|| anyhow::anyhow!("This host makes no agents"))?;
-        conversations.list_agent(name).await?;
+        conversations.make_repo(tau_agents::KIND, name).await?;
         self.0.env.save_settings(name, settings.clone()).await?;
         let mut text = format!("/{SKILL} {}", purpose.trim());
         if !servers.is_empty() {

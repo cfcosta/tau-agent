@@ -487,6 +487,19 @@ impl UiPlugin for LuauPluginsUi {
             ])
     }
 
+    /// The plugins repository (ADR 0027): one, made the first time tau
+    /// starts.
+    fn repo_kinds(&self) -> Vec<tau_ui_plugin::kinds::KindHost> {
+        vec![tau_ui_plugin::kinds::KindHost {
+            kind: crate::KIND,
+            root: crate::repository::ROOT,
+            list: tau_ui_plugin::kinds::KindList::One { name: crate::REPO },
+            first_files: crate::repository::first_files,
+            sandboxed: false,
+            without: &[],
+        }]
+    }
+
     fn manifest(&self) -> Manifest<Self> {
         Manifest::new()
             .page(

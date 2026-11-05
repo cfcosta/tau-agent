@@ -475,14 +475,14 @@ fn answer(
     cx: &mut App,
 ) {
     match ask {
-        conversations::Ask::ListAgent { name, done } => {
+        conversations::Ask::MakeRepo { kind, name, done } => {
             let done = Answer::new(done);
             let failed = done.clone();
             on_host(
                 host,
                 workspace,
                 async move |host| {
-                    let repo = host.list_agent(&name).await?;
+                    let repo = host.make_repo(&kind, &name).await?;
                     let view = host.main_view(&repo).await?;
                     host.catalog_changed();
                     Ok(view)

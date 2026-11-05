@@ -33,6 +33,7 @@ pub mod forge;
 pub mod gate;
 pub mod host;
 pub mod jobs;
+pub mod kinds;
 pub mod manifest;
 pub mod model;
 pub mod notify;
@@ -437,6 +438,13 @@ pub trait UiPlugin: Sized + Send + Sync + 'static {
     /// only the seams, gives only the services and takes only the slot
     /// fillers it names.
     fn declaration(&self) -> Declaration;
+
+    /// The kinds of tau's own repository the plugin keeps: where they
+    /// live, what they start with and how their runs go. None by
+    /// default.
+    fn repo_kinds(&self) -> Vec<kinds::KindHost> {
+        Vec::new()
+    }
 
     fn manifest(&self) -> Manifest<Self>;
 }

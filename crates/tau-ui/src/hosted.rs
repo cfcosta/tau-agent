@@ -102,6 +102,22 @@ pub fn fills(hosted: &[Hosted]) -> Fills {
     fills
 }
 
+/// The kinds of tau's own repository the plugins keep, each with the
+/// plugin that keeps it (`UiPlugin::repo_kinds`).
+pub fn repo_kinds() -> Vec<(&'static str, tau_ui_plugin::kinds::KindHost)> {
+    install();
+    registry()
+        .plugins()
+        .flat_map(|plugin| {
+            let name = plugin.name();
+            plugin
+                .repo_kinds()
+                .into_iter()
+                .map(move |kind| (name, kind))
+        })
+        .collect()
+}
+
 /// What each plugin can fill of the slots needed before any host state
 /// is made (`HostHalf::fill_early`), with each slot's declared order and
 /// the person's picks in `ui`.

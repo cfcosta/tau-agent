@@ -14,7 +14,8 @@ use super::*;
 
 /// What a host half asked of the host, with where its answer goes.
 pub(super) enum Ask {
-    ListAgent {
+    MakeRepo {
+        kind: String,
         name: String,
         done: oneshot::Sender<anyhow::Result<()>>,
     },
@@ -55,9 +56,13 @@ impl HostConversations {
 }
 
 impl Conversations for HostConversations {
-    fn list_agent(&self, name: &str) -> HostFuture<'_, anyhow::Result<()>> {
-        let name = name.to_owned();
-        self.ask(move |done| Ask::ListAgent { name, done })
+    fn make_repo(
+        &self,
+        kind: &str,
+        name: &str,
+    ) -> HostFuture<'_, anyhow::Result<()>> {
+        let (kind, name) = (kind.to_owned(), name.to_owned());
+        self.ask(move |done| Ask::MakeRepo { kind, name, done })
     }
 
     fn main_of(&self, repo: &str) -> Option<String> {
