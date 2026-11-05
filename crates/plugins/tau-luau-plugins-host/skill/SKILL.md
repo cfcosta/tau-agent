@@ -83,7 +83,7 @@ one, its `card`.
 | ------------- | ------------------------------------------ | ------------------------------------------ | ------ |
 | tool `call`   | the arguments, as `parameters` describes   | a JSON value, or `error(message)`          | 60 s   |
 | tool `card`   | the call's arguments and the result        | a view piece, drawn on the call's card     | 200 ms |
-| `before_tool` | `{ id, name, args }`                       | `nil`, `tau.block(why)` or `tau.flag(why)` | 2 s    |
+| `before_tool` | `{ id, name, args }`                       | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
 | `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
 | `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
 | `run_end`     | `{ stop, turns, cost }`                    | nothing                                    | 10 s   |
@@ -92,6 +92,10 @@ one, its `card`.
 
 - `tau.block(why)` keeps the call from running; the model reads why.
   `tau.flag(why)` lets it run and marks it for the person's review.
+  `tau.change(args)` lets it run with `args` in place of its own, marked
+  for review too; it needs `uses.change_args = true`, which the person
+  allows as they allow new tools. The tool checks the new arguments as
+  it would the model's, and the plugins after it see them.
 - `tau.continue(message)` keeps the run going with `message` as the
   next thing the model reads; a run continues at most three times.
 - A hook that errors or runs out of time counts as `nil`, and its error
@@ -118,7 +122,7 @@ JSON has no empty array: use `array({})` for one that must stay a list.
 ### `tau`
 
 - `tau.plugin(table)`, `tau.block(why)`, `tau.flag(why)`,
-  `tau.continue(message)`.
+  `tau.change(args)`, `tau.continue(message)`.
 - `tau.contains(list, value)`: whether `list` holds `value`.
 
 ### `tau.ui`: what views are made of

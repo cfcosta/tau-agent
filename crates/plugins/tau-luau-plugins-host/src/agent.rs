@@ -434,7 +434,7 @@ impl PluginRun for LuauRun {
     ) -> Result<Decision, PluginError> {
         let inner = &self.plugins.0;
         let mut state = self.state.lock().await;
-        let input =
+        let mut input =
             json!({ "id": call.id, "name": call.name, "args": call.args });
         for active in inner.active().iter() {
             let Some(answer) = inner
@@ -452,8 +452,30 @@ impl PluginRun for LuauRun {
             };
             let reason =
                 answer["reason"].as_str().unwrap_or_default().to_owned();
+            let plugin = &active.loaded.declaration;
             match answer["decision"].as_str() {
                 Some("block") => return Ok(Decision::Block(reason)),
+                // The plugins after it see the call as it changed it.
+                Some("change") if plugin.uses.change_args => {
+                    call.args = answer["args"].clone();
+                    input["args"] = call.args.clone();
+                    ctx.publish(&Record::Flag {
+                        plugin: plugin.name.clone(),
+                        call_id: call.id.clone(),
+                        reason: "changed its arguments".into(),
+                    })
+                    .await;
+                }
+                Some("change") => {
+                    ctx.publish(&Record::Error {
+                        plugin: plugin.name.clone(),
+                        hook: hook_name(&Hook::BeforeTool),
+                        error: "changing a call's arguments needs \
+                                `uses.change_args`"
+                            .into(),
+                    })
+                    .await;
+                }
                 Some("flag") => {
                     ctx.publish(&Record::Flag {
                         plugin: active.loaded.declaration.name.clone(),

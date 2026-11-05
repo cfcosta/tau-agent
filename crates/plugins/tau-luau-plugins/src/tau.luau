@@ -66,6 +66,13 @@ function tau.flag(reason)
 	return { decision = "flag", reason = tostring(reason) }
 end
 
+-- Lets the call run with `args` in place of its own, when the plugin
+-- declares `uses.change_args`; the tool checks them as it would the
+-- model's.
+function tau.change(args)
+	return { decision = "change", args = args }
+end
+
 -- What `before_stop` answers to go on.
 function tau.continue(message)
 	return { decision = "continue", message = tostring(message) }
@@ -430,6 +437,7 @@ function tau._describe(plugin)
 			tools = uses.tools or array({}),
 			jev = uses.jev == true,
 			infer = uses.infer == true,
+			change_args = uses.change_args == true,
 		},
 		-- What can be set; `view` draws the settings page, on the host.
 		settings = plugin.settings and {

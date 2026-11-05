@@ -52,6 +52,9 @@ pub struct Uses {
     pub jev: bool,
     #[serde(default)]
     pub infer: bool,
+    /// `before_tool` may change a call's arguments (`tau.change`).
+    #[serde(default)]
+    pub change_args: bool,
 }
 
 impl Uses {
@@ -69,6 +72,9 @@ impl Uses {
         }
         if self.infer && !before.infer {
             grown.push("`infer`".into());
+        }
+        if self.change_args && !before.change_args {
+            grown.push("changing a tool call's arguments".into());
         }
         grown
     }
@@ -365,6 +371,7 @@ mod tests {
                 tools: tools.iter().map(|t| t.to_string()).collect(),
                 jev,
                 infer: false,
+                change_args: false,
             },
             settings: None,
             tools: Vec::new(),
