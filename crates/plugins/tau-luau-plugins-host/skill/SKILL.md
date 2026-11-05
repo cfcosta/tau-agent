@@ -352,8 +352,10 @@ ctx)` returns a view tree, `params.repo` the repository, its store in
 `ctx.store`. `repo_nav`, `{ label, page, icon? }`, is its entry under
 each repository in the sidebar, opening that page; `repo_data(ctx)`
 returns what the entry shows, `{ nav = { detail?, badge?, tone? } }`
-among it. A page's buttons carry out the plugin's `actions` in that
-repository, on its store there.
+among it. A page's buttons and inputs carry out the plugin's `actions`
+in that repository, on its store there, with the page's own params in
+`args.params`. Its links to its own pages (`ui.link(label, page, {
+params })`) open them of that repository.
 
 `recover(input, ctx)` is called once as tau starts, in each
 repository, with `input.runs`, the runs tau found cut off when it last
@@ -404,8 +406,8 @@ no longer accepts gives way to the defaults, and the pane says so.
 ### Modules
 
 `lib/<module>.luau` is `require("<module>")` in `plugin.luau`. A module
-may require `tau`, but not another module of the plugin. `tau` and
-`plugin` are taken.
+may require `tau` and the plugin's other modules, as long as no two
+require each other, however far around. `tau` and `plugin` are taken.
 
 ## Tests
 

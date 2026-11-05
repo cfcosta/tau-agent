@@ -503,8 +503,11 @@ impl Registry {
         match outcome.error {
             Some(error) => failed(error),
             None => {
-                let tree =
-                    tau_luau_plugins::ui::embed_repo(&outcome.value, plugin);
+                let tree = tau_luau_plugins::ui::embed_repo(
+                    &outcome.value,
+                    plugin,
+                    repo,
+                );
                 serde_json::json!({ "tree": tree.value() })
             }
         }

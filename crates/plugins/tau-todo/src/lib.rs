@@ -11,5 +11,14 @@ pub const NAME: &str = "tau-todo";
 pub const FILES: &[(&str, &str)] = &[
     ("plugin.luau", include_str!("../luau/plugin.luau")),
     ("lib/steps.luau", include_str!("../luau/lib/steps.luau")),
+    ("lib/graph.luau", include_str!("../luau/lib/graph.luau")),
+    ("lib/issues.luau", include_str!("../luau/lib/issues.luau")),
+    ("lib/beads.luau", include_str!("../luau/lib/beads.luau")),
+    ("lib/time.luau", include_str!("../luau/lib/time.luau")),
     ("tests/steps.luau", include_str!("../luau/tests/steps.luau")),
+    (
+        "tests/issues.luau",
+        include_str!("../luau/tests/issues.luau"),
+    ),
+    ("tests/beads.luau", include_str!("../luau/tests/beads.luau")),
 ];

@@ -1022,9 +1022,41 @@ local function weekday(iso)
 	return DAYS[w + 1]
 end
 
--- A fake run: `spec` may give `now` (an ISO date), `kind`, `settings`,
--- `state` and `tools` (a function or a value per tool name). Its hooks
--- are methods; each keeps the state the last one left.
+-- Seconds since 1970 of an ISO time.
+local function unix_of(iso)
+	local y, m, d = string.match(iso, "^(%d+)-(%d+)-(%d+)")
+	y, m, d = tonumber(y), tonumber(m), tonumber(d)
+	if m <= 2 then
+		y -= 1
+	end
+	local era = (y >= 0 and y or y - 399) // 400
+	local yoe = y - era * 400
+	local doy = (153 * ((m + 9) % 12) + 2) // 5 + d - 1
+	local doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+	local unix = (era * 146097 + doe - 719468) * 86400
+	local hh, mm, ss = string.match(iso, "T(%d%d):(%d%d):(%d%d)")
+	if hh then
+		unix += tonumber(hh) * 3600 + tonumber(mm) * 60 + tonumber(ss)
+	end
+	return unix
+end
+
+local function deep_copy(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for key, item in pairs(value) do
+		out[key] = deep_copy(item)
+	end
+	return setmetatable(out, getmetatable(value))
+end
+
+-- A fake run: `spec` may give `now` (an ISO date), `id`, `kind`,
+-- `settings`, `state`, `store` (a table of keys, shared by the runs
+-- given the same one) and `tools` (a function or a value per tool
+-- name). Its hooks are methods; each keeps the state the last one left,
+-- and a hook that fails keeps none of what it wrote to the store.
 function test.run(spec)
 	spec = spec or {}
 	local plugin = test.load()
@@ -1075,8 +1107,8 @@ function test.run(spec)
 		state = spec.state or {},
 		logs = {},
 		data = {
-			run = { id = "test", kind = spec.kind or "main", repo = "test", model = "test", turn = 1 },
-			now = { unix = 0, iso = now, weekday = weekday(now) },
+			run = { id = spec.id or "test", kind = spec.kind or "main", repo = "test", model = "test", turn = 1 },
+			now = { unix = unix_of(now), iso = now, weekday = weekday(now) },
 			settings = spec.settings or defaults,
 		},
 	}
@@ -1084,7 +1116,17 @@ function test.run(spec)
 		local data = table.clone(run.data)
 		data.state = run.state
 		local ctx = tau._ctx(data, fakes)
-		local answer = hook(..., ctx)
+		local before = deep_copy(kept)
+		local ok, answer = pcall(hook, ..., ctx)
+		if not ok then
+			for key in pairs(kept) do
+				kept[key] = nil
+			end
+			for key, value in pairs(before) do
+				kept[key] = value
+			end
+			error(answer, 0)
+		end
 		run.state = ctx.state
 		for _, line in ipairs(ctx._logs) do
 			table.insert(run.logs, line)
@@ -1158,6 +1200,25 @@ function test.run(spec)
 	function run:tool(name, args)
 		local tool = need((plugin.tools or {})[name], "tool " .. name)
 		return call(tool.call, args or {})
+	end
+	-- Moves the run's clock to `iso`.
+	function run:at(iso)
+		run.data.now = { unix = unix_of(iso), iso = iso, weekday = weekday(iso) }
+		return run
+	end
+	function run:page(name, params)
+		local page = need((plugin.pages or {})[name], "page " .. name)
+		local given = table.clone(params or {})
+		given.repo = given.repo or "test"
+		return call(page, given)
+	end
+	function run:repo_data()
+		return call(function(_, ctx)
+			return need(plugin.repo_data, "repo_data")(ctx)
+		end, nil)
+	end
+	function run:recover(input)
+		return call(need(plugin.recover, "recover"), input)
 	end
 	function run:card(name, c, result)
 		local tool = need((plugin.tools or {})[name], "tool " .. name)

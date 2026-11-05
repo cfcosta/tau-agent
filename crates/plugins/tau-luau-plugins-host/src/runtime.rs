@@ -182,8 +182,8 @@ impl Files {
     }
 
     /// The codemode modules the folder makes: `tau`, each `lib/` file
-    /// (which may require `tau`), and its root, `plugin` (which may
-    /// require them all).
+    /// (which may require `tau` and the other `lib/` files, but not in a
+    /// cycle), and its root, `plugin` (which may require them all).
     pub fn modules(&self) -> Result<Modules, String> {
         let (file, module) = (self.root.file, self.root.module);
         let tau = Definition::new(
@@ -195,17 +195,41 @@ impl Files {
         let mut modules = BTreeMap::new();
         let mut plugin_deps =
             BTreeMap::from([("tau".to_owned(), tau.version().to_owned())]);
-        for (name, source) in &self.libs {
+        for name in self.libs.keys() {
             if name == "tau" || name == module {
                 return Err(format!("lib/{name}.luau: `{name}` is taken"));
             }
-            let lib = Definition::new(
-                name.clone(),
-                source.clone(),
-                json!({}),
-                BTreeMap::from([("tau".to_owned(), tau.version().to_owned())]),
-            )
-            .map_err(|error| format!("lib/{name}.luau: {error}"))?;
+        }
+        // Each lib once the libs it requires are: their versions pin it.
+        let mut versions: BTreeMap<String, String> = BTreeMap::new();
+        while versions.len() < self.libs.len() {
+            let ready = self.libs.iter().find(|(name, source)| {
+                !versions.contains_key(*name)
+                    && required(source, &self.libs)
+                        .iter()
+                        .all(|dep| versions.contains_key(dep))
+            });
+            let Some((name, source)) = ready else {
+                let left: Vec<String> = self
+                    .libs
+                    .keys()
+                    .filter(|name| !versions.contains_key(*name))
+                    .map(|name| format!("lib/{name}.luau"))
+                    .collect();
+                return Err(format!(
+                    "{} require each other: one of them cannot",
+                    left.join(", ")
+                ));
+            };
+            let mut deps =
+                BTreeMap::from([("tau".to_owned(), tau.version().to_owned())]);
+            for dep in required(source, &self.libs) {
+                deps.insert(dep.clone(), versions[&dep].clone());
+            }
+            let lib =
+                Definition::new(name.clone(), source.clone(), json!({}), deps)
+                    .map_err(|error| format!("lib/{name}.luau: {error}"))?;
+            versions.insert(name.clone(), lib.version().to_owned());
             plugin_deps.insert(name.clone(), lib.version().to_owned());
             modules.insert(name.clone(), lib);
         }
@@ -220,6 +244,18 @@ impl Files {
         modules.insert("tau".into(), tau);
         Ok(modules)
     }
+}
+
+/// The `libs` that `source` requires, by name: `require("name")`.
+fn required(source: &str, libs: &BTreeMap<String, String>) -> Vec<String> {
+    libs.keys()
+        .filter(|name| {
+            [format!("require(\"{name}\")"), format!("require('{name}')")]
+                .iter()
+                .any(|call| source.contains(call.as_str()))
+        })
+        .cloned()
+        .collect()
 }
 
 /// A hook of a plugin, as the host calls it.

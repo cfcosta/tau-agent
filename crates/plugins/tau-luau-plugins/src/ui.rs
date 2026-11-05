@@ -328,10 +328,22 @@ pub fn embed(piece: &Value, plugin: &str) -> Node {
     embed_as(piece, plugin, LUAU)
 }
 
-/// `piece`, a Luau plugin's page of a repository, as a tree whose
-/// actions are carried out in that repository.
-pub fn embed_repo(piece: &Value, plugin: &str) -> Node {
-    embed_as(piece, plugin, LUAU_REPO)
+/// `piece`, a Luau plugin's page of `repo`, as a tree whose actions are
+/// carried out in that repository, and whose links to the plugin's own
+/// pages open them of that repository.
+pub fn embed_repo(piece: &Value, plugin: &str, repo: &str) -> Node {
+    rewrite(embed_as(piece, plugin, LUAU_REPO), &mut |node| match node {
+        Node::Link { label, to } if to.plugin.is_none() => {
+            let mut link = repo_page_link(plugin, &to.page, repo);
+            for (name, value) in to.params {
+                if name != PAGE_PARAM && name != REPO_PARAM {
+                    link = link.param(name, value);
+                }
+            }
+            Node::Link { label, to: link }
+        }
+        other => other,
+    })
 }
 
 /// [`embed`], its actions starting with `mark`.
@@ -655,11 +667,25 @@ impl UiPlugin for LuauPluginsUi {
                 return;
             }
             if let Some(repo) = view.params.get(REPO_PARAM) {
+                // With the page's own params, as an input's text comes
+                // alone: which issue a page shows, say.
+                let mut args = args.clone();
+                if let Value::Object(fields) = &mut args {
+                    let params: serde_json::Map<String, Value> = view
+                        .params
+                        .iter()
+                        .filter(|(name, _)| {
+                            *name != PAGE_PARAM && *name != REPO_PARAM
+                        })
+                        .map(|(name, value)| (name.clone(), json!(value)))
+                        .collect();
+                    fields.entry("params").or_insert(Value::Object(params));
+                }
                 view.handle.act(Act::RepoAction {
                     plugin: plugin.to_owned(),
                     repo: repo.clone(),
                     action: own.to_owned(),
-                    args: args.clone(),
+                    args,
                 });
             }
             return;
