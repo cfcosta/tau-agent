@@ -186,11 +186,29 @@ pub const EVENTS: [&str; 8] = [
 ];
 
 /// The slots a Luau plugin may fill (ADR 0045), as `fills` names them.
-pub const SLOTS: [&str; 3] = [
+pub const SLOTS: [&str; 4] = [
     tau_ui_plugin::title::TITLE.name(),
     tau_ui_plugin::compaction::COMPACTION.name(),
     tau_ui_plugin::notify::NOTIFY.name(),
+    tau_ui_plugin::forge::FORGE.name(),
 ];
+
+/// The forge's hooks, as its `forge` table names them.
+pub const FORGE_HOOKS: [&str; 5] =
+    ["account", "repos", "can_push", "open_pull", "checks"];
+
+/// What a plugin that fills `tau.forge` says of the forge: its name, its
+/// clones' directory, the host repositories clone from, the secret that
+/// signs in, and which of [`FORGE_HOOKS`] it has.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForgeFill {
+    pub name: String,
+    pub id: String,
+    pub host: String,
+    pub token: String,
+    #[serde(default)]
+    pub hooks: Vec<String>,
+}
 
 /// What a plugin that fills `tau.compaction` says: the plugins whose
 /// rewrites run, besides the Luau plugins' own.
@@ -226,6 +244,9 @@ pub struct Declaration {
     /// What it fills `tau.compaction` with.
     #[serde(default)]
     pub compaction: Option<CompactionFill>,
+    /// What it fills `tau.forge` with.
+    #[serde(default)]
+    pub forge: Option<ForgeFill>,
 }
 
 impl Declaration {
@@ -487,6 +508,7 @@ mod tests {
             events: Vec::new(),
             fills: Vec::new(),
             compaction: None,
+            forge: None,
         }
     }
 

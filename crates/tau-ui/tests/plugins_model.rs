@@ -1516,9 +1516,11 @@ impl Tau {
                 tc.draw(gs::integers::<usize>().max_value(picked.len() - 1));
             ordered.push(picked.remove(at));
         }
-        // What each fills alone. Only `test.alpha` has two who can
-        // fill it; together they fill each other slot with the one who
-        // can, and it with the person's pick or the first in its order.
+        // What each fills alone. `test.alpha` has two who can fill it,
+        // and `tau.forge` too (tau-github, and tau-luau-plugins for the
+        // person's Luau plugins); together they fill each other slot with
+        // the one who can, and those with the person's pick or the first
+        // in its order.
         let mut alone: BTreeMap<&'static str, Option<String>> =
             slot_table(&Fills::default());
         for hosted in &ordered {
@@ -1527,6 +1529,7 @@ impl Tau {
             for (slot, filler) in slot_table(&fills) {
                 if let Some(filler) = filler
                     && slot != SLOTS[0].name()
+                    && slot != tau_ui_plugin::forge::FORGE.name()
                 {
                     let before = alone.insert(slot, Some(filler));
                     assert_eq!(before, Some(None), "{slot} has two fillers");
@@ -1536,6 +1539,18 @@ impl Tau {
         let names: Vec<&str> =
             ordered.iter().map(|hosted| hosted.plugin.name()).collect();
         alone.insert(SLOTS[0].name(), alpha_filler(&names, &self.host.ui));
+        let forge = if names.contains(&tau_github::NAME) {
+            Some("github")
+        } else if names.contains(&tau_luau_plugins::NAME) {
+            // No Luau plugin fills it yet.
+            Some("luau")
+        } else {
+            None
+        };
+        alone.insert(
+            tau_ui_plugin::forge::FORGE.name(),
+            forge.map(str::to_owned),
+        );
         // All of them fill every slot: tau's own fillers, tau-vcs-host
         // and tau-github-host, are among them.
         let all = slot_table(&hosted::fills(hosted));

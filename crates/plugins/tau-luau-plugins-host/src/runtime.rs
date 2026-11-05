@@ -251,6 +251,8 @@ pub enum Hook {
     Title,
     /// One of tau's notices, for `tau.notify`, with `{ title, body }`.
     Notify,
+    /// One of the forge's hooks, for `tau.forge`, by name.
+    Forge(String),
     RunEnd,
     View,
     /// Its settings page, with the settings shown as input (ADR 0029).
@@ -264,6 +266,7 @@ impl Hook {
     pub fn limit(&self) -> Duration {
         Duration::from_millis(match self {
             Self::Tool(_) => 60_000,
+            Self::Forge(_) => 30_000,
             Self::Card(_)
             | Self::View
             | Self::SettingsView
@@ -301,6 +304,7 @@ impl Hook {
             Self::OnEvent => "p.on_event(input, ctx)".into(),
             Self::Title => "p.title(input, ctx)".into(),
             Self::Notify => "p.notify(input, ctx)".into(),
+            Self::Forge(name) => format!("p.forge[\"{name}\"](input, ctx)"),
             Self::RunEnd => "p.run_end(input, ctx)".into(),
             Self::View => "p.view(ctx.state, ctx)".into(),
             Self::SettingsView => "p.settings.view(input, ctx)".into(),
@@ -326,6 +330,10 @@ impl Hook {
             Self::OnEvent => declaration.hooks.on_event,
             Self::Title => declaration.hooks.title,
             Self::Notify => declaration.hooks.notify,
+            Self::Forge(name) => declaration
+                .forge
+                .as_ref()
+                .is_some_and(|forge| forge.hooks.contains(name)),
             Self::RunEnd => declaration.hooks.run_end,
             Self::View => declaration.hooks.view,
             Self::SettingsView => declaration.hooks.settings_view,
@@ -449,6 +457,24 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
             s if s == tau_ui_plugin::title::TITLE.name() => {
                 (!declaration.hooks.title).then_some("a `title` hook")
             }
+            s if s == tau_ui_plugin::forge::FORGE.name() => match &declaration
+                .forge
+            {
+                None => Some("a `forge` table"),
+                Some(forge)
+                    if [&forge.name, &forge.id, &forge.host, &forge.token]
+                        .iter()
+                        .any(|field| field.is_empty()) =>
+                {
+                    Some("its `forge` table's `name`, `id`, `host` and `token`")
+                }
+                Some(forge)
+                    if !declaration.uses.secrets.contains(&forge.token) =>
+                {
+                    Some("its `token` named in `uses.secrets`")
+                }
+                Some(_) => None,
+            },
             s if s == tau_ui_plugin::notify::NOTIFY.name() => {
                 (!declaration.hooks.notify).then_some("a `notify` hook")
             }

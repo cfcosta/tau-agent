@@ -116,6 +116,11 @@ impl HostHalf for LuauPluginsHost {
                 as std::sync::Arc<dyn tau_ui_plugin::title::Title>,
         );
         fills.fill(
+            &tau_ui_plugin::forge::FORGE,
+            std::sync::Arc::new(crate::slots::LuauForge(host.clone()))
+                as std::sync::Arc<dyn tau_ui_plugin::forge::Forge>,
+        );
+        fills.fill(
             &tau_ui_plugin::notify::NOTIFY,
             std::sync::Arc::new(crate::slots::LuauNotify(host.clone()))
                 as std::sync::Arc<dyn tau_ui_plugin::notify::Notify>,

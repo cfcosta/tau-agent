@@ -521,3 +521,116 @@ return tau.plugin {{
         "{request}"
     );
 }
+
+const FORGE: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "greet",
+  uses = { secrets = { "forge-token" } },
+  fills = { "tau.forge" },
+  forge = {
+    name = "Gitea at home",
+    id = "home",
+    host = "git.home.lan",
+    token = "forge-token",
+    account = function(input, ctx) return "cainã" end,
+    repos = function(input, ctx)
+      return { { name = "me/tau", description = "the agent", branch = "trunk" } }
+    end,
+    can_push = function(input, ctx) return input.repo == "me/tau" end,
+    checks = function(input, ctx) return "passed" end,
+  },
+}
+"#;
+
+/// A plugin that fills `tau.forge` is the forge tau clones from and
+/// pushes to: it is named and placed by its `forge` table, signed in by
+/// the secret it names, which only tau's remote reads, and asked the
+/// rest through its hooks.
+#[test]
+fn a_plugin_fills_the_forge_slot() {
+    use tau_luau_plugins_host::slots::LuauForge;
+    use tau_ui_plugin::forge::{Checks, Forge};
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    )
+    .with_config(home.path().join("config"));
+    let (v1, trunk) = project(home.path(), 1, FORGE, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    block_on_io(registry.allow("greet")).unwrap();
+    let forge = LuauForge(registry.clone());
+    assert_eq!((forge.name(), forge.id()), ("Gitea at home", "home"));
+    assert_eq!(forge.clone_url("me/tau"), "https://git.home.lan/me/tau.git");
+    assert_eq!(
+        forge
+            .repository_of("git@git.home.lan:me/tau.git")
+            .as_deref(),
+        Some("me/tau")
+    );
+    assert_eq!(forge.repository_of("https://github.com/me/tau"), None);
+
+    // Signed out until its secret is set.
+    assert_eq!(block_on_io(forge.signed_in()), None);
+    let error = block_on_io(forge.remote("me/tau")).unwrap_err().to_string();
+    assert!(error.contains("forge-token"), "{error}");
+    block_on_io(registry.set_secret("greet", "forge-token", "t0k3n")).unwrap();
+    assert_eq!(block_on_io(forge.signed_in()).as_deref(), Some("cainã"));
+    let remote = block_on_io(forge.remote("me/tau")).unwrap();
+    assert_eq!(remote.token.as_deref(), Some("t0k3n"));
+    // A secret it does not name is refused.
+    assert!(block_on_io(registry.set_secret("greet", "github", "x")).is_err());
+
+    let repos = block_on_io(forge.repos()).unwrap();
+    assert_eq!(repos[0].name, "me/tau");
+    assert_eq!(repos[0].branch, "trunk");
+    assert!(block_on_io(forge.can_push("me/tau")).unwrap());
+    assert!(!block_on_io(forge.can_push("you/x")).unwrap());
+    assert_eq!(
+        block_on_io(forge.checks("me/tau", "abc")).unwrap(),
+        Checks::Passed
+    );
+    // A hook it lacks says so.
+    let pull = tau_ui_plugin::forge::OpenPull {
+        repo: "me/tau".into(),
+        title: "t".into(),
+        body: String::new(),
+        head: "h".into(),
+        base: "trunk".into(),
+        draft: false,
+        reviewers: Vec::new(),
+    };
+    let error = block_on_io(forge.open_pull(pull)).unwrap_err().to_string();
+    assert!(error.contains("`open_pull`"), "{error}");
+}
+
+/// A repository's full name comes from every form of URL Git takes for
+/// the forge's host, and from no other host's.
+#[test]
+fn a_forge_reads_its_own_urls() {
+    use tau_luau_plugins_host::slots::repository_of;
+    for url in [
+        "https://git.home.lan/me/tau",
+        "https://git.home.lan/me/tau.git",
+        "https://git.home.lan/me/tau/",
+        "ssh://git@git.home.lan/me/tau.git",
+        "git@git.home.lan:me/tau.git",
+    ] {
+        assert_eq!(
+            repository_of("git.home.lan", url).as_deref(),
+            Some("me/tau"),
+            "{url}"
+        );
+    }
+    for url in [
+        "https://git.home.lan.evil/me/tau",
+        "https://git.home.lan/me",
+        "https://git.home.lan/me/tau/extra",
+        "git@other:me/tau.git",
+    ] {
+        assert_eq!(repository_of("git.home.lan", url), None, "{url}");
+    }
+}

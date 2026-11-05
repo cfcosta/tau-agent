@@ -138,7 +138,7 @@ one, its `card`.
   does every call with its results. The first plugin that rewrites
   wins; which plugins may rewrite at all is the person's pick on the
   Plugins screen. Having `rewrite_context` at all is new reach.
-- A plugin may fill three of tau's slots, named in `fills`. Filling one
+- A plugin may fill four of tau's slots, named in `fills`. Filling one
   is new reach, and tau-luau-plugins must be the slot's pick on the
   Plugins screen; the first active plugin by name that fills it does.
   - `tau.title`: `title` writes a run's title from its `task` (at most
@@ -147,6 +147,17 @@ one, its `card`.
   - `tau.notify`: `notify` gets each notice tau would show while its
     window is not in front, and sends it where the plugin reaches over
     HTTP, such as a push service.
+  - `tau.forge`: where repositories are hosted. Its `forge` table
+    names the forge (`name`, `id`, the `host` repositories clone from)
+    and the secret that signs in (`token`, which `uses.secrets` must
+    name); the person sets it on the plugin's settings. tau clones and
+    pushes over HTTPS with it, and never hands it to the plugin. Its
+    hooks reach the forge's API over HTTP: `account(input, ctx)` (who
+    is signed in), `repos` (a list of `{ name, description, branch,
+    pushed_at }`), `can_push` (`{ repo }`, a boolean), `open_pull`
+    (`{ repo, title, body, head, base, draft, reviewers }`, answering
+    `{ number, url }`) and `checks` (`{ repo, head }`, answering
+    `"running"`, `"passed"`, `"failed"` or `"none"`).
   - `tau.compaction`: which plugins' rewrites run. The Luau plugins'
     own always do; the `compaction` table's `rewriters` names the
     others, such as `tau-fast-compaction`.

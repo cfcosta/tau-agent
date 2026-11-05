@@ -57,6 +57,24 @@ Secret.__concat = function(left, right)
 	error('a secret can only follow text, as in "Bearer " .. tau.secret("github")', 2)
 end
 
+-- A `forge` table as the host reads it: what it names, and which of its
+-- hooks it has.
+function tau._forge(forge)
+	local hooks = array({})
+	for _, name in ipairs({ "account", "repos", "can_push", "open_pull", "checks" }) do
+		if type(forge[name]) == "function" then
+			table.insert(hooks, name)
+		end
+	end
+	return {
+		name = forge.name or "",
+		id = forge.id or "",
+		host = forge.host or "",
+		token = forge.token or "",
+		hooks = hooks,
+	}
+end
+
 -- What `before_tool` answers.
 function tau.block(reason)
 	return { decision = "block", reason = tostring(reason) }
@@ -504,6 +522,7 @@ function tau._describe(plugin)
 		compaction = plugin.compaction and {
 			rewriters = plugin.compaction.rewriters or array({}),
 		} or json.null,
+		forge = plugin.forge and tau._forge(plugin.forge) or json.null,
 	}
 end
 
