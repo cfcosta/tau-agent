@@ -117,19 +117,12 @@ pub fn sidebar(
         .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
         .on_click(cx.listener(|ws, _, _, cx| ws.pick_repos(cx)));
 
-    let phones = match ws.phones.paired.len() {
-        0 => String::new(),
-        n => format!("{n} paired"),
-    };
-    let mut everywhere = vec![
-        (
-            Route::History,
-            "History".to_owned(),
-            "all repos".to_owned(),
-            t.dim,
-        ),
-        (Route::Phones, "Phones".to_owned(), phones, t.green),
-    ];
+    let mut everywhere = vec![(
+        Route::History,
+        "History".to_owned(),
+        "all repos".to_owned(),
+        t.dim,
+    )];
     // What plugins list there.
     for entry in ws.contributions(points::EVERYWHERE, &points::AtApp) {
         let Some(route) = ws.link_route(&entry.to, None) else {

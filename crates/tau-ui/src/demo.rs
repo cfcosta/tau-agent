@@ -678,39 +678,44 @@ pub fn computer() -> Computer {
     }
 }
 
-/// The Phones screen with phones allowed, a code showing and a phone
+/// tau-phones' page with phones allowed, a code showing and a phone
 /// paired.
-pub fn phones() -> crate::phones::Phones {
-    use crate::phones::{LocalAddress, Phones, ShownCode};
+pub fn phones() -> tau_phones::PhonesData {
     let computer = computer();
-    Phones {
+    let code = tau_remote::PairingCode {
+        address: computer.address.clone(),
+        host: computer.name,
+        fingerprint: computer.fingerprint,
+        secret: tau_remote::PairingSecret::typed("K7QM-2XPA")
+            .expect("a valid secret"),
+    };
+    // Four and a half minutes left.
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |now| i64::try_from(now.as_millis()).unwrap_or(0))
+        + 272_000;
+    tau_phones::PhonesData {
         allowed: true,
         addresses: vec![
-            LocalAddress {
+            tau_phones::LocalAddress {
                 ip: "100.84.12.7".into(),
                 label: "Tailscale".into(),
             },
-            LocalAddress {
+            tau_phones::LocalAddress {
                 ip: "192.168.1.20".into(),
                 label: "wlan0".into(),
             },
         ],
-        listen: Some("100.84.12.7".into()),
-        port: tau_remote::Address::DEFAULT_PORT,
-        listening: Some(computer.address.clone()),
-        fingerprint: Some(computer.fingerprint),
-        code: Some(ShownCode {
-            code: tau_remote::PairingCode {
-                address: computer.address,
-                host: computer.name,
-                fingerprint: computer.fingerprint,
-                secret: tau_remote::PairingSecret::typed("K7QM-2XPA")
-                    .expect("a valid secret"),
-            },
-            expires: std::time::Instant::now()
-                + std::time::Duration::from_secs(272),
+        listening: Some(computer.address.to_string()),
+        code: Some(tau_phones::ShownCode {
+            text: code.to_string(),
+            address: code.address.to_string(),
+            secret: code.secret.to_string(),
+            certificate: code.fingerprint.short(),
+            lines: code.fingerprint.lines(),
+            expires,
         }),
-        paired: vec![tau_remote::Device {
+        paired: vec![tau_phones::Paired {
             id: "d1".into(),
             name: "Pixel 9".into(),
             paired_at: "2026-09-28T19:12:40Z".into(),

@@ -544,7 +544,7 @@ window, so it needs no GPU; the window draws a frame before each read.
 `phone_model.rs` (state machine) is the phone's own state: the real
 phone `Workspace` and `remote::connect`, with its credentials directory
 kept across restarts, against two real computers (`Workspace`
-and `phone_server` over loopback TLS), each behind a proxy that stands
+and tau-phones' server over loopback TLS), each behind a proxy that stands
 for the network. Rules: pair from the screens that offer it (how a
 phone goes from one computer to another, or back), pair and close
 before the credentials are kept, revoke, move the computer, give it a

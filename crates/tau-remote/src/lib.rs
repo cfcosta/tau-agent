@@ -22,6 +22,7 @@ pub mod devices;
 pub mod feed;
 pub mod outbox;
 pub mod pairing;
+pub mod reach;
 pub mod server;
 pub mod tls;
 pub mod wire;
@@ -36,6 +37,7 @@ pub use pairing::{
     PairingSecret,
     ParseError,
 };
+pub use reach::reach;
 pub use server::{ConnId, Server, ServerConfig, ServerEvent, ServerHandle};
 pub use wire::{Down, Refusal, Up};
 

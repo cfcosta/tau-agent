@@ -5,7 +5,7 @@
 //! The phone is the real app's Rust side: a `Workspace` and
 //! `remote::connect`, with its credentials in a directory that outlives
 //! its restarts and a camera that reads the code the test puts in front
-//! of it. Each computer is a real `Workspace` with `phone_server`,
+//! of it. Each computer is a real `Workspace` with tau-phones' server,
 //! serving over loopback TLS, behind a proxy that stands for the
 //! network: the test cuts it, moves the computer to another address, or
 //! puts something else at that address. A small plugin of the test's
@@ -70,6 +70,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use hegel::{HealthCheck, TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::tool::RunId;
+use tau_phones::{Act, Phones};
 use tau_remote::{
     Address,
     Credentials,
@@ -79,8 +80,9 @@ use tau_remote::{
     ServerConfig,
     ServerEvent,
     ServerHandle,
+    reach,
 };
-use tau_ui::{demo, mirror, phone_server};
+use tau_ui::{demo, mirror};
 use tau_ui_kit::assets::Icon;
 use tau_ui_plugin::{
     Link,
@@ -96,7 +98,6 @@ use tau_ui_remote::{
     WorkspaceEvent,
     catalog::Catalog,
     pairing::{PairRequest, PairStep},
-    phones::{PhonesRequest, reach},
     plugins,
     remote::{self, Platform},
     route::Route,
@@ -293,6 +294,9 @@ struct Computer {
     cx: VisualTestContext,
     dir: tempfile::TempDir,
     proxy: Proxy,
+    /// Its phones, on the test's runtime.
+    phones: Phones,
+    runtime: tokio::runtime::Handle,
     /// The phone's requests that reached it, in order.
     asked: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
     impostor: Option<Impostor>,
@@ -339,14 +343,7 @@ impl Computer {
         .unwrap();
         let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let seen = asked.clone();
-        cx.update(|_, cx| {
-            phone_server::serve(
-                runtime.handle().clone(),
-                dir.path().to_owned(),
-                mirror::app(&workspace, cx),
-                &workspace,
-                cx,
-            );
+        let app = cx.update(|_, cx| {
             cx.subscribe(&workspace, move |_, event: &WorkspaceEvent, _| {
                 if let WorkspaceEvent::Cancel { run } = event
                     && run.0.starts_with("req-")
@@ -355,7 +352,14 @@ impl Computer {
                 }
             })
             .detach();
+            mirror::app(&workspace, cx)
         });
+        let phones = runtime.block_on(Phones::open(
+            dir.path().to_owned(),
+            app,
+            Arc::new(|| {}),
+        ));
+        phones.resume();
         let proxy = Proxy::start(
             runtime,
             "127.0.0.1",
@@ -369,6 +373,8 @@ impl Computer {
             cx,
             dir,
             proxy,
+            phones,
+            runtime: runtime.handle().clone(),
             asked,
             impostor: None,
         };
@@ -385,15 +391,12 @@ impl Computer {
     fn serving(&mut self, not: Option<Fingerprint>) {
         for _ in 0..LOOKS {
             self.cx.run_until_parked();
-            let listening = self.workspace.read_with(&self.cx, |ws, _| {
-                let phones = ws.phones();
-                assert!(phones.error.is_none(), "{:?}", phones.error);
-                phones
-                    .listening
-                    .clone()
-                    .zip(phones.fingerprint)
-                    .filter(|(_, fingerprint)| Some(*fingerprint) != not)
-            });
+            let error = self.phones.error();
+            assert!(error.is_none(), "{error:?}");
+            let listening = self
+                .phones
+                .listening()
+                .filter(|(_, fingerprint)| Some(*fingerprint) != not);
             if let Some((address, _)) = listening {
                 let at = format!("{}:{}", address.host, address.port);
                 *self.proxy.upstream.lock().unwrap() =
@@ -406,15 +409,14 @@ impl Computer {
     }
 
     fn fingerprint(&self) -> Fingerprint {
-        self.workspace
-            .read_with(&self.cx, |ws, _| ws.phones().fingerprint)
+        self.phones
+            .listening()
+            .map(|(_, fingerprint)| fingerprint)
             .expect("listening")
     }
 
     fn devices(&self) -> BTreeSet<String> {
-        self.workspace.read_with(&self.cx, |ws, _| {
-            ws.phones().paired.iter().map(|d| d.id.clone()).collect()
-        })
+        self.phones.paired().iter().map(|d| d.id.clone()).collect()
     }
 
     /// The paired phones in its file, read without running anything.
@@ -435,18 +437,20 @@ impl Computer {
     /// off and on again without it.
     fn new_certificate(&mut self) {
         let old = self.fingerprint();
-        self.workspace.update(&mut self.cx, |ws, cx| {
-            ws.ask_phones(PhonesRequest::Allow(false), cx)
-        });
+        self.act(Act::Allow { allow: false });
         self.cx.run_until_parked();
         for file in ["cert.der", "key.der"] {
             std::fs::remove_file(self.dir.path().join(file)).unwrap();
         }
-        self.workspace.update(&mut self.cx, |ws, cx| {
-            ws.ask_phones(PhonesRequest::Allow(true), cx)
-        });
+        self.act(Act::Allow { allow: true });
         self.serving(Some(old));
         self.proxy.cut();
+    }
+
+    /// Asks its phones for `act`, as its Phones page does.
+    fn act(&mut self, act: Act) {
+        self.runtime.block_on(self.phones.act(act));
+        self.cx.run_until_parked();
     }
 
     /// A pairing code to show the phone, reaching it through the proxy.
@@ -456,13 +460,8 @@ impl Computer {
         // again until it stays.
         let mut code = None;
         for _ in 0..LOOKS {
-            self.workspace.update(&mut self.cx, |ws, cx| {
-                ws.ask_phones(PhonesRequest::ShowCode, cx)
-            });
-            self.cx.run_until_parked();
-            code = self.workspace.read_with(&self.cx, |ws, _| {
-                ws.phones().code.as_ref().map(|shown| shown.code.clone())
-            });
+            self.act(Act::ShowCode);
+            code = self.phones.code();
             if code.is_some() {
                 break;
             }
@@ -929,8 +928,8 @@ impl Machine {
         };
         tc.assume(!self.revoked.contains(&paired.device));
         let computer = &mut self.computers[paired.computer];
-        computer.workspace.update(&mut computer.cx, |ws, cx| {
-            ws.ask_phones(PhonesRequest::Revoke(paired.device.clone()), cx)
+        computer.act(Act::Revoke {
+            id: paired.device.clone(),
         });
         // Revoked once the computer saved it.
         for _ in 0..LOOKS {

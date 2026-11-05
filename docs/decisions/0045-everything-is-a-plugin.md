@@ -431,6 +431,30 @@ Each step lands on main by itself and leaves tau working.
    compacts is still the kernel's (`idle.rs`).
 9. **App and repository seams.** `tau-phones`, repository kinds for
    agents and the plugins repository, onboarding stages.
+   As built: what crosses to phones stays the kernel's (`tau_ui::mirror`:
+   `to_phones`, `transient`, `snapshot`, `from_phone`, the views phones
+   asked for), offered to plugins as the service `tau.app`
+   (`tau_ui_plugin::app::App`). It is a service, not an `on_update`
+   hook: the carrier gives a sink the window calls on its own thread,
+   in order, and a snapshot is handed back on that thread too, so no
+   update falls between a snapshot and the feed. tau-phones carries it:
+   its host half runs the server, the pairing code and the settings on
+   the host's runtime (`tau_phones::Phones`), and its UI half draws the
+   Phones page (`Node::Qr`, a countdown by `Node::Due`) and an entry in
+   the sidebar's Everywhere (`points::EVERYWHERE`). It is
+   `computer_only`: what it keeps, the code among it, never goes to a
+   phone (`HostUpdate::for_phones`), and a phone cannot ask it
+   anything. The kernel's Phones screen, route, state and request went.
+   Repository kinds replace `Own`: `Repo.kind` names one, a plugin
+   declares those it keeps (`UiPlugin::repo_kinds`,
+   `tau_ui_plugin::kinds::KindHost`: its directory, one repository or
+   one per folder, first files, whether its runs are sandboxed and
+   which plugins they go without), and the host lists and makes them
+   (`Host::list_kinds`, `Conversations::make_repo`). Its place in the
+   sidebar is the kind's (`RepoKind::place`): a section of its own for
+   agents, or its chats under Plugins for the plugins repository. No
+   kernel source names a kind. Onboarding's words for the model come
+   from the provider (`Models::access`).
 10. **Luau parity.** The binding implements every seam and slot; the
     seam table test; the skill documents all of it, with worked plugins
     for a context rewrite, a slot filler and a page.
@@ -461,7 +485,7 @@ Each step lands on main by itself and leaves tau working.
 
 - tau-ui's host and tau-ui-remote shrink to the frame and the
   lifecycle; most of `host.rs`, `host/*.rs`, `github.rs`, `accounts.rs`,
-  `notify.rs` and `phone_server.rs` move into plugins.
+  `notify.rs` and the phones server move into plugins.
 - Every Rust plugin's UI is rewritten as trees. The hardest are tau-ask
   (focus, keys, a panel in the composer's place), tau-tools (the
   terminal), tau-vcs (diffs) and tau-memory (its graph); they need

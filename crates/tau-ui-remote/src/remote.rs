@@ -35,7 +35,7 @@ use tokio::{
 
 use crate::{
     pairing::{Computer, PairRequest, PairStep, PairingUpdate, Progress},
-    phones::{PhoneUp, reach},
+    phones::PhoneUp,
     update::HostUpdate,
     workspace::{Workspace, WorkspaceEvent},
 };
@@ -140,7 +140,7 @@ fn computer(credentials: &Credentials) -> Computer {
         name: credentials.host.clone(),
         address: credentials.address.clone(),
         fingerprint: credentials.fingerprint,
-        via: reach(&credentials.address.host).map(str::to_owned),
+        via: tau_remote::reach(&credentials.address.host).map(str::to_owned),
     }
 }
 

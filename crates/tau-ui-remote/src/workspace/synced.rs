@@ -131,7 +131,6 @@ impl Workspace {
             // Onboarding and pairing are each device's own.
             setup: _,
             pairing: _,
-            phones: _,
             pair_address: _,
             pair_code: _,
             phone_name: _,

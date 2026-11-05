@@ -1,8 +1,8 @@
 # tau-ui
 
 tau on the computer: the host that runs coding agents in repositories
-cloned from the forge (tau-github fills its slot), drives `tau-ui-remote`'s interface, and serves the
-phones paired with it. The interface itself (the workspace, its screens,
+cloned from the forge (tau-github fills its slot), drives `tau-ui-remote`'s interface, and mirrors it to
+the phones tau-phones pairs with it. The interface itself (the workspace, its screens,
 the plugins' views) lives in `tau-ui-remote`; this crate is everything
 behind it that runs agents, signs in, clones, lands, pushes and notifies.
 It is a library: the `tau` app (`crates/tau`) is the binary.
@@ -15,7 +15,7 @@ It is a library: the `tau` app (`crates/tau`) is the binary.
 | `host::queue`       | A main chat's landing queue: `Lane` decides, the host acts                                        |
 | `hosted`            | The plugins' host halves: `halves` gives them to `tau-ui-remote`'s plugins, `install` once        |
 | `accounts`          | `Credentials`: where sign-ins are kept; tau-chatgpt signs in                                       |
-| `phone_server`      | The computer's side of phones: `serve`, once "Allow phones" is on                                 |
+| `mirror`            | The window as phones mirror it: what crosses, what a phone may ask, the `tau.app` service          |
 | `notify`            | When to notify while the window is not focused (`Notifier`), through the `tau.notify` slot (`Slotted`) |
 | `metered`           | Jev requests counted for the Plugins screen: `Metered`                                            |
 | `demo`              | A scripted session, for running the interface without an agent                                    |

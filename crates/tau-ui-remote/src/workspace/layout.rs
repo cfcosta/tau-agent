@@ -788,7 +788,6 @@ impl Workspace {
                 self.focused(compact, t, cx)
             }
             Route::Models => screens::models::render(self, compact, t, cx),
-            Route::Phones => screens::phones::render(self, compact, t, cx),
             Route::Repo(repo) => {
                 screens::repo::render(self, repo, compact, t, cx)
             }

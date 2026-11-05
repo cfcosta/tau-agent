@@ -67,7 +67,7 @@ messages and keeps it again.
 
 Phones get `HostUpdate::Picture` and `PluginReply` as
 `Down::Transient`: unnumbered, only while connected, never replayed
-(`phone_server::transient`). This keeps images out of the feed that
+(`mirror::transient`). This keeps images out of the feed that
 phones replay when they come back.
 
 ## Demo

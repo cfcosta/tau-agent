@@ -1,17 +1,21 @@
 //! A computer and a phone in one process, over the loopback: the phone
 //! pairs by the computer's code, shows what the computer shows, and its
 //! requests reach the computer's host (decision 0013).
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
 
 use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
-use tau_ui::{demo, mirror, phone_server};
+use tau_phones::{Act, Phones};
+use tau_ui::{demo, mirror};
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
     catalog::Catalog,
     pairing::PairStep,
-    phones::PhonesRequest,
     remote::{self, Platform},
     route::Route,
     update::HostUpdate,
@@ -66,33 +70,26 @@ fn a_phone_pairs_and_steers_the_computer(cx: &mut TestAppContext) {
     let (desktop, mut desktop_cx) = window(cx, demo::history());
     let asked = Rc::new(RefCell::new(Vec::new()));
     let seen = asked.clone();
-    desktop_cx.update(|_, cx| {
-        phone_server::serve(
-            runtime.handle().clone(),
-            computer_dir.path().to_owned(),
-            mirror::app(&desktop, cx),
-            &desktop,
-            cx,
-        );
+    let app = desktop_cx.update(|_, cx| {
         cx.subscribe(&desktop, move |_, event: &WorkspaceEvent, _| {
             seen.borrow_mut().push(event.clone())
         })
         .detach();
+        mirror::app(&desktop, cx)
     });
+    let phones = runtime.block_on(Phones::open(
+        computer_dir.path().to_owned(),
+        app,
+        Arc::new(|| {}),
+    ));
+    phones.resume();
     // The server starts on the host's runtime, a moment after.
-    until(&mut desktop_cx, "the server to listen", |cx| {
-        desktop.read_with(cx, |ws, _| {
-            ws.phones().listening.is_some() || ws.phones().error.is_some()
-        })
+    until(&mut desktop_cx, "the server to listen", |_| {
+        phones.listening().is_some() || phones.error().is_some()
     });
-    desktop.update(&mut desktop_cx, |ws, cx| {
-        assert!(ws.phones().listening.is_some(), "{:?}", ws.phones().error);
-        ws.ask_phones(PhonesRequest::ShowCode, cx);
-    });
-    desktop_cx.run_until_parked();
-    let code = desktop.update(&mut desktop_cx, |ws, _| {
-        ws.phones().code.as_ref().unwrap().code.to_string()
-    });
+    assert!(phones.listening().is_some(), "{:?}", phones.error());
+    runtime.block_on(phones.act(Act::ShowCode));
+    let code = phones.code().unwrap().to_string();
 
     // The phone's camera reads the code on the computer's screen.
     let (phone, mut phone_cx) = window(cx, Vec::new());
@@ -114,10 +111,10 @@ fn a_phone_pairs_and_steers_the_computer(cx: &mut TestAppContext) {
     until(&mut phone_cx, "the snapshot", |cx| {
         phone.update(cx, |ws, _| ws.runs() == runs.as_slice())
     });
-    desktop.update(&mut desktop_cx, |ws, _| {
-        assert_eq!(ws.phones().paired.len(), 1);
-        assert!(ws.phones().code.is_none(), "a used code goes away");
+    until(&mut desktop_cx, "the computer to list the phone", |_| {
+        phones.paired().len() == 1
     });
+    assert!(phones.code().is_none(), "a used code goes away");
     phone.update(&mut phone_cx, |ws, cx| ws.open_tau(cx));
 
     // What the phone asks for reaches the computer's host.

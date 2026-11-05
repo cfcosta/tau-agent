@@ -1,0 +1,30 @@
+[package]
+name = "tau-phones"
+description = "Lets phones reach tau on this computer (decision 0013), as a plugin: it listens for them, pairs them and carries the window's mirror."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The host half: the server phones connect to, its settings and the
+# computer's addresses.
+host = ["dep:tau-remote", "dep:tokio", "dep:if-addrs", "dep:libc"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tau-agent.workspace = true
+tau-ui-kit.workspace = true
+tau-ui-plugin.workspace = true
+if-addrs = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
+tau-remote = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["fs", "rt", "sync", "time"] }
+
+[dev-dependencies]
+tau-testing.workspace = true
+tempfile.workspace = true

@@ -45,7 +45,6 @@ use crate::{
     input::{InputEvent, TextInput},
     models::ModelChoice,
     pairing::{PairRequest, PairStep, Pairing, PairingUpdate, Progress},
-    phones::{Phones, PhonesRequest},
     pull_request::{PrState, PullRequest},
     push::PushState,
     route::{self, Route},
@@ -364,10 +363,6 @@ pub enum WorkspaceEvent {
     /// Handled on the phone, never sent up.
     #[serde(skip)]
     Pair(PairRequest),
-    /// Allow phones, show the pairing code, revoke a phone: the
-    /// computer's own, never sent up.
-    #[serde(skip)]
-    Phones(PhonesRequest),
     /// Go on with a run tau closing cut off, in its workspace, with
     /// tau's message saying so. The host answers with a
     /// [`HostUpdate::TauTurn`], or [`Workspace::resume_failed`].
@@ -562,9 +557,6 @@ pub struct Workspace {
     proposed: HashSet<RunId>,
     pub(crate) setup: Setup,
     pub(crate) pairing: Pairing,
-    /// The phones that may reach this computer, as the Phones screen
-    /// shows them.
-    pub(crate) phones: Phones,
     /// A computer's address and pairing code, typed.
     pub(crate) pair_address: Entity<TextInput>,
     pub(crate) pair_code: Entity<TextInput>,
@@ -860,7 +852,6 @@ impl Workspace {
             proposed: HashSet::new(),
             setup: Setup::default(),
             pairing: Pairing::default(),
-            phones: Phones::default(),
             pair_address,
             pair_code,
             phone_name,
@@ -2310,8 +2301,6 @@ impl Workspace {
     }
 
     // Onboarding.
-
-    // Phones, on the computer.
 
     // Pairing a phone.
 

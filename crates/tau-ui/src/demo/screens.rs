@@ -211,9 +211,29 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("pair-unreachable", |ws, _, cx| {
         pair_at(ws, PairStep::Unreachable, cx)
     }),
-    ("phones", |ws, _, cx| {
-        ws.set_phones(phones(), cx);
-        ws.navigate(Route::Phones, cx);
+    ("phones", |ws, host, cx| {
+        let mut catalog = ws.catalog().clone();
+        let data = PluginValue::typed(phones());
+        catalog
+            .plugin_data
+            .insert(tau_phones::NAME.into(), data.clone());
+        if let Some(info) = catalog
+            .plugins
+            .iter()
+            .find(|plugin| plugin.name == tau_phones::NAME)
+            .cloned()
+        {
+            host.pin(info, data);
+        }
+        ws.set_catalog(catalog, cx);
+        ws.navigate(
+            Route::Plugin {
+                plugin: tau_phones::NAME.into(),
+                page: tau_phones::PAGE.into(),
+                params: Default::default(),
+            },
+            cx,
+        );
     }),
     // The main chat ahead of GitHub (ADR 0023): its header and sidebar
     // row; the card of a push that went; GitHub's main moved.

@@ -3,23 +3,6 @@
 use super::*;
 
 impl Workspace {
-    pub fn phones(&self) -> &Phones {
-        &self.phones
-    }
-
-    pub fn set_phones(&mut self, phones: Phones, cx: &mut Context<Self>) {
-        self.phones = phones;
-        cx.notify();
-    }
-
-    pub fn ask_phones(
-        &mut self,
-        request: PhonesRequest,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(WorkspaceEvent::Phones(request));
-    }
-
     pub fn pairing(&self) -> &Pairing {
         &self.pairing
     }

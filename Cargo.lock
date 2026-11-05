@@ -10070,6 +10070,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-phones"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "if-addrs",
+ "libc",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-remote",
+ "tau-testing",
+ "tau-ui-kit",
+ "tau-ui-plugin",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "tau-plugins"
 version = "0.1.0"
 dependencies = [
@@ -10090,6 +10108,7 @@ dependencies = [
  "tau-mcp",
  "tau-memory",
  "tau-notify",
+ "tau-phones",
  "tau-reasoning",
  "tau-schedule",
  "tau-skills",
@@ -10401,6 +10420,7 @@ dependencies = [
  "tau-memory",
  "tau-memory-host",
  "tau-notify",
+ "tau-phones",
  "tau-plugins",
  "tau-reasoning",
  "tau-remote",

@@ -29,8 +29,6 @@ pub enum Route {
     PullRequest(RunId),
     /// Model settings: defaults, what the picker shows, what to ask about.
     Models,
-    /// Allow phones, pair one, and see those paired.
-    Phones,
     /// A repository's page: its runs, with tabs for what plugins keep
     /// for it.
     Repo(String),
@@ -103,7 +101,7 @@ impl Route {
         match self {
             Self::History => Tab::History,
             Self::Plugins => Tab::Plugins,
-            Self::Models | Self::Phones => Tab::Models,
+            Self::Models => Tab::Models,
             _ => Tab::Runs,
         }
     }
@@ -121,7 +119,6 @@ impl Route {
             Self::Pair(step) => step.title(),
             Self::PullRequest(_) => "Pull request",
             Self::Models => "Models",
-            Self::Phones => "Phones",
             Self::Repo(_) => "Repository",
             // The page names itself; see `Workspace::route_title`.
             Self::Plugin { .. } => "",
@@ -223,7 +220,6 @@ mod tests {
                 true,
             ),
             (Route::Models, None, None, Tab::Models, true, false),
-            (Route::Phones, None, None, Tab::Models, false, false),
             (
                 Route::Repo("docbert".into()),
                 None,

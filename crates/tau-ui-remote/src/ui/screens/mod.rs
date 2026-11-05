@@ -5,7 +5,6 @@ pub mod compare;
 pub mod history;
 pub mod models;
 pub mod pairing;
-pub mod phones;
 pub mod plan;
 pub mod plugins;
 pub mod pull_request;

@@ -875,20 +875,12 @@ impl Host {
         }
         // Finished forks say whether they would land cleanly.
         super::forecast::follow(&host, workspace, cx);
-        // The window as phones mirror it, and phones reach this host
-        // once allowed.
+        // The window as phones mirror it (tau-phones carries it).
         if let Some(mirrored) =
             host.mirrored.lock().expect("not poisoned").take()
         {
             mirrored.attach(workspace, cx);
         }
-        crate::phone_server::serve(
-            host.runtime.handle().clone(),
-            host.config.credentials.dir.join("phones"),
-            host.mirror.clone(),
-            workspace,
-            cx,
-        );
         // Once a repository is imported, the plugins and the status bar
         // change: the host pushes its catalog then.
         let slots = host.repos.lock().expect("not poisoned").clone();
@@ -1472,9 +1464,6 @@ impl Host {
                         });
                     });
                 }
-                // `phone_server::serve` handles these in its own
-                // subscription.
-                WorkspaceEvent::Phones(_) => {}
                 WorkspaceEvent::Cancel { run } => handler.cancel(run),
                 other => eprintln!("tau-ui: not handled yet: {other:?}"),
                 }

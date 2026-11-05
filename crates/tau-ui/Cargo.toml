@@ -37,6 +37,7 @@ tau-canvas = { workspace = true, features = ["demo"] }
 tau-skills = { workspace = true, features = ["demo"] }
 tau-direnv.workspace = true
 tau-notify.workspace = true
+tau-phones.workspace = true
 tau-titles.workspace = true
 tau-sqlite.workspace = true
 tau-chatgpt.workspace = true
