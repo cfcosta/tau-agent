@@ -100,12 +100,17 @@ fn credentials_path(dir: &Path) -> PathBuf {
     dir.join("remote.json")
 }
 
-fn load(dir: &Path) -> Option<Credentials> {
+/// The credentials the phone kept in `dir`, if it paired.
+pub fn load(dir: &Path) -> Option<Credentials> {
     let text = std::fs::read_to_string(credentials_path(dir)).ok()?;
     serde_json::from_str(&text).ok()
 }
 
-fn store(dir: &Path, credentials: Option<&Credentials>) -> std::io::Result<()> {
+/// Keeps `credentials` in `dir`, or forgets them.
+pub fn store(
+    dir: &Path,
+    credentials: Option<&Credentials>,
+) -> std::io::Result<()> {
     let path = credentials_path(dir);
     match credentials {
         Some(credentials) => {
@@ -192,9 +197,20 @@ pub fn connect(
     });
     state.borrow_mut()._news = Some(task);
 
-    let events = state.clone();
+    let events = Rc::downgrade(&state);
     cx.subscribe(workspace, move |workspace, event: &WorkspaceEvent, cx| {
-        act(&events, &workspace, event, cx)
+        if let Some(state) = events.upgrade() {
+            act(&state, &workspace, event, cx)
+        }
+    })
+    .detach();
+    // The remote lives as long as its window: once the window is gone,
+    // the phone reaches its computer no more.
+    let stopping = Rc::downgrade(&state);
+    cx.observe_release(workspace, move |_, _| {
+        if let Some(state) = stopping.upgrade() {
+            stop(&state);
+        }
     })
     .detach();
 
@@ -215,6 +231,22 @@ pub fn connect(
     if let Some(credentials) = credentials {
         start_session(&state, credentials, None);
     }
+}
+
+/// Stops the session, any pairing and the news from them, so the
+/// remote's state, and its runtime with it, can go.
+fn stop(state: &Rc<RefCell<State>>) {
+    let mut state = state.borrow_mut();
+    for work in [state.session.take(), state.pairing.take()]
+        .into_iter()
+        .flatten()
+    {
+        work.abort();
+    }
+    state.sender = None;
+    let news = state._news.take();
+    drop(state);
+    drop(news);
 }
 
 /// Applies what the network learned. None once the workspace is gone.
