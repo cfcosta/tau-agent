@@ -729,3 +729,47 @@ async fn a_plugin_reaches_the_hosts_and_secrets_it_declares() {
         "{other:?}"
     );
 }
+
+const SHIPS: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "ships",
+  commands = {
+    ship = {
+      description = "Marks the run shipped",
+      args = "<version>",
+      run = function(text, ctx) ctx.state.shipped = text end,
+    },
+  },
+}
+"#;
+
+/// A plugin's command is declared with what it does and takes, and runs
+/// as its action `/name`, given the text after it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_runs_as_its_action() {
+    let ships = Files {
+        source: SHIPS.into(),
+        ..Files::default()
+    };
+    let loaded = load("ships", ships).await.unwrap();
+    assert_eq!(
+        loaded.declaration.commands,
+        [tau_luau_plugins::CommandSpec {
+            name: "ship".into(),
+            description: "Marks the run shipped".into(),
+            args: "<version>".into(),
+        }]
+    );
+    let out = loaded
+        .call(
+            &Hook::Action("/ship".into()),
+            json!({ "text": "1.2" }),
+            &context("Monday"),
+            no_reach(),
+            CancellationToken::new(),
+        )
+        .await;
+    assert_eq!(out.error, None);
+    assert_eq!(out.state, json!({ "shipped": "1.2" }));
+}

@@ -79,6 +79,7 @@ return tau.plugin {
   run_end = function(run, ctx) end,
   view = function(state, ctx) end,
   nav = { label = "Deploys", icon = "plug" },  -- its sidebar entry
+  commands = { name = { description, args, run = function(text, ctx) end } },
   fills = { "tau.title" },  -- the slots it fills
   title = function(run, ctx) end,
   notify = function(notice, ctx) end,
@@ -285,6 +286,12 @@ read the state: it has no tools. What it returns goes in three places:
   the sidebar; `tone` is `"good"`, `"warn"` or `"bad"`.
 - `asks`: what the run asks the person, in words: its row says so, and
   a notice shows it while tau's window is not in front.
+
+A plugin's `commands` are slash commands in the composer's menu, each
+with its `description` and what follows it (`args`, such as
+`"<version>"`). Typed in a chat, `/name text` runs `run(text, ctx)` on
+that chat's state, as an action does; in tests, `run:action("/name",
+{ text = "..." })`.
 
 A plugin with `nav`, `{ label, icon? }`, has an entry in the sidebar that
 opens its page; `icon` names one of the interface's icons.

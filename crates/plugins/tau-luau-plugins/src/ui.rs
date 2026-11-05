@@ -18,6 +18,7 @@ use tau_ui_plugin::{
     Handle,
     KindPlace,
     Link,
+    ListedCommand,
     Manifest,
     NavEntry,
     Page,
@@ -532,6 +533,7 @@ impl UiPlugin for LuauPluginsUi {
                 .args("<what it should do>")
                 .icon(Icon::Plug),
             )
+            .listed_commands(|overview, _| commands(overview), run_command)
             .status(State::status)
             // The plugins repository, whose chats the sidebar lists under
             // Plugins (ADR 0027).
@@ -614,6 +616,68 @@ impl UiPlugin for LuauPluginsUi {
             })
         })
     }
+}
+
+/// The active plugins' slash commands, for the composer's menu.
+fn commands(overview: &Overview) -> Vec<ListedCommand> {
+    overview
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .flat_map(|entry| {
+            let declared = entry.declaration.iter().flat_map(|d| &d.commands);
+            declared.map(|command| ListedCommand {
+                name: command.name.clone(),
+                hint: if command.description.is_empty() {
+                    entry.name.clone()
+                } else {
+                    command.description.clone()
+                },
+                args: command.args.clone(),
+                icon: Icon::Plug,
+            })
+        })
+        .collect()
+}
+
+/// `/command args`: the plugin whose command it is carries it out on the
+/// run it was typed in, as its action `/command`.
+fn run_command(
+    command: &str,
+    args: &str,
+    _repo: Option<&str>,
+    view: &mut ViewCx<'_, LuauPluginsUi>,
+) {
+    let Some(plugin) = view
+        .data
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .find(|entry| {
+            entry
+                .declaration
+                .iter()
+                .flat_map(|d| &d.commands)
+                .any(|c| c.name == command)
+        })
+        .map(|entry| entry.name.clone())
+    else {
+        return;
+    };
+    let Some(run) = view.run.map(|run| run.id.0.to_string()) else {
+        view.handle
+            .note(format!("/{command} runs in a chat: open one first"));
+        return;
+    };
+    // A run no plugin has drawn in yet starts from no state.
+    let state = view.state.cloned().unwrap_or_default();
+    luau_action(
+        &plugin,
+        &format!("/{command}"),
+        &json!({ "text": args }),
+        Some((run, state)),
+        view,
+    );
 }
 
 /// The most of the person's plugins the sidebar lists.
@@ -1256,6 +1320,39 @@ mod tests {
         state.plugins.get_mut("b").unwrap().off = Some("failed".into());
         assert!(matches!(drawn(&state, "banner"), Some(Node::Button { .. })));
         assert_eq!(row(&state), None);
+    }
+
+    /// Each active plugin's commands are in the composer's menu, with
+    /// what they do and take; a waiting plugin's are not.
+    #[test]
+    fn active_plugins_list_their_commands() {
+        let entry = |name: &str, standing: Standing| Entry {
+            name: name.into(),
+            description: String::new(),
+            standing,
+            declaration: Some(Declaration {
+                commands: vec![crate::CommandSpec {
+                    name: format!("{name}-go"),
+                    description: String::new(),
+                    args: "<what>".into(),
+                }],
+                ..Declaration::named(name)
+            }),
+            tests: Vec::new(),
+            keeps_earlier: false,
+        };
+        let overview = Overview {
+            plugins: vec![
+                entry("ships", Standing::Active),
+                entry("new", Standing::Waiting { grown: Vec::new() }),
+            ],
+            ..Overview::default()
+        };
+        let listed = commands(&overview);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "ships-go");
+        assert_eq!(listed[0].hint, "ships");
+        assert_eq!(listed[0].args, "<what>");
     }
 
     /// Each active plugin that asks for a sidebar entry has one, opening

@@ -193,6 +193,18 @@ pub const SLOTS: [&str; 4] = [
     tau_ui_plugin::forge::FORGE.name(),
 ];
 
+/// One of its slash commands: run on the run it is typed in, as its
+/// action `/name`, with the text after it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandSpec {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// What follows the name, as the composer's menu shows it.
+    #[serde(default)]
+    pub args: String,
+}
+
 /// Its entry in the sidebar, which opens its page.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Nav {
@@ -260,6 +272,9 @@ pub struct Declaration {
     /// Its entry in the sidebar.
     #[serde(default)]
     pub nav: Option<Nav>,
+    /// Its slash commands.
+    #[serde(default)]
+    pub commands: Vec<CommandSpec>,
 }
 
 impl Declaration {
@@ -523,6 +538,7 @@ mod tests {
             compaction: None,
             forge: None,
             nav: None,
+            commands: Vec::new(),
         }
     }
 

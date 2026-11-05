@@ -15,6 +15,16 @@ function tau.plugin(spec)
 	if type(spec.name) ~= "string" or spec.name == "" then
 		error("a plugin needs a name", 2)
 	end
+	-- Each command runs as the action `/name`, given the text after it.
+	for name, command in pairs(spec.commands or {}) do
+		if type(command) ~= "table" or type(command.run) ~= "function" then
+			error("command `" .. tostring(name) .. "` needs a `run`", 2)
+		end
+		spec.actions = spec.actions or {}
+		spec.actions["/" .. name] = function(args, ctx)
+			return command.run(args.text or "", ctx)
+		end
+	end
 	return spec
 end
 
@@ -55,6 +65,23 @@ Secret.__concat = function(left, right)
 		return tau.secret(right["$secret"], left .. (right.prefix or ""))
 	end
 	error('a secret can only follow text, as in "Bearer " .. tau.secret("github")', 2)
+end
+
+-- A plugin's commands as the host reads them: each by name, with what it
+-- does and what follows it, in name order.
+function tau._commands(commands)
+	local list = array({})
+	for name, command in pairs(commands or {}) do
+		table.insert(list, {
+			name = name,
+			description = command.description or "",
+			args = command.args or "",
+		})
+	end
+	table.sort(list, function(a, b)
+		return a.name < b.name
+	end)
+	return list
 end
 
 -- A `forge` table as the host reads it: what it names, and which of its
@@ -518,6 +545,7 @@ function tau._describe(plugin)
 		},
 		actions = actions,
 		events = plugin.events or array({}),
+		commands = tau._commands(plugin.commands),
 		fills = plugin.fills or array({}),
 		compaction = plugin.compaction and {
 			rewriters = plugin.compaction.rewriters or array({}),
