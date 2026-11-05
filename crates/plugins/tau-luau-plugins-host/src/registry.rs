@@ -76,6 +76,8 @@ struct Shared {
     runtime: Option<tokio::runtime::Handle>,
     /// The person's model, for `infer` in hooks outside any run.
     model: Option<tau_ui_plugin::Model>,
+    /// Each plugin's store in each repository.
+    stores: Arc<crate::store::Stores>,
 }
 
 #[derive(Default)]
@@ -89,6 +91,20 @@ struct State {
     trunk: BTreeMap<String, String>,
     /// The Luau plugins tau comes with, loaded: always active.
     built_in: Vec<(Entry, Active)>,
+}
+
+/// One of a plugin's actions to carry out ([`Registry::action`]): on the
+/// `state` the plugin has in `run`, which works in `repo`, under the
+/// person's `settings` for it.
+#[derive(Debug, Clone, Copy)]
+pub struct ActionCall<'a> {
+    pub plugin: &'a str,
+    pub action: &'a str,
+    pub args: &'a serde_json::Value,
+    pub run: &'a str,
+    pub repo: Option<&'a str>,
+    pub state: &'a serde_json::Value,
+    pub settings: Option<&'a serde_json::Value>,
 }
 
 /// A Luau plugin tau comes with: its name, and its files by their paths
@@ -124,6 +140,9 @@ impl PluginHost for Registry {
             Some(model) => registry.with_model(model.clone()),
             None => registry,
         };
+        let registry = registry.with_stores(Arc::new(
+            crate::store::Stores::at(cx.plugin_dir(crate::NAME).join("stores")),
+        ));
         registry.load_built_in().await;
         let watcher = registry.clone();
         cx.runtime.spawn(async move { watcher.watch().await });
@@ -153,7 +172,33 @@ impl Registry {
             config: None,
             runtime: None,
             model: None,
+            stores: Arc::new(crate::store::Stores::memory()),
         }))
+    }
+
+    /// The registry, keeping each plugin's stores in `stores`.
+    pub fn with_stores(self, stores: Arc<crate::store::Stores>) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("the stores are given before the registry is shared");
+        Self(Arc::new(Shared { stores, ..shared }))
+    }
+
+    /// Each plugin's store in each repository.
+    pub fn stores(&self) -> Arc<crate::store::Stores> {
+        self.0.stores.clone()
+    }
+
+    /// `plugin`'s store in `repo`, when its declaration uses one.
+    pub async fn store_of(
+        &self,
+        declaration: &crate::Declaration,
+        repo: Option<&str>,
+    ) -> Option<crate::runtime::StoreRef> {
+        if !declaration.uses.store {
+            return None;
+        }
+        let store = self.0.stores.of(&declaration.name, repo?).await.ok()?;
+        Some(crate::runtime::StoreRef(store))
     }
 
     /// The registry, asking `model` for `infer` in hooks outside any run.
@@ -689,16 +734,17 @@ impl Registry {
     /// the `state` it has in `run`, under the person's `settings`, then
     /// draws its view from the state it left (ADR 0045). An action that
     /// fails leaves the state as it was, and says why.
-    pub async fn action(
-        &self,
-        plugin: &str,
-        action: &str,
-        args: serde_json::Value,
-        run: &str,
-        state: serde_json::Value,
-        settings: Option<&serde_json::Value>,
-    ) -> crate::ActionDone {
+    pub async fn action(&self, call: ActionCall<'_>) -> crate::ActionDone {
         use crate::runtime::{Context, Hook, NoReach};
+        let ActionCall {
+            plugin,
+            action,
+            args,
+            run,
+            repo,
+            state,
+            settings,
+        } = call;
 
         let hook = Hook::Action(action.to_owned());
         let mut done = crate::ActionDone {
@@ -739,13 +785,14 @@ impl Registry {
                 settings,
             )
             .0,
-            state,
+            state: state.clone(),
             secrets: self.secrets_of(plugin),
+            store: self.store_of(&loaded.declaration, repo).await,
         };
         let outcome = loaded
             .call(
                 &hook,
-                args,
+                args.clone(),
                 &context,
                 Arc::new(NoReach),
                 CancellationToken::new(),

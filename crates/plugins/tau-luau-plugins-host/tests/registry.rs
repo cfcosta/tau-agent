@@ -355,12 +355,15 @@ return tau.plugin {
     assert_eq!(standing(&registry), Standing::Active);
     let act = |action: &str, state: serde_json::Value| {
         block_on_io(registry.action(
-            "greet",
-            action,
-            serde_json::json!({ "times": 2 }),
-            "r1",
-            state,
-            Some(&serde_json::json!({ "step": 5 })),
+            tau_luau_plugins_host::registry::ActionCall {
+                plugin: "greet",
+                action,
+                args: &serde_json::json!({ "times": 2 }),
+                run: "r1",
+                repo: None,
+                state: &state,
+                settings: Some(&serde_json::json!({ "step": 5 })),
+            },
         ))
     };
 

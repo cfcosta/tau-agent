@@ -110,6 +110,7 @@ fn context(weekday: &str) -> Context {
         settings: json!({ "days": ["Friday"] }),
         state: json!({}),
         secrets: None,
+        store: None,
     }
 }
 
@@ -132,6 +133,7 @@ async fn a_plugin_declares_what_it_is() {
             network: Vec::new(),
             secrets: Vec::new(),
             model: None,
+            store: false,
         }
     );
     let tools: Vec<(&str, bool)> = declared

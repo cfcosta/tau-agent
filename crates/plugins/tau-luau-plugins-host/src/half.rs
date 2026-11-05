@@ -99,6 +99,7 @@ impl HostHalf for LuauPluginsHost {
         .await;
         // Their HTTP requests name secrets kept for each in tau's
         // configuration directory.
+        let luau = luau.with_stores(host.stores());
         let luau = match run.services.get::<tau_ui_plugin::ConfigDir>() {
             Some(config) => luau.with_config(config.0.clone()),
             None => luau,
@@ -254,18 +255,20 @@ impl HostHalf for LuauPluginsHost {
                 action,
                 args,
                 run,
+                repo,
                 state,
                 settings,
             } => {
                 let done = host
-                    .action(
-                        &plugin,
-                        &action,
-                        args,
-                        &run,
-                        state,
-                        settings.as_ref(),
-                    )
+                    .action(crate::registry::ActionCall {
+                        plugin: &plugin,
+                        action: &action,
+                        args: &args,
+                        run: &run,
+                        repo: repo.as_deref(),
+                        state: &state,
+                        settings: settings.as_ref(),
+                    })
                     .await;
                 return Ok(Some(serde_json::to_value(done)?));
             }

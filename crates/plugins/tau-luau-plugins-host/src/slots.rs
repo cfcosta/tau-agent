@@ -28,6 +28,7 @@ pub(crate) fn context(
         settings: active.settings.clone(),
         state: json!({}),
         secrets: registry.secrets_of(&active.loaded.declaration.name),
+        store: None,
     }
 }
 

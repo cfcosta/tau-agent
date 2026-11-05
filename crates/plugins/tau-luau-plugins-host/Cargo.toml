@@ -18,6 +18,7 @@ tau-ai.workspace = true
 tau-codemode.workspace = true
 tau-codemode-host.workspace = true
 tau-jev.workspace = true
+sqlx.workspace = true
 # The Luau plugins tau comes with.
 tau-todo.workspace = true
 tau-tools-host.workspace = true

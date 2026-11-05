@@ -348,6 +348,19 @@ impl Hook {
     }
 }
 
+/// A plugin's store, as a hook's context names it.
+#[derive(Debug, Clone)]
+pub struct StoreRef(pub Arc<crate::store::Kv>);
+
+impl PartialEq for StoreRef {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// A hook's session with its plugin's store.
+type SessionRef = Arc<tokio::sync::Mutex<crate::store::Session>>;
+
 /// What a hook's `ctx` holds, besides what it may reach.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Context {
@@ -361,6 +374,10 @@ pub struct Context {
     /// secrets from ([`secrets_of`]); none where the host keeps none.
     #[serde(skip)]
     pub secrets: Option<std::path::PathBuf>,
+    /// The plugin's store in the repository the hook works in, when it
+    /// has one and the plugin uses it (`uses.store`).
+    #[serde(skip)]
+    pub store: Option<StoreRef>,
 }
 
 /// The file the plugin `plugin`'s secrets are kept in, in tau's
@@ -590,16 +607,37 @@ impl Loaded {
             ("__context".to_owned(), json!(context).to_string()),
         ];
         let started = std::time::Instant::now();
-        let (value, error) = run(
+        // Its turn with the store, from here to the end of the hook.
+        let session = match (&context.store, self.declaration.uses.store) {
+            (Some(store), true) => {
+                Some(Arc::new(tokio::sync::Mutex::new(store.0.session().await)))
+            }
+            _ => None,
+        };
+        let mut reaches =
+            Reaches::of(&self.declaration, context.secrets.as_deref());
+        reaches.store = session.clone();
+        let (value, mut error) = run(
             self.modules.clone(),
             reach,
-            Reaches::of(&self.declaration, context.secrets.as_deref()),
+            reaches,
             script,
             inputs,
             hook.limit(),
             cancel,
         )
         .await;
+        // What it wrote goes in whole once it ends well, and not at all
+        // when it fails.
+        if let (Some(session), None) = (session, &error) {
+            let committed = match Arc::into_inner(session) {
+                Some(session) => session.into_inner().commit().await,
+                None => Err("the hook's store was still in use".into()),
+            };
+            if let Err(why) = committed {
+                error = Some(format!("its store: {why}"));
+            }
+        }
         let wall = started.elapsed();
         if let Some(error) = error {
             return Outcome {
@@ -752,6 +790,7 @@ struct Reaches {
     infer: bool,
     jev: bool,
     network: Option<Network>,
+    store: Option<SessionRef>,
 }
 
 /// The HTTP requests a plugin may send (`uses.network`): to these hosts,
@@ -779,6 +818,7 @@ impl Reaches {
                 secrets: uses.secrets.clone(),
                 store: secrets.map(tau_tools_host::secrets::SecretStore::new),
             }),
+            store: None,
         }
     }
 
@@ -789,6 +829,7 @@ impl Reaches {
             infer: false,
             jev: false,
             network: None,
+            store: None,
         }
     }
 }
@@ -811,6 +852,7 @@ async fn run(
         infer: reaches.infer,
         jev: reaches.jev,
         network: reaches.network,
+        store: reaches.store,
     });
     let request = Request {
         call_id: format!("plugin:{}", reaches.name),
@@ -862,6 +904,7 @@ struct PluginHost {
     infer: bool,
     jev: bool,
     network: Option<Network>,
+    store: Option<SessionRef>,
 }
 
 impl PluginHost {
@@ -933,6 +976,29 @@ impl Host for PluginHost {
             .filter(|entry| self.allowed(&entry.name))
             .collect();
         // What makes `http.request` there: the plugin's own requests.
+        if self.store.is_some() {
+            for (name, description) in [
+                (
+                    "store_get",
+                    "The value of `key` in the plugin's store, or null.",
+                ),
+                ("store_put", "Sets `key` to `value` in the plugin's store."),
+                ("store_delete", "Deletes `key` from the plugin's store."),
+                (
+                    "store_list",
+                    "Every key starting with `prefix`, with its value.",
+                ),
+            ] {
+                tools.push(ToolEntry {
+                    name: name.into(),
+                    description: description.into(),
+                    input_schema: json!({ "type": "object" }),
+                    output_schema: None,
+                    namespace: None,
+                    sequential: true,
+                });
+            }
+        }
         if self.network.is_some() {
             tools.push(ToolEntry {
                 name: "http".into(),
@@ -962,6 +1028,11 @@ impl Host for PluginHost {
     }
 
     async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String> {
+        if let Some(store) = &self.store
+            && call.name.starts_with("store_")
+        {
+            return store_call(store, &call).await;
+        }
         if let (Some(network), "http") = (&self.network, call.name.as_str()) {
             return self.request(network, &call.args).await;
         }
@@ -981,4 +1052,42 @@ impl Host for PluginHost {
     fn charge(&self, usage: &Usage) {
         self.reach.charge(usage);
     }
+}
+
+/// A script's call to its store: `store_get { key }`, `store_put { key,
+/// value }`, `store_delete { key }`, `store_list { prefix }`.
+async fn store_call(
+    store: &SessionRef,
+    call: &ToolCall,
+) -> Result<ToolReply, String> {
+    let text = |field: &str| -> Result<String, String> {
+        call.args[field].as_str().map(str::to_owned).ok_or_else(|| {
+            format!("`{}` needs its `{field}`, a string", call.name)
+        })
+    };
+    let mut session = store.lock().await;
+    let value = match call.name.as_str() {
+        "store_get" => session.get(&text("key")?).await?.unwrap_or(Value::Null),
+        "store_put" => {
+            session.put(&text("key")?, call.args["value"].clone());
+            Value::Null
+        }
+        "store_delete" => {
+            session.delete(&text("key")?);
+            Value::Null
+        }
+        "store_list" => {
+            let prefix = call.args["prefix"].as_str().unwrap_or_default();
+            Value::Array(
+                session
+                    .list(prefix)
+                    .await?
+                    .into_iter()
+                    .map(|(key, value)| json!({ "key": key, "value": value }))
+                    .collect(),
+            )
+        }
+        other => return Err(format!("the store has no `{other}`")),
+    };
+    Ok(ToolReply::success(value))
 }

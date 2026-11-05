@@ -541,6 +541,7 @@ function tau._describe(plugin)
 			network = uses.network or array({}),
 			secrets = uses.secrets or array({}),
 			model = uses.model or json.null,
+			store = uses.store == true,
 		},
 		-- What can be set; `view` draws the settings page, on the host.
 		settings = plugin.settings and {
@@ -831,6 +832,34 @@ end
 
 -- The `ctx` a hook gets, from what the host sends; a test gives its own
 -- tools.
+-- The plugin's store (`uses.store`), over the host's calls `source`
+-- has: none when it has no store.
+local function store_of(source)
+	if source == nil or source.store_get == nil then
+		return nil
+	end
+	return {
+		-- The value of `key`, or nil.
+		get = function(key)
+			local value = source.store_get({ key = tostring(key) })
+			if value == json.null then
+				return nil
+			end
+			return value
+		end,
+		put = function(key, value)
+			source.store_put({ key = tostring(key), value = value })
+		end,
+		delete = function(key)
+			source.store_delete({ key = tostring(key) })
+		end,
+		-- Every key starting with `prefix`, in key order, as { key, value }.
+		list = function(prefix)
+			return source.store_list({ prefix = tostring(prefix or "") })
+		end,
+	}
+end
+
 function tau._ctx(data, with_tools)
 	local logs = array({})
 	local ctx = {
@@ -839,6 +868,7 @@ function tau._ctx(data, with_tools)
 		settings = data.settings or {},
 		state = data.state or {},
 		tools = with_tools or tools,
+		store = store_of(with_tools or tools),
 		jev = jev,
 		_logs = logs,
 	}
@@ -933,7 +963,39 @@ function test.run(spec)
 			return fake
 		end
 	end
+	-- The store, kept in the fake run: `spec.store` to start from.
+	local kept = spec.store or {}
+	if plugin.uses and plugin.uses.store then
+		fakes.store_get = function(args)
+			local value = kept[args.key]
+			if value == nil then
+				return json.null
+			end
+			return value
+		end
+		fakes.store_put = function(args)
+			kept[args.key] = args.value
+		end
+		fakes.store_delete = function(args)
+			kept[args.key] = nil
+		end
+		fakes.store_list = function(args)
+			local keys = {}
+			for key in pairs(kept) do
+				if string.sub(key, 1, #args.prefix) == args.prefix then
+					table.insert(keys, key)
+				end
+			end
+			table.sort(keys)
+			local found = array({})
+			for _, key in ipairs(keys) do
+				table.insert(found, { key = key, value = kept[key] })
+			end
+			return found
+		end
+	end
 	local run = {
+		store = kept,
 		state = spec.state or {},
 		logs = {},
 		data = {

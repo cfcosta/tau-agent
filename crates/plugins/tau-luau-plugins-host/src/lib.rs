@@ -24,6 +24,7 @@ pub mod rewrite;
 pub mod runtime;
 pub mod skill;
 pub mod slots;
+pub mod store;
 pub mod testing;
 
 pub use half::LuauPluginsHost;

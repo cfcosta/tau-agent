@@ -106,6 +106,8 @@ struct Inner {
     jev: Option<Arc<dyn Jev>>,
     /// tau's configuration directory, where each plugin's secrets are.
     config: Option<std::path::PathBuf>,
+    /// Each plugin's store in each repository (`uses.store`).
+    stores: Option<Arc<crate::store::Stores>>,
     /// The state of each run going on, by run.
     runs: Mutex<HashMap<RunId, Arc<tokio::sync::Mutex<RunState>>>>,
 }
@@ -142,8 +144,17 @@ impl LuauPlugins {
             run,
             jev,
             config: None,
+            stores: None,
             runs: Mutex::default(),
         }))
+    }
+
+    /// The plugins, each with its store in the run's repository.
+    pub fn with_stores(mut self, stores: Arc<crate::store::Stores>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("the stores are given before the plugins are shared")
+            .stores = Some(stores);
+        self
     }
 
     /// The plugins, their HTTP requests naming secrets kept in tau's
@@ -169,6 +180,7 @@ impl LuauPlugins {
             run,
             jev,
             config: None,
+            stores: None,
             runs: Mutex::default(),
         }))
     }
@@ -224,6 +236,27 @@ impl Inner {
                 .config
                 .as_deref()
                 .map(|config| crate::runtime::secrets_of(config, name)),
+            store: None,
+        }
+    }
+
+    /// `active`'s store in the run's repository, when it uses one.
+    async fn store_of(
+        &self,
+        active: &Active,
+    ) -> Option<crate::runtime::StoreRef> {
+        let declaration = &active.loaded.declaration;
+        if !declaration.uses.store {
+            return None;
+        }
+        let repo = self.run["repo"].as_str()?;
+        let stores = self.stores.as_ref()?;
+        match stores.of(&declaration.name, repo).await {
+            Ok(store) => Some(crate::runtime::StoreRef(store)),
+            Err(error) => {
+                eprintln!("{}'s store in {repo}: {error}", declaration.name);
+                None
+            }
         }
     }
 
@@ -253,7 +286,8 @@ impl Inner {
         if !matches!(hook, Hook::View | Hook::Card(_)) {
             self.catch_up(state, ctx).await;
         }
-        let context = self.context(&ctx.run, state, active);
+        let mut context = self.context(&ctx.run, state, active);
+        context.store = self.store_of(active).await;
         let outcome = active
             .loaded
             .call(&hook, input, &context, reach, ctx.cancel.child_token())

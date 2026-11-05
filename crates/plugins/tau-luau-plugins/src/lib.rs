@@ -65,6 +65,9 @@ pub struct Uses {
     /// run's own when it names none.
     #[serde(default)]
     pub model: Option<String>,
+    /// A store of its own in each repository (`ctx.store`).
+    #[serde(default)]
+    pub store: bool,
 }
 
 impl Uses {
@@ -82,6 +85,9 @@ impl Uses {
         }
         if self.infer && !before.infer {
             grown.push("`infer`".into());
+        }
+        if self.store && !before.store {
+            grown.push("a store of its own".into());
         }
         if self.change_args && !before.change_args {
             grown.push("changing a tool call's arguments".into());
@@ -447,6 +453,9 @@ pub enum Act {
         action: String,
         args: Value,
         run: String,
+        /// The repository the run works in, for the plugin's store.
+        #[serde(default)]
+        repo: Option<String>,
         state: Value,
         settings: Option<Value>,
     },
@@ -558,6 +567,7 @@ mod tests {
                 network: Vec::new(),
                 secrets: Vec::new(),
                 model: None,
+                store: false,
             },
             settings: None,
             tools: Vec::new(),

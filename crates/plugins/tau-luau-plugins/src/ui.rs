@@ -420,10 +420,10 @@ fn luau_action(
     plugin: &str,
     action: &str,
     args: &Value,
-    run: Option<(String, State)>,
+    run: Option<(String, Option<String>, State)>,
     view: &ViewCx<'_, LuauPluginsUi>,
 ) {
-    let Some((run, state)) = run else {
+    let Some((run, repo, state)) = run else {
         return;
     };
     let state = state
@@ -435,6 +435,7 @@ fn luau_action(
         action: action.to_owned(),
         args: args.clone(),
         run,
+        repo,
         state,
         settings: view.settings.plugins.get(plugin).cloned(),
     });
@@ -490,8 +491,12 @@ impl UiPlugin for LuauPluginsUi {
             if kernel_action(own, args, run.as_ref(), &view.handle) {
                 return;
             }
-            let run = run.map(|run| run.0.to_string());
-            luau_action(plugin, own, args, run.zip(view.state.cloned()), view);
+            let repo = view.run.map(|run| run.repo.clone());
+            let run = run
+                .map(|run| run.0.to_string())
+                .zip(view.state.cloned())
+                .map(|(run, state)| (run, repo, state));
+            luau_action(plugin, own, args, run, view);
             return;
         }
         if let Some((plugin, own)) = action
@@ -503,7 +508,9 @@ impl UiPlugin for LuauPluginsUi {
             if kernel_action(own, args, id.as_ref(), &view.handle) {
                 return;
             }
-            let run = run.map(|(run, state, _)| (run.id.0.to_string(), state));
+            let run = run.map(|(run, state, _)| {
+                (run.id.0.to_string(), Some(run.repo.clone()), state)
+            });
             luau_action(plugin, own, args, run, view);
             return;
         }
@@ -717,7 +724,7 @@ fn run_command(
         &plugin,
         &format!("/{command}"),
         &json!({ "text": args }),
-        Some((run, state)),
+        Some((run, view.run.map(|run| run.repo.clone()), state)),
         view,
     );
 }
