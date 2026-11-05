@@ -5,12 +5,15 @@
 //!
 //! [`Notifier`] decides when: one notice each time a chat's state turns
 //! into one of those, never per frame, and none for what was already so
-//! when tau first saw the chat. [`Sink`] is where notices go: the
-//! desktop's notification server over D-Bus ([`Desktop`]), or a test's
-//! list. Clicking a notice opens its chat and brings tau's window up.
-//! `"notifications": false` in `interface.json` turns them off.
+//! when tau first saw the chat. [`Sink`] is where notices go: the plugin
+//! that fills the `tau.notify` slot (ADR 0045; tau-notify's desktop
+//! notifications, which its settings switch off), or a test's list.
+//! Opening a notice opens its chat and brings tau's window up.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use gpui::{
     AnyWindowHandle,
@@ -21,7 +24,12 @@ use gpui::{
     Global,
 };
 use tau_agent::tool::RunId;
-use tau_ui_plugin::{Waiting, waiting::Watch};
+use tau_ui_plugin::{
+    Waiting,
+    notify::{self, NOTIFY},
+    slots::Fills,
+    waiting::Watch,
+};
 use tau_ui_remote::attention::{Attention, count};
 use tokio::sync::mpsc;
 
@@ -222,45 +230,39 @@ pub fn sightings(ws: &Workspace) -> Vec<Sighting> {
         .collect()
 }
 
-/// Notices sent to the desktop's notification server, each on a thread
-/// of its own that waits for a click. A clicked notice's chat goes to
+/// Notices given to the plugin that fills `tau.notify` as each goes, so
+/// the person's pick counts at once. An opened notice's chat goes to
 /// `clicked`.
-pub struct Desktop {
+pub struct Slotted {
+    slots: Arc<Mutex<Fills>>,
     clicked: mpsc::UnboundedSender<RunId>,
 }
 
-impl Sink for Desktop {
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fn show(&mut self, notice: Notice) {
-        let clicked = self.clicked.clone();
-        let spawned = std::thread::Builder::new()
-            .name("tau-notice".into())
-            .spawn(move || {
-                let shown = notify_rust::Notification::new()
-                    .appname("tau")
-                    .summary(&notice.title)
-                    .body(&notice.body)
-                    .action("default", "Open")
-                    .show();
-                match shown {
-                    Ok(handle) => handle.wait_for_action(|action| {
-                        if action == "default" {
-                            let _ = clicked.send(notice.run.clone());
-                        }
-                    }),
-                    Err(error) => {
-                        eprintln!("tau-ui: cannot show a notification: {error}")
-                    }
-                }
-            });
-        if let Err(error) = spawned {
-            eprintln!("tau-ui: cannot show a notification: {error}");
-        }
+impl Slotted {
+    pub fn new(
+        slots: Arc<Mutex<Fills>>,
+        clicked: mpsc::UnboundedSender<RunId>,
+    ) -> Self {
+        Self { slots, clicked }
     }
+}
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+impl Sink for Slotted {
     fn show(&mut self, notice: Notice) {
-        let _ = (&self.clicked, notice);
+        let filler = self.slots.lock().expect("not poisoned").get(&NOTIFY);
+        let Some(filler) = filler else {
+            return;
+        };
+        let (clicked, run) = (self.clicked.clone(), notice.run);
+        filler.show(
+            notify::Notice {
+                title: notice.title,
+                body: notice.body,
+            },
+            Box::new(move || {
+                let _ = clicked.send(run);
+            }),
+        );
     }
 }
 
@@ -270,9 +272,6 @@ struct Notifications {
     notifier: Notifier,
     sink: Box<dyn Sink>,
     window: AnyWindowHandle,
-    /// `interface.json`, read as each notice goes: `"notifications":
-    /// false` turns them off.
-    settings: std::path::PathBuf,
 }
 
 impl Global for Notifications {}
@@ -281,33 +280,28 @@ impl Notifications {
     fn focused(&self, cx: &App) -> bool {
         cx.active_window() == Some(self.window)
     }
-
-    /// Whether the person left notifications on.
-    fn on(&self) -> bool {
-        tau_ui_remote::motion::saved_notifications(&self.settings)
-    }
 }
 
 /// Notifies from `workspace`'s chats, shown in `window`, while that
-/// window is not focused; a clicked notice opens its chat there.
+/// window is not focused, through what fills `slots`' `tau.notify`; an
+/// opened notice opens its chat there.
 pub fn follow(
     workspace: &Entity<Workspace>,
     window: AnyWindowHandle,
-    settings: std::path::PathBuf,
+    slots: Arc<Mutex<Fills>>,
     cx: &mut App,
 ) {
     let (clicked, mut clicks) = mpsc::unbounded_channel();
     cx.set_global(Notifications {
         notifier: Notifier::default(),
-        sink: Box::new(Desktop { clicked }),
+        sink: Box::new(Slotted::new(slots, clicked)),
         window,
-        settings,
     });
     cx.observe(workspace, |workspace, cx| {
         let sightings = workspace.update(cx, |ws, _| sightings(ws));
         let waiting = workspace.read(cx).waiting();
         cx.update_global::<Notifications, _>(|notifications, cx| {
-            let quiet = notifications.focused(cx) || !notifications.on();
+            let quiet = notifications.focused(cx);
             let Notifications { notifier, sink, .. } = notifications;
             notifier.observe(&sightings, quiet, sink.as_mut());
             notifier.waiting(&waiting, quiet, sink.as_mut());
@@ -340,7 +334,7 @@ pub fn conflicts_on_main(
         return;
     }
     cx.update_global::<Notifications, _>(|notifications, cx| {
-        let quiet = notifications.focused(cx) || !notifications.on();
+        let quiet = notifications.focused(cx);
         let Notifications { notifier, sink, .. } = notifications;
         notifier.conflicts_left(main, repo, files.len(), quiet, sink.as_mut());
     });

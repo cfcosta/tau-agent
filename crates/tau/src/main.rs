@@ -61,9 +61,17 @@ struct Args {
     reduce_motion: bool,
 }
 
-/// `host`, telling the desktop when a turn leaves conflicts on a main
-/// chat ([`tau_ui::notify::conflicts_on_main`]).
-fn with_notices(host: Host) -> Host {
+/// `host`, with notices for what needs the person while tau is in the
+/// background, given to what fills its `tau.notify` slot
+/// ([`tau_ui::notify::follow`]), and when a turn leaves conflicts on a
+/// main chat ([`tau_ui::notify::conflicts_on_main`]).
+fn with_notices(
+    host: Host,
+    workspace: &gpui::Entity<Workspace>,
+    window: gpui::AnyWindowHandle,
+    cx: &mut gpui::App,
+) -> Host {
+    tau_ui::notify::follow(workspace, window, host.slots(), cx);
     host.on_conflicts_on_main(std::sync::Arc::new(
         tau_ui::notify::conflicts_on_main,
     ))
@@ -171,15 +179,6 @@ fn main() {
                 cx.quit();
                 return;
             };
-            // What needs the person, said while tau is in the background.
-            if !args.demo {
-                tau_ui::notify::follow(
-                    &workspace,
-                    window,
-                    HostConfig::default_interface_settings(),
-                    cx,
-                );
-            }
             workspace.update(cx, |ws, cx| {
                 ws.use_interface_settings(
                     HostConfig::default_interface_settings(),
@@ -191,7 +190,8 @@ fn main() {
                 Some((host, events)) => {
                     workspace
                         .update(cx, |ws, cx| ws.navigate(Route::NewRun, cx));
-                    with_notices(host).attach(&workspace, events, cx);
+                    with_notices(host, &workspace, window, cx)
+                        .attach(&workspace, events, cx);
                     if let Some(prompt) = args.prompt.clone() {
                         workspace
                             .update(cx, |ws, cx| ws.submit_prompt(prompt, cx));
@@ -223,7 +223,7 @@ fn main() {
                             let entity = entity.clone();
                             cx.spawn(async move |cx| match made.await {
                                 Ok((host, events)) => cx.update(|cx| {
-                                    with_notices(host)
+                                    with_notices(host, &entity, window, cx)
                                         .attach(&entity, events, cx);
                                 }),
                                 Err(error) => {

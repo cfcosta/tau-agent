@@ -44,6 +44,8 @@ tau-agent/
 │       │                         # sandbox (ADR 0027)
 │       ├── tau-mcp/              # MCP servers' tools (rmcp), the Servers page
 │       ├── tau-memory/           # linked notes each repository's runs keep
+│       ├── tau-notify/           # desktop notices while tau is in the
+│       │                         # background, filling `tau.notify`
 │       ├── tau-reasoning/        # picks a run's reasoning effort
 │       ├── tau-schedule/         # a chat wakes itself later, once; the
 │       │                         # clock agents' schedules go by (ADR 0039)

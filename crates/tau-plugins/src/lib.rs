@@ -22,6 +22,7 @@ pub fn plugins() -> Registry {
         .with(tau_luau_plugins::LuauPluginsUi)
         .with(tau_mcp::McpUi)
         .with(tau_memory::ui::MemoryUi)
+        .with(tau_notify::NotifyUi)
         .with(tau_reasoning::ReasoningPlugin)
         .with(tau_schedule::ScheduleUi)
         .with(tau_skills::SkillsUi)

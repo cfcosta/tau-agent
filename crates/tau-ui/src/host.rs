@@ -269,7 +269,7 @@ pub struct Host {
     /// projects ([`Host::vcs`]), `tau.forge` is where repositories are
     /// cloned from, pushed to and opened pull requests on
     /// ([`Host::forge`]).
-    slots: Mutex<tau_ui_plugin::slots::Fills>,
+    slots: Arc<Mutex<tau_ui_plugin::slots::Fills>>,
     /// A forge in place of the slot's: for tests.
     forge_override: Option<Arc<dyn tau_ui_plugin::forge::Forge>>,
     /// Held while a run starts, and while a sweep reads what the
@@ -577,7 +577,7 @@ impl Host {
             unread: Arc::default(),
             events,
             hosted: Vec::new(),
-            slots: Mutex::default(),
+            slots: Arc::default(),
             forge_override: None,
             jev_key: Mutex::new(jev_key),
             list_saving: Saving::default(),
@@ -628,6 +628,13 @@ impl Host {
     ) -> Self {
         self.forge_override = Some(forge);
         self
+    }
+
+    /// The slots' fillers as they are now, with the person's picks: for
+    /// what outside the host calls a slot, such as the app's notices
+    /// (`tau.notify`).
+    pub fn slots(&self) -> Arc<Mutex<tau_ui_plugin::slots::Fills>> {
+        self.slots.clone()
     }
 
     /// What fills the `tau.vcs` slot now.

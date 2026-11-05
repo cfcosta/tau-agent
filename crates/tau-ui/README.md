@@ -16,7 +16,7 @@ It is a library: the `tau` app (`crates/tau`) is the binary.
 | `hosted`            | The plugins' host halves: `halves` gives them to `tau-ui-remote`'s plugins, `install` once        |
 | `accounts`          | Sign in with ChatGPT: `Credentials` (where sign-ins are kept) and `SignIns`                       |
 | `phone_server`      | The computer's side of phones: `serve`, once "Allow phones" is on                                 |
-| `notify`            | Desktop notifications over D-Bus while the window is not focused: `Notifier`, `Desktop`           |
+| `notify`            | When to notify while the window is not focused (`Notifier`), through the `tau.notify` slot (`Slotted`) |
 | `metered`           | Jev requests counted for the Plugins screen: `Metered`                                            |
 | `interface_runtime` | A tokio runtime for the interface's own async work, such as signing in                            |
 | `demo`              | A scripted session, for running the interface without an agent                                    |

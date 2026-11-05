@@ -32,6 +32,7 @@ tau-ask.workspace = true
 tau-canvas = { workspace = true, features = ["demo"] }
 tau-skills = { workspace = true, features = ["demo"] }
 tau-direnv.workspace = true
+tau-notify.workspace = true
 tau-schedule.workspace = true
 tau-goal = { workspace = true, features = ["demo"] }
 tau-agents.workspace = true
@@ -76,7 +77,3 @@ libc.workspace = true
 # Where the demo's plugins keep their files.
 tempfile.workspace = true
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-# Desktop notifications over D-Bus, in Rust (zbus): no libdbus. GPUI's
-# Linux backend already builds it with these features.
-notify-rust = { version = "4.18", default-features = false, features = ["z"] }

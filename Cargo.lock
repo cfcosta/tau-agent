@@ -9986,6 +9986,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-notify"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "notify-rust",
+ "serde",
+ "serde_json",
+ "tau-agent",
+ "tau-ui-plugin",
+]
+
+[[package]]
 name = "tau-output-pruning-eval"
 version = "0.1.0"
 dependencies = [
@@ -10042,6 +10054,7 @@ dependencies = [
  "tau-luau-plugins",
  "tau-mcp",
  "tau-memory",
+ "tau-notify",
  "tau-reasoning",
  "tau-schedule",
  "tau-skills",
@@ -10300,7 +10313,6 @@ dependencies = [
  "if-addrs",
  "image",
  "libc",
- "notify-rust",
  "serde",
  "serde_json",
  "tau",
@@ -10325,6 +10337,7 @@ dependencies = [
  "tau-mcp-host",
  "tau-memory",
  "tau-memory-host",
+ "tau-notify",
  "tau-plugins",
  "tau-reasoning",
  "tau-remote",

@@ -44,7 +44,7 @@ fn the_registry_keeps_every_declared_order() {
 }
 
 #[test]
-fn the_slots_tau_orders_are_ones_a_plugin_declares_it_fills() {
+fn the_kernels_slots_are_ones_a_plugin_declares_it_fills() {
     let registry = tau_plugins::plugins();
     let filled: BTreeSet<&str> = registry
         .plugins()
@@ -54,6 +54,7 @@ fn the_slots_tau_orders_are_ones_a_plugin_declares_it_fills() {
     for slot in [
         tau_ui_plugin::vcs::VCS.name(),
         tau_ui_plugin::forge::FORGE.name(),
+        tau_ui_plugin::notify::NOTIFY.name(),
     ] {
         assert!(filled.contains(slot), "nobody declares it fills {slot}");
     }

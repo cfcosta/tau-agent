@@ -439,24 +439,6 @@ struct InterfaceSettings {
     reduce_motion: Option<bool>,
     /// How large the interface is drawn: 1 is as designed.
     zoom: Option<f32>,
-    /// Desktop notifications while tau's window is not focused; on
-    /// unless `false`.
-    notifications: Option<bool>,
-}
-
-/// Whether the interface settings at `path` leave desktop notifications
-/// on: they are, unless the file says `"notifications": false`.
-pub fn saved_notifications(path: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return true;
-    };
-    match serde_json::from_str::<InterfaceSettings>(&text) {
-        Ok(settings) => settings.notifications.unwrap_or(true),
-        Err(error) => {
-            eprintln!("tau-ui: ignoring {}: {error}", path.display());
-            true
-        }
-    }
 }
 
 /// The zoom saved in the interface settings at `path`, when the file is
@@ -570,21 +552,6 @@ mod tests {
         assert_eq!(saved_reduce_motion(&path), None, "no key");
         std::fs::write(&path, "not json").unwrap();
         assert_eq!(saved_reduce_motion(&path), None, "unreadable");
-    }
-
-    #[test]
-    fn notifications_are_on_unless_the_settings_turn_them_off() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("interface.json");
-        assert!(saved_notifications(&path), "no file");
-        std::fs::write(&path, r#"{"notifications": false}"#).unwrap();
-        assert!(!saved_notifications(&path));
-        std::fs::write(&path, r#"{"notifications": true}"#).unwrap();
-        assert!(saved_notifications(&path));
-        std::fs::write(&path, r#"{"reduce_motion": true}"#).unwrap();
-        assert!(saved_notifications(&path), "no key");
-        std::fs::write(&path, "not json").unwrap();
-        assert!(saved_notifications(&path), "unreadable");
     }
 
     /// The named curves do what their names say: a pop overshoots, and

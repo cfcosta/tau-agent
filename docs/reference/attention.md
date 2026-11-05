@@ -82,6 +82,10 @@ open forks get new forecasts, so a forecast follows main's head.
   left on main. tau-ui's `main` passes it to
   `Host::on_conflicts_on_main` before `attach`, so the host calls it
   each time a turn of main ends with conflicts still on it (ADR 0024).
-- The desktop gets them through `notify-rust` over zbus (no libdbus).
-  Clicking one brings tau's window up and opens its chat.
-- `"notifications": false` in `interface.json` turns them off.
+- Notices go to the plugin that fills the `tau.notify` slot (ADR 0045),
+  looked up as each goes (`notify::Slotted`, given `Host::slots`), so
+  the person's pick on the Plugins screen counts at once. tau-notify
+  fills it: the desktop gets them through `notify-rust` over zbus (no
+  libdbus), and its settings pane switches them off. Opening one brings
+  tau's window up and opens its chat. With nothing in the slot, no
+  notice shows.

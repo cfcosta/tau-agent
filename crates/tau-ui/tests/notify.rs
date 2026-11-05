@@ -333,3 +333,60 @@ fn an_agent_s_notes_questions_and_cap_notify_once() {
         ]
     );
 }
+
+/// What fills `tau.notify` gets each notice as it goes, with its words,
+/// and opening one brings back its chat; with nothing filling the slot,
+/// a notice goes nowhere.
+#[test]
+fn notices_go_to_what_fills_the_slot_and_opening_one_brings_its_chat() {
+    use std::sync::{Arc, Mutex};
+
+    use tau_ui::notify::Slotted;
+    use tau_ui_plugin::{
+        notify::{self, NOTIFY, Notify},
+        slots::Fills,
+    };
+
+    /// Keeps the notices it is shown, and opens each at once.
+    #[derive(Default)]
+    struct Opens(Mutex<Vec<notify::Notice>>);
+
+    impl Notify for Opens {
+        fn show(
+            &self,
+            notice: notify::Notice,
+            opened: Box<dyn FnOnce() + Send>,
+        ) {
+            self.0.lock().unwrap().push(notice);
+            opened();
+        }
+    }
+
+    let notice = Notice {
+        run: RunId("run-1".into()),
+        kind: Kind::Failed,
+        title: "Fix the tests failed".into(),
+        body: "The run stopped with an error · tau".into(),
+    };
+    let slots = Arc::new(Mutex::new(Fills::default()));
+    let (clicked, mut clicks) = tokio::sync::mpsc::unbounded_channel();
+    let mut sink = Slotted::new(slots.clone(), clicked);
+    sink.show(notice.clone());
+    assert!(clicks.try_recv().is_err(), "nothing fills the slot");
+
+    let opens = Arc::new(Opens::default());
+    {
+        let mut fills = slots.lock().unwrap();
+        fills.filling("opens", &[NOTIFY.name().to_owned()]);
+        fills.fill(&NOTIFY, opens.clone() as Arc<dyn Notify>);
+    }
+    sink.show(notice.clone());
+    assert_eq!(
+        *opens.0.lock().unwrap(),
+        [notify::Notice {
+            title: notice.title,
+            body: notice.body,
+        }]
+    );
+    assert_eq!(clicks.try_recv().unwrap(), notice.run);
+}

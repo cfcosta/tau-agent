@@ -34,6 +34,7 @@ pub mod host;
 pub mod jobs;
 pub mod manifest;
 pub mod model;
+pub mod notify;
 pub mod points;
 pub mod registry;
 pub mod run;
@@ -297,16 +298,19 @@ pub enum Group {
     Tools,
     /// Where commands run.
     Environment,
+    /// How tau reaches the person: its notices.
+    App,
     /// The person's own plugins, written in Luau.
     Yours,
 }
 
 impl Group {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Context,
         Self::Rules,
         Self::Tools,
         Self::Environment,
+        Self::App,
         Self::Yours,
     ];
 
@@ -316,6 +320,7 @@ impl Group {
             Self::Rules => "Rules",
             Self::Tools => "Tools",
             Self::Environment => "Environment",
+            Self::App => "App",
             Self::Yours => "Yours",
         }
     }
