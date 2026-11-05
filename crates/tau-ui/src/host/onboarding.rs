@@ -52,7 +52,19 @@ impl Host {
         &self,
         change: impl FnOnce(&mut ModelSettings),
     ) -> anyhow::Result<()> {
+        self.change_settings_now(change);
+        self.persist_settings().await
+    }
+
+    /// Changes the user's model choices as kept now, at once: changes
+    /// made in the order the window made them end as the window does.
+    /// Saving them is [`Host::save_kept_settings`].
+    pub fn change_settings_now(&self, change: impl FnOnce(&mut ModelSettings)) {
         change(&mut self.settings.lock().expect("not poisoned"));
+    }
+
+    /// Saves the user's model choices as kept now.
+    pub async fn save_kept_settings(&self) -> anyhow::Result<()> {
         self.persist_settings().await
     }
 }

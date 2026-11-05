@@ -1266,23 +1266,23 @@ impl Host {
                 }
                 WorkspaceEvent::SetDefaultModel { .. } | WorkspaceEvent::HideModel { .. } => {
                     // The change, to the settings as kept now: another
-                    // interface may have changed others since.
-                    let event = event.clone();
+                    // interface may have changed others since. Made here,
+                    // in the order the window made the changes; saved on
+                    // the host.
+                    handler.change_settings_now(|settings| match event {
+                        WorkspaceEvent::SetDefaultModel { agent, choice } => {
+                            settings.set_default(agent, choice.clone())
+                        }
+                        WorkspaceEvent::HideModel { id, hidden } => {
+                            settings.set_hidden(id, *hidden)
+                        }
+                        _ => {}
+                    });
                     on_host(
                         &handler,
                         &workspace,
                         async move |host| {
-                            let saved = host
-                                .change_settings(|settings| match &event {
-                                    WorkspaceEvent::SetDefaultModel { agent, choice } => {
-                                        settings.set_default(agent, choice.clone())
-                                    }
-                                    WorkspaceEvent::HideModel { id, hidden } => {
-                                        settings.set_hidden(id, *hidden)
-                                    }
-                                    _ => {}
-                                })
-                                .await;
+                            let saved = host.save_kept_settings().await;
                             // What is saved, for every interface; the one
                             // that changed it showed the change already.
                             host.catalog_changed();

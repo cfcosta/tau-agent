@@ -869,3 +869,31 @@ fn the_host_keeps_the_last_of_quick_edits() {
     net.restart();
     assert_eq!(draft(&mut net), last, "the last word outlives a restart");
 }
+
+/// Models hidden and shown, and the model new chats start on, picked
+/// one after another on the computer: every device ends with the last.
+#[test]
+fn the_host_keeps_the_last_of_quick_model_picks() {
+    let mut net = Net::new(1, Keep::Memory);
+    let ids = models();
+    for round in 0..10 {
+        let computer = &mut net.computer;
+        computer.workspace.update(&mut computer.cx, |ws, cx| {
+            for n in 0..=round + 40 {
+                ws.toggle_model_hidden(&ids[0], cx);
+                let model = ids[n % ids.len()].clone();
+                ws.set_default_model(
+                    "coder",
+                    ModelChoice::new(model, Effort::Auto),
+                    cx,
+                );
+            }
+        });
+        let shown = computer.synced().catalog.models.settings;
+        net.settle();
+        let settings = net.computer.synced().catalog.models.settings;
+        assert_eq!(settings, shown, "round {round}: the last picks hold");
+        let phone = net.phones[0].synced();
+        assert_synced("phone 0", &net.computer.synced(), &phone);
+    }
+}
