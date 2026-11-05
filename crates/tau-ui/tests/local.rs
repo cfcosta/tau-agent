@@ -42,6 +42,7 @@ use tau_ui_plugin::vcs::SetupStep;
 use tau_ui_remote::{Workspace, catalog::Catalog, models::ModelChoice};
 use tau_vcs_host::{
     Identity,
+    JjEnv,
     Layout,
     Project,
     ProjectRepo,
@@ -204,6 +205,9 @@ impl Disk {
             ),
             _ => (404, json!({})),
         });
+        for dir in ["home", "config/jj"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
         let disk = Self {
             _dir: dir,
             root,
@@ -221,6 +225,27 @@ impl Disk {
         )
         .unwrap();
         disk
+    }
+
+    /// tau's identity under the person's jj config directory and home,
+    /// both empty: with a config directory, a setup writes the
+    /// repository's `trunk()` alias, as the jj CLI does, and the app
+    /// always has one.
+    fn identity(&self) -> Identity {
+        let config = self.root.join("config");
+        Identity {
+            env: JjEnv {
+                config_dir: Some(config.clone()),
+                home_dir: Some(self.root.join("home")),
+                vars: [(
+                    "XDG_CONFIG_HOME".to_owned(),
+                    config.display().to_string(),
+                )]
+                .into(),
+                ..JjEnv::default()
+            },
+            ..Identity::default()
+        }
     }
 
     fn credentials(&self) -> Credentials {
@@ -251,7 +276,7 @@ impl Disk {
             repo_list: self.repo_list(),
             skills: std::env::temp_dir().join("tau-test-skills-none"),
             home: None,
-            identity: Identity::default(),
+            identity: self.identity(),
         };
         let agent = tau_agent::agent::Agent::new(llm).name("coder");
         let (host, events) = Host::with_agent(runtime, agent, store, config);
@@ -281,7 +306,7 @@ impl Disk {
         let dir = |key: &str| PathBuf::from(local[key].as_str().unwrap());
         let layout =
             Layout::local(dir("folder"), dir("main_dir"), dir("runs_dir"));
-        ProjectRepo::open_local(layout, Identity::default())
+        ProjectRepo::open_local(layout, self.identity())
             .map(Project::from)
             .unwrap()
     }
