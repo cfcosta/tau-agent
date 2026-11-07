@@ -21,8 +21,8 @@ use std::{
 };
 
 use jj_lib::{
-    backend::Backend,
-    default_backend_factories::default_working_copy_factory,
+    backend::{Backend, BackendInitError},
+    default_backend_factories::{self, default_working_copy_factory},
     file_util::{self, IoResultExt as _, PathError},
     git_backend::GitBackend,
     ref_name::{WorkspaceName, WorkspaceNameBuf},
@@ -67,6 +67,9 @@ pub(crate) fn begin_repo(
         let backend = |settings: &UserSettings,
                        store_path: &Path|
          -> Result<Box<dyn Backend>, _> {
+            let settings = &settings
+                .git_backend_settings()
+                .map_err(BackendInitError::new)?;
             Ok(Box::new(match git {
                 GitStore::Internal => GitBackend::init_internal(
                     settings,
@@ -111,11 +114,11 @@ pub(crate) fn begin_repo(
             &repo_dir,
             &backend,
             signer_from_settings(settings)?,
-            ReadonlyRepo::default_workspace_store_initializer(),
-            ReadonlyRepo::default_op_store_initializer(),
-            ReadonlyRepo::default_op_heads_store_initializer(),
-            ReadonlyRepo::default_index_store_initializer(),
-            ReadonlyRepo::default_submodule_store_initializer(),
+            default_backend_factories::default_workspace_store_initializer(),
+            default_backend_factories::default_op_store_initializer(),
+            default_backend_factories::default_op_heads_store_initializer(),
+            default_backend_factories::default_index_store_initializer(),
+            default_backend_factories::default_submodule_store_initializer(),
         ))
         .map_err(|error| match error {
             RepoInitError::Backend(error) => WorkspaceInitError::Backend(error),

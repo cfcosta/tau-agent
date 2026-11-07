@@ -413,7 +413,6 @@ impl ProjectRepo {
     ) -> Result<Self, VcsError> {
         use jj_lib::{
             backend::{CopyId, TreeValue},
-            merge::Merge,
             merged_tree_builder::MergedTreeBuilder,
             op_store::RefTarget,
             repo_path::RepoPathBuf,
@@ -449,7 +448,7 @@ impl ProjectRepo {
             let id = block_on(store.write_file(&path, &mut text.as_bytes()))?;
             tree.set_or_remove(
                 path,
-                Merge::normal(TreeValue::File {
+                Some(TreeValue::File {
                     id,
                     executable: false,
                     copy_id: CopyId::placeholder(),
@@ -496,7 +495,7 @@ impl ProjectRepo {
             gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
                 VcsError::BadCommitHex {
                     commit: commit.to_owned(),
-                    source: source.into(),
+                    source,
                 }
             })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
@@ -856,7 +855,7 @@ impl ProjectRepo {
             gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
                 VcsError::BadCommitHex {
                     commit: commit.to_owned(),
-                    source: source.into(),
+                    source,
                 }
             })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
@@ -879,7 +878,7 @@ impl ProjectRepo {
             gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
                 VcsError::BadCommitHex {
                     commit: commit.to_owned(),
-                    source: source.into(),
+                    source,
                 }
             })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
@@ -893,7 +892,7 @@ impl ProjectRepo {
             gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
                 VcsError::BadCommitHex {
                     commit: commit.to_owned(),
-                    source: source.into(),
+                    source,
                 }
             })?;
         let commit = repo.find_object(id)?.try_into_commit()?;
@@ -1199,11 +1198,9 @@ impl ProjectRepo {
     /// path order.
     pub fn conflicts(&self, commit: &str) -> Result<Vec<String>, VcsError> {
         let repo = self.load()?;
-        Ok(self::commit(&repo, commit)?
-            .tree()
-            .conflicts()
-            .map(|(path, _)| path.as_internal_file_string().to_owned())
-            .collect())
+        Ok(crate::ops::conflict_paths(
+            &self::commit(&repo, commit)?.tree(),
+        ))
     }
 
     /// Whether `ancestor` is `descendant` or one of its ancestors. Both
@@ -1549,7 +1546,7 @@ impl ProjectRepo {
         if main.workspace_name() != old {
             return Ok(true);
         }
-        let repo = block_on(main.repo_loader().load_at_head())?;
+        let repo = block_on(main.repo_loader().load_at_head(None))?;
         let store = repo.loader().workspace_store().clone();
         let dir = self.main_dir().to_owned();
         let view = repo.view();
@@ -1622,7 +1619,7 @@ impl ProjectRepo {
             })?;
         let name = workspace.workspace_name().to_owned();
         let loader = workspace.repo_loader();
-        let repo = block_on(loader.load_at_head())?;
+        let repo = block_on(loader.load_at_head(None))?;
         let checked_out = block_on(
             loader.load_operation(workspace.working_copy().operation_id()),
         )?;
@@ -1659,7 +1656,7 @@ impl ProjectRepo {
 
     pub(crate) fn load(&self) -> Result<Arc<ReadonlyRepo>, VcsError> {
         let main = self.main()?;
-        Ok(block_on(main.repo_loader().load_at_head())?)
+        Ok(block_on(main.repo_loader().load_at_head(None))?)
     }
 
     /// The repository at its newest operation, for a write under `git`,
@@ -1698,9 +1695,12 @@ fn load_workspace(
     settings: &UserSettings,
     dir: &Path,
 ) -> Result<Workspace, jj_lib::workspace::WorkspaceLoadError> {
-    Workspace::load(
-        settings,
+    jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         dir,
+    )?
+    .load(
+        settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )

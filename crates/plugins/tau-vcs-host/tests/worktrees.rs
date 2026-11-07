@@ -57,7 +57,6 @@ use jj_lib::{
         default_working_copy_factories,
     },
     object_id::ObjectId as _,
-    workspace::Workspace,
 };
 use pollster::block_on;
 use serde_json::{Value, json};
@@ -351,14 +350,18 @@ fn view_heads(world: &World, main: &Path) -> BTreeMap<String, String> {
         &main.join(".jj").join("repo"),
     )
     .unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         main,
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
-    let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
+    let repo = block_on(workspace.repo_loader().load_at_head(None)).unwrap();
     repo.view()
         .wc_commit_ids()
         .keys()

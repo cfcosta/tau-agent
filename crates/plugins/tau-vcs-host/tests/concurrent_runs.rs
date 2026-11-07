@@ -1412,7 +1412,6 @@ fn a_divergent_working_copy_is_stale() {
         ref_name::WorkspaceNameBuf,
         repo::Repo as _,
         settings::UserSettings,
-        workspace::Workspace,
     };
     let repo = Repo::new();
     let trunk = repo.project.trunk().unwrap();
@@ -1427,16 +1426,20 @@ fn a_divergent_working_copy_is_stale() {
     config.add_layer(user);
     let settings =
         UserSettings::from_config_and_home_dir(config, None).unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         &repo.main_dir(),
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
     // The other program's operation starts here.
     let before =
-        pollster::block_on(workspace.repo_loader().load_at_head()).unwrap();
+        pollster::block_on(workspace.repo_loader().load_at_head(None)).unwrap();
 
     block_on(chat.end_turn(run_head("c0"), None)).unwrap();
 

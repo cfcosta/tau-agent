@@ -33,7 +33,6 @@ fn load(project: &ProjectRepo) -> Arc<ReadonlyRepo> {
             default_working_copy_factories,
         },
         settings::UserSettings,
-        workspace::Workspace,
     };
     let mut config = StackedConfig::with_defaults();
     let mut user = ConfigLayer::empty(ConfigSource::User);
@@ -42,14 +41,18 @@ fn load(project: &ProjectRepo) -> Arc<ReadonlyRepo> {
     config.add_layer(user);
     let settings =
         UserSettings::from_config_and_home_dir(config, None).unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         project.main_dir(),
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
-    block_on(workspace.repo_loader().load_at_head()).unwrap()
+    block_on(workspace.repo_loader().load_at_head(None)).unwrap()
 }
 
 /// An operation from `base` that adds a commit on the root, tagged as

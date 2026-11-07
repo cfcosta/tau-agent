@@ -693,7 +693,7 @@ fn uncommitted(
         let mut config = repo.config_snapshot_mut();
         config.set_raw_value(
             "core.excludesFile",
-            gix::path::into_bstr(excludes).as_ref(),
+            gix::path::into_bstr(excludes)?.as_ref(),
         )?;
         config.commit()?;
     }

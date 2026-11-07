@@ -4,7 +4,7 @@
 //! and untracked remote bookmarks, or the person's own definition, with
 //! their aliases. Checked against a model of that rule on made-up
 //! histories: the flags `vcs_log` shows, and whether a write tool
-//! refuses `@`; where the jj CLI 0.46.0 is installed, `immutable()`
+//! refuses `@`; where the jj CLI 0.47.0 is installed, `immutable()`
 //! names the same commits there.
 //!
 //! Each world lives in a temporary directory and reads no real config.
@@ -235,9 +235,13 @@ fn load(dir: &Path) -> Workspace {
         None,
     )
     .unwrap();
-    Workspace::load(
-        &settings,
+    jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         dir,
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
@@ -246,7 +250,7 @@ fn load(dir: &Path) -> Workspace {
 
 fn working_copy(dir: &Path) -> CommitId {
     let workspace = load(dir);
-    let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
+    let repo = block_on(workspace.repo_loader().load_at_head(None)).unwrap();
     repo.view()
         .get_wc_commit_id(workspace.workspace_name())
         .unwrap()
@@ -256,7 +260,7 @@ fn working_copy(dir: &Path) -> CommitId {
 /// Sets the world's marks with jj-lib, as the host or a fetch would.
 fn mark(dir: &Path, world: &World, ids: &[CommitId]) {
     let workspace = load(dir);
-    let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
+    let repo = block_on(workspace.repo_loader().load_at_head(None)).unwrap();
     let mut tx = repo.start_transaction();
     let mut trunk = false;
     let mut frozen = false;

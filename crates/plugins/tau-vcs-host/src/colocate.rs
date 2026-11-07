@@ -157,7 +157,9 @@ fn keep_in_step(
     {
         return Ok(());
     }
-    block_on(reset_head(tx.repo_mut(), name, root, wc))
+    // No old working-copy commit: the index is reset whole, as before
+    // jj-lib 0.47 took the old one to update it in place.
+    block_on(reset_head(tx.repo_mut(), name, root, (None, wc)))
         .map_err(VcsError::ResetHead)
 }
 

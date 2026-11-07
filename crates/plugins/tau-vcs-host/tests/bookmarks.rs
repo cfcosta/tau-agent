@@ -20,7 +20,6 @@ use jj_lib::{
     ref_name::RefName,
     repo::Repo as _,
     settings::UserSettings,
-    workspace::Workspace,
 };
 use serde_json::{Value, json};
 use tau_agent::{plugin::Plugin, tool::ToolCtx};
@@ -37,14 +36,18 @@ fn bookmark_and_diverge(dir: &Path, hex: &str) {
     config.add_layer(user);
     let settings =
         UserSettings::from_config_and_home_dir(config, None).unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         dir,
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
-    let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
+    let repo = block_on(workspace.repo_loader().load_at_head(None)).unwrap();
     let id = CommitId::try_from_hex(hex).unwrap();
     let commit = repo.store().get_commit(&id).unwrap();
     let mut tx = repo.start_transaction();

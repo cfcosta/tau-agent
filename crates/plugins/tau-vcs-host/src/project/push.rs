@@ -117,8 +117,7 @@ impl ProjectRepo {
         let mut conflicts: Vec<String> = Vec::new();
         for change in pushed.changes.iter().filter(|change| change.conflict) {
             let tree = commit(&repo, &change.commit_id)?.tree();
-            for (path, _) in tree.conflicts() {
-                let path = path.as_internal_file_string().to_owned();
+            for path in crate::ops::conflict_paths(&tree) {
                 if !conflicts.contains(&path) {
                     conflicts.push(path);
                 }
@@ -197,7 +196,7 @@ impl ProjectRepo {
         let mut copies = Vec::new();
         for hex in commits {
             let original = commit(&repo, hex)?;
-            let base = block_on(original.parent_tree(repo.as_ref()))?;
+            let base = block_on(original.parent_tree(repo.as_ref().index()))?;
             let tree = block_on(MergedTree::merge(Merge::from_vec(vec![
                 (parent.tree(), "the remote's trunk".to_owned()),
                 (base, "the commit's parent".to_owned()),
@@ -205,11 +204,7 @@ impl ProjectRepo {
             ])))?;
             if tree.has_conflict() {
                 return Err(VcsError::WouldConflict(
-                    tree.conflicts()
-                        .map(|(path, _)| {
-                            path.as_internal_file_string().to_owned()
-                        })
-                        .collect(),
+                    crate::ops::conflict_paths(&tree),
                 ));
             }
             parent = block_on(

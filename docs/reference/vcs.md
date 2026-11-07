@@ -1,6 +1,6 @@
 # Version-control tools (`tau-vcs`, optional)
 
-- Status: implemented in `crates/plugins/tau-vcs-host`, on `jj-lib` 0.46.0,
+- Status: implemented in `crates/plugins/tau-vcs-host`, on `jj-lib` 0.47.0,
   with its cards in `crates/plugins/tau-vcs`.
 - Design study: [jj-lib.md](../research/jj-lib.md). Decisions:
   [0009](../decisions/0009-child-runs-land-on-their-parent.md) (child
@@ -45,7 +45,7 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 
 ## Identity and jj config
 
-tau follows the person's jj config exactly as the jj CLI (0.46.0) would
+tau follows the person's jj config exactly as the jj CLI (0.47.0) would
 in the same workspace. tau-vcs-host's `config` module ports jj-cli's
 loading:
 

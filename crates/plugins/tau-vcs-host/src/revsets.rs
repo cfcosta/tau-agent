@@ -10,7 +10,7 @@
 
 use std::{borrow::Cow, collections::HashMap, path::Path, sync::Arc};
 
-use chrono::TimeZone as _;
+use jiff::Zoned;
 use jj_lib::{
     fileset::FilesetAliasesMap,
     git::REMOTE_NAME_FOR_LOCAL_GIT_REPO,
@@ -30,7 +30,6 @@ use jj_lib::{
         UserRevsetExpression,
     },
     settings::UserSettings,
-    time_util::DatePatternContext,
     ui_path::RepoPathUiConverter,
 };
 
@@ -42,7 +41,7 @@ pub(crate) struct ConfigRevsets {
     fileset_aliases: FilesetAliasesMap,
     extensions: RevsetExtensions,
     user_email: String,
-    now: DatePatternContext,
+    now: Zoned,
     path_converter: RepoPathUiConverter,
     workspace_name: WorkspaceNameBuf,
 }
@@ -57,13 +56,10 @@ impl ConfigRevsets {
     ) -> Result<Self, VcsError> {
         // jj's commit time, `debug.commit-timestamp` when set: what
         // `after:` and `before:` dates count from.
-        let now = match settings.commit_timestamp() {
-            Some(timestamp) => chrono::Local
-                .timestamp_millis_opt(timestamp.timestamp.0)
-                .single()
-                .unwrap_or_else(chrono::Local::now),
-            None => chrono::Local::now(),
-        };
+        let now = settings
+            .commit_timestamp()
+            .and_then(|timestamp| timestamp.to_zoned().ok())
+            .unwrap_or_else(Zoned::now);
         Ok(Self {
             aliases: crate::config::aliases(
                 settings.config(),
@@ -75,7 +71,7 @@ impl ConfigRevsets {
             )?,
             extensions: RevsetExtensions::default(),
             user_email: settings.user_email().to_owned(),
-            now: now.into(),
+            now,
             path_converter: RepoPathUiConverter::Fs {
                 cwd: workspace_root.to_owned(),
                 base: workspace_root.to_owned(),
@@ -92,7 +88,7 @@ impl ConfigRevsets {
             aliases_map: aliases,
             local_variables: HashMap::new(),
             user_email: &self.user_email,
-            date_pattern_context: self.now,
+            current_time: self.now.clone(),
             // tau's repositories are all Git-backed.
             default_ignored_remote: Some(REMOTE_NAME_FOR_LOCAL_GIT_REPO),
             fileset_aliases_map: &self.fileset_aliases,

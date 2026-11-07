@@ -393,7 +393,7 @@ impl<'a> Journal<'a> {
             let lock = crate::lock::lock_repo(&repo_path)?;
             let git = lock.git()?;
             let person = load(&settings, &folder)?;
-            let repo = block_on(person.repo_loader().load_at_head())?;
+            let repo = block_on(person.repo_loader().load_at_head(None))?;
             let repo = self.import_git(&repo, &settings, &options, &git)?;
             drop(git);
             (First::Done(repo), lock)
@@ -974,7 +974,7 @@ fn remove_repo_config(
         return Ok(());
     };
     let dir = root.join(crate::config::REPO_CONFIG_DIR).join(id.trim());
-    match jj_lib::secure_config::remove_repo_config_dir(&dir) {
+    match jj_lib::secure_config::remove_config_dir(&dir) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(source) => Err(VcsError::Delete { path: dir, source }),
@@ -1147,12 +1147,18 @@ fn load(
     settings: &jj_lib::settings::UserSettings,
     dir: &Path,
 ) -> Result<Workspace, VcsError> {
-    Workspace::load(
-        settings,
+    jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         dir,
-        &jj_lib::default_backend_factories::default_backend_factories(),
-        &jj_lib::default_backend_factories::default_working_copy_factories(),
     )
+    .and_then(|loader| {
+        loader.load(
+            settings,
+            &jj_lib::default_backend_factories::default_backend_factories(),
+            &jj_lib::default_backend_factories::default_working_copy_factories(
+            ),
+        )
+    })
     .map_err(|source| VcsError::NoWorkspace {
         root: dir.to_owned(),
         source,

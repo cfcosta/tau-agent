@@ -47,7 +47,7 @@ pub(crate) fn changed_paths(
     matcher: &dyn Matcher,
 ) -> Result<Vec<FileChange>, VcsError> {
     block_on(async {
-        let mut stream = from.diff_stream(to, matcher);
+        let mut stream = from.diff(to, matcher);
         let mut changes = Vec::new();
         while let Some(entry) = stream.next().await {
             let values = entry.values?;
@@ -85,7 +85,7 @@ pub(crate) fn unified(
     };
     let store = repo.store();
     block_on(async {
-        let mut stream = from.diff_stream(to, matcher);
+        let mut stream = from.diff(to, matcher);
         let mut text = String::new();
         let mut changes = Vec::new();
         while let Some(entry) = stream.next().await {

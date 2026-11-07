@@ -90,7 +90,6 @@ fn load(home: &Path) -> std::sync::Arc<jj_lib::repo::ReadonlyRepo> {
             default_working_copy_factories,
         },
         settings::UserSettings,
-        workspace::Workspace,
     };
     let mut config = StackedConfig::with_defaults();
     let mut user = ConfigLayer::empty(ConfigSource::User);
@@ -99,28 +98,32 @@ fn load(home: &Path) -> std::sync::Arc<jj_lib::repo::ReadonlyRepo> {
     config.add_layer(user);
     let settings =
         UserSettings::from_config_and_home_dir(config, None).unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         &home.join("p").join("main"),
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
-    pollster::block_on(workspace.repo_loader().load_at_head()).unwrap()
+    pollster::block_on(workspace.repo_loader().load_at_head(None)).unwrap()
 }
 
 /// The paths jj holds in conflict at `commit` (a full hex id).
 fn jj_conflicts(home: &Path, commit: &str) -> BTreeSet<String> {
+    use futures_util::StreamExt as _;
     use jj_lib::{backend::CommitId, repo::Repo as _};
     let repo = load(home);
     let id = CommitId::try_from_hex(commit).unwrap();
-    repo.store()
-        .get_commit(&id)
-        .unwrap()
-        .tree()
-        .conflicts()
-        .map(|(path, _)| path.as_internal_file_string().to_owned())
-        .collect()
+    let tree = repo.store().get_commit(&id).unwrap().tree();
+    pollster::block_on(
+        tree.conflicts()
+            .map(|(path, _)| path.as_internal_file_string().to_owned())
+            .collect(),
+    )
 }
 
 /// A commit on a stack, as [`walk`] finds it.

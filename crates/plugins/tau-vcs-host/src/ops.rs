@@ -16,7 +16,6 @@ use jj_lib::{
     conflicts,
     files::{self, MergeResult},
     matchers::{EverythingMatcher, FilesMatcher},
-    merge::Merge,
     merged_tree_builder::MergedTreeBuilder,
     object_id::ObjectId as _,
     op_store::OperationId,
@@ -74,7 +73,7 @@ pub(crate) fn change_info(
         change_id: commit.change_id().reverse_hex(),
         commit_id: commit.id().hex(),
         description: commit.description().to_owned(),
-        empty: block_on(commit.is_empty(repo))?,
+        empty: block_on(commit.is_empty(repo.index()))?,
         conflict: commit.has_conflict(),
         immutable: immutable.contains(repo, commit.id())?,
         working_copy: commit.id() == wc,
@@ -173,7 +172,7 @@ pub(crate) fn status(worker: &mut Worker) -> Result<Report, VcsError> {
     }
 
     // The diff is for callers that draw it; the model asks vcs_diff.
-    let parent_tree = block_on(wc.parent_tree(repo))?;
+    let parent_tree = block_on(wc.parent_tree(repo.index()))?;
     let (diff_text, changes) = diff::unified(
         repo,
         &settings,
@@ -195,11 +194,7 @@ pub(crate) fn status(worker: &mut Worker) -> Result<Report, VcsError> {
         }
     }
 
-    let conflicts: Vec<String> = wc
-        .tree()
-        .conflicts()
-        .map(|(path, _)| path.as_internal_file_string().to_owned())
-        .collect();
+    let conflicts = conflict_paths(&wc.tree());
     if !conflicts.is_empty() {
         text.push_str(
             "\nUnresolved conflicts (some files have no markers; edit markers, \
@@ -243,7 +238,7 @@ pub(crate) fn changes(
 ) -> Result<Vec<FileChange>, VcsError> {
     let snapshot = session::snapshot(worker)?;
     let wc = &snapshot.wc;
-    let parent_tree = block_on(wc.parent_tree(snapshot.repo.as_ref()))?;
+    let parent_tree = block_on(wc.parent_tree(snapshot.repo.as_ref().index()))?;
     diff::changed_paths(&parent_tree, &wc.tree(), &EverythingMatcher)
 }
 
@@ -260,7 +255,7 @@ pub(crate) fn diff(
         Some(rev) => resolve(repo, rev)?,
         None => snapshot.wc.clone(),
     };
-    let parent_tree = block_on(commit.parent_tree(repo))?;
+    let parent_tree = block_on(commit.parent_tree(repo.index()))?;
     let matcher = session::matcher(paths);
     let (text, files) = diff::unified(
         repo,
@@ -371,7 +366,7 @@ pub(crate) fn show(
             text.push_str(&format!("    {line}\n"));
         }
     }
-    let parent_tree = block_on(commit.parent_tree(repo))?;
+    let parent_tree = block_on(commit.parent_tree(repo.index()))?;
     let (diff_text, files) = diff::unified(
         repo,
         &settings,
@@ -459,7 +454,7 @@ pub(crate) fn commit(
                 block_on(tx.repo_mut().check_out(name, &committed))?;
                 return Ok((committed, Vec::new()));
             };
-            let parent = block_on(wc.parent_tree(tx.repo()))?;
+            let parent = block_on(wc.parent_tree(tx.repo().index()))?;
             let all =
                 diff::changed_paths(&parent, &wc.tree(), &EverythingMatcher)?;
             // The parent's tree, with the chosen paths as `@` has them.
@@ -520,7 +515,7 @@ pub(crate) fn commit(
     let (diff_text, files) = diff::unified(
         repo,
         &settings,
-        &block_on(commit.parent_tree(repo))?,
+        &block_on(commit.parent_tree(repo.index()))?,
         &commit.tree(),
         &EverythingMatcher,
     )?;
@@ -623,7 +618,7 @@ pub(crate) fn commit_all(
         )?;
         followed = onto;
         let wc = &wc;
-        let parent_tree = block_on(wc.parent_tree(tx.repo()))?;
+        let parent_tree = block_on(wc.parent_tree(tx.repo().index()))?;
         // Changed paths, not jj's emptiness, which compares trees as
         // written: `@` can hold its parent's conflict in another form,
         // as a restore from it writes, and change no file.
@@ -739,7 +734,7 @@ pub(crate) fn end_turn(
                     &moves,
                 )?
             }
-            None => block_on(wc.parent_tree(tx.repo()))?,
+            None => block_on(wc.parent_tree(tx.repo().index()))?,
         };
         let paths =
             diff::changed_paths(&before, &wc.tree(), &EverythingMatcher)?
@@ -853,16 +848,22 @@ impl WorkingCopy {
     }
 }
 
+/// The paths `tree` holds in conflict, in path order.
+pub(crate) fn conflict_paths(
+    tree: &jj_lib::merged_tree::MergedTree,
+) -> Vec<String> {
+    block_on(
+        tree.conflicts()
+            .map(|(path, _)| path.as_internal_file_string().to_owned())
+            .collect(),
+    )
+}
+
 /// The paths `@` holds in conflict, after a snapshot, in path order:
 /// what `vcs_status` lists as unresolved.
 pub(crate) fn conflicts(worker: &mut Worker) -> Result<Vec<String>, VcsError> {
     let snapshot = session::snapshot(worker)?;
-    Ok(snapshot
-        .wc
-        .tree()
-        .conflicts()
-        .map(|(path, _)| path.as_internal_file_string().to_owned())
-        .collect())
+    Ok(conflict_paths(&snapshot.wc.tree()))
 }
 
 pub(crate) fn working_copy(
@@ -871,7 +872,7 @@ pub(crate) fn working_copy(
     let snapshot = session::snapshot(worker)?;
     let wc = &snapshot.wc;
     let head = wc.parent_ids().first().ok_or(VcsError::NoParent)?.hex();
-    let parent_tree = block_on(wc.parent_tree(snapshot.repo.as_ref()))?;
+    let parent_tree = block_on(wc.parent_tree(snapshot.repo.as_ref().index()))?;
     let paths =
         diff::changed_paths(&parent_tree, &wc.tree(), &EverythingMatcher)?
             .into_iter()
@@ -897,7 +898,7 @@ pub(crate) fn restore(
     let (snapshot, restored) = session::mutate(worker, "restore", |tx, wc| {
         let source = match &from {
             Some(rev) => resolve(tx.repo(), rev)?.tree(),
-            None => block_on(wc.parent_tree(tx.repo()))?,
+            None => block_on(wc.parent_tree(tx.repo().index()))?,
         };
         let new_tree = block_on(restore_tree(
             &source,
@@ -949,7 +950,9 @@ pub(crate) fn resolve_conflicts(
         let tree = wc.tree();
         let mut builder = MergedTreeBuilder::new(tree.clone());
         let mut resolved = Vec::new();
-        for (path, value) in tree.conflicts_matching(matcher.as_ref()) {
+        let conflicted: Vec<_> =
+            block_on(tree.conflicts_matching(matcher.as_ref()).collect());
+        for (path, value) in conflicted {
             let value = value?;
             let file =
                 block_on(conflicts::try_materialize_file_conflict_value(
@@ -976,7 +979,7 @@ pub(crate) fn resolve_conflicts(
             )?;
             builder.set_or_remove(
                 path.clone(),
-                Merge::normal(TreeValue::File {
+                Some(TreeValue::File {
                     id,
                     // The same native executable choice and copy metadata used
                     // to materialize this file in jj's working copy.
@@ -1103,9 +1106,8 @@ fn carry_edits(
     let bad_wc = store.get_commit(&bad_id)?;
     let good_wc = store.get_commit(&good_id)?;
     let edited: Vec<RepoPathBuf> = block_on(async {
-        let mut stream = bad_wc
-            .tree()
-            .diff_stream(&current.tree(), &EverythingMatcher);
+        let mut stream =
+            bad_wc.tree().diff(&current.tree(), &EverythingMatcher);
         let mut paths = Vec::new();
         while let Some(entry) = stream.next().await {
             let values = entry.values?;

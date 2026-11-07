@@ -415,7 +415,6 @@ fn unpublished(main: &Path, parent: &str) -> (String, String) {
         object_id::ObjectId as _,
         repo::Repo as _,
         settings::UserSettings,
-        workspace::Workspace,
     };
     let mut config = StackedConfig::with_defaults();
     let mut user = ConfigLayer::empty(ConfigSource::User);
@@ -424,15 +423,19 @@ fn unpublished(main: &Path, parent: &str) -> (String, String) {
     config.add_layer(user);
     let settings =
         UserSettings::from_config_and_home_dir(config, None).unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         main,
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
     let repo =
-        pollster::block_on(workspace.repo_loader().load_at_head()).unwrap();
+        pollster::block_on(workspace.repo_loader().load_at_head(None)).unwrap();
     let parent = CommitId::try_from_hex(parent).unwrap();
     let tree = repo.store().get_commit(&parent).unwrap().tree();
     let mut tx = repo.start_transaction();

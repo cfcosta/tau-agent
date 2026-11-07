@@ -237,7 +237,7 @@ fn snapshot_locked(
     git: &GitLock,
 ) -> Result<Snapshot, VcsError> {
     let options = config.options();
-    let mut repo = block_on(loader.load_at_head())?;
+    let mut repo = block_on(loader.load_at_head(None))?;
     let mut wc = wc_commit(&repo, name)?;
     // Two operations that rewrote `@` from the same one, merged when the
     // repository loaded: one side is a stray copy, and either may hold

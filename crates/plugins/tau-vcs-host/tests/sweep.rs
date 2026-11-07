@@ -18,7 +18,6 @@ use jj_lib::{
         default_working_copy_factories,
     },
     repo::Repo as _,
-    workspace::Workspace,
 };
 use tau_agent::tool::RunId;
 use tau_testing::block_on_io as block_on;
@@ -53,14 +52,18 @@ fn visible(project: &ProjectRepo, change: &str) -> bool {
         None,
     )
     .unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         project.main_dir(),
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
-    let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
+    let repo = block_on(workspace.repo_loader().load_at_head(None)).unwrap();
     let change = ChangeId::try_from_reverse_hex(change).unwrap();
     block_on(repo.resolve_change_id(&change))
         .unwrap()

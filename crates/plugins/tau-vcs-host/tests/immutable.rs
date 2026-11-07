@@ -18,7 +18,6 @@ use jj_lib::{
     op_store::RefTarget,
     ref_name::RefName,
     settings::UserSettings,
-    workspace::Workspace,
 };
 use serde_json::json;
 use tau_agent::{plugin::Plugin, tool::ToolCtx};
@@ -34,14 +33,18 @@ fn tag_working_copy(dir: &Path) {
     config.add_layer(user);
     let settings =
         UserSettings::from_config_and_home_dir(config, None).unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         dir,
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
-    let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
+    let repo = block_on(workspace.repo_loader().load_at_head(None)).unwrap();
     let wc = repo
         .view()
         .get_wc_commit_id(workspace.workspace_name())

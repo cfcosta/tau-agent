@@ -399,7 +399,6 @@ fn repo_at(root: &Path) -> std::sync::Arc<jj_lib::repo::ReadonlyRepo> {
             default_working_copy_factories,
         },
         settings::UserSettings,
-        workspace::Workspace,
     };
     let mut config = StackedConfig::with_defaults();
     let mut user = ConfigLayer::empty(ConfigSource::User);
@@ -408,14 +407,18 @@ fn repo_at(root: &Path) -> std::sync::Arc<jj_lib::repo::ReadonlyRepo> {
     config.add_layer(user);
     let settings =
         UserSettings::from_config_and_home_dir(config, None).unwrap();
-    let workspace = Workspace::load(
-        &settings,
+    let workspace = jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
         &root.join("main"),
+    )
+    .unwrap()
+    .load(
+        &settings,
         &default_backend_factories(),
         &default_working_copy_factories(),
     )
     .unwrap();
-    pollster::block_on(workspace.repo_loader().load_at_head()).unwrap()
+    pollster::block_on(workspace.repo_loader().load_at_head(None)).unwrap()
 }
 
 /// A link follows its change when the commit is rewritten, and refuses

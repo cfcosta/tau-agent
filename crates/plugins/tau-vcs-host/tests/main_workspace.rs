@@ -155,9 +155,13 @@ impl World {
             &main.join(".jj").join("repo"),
         )
         .unwrap();
-        Workspace::load(
-            &settings,
+        jj_lib::workspace::WorkspaceLoaderFactory::create(
+            &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
             main,
+        )
+        .unwrap()
+        .load(
+            &settings,
             &default_backend_factories(),
             &default_working_copy_factories(),
         )
@@ -168,7 +172,8 @@ impl World {
     /// them in `main`.
     fn view(&self, main: &Path) -> BTreeMap<String, String> {
         let workspace = self.workspace(main);
-        let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
+        let repo =
+            block_on(workspace.repo_loader().load_at_head(None)).unwrap();
         repo.view()
             .wc_commit_ids()
             .iter()
@@ -189,7 +194,8 @@ impl World {
     fn rename_by_hand(&self, main: &Path, from: &str, to: &str, steps: u8) {
         let (from, to) = (WorkspaceName::new(from), WorkspaceNameBuf::from(to));
         let mut workspace = self.workspace(main);
-        let repo = block_on(workspace.repo_loader().load_at_head()).unwrap();
+        let repo =
+            block_on(workspace.repo_loader().load_at_head(None)).unwrap();
         let store = repo.loader().workspace_store().clone();
         let mut locked =
             block_on(workspace.start_working_copy_mutation()).unwrap();

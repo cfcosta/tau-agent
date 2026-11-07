@@ -184,7 +184,7 @@ fn restack(
 ) -> Result<Landing, VcsError> {
     // The parent's uncommitted work stays in its working copy, which
     // moves onto the landed changes.
-    let dirty = !block_on(wc.is_empty(tx.repo()))?;
+    let dirty = !block_on(wc.is_empty(tx.repo().index()))?;
     let head = match wc.parent_ids() {
         [head] => head.clone(),
         _ => return Err(VcsError::ParentMerge),
@@ -302,11 +302,7 @@ fn current(repo: &dyn Repo, commit: &Commit) -> Result<Commit, VcsError> {
 }
 
 fn conflicts(commit: &Commit) -> Vec<String> {
-    commit
-        .tree()
-        .conflicts()
-        .map(|(path, _)| path.as_internal_file_string().to_owned())
-        .collect()
+    crate::ops::conflict_paths(&commit.tree())
 }
 
 /// Moves this workspace's run, its changes up to `@`, onto `onto` (a

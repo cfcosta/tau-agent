@@ -9,7 +9,6 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 etcetera.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
@@ -23,6 +22,7 @@ gix = { workspace = true, features = [
 ] }
 reqwest.workspace = true
 tokio-rustls.workspace = true
+jiff.workspace = true
 jj-lib.workspace = true
 pollster.workspace = true
 rand.workspace = true
