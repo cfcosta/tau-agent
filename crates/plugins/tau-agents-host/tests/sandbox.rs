@@ -14,7 +14,15 @@ use std::{
 };
 
 use tau_agent::launch::Launcher;
-use tau_agents_host::sandbox::{HOME, SYSTEM, Sandbox, find_bwrap, words};
+use tau_agents_host::sandbox::{
+    HOME,
+    SYSTEM,
+    Sandbox,
+    check,
+    find_bwrap,
+    usable_bwrap,
+    words,
+};
 use tau_testing::block_on_io;
 
 fn strings(words: &[OsString]) -> Vec<String> {
@@ -112,6 +120,8 @@ fn taus_variables_are_dropped_but_for_the_kept_ones() {
 #[test]
 fn a_real_command_stays_in_its_sandbox() {
     let bwrap = find_bwrap().expect("bwrap is on PATH in the dev shell");
+    assert_eq!(check(&bwrap), Ok(()));
+    assert_eq!(usable_bwrap(), Ok(bwrap.clone()));
     assert!(
         std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
         "the test runner sets CARGO_MANIFEST_DIR"
@@ -161,4 +171,29 @@ fn a_real_command_stays_in_its_sandbox() {
     if Path::new("/etc/resolv.conf").exists() {
         assert!(stdout.contains("dns"), "{stdout}");
     }
+}
+
+/// A `bwrap` that cannot make a sandbox here, as on Ubuntu, where
+/// AppArmor keeps it out of user namespaces: the check says so, in its
+/// words. One that does not start says that.
+#[test]
+fn a_bwrap_that_cannot_make_a_sandbox_says_why() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let bwrap = dir.path().join("bwrap");
+    std::fs::write(
+        &bwrap,
+        "#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&bwrap, std::fs::Permissions::from_mode(0o755))
+        .unwrap();
+    assert_eq!(
+        check(&bwrap),
+        Err("bwrap cannot make a sandbox here \
+             (bwrap: setting up uid map: Permission denied)"
+            .to_owned())
+    );
+    let missing = check(&dir.path().join("none"));
+    assert!(missing.unwrap_err().contains("does not start"));
 }

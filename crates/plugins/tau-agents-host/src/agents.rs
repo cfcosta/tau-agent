@@ -107,8 +107,9 @@ struct Inner {
     tasks: Mutex<JoinSet<()>>,
     /// Where each agent's home is kept, one directory each.
     homes: PathBuf,
-    /// The `bwrap` its commands run in; with none, they have no command tools.
-    bwrap: Option<PathBuf>,
+    /// The `bwrap` its commands run in; without one that can make a
+    /// sandbox here, why, and they have no command tools.
+    bwrap: Result<PathBuf, String>,
     /// The streams kept open, by agent and trigger.
     streams: streams::Streams,
     /// The MCP resources watched, by agent and trigger.
@@ -208,15 +209,16 @@ impl Agents {
             polled: Mutex::default(),
             tasks: Mutex::default(),
             homes: dir.join("homes"),
-            bwrap: crate::sandbox::find_bwrap(),
+            bwrap: crate::sandbox::usable_bwrap(),
             streams: streams::Streams::default(),
             resources: resources::Resources::default(),
         }))
     }
 
     /// The same agents, their commands run in `bwrap`, or with no
-    /// command tools when there is none. Before it is shared.
-    pub fn with_bwrap(mut self, bwrap: Option<PathBuf>) -> Self {
+    /// command tools when there is none, for the reason given. Before it
+    /// is shared.
+    pub fn with_bwrap(mut self, bwrap: Result<PathBuf, String>) -> Self {
         Arc::get_mut(&mut self.0)
             .expect("set before the agents are shared")
             .bwrap = bwrap;
@@ -225,7 +227,7 @@ impl Agents {
 
     /// What the commands of the repository at `checkout` run in, when it
     /// is an agent's: its sandbox, or nothing when there is no `bwrap`
-    /// (its runs then have no `exec_command`).
+    /// that can make one (its runs then have no `exec_command`).
     pub fn sandbox(
         &self,
         name: &str,
@@ -235,17 +237,18 @@ impl Agents {
             return None;
         }
         Some(crate::sandbox::Sandbox {
-            bwrap: self.0.bwrap.clone()?,
+            bwrap: self.0.bwrap.clone().ok()?,
             home: self.0.homes.join(name),
         })
     }
 
     /// Why an agent's commands cannot run, if they cannot.
     pub fn sandbox_problem(&self) -> Option<String> {
-        self.0.bwrap.is_none().then(|| {
-            "commands are off: bwrap (bubblewrap) is not installed, and an \
-             agent's commands never run outside it"
-                .to_owned()
+        self.0.bwrap.as_ref().err().map(|why| {
+            format!(
+                "commands are off: {why}, and an agent's commands never run \
+                 outside it"
+            )
         })
     }
 

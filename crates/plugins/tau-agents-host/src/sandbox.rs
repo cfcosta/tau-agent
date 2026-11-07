@@ -133,6 +133,41 @@ pub fn find_bwrap() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// Whether `bwrap` can make a sandbox here: one that runs `true`, with
+/// the namespaces an agent's has. It can be installed and still not:
+/// Ubuntu's AppArmor keeps unprivileged processes out of user
+/// namespaces (`kernel.apparmor_restrict_unprivileged_userns`). If it
+/// cannot, why, in bwrap's words.
+pub fn check(bwrap: &Path) -> Result<(), String> {
+    let out = std::process::Command::new(bwrap)
+        .args(["--unshare-all", "--share-net", "--die-with-parent"])
+        .args(["--ro-bind", "/", "/", "--", "true"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| {
+            format!("{} does not start: {error}", bwrap.display())
+        })?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&out.stderr);
+    let said = said.trim();
+    Err(if said.is_empty() {
+        format!("bwrap cannot make a sandbox here ({})", out.status)
+    } else {
+        format!("bwrap cannot make a sandbox here ({said})")
+    })
+}
+
+/// The `bwrap` an agent's commands run in: the first on `PATH`, if it
+/// can make a sandbox here ([`check`]). If not, why.
+pub fn usable_bwrap() -> Result<PathBuf, String> {
+    let bwrap = find_bwrap()
+        .ok_or_else(|| "bwrap (bubblewrap) is not installed".to_owned())?;
+    check(&bwrap)?;
+    Ok(bwrap)
+}
+
 /// What an agent's commands start through: `bwrap`, with the agent's
 /// home at `home`.
 #[derive(Debug, Clone)]

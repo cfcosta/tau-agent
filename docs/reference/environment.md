@@ -96,7 +96,7 @@ An agent's repository (ADR 0037) takes one launcher, tau-agents', and
 no other plugin's: its commands, and its stdio MCP servers, start inside
 `bwrap` (`tau_agents_host::sandbox`), one sandbox per command. Its MCP
 servers take the sandbox through `tau_ui_plugin::Unattended`, also when
-no run asks for them; without `bwrap` they do not start.
+no run asks for them; without a sandbox they do not start.
 
 - **Seen:** the command's workspace, read-write, where it starts;
   `/nix`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`,
@@ -118,6 +118,12 @@ no run asks for them; without `bwrap` they do not start.
 - **Without `bwrap`** on `PATH` there is no launcher, the host gives the
   agent's runs no `bash`, and the agent's page says why. tau's Nix
   package puts `bwrap` on its `PATH`; the dev shell has it.
+- **A `bwrap` that cannot make a sandbox** counts as none. As tau
+  starts, `bwrap` runs `true` with an agent's namespaces
+  (`sandbox::check`); if that fails, the page gives bwrap's words. On
+  Ubuntu 24.04 and later, AppArmor keeps unprivileged processes out of
+  user namespaces (`kernel.apparmor_restrict_unprivileged_userns=1`)
+  unless a profile allows `bwrap`.
 
 ## Tests
 
@@ -136,8 +142,9 @@ no run asks for them; without `bwrap` they do not start.
 - `tau-ui`: `tests/direnv.rs` (the host with the fake first on `PATH`)
   and `tests/direnv_ui.rs` (the question, cards and menu entry).
 - `tau-agents-host` (`tests/sandbox.rs`): `bwrap`'s words, the variables
-  dropped and kept, and a real command in a real sandbox when `bwrap`
-  is on `PATH`; (`tests/agents.rs`) a sandbox for agents' repositories
+  dropped and kept, a real command in a real sandbox when `bwrap` is on
+  `PATH`, and a `bwrap` that cannot make one saying why;
+  (`tests/agents.rs`) a sandbox for agents' repositories
   only, and none, said why, without `bwrap`.
 - `tau-ui` (`tests/host.rs`): an agent's runs without a sandbox declare
   no `bash`; the person's keep it.
