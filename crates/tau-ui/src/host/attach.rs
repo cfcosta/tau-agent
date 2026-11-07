@@ -785,9 +785,13 @@ fn drain_all_in_background(
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) {
+    // Counted until each report is shown, as recovery is: what lands
+    // here keeps the host busy.
+    let counted = host.job();
     let job = host.spawn(async move |drainer| drainer.drain_all().await);
     let (host, workspace) = (host.clone(), workspace.downgrade());
     cx.spawn(async move |cx| {
+        let _counted = counted;
         let Ok(reports) = job.await else {
             return;
         };

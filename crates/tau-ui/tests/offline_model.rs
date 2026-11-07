@@ -742,10 +742,26 @@ impl Tau {
     fn restart(&mut self, tc: TestCase) {
         tc.event("the computer starts again");
         self.host_settles();
-        let before = kept(&self.computer.synced());
+        let shown = self.computer.synced();
+        let before = kept(&shown);
         self.net.restart();
         self.listen();
-        let after = kept(&self.computer.synced());
+        self.host_settles();
+        let started = self.computer.synced();
+        // What waited to land lands as tau starts, and closes: a turn of
+        // main's that held it back ended with the restart.
+        let landed: Vec<String> = started
+            .runs
+            .iter()
+            .filter(|view| view.ending.is_some() && waits(&shown, &view.id))
+            .map(|view| view.id.0.to_string())
+            .collect();
+        let mut after = kept(&started);
+        if let Some(closed) = after["closed"].as_array_mut() {
+            closed.retain(|run| {
+                !landed.iter().any(|landed| run.as_str() == Some(landed))
+            });
+        }
         assert_eq!(after, before, "a restart changed what the computer shows");
     }
 
