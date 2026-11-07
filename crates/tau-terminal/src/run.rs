@@ -338,7 +338,9 @@ impl Command {
             .interactive
             .then(|| master.try_clone().map(|fd| Input(Arc::new(fd))))
             .transpose()?;
-        let master = AsyncFd::new(master)?;
+        // SAFETY: `master` is an `OwnedFd` the `AsyncFd` owns from here
+        // on, so its descriptor stays open and the same until it drops.
+        let master = unsafe { AsyncFd::register(master) }.map_err(io::Error::from)?;
 
         let (to_terminal, from_reader) = std_mpsc::channel();
         let (events, receiver) = mpsc::unbounded_channel();

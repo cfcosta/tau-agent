@@ -26,8 +26,9 @@ enum CliError {
     NoPath,
     #[error("unknown argument {0:?}; see the source's header")]
     Unknown(String),
+    /// Boxed, as an `EvalError` is large.
     #[error(transparent)]
-    Eval(#[from] EvalError),
+    Eval(Box<EvalError>),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error("cannot write {}: {source}", path.display())]
@@ -35,6 +36,12 @@ enum CliError {
         path: PathBuf,
         source: std::io::Error,
     },
+}
+
+impl From<EvalError> for CliError {
+    fn from(error: EvalError) -> Self {
+        Self::Eval(Box::new(error))
+    }
 }
 
 fn main() -> ExitCode {
