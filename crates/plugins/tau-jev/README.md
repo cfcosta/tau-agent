@@ -9,31 +9,31 @@ is one crate they share instead of code copied into each.
 
 ## What it provides
 
-| Item                       | What it is                                                           |
-| -------------------------- | -------------------------------------------------------------------- |
-| `Jev`                      | The trait plugins depend on: `ask(&Request) -> Result<Response, _>`  |
-| `TypeSafe`                 | The HTTPS client: `new(key)` or `from_env()`; clones share a pool    |
-| `Request`                  | A state and its questions; `Request::new(state).question(id, q)`     |
-| `Question`                 | `noul` (yes or no), `choice` (one of a set), `score` (levels)        |
-| `NoulCriteria`             | What counts as yes and as no for a `Noul`                            |
-| `Response`                 | The answers by question id, read with `noul`, `choice` and `score`   |
-| `Response::usage`          | Tokens and cost as a `tau_ai` `Usage`, for `PluginCtx::charge`       |
-| `Answer`, `JevUsage`       | The raw answers and token counts                                     |
-| `JevError`                 | Transport, status, malformed, missing, wrong-kind or out-of-range    |
-| `fake::FakeJev`            | A `Jev` that answers from a function and records requests, for tests |
-| `fake::response`           | Builds a `Response` billed one input token per request byte          |
-| `api_key`, `MissingApiKey` | Reading a key; the error when it is missing or blank                 |
-| `API_KEY_VAR`              | `TYPESAFE_API_KEY`                                                   |
-| `DEFAULT_MODEL`            | `jev-latest`                                                         |
-| `SYSTEM_ONE_URL`           | `https://api.typesafe.ai/v1/systemone`                               |
-| `PRICE_PER_MILLION_INPUT`  | US dollars per million input tokens; output tokens are free          |
-| `NAME`, `SERVICE`          | `"tau-jev"`, and the service it gives, `"tau.jev"`                   |
+| Item                       | What it is                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `Jev`                      | The trait plugins depend on: `ask(&Request) -> Result<Response, _>`                               |
+| `TypeSafe`                 | The HTTPS client: `new(key)` or `from_env()`; clones share a pool                                 |
+| `Request`                  | A state and its questions; `Request::new(state).question(id, q)`                                  |
+| `Question`                 | `noul` (yes or no), `choice` (one of a set), `score` (levels)                                     |
+| `NoulCriteria`             | What counts as yes and as no for a `Noul`                                                         |
+| `Response`                 | The answers by question id, read with `noul`, `choice` and `score`                                |
+| `Response::usage`          | Tokens and cost as a `tau_ai` `Usage`, for `PluginCtx::charge`                                    |
+| `Answer`, `JevUsage`       | The raw answers and token counts                                                                  |
+| `JevError`                 | Transport, status, malformed, missing, wrong-kind or out-of-range                                 |
+| `fake::FakeJev`            | A `Jev` that answers from a function and records requests, for tests                              |
+| `fake::response`           | Builds a `Response` billed one input token per request byte                                       |
+| `api_key`, `MissingApiKey` | Reading a key; the error when it is missing or blank                                              |
+| `API_KEY_VAR`              | `TYPESAFE_API_KEY`                                                                                |
+| `DEFAULT_MODEL`            | `jev-latest`                                                                                      |
+| `SYSTEM_ONE_URL`           | `https://api.typesafe.ai/v1/systemone`                                                            |
+| `PRICE_PER_MILLION_INPUT`  | US dollars per million input tokens; output tokens are free                                       |
+| `NAME`, `SERVICE`          | `"tau-jev"`, and the service it gives, `"tau.jev"`                                                |
 | `JevUi`, `ui::Data`        | The plugin's UI: its Models section and key page; whether a key is saved, and the session's stats |
-| `JevHost`                  | The host half: keeps the key, gives the counted client while there is one |
-| `Upstream`                 | A Jev given in place of TypeSafe's, as if a key were saved: tests and the demo |
-| `Metered`, `Meter`         | A Jev that counts its requests, cost and latency                     |
-| `keyed`, `key_page`        | Whether a key is saved, as another plugin's view reads it; the page that takes it |
-| `needs_jev`, `NO_KEY`      | What a plugin that asks Jev says of itself without a key             |
+| `JevHost`                  | The host half: keeps the key, gives the counted client while there is one                         |
+| `Upstream`                 | A Jev given in place of TypeSafe's, as if a key were saved: tests and the demo                    |
+| `Metered`, `Meter`         | A Jev that counts its requests, cost and latency                                                  |
+| `keyed`, `key_page`        | Whether a key is saved, as another plugin's view reads it; the page that takes it                 |
+| `needs_jev`, `NO_KEY`      | What a plugin that asks Jev says of itself without a key                                          |
 
 `TypeSafe::model`, `url` and `retry` change the model, the endpoint (for a
 proxy or a test server) and the retry policy.

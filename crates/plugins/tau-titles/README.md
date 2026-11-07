@@ -10,13 +10,13 @@ plugin, so the Plugins screen shows it.
 
 ## What it provides
 
-| Item                            | What it is                                                          |
-| ------------------------------- | ------------------------------------------------------------------- |
-| `NAME`                          | `"tau-titles"`                                                      |
-| `TitlesUi`                      | The plugin's `UiPlugin`: its row on the Plugins screen and settings |
-| `Settings`                      | Whether titles are written (they are, until switched off)           |
-| `request`, `format`, `parse`, `model` | The request, the reply's schema, its title, and the model asked |
-| `TitlesHost`                    | The `HostHalf`: fills `tau.title` (feature `host`)                  |
+| Item                                  | What it is                                                          |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `NAME`                                | `"tau-titles"`                                                      |
+| `TitlesUi`                            | The plugin's `UiPlugin`: its row on the Plugins screen and settings |
+| `Settings`                            | Whether titles are written (they are, until switched off)           |
+| `request`, `format`, `parse`, `model` | The request, the reply's schema, its title, and the model asked     |
+| `TitlesHost`                          | The `HostHalf`: fills `tau.title` (feature `host`)                  |
 
 ## How it fits
 

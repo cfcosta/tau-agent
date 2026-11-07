@@ -1,6 +1,6 @@
 ---
 name: humanizer
-description: "Load before writing or editing prose a person will read (docs, commit messages, replies, reviews) or when asked to make text sound less AI-written. Finds the patterns from Wikipedia's \"Signs of AI writing\" and tropes.fyi and rewrites them, without inventing facts."
+description: 'Load before writing or editing prose a person will read (docs, commit messages, replies, reviews) or when asked to make text sound less AI-written. Finds the patterns from Wikipedia''s "Signs of AI writing" and tropes.fyi and rewrites them, without inventing facts.'
 ---
 
 # Humanizer
@@ -72,50 +72,25 @@ If a sentence only gestures at abstractions, ground it in a concrete detail alre
 The numbers match `references/patterns.md`, which has the words to watch and a before and after for each.
 
 Content:
+
 1. Inflated significance and legacy ("a pivotal moment", "a testament to", "evolving landscape").
 2. Notability claims and lists of media coverage without context.
 3. Superficial -ing tails ("highlighting...", "ensuring...", "reflecting...").
 4. Promotional language ("nestled", "vibrant", "breathtaking", "boasts").
 5. Vague attributions ("experts argue", "observers have cited").
 6. Formulaic "challenges and future prospects" sections.
-6a. Institutional noun clusters ("stakeholder engagement", "innovative solutions").
+   6a. Institutional noun clusters ("stakeholder engagement", "innovative solutions").
 
-Language:
-7. AI vocabulary (additionally, crucial, delve, enhance, fostering, interplay, intricate, key, landscape, pivotal, showcase, tapestry, testament, underscore, valuable, vibrant).
-8. Copula avoidance ("serves as", "stands as", "features") where "is" or "has" works.
-9. Negative parallelisms and over-balanced contrasts ("not only... but also", "it's not just X, it's Y", "rather than X").
-10. Forced groups of three.
-11. Synonym cycling (protagonist, main character, central figure, hero).
-12. False ranges ("from X to Y" on no real scale).
+Language: 7. AI vocabulary (additionally, crucial, delve, enhance, fostering, interplay, intricate, key, landscape, pivotal, showcase, tapestry, testament, underscore, valuable, vibrant). 8. Copula avoidance ("serves as", "stands as", "features") where "is" or "has" works. 9. Negative parallelisms and over-balanced contrasts ("not only... but also", "it's not just X, it's Y", "rather than X"). 10. Forced groups of three. 11. Synonym cycling (protagonist, main character, central figure, hero). 12. False ranges ("from X to Y" on no real scale).
 
-Style:
-13. Em dashes. In text you write, use none.
-14. Mechanical boldface.
-15. Inline-header lists ("**Performance:** Performance improved...").
-16. Title Case In Headings.
-17. Emojis on headings and bullets.
-18. Curly quotes.
+Style: 13. Em dashes. In text you write, use none. 14. Mechanical boldface. 15. Inline-header lists ("**Performance:** Performance improved..."). 16. Title Case In Headings. 17. Emojis on headings and bullets. 18. Curly quotes.
 
-Communication:
-19. Chatbot artifacts ("I hope this helps", "Certainly!", "Let me know if...").
-20. Knowledge-cutoff disclaimers ("while specific details are limited...").
-21. Sycophancy ("Great question!", "You're absolutely right").
+Communication: 19. Chatbot artifacts ("I hope this helps", "Certainly!", "Let me know if..."). 20. Knowledge-cutoff disclaimers ("while specific details are limited..."). 21. Sycophancy ("Great question!", "You're absolutely right").
 21a. Institutional voice that could be anyone's.
 
-Filler and hedging:
-22. Filler phrases ("in order to", "due to the fact that", "it is important to note that").
-23. Stacked hedges ("could potentially possibly").
-24. Generic upbeat conclusions ("the future looks bright").
+Filler and hedging: 22. Filler phrases ("in order to", "due to the fact that", "it is important to note that"). 23. Stacked hedges ("could potentially possibly"). 24. Generic upbeat conclusions ("the future looks bright").
 
-Technical prose:
-25. Abstract metaphor nouns (substrate, wedge, surface, ratchet, north star, flywheel).
-26. Mid-sentence colons used as connectors.
-27. Feelings stated where a mechanism or a number belongs.
-28. Dense sentences the reader must parse twice.
-29. Passive voice that hides the actor.
-30. Adverbs propping up weak verbs.
-31. Mannered prose: aphorisms, personified code, figurative verbs.
-32. Over-compression: dropped articles, arrows, verbless fragments.
+Technical prose: 25. Abstract metaphor nouns (substrate, wedge, surface, ratchet, north star, flywheel). 26. Mid-sentence colons used as connectors. 27. Feelings stated where a mechanism or a number belongs. 28. Dense sentences the reader must parse twice. 29. Passive voice that hides the actor. 30. Adverbs propping up weak verbs. 31. Mannered prose: aphorisms, personified code, figurative verbs. 32. Over-compression: dropped articles, arrows, verbless fragments.
 
 Tropes (tropes.fyi): magic adverbs (quietly, deeply, fundamentally); "Not X. Not Y. Just Z."; self-answered rhetorical questions ("The result? A mess."); the same opening three times running; filler transitions ("Notably", "Interestingly"); gerund fragment litanies; one-sentence paragraphs for drama; "The first... The second... The third..." prose; false suspense ("Here's the kicker"); "Think of it as..."; "Imagine a world where..."; false vulnerability; assertion in place of proof ("The truth is simple"); stakes inflation; teacher mode ("Let's dive in"); invented concept labels; Unicode decoration; fractal summaries; one metaphor repeated across the piece; stacked historical analogies; one point restated in new frames; duplicated paragraphs.
 

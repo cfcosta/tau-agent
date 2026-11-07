@@ -10,6 +10,7 @@ When two or more fixes that share one premise have failed the same gate, suspect
 **Why:** Each failed fix is evidence against the belief it assumed. A third fix on the same premise spends effort where the evidence already says the cause is not.
 
 **Pattern:**
+
 - **Write the premise down.** The premise is the one sentence every failed fix assumed, for example "the test fails because the cache is stale". Put it in your notes or your reply.
 - **Test the premise before the next fix.** Find an observation that would come out differently if the premise were false, and make it. Look at how the failures are distributed, not only at how large they are: which tests, which inputs, which runs, which order.
 - **Make the check rerunnable** (load the `principle-build-the-lever` skill). A filtered test run that targets the one failing case, or a small script in a scratch directory outside the repository that sets up the condition and prints the observation. Keep the exact command so you can rerun it after each change.

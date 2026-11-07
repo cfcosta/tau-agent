@@ -9,15 +9,15 @@ It is a library: the `tau` app (`crates/tau`) is the binary.
 
 ## What it provides
 
-| Module              | What it holds                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------------- |
-| `host`              | `Host`, the wiring for a real coding agent, and `HostConfig`; it starts signed out or in          |
-| `host::queue`       | A main chat's landing queue: `Lane` decides, the host acts                                        |
-| `hosted`            | The plugins' host halves: `halves` gives them to `tau-ui-remote`'s plugins, `install` once        |
-| `accounts`          | `Credentials`: where sign-ins are kept; tau-chatgpt signs in                                       |
-| `mirror`            | The window as phones mirror it: what crosses, what a phone may ask, the `tau.app` service          |
-| `notify`            | When to notify while the window is not focused (`Notifier`), through the `tau.notify` slot (`Slotted`) |
-| `metered`           | Jev requests counted for the Plugins screen: `Metered`                                            |
+| Module        | What it holds                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------ |
+| `host`        | `Host`, the wiring for a real coding agent, and `HostConfig`; it starts signed out or in               |
+| `host::queue` | A main chat's landing queue: `Lane` decides, the host acts                                             |
+| `hosted`      | The plugins' host halves: `halves` gives them to `tau-ui-remote`'s plugins, `install` once             |
+| `accounts`    | `Credentials`: where sign-ins are kept; tau-chatgpt signs in                                           |
+| `mirror`      | The window as phones mirror it: what crosses, what a phone may ask, the `tau.app` service              |
+| `notify`      | When to notify while the window is not focused (`Notifier`), through the `tau.notify` slot (`Slotted`) |
+| `metered`     | Jev requests counted for the Plugins screen: `Metered`                                                 |
 
 `Host` owns a tokio runtime beside GPUI's executor. A new run starts on that
 runtime; a task reads its events and sends them to the workspace on the UI

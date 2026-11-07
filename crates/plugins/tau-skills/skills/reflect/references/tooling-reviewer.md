@@ -7,16 +7,19 @@ The transcript you review is the conversation you forked from: everything before
 ## Lens addition: agent self-sufficiency
 
 Flag every moment the person handed over context the agent could have fetched itself: through an MCP tool (a ticket tracker, chat, docs, observability, an error tracker, CI, a design tool), through `vcs_log` and `vcs_show`, through `memory_search`, through the repository's instructions, or through another skill. For each:
+
 - Principle: one sentence on what the agent should have looked up on its own.
 - Evidence: the person's hand-off (a ticket id, a thread link, a trace id, "this is from the commit that added X", a pasted error).
 - Routing: the skill that owns the workflow this came up in, extended to fetch the context itself, or `instructions: <section>` when the repository's instructions should say where that context lives.
 
 Examples of the pattern:
+
 - The person pastes a ticket title because the agent did not query the ticket tracker's MCP tool. Routing: the triage workflow should query it first.
 - The person describes a flaky test the agent could have looked up through an observability tool. Routing: the debugging skill should name that tool.
 - The person explains a past decision that `vcs_show` on the commit that made it already records. Routing: the investigation workflow should read history first.
 
 Scan for:
+
 - Tool calls and command flags the agent had to discover.
 - Library and framework quirks: config, lockfiles, environment variables, version-specific gotchas.
 - File and path conventions that are not obvious from a glance at the code.
@@ -29,6 +32,7 @@ Scan for:
 Route a finding to a skill only if the session used that skill or should have. A skill counts as used when the transcript shows a `skill` call that loaded it, or a `read` of its `SKILL.md`. Speculative routings to skills the session never opened do not count.
 
 Valid finding shapes:
+
 - The session loaded the skill and you found a real gap in its body. Route to the skill and its section.
 - The skill was in the run's skill list and would have helped, but was never loaded. Route as `tune description: <skill name>`, so the next agent loads it.
 - The lesson belongs to this repository but to no skill. Route as `instructions: <section>` for the repository's instructions file.
@@ -38,6 +42,7 @@ Valid finding shapes:
 Drop any skill that was neither loaded nor a missed-trigger candidate.
 
 List each durable lesson. For each:
+
 - Principle: one sentence naming the convention or technical fact, concrete enough that a future agent recognizes when it applies.
 - Evidence: the exact moment in the transcript, with the command or flag.
 - Routing: one of the shapes above.

@@ -16,6 +16,7 @@ Make the compiler reject impossible states, mixed-up primitives, and unhandled v
 - **Derive types from authoritative schemas.** When a protobuf file, an OpenAPI spec, a GraphQL schema, a database migration, or a design-token file owns a shape, generate the type from it or check it against it. A query library that checks each SQL query against the real schema at build time ties row types to that schema, so a migration that drops a column breaks the build instead of production.
 
 **The test:**
+
 1. List the values your type can hold. Is any of them a state the program must never be in?
 2. Add a case to the union in your head. Does the compiler point at every place that needs a decision?
 3. Swap two arguments at a call site. Does it still compile?

@@ -10,6 +10,7 @@ When a decision is new, build two or three competing prototypes and compare them
 **Why:** The first design that comes to mind is a sample of one. A structurally different second design either beats it or shows why the first was right.
 
 **When it applies.** Only to real novelty:
+
 - The codebase has no precedent for this kind of interaction, component or architecture, so there is no pattern to follow.
 - The decision is a one-way door: hard to reverse once code, data or users depend on it, such as a storage format, a public API, a protocol, or a core data model.
 
@@ -18,6 +19,7 @@ It also applies to product design decisions where the experience depends on feel
 If the codebase already does this kind of thing, follow its precedent and skip this principle. Three versions of routine work triple it for nothing.
 
 **Pattern:**
+
 - Write the decision down first: the question the prototypes must answer and a short rubric (what must be true, what you are trading off). Write it before any candidate exists, so the candidates cannot shape the rubric.
 - Make the candidates structurally different. Whole-shape alternatives (two ownership models, two data models, two layouts), not point variations inside one shape.
 - Keep each prototype throwaway: no tests, no polish.

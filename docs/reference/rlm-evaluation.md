@@ -29,12 +29,12 @@ had `plain` exact for US$0.12 and `rlm` exact for US$1.13.)
 `### DOCUMENT k` lines, titles removed; the question is how many are
 about codemode (27, by path). Two trials per arm; 27 is exact.
 
-| Arm             | Answers          | Mean score | `infer` | Cost (US$) | Time |
-| --------------- | ---------------- | ---------: | ------: | ---------: | ---: |
-| `plain`         | 28, 28           |       0.96 |       0 |       0.62 | 115s |
-| `codemode`      | 30, 27           |       0.94 |       1 |       0.57 | 122s |
-| `codemode_wide` | 27, 27           |       1.00 |       0 |       0.43 |  71s |
-| `rlm`           | 21, 25           |       0.85 |     118 |       2.71 | 182s |
+| Arm             | Answers | Mean score | `infer` | Cost (US$) | Time |
+| --------------- | ------- | ---------: | ------: | ---------: | ---: |
+| `plain`         | 28, 28  |       0.96 |       0 |       0.62 | 115s |
+| `codemode`      | 30, 27  |       0.94 |       1 |       0.57 | 122s |
+| `codemode_wide` | 27, 27  |       1.00 |       0 |       0.43 |  71s |
+| `rlm`           | 21, 25  |       0.85 |     118 |       2.71 | 182s |
 
 The `rlm` arm is the worst and about five times dearer: a sub-model sees
 one slice at a time and judges "about codemode" without the rest of the
@@ -49,14 +49,14 @@ The same `docs` (two trials) and `count` at 4000 lines (one trial) on
 
 | Task    | Arm             | Exact | Score | `infer` | Cost (US$) | Time |
 | ------- | --------------- | ----: | ----: | ------: | ---------: | ---: |
-| `docs`  | `plain`         |  2/2  |  1.00 |       0 |       0.07 |  37s |
-| `docs`  | `codemode`      |  2/2  |  1.00 |       0 |       0.09 |  34s |
-| `docs`  | `codemode_wide` |  2/2  |  1.00 |       0 |       0.09 |  44s |
-| `docs`  | `rlm`           |  0/2  |  0.89 |     187 |       1.01 | 251s |
-| `count` | `plain`         |  1/1  |  1.00 |       0 |       0.03 |  34s |
-| `count` | `codemode`      |  1/1  |  1.00 |       0 |       0.04 |  28s |
-| `count` | `codemode_wide` |  1/1  |  1.00 |       0 |       0.06 |  40s |
-| `count` | `rlm`           |  0/1  |  1.00 |      40 |       0.78 | 144s |
+| `docs`  | `plain`         |   2/2 |  1.00 |       0 |       0.07 |  37s |
+| `docs`  | `codemode`      |   2/2 |  1.00 |       0 |       0.09 |  34s |
+| `docs`  | `codemode_wide` |   2/2 |  1.00 |       0 |       0.09 |  44s |
+| `docs`  | `rlm`           |   0/2 |  0.89 |     187 |       1.01 | 251s |
+| `count` | `plain`         |   1/1 |  1.00 |       0 |       0.03 |  34s |
+| `count` | `codemode`      |   1/1 |  1.00 |       0 |       0.04 |  28s |
+| `count` | `codemode_wide` |   1/1 |  1.00 |       0 |       0.06 |  40s |
+| `count` | `rlm`           |   0/1 |  1.00 |      40 |       0.78 | 144s |
 
 The stronger model gets every question right with the coding tools or
 plain codemode, in half a minute for a few cents, and never reaches for
@@ -78,8 +78,7 @@ other arms grew with the model's strength.
 - **The default `infer` limits did not bind** (7 calls at most, under
   the 16).
 - A stronger model (above) widened the gap rather than closing it.
-- One trial per cell is noise: the 1000-line `plain` miss was 200 for
-  213.
+- One trial per cell is noise: the 1000-line `plain` miss was 200 for 213.
 
 ## Decision
 

@@ -9,12 +9,12 @@ plugin decides where it goes.
 
 ## What it provides
 
-| Item         | What it is                                                                     |
-| ------------ | ------------------------------------------------------------------------------ |
-| `NAME`       | `"tau-notify"`                                                                 |
-| `NotifyUi`   | The plugin's `UiPlugin`: its row on the Plugins screen and its settings pane   |
-| `Settings`   | Whether notices are on (they are, until switched off)                          |
-| `NotifyHost` | The `HostHalf`: fills `tau.notify` with the desktop's notifications (`host`)   |
+| Item         | What it is                                                                   |
+| ------------ | ---------------------------------------------------------------------------- |
+| `NAME`       | `"tau-notify"`                                                               |
+| `NotifyUi`   | The plugin's `UiPlugin`: its row on the Plugins screen and its settings pane |
+| `Settings`   | Whether notices are on (they are, until switched off)                        |
+| `NotifyHost` | The `HostHalf`: fills `tau.notify` with the desktop's notifications (`host`) |
 
 ## How it fits
 

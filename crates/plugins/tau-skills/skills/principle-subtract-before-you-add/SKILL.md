@@ -12,6 +12,7 @@ When you evolve a system, remove complexity first, then build. Default to subtra
 Make simplification a continual investment. Leave the design slightly simpler and more capable, behind the same or a smaller interface than you found it.
 
 **Pattern:**
+
 - Sequence removal before construction. Land the removal as its own `vcs_commit` (for example `refactor: remove unused retry wrapper`) before the commit that adds anything. Run the tests on the removal commit, so it is proven to change nothing.
 - Cut before you polish. Get to the minimum before you invest in quality.
 - Design for observed usage, not speculative edge cases.

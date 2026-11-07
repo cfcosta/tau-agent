@@ -8,21 +8,21 @@ The crate depends on no other tau crate, so any GPUI app can use it.
 
 ## What it provides
 
-| Item                                 | What it is                                                                                   |
-| ------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `Terminal`                           | The emulator. Feed bytes with `write`; read `text` (plain), `vt` (replayable) or `snapshot`  |
-| `Options`, `Size`, `Scroll`          | How to create a `Terminal`, its size in cells (`Size::TOOL` is 120×40), and viewport scrolls |
-| `Screen`, `Line`, `TextRun`, `Style` | A styled snapshot of the terminal, as plain data that crosses threads                        |
-| `Command`                            | A builder that runs a program under a pseudo-terminal (`interactive` puts stdin on it)       |
-| `Run`, `Event`, `Finished`, `Replay` | A running command, its ordered events (`Output`, `Text`, `Screen`, `Exit`) and how it ended  |
+| Item                                 | What it is                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `Terminal`                           | The emulator. Feed bytes with `write`; read `text` (plain), `vt` (replayable) or `snapshot`      |
+| `Options`, `Size`, `Scroll`          | How to create a `Terminal`, its size in cells (`Size::TOOL` is 120×40), and viewport scrolls     |
+| `Screen`, `Line`, `TextRun`, `Style` | A styled snapshot of the terminal, as plain data that crosses threads                            |
+| `Command`                            | A builder that runs a program under a pseudo-terminal (`interactive` puts stdin on it)           |
+| `Run`, `Event`, `Finished`, `Replay` | A running command, its ordered events (`Output`, `Text`, `Screen`, `Exit`) and how it ended      |
 | `Killer`, `Input`                    | Kill a run's whole process group, or write to an interactive command's terminal, from any thread |
-| `TerminalView`, `ViewOptions`        | A GPUI entity: feed it bytes while a program runs, `freeze` it when it ends                  |
-| `TerminalEvent`, `view::bind_keys`   | What the view emits, and the key bindings for copy                                           |
-| `Palette`                            | The colors the view draws in                                                                 |
-| `Scroller`, `ScrollTo`               | Scroll math for the view                                                                     |
-| `Selection`, `Point`, `text_of`      | Selecting cells and reading their text                                                       |
-| `glyph`, `layout`                    | Pure drawing helpers: box and block glyphs as shapes, and a row's runs                       |
-| `Error`                              | Why a call failed: libghostty-vt, I/O, or a write to a frozen view                           |
+| `TerminalView`, `ViewOptions`        | A GPUI entity: feed it bytes while a program runs, `freeze` it when it ends                      |
+| `TerminalEvent`, `view::bind_keys`   | What the view emits, and the key bindings for copy                                               |
+| `Palette`                            | The colors the view draws in                                                                     |
+| `Scroller`, `ScrollTo`               | Scroll math for the view                                                                         |
+| `Selection`, `Point`, `text_of`      | Selecting cells and reading their text                                                           |
+| `glyph`, `layout`                    | Pure drawing helpers: box and block glyphs as shapes, and a row's runs                           |
+| `Error`                              | Why a call failed: libghostty-vt, I/O, or a write to a frozen view                               |
 
 `Terminal` wraps libghostty-vt, which is not thread-safe, so it is neither
 `Send` nor `Sync`. Create it on the thread that uses it. `Screen` and

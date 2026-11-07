@@ -1,6 +1,6 @@
 ---
 name: why
-description: "Load for \"why is X this way\", \"why did we pick Y\", design rationale, regressions, postmortems, or where a number came from. Makes you search the history and each MCP source the run has, then give a cited answer that keeps known, inferred and unknown apart. For behaviour, load `how`."
+description: 'Load for "why is X this way", "why did we pick Y", design rationale, regressions, postmortems, or where a number came from. Makes you search the history and each MCP source the run has, then give a cited answer that keeps known, inferred and unknown apart. For behaviour, load `how`.'
 ---
 
 # Why

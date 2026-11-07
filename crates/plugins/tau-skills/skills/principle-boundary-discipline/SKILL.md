@@ -10,11 +10,13 @@ Place validation, type narrowing and error handling at system boundaries. Trust 
 **Why:** Scattered validation is noisy and redundant, and it gives a false sense of safety: each check covers only the path it sits on. Logic kept out of framework wiring can be tested without the framework.
 
 **The pattern:**
+
 - **At boundaries** (CLI arguments, config files, environment variables, database rows, external APIs, network protocols): validate, return errors, handle defensively.
 - **Inside the system:** typed data, propagated errors, no re-validation. Trust the types.
 - **Across the boundary:** expose domain concepts, not the boundary's private representation. Keep general-purpose mechanism inside and special-purpose policy at the edge.
 
 **Applications:**
+
 - A config file is parsed and checked once, at load, into a `Config` type, with errors that name the bad key. Business logic takes the `Config`. It never reads the file or the environment again.
 - A database row is turned into a domain type in the storage layer. Callers get a `Session`, not a row, a column map, or a record of nullable fields that mirrors the table.
 - A provider's wire types (the JSON request and response shapes of an HTTP API) stay inside the provider module. The rest of the code sees domain messages and errors, so a provider change touches one module.
@@ -24,6 +26,7 @@ Place validation, type narrowing and error handling at system boundaries. Trust 
 - Business logic has no framework dependencies, so its tests need no database, server or UI.
 
 **The tests:**
+
 - "Is this data crossing a system boundary right now?" If not, validation here is redundant.
 - "Can this be a pure function that the shell just calls?" If yes, extract it.
 

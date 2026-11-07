@@ -9,18 +9,18 @@ publishes.
 
 ## What it provides
 
-| Item                      | What it is                                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------------------------ |
+| Item                      | What it is                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
 | `GitHubUi`                | The plugin's `UiPlugin`: the setup step (`points::SETUP`) and the Models section (`points::MODELS`) |
-| `GitHubData`, `SignIn`    | Its data: how the sign-in stands, `Unknown` until a host says                                    |
-| `DeviceCode`              | A device code to enter on GitHub, where, and for how long                                        |
-| `Act`                     | What the UI asks the host half: `SignIn`, `Check`, `Token`, `SignOut`                            |
-| `Signed`                  | The host half's answer once a sign-in is saved; its reply ends the setup step                    |
-| `Do`                      | What a sign-in button asks, in its arguments                                                     |
-| `sign_in::form`           | The sign-in's tree: start, the code, the token form, or who is signed in                        |
-| `step`, `section`         | The setup step and the Models section                                                            |
-| `NAME`, `STEP`            | `"tau-github"`, the name both halves go by, and the step's name                                 |
-| `install_url`, `APP_SLUG` | Where to give tau's GitHub App access to more repositories                                       |
+| `GitHubData`, `SignIn`    | Its data: how the sign-in stands, `Unknown` until a host says                                       |
+| `DeviceCode`              | A device code to enter on GitHub, where, and for how long                                           |
+| `Act`                     | What the UI asks the host half: `SignIn`, `Check`, `Token`, `SignOut`                               |
+| `Signed`                  | The host half's answer once a sign-in is saved; its reply ends the setup step                       |
+| `Do`                      | What a sign-in button asks, in its arguments                                                        |
+| `sign_in::form`           | The sign-in's tree: start, the code, the token form, or who is signed in                            |
+| `step`, `section`         | The setup step and the Models section                                                               |
+| `NAME`, `STEP`            | `"tau-github"`, the name both halves go by, and the step's name                                     |
+| `install_url`, `APP_SLUG` | Where to give tau's GitHub App access to more repositories                                          |
 
 ## How it fits
 

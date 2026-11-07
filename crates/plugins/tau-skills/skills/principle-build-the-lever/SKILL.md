@@ -12,6 +12,7 @@ When the work is not trivial, build the tool that does it instead of doing it by
 Default to building the lever. Skip it only when the task is trivial: a couple of obvious edits you can see at a glance.
 
 **Pattern:**
+
 - Do the first unit by hand to learn the recipe, then build the tool. Prove it on that unit: commit the hand-done version, `vcs_restore` those paths `from` the change before it, run the tool, and check that `vcs_diff` comes out empty. Make the lever safe to rerun.
 - Pick the kind that fits: a codemod or script for edits, a generator for repetitive files, a query over a dump (sqlite, jq, or a `codemode` script) for analysis, a rerunnable check for verification.
 - A deterministic lever beats fan-out. If the tool can process every unit in one pass, run it yourself. Do not `spawn` sub-agents to hand-apply what a script can do.

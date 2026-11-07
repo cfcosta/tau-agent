@@ -1,6 +1,6 @@
 ---
 name: interrogate
-description: "Load for \"interrogate\", \"adversarial review\", \"challenge this\", \"stress test this\", \"find blind spots\" or \"tear this apart\". Makes you review a commit stack through separate lenses (correctness, structure, verification and security) and sort findings into Act on, Consider, Noted, Dismissed."
+description: 'Load for "interrogate", "adversarial review", "challenge this", "stress test this", "find blind spots" or "tear this apart". Makes you review a commit stack through separate lenses (correctness, structure, verification and security) and sort findings into Act on, Consider, Noted, Dismissed.'
 ---
 
 # Interrogate
@@ -55,27 +55,35 @@ You are the lead reviewer, a pragmatic senior engineer, not a neutral aggregator
 Put a long verdict on the canvas with `canvas_write` and give the Act on list in the reply. A short one goes in the reply.
 
 ### Intent
+
 > The intent paragraph from step 2.
 
 ### Scope
+
 The change ids reviewed and the files they touch.
 
 ### Reviewers
+
 One line per lens: the lens, whether a spawned reviewer or you ran it, and its number of findings.
 
 ### Act on
+
 Each: the description, the lenses that raised it, why it matters, and what you checked yourself.
 
 ### Consider
+
 Each: the description, the lenses that raised it, and the tradeoff.
 
 ### Noted
+
 A brief list.
 
 ### Dismissed
+
 Each with a brief reason.
 
 ### Agreement map
+
 Where the lenses agreed and where they diverged, and what that pattern says about the change. Name any area no lens covered.
 
 After the verdict, stop. Fixing the Act on items is a separate task the person starts, or the next step of the playbook that called this skill.

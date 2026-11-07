@@ -1,6 +1,6 @@
 ---
 name: playbook-autonomous-run
-description: "Load when told to drive a task to done without stopping (\"run until done\", \"keep going until the tests pass\", \"going to bed, finish this\"). Makes you state a checkable exit condition, offer it as a /goal, iterate in small verified commits, and keep a decision trail on the canvas."
+description: 'Load when told to drive a task to done without stopping ("run until done", "keep going until the tests pass", "going to bed, finish this"). Makes you state a checkable exit condition, offer it as a /goal, iterate in small verified commits, and keep a decision trail on the canvas.'
 ---
 
 # Autonomous run

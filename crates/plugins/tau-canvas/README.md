@@ -8,19 +8,19 @@ revision of an item is kept, and the person steps back through them.
 
 ## What it provides
 
-| Item                                        | What it is                                                                    |
-| ------------------------------------------- | ----------------------------------------------------------------------------- |
-| `Record`                                    | What the plugin publishes: `Revised`, one revision of an item                 |
-| `Content`, `ImageRef`, `Blob`               | A revision's image (kept in storage, by reference) or document text           |
-| `Canvas`, `Item`, `Revision`                | The fold of a run's records: its items with every revision                    |
-| `apply_edits`, `Edit`                       | `canvas_edit`'s replacements, each matching once                              |
-| `NAME`, `SHOW`, `WRITE`, `EDIT`, `READ`     | `"tau-canvas"` and the tools' names                                           |
-| `MAX_IMAGE_BYTES`, `MAX_DOCUMENT_BYTES`     | 8 MiB an image, 256 KiB a document                                            |
-| `CanvasUi`                                  | The plugin's `UiPlugin`: the pane, the cards, and its status line             |
-| `ui::Pick`, `ui::pick_key`, `ui::Ui`        | The revision the person picked, the UI state key it is kept under, and what a window keeps (fetched images) |
-| `host::CanvasPlugin`, `host::Storage`       | The agent plugin with the four tools, and the image storage (feature `host`)  |
-| `CanvasHost`                                | The `HostHalf` for tau's plugin registry (feature `host`)                     |
-| `demo::seed`, `demo::chart`                 | What tau-ui's demo puts on a canvas (feature `demo`)                          |
+| Item                                    | What it is                                                                                                  |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `Record`                                | What the plugin publishes: `Revised`, one revision of an item                                               |
+| `Content`, `ImageRef`, `Blob`           | A revision's image (kept in storage, by reference) or document text                                         |
+| `Canvas`, `Item`, `Revision`            | The fold of a run's records: its items with every revision                                                  |
+| `apply_edits`, `Edit`                   | `canvas_edit`'s replacements, each matching once                                                            |
+| `NAME`, `SHOW`, `WRITE`, `EDIT`, `READ` | `"tau-canvas"` and the tools' names                                                                         |
+| `MAX_IMAGE_BYTES`, `MAX_DOCUMENT_BYTES` | 8 MiB an image, 256 KiB a document                                                                          |
+| `CanvasUi`                              | The plugin's `UiPlugin`: the pane, the cards, and its status line                                           |
+| `ui::Pick`, `ui::pick_key`, `ui::Ui`    | The revision the person picked, the UI state key it is kept under, and what a window keeps (fetched images) |
+| `host::CanvasPlugin`, `host::Storage`   | The agent plugin with the four tools, and the image storage (feature `host`)                                |
+| `CanvasHost`                            | The `HostHalf` for tau's plugin registry (feature `host`)                                                   |
+| `demo::seed`, `demo::chart`             | What tau-ui's demo puts on a canvas (feature `demo`)                                                        |
 
 ## How it fits
 

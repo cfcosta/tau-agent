@@ -13,14 +13,14 @@ calls and costs money.
 One generated file, `data/tickets.txt`, of customer support messages
 (about 100 bytes a line), the same for every arm of a trial. Each message
 is mainly about one of five things; some deliberately share words with
-another (a message asking for a refund *button* is a feature request).
+another (a message asking for a refund _button_ is a feature request).
 
-| Task     | Question                                    | Needs                         |
-| -------- | ------------------------------------------- | ----------------------------- |
-| `count`  | how many messages are billing messages      | every line classified (OOLONG) |
-| `top`    | which category has the most messages        | every line, five counts       |
-| `needle` | the passphrase hidden in one line           | a `grep`: the control         |
-| `docs`   | how many of tau's documents are about codemode | real text, not templates |
+| Task     | Question                                       | Needs                          |
+| -------- | ---------------------------------------------- | ------------------------------ |
+| `count`  | how many messages are billing messages         | every line classified (OOLONG) |
+| `top`    | which category has the most messages           | every line, five counts        |
+| `needle` | the passphrase hidden in one line              | a `grep`: the control          |
+| `docs`   | how many of tau's documents are about codemode | real text, not templates       |
 
 The answer is the last `ANSWER:` line of the reply. `exact` is a match;
 `score` is 1 for a match and, for `count`, 1 minus the relative error
@@ -29,12 +29,12 @@ every run.
 
 ## Arms
 
-| Arm             | What the model has                                                          |
-| --------------- | --------------------------------------------------------------------------- |
-| `plain`         | the coding tools                                                            |
+| Arm             | What the model has                                                                            |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| `plain`         | the coding tools                                                                              |
 | `codemode`      | plus `codemode`, with `tools.infer` at its default limits (16 calls, 100k tokens, US$1, 60 s) |
-| `codemode_wide` | the same with the limits raised (400 calls, 8 at once, 20 min, US$10)       |
-| `rlm`           | `codemode_wide` and the paper's strategy, with a worked Luau example, in the instructions |
+| `codemode_wide` | the same with the limits raised (400 calls, 8 at once, 20 min, US$10)                         |
+| `rlm`           | `codemode_wide` and the paper's strategy, with a worked Luau example, in the instructions     |
 
 ## Usage
 

@@ -1,6 +1,6 @@
 ---
 name: blast-radius
-description: "Load for \"blast radius of X\", \"what could this break\", or a small diff you don't trust yet. Makes you find what a change breaks outside itself, beyond what grep shows, and prove the one fact it is safe because of by running real code instead of writing it up."
+description: 'Load for "blast radius of X", "what could this break", or a small diff you don''t trust yet. Makes you find what a change breaks outside itself, beyond what grep shows, and prove the one fact it is safe because of by running real code instead of writing it up.'
 ---
 
 # Blast radius

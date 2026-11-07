@@ -12,7 +12,13 @@ default = ["host"]
 # The host half: the clock, what chats scheduled, kept on the host, and
 # the turns that wake them. The types, the message and the views build
 # without it.
-host = ["dep:anyhow", "dep:async-trait", "dep:libc", "dep:tau-agents", "dep:tokio"]
+host = [
+  "dep:anyhow",
+  "dep:async-trait",
+  "dep:libc",
+  "dep:tau-agents",
+  "dep:tokio",
+]
 
 [dependencies]
 anyhow = { workspace = true, optional = true }
@@ -33,5 +39,10 @@ tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
 hegeltest.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = [
+  "rt",
+  "rt-multi-thread",
+  "sync",
+  "time",
+] }
 tokio-util.workspace = true

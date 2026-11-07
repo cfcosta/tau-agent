@@ -53,22 +53,29 @@ Mechanics are not motivation. A commit changing `limit = 50` to `limit = 100` sh
 Your final message is your report, in this structure.
 
 ### Source
+
 Which source you investigated.
 
 ### What I searched
+
 The queries you ran, the items you opened, the places you looked. Be specific.
 
 ### Direct evidence found
+
 For each item that explicitly addresses the question: what it says (verbatim where you can), where it's from (commit id, PR number, ticket id, URL or `file:line`), author and date if known, and one sentence on its relevance.
 
 ### Indirect evidence
+
 For each item that bears on the question without answering it: what it is, where it's from, what it suggests with the inference chain, and any other reading the same evidence fits.
 
 ### Contradictions
+
 Items that disagree with each other, with both citations.
 
 ### Gaps
+
 What you searched for and didn't find: "Searched the issue tracker for [query] across [time range]. No matching issues."
 
 ### Additional leads
+
 References into other sources, for their investigator or a follow-up pass.

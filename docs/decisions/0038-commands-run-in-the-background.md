@@ -30,8 +30,8 @@ models have been trained on exactly this contract.
 - **`bash` goes**, with its timeout, its spill file, its artifact
   publication and its pipe mode. Every command runs on a terminal.
 - **`exec_command { cmd, workdir?, yield_time_ms?, tty? }`** starts the
-  command and waits 250 to 30000 ms (10000 by default). **`write_stdin {
-  process_id, chars?, yield_time_ms? }`** types to a process and reads it;
+  command and waits 250 to 30000 ms (10000 by default).
+  **`write_stdin { process_id, chars?, yield_time_ms? }`** types to a process and reads it;
   with no `chars` it polls, and waits at least 5 s. Both answer with the
   new output only, once, and whether the process still runs; a non-zero
   exit is an error carrying the output, as `bash`'s was.
@@ -70,8 +70,8 @@ models have been trained on exactly this contract.
   tools, from the text of the result: with no spill file, that text is
   the whole output, and the archive is written when it prunes.
 - **Command artifacts go.** Only `read` publishes artifacts. The
-  structured result for codemode is `{ process_id, running, exit_code,
-  output, truncated, dropped_lines }`.
+  structured result for codemode is
+  `{ process_id, running, exit_code, output, truncated, dropped_lines }`.
 
 ## Alternatives considered
 

@@ -12,7 +12,7 @@ conversation's prompt cache lapses; signed out, it gives none.
 | -------------- | ----------------------------------------------------------------------- |
 | `NAME`         | `"tau-chatgpt"`                                                         |
 | `ChatGptUi`    | The plugin's `UiPlugin`: its row on the Plugins screen                  |
-| `plan_account` | The active account in tau's config directory, when it has plan usage   |
+| `plan_account` | The active account in tau's config directory, when it has plan usage    |
 | `ChatGptHost`  | The `HostHalf`: fills `tau.provider` from the saved sign-ins (`host`)   |
 | `Over`         | A provider over a client given it, always signed in: for tests (`host`) |
 

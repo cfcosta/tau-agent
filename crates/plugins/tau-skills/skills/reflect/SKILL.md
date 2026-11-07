@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: "Load when the person says \"reflect\", or at the end of a long task to capture what it taught. Reviews this conversation through three lenses, filters the findings, and turns each kept one into an approved edit to the repository's skills, its instructions file, or memory."
+description: 'Load when the person says "reflect", or at the end of a long task to capture what it taught. Reviews this conversation through three lenses, filters the findings, and turns each kept one into an approved edit to the repository''s skills, its instructions file, or memory.'
 ---
 
 # Reflect
@@ -13,11 +13,11 @@ Skip it when the conversation was trivial, off-topic, or already covered by a sk
 
 Each lens has a brief in this skill's folder. Read the three files first.
 
-| Lens | Looks for | Brief |
-|---|---|---|
-| Judgment | the durable principle behind a specific incident | `references/judgment-reviewer.md` |
-| Tooling | the command, flag, path, or quirk the next agent would re-derive, and context the person handed over that you could have fetched | `references/tooling-reviewer.md` |
-| Divergent | second-order effects, things that worked for the wrong reasons, what did not happen but should have | `references/divergent-reviewer.md` |
+| Lens      | Looks for                                                                                                                        | Brief                              |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| Judgment  | the durable principle behind a specific incident                                                                                 | `references/judgment-reviewer.md`  |
+| Tooling   | the command, flag, path, or quirk the next agent would re-derive, and context the person handed over that you could have fetched | `references/tooling-reviewer.md`   |
+| Divergent | second-order effects, things that worked for the wrong reasons, what did not happen but should have                              | `references/divergent-reviewer.md` |
 
 **On the main chat**, spawn one sub-agent per lens. Commit any pending work first, because `spawn` refuses while `@` holds changes. Pass each brief verbatim as the `task`, with `land: false` so nothing a reviewer touches lands. Do not pass `fresh`: the session is what they review, and a forked sub-agent already has the whole transcript, with nothing to locate or attach. A fresh one would see none of it. The cost is that the reviewers share your view of what happened, so they are not independent. Their diversity comes from the lens, so keep the briefs distinct and do not add your own conclusions to them. Spawn all three in one turn, then end the turn. Each reviewer's report starts a turn of yours. Note it and end the turn again until all three are in.
 

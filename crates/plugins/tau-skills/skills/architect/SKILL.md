@@ -1,6 +1,6 @@
 ---
 name: architect
-description: "Load before writing code that crosses a function boundary, for \"architect this\" or \"design this\", or when jumping to code would lock in the wrong shape. Makes you ground in the code, sketch two or more distinct designs as types and signatures, screen them for red flags, then build to the sketch."
+description: 'Load before writing code that crosses a function boundary, for "architect this" or "design this", or when jumping to code would lock in the wrong shape. Makes you ground in the code, sketch two or more distinct designs as types and signatures, screen them for red flags, then build to the sketch.'
 ---
 
 # Architect

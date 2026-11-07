@@ -68,8 +68,8 @@ loading:
   `workspaces/<id>/config.toml` in jj's config directory, named by
   `.jj/repo/config-id` and `.jj/workspace-config-id`. tau reads them
   with jj-lib's `SecureConfig::maybe_load_config`, as any jj command
-  does, and makes a config id only where `jj git clone` or `jj git
-  init` would: when a clone, an import or a local repository's setup
+  does, and makes a config id only where `jj git clone` or
+  `jj git init` would: when a clone, an import or a local repository's setup
   writes the repository's `trunk()` (see "Projects" and "Setting up a
   local repository").
 - `--when` scopes resolve once the repository is known, against the
@@ -138,8 +138,8 @@ loading:
   new workspace a Git worktree when the current one is colocated, and
   tau's run workspaces always are, see "Projects");
   `git.push` and `revsets.git-push` (a push names its remote, `origin`,
-  and the one branch it sends, as `jj git push --remote origin
-  --bookmark <branch>` would, so neither the default remotes nor the
+  and the one branch it sends, as
+  `jj git push --remote origin --bookmark <branch>` would, so neither the default remotes nor the
   default revset applies); `aliases.*` (tau runs no jj command);
   `experimental-advance-branches` (tau moves its trunk and run
   bookmarks itself); `diff.git.show-path-prefix` (tau's diff readers
@@ -219,25 +219,25 @@ person's own `jj` commands from its own in the operation log:
 - Its description starts `tau: ` (`DESCRIPTION_PREFIX`), so
   `jj op log` shows whose it is:
 
-  | Description                           | Written by                                              |
-  | ------------------------------------- | ------------------------------------------------------- |
-  | `tau: vcs_<tool>`                     | a write tool, `vcs_land` included                       |
-  | `tau: snapshot working copy`          | a tool's or a turn's snapshot, a local setup's          |
-  | `tau: import git refs`                | in a local repository, a write's import of Git's refs   |
-  | `tau: import git head`                | a local setup, as `jj git init` imports `HEAD`          |
-  | `tau: checkpoint`                     | a turn's end (`end_turn`, `commit_all`)                 |
-  | `tau: move onto`                      | a catch-up (`Vcs::move_onto`)                           |
-  | `tau: make the repository`            | `Project::init`, `Vcs::init`                            |
-  | `tau: import`                         | a clone or an import                                    |
-  | `tau: update`                         | `update`                                                |
-  | `tau: add workspace <name>`           | `add_workspace`, a fork's, a local setup                |
-  | `tau: name the main chat's workspace` | opening a project made before it had one                |
-  | `tau: forget workspace <name>`        | a sweep, a landing, a dropped child, a sub-agent's end  |
-  | `tau: abandon <n> changes`            | a sweep, a dropped child, a sub-agent's end             |
-  | `tau: remove bookmark <name>`         | `remove_head` of a branch                               |
-  | `tau: move run heads to refs/tau`     | opening a project whose runs' heads were bookmarks      |
-  | `tau: push <branch>`                  | `push_trunk`                                            |
-  | `tau: sign commits before pushing`    | `push_trunk` with `git.sign-on-push`                    |
+  | Description                           | Written by                                             |
+  | ------------------------------------- | ------------------------------------------------------ |
+  | `tau: vcs_<tool>`                     | a write tool, `vcs_land` included                      |
+  | `tau: snapshot working copy`          | a tool's or a turn's snapshot, a local setup's         |
+  | `tau: import git refs`                | in a local repository, a write's import of Git's refs  |
+  | `tau: import git head`                | a local setup, as `jj git init` imports `HEAD`         |
+  | `tau: checkpoint`                     | a turn's end (`end_turn`, `commit_all`)                |
+  | `tau: move onto`                      | a catch-up (`Vcs::move_onto`)                          |
+  | `tau: make the repository`            | `Project::init`, `Vcs::init`                           |
+  | `tau: import`                         | a clone or an import                                   |
+  | `tau: update`                         | `update`                                               |
+  | `tau: add workspace <name>`           | `add_workspace`, a fork's, a local setup               |
+  | `tau: name the main chat's workspace` | opening a project made before it had one               |
+  | `tau: forget workspace <name>`        | a sweep, a landing, a dropped child, a sub-agent's end |
+  | `tau: abandon <n> changes`            | a sweep, a dropped child, a sub-agent's end            |
+  | `tau: remove bookmark <name>`         | `remove_head` of a branch                              |
+  | `tau: move run heads to refs/tau`     | opening a project whose runs' heads were bookmarks     |
+  | `tau: push <branch>`                  | `push_trunk`                                           |
+  | `tau: sign commits before pushing`    | `push_trunk` with `git.sign-on-push`                   |
 
 - jj-lib writes an operation of its own when it makes a repository or
   a workspace (`add workspace '<name>'`). tau makes both without it:
@@ -629,8 +629,8 @@ one the workspace store gives `main/`.
   `add_workspace_from_snapshot` make the worktree first, with `HEAD` on
   jj's unborn placeholder (`ref: refs/jj/root`), and the operation that
   adds the workspace points it at `@-`; they write `.jj/.gitignore`
-  there too. The jj CLI finds the workspace colocated (`jj git
-  colocation status`), and its export, which detaches every worktree's
+  there too. The jj CLI finds the workspace colocated
+  (`jj git colocation status`), and its export, which detaches every worktree's
   `HEAD` on a branch it moves, finds tau's detached already.
 - A run workspace that is not a whole worktree (one made before runs
   had them, one whose making was cut off, one whose worktree the person
@@ -654,8 +654,8 @@ one the workspace store gives `main/`.
   removes `root`. As `jj git clone` does, when `origin/HEAD` names a
   branch the clone has, the repository's config (`repos/<id>/config.toml`
   in the person's jj config directory, made when there is none, with
-  what it held kept) gets `revset-aliases."trunk()" =
-  "<branch>@origin"`, so `trunk()` and `immutable_heads()` name
+  what it held kept) gets
+  `revset-aliases."trunk()" = "<branch>@origin"`, so `trunk()` and `immutable_heads()` name
   upstream's default branch whatever it is called. Nothing is written
   without a jj config directory. An import writes it the same way, the
   source's default branch standing for the remote's. An update leaves
@@ -694,16 +694,16 @@ one the workspace store gives `main/`.
   commits, the workspace starts on the commit `base`'s change names
   now, so the old commit does not come back beside the new one. It is
   one operation, `tau: add workspace <name>`, after the workspace's
-  Git worktree is made. `forget_workspace(name)` removes it as `jj
-  workspace remove` does: it drops it from the view, then from the
+  Git worktree is made. `forget_workspace(name)` removes it as
+  `jj workspace remove` does: it drops it from the view, then from the
   workspace store (`.jj/repo/workspace_store`), then its Git worktree,
   then deletes the directory; its commits stay. (`jj workspace forget`
   keeps the store's entry, for `jj undo`; tau deletes the directory,
   so there is nothing to point back at.)
 - A run's workspace is one tau made: the workspace store has it in its
   directory under `runs/`. `workspaces()` lists those, and only those:
-  never the main chat's, and never one the person made with `jj
-  workspace add`, wherever they put it. `forget_workspace` leaves the
+  never the main chat's, and never one the person made with
+  `jj workspace add`, wherever they put it. `forget_workspace` leaves the
   main chat's workspace and the person's alone, and never deletes a
   directory the store gives another workspace.
 - These calls block. Call them off the async executor.
@@ -744,8 +744,8 @@ Otherwise it returns `Found`:
 - `kind`: `Git`, or `Jj` for a jj repository colocated with Git (its
   Git store checked out at its root, as `jj git colocation status`
   says).
-- `root`: the repository's folder, symbolic links resolved, as `git
-  rev-parse --show-toplevel` prints it.
+- `root`: the repository's folder, symbolic links resolved, as
+  `git rev-parse --show-toplevel` prints it.
 - `branch`: the checked-out branch, one with no commits yet included;
   none when `HEAD` is detached, as it is in a colocated jj repository.
 - `origin`: `remote.origin.url`. The forge's plugin says which of its

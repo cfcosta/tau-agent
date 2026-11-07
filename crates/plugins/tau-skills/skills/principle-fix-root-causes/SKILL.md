@@ -10,6 +10,7 @@ When debugging, fix the fault, not the place where it showed. The symptom is whe
 **Why:** A symptom fix hides the evidence and leaves the fault free to appear somewhere else. Each one makes the system harder to reason about, because the code now carries a workaround for a bug nobody named.
 
 **Pattern:**
+
 - Reproduce first. Write the reproduction as a test that fails on the current code, run it, and watch it fail for the reason you expect.
 - Commit the failing test on its own with `vcs_commit` (for example `test(parser): a trailing comma drops the last field`). Then fix, run it again, watch it pass, and commit the fix separately. The reviewer sees red, then green. If the repository's checks forbid a failing test in a commit, mark the test as expected to fail in the first commit and remove the mark in the fix.
 - Ask "why" at each step until the answer is a wrong decision in the code, not a consequence of an earlier one.

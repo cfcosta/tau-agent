@@ -10,6 +10,7 @@ Encode the real domain in a data structure instead of scattering it across condi
 **Why:** Choosing the structure at write time is cheap. Recovering it later reads as a refactor and gets deferred, while every new feature adds another branch to the scattered version.
 
 **Reach for:**
+
 - A state machine instead of scattered booleans, phases or lifecycle checks. In a typed language, a tagged union (sum type) whose cases carry each state's data: a job that is queued, running with its process id, or done with its exit status. Handle it exhaustively, with no catch-all branch, so a new state breaks the build everywhere that must decide about it.
 - A typed model instead of loose parameters or repeated shape assumptions: a record type in place of a tuple, a string-keyed map of untyped values, or five arguments that always travel together. A distinct type (a duration in milliseconds, not a bare integer) when a primitive carries a meaning or a rule.
 - A map, registry, lookup table or tagged union instead of branching spread across files. One table that lists every kind with its properties replaces the same branch on the kind copied into five modules.

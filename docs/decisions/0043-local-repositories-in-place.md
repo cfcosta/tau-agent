@@ -159,9 +159,9 @@ small dialog).
   and remove the code paths that assume the main chat is `default`
   (`DEFAULT_WORKSPACE`, 22 places).
 - jj-lib 0.46.0's API for a jj workspace that is also a Git worktree
-  (`git::create_worktree` and `unlink_worktree`, what `jj workspace
-  add` and `forget` use) runs `git worktree add --orphan` and `git
-  worktree prune`. tau creates the worktree itself with gix (there is
+  (`git::create_worktree` and `unlink_worktree`, what
+  `jj workspace add` and `forget` use) runs `git worktree add --orphan` and
+  `git worktree prune`. tau creates the worktree itself with gix (there is
   no git binary), as jj-lib lays it out but with absolute paths, so
   the person's `.git/config` is never changed, and keeps its `HEAD`
   and index in step, as `colocate.rs` does for `main/` today.

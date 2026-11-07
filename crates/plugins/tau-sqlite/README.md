@@ -7,11 +7,11 @@ plugin fills it from its half alone (`HostHalf::fill_early`).
 
 ## What it provides
 
-| Item         | What it is                                                     |
-| ------------ | -------------------------------------------------------------- |
-| `NAME`       | `"tau-sqlite"`                                                 |
-| `SqliteUi`   | The plugin's `UiPlugin`: its row on the Plugins screen         |
-| `SqliteHost` | The `HostHalf`: fills `tau.store` early (feature `host`)       |
+| Item         | What it is                                               |
+| ------------ | -------------------------------------------------------- |
+| `NAME`       | `"tau-sqlite"`                                           |
+| `SqliteUi`   | The plugin's `UiPlugin`: its row on the Plugins screen   |
+| `SqliteHost` | The `HostHalf`: fills `tau.store` early (feature `host`) |
 
 ## How it fits
 

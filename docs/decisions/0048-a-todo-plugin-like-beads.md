@@ -90,22 +90,22 @@ checklist without touching the board.
 
 The plugin gives every run these tools (`tools`, per workspace):
 
-| Tool            | Does                                                                              |
-| --------------- | --------------------------------------------------------------------------------- |
+| Tool            | Does                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------- |
 | `todo_ready`    | Ready issues, filtered by label, type or priority; with `--blocked`, what waits on what |
-| `todo_list`     | Issues by status, label, type, priority, claim; as a tree under epics            |
-| `todo_show`     | One issue with its links, criteria and comments                                   |
-| `todo_search`   | Full text over titles, descriptions and comments                                  |
-| `todo_create`   | A new issue; `found_while` is set to the run's claim when it has one             |
-| `todo_update`   | Title, description, type, priority, labels, status, criteria                      |
-| `todo_claim`    | Claim an issue for this run; refused when another live run holds it               |
-| `todo_check`    | Check or uncheck a criterion                                                      |
-| `todo_link`     | Add or remove a link; refuses a `blocks` cycle                                    |
-| `todo_comment`  | Add a comment                                                                     |
-| `todo_close`    | Close with a reason; reopen                                                       |
-| `todo_defer`    | Defer, optionally until a date                                                    |
-| `todo_dispatch` | Ask the person to start a chat on an issue, or send it to a chat; an Allow card   |
-| `todo_steps`    | Replace the run's steps with a new list (the model's own; see above)              |
+| `todo_list`     | Issues by status, label, type, priority, claim; as a tree under epics                   |
+| `todo_show`     | One issue with its links, criteria and comments                                         |
+| `todo_search`   | Full text over titles, descriptions and comments                                        |
+| `todo_create`   | A new issue; `found_while` is set to the run's claim when it has one                    |
+| `todo_update`   | Title, description, type, priority, labels, status, criteria                            |
+| `todo_claim`    | Claim an issue for this run; refused when another live run holds it                     |
+| `todo_check`    | Check or uncheck a criterion                                                            |
+| `todo_link`     | Add or remove a link; refuses a `blocks` cycle                                          |
+| `todo_comment`  | Add a comment                                                                           |
+| `todo_close`    | Close with a reason; reopen                                                             |
+| `todo_defer`    | Defer, optionally until a date                                                          |
+| `todo_dispatch` | Ask the person to start a chat on an issue, or send it to a chat; an Allow card         |
+| `todo_steps`    | Replace the run's steps with a new list (the model's own; see above)                    |
 
 `todo_dispatch` is how a chat hands work to another: it proposes, the
 person allows. The call shows an Allow card in the run, and on phones,
@@ -417,20 +417,20 @@ Before the plugin lands, each fault below is put in by hand, must fail
 at least one model, and is listed with its shrunk case in the commit
 that adds the model:
 
-| Fault                                                     | Expected to fail             |
-| --------------------------------------------------------- | ---------------------------- |
-| ready keeps an issue whose blocker closed                 | graph laws                   |
-| the cycle check skips paths longer than two               | graph laws                   |
-| export drops `defer_until` or a comment                   | graph laws (round trip)      |
-| an issue's row and its links written in two transactions  | crash model                  |
-| a claim not ended when its run is cancelled               | claims model                 |
-| a fork inherits its parent's claim                        | claims model                 |
-| steps not folded along the fork chain                     | claims model                 |
-| `todo_claim` reads, then writes, outside one transaction  | linearizability check        |
-| Allow from two devices starts two chats                   | dispatch                     |
-| a drag to In progress only changes the status             | board model                  |
-| the band's fold kept in a gpui entity, not the state      | board model (phone differs)  |
-| ready sorted by age before priority                       | graph laws, and beads oracle |
+| Fault                                                    | Expected to fail             |
+| -------------------------------------------------------- | ---------------------------- |
+| ready keeps an issue whose blocker closed                | graph laws                   |
+| the cycle check skips paths longer than two              | graph laws                   |
+| export drops `defer_until` or a comment                  | graph laws (round trip)      |
+| an issue's row and its links written in two transactions | crash model                  |
+| a claim not ended when its run is cancelled              | claims model                 |
+| a fork inherits its parent's claim                       | claims model                 |
+| steps not folded along the fork chain                    | claims model                 |
+| `todo_claim` reads, then writes, outside one transaction | linearizability check        |
+| Allow from two devices starts two chats                  | dispatch                     |
+| a drag to In progress only changes the status            | board model                  |
+| the band's fold kept in a gpui entity, not the state     | board model (phone differs)  |
+| ready sorted by age before priority                      | graph laws, and beads oracle |
 
 A probe that survives means the model has a hole: the rule or the
 invariant that should have caught it is added before the probe counts.
@@ -445,21 +445,21 @@ are injected, so every run is deterministic for its seed.
 
 ### What each statement is checked by
 
-| Statement in this ADR                                  | Checked by                         |
-| ------------------------------------------------------ | ---------------------------------- |
-| ready: open, not deferred, no open blocker; sorted     | graph laws; beads oracle           |
-| a `blocks` cycle is refused, with its path             | graph laws                         |
-| blocked is computed, never stale                       | graph laws                         |
-| an epic closes when its children have                  | graph laws                         |
-| issues survive any crash, never half-written           | crash model                        |
-| a claim belongs to one live run and ends with it       | claims model; linearizability      |
-| a fork inherits steps, not claims                      | claims model                       |
-| steps: one in progress, replaced whole                 | claims model                       |
-| a promoted step becomes a `found_while` issue          | claims model                       |
-| a dispatch is allowed once, by the person              | dispatch                           |
-| a card's move is the action it stands for              | board model                        |
-| phones show the board and the band as the computer     | board model                        |
-| the export is beads' format, and round-trips           | graph laws; beads oracle           |
+| Statement in this ADR                              | Checked by                    |
+| -------------------------------------------------- | ----------------------------- |
+| ready: open, not deferred, no open blocker; sorted | graph laws; beads oracle      |
+| a `blocks` cycle is refused, with its path         | graph laws                    |
+| blocked is computed, never stale                   | graph laws                    |
+| an epic closes when its children have              | graph laws                    |
+| issues survive any crash, never half-written       | crash model                   |
+| a claim belongs to one live run and ends with it   | claims model; linearizability |
+| a fork inherits steps, not claims                  | claims model                  |
+| steps: one in progress, replaced whole             | claims model                  |
+| a promoted step becomes a `found_while` issue      | claims model                  |
+| a dispatch is allowed once, by the person          | dispatch                      |
+| a card's move is the action it stands for          | board model                   |
+| phones show the board and the band as the computer | board model                   |
+| the export is beads' format, and round-trips       | graph laws; beads oracle      |
 
 ## As built
 
@@ -472,8 +472,7 @@ showed a better way, or where the kernel had no piece for it:
   when it ends (seam 1). The crash model's fault "an issue's row and
   its links written in two transactions" became "each write of a hook
   committed alone", which fails both crash tests.
-- **A hook never waits on a chat.** Starting or steering a chat (seam
-  3) is what an action answers, `tau.start_chat` or `tau.steer_chat`;
+- **A hook never waits on a chat.** Starting or steering a chat (seam 3) is what an action answers, `tau.start_chat` or `tau.steer_chat`;
   the host carries it out once the action ended and its store is
   written, then calls the action it names next with the chat's run. A
   tool asks the person with `tau.allow`: the host shows the Allow card

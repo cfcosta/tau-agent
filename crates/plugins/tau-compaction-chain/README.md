@@ -9,8 +9,8 @@ the kernel turns off the others' rewrites.
 
 ## What it provides
 
-| Item         | What it is                                                     |
-| ------------ | -------------------------------------------------------------- |
-| `NAME`       | `"tau-compaction-chain"`                                       |
-| `ChainUi`    | The plugin's `UiPlugin`: its row on the Plugins screen         |
-| `ChainHost`  | The `HostHalf`: fills `tau.compaction` with the three in turn  |
+| Item        | What it is                                                    |
+| ----------- | ------------------------------------------------------------- |
+| `NAME`      | `"tau-compaction-chain"`                                      |
+| `ChainUi`   | The plugin's `UiPlugin`: its row on the Plugins screen        |
+| `ChainHost` | The `HostHalf`: fills `tau.compaction` with the three in turn |

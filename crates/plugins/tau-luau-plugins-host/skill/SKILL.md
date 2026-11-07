@@ -98,24 +98,24 @@ one, its `card`.
 
 ### Hooks
 
-| Hook          | Given                                      | Returns                                    | Time   |
-| ------------- | ------------------------------------------ | ------------------------------------------ | ------ |
-| tool `call`   | the arguments, as `parameters` describes   | a JSON value, or `error(message)`          | 60 s   |
-| tool `card`   | the call's arguments and the result        | a view piece, drawn on the call's card     | 200 ms |
-| `start`       | `{ input, context, instructions }`         | `nil`, or `tau.start{ context, instructions }` | 2 s |
-| `before_tool` | `{ id, name, args }`                       | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
-| `before_request` | `{ model, effort, turn, messages }`    | `nil`, or `tau.effort(level)`              | 200 ms |
-| `after_tool_result` | `{ id, name, args, ok, text, truncated }` | `nil`, or `tau.result(text)`  | 2 s    |
-| `rewrite_context` | `{ trigger, turn, tokens, window, messages }` | `nil`, or `tau.rewrite{ keep, insert, drops_conversation }` | 10 s |
-| `rewritten`   | `{ plugin, before, after, drops_conversation }` | nothing                               | 2 s    |
-| `before_stop` | `{ text, turn, reason }`                   | `nil`, or `tau.continue(message)`          | 10 s   |
-| `turn_end`    | `{ turn, text, calls = { { name, ok } } }` | nothing                                    | 2 s    |
-| `on_event`    | `{ kind, turn, ... }`, for each of `events` | nothing                                    | 200 ms |
-| `run_end`     | `{ stop, turns, cost, text }`, `text` its last reply | nothing                          | 10 s   |
-| `title`       | `{ task, model }`, outside any run         | a title, or `nil`                          | 2 s    |
-| `notify`      | `{ title, body }`, outside any run         | nothing                                    | 10 s   |
-| `view`        | the run's state                            | `{ status?, note?, page? }`, or `{}`       | 200 ms |
-| `actions[x]`  | a button's or an input's arguments         | nothing; what it does to `ctx.state` stays | 2 s    |
+| Hook                | Given                                                | Returns                                                        | Time   |
+| ------------------- | ---------------------------------------------------- | -------------------------------------------------------------- | ------ |
+| tool `call`         | the arguments, as `parameters` describes             | a JSON value, or `error(message)`                              | 60 s   |
+| tool `card`         | the call's arguments and the result                  | a view piece, drawn on the call's card                         | 200 ms |
+| `start`             | `{ input, context, instructions }`                   | `nil`, or `tau.start{ context, instructions }`                 | 2 s    |
+| `before_tool`       | `{ id, name, args }`                                 | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
+| `before_request`    | `{ model, effort, turn, messages }`                  | `nil`, or `tau.effort(level)`                                  | 200 ms |
+| `after_tool_result` | `{ id, name, args, ok, text, truncated }`            | `nil`, or `tau.result(text)`                                   | 2 s    |
+| `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`        | `nil`, or `tau.rewrite{ keep, insert, drops_conversation }`    | 10 s   |
+| `rewritten`         | `{ plugin, before, after, drops_conversation }`      | nothing                                                        | 2 s    |
+| `before_stop`       | `{ text, turn, reason }`                             | `nil`, or `tau.continue(message)`                              | 10 s   |
+| `turn_end`          | `{ turn, text, calls = { { name, ok } } }`           | nothing                                                        | 2 s    |
+| `on_event`          | `{ kind, turn, ... }`, for each of `events`          | nothing                                                        | 200 ms |
+| `run_end`           | `{ stop, turns, cost, text }`, `text` its last reply | nothing                                                        | 10 s   |
+| `title`             | `{ task, model }`, outside any run                   | a title, or `nil`                                              | 2 s    |
+| `notify`            | `{ title, body }`, outside any run                   | nothing                                                        | 10 s   |
+| `view`              | the run's state                                      | `{ status?, note?, page? }`, or `{}`                           | 200 ms |
+| `actions[x]`        | a button's or an input's arguments                   | nothing; what it does to `ctx.state` stays                     | 2 s    |
 
 - `tau.block(why)` keeps the call from running; the model reads why.
   `tau.flag(why)` lets it run and marks it for the person's review.
@@ -139,12 +139,13 @@ one, its `card`.
   message's `index` (from 1), `role` (`user`, `assistant`,
   `toolResult`), `text` (its first 2,000 characters) and `size`; an
   answer's `calls` (`id`, `name`); a result's `call`, `name` and `ok`.
-  `tau.rewrite{ keep = { 1, 4 }, insert = { { before = 4, text = "..." } },
-  drops_conversation = true }` keeps those messages and puts the texts
+
+  `tau.rewrite{ keep = { 1, 4 }, insert = { { before = 4, text = "..." } }, drops_conversation = true }` keeps those messages and puts the texts
   before them as the person's. The last message always stays, and so
   does every call with its results. The first plugin that rewrites
   wins; which plugins may rewrite at all is the person's pick on the
   Plugins screen. Having `rewrite_context` at all is new reach.
+
 - A plugin may fill four of tau's slots, named in `fills`. Filling one
   is new reach, and tau-luau-plugins must be the slot's pick on the
   Plugins screen; the first active plugin by name that fills it does.
@@ -160,8 +161,8 @@ one, its `card`.
     name); the person sets it on the plugin's settings. tau clones and
     pushes over HTTPS with it, and never hands it to the plugin. Its
     hooks reach the forge's API over HTTP: `account(input, ctx)` (who
-    is signed in), `repos` (a list of `{ name, description, branch,
-    pushed_at }`), `can_push` (`{ repo }`, a boolean), `open_pull`
+    is signed in), `repos` (a list of
+    `{ name, description, branch, pushed_at }`), `can_push` (`{ repo }`, a boolean), `open_pull`
     (`{ repo, title, body, head, base, draft, reviewers }`, answering
     `{ number, url }`) and `checks` (`{ repo, head }`, answering
     `"running"`, `"passed"`, `"failed"` or `"none"`).

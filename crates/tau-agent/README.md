@@ -13,21 +13,21 @@ Compaction is not in this crate; it is a plugin, in `tau-compaction`.
 
 ## What it provides
 
-| Module       | What it holds                                                                              |
-| ------------ | ------------------------------------------------------------------------------------------ |
+| Module       | What it holds                                                                                   |
+| ------------ | ----------------------------------------------------------------------------------------------- |
 | `agent`      | `Agent` (the builder), `Run`, `RunControl`, `Outcome`, `Typed`, `Checkpoint`, `Input`, `Prompt` |
-|              | `Forked` and `Resumed` (from `Agent::fork` and `Agent::resume`), `SubAgent` (`as_tool`)    |
-| `tool`       | `AgentTool`, `TypedTool` and `typed`, `ToolCtx`, `ToolOutput`, `Exposure`, `ExecutionMode` |
-| `plugin`     | `Plugin`, `PluginRun`, `RunPlan`, `PluginCtx`, `Decision`, `Rewrite`, `StopDecision`       |
-| `event`      | `RunEvent`, `StopReason`, `LimitKind`                                                      |
-| `limits`     | `Limits`: turns, tokens, USD, time and plugin continuations per run                        |
-| `error`      | `ToolError` and `PluginError`, which convert with `?` from common errors                   |
-| `runner`     | The loop for one run; `Clock` and `system_clock`                                           |
-| `schema`     | `to_strict`: the OpenAI strict-mode rewrite of a JSON Schema                               |
-| `validation` | `ArgumentSchema`: coerces and validates tool arguments before they run                     |
-| `context`    | Token estimates for messages and transcripts, and `is_context_overflow`                    |
-| `output`     | Cuts tool output too large for the model, and `Spill` keeps the whole of it in a file      |
-| `launch`     | `Launch`, `Launcher`: how tools start programs, such as through a direnv environment       |
+|              | `Forked` and `Resumed` (from `Agent::fork` and `Agent::resume`), `SubAgent` (`as_tool`)         |
+| `tool`       | `AgentTool`, `TypedTool` and `typed`, `ToolCtx`, `ToolOutput`, `Exposure`, `ExecutionMode`      |
+| `plugin`     | `Plugin`, `PluginRun`, `RunPlan`, `PluginCtx`, `Decision`, `Rewrite`, `StopDecision`            |
+| `event`      | `RunEvent`, `StopReason`, `LimitKind`                                                           |
+| `limits`     | `Limits`: turns, tokens, USD, time and plugin continuations per run                             |
+| `error`      | `ToolError` and `PluginError`, which convert with `?` from common errors                        |
+| `runner`     | The loop for one run; `Clock` and `system_clock`                                                |
+| `schema`     | `to_strict`: the OpenAI strict-mode rewrite of a JSON Schema                                    |
+| `validation` | `ArgumentSchema`: coerces and validates tool arguments before they run                          |
+| `context`    | Token estimates for messages and transcripts, and `is_context_overflow`                         |
+| `output`     | Cuts tool output too large for the model, and `Spill` keeps the whole of it in a file           |
+| `launch`     | `Launch`, `Launcher`: how tools start programs, such as through a direnv environment            |
 
 A run's events follow `RunStart (TurnStart … TurnEnd)* RunEnd`. Tool calls
 are prepared in source order, then run together, or one at a time if any

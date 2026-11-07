@@ -1,6 +1,6 @@
 ---
 name: arena
-description: "Load when one attempt at a non-trivial artifact could lock in the wrong shape, for \"arena this\", or when work splits into parallel slices or a race. Makes you fan out candidates with distinct briefs, judge them on a rubric written first, keep one base, graft the best parts, and verify."
+description: 'Load when one attempt at a non-trivial artifact could lock in the wrong shape, for "arena this", or when work splits into parallel slices or a race. Makes you fan out candidates with distinct briefs, judge them on a rubric written first, keep one base, graft the best parts, and verify.'
 ---
 
 # Arena

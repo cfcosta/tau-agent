@@ -614,8 +614,8 @@ settings)` gives what commands in a repository start through: a
   `agent_plugins`. Every run declares the same tools in the same
   order, so each reads the others' prompt cache (ADR 0022). When a
   workspace closes (a landing, a drop, a sub-agent's work kept or
-  dropped) the host calls every plugin's `HostHalf::workspace_closed(
-  host, repo, dir)`: tau-tools ends the commands left running there.
+  dropped) the host calls every plugin's
+  `HostHalf::workspace_closed( host, repo, dir)`: tau-tools ends the commands left running there.
   `HostHalf::prompt(host, kind, settings)` gives a `Prompt`: a part of
   the instructions, which must not hang on `kind` as every run shares
   them, and context put before the run's first message, which may. The
@@ -642,8 +642,8 @@ settings)` gives what commands in a repository start through: a
   the plugin does for the whole repository. Every contribution is
   drawn, in order. Core names no plugin in either place
   ([0006](../decisions/0006-plugin-crates.md)).
-- **Kinds of repository.** `points::REPO_KIND` (`Point<AtApp,
-  RepoKind>`) gives a section of the sidebar and of the phone's list to
+- **Kinds of repository.** `points::REPO_KIND`
+  (`Point<AtApp, RepoKind>`) gives a section of the sidebar and of the phone's list to
   the repositories of one kind: its `kind` as the catalog's `Repo::own`
   names it (`agent`), its `title`, the `page` its heading opens, the
   `new` page its `+` opens, and the line it shows while there are none.
@@ -653,8 +653,8 @@ settings)` gives what commands in a repository start through: a
   under an open row and under its name on the phone (its last word).
   tau-agents fills all three
   ([0037](../decisions/0037-agents.md)).
-- **What waits on the person.** `points::WAITING` (`Point<AtApp,
-  Waiting>`) lists the plugin's things that wait on the person, by
+- **What waits on the person.** `points::WAITING`
+  (`Point<AtApp, Waiting>`) lists the plugin's things that wait on the person, by
   group (an agent): each `WaitItem` by an id that stays while it waits,
   with a notice's title and body, the run a notice opens, and the
   `away` words for a group first seen with some waiting.
@@ -713,6 +713,7 @@ settings)` gives what commands in a repository start through: a
   count it, and `plugin_spend`, the Plugins screen's spend, does.
   Memory's notes requests run on either: `write_notes` takes an `Asker`,
   a run's `PluginCtx` or `Outside { model, cancel }`.
+
 - **Jobs**
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
   `HostCx::jobs()` gives the host's `Jobs`. A plugin starts a named job:
@@ -793,8 +794,8 @@ settings)` gives what commands in a repository start through: a
   tau draws under it; either goes to the next step, or past the last to
   Ready (with clones) or a new run (without). As setup passes its last
   step, the workspace says `WorkspaceEvent::SetupFinished { repos }`
-  once per window, and the host calls `HostHalf::setup_finished(host,
-  repos, cx)` on every plugin in the registry's order: the plugin starts
+  once per window, and the host calls
+  `HostHalf::setup_finished(host, repos, cx)` on every plugin in the registry's order: the plugin starts
   what its step chose, such as a job, which reads the repositories as
   their clones land (`JobCx::repos`). Setup stays on the desktop: a phone
   drops `HostUpdate::Setup`, and draws no step.

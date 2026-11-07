@@ -81,7 +81,7 @@ done when the call returns keeps running, and a second tool reads it.
   that reads it gets end of file.
 - `notify` (off by default) asks to be told when a command that is still
   running when the call returns ends: tau starts a turn on the run, or
-  steers the one going, with `Process N (`cmd`) exited with code C.
+  steers the one going, with ``Process N (`cmd`) exited with code C.``
   `write_stdin` then reads its output. Nothing is told when a call
   reported the end first, when the store pruned or killed the process
   (workspace closed, `^C` aside), or on a sub-agent's run.

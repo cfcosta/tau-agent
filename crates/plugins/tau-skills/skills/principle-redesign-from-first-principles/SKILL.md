@@ -10,6 +10,7 @@ When you integrate a change, do not bolt it onto the existing design. Redesign a
 **Why:** A bolted-on requirement leaves a design that describes the old world plus a patch. The next reader must learn both, and the next requirement bolts onto the patch. A redesign keeps option value: the code reads as if it was always meant to do this.
 
 **Pattern:**
+
 - Read every affected file and understand the current design before you change it. `grep` for every name the change touches.
 - Ask: "if we were writing this from scratch with this new requirement, what would we build?" Write the answer down in a few sentences before you edit.
 - Compare that answer with what exists. The gap is the redesign. If there is no gap, the design already fits and you can make the change directly.

@@ -12,6 +12,7 @@ The two axes are independent. A flat file with 50 globals can be as hard to reas
 **Why:** Working memory is finite, for people and for models. This is the human analog of `principle-guard-the-context-window`. Code that needs fewer jumps and less held state gets changed correctly more often.
 
 **Pattern:**
+
 - **Collapse layers** that cost more than they save: wrappers with one caller, adapters with no second implementation (an interface with one implementation that nothing substitutes), indirection that was never needed. Inline them.
 - **Make adjacent layers change the abstraction.** A layer that repeats the same methods and arguments as the one below adds load without compression. Collapse pass-through layers.
 - **Demand interface compression.** A broad interface that hides little makes readers learn both the interface and the implementation. Prefer boundaries that hide meaningful decisions.

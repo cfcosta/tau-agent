@@ -9,24 +9,24 @@ take one path.
 
 ## What it provides
 
-| Item                             | What it is                                                                                   |
-| -------------------------------- | -------------------------------------------------------------------------------------------- |
-| `Workspace`                      | The window's root view: the runs, the screen on show, and the layout for the window's width  |
-| `WorkspaceEvent`                 | What the person asked for (`NewRun`, `Say`, `Cancel`, `Fork`, `Land`, …), for the host to do |
-| `update::HostUpdate`             | What a host tells the interface; `Workspace::apply` takes each one                           |
-| `view::RunView`                  | A run as the interface shows it, built from `RunEvent`s with no window                       |
-| `catalog::Catalog`               | What the workspace shows beyond runs: plugins, repositories, the store, plugins' jobs        |
-| `plugins`                        | The installed plugins (`registry`, none on a phone), `install` for a host's, and their views|
-| `remote`                         | The phone's side: `remote::connect` pairs with a computer and applies what it sends          |
-| `views`                          | Plugins' views by name (ADR 0046): the computer builds them, a phone draws what comes back   |
-| `attention`                      | Whether a chat needs the person: `Attention::of` over a run's `Facts`                        |
-| `setup`, `pairing`, `phones`     | Onboarding (with plugins' steps), a phone's pairing, and the computer's list of phones       |
-| `pull_request`, `push`, `queue`  | Pull requests, pushing main, and the landing queue, labelled with `Catalog::forge`           |
-| `models`, `picker`               | Choosing models and effort; a provider's stop shows as it words it (`Stopped`)                |
-| `route`, `search`, `slash`       | The screens, the search palette (Ctrl K), and slash commands in the composer                 |
-| `titles`                         | A run's title until the `tau.title` slot writes one: its prompt's first line                 |
-| `ui`                             | The pieces screens are built from, and the screens themselves (`ui::screens`)                |
-| `init`                           | Sets up fonts, the theme and the keys, plugins' among them, once per app                     |
+| Item                            | What it is                                                                                   |
+| ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `Workspace`                     | The window's root view: the runs, the screen on show, and the layout for the window's width  |
+| `WorkspaceEvent`                | What the person asked for (`NewRun`, `Say`, `Cancel`, `Fork`, `Land`, …), for the host to do |
+| `update::HostUpdate`            | What a host tells the interface; `Workspace::apply` takes each one                           |
+| `view::RunView`                 | A run as the interface shows it, built from `RunEvent`s with no window                       |
+| `catalog::Catalog`              | What the workspace shows beyond runs: plugins, repositories, the store, plugins' jobs        |
+| `plugins`                       | The installed plugins (`registry`, none on a phone), `install` for a host's, and their views |
+| `remote`                        | The phone's side: `remote::connect` pairs with a computer and applies what it sends          |
+| `views`                         | Plugins' views by name (ADR 0046): the computer builds them, a phone draws what comes back   |
+| `attention`                     | Whether a chat needs the person: `Attention::of` over a run's `Facts`                        |
+| `setup`, `pairing`, `phones`    | Onboarding (with plugins' steps), a phone's pairing, and the computer's list of phones       |
+| `pull_request`, `push`, `queue` | Pull requests, pushing main, and the landing queue, labelled with `Catalog::forge`           |
+| `models`, `picker`              | Choosing models and effort; a provider's stop shows as it words it (`Stopped`)               |
+| `route`, `search`, `slash`      | The screens, the search palette (Ctrl K), and slash commands in the composer                 |
+| `titles`                        | A run's title until the `tau.title` slot writes one: its prompt's first line                 |
+| `ui`                            | The pieces screens are built from, and the screens themselves (`ui::screens`)                |
+| `init`                          | Sets up fonts, the theme and the keys, plugins' among them, once per app                     |
 
 It re-exports `tau-ui-kit`'s `assets`, `input`, `markdown` and `theme`.
 

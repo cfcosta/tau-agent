@@ -32,10 +32,10 @@ A doc can obey every layer and still read machine-written: every sentence clippe
 
 One document, one mode. Two questions pick it. Does the content inform action (doing) or understanding (thinking)? Does it serve learning or work?
 
-| | Learning | Work |
-|---|---|---|
-| Action | Tutorial | How-to guide |
-| Understanding | Explanation | Reference |
+|               | Learning    | Work         |
+| ------------- | ----------- | ------------ |
+| Action        | Tutorial    | How-to guide |
+| Understanding | Explanation | Reference    |
 
 - **Tutorial.** The learner's success is your job. Open with what they will build. Every step produces a visible result, and you tell them what they should see. Explanation shrinks to one clause and a link. Write as "we", in commands.
 - **How-to guide.** Steps to a goal a competent person already has. Action only, no background, forks allowed ("If you want x, do y"). Name it by the task: "How to rotate the signing key", not "Signing keys".

@@ -14,11 +14,13 @@ Design operations so they converge to the correct state however many times they 
 Anything a run leaves behind, such as a lock, a temporary file, a half-written record, or a claimed job, must be recognizable as stale by the next run. Judge staleness by evidence that stays true wherever the previous run could have stopped, not only in the common case. A marker the next run cannot judge turns every crash into manual cleanup. Write to a temporary path and rename it into place. Compare artifacts by content, not by creation time or order.
 
 **Examples:**
+
 - A program that installs files on every start rewrites each one from its source, or compares content and writes when it differs. A "skip if the marker file exists" check says an install once began. It says nothing about whether the files are right now.
 - A queue that resumes after a crash (a landing queue, a batch of migrations) checks each item against the real state: is the commit already on trunk, is the row already there. It does not trust a "next index" saved before the crash.
 - A wake-up, webhook, or retry that fires twice finds the work done and does nothing. An outward effect that cannot be read back, such as a sent message or a charge, carries an idempotency key the receiver checks.
 
 **The test:**
+
 1. What happens if this runs twice in a row?
 2. What happens if the previous run crashed at every possible point?
 3. Does running it again converge to the same end state?

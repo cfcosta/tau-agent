@@ -10,6 +10,7 @@ When implementation convenience conflicts with the experience of the person usin
 **Why:** Users meet the result, not the implementation. A shortcut that saves an afternoon of building costs every user a little on every use, and rough features are rarely revisited once they ship.
 
 **Pattern:**
+
 - Justify every feature, control and option. Each one is something the user must learn.
 - Ship less, ship better. A polished experience with three features beats a rough one with ten.
 - Prototype before committing. Design decisions are cheaper in a throwaway than in production code. A prototype can be a canvas item (a Markdown mockup, a Mermaid flow, a table of example outputs, a screenshot of a throwaway page) or, on the main chat, a sub-agent spawned with `land: false` that builds the variant beside your work, so nothing of it lands unless you take it. The `playbook-prototype` skill has the procedure.

@@ -42,11 +42,11 @@ An exception goes on the offending line as the linter's own suppression marker, 
 
 Keep a table in the repository's instructions file that pairs each rule with what enforces it:
 
-| Rule | Enforced by |
-|---|---|
-| Spawn processes through `proc.spawn` | a lint rule that bans direct process creation |
-| Ports are `Port`, never a bare integer | the `Port` type |
-| Pick the error message tone per the copy guide | judgment, no enforcer |
+| Rule                                           | Enforced by                                   |
+| ---------------------------------------------- | --------------------------------------------- |
+| Spawn processes through `proc.spawn`           | a lint rule that bans direct process creation |
+| Ports are `Port`, never a bare integer         | the `Port` type                               |
+| Pick the error message tone per the copy guide | judgment, no enforcer                         |
 
 When the person corrects you, fix the mistake and add the rule. If the rule was already there and nothing enforces it, that is a repeat: fix it at the highest level in the same change. Drop a rule once its mistake cannot happen.
 

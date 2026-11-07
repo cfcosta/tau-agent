@@ -11,31 +11,31 @@ keeps or drops (decision 0044).
 
 ## What it provides
 
-| Item                   | What it is                                                                        |
-| ---------------------- | --------------------------------------------------------------------------------- |
-| `MemoryPlugin`         | The `Plugin`; share one across an agent's runs                                    |
-| `plugin::write_notes`  | One notes request and the writes it asks for, on any `Asker`                      |
-| `plugin::Asker`        | Who it asks: a run's `PluginCtx`, or the person's model outside a run (`Outside`) |
-| `Scopes`               | The repository's scope, the user's (optional) and the clock                       |
-| `Memory`               | One scope: its notes and their index, kept in step                                |
-| `memory::Draft`        | A note to write: new, a new version (`id`), or a replacement (`supersedes`)       |
-| `store::Notes`         | The note files of one directory, at `<type>/<id>.md`, with history and backlinks  |
-| `index::Index`, `Bm25` | The search index trait, and keyword search                                        |
-| `colbert::Colbert`     | ColBERT MaxSim search over an `Encoder`, with embeddings cached on disk           |
-| `docbert::Docbert`     | docbert's model as an `Encoder` (`docbert` feature)                               |
-| `recall`               | Ranking: superseded notes rank lower, and one hop along links                     |
-| `safety`               | `redact` removes secrets before a write; `refusal` catches prompt injection       |
-| `eval`                 | The retrieval evaluation over `eval/harbor.toml`                                  |
-| `MemoryHost`, `Host`   | The `HostHalf` tau's interface registers; opens each scope once per session       |
-| `Memories`, `Search`   | The open scopes, and whether they search by meaning or by keywords                |
-| `stale_on_turn`        | A turn hook that marks notes about a commit's paths as possibly stale             |
-| `notebook`, `now`      | A scope's notes as the page lists them; the clock in milliseconds                 |
-| `importers`            | Readers for Claude Code's and Codex's files under a given home (`Roots`)          |
-| `importers::remote`    | A folder's Git remote, from its config, without running Git                       |
-| `import::Importer`     | Proposals, the checkpoint and the last scan, kept in memory's plugin directory    |
-| `import::Reach`        | The `import` job, and the acts: import, stop, tick, keep, drop, not now           |
-| `import::Proposals`    | The proposals and the tally; `admit` checks a draft as `Memory::write` would      |
-| `plugin::write_notes_from` | `write_notes` on input fenced its own way, as an import's material is         |
+| Item                       | What it is                                                                        |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| `MemoryPlugin`             | The `Plugin`; share one across an agent's runs                                    |
+| `plugin::write_notes`      | One notes request and the writes it asks for, on any `Asker`                      |
+| `plugin::Asker`            | Who it asks: a run's `PluginCtx`, or the person's model outside a run (`Outside`) |
+| `Scopes`                   | The repository's scope, the user's (optional) and the clock                       |
+| `Memory`                   | One scope: its notes and their index, kept in step                                |
+| `memory::Draft`            | A note to write: new, a new version (`id`), or a replacement (`supersedes`)       |
+| `store::Notes`             | The note files of one directory, at `<type>/<id>.md`, with history and backlinks  |
+| `index::Index`, `Bm25`     | The search index trait, and keyword search                                        |
+| `colbert::Colbert`         | ColBERT MaxSim search over an `Encoder`, with embeddings cached on disk           |
+| `docbert::Docbert`         | docbert's model as an `Encoder` (`docbert` feature)                               |
+| `recall`                   | Ranking: superseded notes rank lower, and one hop along links                     |
+| `safety`                   | `redact` removes secrets before a write; `refusal` catches prompt injection       |
+| `eval`                     | The retrieval evaluation over `eval/harbor.toml`                                  |
+| `MemoryHost`, `Host`       | The `HostHalf` tau's interface registers; opens each scope once per session       |
+| `Memories`, `Search`       | The open scopes, and whether they search by meaning or by keywords                |
+| `stale_on_turn`            | A turn hook that marks notes about a commit's paths as possibly stale             |
+| `notebook`, `now`          | A scope's notes as the page lists them; the clock in milliseconds                 |
+| `importers`                | Readers for Claude Code's and Codex's files under a given home (`Roots`)          |
+| `importers::remote`        | A folder's Git remote, from its config, without running Git                       |
+| `import::Importer`         | Proposals, the checkpoint and the last scan, kept in memory's plugin directory    |
+| `import::Reach`            | The `import` job, and the acts: import, stop, tick, keep, drop, not now           |
+| `import::Proposals`        | The proposals and the tally; `admit` checks a draft as `Memory::write` would      |
+| `plugin::write_notes_from` | `write_notes` on input fenced its own way, as an import's material is             |
 
 The model gets four tools: `memory_write`, `memory_search`, `memory_read`
 and `memory_link`. Ids from the user's scope read `user:<id>`.

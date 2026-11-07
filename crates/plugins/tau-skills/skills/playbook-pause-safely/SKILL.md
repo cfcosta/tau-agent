@@ -27,7 +27,7 @@ A pause is a reversible act. Make every choice in it yourself and say what you c
    - State: what is uncommitted or broken, which sub-agents are still running, and the change ids of kept work you have not taken.
    - Next steps: the first action on resume, then the rest in order.
    - Key files and gotchas: the paths that matter, the trap you found.
-   If a decision trail already exists on the canvas, point at it instead of repeating it, and append a "paused" row to it with `canvas_edit`. Facts that outlive this task (a repository quirk, a tool's flag) go to `memory_write`. Task progress does not.
+     If a decision trail already exists on the canvas, point at it instead of repeating it, and append a "paused" row to it with `canvas_edit`. Facts that outlive this task (a repository quirk, a tool's flag) go to `memory_write`. Task progress does not.
 6. **Schedule the resume if the chat should continue itself.** When the person wants the work to pick up later without them, `schedule {name, note, in|on}` with a note that names the canvas resume note and the first action. Not available on a sub-agent: there, end with the resume note in your final answer, since it reaches the caller.
 
 ## Reply

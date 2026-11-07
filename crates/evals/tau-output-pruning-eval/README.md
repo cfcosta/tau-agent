@@ -12,16 +12,16 @@ generated from a seed with synthetic noise (cargo, npm, pip, pytest,
 bundler and upload logs; no network). The lines the task needs, the
 needles, are each in the output exactly once.
 
-| Workload              | Needles                                                      |
-| --------------------- | ------------------------------------------------------------ |
-| `needle-error`        | one error line deep in a noisy cargo build                   |
-| `needle-detail`       | a bundle hash the user asked to remember, among many like it |
-| `summary-line`        | npm's totals line, with post-install noise after it          |
-| `structured-json`     | one service's record in a large JSON registry                |
-| `all-noise`           | none: pruning should cut most of a pip install               |
+| Workload              | Needles                                                          |
+| --------------------- | ---------------------------------------------------------------- |
+| `needle-error`        | one error line deep in a noisy cargo build                       |
+| `needle-detail`       | a bundle hash the user asked to remember, among many like it     |
+| `summary-line`        | npm's totals line, with post-install noise after it              |
+| `structured-json`     | one service's record in a large JSON registry                    |
+| `all-noise`           | none: pruning should cut most of a pip install                   |
 | `cut-middle`          | a failed step far above the 2,000-line tail `exec_command` keeps |
-| `multi-needle`        | three failing tests far apart in a cargo test run            |
-| `earlier-requirement` | a checksum only a large runbook read earlier asks for        |
+| `multi-needle`        | three failing tests far apart in a cargo test run                |
+| `earlier-requirement` | a checksum only a large runbook read earlier asks for            |
 
 The runner drives each workload through the agent loop as the app
 prunes: a scripted model makes the workload's calls, fake tools answer,
@@ -60,16 +60,16 @@ TYPESAFE_API_KEY=… cargo run -p tau-output-pruning-eval -- \
   --seeds 3 --budget-usd 0.5 --json results.json
 ```
 
-| Option             | Effect                                                                                |
-| ------------------ | ------------------------------------------------------------------------------------- |
-| `--workload NAME`  | Only these workloads (repeat, or comma-separated)                                     |
-| `--seeds N`        | Seeds 0 to N-1 of each workload (default 1)                                           |
-| `--budget-usd USD` | Stop once Jev's spend passes this                                                     |
-| `--json PATH`      | Also write every trial and summary to `PATH`                                          |
-| `--whole`          | `exec_command` returns every output whole, with no truncation                         |
+| Option             | Effect                                                            |
+| ------------------ | ----------------------------------------------------------------- |
+| `--workload NAME`  | Only these workloads (repeat, or comma-separated)                 |
+| `--seeds N`        | Seeds 0 to N-1 of each workload (default 1)                       |
+| `--budget-usd USD` | Stop once Jev's spend passes this                                 |
+| `--json PATH`      | Also write every trial and summary to `PATH`                      |
+| `--whole`          | `exec_command` returns every output whole, with no truncation     |
 | `--work DIR`       | Where archives go (default: a temp directory, removed afterwards) |
-| `--list`           | List the workloads, and exit                                                          |
-| `--help`           | Print the usage, and exit                                                             |
+| `--list`           | List the workloads, and exit                                      |
+| `--help`           | Print the usage, and exit                                         |
 
 It needs `TYPESAFE_API_KEY`; without it, it refuses to run. Each trial's
 progress goes to standard error. Standard output gets a table per

@@ -10,6 +10,7 @@ When a mistake repeats, change the code so the mistake cannot be made, or fails 
 **Why:** An instruction works only when the reader opens the file, notices the line, and agrees it applies. Agents see only the files they opened, copy the nearest example, and take the shortest path that compiles. A compiler error or a failing check reaches every contributor, every time, with no reading required.
 
 **Pick the highest lever that works, in this order:**
+
 1. **Architecture.** Remove the possibility. Give each piece of state one owner and each task one supported way. Hide internals so the wrong import does not resolve. Replace hand-synced lists with one source of truth. Delete the old way, so nobody copies it.
 2. **Types.** Make the bad state impossible to write. Load the `principle-type-system-discipline` skill.
 3. **Lint rules.** When bad code still compiles, add a check whose error message names the fix. A lint rule that bans the call, with a message naming what to call instead, is one example. Use the linter the repository already runs. A custom lint, a grep in the repository's check script, or a schema check also count. If the pattern is already common, fail only on new occurrences.

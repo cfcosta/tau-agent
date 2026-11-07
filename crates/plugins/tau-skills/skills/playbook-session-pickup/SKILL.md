@@ -1,6 +1,6 @@
 ---
 name: playbook-session-pickup
-description: "Load when resuming or taking over earlier work, yours or another agent's (\"pick this up\", \"continue where it stopped\", a wake-up note, a resume note on the canvas). Makes you rebuild state from commits, canvas and memory, trust the prior trail, and resume without redoing work."
+description: 'Load when resuming or taking over earlier work, yours or another agent''s ("pick this up", "continue where it stopped", a wake-up note, a resume note on the canvas). Makes you rebuild state from commits, canvas and memory, trust the prior trail, and resume without redoing work.'
 ---
 
 # Session pickup
@@ -22,7 +22,7 @@ Reversible choices (which open item to take first, whether a prior conclusion st
    - Memory: `memory_search` for facts recorded about this work or this repository, then `memory_read` on the hits.
    - Wake-ups: `scheduled` for pending notes, and the note of the wake-up that started this turn, if one did.
    - A forked sub-agent already holds its caller's conversation. Read it, do not search for it. A fresh one has only its task: the trail is whatever the task names.
-   Read the most recent items first, then scan back for the decision points. If the trail is long, load the `principle-guard-the-context-window` skill and reduce it to a short timeline in your notes.
+     Read the most recent items first, then scan back for the decision points. If the trail is long, load the `principle-guard-the-context-window` skill and reduce it to a short timeline in your notes.
 2. **Rebuild the state.** Write down the goal, the decisions made and why, what landed, what is uncommitted, what was verified and how, the open items, and any `/goal` condition still set. The prior trail is authoritative input. Resist the urge to re-derive it.
 3. **Diff done against pending.** Compare what landed with what was planned. Name the resume point as one concrete next action. Do not re-run the prior repro or redo finished work. A "let me verify from scratch" pass treats an authoritative trail as untrustworthy.
 4. **Pick the verdict and route.** Choose one: continue the work, finish a recommendation that is already supported, ratify or override a prior conclusion (with the evidence that overrides it), or write a postmortem of a failed run. Then load the playbook that fits the remaining work (for example `playbook-feature`, `playbook-bug-fix`, `playbook-hillclimb`, `playbook-autonomous-run`). This playbook ends there. The routed playbook owns the rest.

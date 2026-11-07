@@ -10,6 +10,7 @@ When concurrent actors might share mutable state, first ask whether they need th
 **Why:** Concurrent writes to shared state create races that are intermittent, hard to reproduce, and expensive to debug.
 
 **Pattern:**
+
 1. **Identify shared mutable state.** Look for files that several actors both read and write, branches several actors commit to, and interfaces one actor defines while another consumes them.
 2. **By default, eliminate the shared write target.** Ask whether the actors need one canonical object or are publishing independent facts. Give each actor its own file, key, branch, or state directory, and merge only where the results are read or reported. Two workers writing their own `last_x` field into one `state.json` is still shared mutation. `indexer-state.json` and `metrics-state.json` is not.
 3. **Serialize only when one shared write target is a real invariant.** Use a lockfile, sequential phases, a single-writer actor, or an atomic compare-and-swap. Treat "we need a lock" as a design smell to check, not as the default answer.

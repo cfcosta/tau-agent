@@ -8,30 +8,30 @@ search, no tools and no plugin; those are in `tau-memory-host`.
 
 ## What it provides
 
-| Item                    | What it is                                                                 |
-| ----------------------- | -------------------------------------------------------------------------- |
-| `NAME`                  | `"tau-memory"`, the name the plugin goes by in events and records          |
-| `note::Note`            | One idea: TOML front matter between `+++` lines, then a Markdown body      |
-| `note::NoteType`        | The closed set of kinds: fact, convention, decision, gotcha, and so on     |
-| `note::LinkType`        | The closed set of links: `relates`, `refines`, `supersedes`, `about`, ...  |
-| `note::Link`, `Source`  | A typed link to another note, and who wrote a note (`By`) and from where   |
-| `Note::parse`, `render` | Read and write a note file; `validate` checks it                           |
-| `note::wiki_links`      | The bare `[[id]]` links in a body, which count as `relates`                |
-| `note::slug`, `is_id`   | Make an id from a title, and check one                                     |
-| `record::Record`        | What a run publishes: `Recalled`, `Saved`, `Error` and `Starting`          |
-| `record::USER`          | `"user:"`, the prefix of ids from the user's scope                         |
-| `MemoryUi`              | The `UiPlugin`: notes pages, sidebar entries, transcript marks, run status |
-| `ui::Notebook`          | A scope's notes as their page shows them (`NoteView`, `LinkView`)          |
-| `ui::State`, `ui::Mark` | A run's folded records: how many notes, and what was recalled or saved     |
-| `ui::notes_link`        | The link to a repository's notes page                                      |
-| `ui::MemoryData`        | Its data across repositories: the person's notes, and `Imports`            |
-| `ui::review_link`       | The review page of what imports propose                                    |
-| `ui::READS`             | What it reads outside repositories: `~/.claude`, `~/.codex`                |
-| `import::Proposal`      | A note an import proposes, with its scope, origins and flags               |
-| `import::Place`         | A folder and its remote; `matches` tells the repository that claims it     |
-| `import::Act`, `Request` | What its pages ask the host half: import, stop, tick, keep, drop, not now |
-| `import::Imports`       | What the interface shows of imports: found, pending, banners, progress     |
-| `note::Imported`        | Where an imported note came from: tool, path, session                      |
+| Item                     | What it is                                                                 |
+| ------------------------ | -------------------------------------------------------------------------- |
+| `NAME`                   | `"tau-memory"`, the name the plugin goes by in events and records          |
+| `note::Note`             | One idea: TOML front matter between `+++` lines, then a Markdown body      |
+| `note::NoteType`         | The closed set of kinds: fact, convention, decision, gotcha, and so on     |
+| `note::LinkType`         | The closed set of links: `relates`, `refines`, `supersedes`, `about`, ...  |
+| `note::Link`, `Source`   | A typed link to another note, and who wrote a note (`By`) and from where   |
+| `Note::parse`, `render`  | Read and write a note file; `validate` checks it                           |
+| `note::wiki_links`       | The bare `[[id]]` links in a body, which count as `relates`                |
+| `note::slug`, `is_id`    | Make an id from a title, and check one                                     |
+| `record::Record`         | What a run publishes: `Recalled`, `Saved`, `Error` and `Starting`          |
+| `record::USER`           | `"user:"`, the prefix of ids from the user's scope                         |
+| `MemoryUi`               | The `UiPlugin`: notes pages, sidebar entries, transcript marks, run status |
+| `ui::Notebook`           | A scope's notes as their page shows them (`NoteView`, `LinkView`)          |
+| `ui::State`, `ui::Mark`  | A run's folded records: how many notes, and what was recalled or saved     |
+| `ui::notes_link`         | The link to a repository's notes page                                      |
+| `ui::MemoryData`         | Its data across repositories: the person's notes, and `Imports`            |
+| `ui::review_link`        | The review page of what imports propose                                    |
+| `ui::READS`              | What it reads outside repositories: `~/.claude`, `~/.codex`                |
+| `import::Proposal`       | A note an import proposes, with its scope, origins and flags               |
+| `import::Place`          | A folder and its remote; `matches` tells the repository that claims it     |
+| `import::Act`, `Request` | What its pages ask the host half: import, stop, tick, keep, drop, not now  |
+| `import::Imports`        | What the interface shows of imports: found, pending, banners, progress     |
+| `note::Imported`         | Where an imported note came from: tool, path, session                      |
 
 A note file looks like this:
 

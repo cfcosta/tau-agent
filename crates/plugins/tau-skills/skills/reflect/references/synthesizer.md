@@ -19,12 +19,14 @@ Apply each criterion to every finding.
 - **Right target.** A fact about this repository goes to its skills or its instructions file. A fact that holds across repositories goes to memory. A gap in a skill that is not in the repository (a built-in or one of the person's own) is reported as proposed text, not applied.
 
 Drop details that drift:
+
 - "the linter at change `kxqpmz` uses a chars/4 heuristic"
 - "the skill has 175 tokens at limit 80"
 - "review flagged regex backtracking on May 2"
 - "we renamed the `gpt-4` model id to `gpt-4o` in the token counter"
 
 Keep durable patterns:
+
 - "closed lists of regexes for trigger detection are brittle, so prefer schema-validated structures"
 - "skill descriptions front-load the trigger, then the action"
 - "the repository's scripts run under their own lockfile, not the workspace's"
@@ -36,19 +38,20 @@ Output exactly this format. No preamble, no narration. One sentence per cell. A 
 
 ### Accepted
 
-| # | Problem | Proposal | Routing |
-|---|---|---|---|
-| 1 | a failure in a skill the session loaded | the change to that skill's body | skill name and section |
-| 2 | a skill existed but was not loaded | a description that makes it load next time | `tune description: <skill>` |
-| 3 | a repository rule nobody wrote down | the rule, in the instructions file's words | `instructions: <section>` |
-| 4 | a cross-repository fact | the memory note's text | `memory` |
-| 5 | a recurring pattern with no home | the new skill's name and one-line description | `new skill: <kebab-name>` |
+| #   | Problem                                 | Proposal                                      | Routing                     |
+| --- | --------------------------------------- | --------------------------------------------- | --------------------------- |
+| 1   | a failure in a skill the session loaded | the change to that skill's body               | skill name and section      |
+| 2   | a skill existed but was not loaded      | a description that makes it load next time    | `tune description: <skill>` |
+| 3   | a repository rule nobody wrote down     | the rule, in the instructions file's words    | `instructions: <section>`   |
+| 4   | a cross-repository fact                 | the memory note's text                        | `memory`                    |
+| 5   | a recurring pattern with no home        | the new skill's name and one-line description | `new skill: <kebab-name>`   |
 
 One row per finding.
 
 ### Rejected
 
 For each rejected finding:
+
 - Principle: one sentence.
 - Reason: durability, specificity, existing-home, convergence, decision-changing, structural, duplicate, skill-not-used, or already-covered.
 

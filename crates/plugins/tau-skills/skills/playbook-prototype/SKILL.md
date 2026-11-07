@@ -1,6 +1,6 @@
 ---
 name: playbook-prototype
-description: "Load when asked to prototype, mock up, sketch, or try a layout, or when a \"which approach?\" fork can be settled by observing it instead of asking. Makes you build throwaway variants in a scratch path behind one switch, observe them, and hand the winner to playbook-feature."
+description: 'Load when asked to prototype, mock up, sketch, or try a layout, or when a "which approach?" fork can be settled by observing it instead of asking. Makes you build throwaway variants in a scratch path behind one switch, observe them, and hand the winner to playbook-feature.'
 ---
 
 # Prototype

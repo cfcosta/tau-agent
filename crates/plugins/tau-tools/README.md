@@ -55,8 +55,8 @@ A host then gives it its half, in its place, with
 
 ## Features
 
-| Feature    | Default | Effect                                                                                    |
-| ---------- | ------- | ----------------------------------------------------------------------------------------- |
+| Feature    | Default | Effect                                                                                     |
+| ---------- | ------- | ------------------------------------------------------------------------------------------ |
 | `terminal` | off     | Draws command output as a terminal through `tau-terminal` (libghostty-vt): `ui::term_card` |
 
 Without `terminal`, command cards show the last lines of the output and

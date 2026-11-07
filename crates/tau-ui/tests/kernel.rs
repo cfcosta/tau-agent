@@ -9,14 +9,12 @@ use std::{
 };
 
 /// Where a plugin may still be named, and why. `*` is every plugin.
-const ALLOWED: &[(&str, &str, &str)] = &[
-    (
-        "tau-ui/src/hosted.rs",
-        "*",
-        "the host halves tau-ui gives the plugins: the app's composition, \
+const ALLOWED: &[(&str, &str, &str)] = &[(
+    "tau-ui/src/hosted.rs",
+    "*",
+    "the host halves tau-ui gives the plugins: the app's composition, \
          as tau-plugins is the interface's",
-    ),
-];
+)];
 
 fn crates() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

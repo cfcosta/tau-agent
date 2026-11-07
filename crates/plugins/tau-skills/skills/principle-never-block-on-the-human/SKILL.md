@@ -1,6 +1,6 @@
 ---
 name: principle-never-block-on-the-human
-description: "Load when you are about to ask \"should I do X?\", or to stop and wait for approval. Decide and proceed on reversible work, then say what you assumed. Use `ask` with options only for decisions the person must make, and confirm irreversible actions."
+description: 'Load when you are about to ask "should I do X?", or to stop and wait for approval. Decide and proceed on reversible work, then say what you assumed. Use `ask` with options only for decisions the person must make, and confirm irreversible actions.'
 ---
 
 # Never Block on the Human
@@ -18,6 +18,7 @@ When you notice a problem outside the task, note it in your reply and fix it in 
 ## Decisions only the person can make: use `ask`
 
 Some decisions are not yours:
+
 - product direction, scope, or what a feature should feel like;
 - a real tradeoff between the person's own preferences, where no default is clearly right;
 - anything irreversible or outward-facing, such as pushing, deleting data, sending a message, or spending money.

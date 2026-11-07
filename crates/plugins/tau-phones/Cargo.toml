@@ -23,7 +23,12 @@ tau-ui-plugin.workspace = true
 if-addrs = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 tau-remote = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true, features = ["fs", "rt", "sync", "time"] }
+tokio = { workspace = true, optional = true, features = [
+  "fs",
+  "rt",
+  "sync",
+  "time",
+] }
 
 [dev-dependencies]
 tau-testing.workspace = true

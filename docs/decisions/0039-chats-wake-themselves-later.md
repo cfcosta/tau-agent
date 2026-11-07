@@ -50,6 +50,7 @@ make one safe to leave running.
   interrupted: the wake waits for that turn to end. A chat that landed
   or was dropped takes no more messages, and what it had scheduled
   goes. A turn that fails to start is tried again half a minute later.
+
 - **Kept on the host**, in the plugin's directory, one file for all
   chats, written whole on each change. tau closed when one came due
   wakes the chat once it starts again; there is no daemon (0037).

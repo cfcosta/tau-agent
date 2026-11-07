@@ -27,12 +27,15 @@ Read `epistemics.md` in full before you write. Its tiers (Direct, Supported, Inf
 ## Output format
 
 ### The question
+
 The question in one or two sentences.
 
 ### The code in question
+
 File paths, line ranges, key symbols. Two or three lines to orient a cold reader.
 
 ### What we found
+
 Claims with textual evidence, each cited precisely:
 
 - **[Direct]** {Claim}. Source: {commit id / PR / ticket / `file:line`}. {Brief quote.}
@@ -41,6 +44,7 @@ Claims with textual evidence, each cited precisely:
 Direct is one explicit source. Supported is several indirect items converging.
 
 ### What we can reasonably infer
+
 Claims stated nowhere but well supported by indirect evidence. Each makes the chain visible ("Given A and B, C is likely") and uses hedged language:
 
 - **[Inferred]** {Hedged claim}. Reasoning: {the evidence and the inference step}.
@@ -48,6 +52,7 @@ Claims stated nowhere but well supported by indirect evidence. Each makes the ch
 Skip this section if there is nothing to infer.
 
 ### Competing hypotheses
+
 If the evidence fits several stories, present each. Don't force a winner the record doesn't support.
 
 - **Hypothesis:** {one sentence}
@@ -57,9 +62,11 @@ If the evidence fits several stories, present each. Don't force a winner the rec
 Skip this section if there is a single clear answer.
 
 ### What we don't know
+
 Specific gaps: "We searched the issue tracker for [query1] and [query2] and found no issue discussing the rate-limit threshold", not "We don't know why." Include unanswered questions, empty searches, unavailable sources and why, line-level blame where the answer needed it, and the people who would likely know.
 
 ### Sources consulted
+
 One line per source, including the ones that returned nothing or were skipped:
 
 - **Source control:** {paths}, {number of commits read}, {searches run}.
@@ -67,11 +74,13 @@ One line per source, including the ones that returned nothing or were skipped:
 - **Kinds of source with no server in this run:** for example "Team chat: not searched, no matching MCP server."
 
 ### Confidence summary
+
 One or two sentences, for example:
 
 > "The core rationale (A) is well supported by a direct commit description and a linked ticket. The threshold value (100) is inferred from surrounding context but not documented. Whether a customer asked for it could not be answered: no ticket mentions it and no chat server was available."
 
 ### Preserve / Change / Avoid / Risk
+
 Only when the question comes before a change. See the skill's step 5.
 
 ---

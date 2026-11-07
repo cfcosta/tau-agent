@@ -1,6 +1,6 @@
 ---
 name: principle-prove-it-works
-description: "Load after finishing a task or receiving a sub-agent's report, before you say it is done. Verify against the real artifact (run the repository's tests, the real app, read the actual value, inspect the diff), not a proxy, a self-report, or \"it compiles\"."
+description: 'Load after finishing a task or receiving a sub-agent''s report, before you say it is done. Verify against the real artifact (run the repository''s tests, the real app, read the actual value, inspect the diff), not a proxy, a self-report, or "it compiles".'
 ---
 
 # Prove It Works
@@ -10,6 +10,7 @@ Verify every task output by checking the real thing directly. Do not infer from 
 **Why:** Unverified work has unknown correctness. Indirect checks (file modification times, output freshness, a sub-agent's summary, an old screenshot) feel cheaper than looking. Acting on a wrong inference costs far more than checking the source.
 
 Check the real thing, not a proxy:
+
 - Run the repository's own test command, from its instructions or its build files. Do not substitute a narrower command you assume is equivalent.
 - For behavior a person sees, run the real app. Use the repository's `verify-*` skill if it has one, or whatever its instructions say to run. Take screenshots from a headless compositor, never from the person's display, and put them on the canvas with `canvas_show`.
 - Check process liveness directly, not through state derived from it.

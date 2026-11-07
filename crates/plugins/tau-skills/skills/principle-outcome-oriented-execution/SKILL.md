@@ -10,10 +10,12 @@ Optimize for the intended, verifiable end state, not for smooth intermediate sta
 **Why:** Keeping every intermediate step fully stable often means temporary compatibility code, and temporary code tends to stay. Converge on the target architecture and prove correctness at explicit verification points.
 
 **Core rule:**
+
 - End-state integrity comes before transitional stability.
 - Intermediate breakage is acceptable when it is planned, scoped and reversible.
 
 **Guardrails:**
+
 - Use this for planned rewrites and migrations with explicit phases. Write the phases down before you start, as a numbered checklist in your notes, or on the canvas for long work.
 - Each phase is a commit, or a short run of commits. The `vcs_commit` message says what the phase did and, if it leaves something broken on purpose, what is broken and which phase fixes it. A reviewer reading `vcs_log` sees the plan.
 - Declare where temporary breakage is acceptable before you cause it. "Phase 2 leaves the old config keys unread until phase 3" is a declaration. Finding the breakage afterwards is not.

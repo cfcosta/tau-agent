@@ -10,6 +10,7 @@ When you replace an internal API, move every caller to the new one and delete th
 **Why:** A compatibility layer meant to be temporary becomes permanent. Every reader then sees two ways to do one thing, and the next agent copies whichever example is nearest. Two paths double the tests and the places a bug can hide. The old path rots, because nothing exercises it on purpose.
 
 **Pattern:**
+
 1. Find every caller before you change anything. `grep` for the name and for every string that spells it: config keys, serialized field names, log and error messages, docs, the repository's instructions, comments that point back to it, scripts, and macros. The compiler finds only the callers it compiles.
 2. With more than a handful of call sites, write the migration as a codemod: a script, a `sed` over a known file list, or a structural search-and-replace. Load the `principle-build-the-lever` skill. The script also records exactly what changed.
 3. Change the API, migrate every caller, and delete the old API. Commit it as one change, or as a short ordered stack in which the last commit leaves only the new path.
@@ -18,6 +19,7 @@ When you replace an internal API, move every caller to the new one and delete th
 6. Build and run the repository's tests. The build proves the compiled callers moved. The grep proves the rest.
 
 **When this applies:**
+
 - No external users depend on backward compatibility.
 - The project can absorb a coordinated breaking change.
 - The new API is part of a simplification or refactor.

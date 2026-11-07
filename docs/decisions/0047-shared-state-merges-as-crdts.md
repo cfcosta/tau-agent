@@ -35,7 +35,7 @@ starts again on what it saved.
 - **Three ways today's own rule broke, now fixed.** Each was a small
   path the computer took out of order, and each has a regression test
   in the model's file:
-  - *An edit lost to a restart.* The host applied each UI event in a
+  - _An edit lost to a restart._ The host applied each UI event in a
     task of its own and did not count the save as work. Edits made just
     before tau closed came back older after it started again: a draft
     at `w8` showed `w7`. The nightly run found it and stopped shrinking
@@ -43,12 +43,12 @@ starts again on what it saved.
     then a restart); the regression test types 200 words on the
     computer and restarts, and came back with no draft at all
     (`the_host_keeps_the_last_of_quick_edits`).
-  - *An older model pick kept.* The host changed the models' settings
+  - _An older model pick kept._ The host changed the models' settings
     in a task per event, so two quick changes could land in either
     order: every device then agreed on the older one
     (`the_host_keeps_the_last_of_quick_model_picks`, which failed in
     two runs of three before the fix).
-  - *A message that did not open a chat.* A phone that last saw a chat
+  - _A message that did not open a chat._ A phone that last saw a chat
     finished closes it while the computer has it going again; that
     close does not stop it, and a message to it after steers it
     without opening it (`a_message_opens_a_chat_closed_while_it_went_on`;
@@ -60,6 +60,7 @@ starts again on what it saved.
   message to a finished one does. tau still does not wait for the
   host's work when it quits, so a save in flight then is lost either
   way.
+
 - **What is left is the rule itself,** below.
 
 ### The rule today's code follows
@@ -167,21 +168,21 @@ Most of the shared state has one writer, the computer, and needs no
 merge: what a device sends for it is an intent, which the computer
 carries out once or refuses.
 
-| State | Written by | Concurrent hazard | Semantics it needs |
-| --- | --- | --- | --- |
-| Runs, transcripts, plugin records folded into them | the computer (host folds what it stores) | none; a message is an intent | none: the computer's state, sent as it is |
-| Messages to a chat (`Say`), new chats, forks | any device | the same intent delivered twice, or after a re-pairing | intent with an op id, run once |
-| Landing queue (`Land`, `Unqueue`) | the computer, on intents | an intent on a chat that ended is refused, as today | intent with an op id, run once |
-| Cancel | any device | a stop for a turn that ended does nothing | intent with an op id, run once |
-| Catalog, pushes, pull requests, code diffs, query results, resuming | the computer | none | none |
-| A chat closed or open | any device (`CloseRun`; a message opens it) | close on one, write on another | last-writer-wins register per chat, by HLC; the stop a close makes is an intent |
-| A chat's goal | any device (tau-goal record) | set on two | last-writer-wins register per chat, by HLC |
-| The model an agent starts on | any device | picked on two | last-writer-wins register per agent, by HLC |
-| Models hidden | any device | hide on one, show on another | last-writer-wins register per model (a set of them) |
-| Repositories hidden | any device; shown again by adding | hide on two, the last listed one | add-wins set, with the host's "one stays listed" rule on top |
-| UI state: sections, flags, a slot's pick, a page's tab | any device | set on two | last-writer-wins register per key, by HLC |
-| UI state: drafts (tree inputs) | any device | typed on two at once | text sequence CRDT per draft, or a register if the person accepts one device's text whole |
-| Route, open repositories, scroll, caret, hover | each device its own | none | none (never shared) |
+| State                                                               | Written by                                  | Concurrent hazard                                      | Semantics it needs                                                                        |
+| ------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| Runs, transcripts, plugin records folded into them                  | the computer (host folds what it stores)    | none; a message is an intent                           | none: the computer's state, sent as it is                                                 |
+| Messages to a chat (`Say`), new chats, forks                        | any device                                  | the same intent delivered twice, or after a re-pairing | intent with an op id, run once                                                            |
+| Landing queue (`Land`, `Unqueue`)                                   | the computer, on intents                    | an intent on a chat that ended is refused, as today    | intent with an op id, run once                                                            |
+| Cancel                                                              | any device                                  | a stop for a turn that ended does nothing              | intent with an op id, run once                                                            |
+| Catalog, pushes, pull requests, code diffs, query results, resuming | the computer                                | none                                                   | none                                                                                      |
+| A chat closed or open                                               | any device (`CloseRun`; a message opens it) | close on one, write on another                         | last-writer-wins register per chat, by HLC; the stop a close makes is an intent           |
+| A chat's goal                                                       | any device (tau-goal record)                | set on two                                             | last-writer-wins register per chat, by HLC                                                |
+| The model an agent starts on                                        | any device                                  | picked on two                                          | last-writer-wins register per agent, by HLC                                               |
+| Models hidden                                                       | any device                                  | hide on one, show on another                           | last-writer-wins register per model (a set of them)                                       |
+| Repositories hidden                                                 | any device; shown again by adding           | hide on two, the last listed one                       | add-wins set, with the host's "one stays listed" rule on top                              |
+| UI state: sections, flags, a slot's pick, a page's tab              | any device                                  | set on two                                             | last-writer-wins register per key, by HLC                                                 |
+| UI state: drafts (tree inputs)                                      | any device                                  | typed on two at once                                   | text sequence CRDT per draft, or a register if the person accepts one device's text whole |
+| Route, open repositories, scroll, caret, hover                      | each device its own                         | none                                                   | none (never shared)                                                                       |
 
 ### The clock
 

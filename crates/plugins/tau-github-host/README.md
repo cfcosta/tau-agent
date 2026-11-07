@@ -8,14 +8,14 @@ through.
 
 ## What it provides
 
-| Item                             | What it is                                                                                  |
-| -------------------------------- | ------------------------------------------------------------------------------------------- |
-| `GitHubHost`                     | The `HostHalf`: the plugin's data (how the sign-in stands), its `act`, and the forge's fill |
-| `GitHub`                         | The `tau.forge` slot's filler (`Forge`), and the sign-in going on (`act`, `sign_in_state`) |
-| `Api`, `Endpoints`               | GitHub's web and API, at their usual addresses or at a fake server's                        |
-| `DeviceStart`, `Poll`, `CLIENT_ID` | A device sign-in: the code to show, each poll's answer, and the app's client id           |
-| `Token`                          | The saved sign-in, `github.json` in tau's config directory, readable only by the user      |
-| `url::repository_of`             | The full name a Git URL names on GitHub, in any form Git takes                             |
+| Item                               | What it is                                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| `GitHubHost`                       | The `HostHalf`: the plugin's data (how the sign-in stands), its `act`, and the forge's fill |
+| `GitHub`                           | The `tau.forge` slot's filler (`Forge`), and the sign-in going on (`act`, `sign_in_state`)  |
+| `Api`, `Endpoints`                 | GitHub's web and API, at their usual addresses or at a fake server's                        |
+| `DeviceStart`, `Poll`, `CLIENT_ID` | A device sign-in: the code to show, each poll's answer, and the app's client id             |
+| `Token`                            | The saved sign-in, `github.json` in tau's config directory, readable only by the user       |
+| `url::repository_of`               | The full name a Git URL names on GitHub, in any form Git takes                              |
 
 ## How it fits
 
