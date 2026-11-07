@@ -278,6 +278,55 @@ return tau.plugin {
     );
 }
 
+/// An error a tool raises is its answer, as a value is: the model reads
+/// it, the plugin's log keeps it, and the plugin stays on however often
+/// it refuses (ADR 0027).
+#[test]
+fn a_tool_that_refuses_tells_the_model_why_and_stays_on() {
+    let picky = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "picky",
+  tools = {
+    take = {
+      description = "Takes a thing.",
+      call = function(args, ctx) error(args.what .. " is taken", 0) end,
+    },
+  },
+}
+"#;
+    let take = |what: &str| json!({ "what": what });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("take", take("a")))
+        .turn(|t| t.tool_call("take", take("b")))
+        .turn(|t| t.tool_call("take", take("c")))
+        .turn(|t| t.tool_call("take", take("d")))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins =
+        LuauPlugins::new(vec![active("picky", picky)], json!({}), None);
+    let agent = Agent::new(llm.clone()).plugin(plugins);
+    let outcome = block_on_io(agent.run("go", &store)).unwrap();
+    assert_eq!(outcome.text, "done");
+    let refused: Vec<(String, bool)> = ["a", "b", "c", "d"]
+        .map(|what| (format!("{what} is taken"), true))
+        .into();
+    assert_eq!(tool_results(&llm), refused);
+    let stored = records(&store, &outcome.run);
+    assert!(
+        !stored.iter().any(|record| matches!(
+            record,
+            Record::Error { .. } | Record::Off { .. }
+        )),
+        "{stored:?}"
+    );
+    assert!(stored.iter().any(|record| matches!(
+        record,
+        Record::Log { plugin, lines }
+            if plugin == "picky" && lines == &["take: d is taken"]
+    )));
+}
+
 #[test]
 fn a_run_tests_a_plugin_in_its_workspace() {
     let dir = tempfile::tempdir().unwrap();

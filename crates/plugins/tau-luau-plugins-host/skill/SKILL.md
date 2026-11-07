@@ -179,6 +179,9 @@ one, its `card`.
 - A hook that errors or runs out of time counts as `nil`, and its error
   shows on the Plugins screen. After three failures in a run the plugin
   is off for the rest of it. Never rely on an error to block.
+- A tool's `call` refuses with `error(message, 0)`: the model reads
+  the message as the call's failure, and it does not count as a
+  failure of the plugin's.
 - `on_event` hears the run's events that `events` names, each with its
   `kind` and `turn`: `turn_start`; `tool_start` (`id`, `name`, `args`);
   `tool_end` (`id`, `name`, `ok`); `retry` (`attempt`, `error`);

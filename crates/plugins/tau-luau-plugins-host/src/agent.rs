@@ -298,6 +298,23 @@ impl Inner {
         ctx: &PluginCtx,
         reach: Arc<dyn Reach>,
     ) -> Option<Value> {
+        let outcome = self
+            .run_hook(active, &hook, input, state, ctx, reach)
+            .await?;
+        self.apply(active, &hook, outcome, state, ctx).await
+    }
+
+    /// Calls `hook` of `active`, applying nothing: `None` when its plugin
+    /// is off or has no such hook.
+    async fn run_hook(
+        &self,
+        active: &Active,
+        hook: &Hook,
+        input: Value,
+        state: &mut RunState,
+        ctx: &PluginCtx,
+        reach: Arc<dyn Reach>,
+    ) -> Option<Outcome> {
         let name = &active.loaded.declaration.name;
         if self.off(state, name)
             || !hook.declared_in(&active.loaded.declaration)
@@ -317,11 +334,12 @@ impl Inner {
             Hook::RunEnd => tokio_util::sync::CancellationToken::new(),
             _ => ctx.cancel.child_token(),
         };
-        let outcome = active
-            .loaded
-            .call(&hook, input, &context, reach, cancel)
-            .await;
-        self.apply(active, &hook, outcome, state, ctx).await
+        Some(
+            active
+                .loaded
+                .call(hook, input, &context, reach, cancel)
+                .await,
+        )
     }
 
     /// Takes each plugin's state stored with the run since this run last
@@ -1182,10 +1200,33 @@ impl AgentTool for LuauTool {
             .into());
         };
         let failures = state.failures.get(&self.plugin).copied().unwrap_or(0);
-        let Some(value) = inner
-            .call(&active, tool, args.clone(), &mut state, &plugin, reach)
-            .await
-        else {
+        let outcome = inner
+            .run_hook(&active, &tool, args.clone(), &mut state, &plugin, reach)
+            .await;
+        let value = match outcome {
+            // An error the tool raised is its answer, as a value is: the
+            // model reads it, and its plugin is not at fault (ADR 0027).
+            Some(Outcome {
+                error: Some(error),
+                raised: true,
+                ..
+            }) => {
+                plugin
+                    .publish(&Record::Log {
+                        plugin: self.plugin.clone(),
+                        lines: vec![format!("{}: {error}", self.spec.name)],
+                    })
+                    .await;
+                return Err(error.into());
+            }
+            Some(outcome) => {
+                inner
+                    .apply(&active, &tool, outcome, &mut state, &plugin)
+                    .await
+            }
+            None => None,
+        };
+        let Some(value) = value else {
             if inner.off(&state, &self.plugin) && failures >= MAX_FAILURES {
                 return Err(format!(
                     "{} is off for this run: {MAX_FAILURES} of its hooks failed",
@@ -1265,6 +1306,13 @@ impl LuauTool {
                 text: ask.text.clone(),
             })
             .await;
+        // A plugin's records reach the interface with the run's next
+        // event, and none comes while the call waits: this update is one,
+        // so the Allow card shows now.
+        ctx.updates.send(ToolOutput::text(format!(
+            "Waiting for the person: {}",
+            ask.title
+        )));
         // A run that ended takes no answer, even one that came as it did.
         let answer = tokio::select! {
             biased;

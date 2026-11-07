@@ -480,6 +480,9 @@ pub struct Outcome {
     pub logs: Vec<String>,
     /// Why it failed, if it did: its error, a time out, a cancel.
     pub error: Option<String>,
+    /// Whether `error` is one the hook raised itself (`error()`, or a
+    /// Lua error), rather than a time out, a cancel or its store's.
+    pub raised: bool,
     pub wall: Duration,
 }
 
@@ -646,6 +649,7 @@ impl Loaded {
                 state: context.state.clone(),
                 logs: Vec::new(),
                 error: None,
+                raised: false,
                 wall: Duration::ZERO,
             };
         }
@@ -676,7 +680,7 @@ impl Loaded {
         let mut reaches =
             Reaches::of(&self.declaration, context.secrets.as_deref());
         reaches.store = session.clone();
-        let (value, mut error) = run(
+        let (value, failed) = run(
             self.modules.clone(),
             reach,
             reaches,
@@ -686,6 +690,8 @@ impl Loaded {
             cancel,
         )
         .await;
+        let raised = failed.as_ref().is_some_and(|failed| failed.raised);
+        let mut error = failed.map(|failed| without_caller(failed.why));
         // What it wrote goes in whole once it ends well, and not at all
         // when it fails.
         if let (Some(session), None) = (session, &error) {
@@ -704,6 +710,7 @@ impl Loaded {
                 state: context.state.clone(),
                 logs: Vec::new(),
                 error: Some(error),
+                raised,
                 wall,
             };
         }
@@ -723,6 +730,7 @@ impl Loaded {
             },
             logs,
             error: None,
+            raised: false,
             wall,
         }
     }
@@ -778,12 +786,12 @@ pub async fn run_tests(
             cancel.clone(),
         )
         .await;
-        if let Some(error) = error {
+        if let Some(failed) = error {
             results.push(TestResult {
                 file: file.clone(),
                 name: format!("tests/{file}.luau"),
                 passed: false,
-                error: Some(error),
+                error: Some(failed.why),
             });
             continue;
         }
@@ -835,7 +843,7 @@ pub async fn evaluate(
     )
     .await;
     match error {
-        Some(error) => Err(error),
+        Some(failed) => Err(failed.why),
         None => Ok(value),
     }
 }
@@ -893,6 +901,26 @@ impl Reaches {
     }
 }
 
+/// `why` without the line of the script that called the hook, which is
+/// tau's and not the plugin's: `codemode:5: x is taken` is `x is taken`.
+fn without_caller(why: String) -> String {
+    let Some(rest) = why.strip_prefix("codemode:") else {
+        return why;
+    };
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    match rest[digits..].strip_prefix(": ") {
+        Some(message) if digits > 0 => message.to_owned(),
+        _ => why,
+    }
+}
+
+/// Why a script failed, and whether it raised that itself: a Lua error,
+/// not a time out, a cancel or a sandbox that did not start.
+struct Failed {
+    why: String,
+    raised: bool,
+}
+
 /// Runs `script`, with `inputs` as its string globals, and gives back
 /// the table it returned, or why it failed.
 async fn run(
@@ -903,7 +931,7 @@ async fn run(
     inputs: Vec<(String, String)>,
     limit: Duration,
     cancel: CancellationToken,
-) -> (Value, Option<String>) {
+) -> (Value, Option<Failed>) {
     let host = Arc::new(PluginHost {
         modules,
         reach,
@@ -928,7 +956,9 @@ async fn run(
     };
     let outcome = tau_codemode_host::run(host, request).await;
     if let Some(failure) = outcome.failure {
-        return (Value::Null, Some(failure_text(&failure)));
+        let raised = matches!(failure, Failure::Error(_));
+        let why = failure_text(&failure);
+        return (Value::Null, Some(Failed { why, raised }));
     }
     let returned = outcome.items.iter().rev().find_map(|item| match item {
         Item::Json(text) => serde_json::from_str(text).ok(),
@@ -936,7 +966,13 @@ async fn run(
     });
     match returned {
         Some(value) => (value, None),
-        None => (Value::Null, Some("the hook returned nothing".into())),
+        None => (
+            Value::Null,
+            Some(Failed {
+                why: "the hook returned nothing".into(),
+                raised: false,
+            }),
+        ),
     }
 }
 

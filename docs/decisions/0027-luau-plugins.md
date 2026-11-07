@@ -183,6 +183,11 @@ return tau.plugin {
   time counts as `nil` (allow, stop), and the plugin's status turns red
   with the error. Three failures in a run turn the plugin off for the
   rest of it. A plugin cannot hang or break a run.
+- **A tool's own error is its answer.** An `error(message)` a tool's
+  `call` raises goes to the model as the call's failure, with its
+  message, and to the plugin's log: a tool that refuses ("held by
+  another run") is not at fault, however often it refuses. A time out,
+  a cancel or a store that fails still counts as a failure.
 - **`before_stop` is capped**: three continuations a run, as tau-goal's
   are, so two plugins cannot keep a run going forever.
 - **Not in this interface yet:** changing a call's arguments, rewriting
