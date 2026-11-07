@@ -51,6 +51,12 @@ jobs:
       # In release, as developers run them: the debug test binaries,
       # each with GPUI or jj-lib linked in, come to over 40 GB and fill
       # the runner's disk; the release ones come to about 8 GB.
+      # Ubuntu's AppArmor keeps unprivileged processes out of user
+      # namespaces, which bwrap makes an agent's sandbox in
+      # (tau-agents-host's sandbox test runs a real one).
+      - name: Allow user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Tests
         run: nix develop -c cargo nextest run --release --workspace --no-fail-fast
 
