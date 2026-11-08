@@ -152,6 +152,11 @@ fn ask(tool: &str, clicks: &[Click], cancel: bool) -> Asked {
             assert_eq!(key.0, id.0.as_ref(), "the form is the run's");
             if cancel {
                 control.cancel();
+                // The call has seen it: what follows comes after.
+                while !forms.waiting().is_empty() {
+                    tokio::time::sleep(std::time::Duration::from_millis(5))
+                        .await;
+                }
             }
             // What the plugin left while the call waits, as each device
             // has it.
