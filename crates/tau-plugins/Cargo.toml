@@ -26,7 +26,6 @@ tau-chatgpt = { path = "../plugins/tau-chatgpt", default-features = false }
 tau-goal.workspace = true
 tau-jev.workspace = true
 tau-schedule = { path = "../plugins/tau-schedule", default-features = false }
-tau-watcher.workspace = true
 tau-luau-plugins.workspace = true
 tau-agents.workspace = true
 tau-skills = { path = "../plugins/tau-skills", default-features = false }

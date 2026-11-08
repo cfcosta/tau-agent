@@ -1248,14 +1248,14 @@ Built: `crates/plugins/tau-goal`. Its reference is [goal.md](goal.md).
 
 ### `tau-watcher`: notes what you missed
 
-Built: `crates/plugins/tau-watcher`. Its reference is
-[watcher.md](watcher.md).
+Built: `crates/plugins/tau-watcher`, a Luau plugin tau comes with (ADR
+0050). Its reference is [watcher.md](watcher.md).
 
 - **Seams:** `start` (a message written past a waiting note), and
   `before_request` (every 6th step, one side request through
-  `PluginCtx::ask`).
-- **State:** records only: `noted`, `dropped`, `typed_past`, `answered`.
-  The interface stores the answers itself.
+  `ctx.tools.infer`, reading the run with `ctx.transcript()`).
+- **State:** the run's `ctx.state`: its notes, the back-off and the
+  last check. The note's buttons are the plugin's `answer` action.
 
 ### `tau-schedule`: a chat wakes itself later
 

@@ -1,0 +1,59 @@
+{
+  "state": {
+    "notes": [
+      {
+        "key": "n0",
+        "step": 12,
+        "tag": "Heads up",
+        "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision.",
+        "explain": {
+          "title": "Queued chats now raise the pill",
+          "bullets": [
+            "A fork waiting in the queue counts as needing you, even though it asks for no decision.",
+            "The pill can read “2 need you” while every chat is only waiting to start.",
+            "Running a queued chat, or removing it, lowers the count again.",
+            "The change is in the sidebar's attention states, not in the chats themselves."
+          ]
+        },
+        "typed_past": 0,
+        "status": "knew"
+      }
+    ],
+    "ignored": 0,
+    "dropped": 0,
+    "last_check": 12
+  },
+  "view": {
+    "notes": {
+      "n0": {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "Heads up",
+                "tone": "neutral"
+              },
+              {
+                "piece": "text",
+                "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "piece": "text",
+            "text": "You knew this."
+          }
+        ],
+        "piece": "stack"
+      }
+    },
+    "status": {
+      "detail": null,
+      "piece": "status",
+      "text": "1 note",
+      "tone": "neutral"
+    }
+  }
+}

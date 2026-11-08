@@ -1,8 +1,27 @@
 //! tau-watcher in the workspace: a note is a line above the composer
-//! while it is new, and an annotation in the transcript for good.
+//! while it is new, and an annotation in the transcript for good. The
+//! watcher is Luau (ADR 0050): its views, drawn by the plugin from each
+//! state, reach the workspace as tau-luau-plugins' records.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+use std::sync::Arc;
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use serde_json::{Value, json};
 use tau_demo as demo;
+use tau_luau_plugins_host::runtime::{
+    Context,
+    Files,
+    Hook,
+    Loaded,
+    NoReach,
+    PLUGIN,
+    load,
+};
 use tau_ui_plugin::points::{self, AtAnchor, AtRun};
 use tau_ui_remote::{
     Workspace,
@@ -10,14 +29,10 @@ use tau_ui_remote::{
     route::Route,
     update::HostUpdate,
 };
-use tau_watcher::{
-    NAME,
-    Record,
-    record::{Answer, Tag},
-};
+use tokio_util::sync::CancellationToken;
 
 fn open(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
-    tau_ui::hosted::install();
+    tau::install();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
         let repo = Repo {
@@ -35,14 +50,59 @@ fn open(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
     (workspace, VisualTestContext::from_window(window.into(), cx))
 }
 
+fn watcher() -> Loaded {
+    let paths: Vec<(String, Vec<u8>)> = tau_watcher::FILES
+        .iter()
+        .map(|(path, source)| ((*path).to_owned(), source.as_bytes().to_vec()))
+        .collect();
+    let files = Files::from_paths(&paths, PLUGIN).unwrap();
+    tau_testing::block_on_io(load(tau_watcher::NAME, files)).unwrap()
+}
+
+/// A run's watcher state with one note, `status`, written past
+/// `typed_past` times.
+fn state(status: &str, typed_past: u32) -> Value {
+    json!({
+        "notes": [{
+            "key": "n0", "step": 6, "tag": "Heads up",
+            "line": "The key expires tomorrow.",
+            "status": status, "typed_past": typed_past,
+        }],
+        "ignored": typed_past, "dropped": 0, "last_check": 6,
+    })
+}
+
+/// The view the watcher draws from `state`, folded into the run as the
+/// host stores it.
 fn fold(
     workspace: &Entity<Workspace>,
-    record: &Record,
+    plugin: &Loaded,
+    state: &Value,
     cx: &mut VisualTestContext,
 ) {
+    let context = Context {
+        run: json!({ "id": demo::run_id().0.as_ref(), "kind": "main" }),
+        now: json!({}),
+        settings: json!({ "enabled": true, "family": "chat" }),
+        state: state.clone(),
+        secrets: None,
+        store: None,
+    };
+    let view = tau_testing::block_on_io(plugin.call(
+        &Hook::View,
+        Value::Null,
+        &context,
+        Arc::new(NoReach),
+        CancellationToken::new(),
+    ));
+    assert_eq!(view.error, None);
+    let record = tau_luau_plugins::Record::View {
+        plugin: tau_watcher::NAME.into(),
+        view: view.value,
+    };
     let update = HostUpdate::PluginFold {
         run: demo::run_id(),
-        plugin: NAME.into(),
+        plugin: tau_luau_plugins::NAME.into(),
         body: serde_json::to_value(record).unwrap(),
     };
     workspace.update(cx, |ws, cx| ws.apply(update, cx));
@@ -59,13 +119,24 @@ fn drawn(
         let run = ws.run(&demo::run_id()).unwrap().info();
         let anchor = AtAnchor {
             run: run.clone(),
-            key: "n0".into(),
+            key: format!("note-{}-n0", tau_watcher::NAME),
             index: 0,
         };
         (
-            ws.drawn_of(NAME, points::COMPOSER_BAND, &AtRun { run }, cx)
-                .len(),
-            ws.drawn_of(NAME, points::TRANSCRIPT, &anchor, cx).len(),
+            ws.drawn_of(
+                tau_luau_plugins::NAME,
+                points::COMPOSER_BAND,
+                &AtRun { run },
+                cx,
+            )
+            .len(),
+            ws.drawn_of(
+                tau_luau_plugins::NAME,
+                points::TRANSCRIPT,
+                &anchor,
+                cx,
+            )
+            .len(),
         )
     })
 }
@@ -75,57 +146,28 @@ fn a_note_is_a_band_while_new_and_an_annotation_always(
     cx: &mut TestAppContext,
 ) {
     let (workspace, mut cx) = open(cx);
+    let plugin = watcher();
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(demo::run_id()), cx)
     });
-    assert_eq!(
-        drawn(&workspace, &mut cx),
-        (0, 0),
-        "nothing before a record"
-    );
-
-    let note = Record::Noted {
-        step: 6,
-        tag: Tag::HeadsUp,
-        line: "The key expires tomorrow.".into(),
-        explain: None,
-    };
-    let steps = [
-        (note, (1, 1)),
-        // Written past once: still a band. Twice: only the annotation.
-        (Record::TypedPast, (1, 1)),
-        (Record::TypedPast, (0, 1)),
-    ];
-    for (record, expected) in steps {
-        fold(&workspace, &record, &mut cx);
-        assert_eq!(drawn(&workspace, &mut cx), expected, "{record:?}");
+    assert_eq!(drawn(&workspace, &mut cx), (0, 0), "nothing before a note");
+    // New: both. Written past once: still a band. Twice: only the
+    // annotation.
+    for (typed_past, expected) in [(0, (1, 1)), (1, (1, 1)), (2, (0, 1))] {
+        fold(&workspace, &plugin, &state("new", typed_past), &mut cx);
+        assert_eq!(drawn(&workspace, &mut cx), expected, "{typed_past}");
     }
 }
 
 #[gpui::test]
 fn acting_on_a_note_takes_the_band_away(cx: &mut TestAppContext) {
     let (workspace, mut cx) = open(cx);
+    let plugin = watcher();
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(demo::run_id()), cx)
     });
-    fold(
-        &workspace,
-        &Record::Noted {
-            step: 6,
-            tag: Tag::YouShouldKnow,
-            line: "Tests run in debug.".into(),
-            explain: None,
-        },
-        &mut cx,
-    );
+    fold(&workspace, &plugin, &state("new", 0), &mut cx);
     assert_eq!(drawn(&workspace, &mut cx), (1, 1));
-    fold(
-        &workspace,
-        &Record::Answered {
-            key: "n0".into(),
-            answer: Answer::Knew,
-        },
-        &mut cx,
-    );
+    fold(&workspace, &plugin, &state("knew", 0), &mut cx);
     assert_eq!(drawn(&workspace, &mut cx), (0, 1));
 }

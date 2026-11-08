@@ -1,22 +1,28 @@
-//! Notes what you missed (`docs/reference/watcher.md`, ADR 0032): every
-//! 6th step of a run, a side request reads the transcript and answers
-//! `learn: none`, or offers one short note the person likely missed. The
-//! note is a record, drawn under the step that asked for it and, while
-//! it is new, as a line above the composer.
-//!
-//! The reply parser, the cadence and the seen-list are plain functions
-//! here; [`WatcherUi`] draws, and [`WatcherHost`] asks (ADR 0030: a host
-//! half this light stays in the plugin's crate).
+//! tau-watcher (docs/reference/watcher.md, ADR 0032, 0050): every 6th
+//! step of a run, a side request reads the conversation and answers
+//! `learn: none`, or offers one short note the person likely missed. It
+//! is a Luau plugin tau comes with: its code is the Luau under `luau/`,
+//! which tau-luau-plugins loads as always active; this crate carries the
+//! files, the views the demo draws, and the tests that check them.
 
-pub mod cadence;
-pub mod host;
-pub mod prompt;
-pub mod record;
-pub mod reply;
-pub mod state;
-pub mod ui;
+/// The plugin's name, and its folder's.
+pub const NAME: &str = "tau-watcher";
 
-pub use host::{WatcherHost, WatcherPlugin};
-pub use record::{NAME, Record};
-pub use state::State;
-pub use ui::WatcherUi;
+/// Its files, by their paths in its folder.
+pub const FILES: &[(&str, &str)] = &[
+    ("plugin.luau", include_str!("../luau/plugin.luau")),
+    ("lib/watch.luau", include_str!("../luau/lib/watch.luau")),
+    ("tests/watch.luau", include_str!("../luau/tests/watch.luau")),
+    (
+        "tests/plugin.luau",
+        include_str!("../luau/tests/plugin.luau"),
+    ),
+];
+
+/// What the demo shows of a note: a run's state, and the view the plugin
+/// draws from it, as JSON (`{ state, view }`), new, opened and known.
+/// The demo cannot run Luau; `tests/luau.rs` checks each view is what the
+/// plugin draws.
+pub const DEMO_NEW: &str = include_str!("../fixtures/new.json");
+pub const DEMO_LEARNED: &str = include_str!("../fixtures/learned.json");
+pub const DEMO_KNEW: &str = include_str!("../fixtures/knew.json");

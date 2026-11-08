@@ -28,6 +28,10 @@ pub const BUILT_IN: &[registry::BuiltIn] = &[
         name: tau_compaction_chain::NAME,
         files: tau_compaction_chain::FILES,
     },
+    registry::BuiltIn {
+        name: tau_watcher::NAME,
+        files: tau_watcher::FILES,
+    },
 ];
 
 pub mod parity;

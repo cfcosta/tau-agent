@@ -10034,6 +10034,7 @@ dependencies = [
  "tau-ui-kit",
  "tau-ui-plugin",
  "tau-vcs-host",
+ "tau-watcher",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -10259,7 +10260,6 @@ dependencies = [
  "tau-tree-compaction",
  "tau-ui-plugin",
  "tau-vcs",
- "tau-watcher",
 ]
 
 [[package]]
@@ -10735,19 +10735,10 @@ dependencies = [
 name = "tau-watcher"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
- "hegeltest",
- "serde",
  "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-store",
- "tau-store-sqlite",
+ "tau-luau-plugins-host",
  "tau-testing",
- "tau-ui-kit",
- "tau-ui-plugin",
- "thiserror 2.0.21",
+ "tokio-util",
 ]
 
 [[package]]

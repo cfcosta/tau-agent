@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dev-dependencies]
+tau-watcher.workspace = true
 tau-titles.workspace = true
 # The demo's session, which tests drive the interface with.
 tau-demo.workspace = true
@@ -57,7 +58,6 @@ tau-agents.workspace = true
 tau-luau-plugins.workspace = true
 tau-jev.workspace = true
 tau-mcp-host.workspace = true
-tau-watcher.workspace = true
 tau-memory-host = { workspace = true, features = ["docbert"] }
 tau-reasoning.workspace = true
 tau-fast-compaction.workspace = true

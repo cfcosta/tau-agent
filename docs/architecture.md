@@ -63,7 +63,7 @@ tau-agent/
 │       ├── tau-tree-compaction/  # compaction into a tree of summaries the
 │       │                         # agent zooms into, after OptChat
 │       ├── tau-vcs/              # version control on jj-lib, and landing runs
-│       └── tau-watcher/          # notes what you likely missed, every 6th step
+│       └── tau-watcher/          # notes what you likely missed, every 6th step (Luau)
 │                                 # (ADR 0032)
 └── docs/
 ```

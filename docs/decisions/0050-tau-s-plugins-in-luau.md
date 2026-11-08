@@ -231,6 +231,66 @@ load it, and the Rust crate deleted.
 - tau-ui does not link Luau, so its tests that need these slots
   install `tau::plugins()`, which does.
 
+### Gap I, and tau-watcher
+
+The inventory had tau-watcher needing gap A alone. It needed five
+things more, closed here as gap I:
+
+- **`ctx.transcript()`**, with `uses.transcript` (new reach: the plugin
+  reads all the person said), in `before_request` and
+  `rewrite_context`, the hooks that hold the transcript: every message
+  whole, an answer's calls with their arguments. `before_request` gets
+  `replies`, so a plugin counts steps without reading it.
+- **Keyed notes**: a view's `notes = { [key] = piece }`, each placed
+  where the run is when its key first comes and drawn again in place.
+  The one `note` a view had moved down the transcript each time it
+  changed.
+- **`tau.interface(action, args)`**: an action may end in one of tau's
+  button actions, done on its run once its state is kept, as "Chat
+  about it" puts the note in the composer.
+- **`infer{ model }`**: a model or family over `uses.model`'s, for a
+  model the person picks in the plugin's settings. Codemode's own
+  `infer` refuses it: a script asks the run's model.
+- **`ctx.models`**: the plan's models, newest of each family, for the
+  settings to choose from.
+
+What the port found besides:
+
+- **A Luau table keeps no order**, and the Rust watcher wrote a call's
+  arguments in the model's order. `ctx.transcript()` gives each call's
+  `order` too.
+- **Per-character Luau is slow on long text.** Cutting a result at
+  2 000 characters by turning it into a list of code points made the
+  conversation check take 80 s; `utf8.offset` and `utf8.len`, in C,
+  take 0.6 s for the same.
+- **A property's case stalled for good under codemode's sequential
+  lock.** With one seed, a case of `lists` drawn to 240 elements
+  stopped mid-case: the VM idle, nothing to wake it, until the 40 s
+  limit. The `hegel` tool was sequential; it is not now (a property's
+  VM is one thread, and the driver has its own lock), and the stall is
+  gone. Five thousand calls of a sequential tool in codemode alone,
+  plain or nested in `pcall`, did not stall, so the cause in codemode
+  is not found; the first driver's tokio mutex stalled the same way.
+- **The demo cannot run Luau**, as tau-ui does not link it. tau-watcher
+  carries the views the demo shows as fixtures, each a state and the
+  view drawn from it, and its tests check each against what the plugin
+  draws (`BLESS_FIXTURES=1` writes them anew). tau-ui's own test draws
+  the views with the plugin, through `tau::plugins()`.
+- **The parity check** ran Rust and Luau side by side on 1 000 drawn
+  replies, 300 written notes, 300 cadences, 300 chat texts, the prompt,
+  200 conversations of drawn messages with calls, and 200 drawn note
+  histories folded by Rust's `State` and by `watch`: all equal. Rust's
+  `chat_text` breaks `ultra` at a word's start by Unicode's
+  `is_alphanumeric`, which Luau has no table for: `watch.chat_text`
+  takes ASCII exactly and, beyond it, anything outside the blocks of
+  white space, punctuation and symbols as a letter, and the check drew
+  from text both read alike.
+- The note keeps to `ui.stack` and `ui.row` (Luau has no card or
+  spacer piece). The instructions go in `infer`'s task, after its own
+  fixed ones, not as the request's instructions. The catalog's
+  "on"/"off" note is gone with the Rust half. Records gave way to the
+  run's state, stored with it as every Luau plugin's is.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with
