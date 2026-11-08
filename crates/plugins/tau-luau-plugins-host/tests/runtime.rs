@@ -778,3 +778,34 @@ async fn a_command_runs_as_its_action() {
     assert_eq!(out.error, None);
     assert_eq!(out.state, json!({ "shipped": "1.2" }));
 }
+
+/// A run hook of a plugin whose `uses` names the model or Jev has a
+/// tool's time to call them (ADR 0050); one that names neither keeps its
+/// short limit, and `on_event`, which runs for every event, always does.
+#[test]
+fn a_hook_that_may_call_the_model_has_the_time_for_it() {
+    use tau_luau_plugins::Declaration;
+    let plain = Declaration::default();
+    let mut reaching = Declaration::default();
+    reaching.uses.jev = true;
+    let tool = Hook::Tool("t".into()).limit();
+    for hook in [
+        Hook::Start,
+        Hook::BeforeTool,
+        Hook::BeforeRequest,
+        Hook::AfterToolResult,
+        Hook::RewriteContext,
+        Hook::Rewritten,
+        Hook::BeforeStop,
+        Hook::TurnEnd,
+        Hook::RunEnd,
+    ] {
+        assert_eq!(hook.limit_for(&reaching), tool, "{hook:?}");
+        assert_eq!(hook.limit_for(&plain), hook.limit(), "{hook:?}");
+    }
+    assert_eq!(Hook::BeforeRequest.limit(), Duration::from_millis(200));
+    assert_eq!(
+        Hook::OnEvent.limit_for(&reaching),
+        Duration::from_millis(200)
+    );
+}

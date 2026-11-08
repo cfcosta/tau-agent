@@ -16,7 +16,12 @@ pub struct InferRequest {
     pub task: String,
     pub context: Value,
     pub schema: Option<Value>,
+    /// The reasoning effort to ask with; `None` keeps the caller's.
+    pub effort: Option<tau_ai::responses::request::ReasoningEffort>,
 }
+
+/// What an `infer` request is told: one task, on its own.
+pub const INSTRUCTIONS: &str = "Answer only the user's independent inference request. Do not assume prior conversation, access tools, or request tool execution.";
 
 impl InferRequest {
     /// Parse and validate all supplied arguments before any model call is made.
@@ -24,10 +29,9 @@ impl InferRequest {
         let Value::Object(mut fields) = value else {
             return Err("infer arguments must be an object".into());
         };
-        if let Some(key) = fields
-            .keys()
-            .find(|key| !matches!(key.as_str(), "task" | "context" | "schema"))
-        {
+        if let Some(key) = fields.keys().find(|key| {
+            !matches!(key.as_str(), "task" | "context" | "schema" | "effort")
+        }) {
             return Err(format!("unknown infer argument: {key}"));
         }
         let task = fields
@@ -48,10 +52,20 @@ impl InferRequest {
             jsonschema::validator_for(schema)
                 .map_err(|error| format!("invalid schema: {error}"))?;
         }
+        let effort = match fields.remove("effort") {
+            None | Some(Value::Null) => None,
+            Some(effort) => {
+                Some(serde_json::from_value(effort).map_err(|_| {
+                    "effort is none, minimal, low, medium, high, xhigh or max"
+                        .to_owned()
+                })?)
+            }
+        };
         Ok(Self {
             task,
             context,
             schema,
+            effort,
         })
     }
 
@@ -62,7 +76,8 @@ impl InferRequest {
             "properties": {
                 "task": {"type": "string", "description": "The independent task for inference."},
                 "context": {"description": "Explicit JSON context for this task; null is allowed."},
-                "schema": {"description": "Optional JSON Schema for the answer, or null."}
+                "schema": {"description": "Optional JSON Schema for the answer, or null."},
+                "effort": {"description": "Optional reasoning effort: none, minimal, low, medium, high, xhigh or max."}
             },
             "required": ["task", "context"],
             "additionalProperties": false

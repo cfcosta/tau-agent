@@ -103,7 +103,8 @@ impl ModelReach {
             .name
             .clone()
             .ok_or("name the model `infer` asks in `uses.model`")?;
-        let mut settings = tau_ui_plugin::AskSettings::new(name, None);
+        let mut settings =
+            tau_ui_plugin::AskSettings::new(name, request.effort);
         if let Some(format) = request.text_format() {
             settings = settings.text_format(format);
         }

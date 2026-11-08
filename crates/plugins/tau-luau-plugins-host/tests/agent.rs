@@ -866,6 +866,95 @@ fn a_plugin_sets_a_turns_effort() {
     assert_eq!(efforts, [None, Some(ReasoningEffort::High)]);
 }
 
+const THINKER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "thinker",
+  uses = { infer = true, jev = true },
+  before_request = function(request, ctx)
+    if request.turn ~= 1 then return nil end
+    local picked = tools.infer({ task = "Pick an effort.", context = json.null, effort = "low" })
+    local odd = ctx.jev.noul({ state = { n = 1 }, question = "Is n odd?", yes = "odd" })
+    ctx.state.said = { picked = picked, odd = odd.probability }
+    return tau.effort(picked.value)
+  end,
+}
+"#;
+
+const PLAIN: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "plain",
+  before_request = function(request, ctx)
+    ctx.state.infer = type(tools.infer)
+    ctx.state.jev = type(ctx.jev)
+  end,
+}
+"#;
+
+/// A run hook calls the model and Jev when its plugin's `uses` names
+/// them (ADR 0050): `before_request` asks the model at low effort and
+/// Jev, and sets the turn's effort from the answer; the model's answer
+/// is charged to the run. A plugin that names neither reaches neither.
+#[test]
+fn a_run_hook_calls_the_model_and_jev_it_uses() {
+    use tau_ai::responses::request::ReasoningEffort;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("high"))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let jev = tau_jev::fake::FakeJev::nouls(|_| 0.75);
+    let plugins = LuauPlugins::new(
+        // The first plugin that picks an effort is the last asked.
+        vec![active("plain", PLAIN), active("thinker", THINKER)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        Some(std::sync::Arc::new(jev.clone())),
+    );
+    let agent = Agent::new(llm.clone()).plugin(plugins);
+    let outcome = block_on_io(agent.run("think", &store)).unwrap();
+    assert_eq!(outcome.text, "done");
+    let requests = llm.requests();
+    let asked: Vec<(Option<ReasoningEffort>, bool)> = requests
+        .iter()
+        .map(|request| {
+            let independent = request.settings.instructions.as_deref()
+                == Some(tau_codemode_host::inference::INSTRUCTIONS);
+            (request.settings.reasoning, independent)
+        })
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            (Some(ReasoningEffort::Low), true),
+            (Some(ReasoningEffort::High), false)
+        ],
+        "the plugin's ask, then the turn at the effort it picked"
+    );
+    assert_eq!(jev.requests().len(), 1);
+    let stored = records(&store, &outcome.run);
+    let state = |name: &str| {
+        stored.iter().rev().find_map(|record| match record {
+            Record::State { plugin, state } if plugin == name => {
+                Some(state.clone())
+            }
+            _ => None,
+        })
+    };
+    assert_eq!(
+        state("thinker").unwrap()["said"],
+        json!({ "picked": { "ok": true, "value": "high" }, "odd": 0.75 })
+    );
+    assert_eq!(
+        state("plain").unwrap(),
+        json!({ "infer": "nil", "jev": "nil" })
+    );
+    assert!(
+        outcome.usage.cost.total >= 0.0 && outcome.usage.input > 0,
+        "the plugin's ask counts in the run's usage: {:?}",
+        outcome.usage
+    );
+}
+
 const TALLY: &str = r#"
 local tau = require("tau")
 return tau.plugin {

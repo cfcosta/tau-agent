@@ -238,6 +238,23 @@ impl Inner {
             .cloned()
     }
 
+    /// What `active`'s run hooks reach (ADR 0050): the model and Jev,
+    /// when its `uses` names them, charged to the run; else nothing.
+    fn reach(&self, active: &Active, ctx: &PluginCtx) -> Arc<dyn Reach> {
+        let uses = &active.loaded.declaration.uses;
+        if !uses.infer && !uses.jev {
+            return Arc::new(NoReach);
+        }
+        let model = uses.model.clone().unwrap_or_else(|| {
+            self.run["model"].as_str().unwrap_or_default().to_owned()
+        });
+        Arc::new(RunReach {
+            plugin: ctx.clone(),
+            jev: self.jev.clone(),
+            model,
+        })
+    }
+
     fn context(
         &self,
         run: &RunId,
@@ -663,7 +680,7 @@ impl Plugin for LuauPlugins {
                         input,
                         &mut state,
                         ctx,
-                        Arc::new(NoReach),
+                        self.0.reach(active, ctx),
                     )
                     .await
                 else {
@@ -743,7 +760,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    Arc::new(NoReach),
+                    inner.reach(active, ctx),
                 )
                 .await
             else {
@@ -819,7 +836,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    Arc::new(NoReach),
+                    inner.reach(active, ctx),
                 )
                 .await
             else {
@@ -872,7 +889,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    Arc::new(NoReach),
+                    inner.reach(active, ctx),
                 )
                 .await;
         }
@@ -911,7 +928,7 @@ impl PluginRun for LuauRun {
                     input,
                     &mut state,
                     ctx,
-                    Arc::new(NoReach),
+                    inner.reach(active, ctx),
                 )
                 .await
             else {
@@ -959,7 +976,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    Arc::new(NoReach),
+                    inner.reach(active, ctx),
                 )
                 .await
             else {
@@ -1006,7 +1023,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    Arc::new(NoReach),
+                    inner.reach(active, ctx),
                 )
                 .await
             else {
@@ -1079,7 +1096,7 @@ impl PluginRun for LuauRun {
                             input.clone(),
                             &mut state,
                             ctx,
-                            Arc::new(NoReach),
+                            inner.reach(active, ctx),
                         )
                         .await;
                 }
@@ -1106,7 +1123,7 @@ impl PluginRun for LuauRun {
                         input.clone(),
                         &mut state,
                         ctx,
-                        Arc::new(NoReach),
+                        inner.reach(active, ctx),
                     )
                     .await;
             }
@@ -1408,6 +1425,81 @@ impl Reach for ToolReach {
 
     fn charge(&self, usage: &Usage) {
         self.plugin.charge(usage);
+    }
+}
+
+/// What a run hook reaches besides a tool's call (ADR 0050): the model,
+/// as `infer`, and Jev, both charged to the run and cancelled with it.
+struct RunReach {
+    plugin: PluginCtx,
+    jev: Option<Arc<dyn Jev>>,
+    /// The model `infer` asks: `uses.model`'s, else the run's.
+    model: String,
+}
+
+#[async_trait]
+impl Reach for RunReach {
+    fn tools(&self) -> Vec<ToolEntry> {
+        vec![ToolEntry {
+            name: "infer".into(),
+            description: "Asks the model one task.".into(),
+            input_schema:
+                tau_codemode_host::inference::InferRequest::parameters(),
+            output_schema: None,
+            namespace: None,
+            sequential: false,
+        }]
+    }
+
+    async fn call(&self, call: ScriptCall) -> Result<ToolReply, String> {
+        if call.name != "infer" {
+            return Err(format!(
+                "`{}` cannot be called from this hook",
+                call.name
+            ));
+        }
+        // As `infer` answers in a tool: `{ ok, value }`, or `{ ok, error }`.
+        let reply = match self.infer(call.args).await {
+            Ok(value) => json!({ "ok": true, "value": value }),
+            Err(error) => json!({ "ok": false, "error": error }),
+        };
+        Ok(ToolReply::success(reply))
+    }
+
+    fn jev(&self) -> Option<Arc<dyn Jev>> {
+        self.jev.clone()
+    }
+
+    fn charge(&self, usage: &Usage) {
+        self.plugin.charge(usage);
+    }
+}
+
+impl RunReach {
+    async fn infer(&self, args: Value) -> Result<Value, String> {
+        use tau_ai::message::{Message, UserContent, UserMessage};
+        use tau_codemode_host::inference::{INSTRUCTIONS, InferRequest};
+        let request = InferRequest::parse(args)?;
+        let settings = tau_ai::responses::request::Settings {
+            model: self.model.clone(),
+            instructions: Some(INSTRUCTIONS.into()),
+            reasoning: request.effort,
+            text_format: request.text_format(),
+            ..Default::default()
+        };
+        let input = [Message::User(UserMessage {
+            content: UserContent::Text(request.input_text()),
+            timestamp: self.plugin.now(),
+        })];
+        let answer = self
+            .plugin
+            .ask(settings, &input)
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(error) = &answer.error_message {
+            return Err(error.clone());
+        }
+        request.decode_answer(&answer.text())
     }
 }
 

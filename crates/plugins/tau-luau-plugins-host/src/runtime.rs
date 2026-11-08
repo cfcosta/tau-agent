@@ -333,6 +333,30 @@ impl Hook {
         })
     }
 
+    /// How long it may run for `declaration`: a run hook of a plugin
+    /// whose `uses` names `infer` or `jev` may call them, and has a
+    /// tool's time for it (ADR 0050); `on_event` never does.
+    pub fn limit_for(&self, declaration: &Declaration) -> Duration {
+        let run_hook = matches!(
+            self,
+            Self::Start
+                | Self::BeforeTool
+                | Self::BeforeRequest
+                | Self::AfterToolResult
+                | Self::RewriteContext
+                | Self::Rewritten
+                | Self::BeforeStop
+                | Self::TurnEnd
+                | Self::RunEnd
+        );
+        let uses = &declaration.uses;
+        if run_hook && (uses.infer || uses.jev) {
+            Self::Tool(String::new()).limit()
+        } else {
+            self.limit()
+        }
+    }
+
     /// The Luau expression that calls it, with `p`, `input` and `ctx`.
     fn expression(&self) -> String {
         match self {
@@ -686,7 +710,7 @@ impl Loaded {
             reaches,
             script,
             inputs,
-            hook.limit(),
+            hook.limit_for(&self.declaration),
             cancel,
         )
         .await;

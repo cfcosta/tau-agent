@@ -460,9 +460,9 @@ impl AgentTool for InferTool {
         };
         let settings = Settings {
             model: self.model.clone(),
-            instructions: Some("Answer only the user's independent inference request. Do not assume prior conversation, access tools, or request tool execution.".into()),
+            instructions: Some(crate::inference::INSTRUCTIONS.into()),
             tools: Vec::new(),
-            reasoning: self.reasoning,
+            reasoning: request.effort.or(self.reasoning),
             text_format: request.text_format(),
             max_output_tokens: output_limit.then_some(2048),
             ..Settings::default()

@@ -191,13 +191,22 @@ one, its `card`.
   plugin from loading.
 - Hooks run each in a fresh VM: keep what must last in `ctx.state`, not
   in local variables.
+- A plugin whose `uses` names `infer` or `jev` may call them from every
+  run hook but `on_event` (`start`, `before_tool`, `before_request`,
+  `after_tool_result`, `rewrite_context`, `rewritten`, `before_stop`,
+  `turn_end`, `run_end`), and those hooks then have 60 s, as a tool's
+  `call` does. The run waits for them: a model call in `before_request`
+  delays every request it runs before, so keep it to the turns that
+  need it. A plugin that names neither keeps the times in the table.
 
 ### The model
 
 A plugin with `uses.infer` asks the person's model one task:
-`tools.infer({ task, context, schema? })` answers `{ ok, value, error? }`,
-`value` the answer's text, or JSON that holds to `schema`. In a run it
-asks the run's model, booked to the run. In a hook outside any run
+`tools.infer({ task, context, schema?, effort? })` answers
+`{ ok, value, error? }`, `value` the answer's text, or JSON that holds
+to `schema`; `effort` is `"low"`, `"medium"` and so on, else the
+model's own. In a run, from any run hook, it asks the model
+`uses.model` names, else the run's, booked to the run. In a hook outside any run
 (`title`, `notify`, the forge's) it asks the model `uses.model` names,
 or for `title` the run's own when it names none, booked to the
 Plugins screen's tau-luau-plugins.
@@ -224,7 +233,7 @@ new reach.
 | `ctx.settings` | what the person set, over `settings.default`; per repository when one keeps its own copy          |
 | `ctx.state`    | the plugin's table for this run; what a hook leaves in it is kept                                 |
 | `ctx.tools`    | in a tool's `call` only: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })` |
-| `ctx.jev`      | Jev, when `uses.jev`                                                                              |
+| `ctx.jev`      | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run     |
 | `ctx.log`      | `ctx.log(text)`: a line on the plugin's page, never for the model                                 |
 | `ctx.store`    | with `uses.store`: the plugin's store in the repository the hook works in (below)                 |
 
