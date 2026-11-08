@@ -76,8 +76,10 @@ fn the_demo_views_are_what_the_plugin_draws() {
         let drawn = view_of(&loaded, &fixture["state"]);
         if std::env::var_os("BLESS_FIXTURES").is_some() {
             fixture["view"] = drawn;
-            let path =
-                format!("{}/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"));
+            let path = format!(
+                "{}/../../../plugins/tau-watcher/fixtures/{name}.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
             let text = serde_json::to_string_pretty(&fixture).unwrap() + "\n";
             std::fs::write(path, text).unwrap();
             continue;

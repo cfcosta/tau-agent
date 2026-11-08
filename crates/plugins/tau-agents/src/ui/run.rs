@@ -189,7 +189,7 @@ pub fn panel_tree(
     wakes.extend(scheduled(agent));
     if wakes.is_empty() {
         wakes.push(Node::text(
-            "Nothing yet: it declares this in its agent.luau, or schedules \
+            "Nothing yet: it declares this in its src/agent.luau, or schedules \
              it from its conversation.",
         ));
     }
@@ -322,7 +322,7 @@ fn secrets(agent: &Agent) -> Vec<Node> {
         })
         .collect();
     if agent.secrets.is_empty() {
-        rows.push(Node::text("Its agent.luau names none yet."));
+        rows.push(Node::text("Its src/agent.luau names none yet."));
     }
     rows.push(Node::text(
         "Kept in this agent's own secret store. Its requests name them; no \
@@ -350,7 +350,7 @@ fn secrets(agent: &Agent) -> Vec<Node> {
     rows
 }
 
-/// A version of its `agent.luau`: live, failed, or one before.
+/// A version of its `src/agent.luau`: live, failed, or one before.
 fn version_row(version: &crate::Version) -> Node {
     let passed = version.tests.iter().filter(|test| test.passed).count();
     let (tone, state) = if version.live {

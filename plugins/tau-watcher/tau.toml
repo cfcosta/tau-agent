@@ -1,0 +1,4 @@
+name = "tau-watcher"
+version = "0.1.0"
+description = "Every 6th step a side request reads the run and, rarely, offers one note you likely missed"
+entry = "src/plugin.luau"

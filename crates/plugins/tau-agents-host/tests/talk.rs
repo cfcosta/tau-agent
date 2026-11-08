@@ -52,18 +52,14 @@ const NOW: i64 = 1_791_792_000;
 /// An agent that hears messages, in its `inbox`.
 const LISTENS: &str = r#"
 local tau = require("tau")
-return tau.agent {
-  name = "triage",
-  triggers = { inbox = { message = true } },
+return tau.agent { triggers = { inbox = { message = true } },
 }
 "#;
 
 /// An agent that hears none.
 const DEAF: &str = r#"
 local tau = require("tau")
-return tau.agent {
-  name = "digest",
-  triggers = { morning = { at = "09:00" } },
+return tau.agent { triggers = { morning = { at = "09:00" } },
 }
 "#;
 
@@ -173,7 +169,7 @@ impl Fixture {
             ProjectRepo::init(
                 home.path().join("agents").join(name),
                 Identity::default(),
-                &[("agent.luau".to_owned(), source.to_owned())],
+                &tau_agents_host::package(name, source),
             )
             .unwrap();
         }

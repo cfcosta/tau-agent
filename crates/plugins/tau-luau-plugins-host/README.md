@@ -14,7 +14,7 @@ uses.
 | `LuauPluginsHost`           | The `HostHalf` the app registers: the plugins for each run       |
 | `agent::LuauPlugins`        | The run's active Luau plugins, as one tau-agent `Plugin`         |
 | `agent::Active`             | A loaded plugin with the person's settings                       |
-| `runtime::Files`            | A plugin folder: `plugin.luau`, `lib/`, `tests/`, README         |
+| `runtime::Files`            | A package: `tau.toml`, `src/`, `tests/`, README                  |
 | `runtime::load`             | Reads what a folder declares, in a fresh VM, and checks it       |
 | `runtime::Loaded`           | A checked plugin: `call` runs a hook, `test` runs its tests      |
 | `runtime::Hook`             | A hook as the host calls it, with its time limit (`Hook::limit`) |

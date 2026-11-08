@@ -2,7 +2,7 @@
 //! that wait for its next turn, and the turns that hear them.
 //!
 //! Every second each agent's schedules that came due fire, those its
-//! `agent.luau` declares and those it scheduled itself (`scheduled`),
+//! `src/agent.luau` declares and those it scheduled itself (`scheduled`),
 //! and its queue is looked at. Its events wait a coalescing window from the
 //! oldest, then go to its conversation as one message from tau, unless
 //! a turn of it is going (they wait for the next), the person paused it,

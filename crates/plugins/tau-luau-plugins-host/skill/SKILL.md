@@ -13,13 +13,18 @@ folder each:
 
 ```
 <name>/
-  plugin.luau      -- returns the plugin: tau.plugin { ... }
-  lib/<module>.luau  -- modules of its own: require("<module>")
+  tau.toml           -- what it is: name, version, description
+  src/plugin.luau    -- returns the plugin: tau.plugin { ... }
+  src/<module>.luau  -- modules of its own: require("<module>")
   tests/<file>.luau  -- its tests, run against fake runs
   README.md        -- what it is for, for the person
 ```
 
-The folder's name is the plugin's `name`. A plugin is active once its
+`tau.toml` has `name`, the folder's; `version`, three numbers such as
+`0.1.0`; `description`, one line for the Plugins screen; and `entry`, if
+the plugin starts anywhere but `src/plugin.luau`. Nothing else goes in
+it. The name and the description live only there: `tau.plugin { ... }`
+refuses them. A plugin is active once its
 commit is on `main` and its tests pass. Write it, write its tests, run
 `plugin_test` with the plugin's name until they pass, then commit. When
 your turn ends, tau lands your commits on `main` by itself if every
@@ -60,8 +65,6 @@ local tau = require("tau")
 local ui = tau.ui
 
 return tau.plugin {
-  name = "...",              -- the folder's name
-  description = "...",       -- one line, for the Plugins screen
   uses = { tools = { "exec_command" }, jev = false, infer = false,
            network = { "ntfy.sh" }, secrets = { "ntfy" },
            transcript = false, archive = false },
@@ -94,7 +97,7 @@ return tau.plugin {
 }
 ```
 
-Every field but `name` is optional. `tools` adds tools the model can
+Every field is optional. `tools` adds tools the model can
 call, each with its arguments' JSON Schema, its `call` and, if it draws
 one, its `card`. A tool with `when = "on"` is offered only while the
 boolean setting `on` is on. One with `model_only = true` is the model's
@@ -581,8 +584,8 @@ no longer accepts gives way to the defaults, and the pane says so.
 
 ### Modules
 
-`lib/<module>.luau` is `require("<module>")` in `plugin.luau`. A module
-may require `tau` and the plugin's other modules, as long as no two
+`src/<module>.luau` is `require("<module>")` in `src/plugin.luau`, the
+two side by side: `src/` has no folders of its own. A module may require `tau` and the plugin's other modules, as long as no two
 require each other, however far around. `tau` and `plugin` are taken.
 
 ## Tests

@@ -1,5 +1,5 @@
 //! The `tau` module's half for agents (ADR 0037): what an agent's
-//! `agent.luau` declares, and its tests, run by the runtime Luau
+//! `src/agent.luau` declares, and its tests, run by the runtime Luau
 //! plugins share.
 
 #![allow(
@@ -10,12 +10,18 @@
 use std::{sync::Arc, time::Duration};
 
 use serde_json::{Value, json};
-use tau_luau_plugins_host::runtime::{Files, Root, evaluate, run_tests};
+use tau_luau_plugins_host::runtime::{
+    Files,
+    Manifest,
+    Root,
+    evaluate,
+    run_tests,
+};
 use tokio_util::sync::CancellationToken;
 
-/// An agent's repository: `agent.luau`, required as `agent`.
+/// An agent's repository: `src/agent.luau`, required as `agent`.
 const AGENT: Root = Root {
-    file: "agent.luau",
+    entry: "src/agent.luau",
     module: "agent",
     subject: "_agent",
 };
@@ -23,9 +29,7 @@ const AGENT: Root = Root {
 const TRIAGE: &str = r#"
 local tau = require("tau")
 
-return tau.agent {
-  name = "pr-triage",
-  triggers = {
+return tau.agent { triggers = {
     pull_requests = {
       poll = { tool = "mcp__github__list_pull_requests", args = { state = "open" } },
       every = "10m",
@@ -57,7 +61,7 @@ fn agent(source: &str) -> Files {
     Files {
         root: AGENT,
         source: source.into(),
-        ..Files::default()
+        ..Files::named("pr-triage")
     }
 }
 
@@ -78,7 +82,6 @@ async fn describe(files: &Files) -> Result<Value, String> {
 #[tokio::test]
 async fn an_agent_declares_what_wakes_it() {
     let described = describe(&agent(TRIAGE)).await.unwrap();
-    assert_eq!(described["name"], "pr-triage");
     assert_eq!(
         described["triggers"],
         json!([
@@ -161,15 +164,15 @@ async fn a_trigger_that_is_not_one_says_why() {
     for (trigger, why) in cases {
         let source = format!(
             "local tau = require(\"tau\")\n\
-             return tau.agent {{ name = \"a\", triggers = {{ t = {trigger} }} }}\n"
+             return tau.agent {{ triggers = {{ t = {trigger} }} }}\n"
         );
         let error = describe(&agent(&source)).await.unwrap_err();
         assert!(error.contains(why), "{trigger}: {error}");
     }
-    let unnamed =
-        "local tau = require(\"tau\")\nreturn tau.agent { triggers = {} }\n";
-    let error = describe(&agent(unnamed)).await.unwrap_err();
-    assert!(error.contains("needs a name"), "{error}");
+    let named = "local tau = require(\"tau\")\n\
+                 return tau.agent { name = \"a\", triggers = {} }\n";
+    let error = describe(&agent(named)).await.unwrap_err();
+    assert!(error.contains("in its tau.toml"), "{error}");
 }
 
 const TESTS: &str = r#"
@@ -238,15 +241,21 @@ async fn an_agents_tests_run_against_a_fake_agent() {
 #[tokio::test]
 async fn an_agents_folder_reads_from_its_paths() {
     let paths = vec![
-        ("agent.luau".to_owned(), TRIAGE.as_bytes().to_vec()),
-        ("lib/x.luau".to_owned(), b"return {}".to_vec()),
+        ("src/agent.luau".to_owned(), TRIAGE.as_bytes().to_vec()),
+        ("src/x.luau".to_owned(), b"return {}".to_vec()),
         ("AGENTS.md".to_owned(), b"# pr-triage".to_vec()),
+        (
+            "tau.toml".to_owned(),
+            Manifest::text("pr-triage", "Triages.").into_bytes(),
+        ),
     ];
     let files = Files::from_paths(&paths, AGENT).unwrap();
     assert_eq!(files.root, AGENT);
     assert!(files.libs.contains_key("x"));
     let missing = Files::from_paths(&paths[1..], AGENT).unwrap_err();
-    assert!(missing.contains("agent.luau"), "{missing}");
+    assert!(missing.contains("src/agent.luau"), "{missing}");
+    let unsaid = Files::from_paths(&paths[..3], AGENT).unwrap_err();
+    assert!(unsaid.contains("tau.toml"), "{unsaid}");
     // `agent` is its own module's name: a lib cannot take it.
     let mut taken = agent(TRIAGE);
     taken.libs.insert("agent".into(), "return {}".into());
@@ -298,9 +307,7 @@ async fn a_poll_s_items_carry_their_keys_as_text() {
 async fn a_poll_s_items_may_be_picked_from_its_result() {
     let source = r#"
 local tau = require("tau")
-return tau.agent {
-  name = "pr-triage",
-  triggers = {
+return tau.agent { triggers = {
     issues = {
       poll = { http = { url = "https://example.com/issues" } },
       every = "1h",
@@ -324,9 +331,7 @@ return tau.agent {
 const COUNTER: &str = r#"
 local tau = require("tau")
 
-return tau.agent {
-  name = "counter",
-  triggers = {
+return tau.agent { triggers = {
     ticks = {
       stream = { websocket = "wss://example.com/ticks" },
       parse = function(frame, state)

@@ -1,0 +1,4 @@
+name = "tau-constitution"
+version = "0.1.0"
+description = "Checks tool calls and final answers against each repository's rules, with Jev"
+entry = "src/plugin.luau"

@@ -1,0 +1,4 @@
+name = "tau-reasoning"
+version = "0.1.0"
+description = "Picks each message's reasoning effort on auto"
+entry = "src/plugin.luau"

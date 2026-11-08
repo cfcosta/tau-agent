@@ -1,0 +1,4 @@
+name = "tau-fast-compaction"
+version = "0.1.0"
+description = "Prunes large command outputs as they arrive, and stale tool history, with Jev"
+entry = "src/plugin.luau"

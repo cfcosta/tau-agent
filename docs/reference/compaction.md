@@ -6,8 +6,8 @@ implementations, and its summarization prompts have drifted apart. This
 one is the version pi ships.
 
 Compaction is a Luau plugin tau comes with (ADR 0050), in
-`crates/plugins/tau-compaction`: `luau/lib/compaction.luau` holds the
-rules, `luau/plugin.luau` the hooks. tau-luau-plugins runs it in every
+`plugins/tau-compaction`: `src/compaction.luau` holds the
+rules, `src/plugin.luau` the hooks. tau-luau-plugins runs it in every
 run of tau's, after fast pruning and the tree, so cheaper rewrites get
 the first chance. An agent of its own, such as an evaluation's, adds it
 with `Active::built_in(tau_compaction::NAME)` in its `LuauPlugins`.

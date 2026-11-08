@@ -133,14 +133,14 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// The agent `watch` with `source` as its `agent.luau`, its secret
+    /// The agent `watch` with `source` as its `src/agent.luau`, its secret
     /// in the store.
     async fn new(source: &str) -> Self {
         let home = tempfile::tempdir().unwrap();
         ProjectRepo::init(
             home.path().join("agents").join("watch"),
             Identity::default(),
-            &[("agent.luau".to_owned(), source.to_owned())],
+            &tau_agents_host::package("watch", source),
         )
         .unwrap();
         let secrets = SecretStore::in_dir(&home.path().join("config"));
@@ -212,7 +212,6 @@ fn agent(stream: &str) -> String {
         r#"
 local tau = require("tau")
 return tau.agent {{
-  name = "watch",
   triggers = {{
     feed = {{
       stream = {{ {stream}, headers = {{ authorization = "Bearer " .. tau.secret("ci") }} }},
@@ -320,12 +319,11 @@ async fn server_sent_events_come_back_from_the_last_id_and_fire_once() {
     let next = ProjectRepo::init(
         f.home.path().join("next"),
         Identity::default(),
-        &[(
-            "agent.luau".to_owned(),
+        &tau_agents_host::package(
+            "watch",
             "local tau = require(\"tau\")\n\
-             return tau.agent { name = \"watch\", triggers = { hourly = { every = \"1h\" } } }\n"
-                .to_owned(),
-        )],
+             return tau.agent { triggers = { hourly = { every = \"1h\" } } }\n",
+        ),
     )
     .unwrap();
     let trunk = next.trunk().unwrap();

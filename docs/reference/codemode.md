@@ -284,7 +284,7 @@ prefix = prefix }`, that a header or the body may hold, at any depth
   else. The value goes in as the request leaves: the script, the
   transcript and the run's records never hold it, and every value in
   the store is scrubbed (as `[secret:<name>]`) from what comes back.
-- `tau.secret` in an agent's `agent.luau` is the same marker, for its
+- `tau.secret` in an agent's `src/agent.luau` is the same marker, for its
   polls.
 
 ### Discovery

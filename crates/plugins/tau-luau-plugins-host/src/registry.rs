@@ -311,6 +311,7 @@ impl Registry {
             let entry = |standing, declaration| Entry {
                 name: built_in.name.to_owned(),
                 description: String::new(),
+                version: String::new(),
                 standing,
                 declaration,
                 tests: Vec::new(),
@@ -324,6 +325,7 @@ impl Registry {
                     let mut entry =
                         entry(Standing::Active, Some(declaration.clone()));
                     entry.description = declaration.description;
+                    entry.version.clone_from(&plugin.files.manifest.version);
                     loaded.push((
                         entry,
                         Active {
@@ -839,6 +841,7 @@ impl Registry {
                 state.overview.plugins.push(Entry {
                     name: name.clone(),
                     description: String::new(),
+                    version: String::new(),
                     standing: Standing::Broken {
                         error: format!(
                             "`{name}` is the name of a plugin tau comes with"
@@ -866,6 +869,7 @@ impl Registry {
                     state.overview.plugins.push(Entry {
                         name: name.clone(),
                         description: String::new(),
+                        version: String::new(),
                         standing: Standing::Broken { error },
                         declaration: None,
                         tests: Vec::new(),
@@ -894,6 +898,7 @@ impl Registry {
             state.overview.plugins.push(Entry {
                 name: name.clone(),
                 description: declaration.description.clone(),
+                version: loaded.files.manifest.version.clone(),
                 standing,
                 declaration: Some(declaration.clone()),
                 tests,
@@ -1152,16 +1157,14 @@ impl Registry {
 }
 
 /// The plugin folders in a workspace `dir`: each top-level folder with a
-/// `plugin.luau`, as its files.
+/// `tau.toml`, as its files.
 fn plugin_folders(dir: &Path) -> Vec<(String, Files)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut folders: Vec<(String, Files)> = entries
         .flatten()
-        .filter(|entry| {
-            entry.path().join(crate::runtime::PLUGIN_FILE).is_file()
-        })
+        .filter(|entry| entry.path().join(crate::runtime::MANIFEST).is_file())
         .filter_map(|entry| {
             let name = entry.file_name().to_str()?.to_owned();
             if name.starts_with('.') {

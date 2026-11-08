@@ -2,8 +2,8 @@
 
 The agent asks the person one to four questions and waits for the
 answers. It is a Luau plugin tau comes with (ADR 0050):
-`crates/plugins/tau-ask`, its code in `luau/plugin.luau`,
-`luau/lib/ask.luau` and `luau/lib/panel.luau`. Decision:
+`plugins/tau-ask`, its code in `src/plugin.luau`,
+`src/ask.luau` and `src/panel.luau`. Decision:
 [0019](../decisions/0019-ask-the-person.md).
 
 ## The tool
@@ -130,12 +130,12 @@ the computer started.
 
 ## Code
 
-- `luau/lib/ask.luau`: the limits and their check, whether answers fit,
+- `src/ask.luau`: the limits and their check, whether answers fit,
   the text the model reads, and the draft and its keys.
-- `luau/lib/escaped.luau`: the characters a quoted header writes as
+- `src/escaped.luau`: the characters a quoted header writes as
   `\u{...}`.
-- `luau/lib/panel.luau`: the panel and the card.
-- `luau/plugin.luau`: the tool, the actions, `start`, `run_end` and the
+- `src/panel.luau`: the panel and the card.
+- `src/plugin.luau`: the tool, the actions, `start`, `run_end` and the
   view.
-- `luau/tests/`: the cases and properties; `tests/luau.rs` runs them
+- `tests/`: the cases and properties; `tests/luau.rs` runs them
   as tau loads the plugin, and checks the demo's fixtures.

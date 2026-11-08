@@ -26,9 +26,7 @@ use tau_vcs_host::{Identity, Project, ProjectRepo};
 
 const HAND_OFF: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "greet",
-  uses = { store = true },
+return tau.plugin { uses = { store = true },
   tools = {
     hand_off = {
       description = "Asks the person to start a chat on an issue.",
@@ -118,7 +116,16 @@ fn registry(home: &std::path::Path) -> Registry {
     let repo = ProjectRepo::init(
         home.join("v1"),
         Identity::default(),
-        &[("greet/plugin.luau".to_owned(), HAND_OFF.to_owned())],
+        &[
+            (
+                "greet/tau.toml".to_owned(),
+                tau_luau_plugins_host::runtime::Manifest::text(
+                    "greet",
+                    "A plugin.",
+                ),
+            ),
+            ("greet/src/plugin.luau".to_owned(), HAND_OFF.to_owned()),
+        ],
     )
     .unwrap();
     let trunk = repo.trunk().unwrap();

@@ -843,8 +843,8 @@ Token estimates and overflow detection, which the loop uses for
 
 ### `tau-reasoning`: reasoning effort per job
 
-Built: `crates/plugins/tau-reasoning`, a Luau plugin tau comes with
-(ADR 0050): `luau/plugin.luau`, the policy in `luau/lib/effort.luau`.
+Built: `plugins/tau-reasoning`, a Luau plugin tau comes with
+(ADR 0050): `src/plugin.luau`, the policy in `src/effort.luau`.
 It scores runs whose effort is "auto" when a TypeSafe key is saved
 (`uses.jev`); each choice (every level's probability, the confidence
 and the threshold) is kept in the run's state, and shows as the run's
@@ -1154,7 +1154,7 @@ tau-memory-host --features docbert --bin tau-memory-eval` (`--keywords`
 
 ### `tau-constitution`: rules checked on specific calls
 
-Built: `crates/plugins/tau-constitution`, a Luau plugin tau comes with
+Built: `plugins/tau-constitution`, a Luau plugin tau comes with
 (ADR 0050). Its reference is [constitution.md](constitution.md).
 
 - **Seams:** `start` (what it watches, and a run fails on rules that
@@ -1189,7 +1189,7 @@ Built: `crates/plugins/tau-constitution`, a Luau plugin tau comes with
 
 ### `tau-fast-compaction`: prune stale tool history
 
-Built: `crates/plugins/tau-fast-compaction`, a Luau plugin tau comes
+Built: `plugins/tau-fast-compaction`, a Luau plugin tau comes
 with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
 
 - **Seams:** `rewrite_context` (turn ends, starts and overflows; it
@@ -1225,7 +1225,7 @@ with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
 
 ### `tau-compaction`: summarize what the window cannot hold
 
-Built: `crates/plugins/tau-compaction`, a Luau plugin tau comes with
+Built: `plugins/tau-compaction`, a Luau plugin tau comes with
 (ADR 0050). Its reference is [compaction.md](compaction.md).
 
 - **Seams:** `start` (the effort the run starts at, which its summaries
@@ -1245,7 +1245,7 @@ Built: `crates/plugins/tau-compaction`, a Luau plugin tau comes with
 
 ### `tau-tree-compaction`: fold the context into a tree
 
-Built: `crates/plugins/tau-tree-compaction`, a Luau plugin tau comes
+Built: `plugins/tau-tree-compaction`, a Luau plugin tau comes
 with (ADR 0050), off by default. Its reference is
 [tree-compaction.md](tree-compaction.md).
 
@@ -1267,7 +1267,7 @@ with (ADR 0050), off by default. Its reference is
 
 ### `tau-ask`: the agent asks the person
 
-Built: `crates/plugins/tau-ask`, a Luau plugin tau comes with (ADR
+Built: `plugins/tau-ask`, a Luau plugin tau comes with (ADR
 0050). Its reference is [ask.md](ask.md).
 
 - **Seams:** `tools` (`ask`, the model's alone, which answers
@@ -1282,7 +1282,7 @@ Built: `crates/plugins/tau-ask`, a Luau plugin tau comes with (ADR
 
 ### `tau-goal`: keep going until a goal holds
 
-Built: `crates/plugins/tau-goal`, a Luau plugin tau comes with (ADR
+Built: `plugins/tau-goal`, a Luau plugin tau comes with (ADR
 0050). Its reference is [goal.md](goal.md).
 
 - **Seams:** `start` (a `/goal` input sets the goal, and gives the
@@ -1299,7 +1299,7 @@ Built: `crates/plugins/tau-goal`, a Luau plugin tau comes with (ADR
 
 ### `tau-watcher`: notes what you missed
 
-Built: `crates/plugins/tau-watcher`, a Luau plugin tau comes with (ADR
+Built: `plugins/tau-watcher`, a Luau plugin tau comes with (ADR
 0050). Its reference is [watcher.md](watcher.md).
 
 - **Seams:** `start` (a message written past a waiting note), and
@@ -1341,7 +1341,7 @@ Built: `crates/plugins/tau-schedule`, with its host half behind its
 2. `Agent` builds each run's settings from its `RunPlan`, not from the
    agent directly.
 3. Compaction moves behind `rewrite_context`, into its own crate,
-   `tau-compaction` (`crates/plugins/tau-compaction`); an agent adds it with
+   `tau-compaction` (`plugins/tau-compaction`); an agent adds it with
    `Agent::plugin` ([0006](../decisions/0006-plugin-crates.md)). It is a
    Luau plugin now (ADR 0050).
 4. `tau-store`:

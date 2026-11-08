@@ -12,8 +12,8 @@ function tau.plugin(spec)
 	if type(spec) ~= "table" then
 		error("tau.plugin takes a table", 2)
 	end
-	if type(spec.name) ~= "string" or spec.name == "" then
-		error("a plugin needs a name", 2)
+	if spec.name ~= nil or spec.description ~= nil then
+		error("a plugin's name and description are in its tau.toml", 2)
 	end
 	-- Each command runs as the action `/name`, given the text after it.
 	for name, command in pairs(spec.commands or {}) do
@@ -36,8 +36,8 @@ function tau.agent(spec)
 	if type(spec) ~= "table" then
 		error("tau.agent takes a table", 2)
 	end
-	if type(spec.name) ~= "string" or spec.name == "" then
-		error("an agent needs a name", 2)
+	if spec.name ~= nil or spec.description ~= nil then
+		error("an agent's name and description are in its tau.toml", 2)
 	end
 	if spec.triggers ~= nil and type(spec.triggers) ~= "table" then
 		error("an agent's `triggers` is a table of triggers by name", 2)
@@ -725,8 +725,6 @@ function tau._describe(plugin)
 	table.sort(actions)
 	local uses = plugin.uses or {}
 	return {
-		name = plugin.name,
-		description = plugin.description or "",
 		uses = {
 			tools = uses.tools or array({}),
 			jev = uses.jev == true,
@@ -769,7 +767,7 @@ function tau._describe(plugin)
 		jobs = tau._jobs(plugin.jobs),
 		pages = tau._names(plugin.pages),
 		repo_nav = plugin.repo_nav and {
-			label = tostring(plugin.repo_nav.label or plugin.name),
+			label = plugin.repo_nav.label and tostring(plugin.repo_nav.label) or "",
 			page = tostring(plugin.repo_nav.page or ""),
 			icon = plugin.repo_nav.icon or "",
 		} or json.null,
@@ -779,7 +777,7 @@ function tau._describe(plugin)
 		} or json.null,
 		forge = plugin.forge and tau._forge(plugin.forge) or json.null,
 		nav = plugin.nav and {
-			label = tostring(plugin.nav.label or plugin.name),
+			label = plugin.nav.label and tostring(plugin.nav.label) or "",
 			icon = plugin.nav.icon or "",
 		} or json.null,
 		picker_auto = plugin.picker_auto and {
@@ -1032,8 +1030,6 @@ function tau._describe_agent(agent)
 	walk(agent.triggers, 0)
 	table.sort(secrets)
 	return {
-		name = agent.name,
-		description = agent.description or "",
 		triggers = triggers,
 		secrets = secrets,
 	}

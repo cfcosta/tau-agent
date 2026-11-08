@@ -72,7 +72,7 @@ too: paste them, drop them on the composer, or attach them.
 
 An agent is a conversation that never ends, in a repository of its own.
 Schedules, polls and streams wake it, it keeps to a daily budget, and it
-can rewrite its own `agent.luau` as it learns. It leaves you questions
+can rewrite its own `src/agent.luau` as it learns. It leaves you questions
 and notes on the Agents page.
 
 <p>

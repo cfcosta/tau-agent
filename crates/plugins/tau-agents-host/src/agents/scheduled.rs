@@ -1,6 +1,6 @@
 //! What an agent schedules for itself from its conversation (ADR 0037):
 //! once, or again and again, kept in tau's state beside its queue rather
-//! than in its `agent.luau`. Each fires an event with the note the agent
+//! than in its `src/agent.luau`. Each fires an event with the note the agent
 //! left itself, the person sees them on its page and may cancel them,
 //! and one that came due while tau was closed fires once, as a declared
 //! schedule does.

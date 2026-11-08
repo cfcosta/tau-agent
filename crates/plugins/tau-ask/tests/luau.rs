@@ -203,8 +203,10 @@ fn the_demo_is_what_the_plugin_leaves_and_draws() {
     let loaded = loaded();
     for (name, text, drawn) in demos(&loaded) {
         if std::env::var_os("BLESS_FIXTURES").is_some() {
-            let path =
-                format!("{}/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"));
+            let path = format!(
+                "{}/../../../plugins/tau-ask/fixtures/{name}.json",
+                env!("CARGO_MANIFEST_DIR")
+            );
             let text = serde_json::to_string_pretty(&drawn).unwrap() + "\n";
             std::fs::write(path, text).unwrap();
             continue;
@@ -220,8 +222,10 @@ fn the_demo_is_what_the_plugin_leaves_and_draws() {
 fn the_demo_lists_what_the_plugin_declares() {
     let declared = serde_json::to_value(&loaded().declaration).unwrap();
     if std::env::var_os("BLESS_FIXTURES").is_some() {
-        let path =
-            format!("{}/fixtures/declaration.json", env!("CARGO_MANIFEST_DIR"));
+        let path = format!(
+            "{}/../../../plugins/tau-ask/fixtures/declaration.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
         let text = serde_json::to_string_pretty(&declared).unwrap() + "\n";
         std::fs::write(path, text).unwrap();
         return;

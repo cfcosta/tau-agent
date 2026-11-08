@@ -1669,6 +1669,9 @@ fn plugin_card(entry: &Entry) -> Node {
     if !entry.description.is_empty() {
         body.push(Node::text(entry.description.clone()));
     }
+    if !entry.version.is_empty() {
+        body.push(Node::text(format!("Version {}", entry.version)));
+    }
     if let Some(declaration) = &entry.declaration {
         let seams = steps_in(declaration);
         if !seams.is_empty() {
@@ -2228,6 +2231,7 @@ mod tests {
         let entry = |name: &str, standing: Standing| Entry {
             name: name.into(),
             description: String::new(),
+            version: String::new(),
             standing,
             declaration: Some(Declaration {
                 commands: vec![crate::CommandSpec {
@@ -2264,6 +2268,7 @@ mod tests {
             |name: &str, standing: Standing, nav: Option<crate::Nav>| Entry {
                 name: name.into(),
                 description: String::new(),
+                version: String::new(),
                 standing,
                 declaration: Some(Declaration {
                     nav,

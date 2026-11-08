@@ -14,8 +14,8 @@ pub fn first_files() -> Vec<(String, String)> {
 }
 
 const README: &str = "# tau's plugins\n\n\
-    Plugins written in Luau, one folder each: `plugin.luau`, modules under \
-    `lib/`, tests under `tests/`, and a README. A plugin works in the chat \
+    Plugins written in Luau, one folder each: `tau.toml`, `src/plugin.luau` \
+    with modules beside it, tests under `tests/`, and a README. A plugin works in the chat \
     that writes it as soon as its tests pass, and everywhere once it lands \
     on `main`; one that reaches further than the version you allowed \
     waits for you on the Plugins screen.\n";

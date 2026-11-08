@@ -1,0 +1,3 @@
+name = "morning-digest"
+version = "0.1.0"
+description = "Each weekday morning, what landed yesterday and what is still open."

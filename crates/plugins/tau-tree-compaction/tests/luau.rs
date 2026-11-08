@@ -37,8 +37,10 @@ fn the_plugin_loads_and_passes_its_tests() {
 fn the_demo_lists_what_the_plugin_declares() {
     let declared = serde_json::to_value(&loaded().declaration).unwrap();
     if std::env::var_os("BLESS_FIXTURES").is_some() {
-        let path =
-            format!("{}/fixtures/declaration.json", env!("CARGO_MANIFEST_DIR"));
+        let path = format!(
+            "{}/../../../plugins/tau-tree-compaction/fixtures/declaration.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
         let text = serde_json::to_string_pretty(&declared).unwrap() + "\n";
         std::fs::write(path, text).unwrap();
         return;

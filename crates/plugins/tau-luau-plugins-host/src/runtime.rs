@@ -4,16 +4,17 @@
 //! Every call is a short script: it requires the `tau` module and the
 //! plugin, builds `ctx` from what the host sends, calls the hook, and
 //! returns the hook's answer with the state it left. The plugin's files
-//! are codemode modules: `tau`, `plugin`, and one per file under `lib/`.
+//! are codemode modules: `tau`, `plugin`, and one per file beside its entry
+//! under `src/`.
 //!
-//! An agent's repository (ADR 0037) is a folder of the same shape whose
-//! [`Root`] is `agent.luau`: [`Files`], [`evaluate`] and [`run_tests`]
-//! serve both.
+//! An agent's repository (ADR 0037) is a package of the same layout whose
+//! [`Root`] requires its entry as `agent` (ADR 0051): [`Files`], [`evaluate`]
+//! and [`run_tests`] serve both.
 
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tau_ai::message::Usage;
@@ -35,18 +36,19 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{Declaration, TAU_MODULE, TestResult};
 
-/// The file a folder starts from, the module it is required as, and
-/// the field of `tau.test` its tests find it in.
+/// What a package's entry is by default, the module it is required as, and
+/// the field of `tau.test` its tests find it in: how a plugin is told from
+/// an agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Root {
-    pub file: &'static str,
+    pub entry: &'static str,
     pub module: &'static str,
     pub subject: &'static str,
 }
 
-/// A plugin's folder: `plugin.luau`, required as `plugin`.
+/// A plugin's package: its entry is required as `plugin`.
 pub const PLUGIN: Root = Root {
-    file: "plugin.luau",
+    entry: "src/plugin.luau",
     module: "plugin",
     subject: "_plugin",
 };
@@ -57,20 +59,112 @@ impl Default for Root {
     }
 }
 
-/// The file a plugin's folder starts from.
-pub const PLUGIN_FILE: &str = PLUGIN.file;
+/// The file that says what a package is (ADR 0051).
+pub const MANIFEST: &str = "tau.toml";
 
 /// A folder's modules, by name: what its scripts run against.
 pub type Modules = BTreeMap<String, Definition>;
 
-/// What a plugin's folder holds, or an agent's.
+/// A package's `tau.toml` (ADR 0051), checked.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Manifest {
+    /// The folder's name, which is the plugin's or the agent's.
+    pub name: String,
+    /// For the person: a digest names a version, not this.
+    pub version: String,
+    pub description: String,
+    /// The entry's path in the folder; empty for the [`Root`]'s default.
+    pub entry: String,
+}
+
+/// `tau.toml` as written.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WrittenManifest {
+    name: String,
+    version: String,
+    description: String,
+    entry: Option<String>,
+}
+
+impl Manifest {
+    /// Reads `tau.toml`'s text. A field it does not know, a missing one and
+    /// a bad value are each an error, which says which.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let written: WrittenManifest = toml::from_str(text)
+            .map_err(|error| format!("{MANIFEST}: {}", error.message()))?;
+        let bad = |why: String| format!("{MANIFEST}: {why}");
+        if written.name.is_empty()
+            || written.name.contains(['/', '\\'])
+            || written.name.starts_with('.')
+        {
+            return Err(bad(format!(
+                "{:?} is not a folder's name",
+                written.name
+            )));
+        }
+        let numbers: Vec<&str> = written.version.split('.').collect();
+        if numbers.len() != 3
+            || numbers.iter().any(|number| {
+                number.is_empty()
+                    || !number.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        {
+            return Err(bad(format!(
+                "`version` is {:?}, not three numbers: MAJOR.MINOR.PATCH",
+                written.version
+            )));
+        }
+        if written.description.trim().is_empty()
+            || written.description.contains('\n')
+        {
+            return Err(bad("`description` is one line, not empty".to_owned()));
+        }
+        let entry = written.entry.unwrap_or_default();
+        if !entry.is_empty() {
+            let stem = entry
+                .strip_prefix("src/")
+                .and_then(|rest| rest.strip_suffix(".luau"));
+            if !stem.is_some_and(|stem| {
+                !stem.is_empty()
+                    && stem != "tau"
+                    && !stem.contains(['/', '\\'])
+                    && !stem.contains("..")
+            }) {
+                return Err(bad(format!(
+                    "`entry` is {entry:?}, not `src/<name>.luau`"
+                )));
+            }
+        }
+        Ok(Self {
+            name: written.name,
+            version: written.version,
+            description: written.description,
+            entry,
+        })
+    }
+
+    /// A `tau.toml` saying `name` and `description`, at version 0.1.0 with
+    /// the default entry: what a test or a new package starts from.
+    pub fn text(name: &str, description: &str) -> String {
+        format!(
+            "name = {}\nversion = \"0.1.0\"\ndescription = {}\n",
+            serde_json::Value::from(name),
+            serde_json::Value::from(description),
+        )
+    }
+}
+
+/// What a plugin's folder holds, or an agent's: a package (ADR 0051).
+#[derive(Debug, Clone, Default)]
 pub struct Files {
-    /// Which file it starts from.
+    /// How its entry is required.
     pub root: Root,
-    /// That file: `plugin.luau`.
+    /// Its `tau.toml`.
+    pub manifest: Manifest,
+    /// Its entry.
     pub source: String,
-    /// `lib/<name>.luau`, by name.
+    /// `src/<name>.luau`, each file beside the entry, by name.
     pub libs: BTreeMap<String, String>,
     /// `tests/<name>.luau`, by name.
     pub tests: BTreeMap<String, String>,
@@ -78,46 +172,74 @@ pub struct Files {
 }
 
 impl Files {
-    /// Reads a folder starting from `root`. It blocks: call it from
-    /// `spawn_blocking`.
-    pub fn read(dir: &Path, root: Root) -> Result<Self, String> {
-        let read = |path: &Path| {
-            std::fs::read_to_string(path)
-                .map_err(|error| format!("{}: {error}", path.display()))
-        };
-        let luau_files =
-            |sub: &str| -> Result<BTreeMap<String, String>, String> {
-                let dir = dir.join(sub);
-                let mut found = BTreeMap::new();
-                let Ok(entries) = std::fs::read_dir(&dir) else {
-                    return Ok(found);
-                };
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("luau")
-                    {
-                        continue;
-                    }
-                    let Some(stem) = path.file_stem().and_then(|s| s.to_str())
-                    else {
-                        continue;
-                    };
-                    found.insert(stem.to_owned(), read(&path)?);
-                }
-                Ok(found)
-            };
-        Ok(Self {
-            root,
-            source: read(&dir.join(root.file))?,
-            libs: luau_files("lib")?,
-            tests: luau_files("tests")?,
-            readme: std::fs::read_to_string(dir.join("README.md")).ok(),
-        })
+    /// A package named `name` that says nothing else: what a test builds
+    /// by hand, in place of a folder and its `tau.toml`.
+    pub fn named(name: &str) -> Self {
+        Self {
+            manifest: Manifest {
+                name: name.to_owned(),
+                version: "0.1.0".to_owned(),
+                ..Manifest::default()
+            },
+            ..Self::default()
+        }
     }
 
-    /// A folder starting from `root` from its files at a commit, by
-    /// their paths in the folder (`plugin.luau`, `lib/x.luau`): what
-    /// trunk holds.
+    /// Its entry's path in the folder.
+    pub fn entry(&self) -> &str {
+        if self.manifest.entry.is_empty() {
+            self.root.entry
+        } else {
+            &self.manifest.entry
+        }
+    }
+
+    /// Reads a folder as a `root`. It reads what [`Self::from_paths`] would
+    /// be given, so the two agree. It blocks: call it from `spawn_blocking`.
+    pub fn read(dir: &Path, root: Root) -> Result<Self, String> {
+        let mut paths = Vec::new();
+        for name in [MANIFEST, "README.md"] {
+            if let Ok(bytes) = std::fs::read(dir.join(name)) {
+                paths.push((name.to_owned(), bytes));
+            }
+        }
+        fn walk(
+            dir: &Path,
+            prefix: &str,
+            paths: &mut Vec<(String, Vec<u8>)>,
+        ) -> Result<(), String> {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return Ok(());
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = entry.file_name().to_str().map(str::to_owned)
+                else {
+                    continue;
+                };
+                let inner = format!("{prefix}/{name}");
+                if path.is_dir() {
+                    walk(&path, &inner, paths)?;
+                } else if name.ends_with(".luau") {
+                    let bytes = std::fs::read(&path).map_err(|error| {
+                        format!("{}: {error}", path.display())
+                    })?;
+                    paths.push((inner, bytes));
+                }
+            }
+            Ok(())
+        }
+        if paths.iter().all(|(path, _)| path != MANIFEST) {
+            return Err(format!("{}: it has no {MANIFEST}", dir.display()));
+        }
+        walk(&dir.join("src"), "src", &mut paths)?;
+        walk(&dir.join("tests"), "tests", &mut paths)?;
+        Self::from_paths(&paths, root)
+    }
+
+    /// A package from its files at a commit or in a folder, by their paths
+    /// in it (`tau.toml`, `src/x.luau`): what tau reads of it. `fixtures/`
+    /// and anything else is not read.
     pub fn from_paths(
         paths: &[(String, Vec<u8>)],
         root: Root,
@@ -126,36 +248,51 @@ impl Files {
             String::from_utf8(bytes.to_vec())
                 .map_err(|_| format!("{path} is not UTF-8"))
         };
+        let Some((_, manifest)) =
+            paths.iter().find(|(path, _)| path == MANIFEST)
+        else {
+            return Err(format!("the folder has no {MANIFEST}"));
+        };
         let mut files = Self {
             root,
+            manifest: Manifest::parse(&text(MANIFEST, manifest)?)?,
             ..Self::default()
         };
-        let mut has_root = false;
+        let entry = files.entry().to_owned();
+        let mut has_entry = false;
         for (path, bytes) in paths {
             let luau = |sub: &str| {
                 path.strip_prefix(sub)
                     .and_then(|rest| rest.strip_suffix(".luau"))
-                    .filter(|stem| !stem.contains('/'))
-                    .map(str::to_owned)
             };
-            if path == root.file {
+            if path == &entry {
                 files.source = text(path, bytes)?;
-                has_root = true;
+                has_entry = true;
             } else if path == "README.md" {
                 files.readme = Some(text(path, bytes)?);
-            } else if let Some(stem) = luau("lib/") {
-                files.libs.insert(stem, text(path, bytes)?);
+            } else if let Some(stem) = luau("src/") {
+                if stem.contains('/') {
+                    return Err(format!(
+                        "{path}: modules sit beside the entry, in `src/`"
+                    ));
+                }
+                files.libs.insert(stem.to_owned(), text(path, bytes)?);
             } else if let Some(stem) = luau("tests/") {
-                files.tests.insert(stem, text(path, bytes)?);
+                if stem.contains('/') {
+                    return Err(format!(
+                        "{path}: tests sit directly in `tests/`"
+                    ));
+                }
+                files.tests.insert(stem.to_owned(), text(path, bytes)?);
             }
         }
-        if !has_root {
-            return Err(format!("the folder has no {}", root.file));
+        if !has_entry {
+            return Err(format!("the folder has no {entry}"));
         }
         Ok(files)
     }
 
-    /// The digest of everything in the folder: what names a version.
+    /// The digest of what tau reads of the folder: what names a version.
     pub fn digest(&self) -> String {
         let mut hasher = Sha256::new();
         let mut add = |path: &str, text: &str| {
@@ -164,9 +301,20 @@ impl Files {
             hasher.update(text.as_bytes());
             hasher.update([0]);
         };
-        add(self.root.file, &self.source);
+        let manifest = &self.manifest;
+        add(
+            MANIFEST,
+            &format!(
+                "{}\n{}\n{}\n{}",
+                manifest.name,
+                manifest.version,
+                manifest.description,
+                self.entry()
+            ),
+        );
+        add(self.entry(), &self.source);
         for (name, text) in &self.libs {
-            add(&format!("lib/{name}.luau"), text);
+            add(&format!("src/{name}.luau"), text);
         }
         for (name, text) in &self.tests {
             add(&format!("tests/{name}.luau"), text);
@@ -181,11 +329,13 @@ impl Files {
             .collect()
     }
 
-    /// The codemode modules the folder makes: `tau`, each `lib/` file
-    /// (which may require `tau` and the other `lib/` files, but not in a
-    /// cycle), and its root, `plugin` (which may require them all).
+    /// The codemode modules the folder makes: `tau`, each file beside its
+    /// entry under `src/` (which may require `tau` and each other, but not
+    /// in a cycle), and its entry, `plugin` or `agent` (which may require
+    /// them all).
     pub fn modules(&self) -> Result<Modules, String> {
-        let (file, module) = (self.root.file, self.root.module);
+        let entry = self.entry().to_owned();
+        let (file, module) = (entry.as_str(), self.root.module);
         let tau = Definition::new(
             "tau".into(),
             TAU_MODULE.into(),
@@ -197,7 +347,7 @@ impl Files {
             BTreeMap::from([("tau".to_owned(), tau.version().to_owned())]);
         for name in self.libs.keys() {
             if name == "tau" || name == module {
-                return Err(format!("lib/{name}.luau: `{name}` is taken"));
+                return Err(format!("src/{name}.luau: `{name}` is taken"));
             }
         }
         // Each lib once the libs it requires are: their versions pin it.
@@ -214,7 +364,7 @@ impl Files {
                     .libs
                     .keys()
                     .filter(|name| !versions.contains_key(*name))
-                    .map(|name| format!("lib/{name}.luau"))
+                    .map(|name| format!("src/{name}.luau"))
                     .collect();
                 return Err(format!(
                     "{} require each other: one of them cannot",
@@ -228,7 +378,7 @@ impl Files {
             }
             let lib =
                 Definition::new(name.clone(), source.clone(), json!({}), deps)
-                    .map_err(|error| format!("lib/{name}.luau: {error}"))?;
+                    .map_err(|error| format!("src/{name}.luau: {error}"))?;
             versions.insert(name.clone(), lib.version().to_owned());
             plugin_deps.insert(name.clone(), lib.version().to_owned());
             modules.insert(name.clone(), lib);
@@ -552,7 +702,14 @@ impl std::fmt::Debug for Loaded {
 /// Reads what `files` declare, in a fresh VM, and checks it: the
 /// plugin's name is its folder's, its tools have names a model can call.
 pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
+    if files.manifest.name != folder {
+        return Err(format!(
+            "{MANIFEST}: the package is named `{}`, but its folder is `{folder}`",
+            files.manifest.name
+        ));
+    }
     let modules = Arc::new(files.modules()?);
+    let entry = files.entry().to_owned();
     let script = "local tau = require(\"tau\")\n\
                   local p = require(\"plugin\")\n\
                   return tau._describe(p)\n";
@@ -564,13 +721,22 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
         CancellationToken::new(),
     )
     .await?;
-    let declaration: Declaration = serde_json::from_value(value)
-        .map_err(|error| format!("{PLUGIN_FILE}: {error}"))?;
-    if declaration.name != folder {
-        return Err(format!(
-            "{PLUGIN_FILE}: the plugin is named `{}`, but its folder is `{folder}`",
-            declaration.name
-        ));
+    let mut declaration: Declaration = serde_json::from_value(value)
+        .map_err(|error| format!("{entry}: {error}"))?;
+    declaration.name.clone_from(&files.manifest.name);
+    declaration
+        .description
+        .clone_from(&files.manifest.description);
+    // A nav's label is its name unless it says.
+    if let Some(nav) = &mut declaration.nav
+        && nav.label.is_empty()
+    {
+        nav.label.clone_from(&declaration.name);
+    }
+    if let Some(nav) = &mut declaration.repo_nav
+        && nav.label.is_empty()
+    {
+        nav.label.clone_from(&declaration.name);
     }
     for slot in &declaration.fills {
         let missing = match slot.as_str() {
@@ -606,14 +772,14 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
             }
             _ => {
                 return Err(format!(
-                    "{PLUGIN_FILE}: `fills` names `{slot}`; a plugin may fill {}",
+                    "{entry}: `fills` names `{slot}`; a plugin may fill {}",
                     tau_luau_plugins::SLOTS.join(", ")
                 ));
             }
         };
         if let Some(missing) = missing {
             return Err(format!(
-                "{PLUGIN_FILE}: it fills `{slot}`, which needs {missing}"
+                "{entry}: it fills `{slot}`, which needs {missing}"
             ));
         }
     }
@@ -621,7 +787,7 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
         && !declaration.pages.contains(&nav.page)
     {
         return Err(format!(
-            "{PLUGIN_FILE}: `repo_nav` opens the page `{}`, which `pages` lacks",
+            "{entry}: `repo_nav` opens the page `{}`, which `pages` lacks",
             nav.page
         ));
     }
@@ -631,7 +797,7 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
         .find(|job| job.every < tau_luau_plugins::SHORTEST_EVERY)
     {
         return Err(format!(
-            "{PLUGIN_FILE}: job `{}` runs `every` {} seconds; the shortest is {}",
+            "{entry}: job `{}` runs `every` {} seconds; the shortest is {}",
             job.name,
             job.every,
             tau_luau_plugins::SHORTEST_EVERY
@@ -643,7 +809,7 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
         .find(|event| !tau_luau_plugins::EVENTS.contains(&event.as_str()))
     {
         return Err(format!(
-            "{PLUGIN_FILE}: `events` names `{unknown}`, which is not one of {}",
+            "{entry}: `events` names `{unknown}`, which is not one of {}",
             tau_luau_plugins::EVENTS.join(", ")
         ));
     }
@@ -660,7 +826,7 @@ pub async fn load(folder: &str, files: Files) -> Result<Loaded, String> {
             && tool.name.len() <= 64;
         if !valid {
             return Err(format!(
-                "{PLUGIN_FILE}: `{}` is not a tool name: letters, digits and \
+                "{entry}: `{}` is not a tool name: letters, digits and \
                  `_`, starting with a letter",
                 tool.name
             ));

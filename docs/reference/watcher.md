@@ -3,8 +3,8 @@
 Notes what the person likely missed. While the main agent works, every
 6th step a side request reads the whole transcript and answers
 `learn: none`, or offers one short note. It is a Luau plugin tau comes
-with (ADR 0050): `crates/plugins/tau-watcher/luau/`, `plugin.luau` and
-`lib/watch.luau`. Decision:
+with (ADR 0050): `plugins/tau-watcher/`, `src/plugin.luau` and
+`src/watch.luau`. Decision:
 [0032](../decisions/0032-the-watcher-notes-what-you-missed.md).
 
 ## Switching it on
@@ -105,7 +105,7 @@ nothing but `checked`.
 
 | Item                              | What it is                                                |
 | --------------------------------- | --------------------------------------------------------- |
-| `luau/plugin.luau`                | The plugin: `start`, `before_request`, the action, `view` |
+| `src/plugin.luau`                 | The plugin: `start`, `before_request`, the action, `view` |
 | `watch.parse`, `watch.write`      | Reads the model's reply; writes one as it reads           |
 | `watch.due`, `watch.skips`        | When to check; the back-off                               |
 | `watch.recent`                    | The last 50 lines the prompt carries                      |

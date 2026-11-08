@@ -1,0 +1,4 @@
+name = "tau-titles"
+version = "0.1.0"
+description = "Titles each chat with a short request to the plan's smallest model"
+entry = "src/plugin.luau"

@@ -1,8 +1,8 @@
 # tau-luau-plugins
 
-The interface half of Luau plugins. A Luau plugin is a folder in tau's
-own plugins repository: `plugin.luau`, which returns `tau.plugin { ... }`,
-modules under `lib/`, tests under `tests/` and a README. tau runs all of
+The interface half of Luau plugins. A Luau plugin is a package (ADR 0051) in
+tau's own plugins repository: `tau.toml`, `src/plugin.luau`, which returns
+`tau.plugin { ... }`, modules beside it, tests under `tests/` and a README. tau runs all of
 them as one tau plugin, each hook in a fresh codemode VM. This crate
 holds what every interface shows of them: what a plugin declares, where
 it stands, the records a run keeps, and the views drawn from them. It
@@ -51,15 +51,13 @@ Used by:
 
 ## Usage
 
-A plugin's `plugin.luau`, shortened from the skill's worked example in
+A plugin's `src/plugin.luau`, shortened from the skill's worked example in
 `tau-luau-plugins-host/skill/examples/no-friday-deploys`:
 
 ```lua
 local tau = require("tau")
 
 return tau.plugin {
-	name = "no-friday-deploys",
-	description = "Blocks deploy commands on Fridays.",
 	settings = { default = { days = { "Friday" } } },
 	before_tool = function(call, ctx)
 		local command = call.args.cmd

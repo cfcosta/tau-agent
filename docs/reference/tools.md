@@ -320,7 +320,7 @@ file held, or from nothing for a new file or one that was not text),
   (`tau_tools_host::secrets::SecretStore`). An agent's requests reach
   its own keys and no other agent's. Names
   are 1 to 64 letters, digits, `_`, `-` and `.`. An agent's page lists
-  the names its `agent.luau` uses and saves or removes values
+  the names its `src/agent.luau` uses and saves or removes values
   (`Act::SetSecret`, `Act::RemoveSecret`, each naming the agent); no interface reads a value
   back.
 - `tau_tools_host::http::fetch` is the same request for the host

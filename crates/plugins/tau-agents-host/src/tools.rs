@@ -306,7 +306,7 @@ impl AgentTool for Send {
     fn description(&self) -> &str {
         "Send another agent a message. It reaches that agent as a `message` \
          event, with the others in its next turn, under its own spend cap; \
-         only an agent whose agent.luau declares a `message = true` trigger \
+         only an agent whose src/agent.luau declares a `message = true` trigger \
          hears messages. A chain of messages between agents that nothing \
          else wakes stops after a few hops: do not use messages to keep \
          each other going."
@@ -362,7 +362,7 @@ impl AgentTool for Schedule {
          `scheduled`, with your note. Scheduling a name again replaces it. \
          Use it for what comes up: following something up, checking back, \
          a routine you took on. What should always wake you belongs in \
-         agent.luau. The person sees what you scheduled on your page and \
+         src/agent.luau. The person sees what you scheduled on your page and \
          may cancel it."
     }
 

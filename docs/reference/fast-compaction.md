@@ -1,9 +1,9 @@
 # Fast compaction
 
-`tau-fast-compaction` (`crates/plugins/tau-fast-compaction`) keeps a run's
+`tau-fast-compaction` (`plugins/tau-fast-compaction`) keeps a run's
 context lean with Jev, TypeSafe's System One model, in two stages. It is
-a Luau plugin tau comes with (ADR 0050): `luau/lib/` holds the rules,
-and `luau/plugin.luau` the hooks and what it draws. It never summarizes: what stays is verbatim, and what goes is archived or
+a Luau plugin tau comes with (ADR 0050): `src/` holds the rules,
+and `src/plugin.luau` the hooks and what it draws. It never summarizes: what stays is verbatim, and what goes is archived or
 can be re-run. When pruning cannot free enough, summarizing compaction
 takes over.
 

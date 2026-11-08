@@ -42,7 +42,8 @@ fn the_skills_agents_pass_their_tests() {
             CancellationToken::new(),
         ))
         .unwrap_or_else(|error| panic!("{name}: {error}"));
-        assert_eq!(described["name"], name);
+        assert!(described["triggers"].is_array(), "{name}: {described}");
+        assert_eq!(files.manifest.name, name);
         let tests = block_on_io(run_tests(
             name,
             modules,

@@ -322,6 +322,7 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
     let built_in = |name: &str, declared: &str| Entry {
         name: name.into(),
         description: String::new(),
+        version: String::new(),
         standing: Standing::Active,
         declaration: Some(
             serde_json::from_str(declared)

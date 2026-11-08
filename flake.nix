@@ -145,6 +145,8 @@
                     ./Cargo.toml
                     ./Cargo.lock
                     ./crates
+                    # tau's Luau plugins (ADR 0051).
+                    ./plugins
                   ];
                 };
 

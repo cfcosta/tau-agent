@@ -26,17 +26,13 @@ use tau_vcs_host::{Identity, Project, ProjectRepo};
 const EVENING: &str = r#"
 local tau = require("tau")
 return tau.agent {
-  name = "greet",
-  description = "Says good evening.",
   triggers = { evening = { at = "18:00" }, hello = { command = "hello" } },
 }
 "#;
 
 const HOURLY: &str = r#"
 local tau = require("tau")
-return tau.agent {
-  name = "greet",
-  triggers = { hourly = { every = "1h" } },
+return tau.agent { triggers = { hourly = { every = "1h" } },
 }
 "#;
 
@@ -65,7 +61,7 @@ fn project(
         "# greet\n\nGreets people.\n".to_owned(),
     )];
     if let Some(agent) = agent {
-        files.push(("agent.luau".to_owned(), agent.to_owned()));
+        files.extend(tau_agents_host::package("greet", agent));
     }
     if let Some(test) = test {
         files.push(("tests/basic.luau".to_owned(), test.to_owned()));
@@ -121,7 +117,7 @@ fn a_passing_version_is_live_and_a_failing_one_keeps_the_one_before() {
     block_on_io(registry.reload("greet", &v1, &trunk1));
     assert_eq!(live_triggers(&registry), ["evening", "hello"]);
     let read = block_on_io(registry.agents())["greet"].clone();
-    assert_eq!(read.purpose, "Says good evening.");
+    assert_eq!(read.purpose, "The agent greet.");
     assert_eq!(read.error, None);
     assert!(read.versions[0].live);
     assert_eq!(
@@ -179,8 +175,14 @@ fn a_version_that_does_not_load_says_why() {
     assert_eq!(told.lock().unwrap().len(), 1);
 
     // Its name must be its repository's.
-    let other = EVENING.replace("\"greet\"", "\"other\"");
-    let (v2, trunk) = project(home.path(), 2, Some(&other), None);
+    let other = ProjectRepo::init(
+        home.path().join("v2"),
+        Identity::default(),
+        &tau_agents_host::package("other", EVENING),
+    )
+    .unwrap();
+    let trunk = other.trunk().unwrap();
+    let v2 = Project::from(other);
     block_on_io(registry.reload("greet", &v2, &trunk));
     let error = block_on_io(registry.agents())["greet"]
         .error
@@ -217,7 +219,13 @@ fn a_scan_reads_every_agent_in_its_directory() {
         agents.join("greet"),
         Identity::default(),
         &[
-            ("agent.luau".to_owned(), EVENING.to_owned()),
+            (
+                "tau.toml".to_owned(),
+                tau_luau_plugins_host::runtime::Manifest::text(
+                    "greet", "Greets.",
+                ),
+            ),
+            ("src/agent.luau".to_owned(), EVENING.to_owned()),
             ("tests/basic.luau".to_owned(), PASSING.to_owned()),
         ],
     )

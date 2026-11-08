@@ -1,4 +1,4 @@
-//! Each agent's `agent.luau`, read from its repository's trunk (ADR
+//! Each agent's `src/agent.luau`, read from its repository's trunk (ADR
 //! 0037).
 //!
 //! The registry watches every agent's trunk. When it moves, the agent's
@@ -22,7 +22,13 @@ use tau_agents::{
     Version,
     event::{Event, Kind},
 };
-use tau_luau_plugins_host::runtime::{Files, Modules, evaluate, run_tests};
+use tau_luau_plugins_host::runtime::{
+    Files,
+    MANIFEST,
+    Modules,
+    evaluate,
+    run_tests,
+};
 use tau_vcs_host::{Identity, Project};
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -41,10 +47,12 @@ const DESCRIBE_LIMIT: Duration = Duration::from_secs(2);
 /// The trigger name a version's events carry: the file that failed.
 pub const VERSION_TRIGGER: &str = tau_agents::ENTRY;
 
-/// What an agent's `agent.luau` declares, as `tau._describe_agent`
+/// What an agent's `src/agent.luau` declares, as `tau._describe_agent`
 /// reads it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Declared {
+    /// From its `tau.toml`, as the description is (ADR 0051).
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -89,9 +97,9 @@ pub struct Read {
     pub versions: Vec<Version>,
     pub live: Option<Live>,
     /// Why no version is live: trunk's does not load, or its tests fail.
-    /// `None` while it has no `agent.luau` yet.
+    /// `None` while it has no `src/agent.luau` yet.
     pub error: Option<String>,
-    /// What it is for: what `agent.luau` says, else the first lines of
+    /// What it is for: what `src/agent.luau` says, else the first lines of
     /// its `AGENTS.md`.
     pub purpose: String,
 }
@@ -250,7 +258,7 @@ impl Registry {
         read.trunk = Some(trunk.to_owned());
         read.purpose = tried.purpose.clone();
         let Some(version) = tried.version else {
-            // No `agent.luau` yet: nothing wakes it, and nothing is wrong.
+            // No `src/agent.luau` yet: nothing wakes it, and nothing is wrong.
             read.live = None;
             read.error = None;
             self.0.agents.write().await.insert(name.to_owned(), read);
@@ -309,7 +317,7 @@ impl Registry {
 
 /// What reading one commit of an agent gave.
 struct Tried {
-    /// `None` when the commit has no `agent.luau`.
+    /// `None` when the commit has no `src/agent.luau`.
     version: Option<Version>,
     /// The version, when it may be live: it loads and its tests pass.
     live: Option<Live>,
@@ -335,7 +343,12 @@ async fn try_commit(name: &str, project: &Project, commit: &str) -> Tried {
         .find(|(path, _)| path == "AGENTS.md")
         .map(|(_, bytes)| first_paragraph(&String::from_utf8_lossy(bytes)))
         .unwrap_or_default();
-    if !paths.iter().any(|(path, _)| path == AGENT.file) {
+    // A repository with neither has no agent yet; with one, a version that
+    // says what is missing.
+    if !paths
+        .iter()
+        .any(|(path, _)| path == MANIFEST || path == AGENT.entry)
+    {
         return Tried {
             version: None,
             live: None,
@@ -406,14 +419,17 @@ async fn load(
         CancellationToken::new(),
     )
     .await?;
-    let declared: Declared = serde_json::from_value(value)
-        .map_err(|error| format!("{}: {error}", AGENT.file))?;
-    if declared.name != name {
+    let entry = files.entry().to_owned();
+    let mut declared: Declared = serde_json::from_value(value)
+        .map_err(|error| format!("{entry}: {error}"))?;
+    if files.manifest.name != name {
         return Err(format!(
-            "{}: the agent is named `{}`, but its repository is `{name}`",
-            AGENT.file, declared.name
+            "{MANIFEST}: the agent is named `{}`, but its repository is `{name}`",
+            files.manifest.name
         ));
     }
+    declared.name.clone_from(&files.manifest.name);
+    declared.description.clone_from(&files.manifest.description);
     for trigger in &declared.triggers {
         let checked = match &trigger.kind {
             TriggerKind::Schedule { .. } => {
@@ -425,7 +441,7 @@ async fn load(
             _ => Ok(()),
         };
         checked.map_err(|error| {
-            format!("{}: trigger `{}`: {error}", AGENT.file, trigger.name)
+            format!("{entry}: trigger `{}`: {error}", trigger.name)
         })?;
     }
     Ok((files, modules, declared))

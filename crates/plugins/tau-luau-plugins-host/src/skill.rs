@@ -17,8 +17,14 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 6] = [
         "no-friday-deploys",
         &[
             (
-                "plugin.luau",
-                include_str!("../skill/examples/no-friday-deploys/plugin.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/no-friday-deploys/tau.toml"),
+            ),
+            (
+                "src/plugin.luau",
+                include_str!(
+                    "../skill/examples/no-friday-deploys/src/plugin.luau"
+                ),
             ),
             (
                 "tests/rule.luau",
@@ -32,12 +38,16 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 6] = [
         "word-count",
         &[
             (
-                "plugin.luau",
-                include_str!("../skill/examples/word-count/plugin.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/word-count/tau.toml"),
             ),
             (
-                "lib/words.luau",
-                include_str!("../skill/examples/word-count/lib/words.luau"),
+                "src/plugin.luau",
+                include_str!("../skill/examples/word-count/src/plugin.luau"),
+            ),
+            (
+                "src/words.luau",
+                include_str!("../skill/examples/word-count/src/words.luau"),
             ),
             (
                 "tests/tool.luau",
@@ -49,8 +59,12 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 6] = [
         "say-the-tests",
         &[
             (
-                "plugin.luau",
-                include_str!("../skill/examples/say-the-tests/plugin.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/say-the-tests/tau.toml"),
+            ),
+            (
+                "src/plugin.luau",
+                include_str!("../skill/examples/say-the-tests/src/plugin.luau"),
             ),
             (
                 "tests/stop.luau",
@@ -62,8 +76,14 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 6] = [
         "forget-old-calls",
         &[
             (
-                "plugin.luau",
-                include_str!("../skill/examples/forget-old-calls/plugin.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/forget-old-calls/tau.toml"),
+            ),
+            (
+                "src/plugin.luau",
+                include_str!(
+                    "../skill/examples/forget-old-calls/src/plugin.luau"
+                ),
             ),
             (
                 "tests/rewrite.luau",
@@ -77,8 +97,12 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 6] = [
         "short-titles",
         &[
             (
-                "plugin.luau",
-                include_str!("../skill/examples/short-titles/plugin.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/short-titles/tau.toml"),
+            ),
+            (
+                "src/plugin.luau",
+                include_str!("../skill/examples/short-titles/src/plugin.luau"),
             ),
             (
                 "tests/title.luau",
@@ -90,8 +114,12 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 6] = [
         "todo-page",
         &[
             (
-                "plugin.luau",
-                include_str!("../skill/examples/todo-page/plugin.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/todo-page/tau.toml"),
+            ),
+            (
+                "src/plugin.luau",
+                include_str!("../skill/examples/todo-page/src/plugin.luau"),
             ),
             (
                 "tests/page.luau",
@@ -109,7 +137,12 @@ pub fn render() -> String {
             .iter()
             .map(|(path, source)| {
                 format!(
-                    "`{name}/{path}`:\n\n```luau\n{}\n```",
+                    "`{name}/{path}`:\n\n```{}\n{}\n```",
+                    if path.ends_with(".toml") {
+                        "toml"
+                    } else {
+                        "luau"
+                    },
                     source.trim_end()
                 )
             })

@@ -228,7 +228,7 @@ impl Agents {
             .find(|trigger| trigger.kind == TriggerKind::Message)
             .ok_or_else(|| {
                 format!(
-                    "{to} hears no messages: its agent.luau declares no \
+                    "{to} hears no messages: its src/agent.luau declares no \
                      `message = true` trigger"
                 )
             })?;

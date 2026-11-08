@@ -132,7 +132,7 @@ limitations under the License.
 
 `tau-fast-compaction` ports the decision logic of three MIT-licensed
 projects. Their notices are in
-[crates/plugins/tau-fast-compaction/THIRD_PARTY_NOTICES.md](crates/plugins/tau-fast-compaction/THIRD_PARTY_NOTICES.md).
+[plugins/tau-fast-compaction/THIRD_PARTY_NOTICES.md](plugins/tau-fast-compaction/THIRD_PARTY_NOTICES.md).
 
 ## Fonts
 

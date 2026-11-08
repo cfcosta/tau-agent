@@ -304,8 +304,10 @@ fn demo_pages(loaded: &Loaded) -> Value {
 /// checks it is `fixture`.
 fn bless_or_check(name: &str, fixture: &str, drawn: &Value) {
     if std::env::var_os("BLESS_FIXTURES").is_some() {
-        let path =
-            format!("{}/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"));
+        let path = format!(
+            "{}/../../../plugins/tau-constitution/fixtures/{name}.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
         let text = serde_json::to_string_pretty(drawn).unwrap() + "\n";
         std::fs::write(path, text).unwrap();
         return;

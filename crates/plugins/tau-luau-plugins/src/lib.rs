@@ -5,8 +5,9 @@
 //! plugins and running their hooks is `tau-luau-plugins-host`'s
 //! (ADR 0030).
 //!
-//! A Luau plugin is a folder: `plugin.luau`, which returns
-//! `tau.plugin { ... }`, modules under `lib/`, tests under `tests/` and
+//! A Luau plugin is a package (ADR 0051): `tau.toml`, `src/plugin.luau`,
+//! which returns `tau.plugin { ... }`, modules beside it, tests under
+//! `tests/` and
 //! a README. The host reads what it declares ([`Declaration`]) and runs
 //! each of its hooks in a fresh codemode VM.
 //!
@@ -336,6 +337,8 @@ pub struct CompactionFill {
 /// What a plugin declares, read without running its hooks.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Declaration {
+    /// From its `tau.toml`, as the description is (ADR 0051).
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -494,6 +497,9 @@ pub struct Entry {
     /// Its folder.
     pub name: String,
     pub description: String,
+    /// What its `tau.toml` says, when it was read; a digest names a version.
+    #[serde(default)]
+    pub version: String,
     pub standing: Standing,
     /// What it declares at trunk, when it loads.
     pub declaration: Option<Declaration>,

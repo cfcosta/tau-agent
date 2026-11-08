@@ -1,0 +1,4 @@
+name = "tau-compaction"
+version = "0.1.0"
+description = "Summarizes the context when it nears the window, and an idle chat's before its cache lapses"
+entry = "src/plugin.luau"

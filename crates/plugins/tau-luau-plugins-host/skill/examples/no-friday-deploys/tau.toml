@@ -1,0 +1,3 @@
+name = "no-friday-deploys"
+version = "0.1.0"
+description = "Blocks deploy commands on Fridays."

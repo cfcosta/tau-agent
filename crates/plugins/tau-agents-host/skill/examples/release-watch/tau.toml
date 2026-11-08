@@ -1,0 +1,3 @@
+name = "release-watch"
+version = "0.1.0"
+description = "Says what each new release of the project changes for us."

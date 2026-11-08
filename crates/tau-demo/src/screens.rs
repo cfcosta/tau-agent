@@ -912,6 +912,7 @@ fn yours(
                   tests: Vec<TestResult>| Entry {
         name: name.into(),
         description: description.into(),
+        version: String::new(),
         keeps_earlier: !matches!(standing, Standing::Active),
         standing,
         declaration: Some(Declaration {

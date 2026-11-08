@@ -2,7 +2,7 @@
 //! repository of its own, woken by the events it declares
 //! ([ADR 0037](../../../docs/decisions/0037-agents.md)). This is its
 //! interface half: what every interface shows of an agent. Loading an
-//! agent's `agent.luau`, firing its triggers and starting its turns is
+//! agent's `src/agent.luau`, firing its triggers and starting its turns is
 //! `tau-agents-host`'s (ADR 0030).
 //!
 //! - [`Overview`], [`Agent`], [`Trigger`], [`Version`]: the agents as
@@ -39,7 +39,7 @@ pub const SKILL: &str = "tau-agents";
 pub const COMMAND: &str = "agent";
 
 /// The file at an agent's root that declares what wakes it.
-pub const ENTRY: &str = "agent.luau";
+pub const ENTRY: &str = "src/agent.luau";
 
 /// Whether `name` can name an agent, and so its repository: lower-case
 /// letters, digits and dashes, starting with a letter, at most 40.
@@ -67,7 +67,7 @@ pub fn default_model() -> String {
 /// The effort a new agent starts at.
 pub const DEFAULT_EFFORT: &str = "low";
 
-/// What wakes an agent, as its `agent.luau` declares it, with when it
+/// What wakes an agent, as its `src/agent.luau` declares it, with when it
 /// last fired and when it fires next.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Trigger {
@@ -157,7 +157,7 @@ pub enum StreamVia {
     Websocket,
 }
 
-/// A version of an agent's `agent.luau`: a commit of its trunk.
+/// A version of an agent's `src/agent.luau`: a commit of its trunk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Version {
     pub commit: String,
@@ -184,7 +184,7 @@ pub enum Status {
     /// It spent its day's cap: events queue until tomorrow, or until the
     /// person allows more.
     AtCap,
-    /// No version of its `agent.luau` loads: nothing wakes it.
+    /// No version of its `src/agent.luau` loads: nothing wakes it.
     Broken { error: String },
 }
 
@@ -242,7 +242,7 @@ pub struct Agent {
 }
 
 /// A schedule an agent made itself with its `schedule` tool (ADR 0037),
-/// kept in tau's state rather than its `agent.luau`: once, or again and
+/// kept in tau's state rather than its `src/agent.luau`: once, or again and
 /// again. It fires an event from the trigger `name`, of kind
 /// [`event::Kind::Scheduled`], with its note.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

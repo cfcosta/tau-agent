@@ -1,0 +1,3 @@
+name = "say-the-tests"
+version = "0.1.0"
+description = "Asks a run that changed files to say which tests it ran."

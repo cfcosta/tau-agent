@@ -3,8 +3,8 @@
 Checks a run's tool calls and final answer against rules, asking Jev
 (TypeSafe's System One model) how likely each rule is broken. It is a
 Luau plugin tau comes with (ADR 0050): its code is the Luau in
-`crates/plugins/tau-constitution/luau/` (`plugin.luau`, and
-`lib/rules.luau`, `lib/checks.luau`, `lib/page.luau`), which
+`plugins/tau-constitution/` (`src/plugin.luau`, and
+`src/rules.luau`, `src/checks.luau`, `src/page.luau`), which
 tau-luau-plugins loads as always active. Design: [plugins.md](plugins.md).
 
 ## Rules

@@ -1,0 +1,4 @@
+name = "tau-compaction-chain"
+version = "0.1.0"
+description = "Compacts with fast pruning, then the tree, then the summary, each declining when it would save too little"
+entry = "src/plugin.luau"

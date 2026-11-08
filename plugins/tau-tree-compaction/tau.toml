@@ -1,0 +1,4 @@
+name = "tau-tree-compaction"
+version = "0.1.0"
+description = "Folds older context into one-line summaries the agent can zoom into"
+entry = "src/plugin.luau"

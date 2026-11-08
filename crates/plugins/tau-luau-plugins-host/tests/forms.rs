@@ -24,9 +24,7 @@ use tau_vcs_host::{Identity, Project, ProjectRepo};
 const QUIZ: &str = r#"
 local tau = require("tau")
 local ui = tau.ui
-return tau.plugin {
-  name = "quiz",
-  tools = {
+return tau.plugin { tools = {
     quiz = {
       description = "Asks the person which.",
       model_only = true,
@@ -74,7 +72,16 @@ fn registry(home: &std::path::Path) -> Registry {
     let repo = ProjectRepo::init(
         home.join("v1"),
         Identity::default(),
-        &[("quiz/plugin.luau".to_owned(), QUIZ.to_owned())],
+        &[
+            (
+                "quiz/tau.toml".to_owned(),
+                tau_luau_plugins_host::runtime::Manifest::text(
+                    "quiz",
+                    "A plugin.",
+                ),
+            ),
+            ("quiz/src/plugin.luau".to_owned(), QUIZ.to_owned()),
+        ],
     )
     .unwrap();
     let trunk = repo.trunk().unwrap();

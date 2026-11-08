@@ -145,9 +145,7 @@ fn a_crash_in_a_commit_leaves_the_sessions_before_it_whole(tc: TestCase) {
 
 const COUNTER: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "counter",
-  uses = { store = true },
+return tau.plugin { uses = { store = true },
   actions = {
     bump = function(args, ctx)
       local n = ctx.store.get("n") or 0
@@ -165,7 +163,7 @@ fn hooks_take_turns_with_the_store_and_a_failing_one_writes_nothing() {
     block_on_io(async {
         let files = Files {
             source: COUNTER.into(),
-            ..Files::default()
+            ..Files::named("counter")
         };
         let loaded = load("counter", files).await.unwrap();
         assert!(loaded.declaration.uses.store);

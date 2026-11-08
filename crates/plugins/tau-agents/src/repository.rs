@@ -13,5 +13,5 @@ pub fn first_files() -> Vec<(String, String)> {
 
 const AGENTS: &str = "# An agent\n\n\
     This repository is an agent's own. Its first message says what it is \
-    for; it then writes these instructions, and the `agent.luau` that says \
-    what wakes it, itself.\n";
+    for; it then writes these instructions, and the `tau.toml` and \
+    `src/agent.luau` that say what it is and what wakes it, itself.\n";

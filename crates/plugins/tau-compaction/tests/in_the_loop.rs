@@ -69,9 +69,7 @@ struct Prompts {
 /// A plugin whose one tool gives the library's prompts.
 const PROBE: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "probe",
-  tools = {
+return tau.plugin { tools = {
     prompts = {
       description = "The prompts.",
       call = function()
@@ -94,13 +92,18 @@ return tau.plugin {
 fn prompts() -> Prompts {
     let library = tau_compaction::FILES
         .iter()
-        .find(|(path, _)| *path == "lib/compaction.luau")
+        .find(|(path, _)| *path == "src/compaction.luau")
         .unwrap()
         .1;
     let paths = vec![
-        ("plugin.luau".to_owned(), PROBE.as_bytes().to_vec()),
         (
-            "lib/compaction.luau".to_owned(),
+            "tau.toml".to_owned(),
+            tau_luau_plugins_host::runtime::Manifest::text("probe", "A probe.")
+                .into_bytes(),
+        ),
+        ("src/plugin.luau".to_owned(), PROBE.as_bytes().to_vec()),
+        (
+            "src/compaction.luau".to_owned(),
             library.as_bytes().to_vec(),
         ),
     ];

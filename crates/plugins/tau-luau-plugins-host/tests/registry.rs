@@ -14,15 +14,13 @@ use std::sync::{
 };
 
 use tau_luau_plugins::Standing;
-use tau_luau_plugins_host::registry::Registry;
+use tau_luau_plugins_host::{registry::Registry, runtime::Manifest};
 use tau_testing::block_on_io;
 use tau_vcs_host::{Identity, Project, ProjectRepo};
 
 const TOOL_ONLY: &str = r#"
 local tau = require("tau")
 return tau.plugin {
-  name = "greet",
-  description = "Says hello.",
   tools = { hello = { description = "Hello.", call = function() return "hi" end } },
 }
 "#;
@@ -30,8 +28,6 @@ return tau.plugin {
 const BLOCKING: &str = r#"
 local tau = require("tau")
 return tau.plugin {
-  name = "greet",
-  description = "Says hello, and blocks rm.",
   tools = { hello = { description = "Hello.", call = function() return "hi" end } },
   before_tool = function(call, ctx)
     if call.name == "exec_command" then return tau.block("no") end
@@ -51,6 +47,15 @@ local t = tau.test
 t.case("says bye", function() t.equal(t.run{}:tool("hello"), "bye") end)
 "#;
 
+/// What `greet`'s `tau.toml` says of `plugin`.
+fn described(plugin: &str) -> &'static str {
+    if plugin == BLOCKING {
+        "Says hello, and blocks rm."
+    } else {
+        "Says hello."
+    }
+}
+
 /// A project whose trunk holds the plugin `greet` with `plugin` and,
 /// when given, a test file.
 fn project(
@@ -59,7 +64,13 @@ fn project(
     plugin: &str,
     test: Option<&str>,
 ) -> (Project, String) {
-    let mut files = vec![("greet/plugin.luau".to_owned(), plugin.to_owned())];
+    let mut files = vec![
+        (
+            "greet/tau.toml".to_owned(),
+            Manifest::text("greet", described(plugin)),
+        ),
+        ("greet/src/plugin.luau".to_owned(), plugin.to_owned()),
+    ];
     if let Some(test) = test {
         files.push(("greet/tests/basic.luau".to_owned(), test.to_owned()));
     }
@@ -187,9 +198,7 @@ fn a_settings_page_is_drawn_of_the_settings_given() {
     const PAGED: &str = r#"
 local tau = require("tau")
 local ui = tau.ui
-return tau.plugin {
-  name = "greet",
-  tools = { hello = { description = "Hello.", call = function() return "hi" end } },
+return tau.plugin { tools = { hello = { description = "Hello.", call = function() return "hi" end } },
   settings = {
     schema = { type = "object", properties = { loud = { type = "boolean" } } },
     default = { loud = false },
@@ -233,7 +242,13 @@ return tau.plugin {
 fn write_greet(dir: &std::path::Path, plugin: &str, test: Option<&str>) {
     let folder = dir.join("greet");
     std::fs::create_dir_all(folder.join("tests")).unwrap();
-    std::fs::write(folder.join("plugin.luau"), plugin).unwrap();
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    std::fs::write(
+        folder.join("tau.toml"),
+        Manifest::text("greet", described(plugin)),
+    )
+    .unwrap();
+    std::fs::write(folder.join("src/plugin.luau"), plugin).unwrap();
     match test {
         Some(test) => std::fs::write(folder.join("tests/basic.luau"), test),
         None => {
@@ -324,9 +339,7 @@ fn an_action_changes_the_state_and_draws_it() {
     const COUNTER: &str = r#"
 local tau = require("tau")
 local ui = tau.ui
-return tau.plugin {
-  name = "greet",
-  tools = { hello = { description = "Hello.", call = function() return "hi" end } },
+return tau.plugin { tools = { hello = { description = "Hello.", call = function() return "hi" end } },
   settings = {
     schema = { type = "object", properties = { step = { type = "integer" } } },
     default = { step = 1 },
@@ -392,8 +405,6 @@ return tau.plugin {
 const TITLES: &str = r#"
 local tau = require("tau")
 return tau.plugin {
-  name = "greet",
-  description = "Titles runs, and keeps the tree's rewrites.",
   fills = { "tau.title", "tau.compaction" },
   title = function(run, ctx)
     return "Asked: " .. run.task
@@ -453,17 +464,15 @@ fn a_plugin_fills_only_what_it_may() {
     let refused = |source: &str| {
         let files = Files {
             source: source.into(),
-            ..Files::default()
+            ..Files::named("greet")
         };
         block_on_io(load("greet", files)).unwrap_err()
     };
-    let vcs = refused(
-        r#"return require("tau").plugin { name = "greet", fills = { "tau.vcs" } }"#,
-    );
+    let vcs =
+        refused(r#"return require("tau").plugin { fills = { "tau.vcs" } }"#);
     assert!(vcs.contains("`tau.vcs`"), "{vcs}");
-    let no_hook = refused(
-        r#"return require("tau").plugin { name = "greet", fills = { "tau.title" } }"#,
-    );
+    let no_hook =
+        refused(r#"return require("tau").plugin { fills = { "tau.title" } }"#);
     assert!(no_hook.contains("a `title` hook"), "{no_hook}");
 }
 
@@ -490,7 +499,6 @@ fn a_plugin_sends_tau_s_notices_on() {
         r#"
 local tau = require("tau")
 return tau.plugin {{
-  name = "greet",
   uses = {{ network = {{ "127.0.0.1" }} }},
   fills = {{ "tau.notify" }},
   notify = function(notice, ctx)
@@ -531,9 +539,7 @@ return tau.plugin {{
 
 const FORGE: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "greet",
-  uses = { secrets = { "forge-token" } },
+return tau.plugin { uses = { secrets = { "forge-token" } },
   fills = { "tau.forge" },
   forge = {
     name = "Gitea at home",
@@ -644,9 +650,7 @@ fn a_forge_reads_its_own_urls() {
 
 const ASKS_THE_MODEL: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "greet",
-  uses = { infer = true },
+return tau.plugin { uses = { infer = true },
   fills = { "tau.title" },
   title = function(run, ctx)
     local answer = tools.infer({ task = "A title for this task", context = run.task })
@@ -691,9 +695,7 @@ fn a_title_hook_asks_the_persons_model() {
 
 const COUNTS: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "greet",
-  jobs = {
+return tau.plugin { jobs = {
     count = {
       every = 3600,
       label = "Counts",
@@ -760,11 +762,10 @@ fn a_job_is_due_after_its_interval() {
 #[test]
 fn a_job_runs_at_most_every_minute() {
     use tau_luau_plugins_host::runtime::{Files, load};
-    let source = r#"return require("tau").plugin { name = "greet",
-      jobs = { fast = { every = 5, run = function() end } } }"#;
+    let source = r#"return require("tau").plugin { jobs = { fast = { every = 5, run = function() end } } }"#;
     let files = Files {
         source: source.into(),
-        ..Files::default()
+        ..Files::named("greet")
     };
     let error = block_on_io(load("greet", files)).unwrap_err();
     assert!(error.contains("`fast`"), "{error}");
@@ -773,10 +774,16 @@ fn a_job_runs_at_most_every_minute() {
 const BUILT_IN: &[tau_luau_plugins_host::registry::BuiltIn] = &[
     tau_luau_plugins_host::registry::BuiltIn {
         name: "shipped",
-        files: &[(
-            "plugin.luau",
-            r#"return require("tau").plugin { name = "shipped", before_tool = function() end }"#,
-        )],
+        files: &[
+            (
+                "tau.toml",
+                "name = \"shipped\"\nversion = \"0.1.0\"\ndescription = \"Ships.\"\n",
+            ),
+            (
+                "src/plugin.luau",
+                r#"return require("tau").plugin { before_tool = function() end }"#,
+            ),
+        ],
     },
 ];
 
@@ -807,11 +814,18 @@ fn a_built_in_plugin_is_active_and_its_name_is_its_own() {
         home.path().join("v1"),
         Identity::default(),
         &[
-            ("greet/plugin.luau".to_owned(), TOOL_ONLY.to_owned()),
             (
-                "shipped/plugin.luau".to_owned(),
-                r#"return require("tau").plugin { name = "shipped" }"#
-                    .to_owned(),
+                "greet/tau.toml".to_owned(),
+                Manifest::text("greet", "Says hello."),
+            ),
+            ("greet/src/plugin.luau".to_owned(), TOOL_ONLY.to_owned()),
+            (
+                "shipped/tau.toml".to_owned(),
+                Manifest::text("shipped", "Ships."),
+            ),
+            (
+                "shipped/src/plugin.luau".to_owned(),
+                r#"return require("tau").plugin { }"#.to_owned(),
             ),
         ],
     )
@@ -844,9 +858,7 @@ fn a_built_in_plugin_is_active_and_its_name_is_its_own() {
 const LISTS: &str = r#"
 local tau = require("tau")
 local ui = tau.ui
-return tau.plugin {
-  name = "greet",
-  uses = { store = true },
+return tau.plugin { uses = { store = true },
   repo_nav = { label = "List", page = "list" },
   pages = {
     list = function(params, ctx)
@@ -928,9 +940,7 @@ fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
 
 const CLAIMS: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "greet",
-  uses = { store = true },
+return tau.plugin { uses = { store = true },
   actions = {
     claim = function(args, ctx) ctx.store.put("claim/" .. args.issue, args.run) end,
   },

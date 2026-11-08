@@ -1,0 +1,4 @@
+name = "tau-goal"
+version = "0.1.0"
+description = "Keeps a conversation going until its /goal holds"
+entry = "src/plugin.luau"

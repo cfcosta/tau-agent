@@ -234,9 +234,7 @@ impl Env for Host {
 /// The agent `watch`, watching `ci`'s resource as `status`.
 const AGENT: &str = r#"
 local tau = require("tau")
-return tau.agent {
-  name = "watch",
-  triggers = {
+return tau.agent { triggers = {
     status = { mcp = { server = "ci", uri = "ci://tau-agent/main" } },
   },
 }
@@ -254,7 +252,7 @@ impl Fixture {
         ProjectRepo::init(
             home.path().join("agents").join("watch"),
             Identity::default(),
-            &[("agent.luau".to_owned(), AGENT.to_owned())],
+            &tau_agents_host::package("watch", AGENT),
         )
         .unwrap();
         let host = Arc::new(Host {
@@ -418,12 +416,11 @@ async fn a_new_version_without_the_trigger_stops_watching() {
     let next = ProjectRepo::init(
         f.home.path().join("next"),
         Identity::default(),
-        &[(
-            "agent.luau".to_owned(),
+        &tau_agents_host::package(
+            "watch",
             "local tau = require(\"tau\")\n\
-             return tau.agent { name = \"watch\", triggers = { hourly = { every = \"1h\" } } }\n"
-                .to_owned(),
-        )],
+             return tau.agent { triggers = { hourly = { every = \"1h\" } } }\n",
+        ),
     )
     .unwrap();
     let trunk = next.trunk().unwrap();

@@ -268,25 +268,25 @@ may misbehave with no error. The loading checks are about a broken folder
 
 ### What replaces each const
 
-| Now                                                                       | After                                                                                     |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `tau_luau_plugins_host::BUILT_IN`, `&'static [BuiltIn]`, in rewrite order | `plugins/built-in.toml`, the order and what must be there |
-| `BuiltIn { name, files: &'static [...] }`                                 | `BuiltIn { name: String, files: Files }`, read at startup |
-| `Registry::with_built_in(&'static [BuiltIn])`                             | `with_built_in(Vec<Loaded>)`; `tests/registry.rs`'s const becomes a function |
-| `Shared::built_in: &'static [BuiltIn]`                                    | `Vec<BuiltIn>`, and `reload`'s check of a taken name reads it                             |
-| `<plugin>::NAME`                                                          | `tau_luau_plugins::names::{ASK, GOAL, ...}`, plain strings; not the list |
-| `<plugin>::FILES`                                                         | `Files::read(find()?.join(name), PLUGIN)`                                                 |
-| `Active::built_in(name)`, from `BUILT_IN`                                 | The same call, read from the listed folder; still `Result` |
-| `tau_ask::DEMO_ASK`, `DEMO_NOTE`, `DEMO_REVIEW`, `DEMO_SWEEP`             | `fixtures/ask.json`, `note.json`, `review.json`, `sweep.json`                             |
-| `tau_reasoning::DEMO_CHOSE`, `DEMO_KEPT`                                  | `fixtures/chose.json`, `kept.json`                                                        |
-| `tau_goal::DEMO_WORKING`, `MET`, `STOPPED`, `TRIAGE`, `LANES`             | `fixtures/working.json`, `met.json`, `stopped.json`, `triage.json`, `lanes.json`          |
-| `tau_goal::DEMO_GOAL`, text in Rust                                       | A literal in `tau_demo::GOAL`, and in the fixture's test, which checks it either way      |
-| `tau_constitution::DEMO_RUN`, `DEMO_PAGES`                                | `fixtures/run.json`, `pages.json`                                                         |
-| `tau_fast_compaction::DEMO_RUN`                                           | `fixtures/run.json`                                                                       |
-| `tau_watcher::DEMO_NEW`, `DEMO_LEARNED`, `DEMO_KNEW`                      | `fixtures/new.json`, `learned.json`, `knew.json`                                          |
-| `DEMO_DECLARATION` (seven plugins)                                        | `fixtures/declaration.json`                                                               |
+| Now                                                                       | After                                                                                  |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `tau_luau_plugins_host::BUILT_IN`, `&'static [BuiltIn]`, in rewrite order | `plugins/built-in.toml`, the order and what must be there                              |
+| `BuiltIn { name, files: &'static [...] }`                                 | `BuiltIn { name: String, files: Files }`, read at startup                              |
+| `Registry::with_built_in(&'static [BuiltIn])`                             | `with_built_in(Vec<Loaded>)`; `tests/registry.rs`'s const becomes a function           |
+| `Shared::built_in: &'static [BuiltIn]`                                    | `Vec<BuiltIn>`, and `reload`'s check of a taken name reads it                          |
+| `<plugin>::NAME`                                                          | `tau_luau_plugins::names::{ASK, GOAL, ...}`, plain strings; not the list               |
+| `<plugin>::FILES`                                                         | `Files::read(find()?.join(name), PLUGIN)`                                              |
+| `Active::built_in(name)`, from `BUILT_IN`                                 | The same call, read from the listed folder; still `Result`                             |
+| `tau_ask::DEMO_ASK`, `DEMO_NOTE`, `DEMO_REVIEW`, `DEMO_SWEEP`             | `fixtures/ask.json`, `note.json`, `review.json`, `sweep.json`                          |
+| `tau_reasoning::DEMO_CHOSE`, `DEMO_KEPT`                                  | `fixtures/chose.json`, `kept.json`                                                     |
+| `tau_goal::DEMO_WORKING`, `MET`, `STOPPED`, `TRIAGE`, `LANES`             | `fixtures/working.json`, `met.json`, `stopped.json`, `triage.json`, `lanes.json`       |
+| `tau_goal::DEMO_GOAL`, text in Rust                                       | A literal in `tau_demo::GOAL`, and in the fixture's test, which checks it either way   |
+| `tau_constitution::DEMO_RUN`, `DEMO_PAGES`                                | `fixtures/run.json`, `pages.json`                                                      |
+| `tau_fast_compaction::DEMO_RUN`                                           | `fixtures/run.json`                                                                    |
+| `tau_watcher::DEMO_NEW`, `DEMO_LEARNED`, `DEMO_KNEW`                      | `fixtures/new.json`, `learned.json`, `knew.json`                                       |
+| `DEMO_DECLARATION` (seven plugins)                                        | `fixtures/declaration.json`                                                            |
 | `tau_fast_compaction::HEADER`, a copy of a line the Luau writes           | `tau_luau_plugins::names::PRUNED_HEADER`; the new test crate checks the Luau writes it |
-| `runtime::PLUGIN` (`file: "plugin.luau"`), `PLUGIN_FILE`                  | `PLUGIN` is a module and a default entry; the entry's path comes from `tau.toml` |
+| `runtime::PLUGIN` (`file: "plugin.luau"`), `PLUGIN_FILE`                  | `PLUGIN` is a module and a default entry; the entry's path comes from `tau.toml`       |
 
 The demo "cannot run Luau", and that stays true: it gets its fixtures
 through `tau_luau_plugins::packages::fixture(plugin, name) ->
@@ -309,7 +309,7 @@ else, and the `load` messages that said `PLUGIN_FILE` say the entry's path.
 | `tau-ui`, normal          | tau-ask, tau-goal, tau-reasoning, unused by `src/`                                                                        |
 | `tau-ui`, dev             | tau-watcher, tau-titles, tau-constitution, tau-compaction, tau-tree-compaction, tau-fast-compaction, tau-todo             |
 | `tau-ui-remote`, dev      | tau-compaction, tau-fast-compaction, tau-reasoning, tau-ask, tau-goal                                                     |
-| `tau-agents`              | tau-ask, for `names::ASK` |
+| `tau-agents`              | tau-ask, for `names::ASK`                                                                                                 |
 | `tau-memory-e2e`          | tau-compaction                                                                                                            |
 | `tau-rlm-eval`            | tau-compaction                                                                                                            |
 | `tau-output-pruning-eval` | tau-fast-compaction                                                                                                       |
@@ -601,7 +601,7 @@ The owner settled what the code did not, on review.
 
 3. **Agents convert too.** An agent's folder takes the same layout, so there
    is one layout, and no switch in `Root`. Decision 2 holds for `tau.agent
-   {}`. `entry` defaults to `src/agent.luau` there. No reader for the old
+{}`. `entry` defaults to `src/agent.luau` there. No reader for the old
    layout, no migrations.
 
 4. **CI does not build the package.** No CI step. The text check of

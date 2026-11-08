@@ -1,11 +1,11 @@
 # Tree compaction
 
-`tau-tree-compaction` (`crates/plugins/tau-tree-compaction`) compacts a
+`tau-tree-compaction` (`plugins/tau-tree-compaction`) compacts a
 run without losing what it drops. It implements OptChat's memory design
 ([the spec](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)),
 fitted to a run of tau's. It is a Luau plugin tau comes with (ADR 0050):
-`luau/lib/tree.luau` holds the history and the view,
-`luau/lib/build.luau` the compactor, and `luau/plugin.luau` the hooks
+`src/tree.luau` holds the history and the view,
+`src/build.luau` the compactor, and `src/plugin.luau` the hooks
 and `zoom`. It is off by default: its settings switch it on, and until
 an evaluation shows it does better than tau-compaction's summary,
 tau-compaction stays the default.

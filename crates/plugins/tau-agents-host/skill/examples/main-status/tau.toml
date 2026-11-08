@@ -1,0 +1,3 @@
+name = "main-status"
+version = "0.1.0"
+description = "Says when main's build turns red or green, and why."

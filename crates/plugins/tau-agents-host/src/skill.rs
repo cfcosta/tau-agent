@@ -17,8 +17,12 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 5] = [
         "morning-digest",
         &[
             (
-                "agent.luau",
-                include_str!("../skill/examples/morning-digest/agent.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/morning-digest/tau.toml"),
+            ),
+            (
+                "src/agent.luau",
+                include_str!("../skill/examples/morning-digest/src/agent.luau"),
             ),
             (
                 "tests/triggers.luau",
@@ -32,13 +36,17 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 5] = [
         "release-watch",
         &[
             (
-                "agent.luau",
-                include_str!("../skill/examples/release-watch/agent.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/release-watch/tau.toml"),
             ),
             (
-                "lib/releases.luau",
+                "src/agent.luau",
+                include_str!("../skill/examples/release-watch/src/agent.luau"),
+            ),
+            (
+                "src/releases.luau",
                 include_str!(
-                    "../skill/examples/release-watch/lib/releases.luau"
+                    "../skill/examples/release-watch/src/releases.luau"
                 ),
             ),
             (
@@ -51,8 +59,12 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 5] = [
         "build-watch",
         &[
             (
-                "agent.luau",
-                include_str!("../skill/examples/build-watch/agent.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/build-watch/tau.toml"),
+            ),
+            (
+                "src/agent.luau",
+                include_str!("../skill/examples/build-watch/src/agent.luau"),
             ),
             (
                 "tests/parse.luau",
@@ -64,8 +76,12 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 5] = [
         "main-status",
         &[
             (
-                "agent.luau",
-                include_str!("../skill/examples/main-status/agent.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/main-status/tau.toml"),
+            ),
+            (
+                "src/agent.luau",
+                include_str!("../skill/examples/main-status/src/agent.luau"),
             ),
             (
                 "tests/triggers.luau",
@@ -79,8 +95,12 @@ pub const EXAMPLES: [(&str, &[(&str, &str)]); 5] = [
         "review-desk",
         &[
             (
-                "agent.luau",
-                include_str!("../skill/examples/review-desk/agent.luau"),
+                "tau.toml",
+                include_str!("../skill/examples/review-desk/tau.toml"),
+            ),
+            (
+                "src/agent.luau",
+                include_str!("../skill/examples/review-desk/src/agent.luau"),
             ),
             (
                 "tests/triggers.luau",
@@ -100,7 +120,12 @@ pub fn render() -> String {
             .iter()
             .map(|(path, source)| {
                 format!(
-                    "`{name}/{path}`:\n\n```luau\n{}\n```",
+                    "`{name}/{path}`:\n\n```{}\n{}\n```",
+                    if path.ends_with(".toml") {
+                        "toml"
+                    } else {
+                        "luau"
+                    },
                     source.trim_end()
                 )
             })

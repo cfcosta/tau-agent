@@ -31,9 +31,7 @@ const MONDAY_EIGHT: i64 = 1_791_792_000;
 
 const AGENT: &str = r#"
 local tau = require("tau")
-return tau.agent {
-  name = "greet",
-  triggers = {
+return tau.agent { triggers = {
     hourly = { every = "1h" },
     morning = { at = "09:00" },
     hello = { command = "hello", hint = "<who>" },
@@ -229,13 +227,13 @@ impl Fixture {
         Self::with(AGENT)
     }
 
-    /// The agent `greet` with `source` as its `agent.luau`.
+    /// The agent `greet` with `source` as its `src/agent.luau`.
     fn with(source: &str) -> Self {
         let home = tempfile::tempdir().unwrap();
         ProjectRepo::init(
             home.path().join("agents").join("greet"),
             Identity::default(),
-            &[("agent.luau".to_owned(), source.to_owned())],
+            &tau_agents_host::package("greet", source),
         )
         .unwrap();
         let clock = Arc::new(FakeClock::new(MONDAY_EIGHT, 0));
@@ -567,7 +565,7 @@ fn a_version_that_fails_is_heard_as_an_event() {
     let broken = ProjectRepo::init(
         home.join("v2"),
         Identity::default(),
-        &[("agent.luau".to_owned(), "return tau.agent {".to_owned())],
+        &tau_agents_host::package("greet", "return tau.agent {"),
     )
     .unwrap();
     let trunk = broken.trunk().unwrap();
@@ -586,7 +584,7 @@ fn a_version_that_fails_is_heard_as_an_event() {
     assert_eq!(turns.len(), 1);
     let message = Message::parse(&turns[0].text).unwrap();
     assert_eq!(message.events[0].kind, tau_agents::event::Kind::Version);
-    assert_eq!(message.events[0].trigger, "agent.luau");
+    assert_eq!(message.events[0].trigger, "src/agent.luau");
 }
 
 #[test]
@@ -755,9 +753,7 @@ fn a_poll_that_fails_says_why_and_waits_longer_after_three() {
 fn a_poll_whose_key_fails_fires_nothing_and_says_why() {
     let source = r#"
 local tau = require("tau")
-return tau.agent {
-  name = "greet",
-  triggers = {
+return tau.agent { triggers = {
     pulls = {
       poll = { tool = "mcp__github__list_pull_requests" },
       every = "10m",
@@ -840,7 +836,6 @@ fn http_agent(url: &str) -> String {
         r#"
 local tau = require("tau")
 return tau.agent {{
-  name = "greet",
   triggers = {{
     releases = {{
       poll = {{ http = {{ url = "{url}", headers = {{ authorization = "Bearer " .. tau.secret("github") }} }} }},
@@ -1049,9 +1044,7 @@ fn data_too_large_for_a_message_is_kept_as_an_artifact() {
 /// comes due.
 const QUIET: &str = r#"
 local tau = require("tau")
-return tau.agent {
-  name = "greet",
-  triggers = { hello = { command = "hello" } },
+return tau.agent { triggers = { hello = { command = "hello" } },
 }
 "#;
 

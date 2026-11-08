@@ -33,7 +33,7 @@ pub enum Kind {
     Stream,
     Mcp,
     Message,
-    /// A version of its `agent.luau` that did not load or whose tests
+    /// A version of its `src/agent.luau` that did not load or whose tests
     /// failed: the agent hears so it can fix it.
     Version,
     /// The person's answer to one of its questions (`ask`).

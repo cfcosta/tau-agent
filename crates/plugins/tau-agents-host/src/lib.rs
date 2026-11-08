@@ -1,6 +1,6 @@
 //! tau-agents' host half
 //! ([ADR 0037](../../../docs/decisions/0037-agents.md), ADR 0030):
-//! each agent's `agent.luau`, read from its repository's trunk and
+//! each agent's `src/agent.luau`, read from its repository's trunk and
 //! tested, and what wakes it. What every interface shows of an agent is
 //! `tau-agents`'.
 //!
@@ -42,18 +42,31 @@ pub use agents::{
 };
 pub use half::AgentsHost;
 pub use tau_agents::{NAME, ROOT, SKILL};
-use tau_luau_plugins_host::runtime::Root;
+use tau_luau_plugins_host::runtime::{MANIFEST, Manifest, Root};
 /// The host's clock and local days, which tau-schedule keeps for chats
 /// and agents alike.
 pub use tau_schedule::clock;
 
-/// An agent's repository as a folder: `agent.luau`, required as
-/// `agent`, with its modules under `lib/` and its tests under `tests/`.
+/// An agent's repository as a package (ADR 0051): `tau.toml`, its entry
+/// `src/agent.luau`, required as `agent`, with its modules beside it and
+/// its tests under `tests/`.
 pub const AGENT: Root = Root {
-    file: tau_agents::ENTRY,
+    entry: tau_agents::ENTRY,
     module: "agent",
     subject: "_agent",
 };
+
+/// What an agent named `name` with `source` as its entry holds, by paths:
+/// what a new one is, or a test's.
+pub fn package(name: &str, source: &str) -> Vec<(String, String)> {
+    vec![
+        (
+            MANIFEST.to_owned(),
+            Manifest::text(name, &format!("The agent {name}.")),
+        ),
+        (AGENT.entry.to_owned(), source.to_owned()),
+    ]
+}
 
 /// Writes `text` to `path` whole or not at all: to a file beside it,
 /// then over it. It blocks: call it from `spawn_blocking`.

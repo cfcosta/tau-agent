@@ -1,0 +1,3 @@
+name = "forget-old-calls"
+version = "0.1.0"
+description = "Drops old tool calls from a long run's context."

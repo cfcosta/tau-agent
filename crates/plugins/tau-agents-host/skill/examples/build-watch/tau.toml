@@ -1,0 +1,3 @@
+name = "build-watch"
+version = "0.1.0"
+description = "Looks into each failed build of main and says why it failed."

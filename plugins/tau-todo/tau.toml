@@ -1,0 +1,4 @@
+name = "tau-todo"
+version = "0.1.0"
+description = "Issues the repository keeps for its runs, like beads, and each run's steps."
+entry = "src/plugin.luau"

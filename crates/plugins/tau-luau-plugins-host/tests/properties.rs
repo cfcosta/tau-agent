@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 const PLUGIN: &str = r#"
 local tau = require("tau")
-return tau.plugin { name = "props" }
+return tau.plugin { }
 "#;
 
 /// What the plugin's tests come to, with `tests` as its one test file.
@@ -25,7 +25,7 @@ fn results(tests: &str) -> Vec<TestResult> {
     let files = Files {
         source: PLUGIN.into(),
         tests: BTreeMap::from([("props".to_owned(), tests.to_owned())]),
-        ..Files::default()
+        ..Files::named("props")
     };
     let loaded = block_on_io(load("props", files)).unwrap();
     block_on_io(loaded.test(CancellationToken::new()))

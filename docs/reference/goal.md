@@ -3,8 +3,8 @@
 Keeps a conversation going until a goal holds. Each time the model
 would stop, Jev (TypeSafe's System One model) is asked whether the
 goal is met; if not, the model is sent back with the goal. It is a
-Luau plugin tau comes with (ADR 0050): `crates/plugins/tau-goal`, its
-code in `luau/plugin.luau` and `luau/lib/goal.luau`. Design:
+Luau plugin tau comes with (ADR 0050): `plugins/tau-goal`, its
+code in `src/plugin.luau` and `src/goal.luau`. Design:
 [plugins.md](plugins.md).
 
 ## Setting a goal

@@ -32,8 +32,6 @@ local ui = tau.ui
 local days = require("days")
 
 return tau.plugin {
-  name = "no-friday-deploys",
-  description = "Blocks deploy commands on Fridays.",
   uses = { tools = { "exec_command" } },
   settings = {
     schema = { type = "object" },
@@ -95,11 +93,11 @@ return {
 }
 "#;
 
-fn files(plugin: &str) -> Files {
+fn files(name: &str, plugin: &str) -> Files {
     Files {
         source: plugin.into(),
         libs: BTreeMap::from([("days".into(), DAYS.into())]),
-        ..Files::default()
+        ..Files::named(name)
     }
 }
 
@@ -120,8 +118,12 @@ fn no_reach() -> Arc<dyn Reach> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plugin_declares_what_it_is() {
-    let loaded = load("no-friday-deploys", files(FRIDAY)).await.unwrap();
+    let mut described = files("no-friday-deploys", FRIDAY);
+    described.manifest.description =
+        "Blocks deploy commands on Fridays.".into();
+    let loaded = load("no-friday-deploys", described).await.unwrap();
     let declared = &loaded.declaration;
+    assert_eq!(declared.name, "no-friday-deploys");
     assert_eq!(declared.description, "Blocks deploy commands on Fridays.");
     assert_eq!(
         declared.uses,
@@ -179,7 +181,9 @@ async fn a_plugin_declares_what_it_is() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn hooks_answer_as_the_plugin_says() {
-    let loaded = load("no-friday-deploys", files(FRIDAY)).await.unwrap();
+    let loaded = load("no-friday-deploys", files("no-friday-deploys", FRIDAY))
+        .await
+        .unwrap();
     let call = |weekday: &'static str, hook: Hook, input: Value| {
         let loaded = loaded.clone();
         async move {
@@ -236,7 +240,9 @@ async fn hooks_answer_as_the_plugin_says() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn state_carries_from_hook_to_hook() {
-    let loaded = load("no-friday-deploys", files(FRIDAY)).await.unwrap();
+    let loaded = load("no-friday-deploys", files("no-friday-deploys", FRIDAY))
+        .await
+        .unwrap();
     let mut ctx = context("Monday");
     for turn in 1..=3 {
         let outcome = loaded
@@ -313,7 +319,9 @@ impl Reach for Shell {
 /// not there for it, and the run's `read` is never called.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_tool_reaches_only_what_it_uses() {
-    let loaded = load("no-friday-deploys", files(FRIDAY)).await.unwrap();
+    let loaded = load("no-friday-deploys", files("no-friday-deploys", FRIDAY))
+        .await
+        .unwrap();
     let ctx = context("Monday");
     let shell = Arc::new(Shell::default());
     let ran = loaded
@@ -351,9 +359,7 @@ async fn a_tool_reaches_only_what_it_uses() {
 async fn a_failing_hook_says_why_and_keeps_the_state() {
     let plugin = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "broken",
-  tools = {
+return tau.plugin { tools = {
     slow = {
       description = "Never draws its card.",
       call = function(args, ctx) return 1 end,
@@ -368,7 +374,7 @@ return tau.plugin {
   end,
 }
 "#;
-    let loaded = load("broken", files(plugin)).await.unwrap();
+    let loaded = load("broken", files("broken", plugin)).await.unwrap();
     let mut ctx = context("Monday");
     ctx.state = json!({ "kept": 1 });
     let failed = loaded
@@ -416,7 +422,7 @@ fn a_long_string_reads_back_as_its_text(tc: TestCase) {
     } else {
         drawn
     };
-    let modules = Arc::new(files("return {}").modules().unwrap());
+    let modules = Arc::new(files("x", "return {}").modules().unwrap());
     let read = tau_testing::block_on_io(evaluate(
         "strings",
         modules,
@@ -430,24 +436,26 @@ fn a_long_string_reads_back_as_its_text(tc: TestCase) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plugin_that_cannot_load_says_why() {
-    let named_wrong = files(&FRIDAY.replace("no-friday-deploys", "other"));
+    let named_wrong = files("other", FRIDAY);
     let error = load("no-friday-deploys", named_wrong).await.unwrap_err();
     assert!(error.contains("folder is `no-friday-deploys`"), "{error}");
 
-    let broken = load("x", files("return tau.plugin {")).await.unwrap_err();
+    let broken = load("x", files("x", "return tau.plugin {"))
+        .await
+        .unwrap_err();
     assert!(!broken.is_empty());
 
     let bad_tool = r#"
 local tau = require("tau")
-return tau.plugin { name = "x", tools = { ["no good"] = { call = function() end } } }
+return tau.plugin { tools = { ["no good"] = { call = function() end } } }
 "#;
-    let error = load("x", files(bad_tool)).await.unwrap_err();
+    let error = load("x", files("x", bad_tool)).await.unwrap_err();
     assert!(error.contains("not a tool name"), "{error}");
 
     let taken = Files {
         source: "return {}".into(),
         libs: BTreeMap::from([("tau".into(), "return {}".into())]),
-        ..Files::default()
+        ..Files::named("x")
     };
     let error = load("x", taken).await.unwrap_err();
     assert!(error.contains("taken"), "{error}");
@@ -498,7 +506,7 @@ end)
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plugins_tests_run_against_fake_runs() {
-    let mut with_tests = files(FRIDAY);
+    let mut with_tests = files("no-friday-deploys", FRIDAY);
     with_tests.tests = BTreeMap::from([
         ("friday".to_owned(), FRIDAY_TESTS.to_owned()),
         ("broken".to_owned(), "error('not even a case')".to_owned()),
@@ -541,8 +549,6 @@ local tau = require("tau")
 local ui = tau.ui
 
 return tau.plugin {
-  name = "every-piece",
-  description = "Draws one of each piece.",
   view = function(state, ctx)
     return { page = ui.stack {
       "plain",
@@ -577,7 +583,9 @@ return tau.plugin {
 /// nothing invalid: the builders and the tree agree on the wire shape.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_ui_piece_reads_as_a_tree() {
-    let loaded = load("every-piece", files(EVERY_PIECE)).await.unwrap();
+    let loaded = load("every-piece", files("every-piece", EVERY_PIECE))
+        .await
+        .unwrap();
     let drawn = loaded
         .call(
             &Hook::View,
@@ -600,9 +608,7 @@ async fn every_ui_piece_reads_as_a_tree() {
 
 const ECHO: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "echo",
-  tools = {
+return tau.plugin { tools = {
     echo = {
       description = "Gives its arguments back.",
       call = function(args, ctx) return args end,
@@ -618,7 +624,7 @@ return tau.plugin {
 async fn a_hook_is_given_its_input_whole() {
     let echo = Files {
         source: ECHO.into(),
-        ..Files::default()
+        ..Files::named("echo")
     };
     let loaded = load("echo", echo).await.unwrap();
     let long = "x]]".repeat(100_000);
@@ -640,9 +646,7 @@ async fn a_hook_is_given_its_input_whole() {
 
 const PINGS: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "pings",
-  uses = { network = { "127.0.0.1" }, secrets = { "token" } },
+return tau.plugin { uses = { network = { "127.0.0.1" }, secrets = { "token" } },
   tools = {
     ping = {
       description = "Pings the server.",
@@ -688,7 +692,7 @@ async fn a_plugin_reaches_the_hosts_and_secrets_it_declares() {
         .unwrap();
     let pings = Files {
         source: PINGS.into(),
-        ..Files::default()
+        ..Files::named("pings")
     };
     let loaded = load("pings", pings).await.unwrap();
     let context = Context {
@@ -739,9 +743,7 @@ async fn a_plugin_reaches_the_hosts_and_secrets_it_declares() {
 
 const SHIPS: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "ships",
-  commands = {
+return tau.plugin { commands = {
     ship = {
       description = "Marks the run shipped",
       args = "<version>",
@@ -764,7 +766,7 @@ return tau.plugin {
 async fn a_command_runs_as_its_action() {
     let ships = Files {
         source: SHIPS.into(),
-        ..Files::default()
+        ..Files::named("ships")
     };
     let loaded = load("ships", ships).await.unwrap();
     let [command] = loaded.declaration.commands.as_slice() else {
@@ -840,9 +842,7 @@ fn a_hook_that_may_call_the_model_has_the_time_for_it() {
 async fn an_action_asks_jev_when_its_plugin_uses_it() {
     const TRIES: &str = r#"
 local tau = require("tau")
-return tau.plugin {
-  name = "tries",
-  uses = { jev = USES },
+return tau.plugin { uses = { jev = USES },
   actions = {
     try = function(args, ctx)
       if ctx.jev == nil then return "no jev" end
@@ -857,7 +857,7 @@ return tau.plugin {
     for (uses, want) in [("true", json!(0.25)), ("false", json!("no jev"))] {
         let files = Files {
             source: TRIES.replace("USES", uses),
-            ..Files::default()
+            ..Files::named("tries")
         };
         let loaded = load("tries", files).await.unwrap();
         let out = loaded
