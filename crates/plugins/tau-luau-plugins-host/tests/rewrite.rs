@@ -220,7 +220,7 @@ fn the_summary_names_and_sizes_each_message() {
     assert_eq!(summary[0]["text"], long);
     assert_eq!(
         summary[1]["calls"],
-        json!([{ "id": "a", "name": "exec_command" }])
+        json!([{ "id": "a", "name": "exec_command", "args": {}, "order": [], "json": "{}" }])
     );
     assert_eq!(summary[2]["call"], "a");
     assert_eq!(summary[2]["ok"], Value::Bool(true));

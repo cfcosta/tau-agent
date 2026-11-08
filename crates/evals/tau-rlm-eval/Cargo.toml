@@ -16,6 +16,7 @@ tau-agent.workspace = true
 tau-ai.workspace = true
 tau-codemode-host.workspace = true
 tau-compaction.workspace = true
+tau-luau-plugins-host.workspace = true
 tau-store.workspace = true
 tau-tools-host.workspace = true
 tempfile.workspace = true

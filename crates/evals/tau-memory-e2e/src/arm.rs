@@ -26,10 +26,9 @@ use tau_agent::{
 use tau_ai::{
     llm::{Llm, LlmError, LlmSession},
     message::Message,
-    model::find,
     responses::request::Settings,
 };
-use tau_compaction::Compaction;
+use tau_luau_plugins_host::agent::{Active, LuauPlugins};
 use tau_memory_host::{Memory, MemoryPlugin, Scopes, index::Index};
 use tau_tools_host::{path::Root, plugin::CodingTools};
 use tau_tree_compaction::{
@@ -174,12 +173,26 @@ pub enum TreeRole {
 /// 64,000.
 pub const TREE_VIEW_BYTES: usize = 16_000;
 
+/// tau-compaction as tau runs it (a Luau plugin, ADR 0050), by the
+/// window of the run's model, `model`, working in `repo`.
+async fn compaction(model: &str, repo: &Path) -> LuauPlugins {
+    let active = Active::built_in(tau_compaction::NAME)
+        .await
+        .expect("tau-compaction loads");
+    LuauPlugins::new(
+        vec![active],
+        serde_json::json!({
+            "kind": "main",
+            "repo": repo.display().to_string(),
+            "model": model,
+        }),
+        None,
+    )
+}
+
 /// The agent for one run in an arm.
-pub fn agent(setup: RunSetup<'_>) -> Agent {
-    let mut compaction = Compaction::default();
-    if let Some(model) = find(setup.model) {
-        compaction = compaction.context_window(model.context_window);
-    }
+pub async fn agent(setup: RunSetup<'_>) -> Agent {
+    let compaction = compaction(setup.model, setup.repo).await;
     let mut agent = Agent::new(SharedLlm(setup.llm))
         .name("coder")
         .model(setup.model)

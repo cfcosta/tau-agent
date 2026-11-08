@@ -12,6 +12,7 @@ pub mod agent;
 pub mod chats;
 mod half;
 pub mod hegel;
+pub mod infer;
 pub mod jobs;
 
 /// The Luau plugins tau comes with (ADR 0048, 0050).
@@ -43,6 +44,12 @@ pub const BUILT_IN: &[registry::BuiltIn] = &[
     registry::BuiltIn {
         name: tau_constitution::NAME,
         files: tau_constitution::FILES,
+    },
+    // The compactions rewrite in this order, the first rewrite winning:
+    // fast pruning, then the tree, then the summary.
+    registry::BuiltIn {
+        name: tau_compaction::NAME,
+        files: tau_compaction::FILES,
     },
 ];
 

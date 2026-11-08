@@ -393,27 +393,26 @@ fn the_store_is_opened_by_what_fills_its_slot() {
     assert!(runtime.block_on(store.recent_runs(1)).unwrap().is_empty());
 }
 
-/// `tau.compaction` is the chain's unless the person picks the summary
-/// alone: fast pruning, the tree and the summary rewrite, in that turn,
-/// or only the summary. The chain is Luau (ADR 0050): tau-luau-plugins
-/// fills the slot, its own plugins' rewrites first.
+/// `tau.compaction` is the chain's: fast pruning, the tree and the
+/// summary rewrite, in that turn. The chain and the summary are Luau (ADR
+/// 0050): tau-luau-plugins fills the slot, its own plugins' rewrites
+/// first, and is the slot's only filler.
 #[test]
-fn the_chain_compacts_unless_the_summary_is_picked() {
+fn the_chain_compacts() {
     use tau_ui_plugin::compaction::COMPACTION;
     let runtime = runtime();
     let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
     let llm = ScriptedModel::new();
     let (host, _events) = host_in(&own_dir(), runtime, store, Agent::new(llm));
-    let rewriters = || {
-        host.slots()
-            .lock()
-            .unwrap()
-            .get(&COMPACTION)
-            .expect("something fills tau.compaction")
-            .rewriters()
-    };
+    let rewriters = host
+        .slots()
+        .lock()
+        .unwrap()
+        .get(&COMPACTION)
+        .expect("something fills tau.compaction")
+        .rewriters();
     assert_eq!(
-        rewriters(),
+        rewriters,
         [
             tau_luau_plugins::NAME,
             tau_fast_compaction::NAME,
@@ -421,11 +420,6 @@ fn the_chain_compacts_unless_the_summary_is_picked() {
             tau_compaction::NAME,
         ]
     );
-    host.slots()
-        .lock()
-        .unwrap()
-        .pick(COMPACTION.name(), Some(tau_compaction::NAME));
-    assert_eq!(rewriters(), [tau_compaction::NAME]);
 }
 
 /// The end of first-run setup reaches every plugin's host half, with the

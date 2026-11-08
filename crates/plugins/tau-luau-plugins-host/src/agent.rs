@@ -61,6 +61,7 @@ use crate::{
     NAME,
     Record,
     ToolSpec,
+    infer::Refused,
     runtime::{Context, Hook, Loaded, NoReach, Outcome, Reach},
 };
 
@@ -79,6 +80,30 @@ pub const MOST_CONTINUATIONS: u32 = 20;
 pub struct Active {
     pub loaded: Loaded,
     pub settings: Value,
+}
+
+impl Active {
+    /// The plugin tau comes with by `name` ([`crate::BUILT_IN`]), loaded
+    /// as tau loads it, with its default settings: for an agent of its
+    /// own, as an evaluation's.
+    pub async fn built_in(name: &str) -> Result<Self, String> {
+        let built_in = crate::BUILT_IN
+            .iter()
+            .find(|built_in| built_in.name == name)
+            .ok_or_else(|| format!("tau comes with no plugin {name}"))?;
+        let paths: Vec<(String, Vec<u8>)> = built_in
+            .files
+            .iter()
+            .map(|(path, source)| {
+                ((*path).to_owned(), source.as_bytes().to_vec())
+            })
+            .collect();
+        let files =
+            crate::runtime::Files::from_paths(&paths, crate::runtime::PLUGIN)?;
+        let loaded = crate::runtime::load(name, files).await?;
+        let settings = loaded.declaration.default_settings();
+        Ok(Self { loaded, settings })
+    }
 }
 
 /// Where a run's plugins come from: the versions active for it now.
@@ -942,42 +967,57 @@ impl PluginRun for LuauRun {
         {
             return Ok(None);
         }
-        let input = json!({
+        let mut input = json!({
             "trigger": view.trigger,
             "turn": view.turn,
             "tokens": view.tokens,
-            "window": view.window,
             "messages": crate::rewrite::summary(view.transcript),
         });
+        // Left out when the model's is not known, so it is `nil` in Luau.
+        if let Some(window) = view.window {
+            input["window"] = json!(window);
+        }
         let mut state = self.state.lock().await;
         // What a hook asks in the run's conversation (`infer{
         // conversation }`), asked here, which holds it.
         let (asks, mut asked) = tokio::sync::mpsc::channel(8);
+        // Why the plugins that failed did: the run hears it when none
+        // rewrites, as a failed overflow's error.
+        let mut failed = Vec::new();
         // The first plugin that rewrites wins.
         for active in inner.active().iter() {
+            let hook = Hook::RewriteContext;
             let reach = inner.reach_asking(
                 active,
                 ctx,
                 Some(view.transcript),
                 Some(asks.clone()),
             );
-            let hook = inner.call(
+            let run = inner.run_hook(
                 active,
-                Hook::RewriteContext,
+                &hook,
                 input.clone(),
                 &mut state,
                 ctx,
                 reach,
             );
+            let Some(outcome) =
+                in_conversation(run, &mut asked, view, ctx).await
+            else {
+                continue;
+            };
+            let name = &active.loaded.declaration.name;
+            if let Some(error) = &outcome.error {
+                failed.push(format!("{name}: {error}"));
+            }
             let Some(answer) =
-                in_conversation(hook, &mut asked, view, ctx).await
+                inner.apply(active, &hook, outcome, &mut state, ctx).await
             else {
                 continue;
             };
             if answer["rewrite"].is_null() {
                 continue;
             }
-            let name = &active.loaded.declaration.name;
             match crate::rewrite::rebuild(
                 view.transcript,
                 &answer["rewrite"],
@@ -987,16 +1027,20 @@ impl PluginRun for LuauRun {
                 Ok(Some(rewrite)) => return Ok(Some(rewrite)),
                 Ok(None) => {}
                 Err(error) => {
+                    failed.push(format!("{name}: {error}"));
                     ctx.publish(&Record::Error {
                         plugin: name.clone(),
-                        hook: hook_name(&Hook::RewriteContext),
+                        hook: hook_name(&hook),
                         error,
                     })
                     .await;
                 }
             }
         }
-        Ok(None)
+        if failed.is_empty() {
+            return Ok(None);
+        }
+        Err(PluginError::Message(failed.join("; ")))
     }
 
     async fn rewritten(
@@ -1605,7 +1649,7 @@ impl Reach for RunReach {
         let mut tools = vec![ToolEntry {
             name: "infer".into(),
             description: "Asks the model one task.".into(),
-            input_schema: infer_parameters(),
+            input_schema: crate::infer::parameters(),
             output_schema: None,
             namespace: None,
             sequential: false,
@@ -1641,7 +1685,7 @@ impl Reach for RunReach {
         // with the `reason` an answer was refused for.
         let reply = match self.infer(call.args).await {
             Ok(value) => json!({ "ok": true, "value": value }),
-            Err(Refused { error, reason }) => {
+            Err(crate::infer::Refused { error, reason }) => {
                 let mut reply = json!({ "ok": false, "error": error });
                 if let Some(reason) = reason {
                     reply["reason"] = json!(reason);
@@ -1661,93 +1705,18 @@ impl Reach for RunReach {
     }
 }
 
-/// `infer`'s arguments in a run hook: codemode's, and `conversation`.
-fn infer_parameters() -> Value {
-    let mut parameters =
-        tau_codemode_host::inference::InferRequest::parameters();
-    parameters["properties"]["conversation"] = json!({
-        "description": "In rewrite_context: true sends the run's conversation \
-                        before the task, or a number its first messages."
-    });
-    parameters
-}
-
-/// Why `infer` gave no answer, and, for an answer it refused, the
-/// `reason`: `"error"`, `"length"` or `"tool_call"`.
-struct Refused {
-    error: String,
-    reason: Option<&'static str>,
-}
-
-impl From<String> for Refused {
-    fn from(error: String) -> Self {
-        Self {
-            error,
-            reason: None,
-        }
-    }
-}
-
-impl From<&str> for Refused {
-    fn from(error: &str) -> Self {
-        error.to_owned().into()
-    }
-}
-
-/// The text of `answer`, unless it stopped with an error, was cut off
-/// at the model's output limit, or called a tool: an answer a plugin
-/// must not take as whole.
-fn answer_text(answer: &AssistantMessage) -> Result<String, Refused> {
-    use tau_ai::message::StopReason;
-    let refused = |error: &str, reason| Refused {
-        error: error.to_owned(),
-        reason: Some(reason),
-    };
-    if answer.stop_reason == StopReason::Error {
-        let error = answer.error_message.as_deref().unwrap_or("Unknown error");
-        return Err(refused(error, "error"));
-    }
-    if answer.stop_reason == StopReason::Length {
-        return Err(refused(
-            "the answer hit the model's output limit and is incomplete",
-            "length",
-        ));
-    }
-    if answer.tool_calls().next().is_some() {
-        return Err(refused("the model called a tool", "tool_call"));
-    }
-    Ok(answer.text())
-}
-
-/// How many of the run's messages `infer{ conversation }` sends first:
-/// all of them for `true`; `None` when it names none.
-fn conversation_of(value: Option<Value>) -> Result<Option<usize>, Refused> {
-    match value {
-        None | Some(Value::Null | Value::Bool(false)) => Ok(None),
-        Some(Value::Bool(true)) => Ok(Some(usize::MAX)),
-        Some(count) => count
-            .as_u64()
-            .map(|count| Some(count as usize))
-            .ok_or_else(|| {
-                "conversation is true, or how many of the run's messages \
-                 go first"
-                    .into()
-            }),
-    }
-}
-
 impl RunReach {
-    async fn infer(&self, mut args: Value) -> Result<Value, Refused> {
+    async fn infer(&self, args: Value) -> Result<Value, Refused> {
         use tau_ai::message::{UserContent, UserMessage};
         use tau_codemode_host::inference::{INSTRUCTIONS, InferRequest};
-        let conversation = conversation_of(
-            args.as_object_mut()
-                .and_then(|fields| fields.remove("conversation")),
-        )?;
-        let request = InferRequest::parse(args)?;
-        if let Some(first) = conversation {
-            return self.infer_in_conversation(request, first).await;
+
+        use crate::infer::{Own, answer_text};
+        if args.get("conversation").is_some()
+            || args.get("instructions").is_some()
+        {
+            return self.infer_own(Own::parse(args)?).await;
         }
+        let request = InferRequest::parse(args)?;
         let named = request.model.as_deref().or(self.named.as_deref());
         let model = crate::slots::model_named(named, Some(&self.run_model))
             .unwrap_or_default();
@@ -1767,55 +1736,58 @@ impl RunReach {
             .ask(settings, &input)
             .await
             .map_err(|error| error.to_string())?;
-        if let Some(error) = &answer.error_message {
-            return Err(Refused {
-                error: error.clone(),
-                reason: Some("error"),
-            });
-        }
         Ok(request.decode_answer(&answer_text(&answer)?)?)
     }
 
-    /// `request` asked in the run's own conversation (ADR 0050, gap B):
-    /// its `first` messages, then the task as written, then the context
-    /// unless it is null, on the run's connection with its
-    /// instructions, tools and effort, so the part the conversation
-    /// starts with reads the provider's cache.
-    async fn infer_in_conversation(
+    /// A request the plugin writes itself: in the run's own conversation
+    /// (ADR 0050, gap B), its first messages, then the message, on the
+    /// run's connection with its instructions, tools and effort, so the
+    /// part the conversation starts with reads the provider's cache; or
+    /// with `instructions` of its own, on its own. The answer is its
+    /// text.
+    async fn infer_own(
         &self,
-        request: tau_codemode_host::inference::InferRequest,
-        first: usize,
+        own: crate::infer::Own,
     ) -> Result<Value, Refused> {
         use tau_ai::message::{UserContent, UserMessage};
-        let asks = self.conversation.as_ref().ok_or(
-            "`conversation` is for rewrite_context, which holds the run's \
-             conversation",
-        )?;
-        if request.schema.is_some()
-            || request.effort.is_some()
-            || request.model.is_some()
-        {
-            return Err("in the run's conversation, `infer` asks with the \
-                        run's own settings: no schema, effort or model"
-                .into());
-        }
-        let mut text = request.task.clone();
-        if !request.context.is_null() {
-            text.push_str("\n\n");
-            text.push_str(&request.context.to_string());
-        }
+
+        use crate::infer::answer_text;
         let message = Message::User(UserMessage {
-            content: UserContent::Text(text),
+            content: UserContent::Text(own.message),
             timestamp: self.plugin.now(),
         });
-        let (reply, answer) = tokio::sync::oneshot::channel();
-        asks.send((first, message, reply))
-            .await
-            .map_err(|_| "the run's conversation is gone")?;
-        let answer = answer
-            .await
-            .map_err(|_| "the run's conversation is gone")??;
-        Ok(request.decode_answer(&answer_text(&answer)?)?)
+        let answer = match own.conversation {
+            Some(first) => {
+                let asks = self.conversation.as_ref().ok_or(
+                    "`conversation` is for rewrite_context, which holds the \
+                     run's conversation",
+                )?;
+                let (reply, answer) = tokio::sync::oneshot::channel();
+                asks.send((first, message, reply))
+                    .await
+                    .map_err(|_| "the run's conversation is gone")?;
+                answer
+                    .await
+                    .map_err(|_| "the run's conversation is gone")??
+            }
+            None => {
+                let named = own.model.as_deref().or(self.named.as_deref());
+                let model =
+                    crate::slots::model_named(named, Some(&self.run_model))
+                        .unwrap_or_default();
+                let settings = tau_ai::responses::request::Settings {
+                    reasoning: crate::slots::effort_for(&model, own.effort),
+                    model,
+                    instructions: own.instructions,
+                    ..Default::default()
+                };
+                self.plugin
+                    .ask(settings, &[message])
+                    .await
+                    .map_err(|error| error.to_string())?
+            }
+        };
+        Ok(Value::String(answer_text(&answer)?))
     }
 }
 

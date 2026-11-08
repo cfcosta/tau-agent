@@ -24,11 +24,11 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.navigate(Route::Plugins, cx);
         ws.pick_plugin(tau_memory::NAME, None, cx);
     }),
-    // tau-compaction's settings: the switch for idle chats, drawn as a
-    // tree (ADR 0045).
+    // tau-compaction, one of tau's Luau plugins (ADR 0050): its entry
+    // under tau-luau-plugins.
     ("plugins-compaction", |ws, _, cx| {
         ws.navigate(Route::Plugins, cx);
-        ws.pick_plugin(tau_compaction::NAME, None, cx);
+        ws.pick_plugin(tau_luau_plugins::NAME, Some(tau_compaction::NAME), cx);
     }),
     ("models", |ws, _, cx| ws.navigate(Route::Models, cx)),
     ("plan", |ws, _, cx| ws.navigate(Route::Plan(run_id()), cx)),

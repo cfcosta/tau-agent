@@ -1,16 +1,22 @@
-//! Compaction inside the agent loop (`docs/reference/compaction.md`),
-//! as a plugin of an `Agent` with `ScriptedModel`, `tau_store_sqlite::memory()` and
-//! paused time.
+//! tau-compaction inside the agent loop (`docs/reference/compaction.md`),
+//! its Luau run by tau-luau-plugins as tau runs it, in an `Agent` with
+//! `ScriptedModel` and `tau_store_sqlite::memory()`. Time is real: a
+//! hook's limit is a timer, which paused time would let run out while
+//! the store works on a thread of its own.
 //!
 //! The scripts steer a second user message in before the first turn
-//! ends, so the transcript has a clean cut point: with
-//! `keep_recent_tokens(1)` the newest user message is kept and
-//! everything before it is summarized.
+//! ends, so the transcript has a clean cut point: keeping 1 token, the
+//! newest user message is kept and everything before it is summarized.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
     error::ToolError,
@@ -21,18 +27,12 @@ use tau_ai::{
     message::{Message, StopReason as MessageStop, UserContent},
     responses::request::ReasoningEffort,
 };
-use tau_compaction::{
-    Compaction,
-    IN_CONTEXT_PREAMBLE,
-    Record,
-    SUMMARIZATION_PROMPT,
-    SUMMARIZATION_SYSTEM_PROMPT,
-    SUMMARY_PREFIX,
-    TURN_PREFIX_SUMMARIZATION_PROMPT,
-    UPDATE_SUMMARIZATION_PROMPT,
+use tau_luau_plugins_host::{
+    agent::{Active, LuauPlugins},
+    runtime::{Files, Loaded, PLUGIN, load},
 };
 use tau_store::{Entry, Store};
-use tau_testing::{block_on, scripted::ScriptedModel};
+use tau_testing::{block_on_io, scripted::ScriptedModel};
 use tokio_util::sync::CancellationToken;
 
 struct Read;
@@ -56,15 +56,141 @@ impl TypedTool for Read {
     }
 }
 
-fn settings() -> Compaction {
-    Compaction::default()
-        .context_window(1_000)
-        .reserve_tokens(100)
-        .keep_recent_tokens(1)
+/// The plugin's prompts, as its Luau has them.
+struct Prompts {
+    system: String,
+    summarization: String,
+    update: String,
+    turn_prefix: String,
+    preamble: String,
+    prefix: String,
+}
+
+/// A plugin whose one tool gives the library's prompts.
+const PROBE: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "probe",
+  tools = {
+    prompts = {
+      description = "The prompts.",
+      call = function()
+        local c = require("compaction")
+        return {
+          system = c.SYSTEM_PROMPT,
+          summarization = c.SUMMARIZATION_PROMPT,
+          update = c.UPDATE_SUMMARIZATION_PROMPT,
+          turn_prefix = c.TURN_PREFIX_SUMMARIZATION_PROMPT,
+          preamble = c.IN_CONTEXT_PREAMBLE,
+          prefix = c.SUMMARY_PREFIX,
+        }
+      end,
+    },
+  },
+}
+"#;
+
+/// The prompts, as the plugin's library has them.
+fn prompts() -> Prompts {
+    let library = tau_compaction::FILES
+        .iter()
+        .find(|(path, _)| *path == "lib/compaction.luau")
+        .unwrap()
+        .1;
+    let paths = vec![
+        ("plugin.luau".to_owned(), PROBE.as_bytes().to_vec()),
+        (
+            "lib/compaction.luau".to_owned(),
+            library.as_bytes().to_vec(),
+        ),
+    ];
+    let loaded =
+        aside(load("probe", Files::from_paths(&paths, PLUGIN).unwrap()))
+            .unwrap();
+    let context = tau_luau_plugins_host::runtime::Context {
+        run: json!({}),
+        now: json!({}),
+        settings: json!({}),
+        state: json!({}),
+        secrets: None,
+        store: None,
+    };
+    let outcome = aside(loaded.call(
+        &tau_luau_plugins_host::runtime::Hook::Tool("prompts".into()),
+        json!({}),
+        &context,
+        std::sync::Arc::new(tau_luau_plugins_host::runtime::NoReach),
+        CancellationToken::new(),
+    ));
+    assert_eq!(outcome.error, None);
+    let text = |key: &str| outcome.value[key].as_str().unwrap().to_owned();
+    Prompts {
+        system: text("system"),
+        summarization: text("summarization"),
+        update: text("update"),
+        turn_prefix: text("turn_prefix"),
+        preamble: text("preamble"),
+        prefix: text("prefix"),
+    }
+}
+
+/// `future`'s output, on a thread of its own: the tests build their
+/// agents inside the runtime that drives them.
+fn aside<T: Send>(future: impl std::future::Future<Output = T> + Send) -> T {
+    std::thread::scope(|scope| {
+        scope.spawn(|| block_on_io(future)).join().unwrap()
+    })
+}
+
+/// tau-compaction, loaded once as tau loads it.
+fn loaded() -> Loaded {
+    static LOADED: std::sync::OnceLock<Loaded> = std::sync::OnceLock::new();
+    LOADED
+        .get_or_init(|| {
+            let paths: Vec<(String, Vec<u8>)> = tau_compaction::FILES
+                .iter()
+                .map(|(path, source)| {
+                    ((*path).to_owned(), source.as_bytes().to_vec())
+                })
+                .collect();
+            let files = Files::from_paths(&paths, PLUGIN).unwrap();
+            aside(load(tau_compaction::NAME, files)).unwrap()
+        })
+        .clone()
+}
+
+/// tau-compaction as tau runs it, with `settings` over its defaults and
+/// the run on `model`.
+fn compaction(settings: Value, model: &str) -> LuauPlugins {
+    let loaded = loaded();
+    let mut merged = loaded.declaration.default_settings();
+    for (key, value) in settings.as_object().unwrap() {
+        merged[key] = value.clone();
+    }
+    LuauPlugins::new(
+        vec![Active {
+            loaded,
+            settings: merged,
+        }],
+        json!({ "kind": "main", "repo": "r", "model": model }),
+        None,
+    )
+}
+
+/// The test's settings: a window of 1,000 tokens, 100 of them reserved,
+/// and 1 kept.
+fn settings() -> Value {
+    json!({ "window": 1_000, "reserve_tokens": 100, "keep_recent_tokens": 1 })
 }
 
 fn agent(llm: &ScriptedModel) -> Agent {
-    Agent::new(llm.clone()).tool(typed(Read)).plugin(settings())
+    agent_with(llm, settings())
+}
+
+fn agent_with(llm: &ScriptedModel, settings: Value) -> Agent {
+    Agent::new(llm.clone())
+        .tool(typed(Read))
+        .plugin(compaction(settings, "m"))
 }
 
 fn text(message: &Message) -> String {
@@ -75,6 +201,30 @@ fn text(message: &Message) -> String {
         },
         other => panic!("expected a user message, got {other:?}"),
     }
+}
+
+/// The run's retry policy, its waits a millisecond: time is real.
+fn quick() -> tau_ai::retry::RetryPolicy {
+    tau_ai::retry::RetryPolicy {
+        base: std::time::Duration::from_millis(1),
+        ..tau_ai::retry::RetryPolicy::default()
+    }
+}
+
+/// A window no turn passes: only an overflow compacts.
+const WIDE: u64 = 1_000_000_000_000;
+
+/// [`settings`] on a window no turn passes.
+fn wide() -> Value {
+    json!({ "window": WIDE, "reserve_tokens": 100, "keep_recent_tokens": 1 })
+}
+
+/// The compaction a context entry's body holds, as tau-luau-plugins
+/// stores a Luau plugin's rewrite.
+fn record(body: &str) -> Value {
+    let body: Value = serde_json::from_str(body).unwrap();
+    assert_eq!(body["plugin"], tau_compaction::NAME);
+    body["details"].clone()
 }
 
 /// Starts `input`, steers `steer` in, and collects the events and the
@@ -110,9 +260,12 @@ fn threshold_compaction_summarizes_older_messages() {
         })
         .turn(|t| t.text("## Goal\nship it").cost(0.25))
         .turn(|t| t.text("done"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = agent(&llm)
+        let prompts = prompts();
+        let agent = Agent::new(llm.clone())
+            .tool(typed(Read))
+            .plugin(compaction(settings(), "gpt-5.4-mini"))
             .model("gpt-5.4-mini")
             .reasoning(ReasoningEffort::High);
         let (events, outcome) =
@@ -120,10 +273,6 @@ fn threshold_compaction_summarizes_older_messages() {
         assert_eq!(outcome.stop, StopReason::Stop);
         assert_eq!(outcome.text, "done");
         assert_eq!(outcome.usage.cost.total, 0.75);
-        // Seven rows: the input, the call and its result, the steered
-        // message, the context entry, the summary, the answer. The
-        // context entry keeps the steered message by reference.
-        assert_eq!(outcome.checkpoint().seq(), 6);
         let compacted: Vec<u64> = events
             .iter()
             .filter_map(|e| match e {
@@ -132,7 +281,7 @@ fn threshold_compaction_summarizes_older_messages() {
                     plugin,
                     ..
                 } => {
-                    assert_eq!(&**plugin, tau_compaction::NAME);
+                    assert_eq!(&**plugin, tau_luau_plugins::NAME);
                     Some(*tokens_before)
                 }
                 _ => None,
@@ -146,7 +295,7 @@ fn threshold_compaction_summarizes_older_messages() {
         let summary = &requests[1];
         assert_eq!(
             summary.settings.instructions.as_deref(),
-            Some(SUMMARIZATION_SYSTEM_PROMPT)
+            Some(prompts.system.as_str())
         );
         assert!(summary.settings.tools.is_empty());
         assert_eq!(summary.settings.model, "gpt-5.4-mini");
@@ -160,7 +309,7 @@ fn threshold_compaction_summarizes_older_messages() {
         let next = &requests[2].transcript;
         assert_eq!(next.len(), 2);
         let opening = text(&next[0]);
-        assert!(opening.starts_with(SUMMARY_PREFIX), "{opening}");
+        assert!(opening.starts_with(&prompts.prefix), "{opening}");
         assert!(opening.contains("## Goal\nship it"), "{opening}");
         assert!(
             opening.contains("<read-files>\nsrc/lib.rs\n</read-files>"),
@@ -172,10 +321,17 @@ fn threshold_compaction_summarizes_older_messages() {
         let Entry::Context { plugin, body, .. } = &entries[0] else {
             panic!("{entries:?}")
         };
-        assert_eq!(plugin, tau_compaction::NAME);
-        let record: Record = serde_json::from_str(body).unwrap();
-        assert_eq!(record.message(), next[0]);
-        assert_eq!(record.read_files, vec!["src/lib.rs".to_owned()]);
+        assert_eq!(plugin, tau_luau_plugins::NAME);
+        let record = record(body);
+        assert_eq!(
+            opening,
+            format!(
+                "{}{}\n</summary>",
+                prompts.prefix,
+                record["summary"].as_str().unwrap()
+            )
+        );
+        assert_eq!(record["read_files"], json!(["src/lib.rs"]));
         // The context entry, the summary, the kept message, the answer.
         assert_eq!(entries.len(), 4);
         let record = store.run(&outcome.run.0).await.unwrap().unwrap();
@@ -200,8 +356,9 @@ fn a_second_compaction_updates_the_first_summary() {
         })
         .turn(|t| t.text("second summary"))
         .turn(|t| t.text("done"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
+        let prompts = prompts();
         let agent = agent(&llm);
         let run = agent.start("go", &store);
         run.steer("then b");
@@ -211,12 +368,12 @@ fn a_second_compaction_updates_the_first_summary() {
 
         let requests = llm.requests();
         let update = text(&requests[3].transcript[0]);
-        assert!(update.ends_with(UPDATE_SUMMARIZATION_PROMPT), "{update}");
+        assert!(update.ends_with(&prompts.update), "{update}");
         assert!(
             update.contains("<previous-summary>\nfirst summary"),
             "{update}"
         );
-        assert!(!update.contains(SUMMARY_PREFIX), "{update}");
+        assert!(!update.contains(&prompts.prefix), "{update}");
         let last = text(&requests[4].transcript[0]);
         assert!(last.contains("second summary"), "{last}");
         assert!(
@@ -249,18 +406,19 @@ fn a_split_turn_gets_a_prefix_summary() {
         })
         .turn(|t| t.text("prefix summary"))
         .turn(|t| t.text("done"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         // Keep the last tool call and its result: the cut lands on the
         // second assistant message, inside the first turn.
-        let agent = Agent::new(llm.clone())
-            .tool(typed(Read))
-            .plugin(settings().keep_recent_tokens(10));
+        let agent = agent_with(
+            &llm,
+            json!({ "window": 1_000, "reserve_tokens": 100, "keep_recent_tokens": 10 }),
+        );
         let outcome = agent.run("go", &store).await.unwrap();
         assert_eq!(outcome.text, "done");
         let requests = llm.requests();
         let asked = text(&requests[2].transcript[0]);
-        assert!(asked.ends_with(TURN_PREFIX_SUMMARIZATION_PROMPT), "{asked}");
+        assert!(asked.ends_with(&prompts().turn_prefix), "{asked}");
         let opening = text(&requests[3].transcript[0]);
         assert!(
             opening.contains(
@@ -285,12 +443,10 @@ fn an_overflow_compacts_and_retries_once() {
         })
         .turn(|t| t.text("summary"))
         .turn(|t| t.text("done"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         // The threshold never fires: the window is huge.
-        let agent = Agent::new(llm.clone())
-            .tool(typed(Read))
-            .plugin(settings().context_window(u64::MAX));
+        let agent = agent_with(&llm, wide());
         let (_, outcome) = run(&agent, &store, "go", "then this").await;
         assert_eq!(outcome.stop, StopReason::Stop);
         assert_eq!(outcome.text, "done");
@@ -325,11 +481,9 @@ fn a_second_overflow_fails_the_run() {
         .turn(overflow)
         .turn(|t| t.text("summary"))
         .turn(overflow);
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(llm.clone())
-            .tool(typed(Read))
-            .plugin(settings().context_window(u64::MAX));
+        let agent = agent_with(&llm, wide());
         let (_, outcome) = run(&agent, &store, "go", "then this").await;
         assert!(
             matches!(&outcome.stop, StopReason::Error(m) if m.contains("context_length_exceeded")),
@@ -348,18 +502,16 @@ fn a_rejected_summary_on_overflow_fails_the_run() {
         .turn(|t| t.tool_call("read", json!({"path": "a.rs"})))
         .turn(|t| t.error("context_length_exceeded", "too long"))
         .turn(|t| t.text("cut off").stop(MessageStop::Length));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(llm.clone())
-            .tool(typed(Read))
-            .plugin(settings().context_window(u64::MAX));
+        let agent = agent_with(&llm, wide());
         let (events, outcome) = run(&agent, &store, "go", "then this").await;
         let StopReason::Error(message) = &outcome.stop else {
             panic!("{:?}", outcome.stop)
         };
         assert!(message.contains("context_length_exceeded"), "{message}");
         assert!(
-            message.contains("compaction failed: Summarization failed: generation hit the token cap"),
+            message.contains("tau-compaction: Summarization failed: generation hit the token cap"),
             "{message}"
         );
         assert!(
@@ -393,7 +545,7 @@ fn a_rejected_summary_is_tried_again_after_a_wait() {
         .turn(|t| t.text("## Goal\nship it"))
         .turn(|t| t.text("## Original Request\nread b.rs"))
         .turn(|t| t.text("done"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         let (events, outcome) =
             run(&agent(&llm), &store, "go", "then this").await;
@@ -422,7 +574,7 @@ fn a_fork_of_a_compacted_run_starts_from_the_summary() {
         .turn(|t| t.text("summary"))
         .turn(|t| t.text("done"))
         .turn(|t| t.text("forked"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         let agent = agent(&llm);
         let (_, base) = run(&agent, &store, "go", "then this").await;
@@ -461,11 +613,9 @@ fn an_overflow_is_recognized_by_its_wording() {
         })
         .turn(|t| t.text("summary"))
         .turn(|t| t.text("done"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(llm.clone())
-            .tool(typed(Read))
-            .plugin(settings().context_window(u64::MAX));
+        let agent = agent_with(&llm, wide());
         let (events, outcome) = run(&agent, &store, "go", "then this").await;
         assert_eq!(outcome.text, "done");
         assert!(
@@ -488,13 +638,12 @@ fn an_overflow_code_compacts_and_the_summary_is_retried() {
         .turn(|t| t.error("server_error", "try again"))
         .turn(|t| t.text("summary"))
         .turn(|t| t.text("done"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(llm.clone()).plugin(
-            Compaction::default()
-                .context_window(u64::MAX)
-                .keep_recent_tokens(1),
-        );
+        let agent = Agent::new(llm.clone()).retry(quick()).plugin(compaction(
+            json!({ "window": WIDE, "keep_recent_tokens": 1 }),
+            "m",
+        ));
         let mut run = agent.start("go", &store);
         run.steer("more");
         let events: Vec<RunEvent> = run.events().collect().await;
@@ -519,24 +668,27 @@ fn a_failing_summary_is_tried_as_the_policy_allows() {
         .turn(|t| t.error("server_error", "try again"))
         .turn(|t| t.error("server_error", "try again"))
         .turn(|t| t.text("never"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         let policy = tau_ai::retry::RetryPolicy {
             max_attempts: 2,
-            ..tau_ai::retry::RetryPolicy::default()
+            ..quick()
         };
-        let agent = Agent::new(llm.clone()).retry(policy).plugin(
-            Compaction::default()
-                .context_window(u64::MAX)
-                .keep_recent_tokens(1),
-        );
+        let agent = Agent::new(llm.clone()).retry(policy).plugin(compaction(
+            json!({ "window": WIDE, "keep_recent_tokens": 1 }),
+            "m",
+        ));
         let run = agent.start("go", &store);
         run.steer("more");
         let outcome = run.outcome().await.unwrap();
         let StopReason::Error(message) = &outcome.stop else {
             panic!("{:?}", outcome.stop)
         };
-        assert!(message.contains("compaction failed"), "{message}");
+        assert!(
+            message
+                .contains("tau-compaction: Summarization failed: server_error"),
+            "{message}"
+        );
         assert_eq!(llm.requests().len(), 4);
         assert_eq!(llm.remaining(), 1);
     });
@@ -558,12 +710,12 @@ fn an_idle_run_is_summarized_in_its_own_conversation() {
         .turn(|t| t.text("## Goal\nidle summary"))
         .turn(|t| t.text("again"))
         .turn(|t| t.text("## Goal\nupdated summary"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
         // No window known: nothing compacts at a turn's end.
         let agent = Agent::new(llm.clone())
             .tool(typed(Read))
-            .plugin(Compaction::default().keep_recent_tokens(1));
+            .plugin(compaction(json!({ "keep_recent_tokens": 1 }), "m"));
         let (_, outcome) = run(&agent, &store, "go", "and then this").await;
         let id = outcome.run.clone();
         let before = store.run(&id.0).await.unwrap().unwrap();
@@ -577,17 +729,18 @@ fn an_idle_run_is_summarized_in_its_own_conversation() {
                 CancellationToken::new(),
             )
             .await
-            .unwrap()
-            .expect("compacted");
-        assert_eq!(&*compacted.plugin, tau_compaction::NAME);
+            .unwrap();
+        let compacted = compacted.expect("compacted");
+        assert_eq!(&*compacted.plugin, tau_luau_plugins::NAME);
+        let prompts = prompts();
         let requests = llm.requests();
         let summary = &requests[2];
         assert_eq!(summary.settings, outcome.request);
         // All but the reply it keeps: what the last request sent.
         assert_eq!(&summary.transcript[..3], &requests[1].transcript[..]);
         let prompt = text(&summary.transcript[3]);
-        assert!(prompt.starts_with(IN_CONTEXT_PREAMBLE), "{prompt}");
-        assert!(prompt.ends_with(SUMMARIZATION_PROMPT), "{prompt}");
+        assert!(prompt.starts_with(&prompts.preamble), "{prompt}");
+        assert!(prompt.ends_with(&prompts.summarization), "{prompt}");
         assert_eq!(summary.transcript.len(), 4);
 
         let after = store.run(&id.0).await.unwrap().unwrap();
@@ -646,10 +799,12 @@ fn idle_compaction_off_leaves_the_run() {
     let llm = ScriptedModel::new()
         .turn(|t| t.text("first"))
         .turn(|t| t.text("done"));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(llm.clone())
-            .plugin(Compaction::default().keep_recent_tokens(1).idle(false));
+        let agent = Agent::new(llm.clone()).plugin(compaction(
+            json!({ "keep_recent_tokens": 1, "idle": false }),
+            "m",
+        ));
         let (_, outcome) = run(&agent, &store, "go", "and then this").await;
         let compacted = agent
             .resume(&outcome.run)

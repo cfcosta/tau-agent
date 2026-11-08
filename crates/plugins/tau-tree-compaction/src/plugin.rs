@@ -25,7 +25,6 @@ use tau_ai::{
     message::{Message, Timestamp, UserContent, UserMessage},
     model,
 };
-use tau_compaction::{find_cut_point, should_compact};
 
 use crate::{
     NAME,
@@ -90,13 +89,41 @@ impl TreeCompaction {
         self.jobs = jobs;
         self
     }
+}
 
-    /// The thresholds as tau-compaction reads them.
-    fn thresholds(&self) -> tau_compaction::Compaction {
-        tau_compaction::Compaction::default()
-            .reserve_tokens(self.reserve_tokens)
-            .keep_recent_tokens(self.keep_recent_tokens)
+/// Whether the estimate has passed `window - reserve`, as tau-compaction
+/// reads it (`docs/reference/compaction.md`, "When it triggers").
+fn should_compact(tokens: u64, window: u64, reserve: u64) -> bool {
+    tokens > window.saturating_sub(reserve)
+}
+
+/// The first message to keep so that at least `keep` tokens of the
+/// newest stay, as tau-compaction cuts (`docs/reference/compaction.md`,
+/// "Cut point"): back from the newest, then on to the next message that
+/// is not a tool result, else the last one there is.
+fn first_kept(messages: &[Message], keep: u64) -> usize {
+    let cuts: Vec<usize> = (0..messages.len())
+        .filter(|&at| !matches!(messages[at], Message::ToolResult(_)))
+        .collect();
+    let Some(&first) = cuts.first() else {
+        return 0;
+    };
+    let mut added = 0;
+    for at in (0..messages.len()).rev() {
+        let tokens = tau_agent::context::estimate_message_tokens(&messages[at]);
+        if tokens == 0 {
+            continue;
+        }
+        added += tokens;
+        if added >= keep {
+            return cuts
+                .iter()
+                .copied()
+                .find(|&cut| cut >= at)
+                .unwrap_or(*cuts.last().expect("cuts is not empty"));
+        }
     }
+    first
 }
 
 /// What tree compaction publishes and stores with a run.
@@ -239,7 +266,7 @@ impl PluginRun for TreeRun {
                         should_compact(
                             view.tokens,
                             window,
-                            &self.settings.thresholds(),
+                            self.settings.reserve_tokens,
                         )
                     });
                 if !due {
@@ -291,9 +318,8 @@ impl TreeRun {
         });
         let offset = usize::from(opens);
         let rest = &transcript[offset..];
-        let kept_from = offset
-            + find_cut_point(rest, self.settings.keep_recent_tokens)
-                .first_kept_index;
+        let kept_from =
+            offset + first_kept(rest, self.settings.keep_recent_tokens);
         if kept_from <= offset {
             return Ok(None);
         }

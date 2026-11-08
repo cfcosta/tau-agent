@@ -26,6 +26,7 @@ tokio-util.workspace = true
 # The plugins whose data and records the tests read.
 tau-remote.workspace = true
 tau-constitution.workspace = true
+tau-compaction.workspace = true
 tau-github.workspace = true
 tau-mcp.workspace = true
 tau-memory.workspace = true
@@ -42,7 +43,6 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-compaction.workspace = true
 tau-ask.workspace = true
 tau-canvas.workspace = true
 tau-skills.workspace = true

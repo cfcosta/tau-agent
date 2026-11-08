@@ -110,7 +110,8 @@ pub async fn evaluate(
                         &config.model,
                         dir.path(),
                         limits,
-                    );
+                    )
+                    .await;
                     let started = Instant::now();
                     let mut meter = Meter::default();
                     let mut run = agent.start(&instance.prompt, &store);

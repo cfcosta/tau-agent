@@ -3,9 +3,8 @@
 The chain of compactions, as the plugin that fills `tau.compaction`
 (ADR 0045, 0050): fast pruning first, then the tree when it is switched on,
 then the summary, each declining when it would save too little, the
-first rewrite winning. It is the slot's default; a person who wants only
-the summary picks tau-compaction for the slot on the Plugins screen, and
-the kernel turns off the others' rewrites.
+first rewrite winning. tau-compaction is Luau too, and runs after the
+others in the order tau comes with them.
 
 It is a Luau plugin tau comes with: `luau/plugin.luau` declares the
 chain in its `compaction` table, and tau-luau-plugins loads it as

@@ -477,6 +477,82 @@ What the port found besides:
   called a tool, which an answer in the run's conversation can, as the
   run's tools go with it. The answer says why in `reason`.
 
+### tau-compaction
+
+pi's rules moved to `luau/lib/compaction.luau` as they were, prompts and
+all, and the plugin is `start` and `rewrite_context`. tau-luau-plugins
+runs it after fast pruning and the tree, as `BUILT_IN` lists them. It
+needed five things more, each any plugin's:
+
+- **A view's message says more.** `tokens`, the loop's estimate of it,
+  which the cut adds up; an answer's `thinking`; each call's `args`,
+  `order` and `json`, the arguments as the model wrote them, which the
+  summary prints key by key in the model's order, nested objects and
+  all; and `images`, when a message has any. A result's text joins its
+  blocks with a new line, as tau-ai's does, and `window` is left out
+  when the model's is not known, so it is `nil`, not `json.null`.
+- **A request of the plugin's own.** `infer{ instructions }` sends the
+  task as written under those instructions and answers its text, with
+  no bound but the VM's: a summary request holds the whole history,
+  far past the 16 KiB a task takes. It takes an `effort`, the one the
+  run started at, which `start` keeps.
+- **`rewrite_context` has ten minutes** when it reaches the model or
+  Jev: one summary of a long history, or many, takes longer than a
+  tool's minute. The Rust plugin was bounded by the run's cancel alone.
+- **A rewrite that fails tells the run.** When no plugin rewrites and
+  one's hook failed, tau-luau-plugins answers the loop with its error,
+  so an overflow fails with the summary's error after the overflow's,
+  as it did.
+- **`Active::built_in(name)`** loads a plugin tau comes with, for an
+  agent of its own: the memory and RLM evaluations run tau-compaction
+  so.
+
+What the port found besides:
+
+- **The rewrite is tau-luau-plugins'.** Its `context` entry and its
+  `ContextRewritten` event name tau-luau-plugins; the entry's details
+  name tau-compaction and hold the record. The record is also the
+  plugin's state, which a fork inherits, in place of
+  `RunPlan::last_rewrite`. A transcript opens with the summary when its
+  first message is the person's with the summary's text; the Rust plugin
+  compared its time too.
+- **The summary alone cannot be picked.** tau-luau-plugins is the only
+  filler of `tau.compaction` left, and fills it for the chain; the
+  person picked tau-compaction there for the summary alone. The tree is
+  off unless switched on, and pruning runs only with a Jev key.
+- **A failed summary past the threshold is a line in the plugin's log**,
+  not a plugin error of the run: three of those in a run would turn the
+  plugin off for the rest of it, where the Rust one waited and tried
+  again. On an overflow or an idle chat it is the hook's error, as it
+  was.
+- **Smaller differences.** An answer whose text blocks are all empty
+  writes no `[Assistant]:` part: Luau reads their text joined. An answer
+  that says an error without stopping for one is refused, where the
+  Rust plugin took its text. The window, reserve and kept tokens are
+  settings, which the pane does not show; it shows the switch for idle
+  chats. The catalog's row is tau-luau-plugins'. The demo's screen of
+  the plugin is its entry under tau-luau-plugins.
+- **Tests moved.** The tests of the loop's token estimate and overflow
+  check, which were tau-agent's, are in `tau-agent/tests/context.rs`;
+  what makes an answer no summary is a property of `infer` in
+  `tau-luau-plugins-host/tests/infer.rs`. The tests in the loop run
+  `LuauPlugins` on real time: on paused time, a hook's limit ran out
+  while the store worked on a thread of its own. tau-ui's tests of idle
+  chats moved to `tests/compaction.rs`, which installs `tau::plugins()`.
+  The Rust tree and pruning lost their tests of tau-compaction taking
+  over, which their ports bring back.
+- **The parity check** ran the Rust rules, copied from before the port,
+  beside the Luau on drawn transcripts (tau-testing's, with thinking,
+  images, nested arguments and results past the 2,000-character cut):
+  400 serialized, cut and planned, on drawn budgets and earlier
+  summaries; 300 summary, split-turn and idle requests, with drawn
+  earlier summaries and focus, and summary messages; 300 file lists,
+  carried from drawn records; 300 answers taken or refused, through
+  `infer`'s refusals and the Luau's words for them; and 300 thresholds
+  and waits. All equal. A cut at 1,999 characters, a `>` for `>=` in the
+  cut's snap, `,` for `, ` between arguments and a reversed sort of the
+  files each failed it. It went with the Rust crate.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

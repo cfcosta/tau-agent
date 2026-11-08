@@ -5,19 +5,24 @@ This is ported from pi's coding-agent compaction
 implementations, and its summarization prompts have drifted apart. This
 one is the version pi ships.
 
-Compaction is a plugin, in the `tau-compaction` crate
-(`crates/plugins/tau-compaction`). It is **off by default**: most workflow
-runs are short. Add it to long-running agents with
-`Agent::plugin(Compaction::default())`, after any other context plugin,
-so cheaper rewrites get the first chance. The token estimate it
-compacts by is the loop's, in `tau_agent::context`.
+Compaction is a Luau plugin tau comes with (ADR 0050), in
+`crates/plugins/tau-compaction`: `luau/lib/compaction.luau` holds the
+rules, `luau/plugin.luau` the hooks. tau-luau-plugins runs it in every
+run of tau's, after fast pruning and the tree, so cheaper rewrites get
+the first chance. An agent of its own, such as an evaluation's, adds it
+with `Active::built_in(tau_compaction::NAME)` in its `LuauPlugins`.
+The token estimate it compacts by is the loop's, in
+`tau_agent::context`, which the hook reads as each message's `tokens`.
 
 In tau, which compactions rewrite is the `tau.compaction` slot's (ADR
-0045): by default tau-compaction-chain, a Luau plugin tau comes with
-(ADR 0050), which lets fast pruning, the tree and the summary rewrite in
-that turn. tau-luau-plugins fills the slot for it, so its own plugins'
-rewrites come first. On the Plugins screen the person can pick
-tau-compaction instead, and then only the summary rewrites.
+0045): tau-compaction-chain, a Luau plugin too, fills it with fast
+pruning, the tree and the summary, in that turn. tau-luau-plugins fills
+the slot for it, and runs its own plugins in the order tau comes with
+them.
+
+Its settings are `idle` (on), `reserve_tokens` (16,384),
+`keep_recent_tokens` (20,000) and `window` (0, the model's). Its pane
+shows the switch for idle chats.
 
 ## When it triggers
 
@@ -31,16 +36,17 @@ tau-compaction instead, and then only the summary rewrites.
 - **Overflow.** If the response fails with `context_length_exceeded`, the
   loop compacts once and retries once. A second overflow fails the run.
   The failed response is not stored.
-- **Context window.** It comes from the model registry, or from
-  `Compaction::context_window` for a model the registry does not know.
-  Without either, only an overflow triggers compaction.
+- **Context window.** It comes from the model registry, or from the
+  `window` setting for a model the registry does not know. Without
+  either, only an overflow triggers compaction.
 - **Failures.** A rejected summary writes nothing. Past the threshold,
-  the run goes on uncompacted, and compaction waits before it tries
-  again: 2 turns after the first failure, then 4, 8 and so on, at most
-  32, until a summary succeeds. A failing summary is not paid for every
-  turn, and a run, which has no turn cap, is not left uncompacted for
-  good. On overflow it always tries; when that fails, the run fails
-  with the overflow error and the compaction error.
+  the run goes on uncompacted, the failure is a line in the plugin's
+  log, and compaction waits before it tries again: 2 turns after the
+  first failure, then 4, 8 and so on, at most 32, until a summary
+  succeeds. A failing summary is not paid for every turn, and a run,
+  which has no turn cap, is not left uncompacted for good. On overflow
+  it always tries; when that fails, the run fails with the overflow
+  error and the compaction error.
 
 ## Idle compaction
 
@@ -66,7 +72,8 @@ resending the whole chat uncached. Claude Code's rules, and tau's:
   nothing from cache. So an idle compaction opens a session with the
   settings of the chat's last request (`Outcome::request`): its
   instructions, tools, effort and `prompt_cache_key`, on the connection
-  that served it. Its input is the messages the cut summarizes, as
+  that served it. The plugin asks `infer{ conversation = n }` (ADR
+  0050, gap B): the first `n` messages, those the cut summarizes, go as
   they were sent, then a user message: a preamble, that the
   conversation is about to be compacted, to answer with the summary
   alone and call no tool, followed by the usual prompt, or the
@@ -77,10 +84,11 @@ resending the whole chat uncached. Claude Code's rules, and tau's:
 - **The cut and the record are compaction's usual ones** ("Cut point",
   "After compaction"); the rewrite's trigger is stored as `idle`.
 - **Which plugins take part.** Only those whose `start_idle` runs:
-  tau-compaction, when idle compaction is on, and tau-memory, which
-  keeps what the summary drops. No plugin's `start` runs, so nothing
-  changes the settings: tau-reasoning picks no effort, and nothing is
-  searched or recorded. Pruning (tau-fast-compaction) and the tree
+  tau-luau-plugins, whose plugins rewrite (tau-compaction summarizes
+  when idle compaction is on), and tau-memory, which keeps what the
+  summary drops. No plugin's `start` runs, so nothing changes the
+  settings: tau-reasoning picks no effort, and nothing is searched or
+  recorded. Pruning (tau-fast-compaction) and the tree
   (tau-tree-compaction) decline it: a rewrite before the summary would
   change what it reads from cache.
 - **Where it runs.** tau-ui's host notes each chat turn's context
@@ -116,7 +124,9 @@ estimated with `chars / 4`.
 
 ## Summary request
 
-- **Model.** The summary is one request to the run's model. It is not
+- **Model.** The summary is one request to the run's model, at the
+  effort the run started at: `infer` with the summary's own
+  `instructions`, so the request is the plugin's as written. It is not
   sent on the run's lane; it uses a short-lived lane of its own.
 - **Input.** The messages being dropped are serialized into a single user
   message inside `<conversation>…</conversation>`. Each tool result is
@@ -131,7 +141,7 @@ estimated with `chars / 4`.
 - **Retries.** The request goes through the run's retry policy, so a
   dropped connection is retried like any other turn.
 - **Rejected summaries.** Compaction fails, and writes nothing, when the
-  response:
+  response (`infer` refuses it, and says why in `reason`):
   - stops with `error`: `Summarization failed: <message>`;
   - stops with `length`, because a cut-off summary must not become a
     checkpoint:
@@ -152,8 +162,8 @@ estimated with `chars / 4`.
 ```
 
 - **File lists.** Lists of files read and modified are appended. They are
-  taken from the `path` argument of tool calls and carried forward
-  between compactions.
+  taken from the `path` argument of `read`, `write` and `edit` calls and
+  carried forward between compactions.
 
 ## What the prompts add
 
@@ -189,17 +199,20 @@ its compactor on it, which does not apply to the models tau uses.
 ## After compaction
 
 - Compaction's rewrite ([plugins.md](plugins.md)) is stored as a
-  `messages` row with `kind = 'context'` and `plugin = 'tau-compaction'`.
-  Its body holds the summary, the token count before compaction, the
-  file lists and a timestamp. The summary message and the kept messages
-  are written after it, in the same transaction, because loading a
-  transcript drops everything before the latest context row. A fork
-  gets the body back (`RunPlan::last_rewrite`) to carry the summary
-  and file lists forward.
+  `messages` row with `kind = 'context'` and `plugin =
+'tau-luau-plugins'`. Its body names `tau-compaction` and holds its
+  details: the summary, the token count before compaction, the file
+  lists and a timestamp. The summary message and the kept messages are
+  written after it, in the same transaction, because loading a
+  transcript drops everything before the latest context row. The same
+  record is the plugin's state, which a fork or a resumed run keeps, to
+  carry the summary and file lists forward. A transcript opens with the
+  summary when its first message is the person's with the summary's
+  text.
 - The summary goes to the model as a user message, wrapped as pi wraps
   it ("The conversation history before this point was compacted into
   the following summary: <summary>…</summary>"). A later compaction
   passes it to the "update" prompt and never summarizes it again.
-- A `ContextRewritten` event from the `tau-compaction` plugin is emitted.
+- A `ContextRewritten` event from `tau-luau-plugins` is emitted.
 - The next turn sends a full request, because the transcript changed. The
   WebSocket continuation chain restarts from there.

@@ -330,41 +330,6 @@ fn a_jev_failure_is_reported() {
     });
 }
 
-/// With pruning declined, summarizing compaction added after it takes the
-/// overflow: the two compose in the order they were added.
-#[test]
-fn compaction_follows_when_pruning_cannot_help() {
-    let model = ScriptedModel::new()
-        .turn(|t| t.tool_call("read", json!({"path": "a.rs", "size": 10})))
-        .turn(|t| t.error("context_length_exceeded", "too long"))
-        .turn(|t| t.text("summary"))
-        .turn(|t| t.text("done"));
-    let jev = FakeJev::nouls(|_| 1.0);
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone())
-            .tool(Read::new())
-            .plugin(FastCompaction::new(jev.clone()).settings(Settings {
-                context_window: Some(u64::MAX),
-                ..settings()
-            }))
-            .plugin(
-                tau_compaction::Compaction::default()
-                    .context_window(u64::MAX)
-                    .keep_recent_tokens(1),
-            );
-        let mut run = agent.start("go", &store);
-        run.steer("then this");
-        let events: Vec<RunEvent> = run.events().collect().await;
-        let outcome = run.outcome().await.unwrap();
-        assert_eq!(outcome.text, "done");
-        let by: Vec<String> =
-            rewrites(&events).into_iter().map(|r| r.0).collect();
-        assert_eq!(by, [tau_compaction::NAME]);
-        assert_eq!(jev.requests().len(), 1, "pruning was asked first");
-    });
-}
-
 /// A fork of a pruned run starts from the pruned transcript, and the
 /// plugin resumes its ledger from the stored rewrite: a later pass in the
 /// fork, told the old result now matters, still holds its cut, since

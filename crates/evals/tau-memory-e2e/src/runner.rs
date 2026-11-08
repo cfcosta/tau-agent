@@ -395,7 +395,7 @@ async fn run_once(
     prompt: &str,
     store: &Store,
 ) -> Result<(RunMetrics, Vec<metrics::Call>), E2eError> {
-    let agent = arm::agent(setup);
+    let agent = arm::agent(setup).await;
     let started = Instant::now();
     let mut meter = Meter::new();
     let mut run = agent.start(prompt, store);

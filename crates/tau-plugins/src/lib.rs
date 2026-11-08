@@ -14,7 +14,6 @@ pub fn plugins() -> Registry {
         .with(tau_canvas::CanvasUi)
         .with(tau_chatgpt::ChatGptUi)
         .with(tau_codemode::CodemodeUi)
-        .with(tau_compaction::ui::CompactionUi)
         .with(tau_direnv::DirenvUi)
         .with(tau_fast_compaction::ui::FastCompactionUi)
         .with(tau_github::GitHubUi)
@@ -35,12 +34,13 @@ pub fn plugins() -> Registry {
         .slot_order(&tau_ui_plugin::vcs::VCS, &[tau_vcs::ui::NAME])
         .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_github::NAME])
         .slot_order(&tau_ui_plugin::provider::PROVIDER, &[tau_chatgpt::NAME])
-        // tau-titles and tau-compaction-chain are Luau (ADR 0050): the
-        // slots are tau-luau-plugins', which fills them for them.
+        // tau-titles, tau-compaction-chain and tau-compaction are Luau
+        // (ADR 0050): the slots are tau-luau-plugins', which fills them
+        // for them.
         .slot_order(&tau_ui_plugin::title::TITLE, &[tau_luau_plugins::NAME])
         .slot_order(&tau_ui_plugin::notify::NOTIFY, &[tau_notify::NAME])
         .slot_order(
             &tau_ui_plugin::compaction::COMPACTION,
-            &[tau_luau_plugins::NAME, tau_compaction::NAME],
+            &[tau_luau_plugins::NAME],
         )
 }

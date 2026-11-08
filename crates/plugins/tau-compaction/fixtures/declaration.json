@@ -1,0 +1,71 @@
+{
+  "name": "tau-compaction",
+  "description": "Summarizes the context when it nears the window, and an idle chat's before its cache lapses",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": true,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": false
+  },
+  "settings": {
+    "default": {
+      "idle": true,
+      "keep_recent_tokens": 20000,
+      "reserve_tokens": 16384,
+      "window": 0
+    },
+    "schema": {
+      "properties": {
+        "idle": {
+          "type": "boolean"
+        },
+        "keep_recent_tokens": {
+          "type": "integer"
+        },
+        "reserve_tokens": {
+          "type": "integer"
+        },
+        "window": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "tools": [],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": false,
+    "rewrite_context": true,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": false,
+    "view": true,
+    "settings_view": true
+  },
+  "actions": [],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": null
+}

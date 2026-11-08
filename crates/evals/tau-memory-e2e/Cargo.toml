@@ -23,6 +23,7 @@ serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
 tau-compaction.workspace = true
+tau-luau-plugins-host.workspace = true
 tau-memory-host.workspace = true
 tau-store.workspace = true
 tau-tools-host.workspace = true

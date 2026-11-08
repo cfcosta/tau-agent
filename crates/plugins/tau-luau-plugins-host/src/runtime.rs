@@ -335,7 +335,8 @@ impl Hook {
 
     /// How long it may run for `declaration`: a run hook of a plugin
     /// whose `uses` names `infer` or `jev` may call them, and has a
-    /// tool's time for it (ADR 0050); `on_event` never does.
+    /// tool's time for it (ADR 0050), `rewrite_context` ten minutes;
+    /// `on_event` never does.
     pub fn limit_for(&self, declaration: &Declaration) -> Duration {
         // An action may ask Jev too, through the host's.
         if matches!(self, Self::Action(_)) && declaration.uses.jev {
@@ -354,10 +355,14 @@ impl Hook {
                 | Self::RunEnd
         );
         let uses = &declaration.uses;
-        if run_hook && (uses.infer || uses.jev) {
-            Self::Tool(String::new()).limit()
-        } else {
-            self.limit()
+        if !run_hook || !(uses.infer || uses.jev) {
+            return self.limit();
+        }
+        // A compaction asks for many summaries, or a long one, while the
+        // run waits for it as it waits for the loop's own.
+        match self {
+            Self::RewriteContext => REWRITE_LIMIT,
+            _ => Self::Tool(String::new()).limit(),
         }
     }
 
@@ -796,6 +801,9 @@ pub fn plan_models() -> Value {
             .collect(),
     )
 }
+
+/// How long `rewrite_context` may run when it reaches the model or Jev.
+pub const REWRITE_LIMIT: Duration = Duration::from_secs(600);
 
 /// How long a test file may run.
 const TEST_LIMIT: Duration = Duration::from_secs(10);

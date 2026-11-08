@@ -144,14 +144,22 @@ one, its `card`.
 - `rewrite_context` is offered the run's context between turns, when a
   request overflowed, and while the run is idle: `messages` holds each
   message's `index` (from 1), `role` (`user`, `assistant`,
-  `toolResult`), `text` (whole) and `size`, its bytes; an answer's
-  `calls` (`id`, `name`); a result's `call`, `name` and `ok`.
+  `toolResult`), `text` (whole), `size` (its bytes), `tokens` (the
+  loop's estimate of it) and `images`, when it has any; an answer's
+  `thinking`, when it has any, and `calls`, each `{ id, name, args,
+order, json }`, `json` the arguments as the model wrote them; a
+  result's `call`, `name` and `ok`. `window` is the model's, `nil` when
+  it is not known.
 
   `tau.rewrite{ keep = { 1, 4 }, insert = { { before = 4, text = "..." } }, drops_conversation = true }` keeps those messages and puts the texts
-  before them as the person's. The last message always stays, and so
+  before them as the person's; `details`, any JSON, is stored with the
+  rewrite. The last message always stays, and so
   does every call with its results. The first plugin that rewrites
   wins; which plugins may rewrite at all is the person's pick on the
-  Plugins screen. Having `rewrite_context` at all is new reach.
+  Plugins screen. Having `rewrite_context` at all is new reach. One
+  that errors, when none rewrites, tells the run why: on an overflow,
+  the run fails with it. It has ten minutes when it reaches the model
+  or Jev, as a compaction's summaries take.
 
 - A plugin may fill four of tau's slots, named in `fills`. Filling one
   is new reach, and tau-luau-plugins must be the slot's pick on the
@@ -225,6 +233,11 @@ a model the person picks in the plugin's settings.
 An answer that stopped with an error, was cut off at the model's output
 limit or called a tool is refused: `{ ok = false, error, reason }`,
 `reason` being `"error"`, `"length"` or `"tool_call"`.
+
+With `instructions`, the request is the plugin's own: its instructions
+in place of `infer`'s, `task` as the message, as written, then
+`context` as JSON unless it is `json.null`, and the answer its text. It
+takes no `schema`, and no bound on the message but the VM's.
 
 In `rewrite_context`, `conversation = true` asks in the run's own
 conversation: its messages go first, then `task` as written, then

@@ -7,91 +7,103 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
-use tau_agent::plugin::Rewrite;
+use tau_agent::{context::estimate_message_tokens, plugin::Rewrite};
 use tau_ai::message::{
+    AssistantBlock,
     InputBlock,
     Message,
     Timestamp,
     UserContent,
     UserMessage,
+    text_of,
 };
 
 /// `transcript` as `rewrite_context` reads it: each message by its place
-/// (from 1), its role, its whole text and its size, and the tool calls
-/// it makes or answers (ADR 0050, gap B: a transcript too large for the
-/// VM is one no plugin can rewrite).
+/// (from 1), its role, its whole text (ADR 0050, gap B: a transcript too
+/// large for the VM is one no plugin can rewrite), its size in bytes,
+/// the loop's estimate of its tokens, and its images, when it has any.
+/// An answer has its thinking, when it has any, and its calls, each with
+/// its arguments, `order`, their names in the order the model gave them
+/// (a Luau table keeps none), and `json`, the arguments as the model
+/// wrote them; a result has its call, name and whether it went well.
 pub fn summary(transcript: &[Message]) -> Value {
     let messages: Vec<Value> = transcript
         .iter()
         .enumerate()
         .map(|(at, message)| {
-            let mut summary = match message {
-                Message::User(user) => json!({ "text": user.content.text() }),
-                Message::Assistant(assistant) => json!({
-                    "text": assistant.text(),
-                    "calls": assistant
-                        .tool_calls()
-                        .map(|call| json!({ "id": call.id, "name": call.name }))
-                        .collect::<Vec<_>>(),
-                }),
-                Message::ToolResult(result) => json!({
-                    "text": blocks_text(&result.content),
-                    "call": result.tool_call_id,
-                    "name": result.tool_name,
-                    "ok": !result.is_error,
-                }),
+            let (mut out, images) = match message {
+                Message::User(user) => (
+                    json!({ "text": user.content.text() }),
+                    match &user.content {
+                        UserContent::Text(_) => 0,
+                        UserContent::Blocks(blocks) => images(blocks),
+                    },
+                ),
+                Message::Assistant(assistant) => {
+                    let mut out = json!({
+                        "text": assistant.text(),
+                        "calls": assistant
+                            .tool_calls()
+                            .map(|call| json!({
+                                "id": call.id,
+                                "name": call.name,
+                                "args": call.arguments,
+                                "order": call.arguments.keys().collect::<Vec<_>>(),
+                                "json": Value::Object(call.arguments.clone()).to_string(),
+                            }))
+                            .collect::<Vec<_>>(),
+                    });
+                    let thinking: Vec<&str> = assistant
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            AssistantBlock::Thinking(thinking) => {
+                                Some(thinking.thinking.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if !thinking.is_empty() {
+                        out["thinking"] = json!(thinking.join("\n"));
+                    }
+                    (out, 0)
+                }
+                Message::ToolResult(result) => (
+                    json!({
+                        "text": text_of(&result.content),
+                        "call": result.tool_call_id,
+                        "name": result.tool_name,
+                        "ok": !result.is_error,
+                    }),
+                    images(&result.content),
+                ),
             };
-            let size = summary["text"].as_str().map_or(0, str::len);
-            summary["index"] = json!(at + 1);
-            summary["role"] = json!(message.role());
-            summary["size"] = json!(size);
-            summary
-        })
-        .collect();
-    Value::Array(messages)
-}
-
-/// `transcript` whole, as `ctx.transcript()` gives it: each message by
-/// its place (from 1), its role and its full text; an answer's calls
-/// with their arguments and, as a Luau table keeps no order, `order`,
-/// their names in the order the model gave them; a result's call, name
-/// and whether it went well.
-pub fn transcript(transcript: &[Message]) -> Value {
-    let messages: Vec<Value> = transcript
-        .iter()
-        .enumerate()
-        .map(|(at, message)| {
-            let mut out = match message {
-                Message::User(user) => json!({ "text": user.content.text() }),
-                Message::Assistant(assistant) => json!({
-                    "text": assistant.text(),
-                    "calls": assistant
-                        .tool_calls()
-                        .map(|call| json!({
-                            "id": call.id,
-                            "name": call.name,
-                            "args": call.arguments,
-                            "order": call.arguments.keys().collect::<Vec<_>>(),
-                        }))
-                        .collect::<Vec<_>>(),
-                }),
-                Message::ToolResult(result) => json!({
-                    "text": blocks_text(&result.content),
-                    "call": result.tool_call_id,
-                    "name": result.tool_name,
-                    "ok": !result.is_error,
-                }),
-            };
+            let size = out["text"].as_str().map_or(0, str::len);
             out["index"] = json!(at + 1);
             out["role"] = json!(message.role());
+            out["size"] = json!(size);
+            out["tokens"] = json!(estimate_message_tokens(message));
+            if images > 0 {
+                out["images"] = json!(images);
+            }
             out
         })
         .collect();
     Value::Array(messages)
 }
 
-fn blocks_text(blocks: &[InputBlock]) -> String {
-    blocks.iter().filter_map(InputBlock::as_text).collect()
+/// `transcript` whole, as `ctx.transcript()` gives it: as
+/// `rewrite_context` reads it ([`summary`]).
+pub fn transcript(transcript: &[Message]) -> Value {
+    summary(transcript)
+}
+
+/// How many of `blocks` are images.
+fn images(blocks: &[InputBlock]) -> usize {
+    blocks
+        .iter()
+        .filter(|block| matches!(block, InputBlock::Image(_)))
+        .count()
 }
 
 /// The rewrite `answer` asks of `transcript`: `{ keep, insert,

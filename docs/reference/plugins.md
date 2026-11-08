@@ -342,11 +342,12 @@ pub struct Rewrite {
   followed by only the messages it made or changed
   ([storage.md](storage.md)). Loading a transcript replays the
   rewrites.
-  Compaction's rewrite is a `context` entry from the `tau-compaction` plugin
-  whose first message is the summary.
+  Compaction's rewrite is a `context` entry from `tau-luau-plugins`,
+  naming `tau-compaction`, whose first message is the summary.
 - **Resuming.** A fork gets the details of the latest rewrite it
-  inherits from `RunPlan::last_rewrite`, when its plugin made it.
-  Compaction resumes its summary and file lists from there.
+  inherits from `RunPlan::last_rewrite`, when its plugin made it. A
+  Luau plugin keeps what it needs in its state instead, which a fork
+  inherits: compaction resumes its summary and file lists from there.
 - **Events.** `ContextRewritten { run, plugin, tokens_before,
 tokens_after, trigger }` marks each rewrite.
 - **Idle compaction.** `Resumed::compact_idle(request, store, events,
@@ -358,8 +359,8 @@ cancel)` offers a finished run's transcript for a rewrite with
   part, and `plan` shows them the run as stored, with no input; no
   plugin's `start` runs, so nothing a start does (an effort picked, a
   memory search, a record) happens, and the settings stay the last
-  request's. tau-compaction and tau-memory take part: one summarizes,
-  the other keeps what the summary drops. The rewrite is stored as any
+  request's. tau-luau-plugins, for tau-compaction, and tau-memory take
+  part: one summarizes, the other keeps what the summary drops. The rewrite is stored as any
   is; no message is added, the run stays finished, and its events are
   only the rewrite's (`ContextRewritten`, and what plugins charged,
   reported or failed at). Cancelling it stores nothing that was not
@@ -533,11 +534,10 @@ change (tau-jev gives `tau.jev` only while a key is saved);
 `hosted::early_fills`; the rest by `HostHalf::fill`. The slots so far:
 `tau.vcs` (tau-vcs), `tau.forge` (tau-github), `tau.notify`
 (tau-notify), `tau.title` (tau-titles), `tau.store` (tau-sqlite) and
-`tau.provider` (tau-chatgpt) and `tau.compaction` (tau-compaction-chain,
-or tau-compaction for the summary alone; the gate turns off the
-rewrites of a plugin it does not name). tau-titles and
-tau-compaction-chain are Luau (ADR 0050): tau-luau-plugins fills their
-slots for them. A plugin's setup step may come first
+`tau.provider` (tau-chatgpt) and `tau.compaction` (tau-compaction-chain;
+the gate turns off the rewrites of a plugin it does not name).
+tau-titles and tau-compaction-chain are Luau (ADR 0050):
+tau-luau-plugins fills their slots for them. A plugin's setup step may come first
 (`SetupAt::Model`), be `required`, and say how its link to a service
 stands (`SetupView::link`), which the handshake above it draws.
 
@@ -1218,6 +1218,26 @@ Built: `crates/plugins/tau-fast-compaction`. Its reference is
 - **Forks** get the ledger back through `RunPlan::last_rewrite`: the
   latest `context` entry, when fast compaction made it.
 
+### `tau-compaction`: summarize what the window cannot hold
+
+Built: `crates/plugins/tau-compaction`, a Luau plugin tau comes with
+(ADR 0050). Its reference is [compaction.md](compaction.md).
+
+- **Seams:** `start` (the effort the run starts at, which its summaries
+  ask at) and `rewrite_context` (turn ends, starts, overflows and idle
+  chats).
+- **How** (after pi's coding-agent compaction): past the window less a
+  reserve, cut so the newest 20,000 tokens stay, summarize what comes
+  before in a request of its own, and put the summary in its place. A
+  turn the cut splits has its start summarized apart. An idle chat's
+  summary is asked in its own conversation, which the cache still holds.
+- **Output:** a rewrite whose first message is the summary, with the
+  files read and modified, and the summary in its details. A failed
+  summary writes nothing, and waits 2, 4, 8 and up to 32 turns before it
+  is tried again; on an overflow it fails the run.
+- **State:** the latest summary, and the failures in a row, in the
+  run's `ctx.state`, which forks inherit.
+
 ### `tau-tree-compaction`: fold the context into a tree
 
 Built: `crates/plugins/tau-tree-compaction`, off by default. Its
@@ -1302,7 +1322,8 @@ Built: `crates/plugins/tau-schedule`, with its host half behind its
    agent directly.
 3. Compaction moves behind `rewrite_context`, into its own crate,
    `tau-compaction` (`crates/plugins/tau-compaction`); an agent adds it with
-   `Agent::plugin` ([0006](../decisions/0006-plugin-crates.md)).
+   `Agent::plugin` ([0006](../decisions/0006-plugin-crates.md)). It is a
+   Luau plugin now (ADR 0050).
 4. `tau-store`:
    - a `context` entry kind, which replaces `compaction`;
    - a `plugin` entry kind, for records, which the transcript skips.

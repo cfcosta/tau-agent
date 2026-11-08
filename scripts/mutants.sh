@@ -21,8 +21,6 @@ exec cargo mutants --workspace --test-tool nextest \
   --file crates/tau-agent/src/agent.rs \
   --file crates/tau-agent/src/validation.rs \
   --file crates/tau-agent/src/schema.rs \
-  --file crates/plugins/tau-compaction/src/lib.rs \
-  --file crates/plugins/tau-compaction/src/plugin.rs \
   --file crates/plugins/tau-fast-compaction/src/state.rs \
   --file crates/plugins/tau-fast-compaction/src/decide.rs \
   --file crates/plugins/tau-fast-compaction/src/ledger.rs \

@@ -93,9 +93,10 @@ impl UiPlugin for TreeCompactionUi {
     }
 
     fn declaration(&self) -> tau_ui_plugin::Declaration {
-        // The tree folds before the summary, which steps in when it fails.
+        // The tree folds before the summary, which steps in when it
+        // fails: tau-compaction is Luau, run by tau-luau-plugins.
         tau_ui_plugin::Declaration::new()
-            .before(&["tau-compaction"])
+            .before(&["tau-luau-plugins"])
             .seams(&[tau_ui_plugin::Seam::Start, tau_ui_plugin::Seam::Rewrite])
     }
 

@@ -809,7 +809,6 @@ fn a_hook_that_may_call_the_model_has_the_time_for_it() {
         Hook::BeforeTool,
         Hook::BeforeRequest,
         Hook::AfterToolResult,
-        Hook::RewriteContext,
         Hook::Rewritten,
         Hook::BeforeStop,
         Hook::TurnEnd,
@@ -818,6 +817,15 @@ fn a_hook_that_may_call_the_model_has_the_time_for_it() {
         assert_eq!(hook.limit_for(&reaching), tool, "{hook:?}");
         assert_eq!(hook.limit_for(&plain), hook.limit(), "{hook:?}");
     }
+    // A compaction may ask for many summaries, or a long one.
+    assert_eq!(
+        Hook::RewriteContext.limit_for(&reaching),
+        tau_luau_plugins_host::runtime::REWRITE_LIMIT
+    );
+    assert_eq!(
+        Hook::RewriteContext.limit_for(&plain),
+        Hook::RewriteContext.limit()
+    );
     assert_eq!(Hook::BeforeRequest.limit(), Duration::from_millis(200));
     assert_eq!(
         Hook::OnEvent.limit_for(&reaching),

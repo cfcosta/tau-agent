@@ -29,6 +29,7 @@ tau-watcher.workspace = true
 tau-reasoning.workspace = true
 tau-goal.workspace = true
 tau-constitution.workspace = true
+tau-compaction.workspace = true
 tau-tools-host.workspace = true
 tau-luau-plugins.workspace = true
 # Where the skill tau ships is installed.

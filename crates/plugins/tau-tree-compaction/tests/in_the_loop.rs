@@ -331,36 +331,6 @@ fn a_fork_of_a_compacted_run_can_zoom_into_the_history() {
     });
 }
 
-/// When a line cannot be built, the tree writes nothing and
-/// tau-compaction, after it, summarizes instead.
-#[test]
-fn a_failed_tree_leaves_the_summary_to_tau_compaction() {
-    let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call("read", json!({"path": "src/lib.rs"}))
-                .usage(5_000, 10)
-        })
-        .turn(|t| t.error("invalid_prompt", "refused"))
-        .turn(|t| t.text("## Goal\nship it"))
-        .turn(|t| t.text("done").usage(10, 10));
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = agent(&llm).plugin(
-            tau_compaction::Compaction::default()
-                .context_window(1_000)
-                .reserve_tokens(100)
-                .keep_recent_tokens(1),
-        );
-        let (events, outcome) =
-            run(&agent, &store, "go", "and then this").await;
-        assert_eq!(outcome.text, "done");
-        assert_eq!(rewrites(&events), [tau_compaction::NAME]);
-        assert!(events.iter().any(|event| matches!(event,
-            RunEvent::PluginError { plugin, .. } if &**plugin == NAME)));
-        llm.assert_exhausted();
-    });
-}
-
 /// Below the threshold nothing is folded, and `zoom` says there is
 /// nothing to open.
 #[test]

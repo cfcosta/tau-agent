@@ -35,7 +35,7 @@ tau-agent/
 │       ├── tau-chatgpt/          # the person's ChatGPT plan, filling
 │       │                         # `tau.provider`
 │       ├── tau-codemode/         # Luau scripts that call tools and Jev
-│       ├── tau-compaction/       # summarizing compaction
+│       ├── tau-compaction/       # summarizing compaction (Luau)
 │       ├── tau-compaction-chain/ # pruning, the tree and the summary in
 │       │                         # turn, filling `tau.compaction` (Luau)
 │       ├── tau-constitution/     # a repository's rules, checked with Jev (Luau)

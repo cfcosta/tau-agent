@@ -7,11 +7,10 @@ use serde::Serialize;
 use tau_agent::{agent::Agent, limits::Limits};
 use tau_ai::{
     llm::{Llm, LlmError, LlmSession},
-    model::find,
     responses::request::Settings,
 };
 use tau_codemode_host::{Codemode, inference_budget};
-use tau_compaction::Compaction;
+use tau_luau_plugins_host::agent::{Active, LuauPlugins};
 use tau_tools_host::{path::Root, plugin::CodingTools};
 
 #[derive(
@@ -132,18 +131,32 @@ impl Llm for SharedLlm {
     }
 }
 
+/// tau-compaction as tau runs it (a Luau plugin, ADR 0050), by the
+/// window of the run's model, `model`, working in `repo`.
+pub async fn compaction(model: &str, repo: &Path) -> LuauPlugins {
+    let active = Active::built_in(tau_compaction::NAME)
+        .await
+        .expect("tau-compaction loads");
+    LuauPlugins::new(
+        vec![active],
+        serde_json::json!({
+            "kind": "main",
+            "repo": repo.display().to_string(),
+            "model": model,
+        }),
+        None,
+    )
+}
+
 /// The agent for one run in an arm, working in `repo`.
-pub fn agent(
+pub async fn agent(
     arm: Arm,
     llm: Arc<dyn Llm>,
     model: &str,
     repo: &Path,
     limits: Limits,
 ) -> Agent {
-    let mut compaction = Compaction::default();
-    if let Some(model) = find(model) {
-        compaction = compaction.context_window(model.context_window);
-    }
+    let compaction = compaction(model, repo).await;
     let mut agent = Agent::new(SharedLlm(llm))
         .name("coder")
         .model(model)

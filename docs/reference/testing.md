@@ -434,7 +434,7 @@ also run in the nightly tier and under `cargo mutants`
 | Arguments changed by `before_tool` are validated again; invalid ones yield an error result and the tool never runs                                                                                                                    | Model        |
 | Limits: a run ends with `StopReason::Limit` if and only if a limit was exceeded after some turn, and child usage counts                                                                                                               | Model        |
 | A fork's transcript equals the parent's transcript up to the checkpoint, followed by the fork's own messages                                                                                                                          | Model        |
-| (`tau-compaction`) Compaction cut point never falls between a tool call and its result, and never on a tool result                                                                                                                    | Invariant    |
+| (`tau-compaction`, Luau) Compaction cut point never falls between a tool call and its result, and never on a tool result                                                                                                              | Invariant    |
 | The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer or snapping past an oversized tool result moved the cut                                                                                  | Invariant    |
 | The token estimate never decreases when a message is appended                                                                                                                                                                         | Invariant    |
 | With no reported usage anywhere, the estimate is `chars / 4` over every message                                                                                                                                                       | Differential |
@@ -714,7 +714,6 @@ silent bug costs the most:
 - `tau-ai`: the delta rule, the lane state and the event processor;
 - `tau-agent`: the loop, plugins, runs (typed results, forks,
   sub-agents), coercion and the strict schema rewrite;
-- `tau-compaction`: the compaction rules and the plugin;
 - `tau-fast-compaction`: the state, the decisions, the ledger and the
   plugin; `tau-jev`: answer checking;
 - `tau-store-sqlite`: the append and transcript queries;
