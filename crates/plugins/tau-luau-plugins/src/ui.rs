@@ -595,6 +595,12 @@ fn kernel_action(
         "alert" => handle.alert(text("title"), text("message")),
         "details" => handle.run_details(),
         "open_run" => handle.open_run(&RunId(text("run").into())),
+        // Stops the run, as its Stop button does.
+        "cancel" => {
+            if let Some(run) = run {
+                handle.cancel(run);
+            }
+        }
         // Enter in an input of a command's popover: what it says stays
         // its draft, which Enter would clear, and the composer is sent.
         submit if submit.starts_with("submit/") => {
@@ -927,6 +933,14 @@ impl UiPlugin for LuauPluginsUi {
             })
             .contribute(points::COMPOSER_BAND, |_: &AtRun, view| {
                 drawn(view.state?, "band")
+            })
+            // In the composer's place while the run goes on: the first
+            // plugin's, by name, that draws there, as only one may.
+            .contribute(points::COMPOSER, |at: &AtRun, view| {
+                if !at.run.live {
+                    return None;
+                }
+                first_drawn(view.state?, "composer")
             })
             .contribute(points::PLAN_STEPS, |_: &AtRun, view| {
                 drawn(view.state?, "plan_steps")
@@ -1531,6 +1545,20 @@ fn drawn(state: &State, key: &str) -> Option<Node> {
     }
 }
 
+/// What the first plugin by name whose view has `key` drew there: for a
+/// place only one plugin may fill.
+fn first_drawn(state: &State, key: &str) -> Option<Node> {
+    state
+        .plugins
+        .iter()
+        .filter(|(_, plugin)| plugin.off.is_none())
+        .find_map(|(name, plugin)| {
+            let piece =
+                plugin.view.get(key).filter(|piece| !piece.is_null())?;
+            Some(embed(piece, name))
+        })
+}
+
 /// What the plugins' views draw on another tool's card, the call
 /// `call_id`: `place` (`badge`, beside its title, or `body`, under it) of
 /// each view's `calls[call_id]`, together.
@@ -2040,6 +2068,7 @@ mod tests {
             plugin: "p".into(),
             run: "r1".into(),
             state: json!({ "answered": true }),
+            changed: true,
             view: None,
             logs: Vec::new(),
             error: None,
@@ -2099,9 +2128,11 @@ mod tests {
             None,
             &handle
         ));
+        assert!(kernel_action("tau.cancel", &json!({}), Some(&run), &handle));
         assert!(!kernel_action("reset", &json!({}), Some(&run), &handle));
         assert!(kernel_action("tau.nope", &json!({}), None, &handle));
         let asked = asked.borrow();
+        assert_eq!(asked[3], Request::Cancel(run.clone()));
         assert_eq!(
             asked[..3],
             [
@@ -2116,7 +2147,7 @@ mod tests {
                 Request::Composer("draft".into()),
             ]
         );
-        assert_eq!(asked.len(), 4, "{asked:?}");
+        assert_eq!(asked.len(), 5, "{asked:?}");
     }
 
     fn with_views(views: &[(&str, Value)]) -> State {
@@ -2553,6 +2584,7 @@ mod tests {
             plugin: "p".into(),
             run: "r1".into(),
             state: json!({ "n": 2 }),
+            changed: true,
             view: Some(json!({ "status": { "text": "2" } })),
             logs: vec!["added".into()],
             error: Some(("view".into(), "late".into())),
@@ -2568,6 +2600,16 @@ mod tests {
         assert_eq!(part.view, json!({ "status": { "text": "2" } }));
         assert_eq!(part.logs, ["added"]);
         assert_eq!(part.errors, [("view".to_owned(), "late".to_owned())]);
+        // One that left the state as it was records neither it nor its
+        // view: the run may have moved on meanwhile.
+        let unchanged = ActionDone {
+            changed: false,
+            ..done
+        };
+        assert!(unchanged.records().iter().all(|record| matches!(
+            record,
+            Record::Log { .. } | Record::Error { .. }
+        )));
     }
 
     /// Records fold into each plugin's part: its state and view, its log

@@ -11,6 +11,7 @@
 pub mod agent;
 pub mod archive;
 pub mod chats;
+pub mod forms;
 mod half;
 pub mod hegel;
 pub mod infer;

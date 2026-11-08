@@ -90,6 +90,7 @@ pub fn point(name: &str) -> Option<Luau> {
         (PICKER_AUTO.name, "picker_auto"),
         (USER_MESSAGE.name, "messages"),
         (CARD_BODY.name, "calls"),
+        (COMPOSER.name, "composer"),
     ];
     if let Some((_, hook)) = hooks.iter().find(|(point, _)| *point == name) {
         return Some(Luau::Hook(hook));
@@ -118,7 +119,6 @@ pub fn point(name: &str) -> Option<Luau> {
             SETUP.name,
             "onboarding runs before the person's plugins load",
         ),
-        (COMPOSER.name, "the composer's place is tau-ask's"),
         (EVERYWHERE.name, outside),
         (SEARCH.name, outside),
         (SIDEBAR_REPO.name, outside),

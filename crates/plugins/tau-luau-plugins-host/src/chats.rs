@@ -157,49 +157,89 @@ pub struct Answer {
 /// The asks waiting for the person, by run and call. The first answer
 /// takes one, from whichever device; the rest find it gone. Clones share
 /// them.
-#[derive(Clone, Default)]
-pub struct Allows(Arc<Mutex<Asks>>);
+pub type Allows = Waits<Answer>;
 
-/// Where each waiting ask's answer goes, by run and call.
-type Asks = BTreeMap<(String, String), oneshot::Sender<Answer>>;
+/// What a run's calls wait for the person on, by run and call, each
+/// with `F`, what it asked; its answer is an `A`. The first answer takes
+/// one, from whichever device; the rest find it gone. Clones share them.
+pub struct Waits<A, F = ()>(Arc<Mutex<Pending<A, F>>>);
 
-impl std::fmt::Debug for Allows {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Allows").field(&self.lock().len()).finish()
+/// What each waiting call asked, and where its answer goes, by run and
+/// call.
+type Pending<A, F> = BTreeMap<(String, String), (F, oneshot::Sender<A>)>;
+
+impl<A, F> Clone for Waits<A, F> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 
-/// One ask waiting: dropped, as when its run ends, it waits no more.
-pub struct Waiting {
-    allows: Allows,
-    key: (String, String),
-    answer: Option<oneshot::Receiver<Answer>>,
+impl<A, F> Default for Waits<A, F> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
 }
 
-impl Waiting {
+impl<A, F> std::fmt::Debug for Waits<A, F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Waits").field(&self.lock().len()).finish()
+    }
+}
+
+/// One call waiting: dropped, as when its run ends, it waits no more.
+pub struct Waiting<A, F = ()> {
+    waits: Waits<A, F>,
+    key: (String, String),
+    answer: Option<oneshot::Receiver<A>>,
+}
+
+impl<A, F> Waiting<A, F> {
     /// The person's answer; `None` once no one can answer, as tau closes.
-    pub async fn answer(mut self) -> Option<Answer> {
+    pub async fn answer(mut self) -> Option<A> {
         self.answer.take()?.await.ok()
     }
 }
 
-impl Drop for Waiting {
+impl<A, F> Drop for Waiting<A, F> {
     fn drop(&mut self) {
-        self.allows.lock().remove(&self.key);
+        self.waits.lock().remove(&self.key);
     }
 }
 
-impl Allows {
-    /// The call `call` of `run` waits for the person.
-    pub fn wait(&self, run: &str, call: &str) -> Waiting {
+/// Why an answer found nothing to take.
+const TAKEN: &str = "That was answered already, or its run ended before";
+
+impl<A, F> Waits<A, F> {
+    /// The call `call` of `run` waits for the person, having asked
+    /// `asked`.
+    pub fn wait(&self, run: &str, call: &str, asked: F) -> Waiting<A, F> {
         let (answer, receive) = oneshot::channel();
         let key = (run.to_owned(), call.to_owned());
-        self.lock().insert(key.clone(), answer);
+        self.lock().insert(key.clone(), (asked, answer));
         Waiting {
-            allows: self.clone(),
+            waits: self.clone(),
             key,
             answer: Some(receive),
         }
+    }
+
+    /// Gives the call `call` of `run` the person's answer, when it still
+    /// waits for one and `fits` what it asked; one that does not fit
+    /// leaves it waiting.
+    pub fn answer_if(
+        &self,
+        run: &str,
+        call: &str,
+        answer: A,
+        fits: impl FnOnce(&F) -> Result<(), String>,
+    ) -> anyhow::Result<()> {
+        let mut waiting = self.lock();
+        let key = (run.to_owned(), call.to_owned());
+        let (asked, _) =
+            waiting.get(&key).ok_or_else(|| anyhow::anyhow!(TAKEN))?;
+        fits(asked).map_err(anyhow::Error::msg)?;
+        let (_, sender) = waiting.remove(&key).expect("found above");
+        sender.send(answer).map_err(|_| anyhow::anyhow!(TAKEN))
     }
 
     /// Gives the call `call` of `run` the person's answer, when it still
@@ -208,19 +248,12 @@ impl Allows {
         &self,
         run: &str,
         call: &str,
-        answer: Answer,
+        answer: A,
     ) -> anyhow::Result<()> {
-        let waiting = self.lock().remove(&(run.to_owned(), call.to_owned()));
-        waiting
-            .and_then(|waiting| waiting.send(answer).ok())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "That was answered already, or its run ended before"
-                )
-            })
+        self.answer_if(run, call, answer, |_| Ok(()))
     }
 
-    /// The asks waiting, by run and call.
+    /// The calls waiting, by run and call.
     pub fn waiting(&self) -> Vec<(String, String)> {
         self.lock().keys().cloned().collect()
     }
@@ -230,7 +263,7 @@ impl Allows {
         self.lock().contains_key(&(run.to_owned(), call.to_owned()))
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Asks> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Pending<A, F>> {
         self.0.lock().expect("not poisoned")
     }
 }

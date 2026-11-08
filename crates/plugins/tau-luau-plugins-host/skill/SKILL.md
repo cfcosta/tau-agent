@@ -97,7 +97,10 @@ return tau.plugin {
 Every field but `name` is optional. `tools` adds tools the model can
 call, each with its arguments' JSON Schema, its `call` and, if it draws
 one, its `card`. A tool with `when = "on"` is offered only while the
-boolean setting `on` is on.
+boolean setting `on` is on. One with `model_only = true` is the model's
+alone, never a script's: a tool whose call waits for the person
+(`tau.ask`) should be, as a script's call ends with the script. In a
+tool's `call`, `ctx.run.call` is the call's id.
 
 ### Hooks
 
@@ -331,6 +334,8 @@ so far, to count steps without reading it.
   `tau.continue(message)`.
 - `tau.start_chat`, `tau.steer_chat` and `tau.allow`: what an action
   or a tool answers to start or steer a chat (below).
+- `tau.ask` and `tau.answer`: what a tool answers to ask the person a
+  form, and what an action answers to give it the answers (below).
 - `tau.contains(list, value)`: whether `list` holds `value`.
 
 ### `tau.ui`: what views are made of
@@ -351,10 +356,19 @@ Plain tables, drawn by tau on the computer and on the phone:
 - `ui.heading(text)`, `ui.markdown(text)`, `ui.pill(text, tone)`
 - `ui.icon(name, tone)`: one of tau's icons by name, such as
   `"memory"`, `"check"` or `"sub-agent"`
-- `ui.table({ "head", ... }, { { piece, ... }, ... })`: a header over
-  rows of pieces or strings
+- `ui.table({ "head", ... }, { { piece, ... }, ... }, { widths = { 1, 4 } })`:
+  a header over rows of pieces or strings; `widths` are the columns'
+  shares of the width
 - `ui.scroll({ ... }, height)`: pieces that scroll past `height` rems
-- `ui.rule()`, `ui.empty(text)`
+- `ui.rule()`, `ui.empty(text)`, `ui.spacer()` (room that pushes what
+  follows in a row to its end), `ui.card({ ... })` (pieces in a frame)
+- `ui.keys(id, { "up", "enter", "1" }, action, { ... }, { through = { "escape" }, focus = n })`:
+  an area that takes the keys. While it has them, each of its keys
+  carries out `actions[action]` with `{ key, field = false }`; in a
+  field inside it, the `through` keys still come, with `field = true`.
+  A click outside its fields gives it the keys, and so does a new
+  `focus` number: keep the number in the state and raise it to move
+  the keys there once. `ui.input`'s `focus` does the same for a field
 - `ui.diff(text, path)`: a unified diff, colored as `path`'s language
 - `ui.terminal(id, text, { cols = 80, rows = 24, live = false, fold = true })`:
   what a program wrote, escapes and all, on a terminal tau keeps under
@@ -404,6 +418,9 @@ read the state: it has no tools. What it returns goes in three places:
 - `banner`: pieces across the top of the run.
 - `inspector`: pieces in the run's inspector, beside the transcript.
 - `band`: pieces just above the composer.
+- `composer`: pieces in the composer's place, while the run goes on: a
+  form the run waits on. Only one plugin's draws, the first by name;
+  the composer comes back once none does.
 - `row`: `{ line, count?, tone?, icon?, phone_line? }`, the run's line
   under its title in the sidebar; `tone` is `"good"`, `"warn"` or
   `"bad"`, `icon` one of the interface's icons, and `phone_line` the
@@ -437,7 +454,8 @@ the run the tree is drawn in (or its page shows):
 message; `tau.steer` cuts into a turn going on; `tau.composer` puts
 `text` in the composer; `tau.start` starts a run in `repo` with `text`;
 `tau.alert` shows `title` and `message`; `tau.details` opens the run's
-details; `tau.open_run` opens the run `run`. An action of the
+details; `tau.open_run` opens the run `run`; `tau.cancel` stops the
+run, as its Stop button does. An action of the
 plugin's own may end in one of them as well: it answers `tau.interface("composer", { text = "..." })`, and once what
 it did to the state is kept, tau does that on the action's run.
 
@@ -517,6 +535,24 @@ would do, with Allow and Deny. The first answer takes it. Allowed,
 the model reads what it answered; denied, the model reads why; a run
 that ends first withdraws it. A person's own click never asks.
 
+A tool asks the person a form and waits for the answers: it answers
+`tau.ask{ questions, action }`, one to four questions, each
+`{ question, header, options = { { label, description, preview } },
+multi_select, other }`, at least one choice each, its labels written
+and each once, `other = true` taking the person's own answer. Keep in
+`ctx.state` what the form needs, with `ctx.run.call`: the plugin's view
+draws it, in `composer`, on the computer and on phones, and its buttons
+and keys are the plugin's actions on the run's state. One of them
+answers `tau.answer{ call, answers }`, each answer `{ picked = { labels
+}, other?, note? }` in the questions' order, or `tau.answer{ call,
+declined = true }`. The first answers that fit, from whichever device,
+take the form; answers that do not fit, or that come once it is taken,
+are that action's error, and the form waits on. An action that answers
+should leave the state as it was: the run takes the answers from there.
+Then `actions[action]` is called in the run with `{ call, answers }` or
+`{ call, declined = true }`, and the model reads what it answers. A
+run cancelled first ends the call with an error.
+
 ### Settings
 
 What the person can set lives in `settings`:
@@ -573,7 +609,8 @@ t.case("what it checks", function()
 end)
 ```
 
-- `run:tool(name, args)`, `run:card(name, args, result)`,
+- `run:tool(name, args, call)` (`call` is `ctx.run.call`, `"call_1"`
+  when not given), `run:card(name, args, result)`,
   `run:settings_view(settings)`, `run:action(name, args)`,
   `run:start(plan)`, `run:before_tool(call)`,
   `run:before_request(request)`, `run:after_tool_result(result)`,

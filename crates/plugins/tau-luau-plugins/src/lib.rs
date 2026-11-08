@@ -135,6 +135,10 @@ pub struct ToolSpec {
     /// it only then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
+    /// Only the model calls it, never a script: a call that waits for
+    /// the person (`tau.ask`) would end with the script.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model_only: bool,
 }
 
 impl ToolSpec {
@@ -592,6 +596,11 @@ pub struct ActionDone {
     pub plugin: String,
     pub run: String,
     pub state: Value,
+    /// Whether the action changed the state. One that did not records
+    /// neither it nor its view: the run may have moved on meanwhile, as
+    /// when the action gave a waiting call its answers.
+    #[serde(default)]
+    pub changed: bool,
     pub view: Option<Value>,
     pub logs: Vec<String>,
     pub error: Option<(String, String)>,
@@ -605,10 +614,13 @@ impl ActionDone {
     /// The records to store with the run, in order.
     pub fn records(&self) -> Vec<Record> {
         let plugin = || self.plugin.clone();
-        let mut records = vec![Record::State {
-            plugin: plugin(),
-            state: self.state.clone(),
-        }];
+        let mut records = Vec::new();
+        if self.changed {
+            records.push(Record::State {
+                plugin: plugin(),
+                state: self.state.clone(),
+            });
+        }
         if !self.logs.is_empty() {
             records.push(Record::Log {
                 plugin: plugin(),
@@ -622,7 +634,7 @@ impl ActionDone {
                 error: error.clone(),
             });
         }
-        if let Some(view) = &self.view {
+        if let Some(view) = self.view.as_ref().filter(|_| self.changed) {
             records.push(Record::View {
                 plugin: plugin(),
                 view: view.clone(),

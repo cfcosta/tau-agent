@@ -80,6 +80,8 @@ struct Shared {
     stores: Arc<crate::store::Stores>,
     /// What runs' tools ask the person to allow, waiting for an answer.
     allows: crate::chats::Allows,
+    /// The forms runs' tools ask the person, waiting for the answers.
+    forms: crate::forms::Forms,
     /// The host's chats, which what the person allows starts or steers.
     chats: Option<Arc<dyn tau_ui_plugin::Conversations>>,
 }
@@ -190,6 +192,7 @@ impl Registry {
             model: None,
             stores: Arc::new(crate::store::Stores::memory()),
             allows: crate::chats::Allows::default(),
+            forms: crate::forms::Forms::default(),
             chats: None,
         }))
     }
@@ -224,6 +227,11 @@ impl Registry {
     /// What runs' tools ask the person to allow, waiting for an answer.
     pub fn allows(&self) -> crate::chats::Allows {
         self.0.allows.clone()
+    }
+
+    /// The forms runs' tools ask the person, waiting for the answers.
+    pub fn forms(&self) -> crate::forms::Forms {
+        self.0.forms.clone()
     }
 
     /// `plugin`'s store in `repo`, when its declaration uses one.
@@ -988,6 +996,7 @@ impl Registry {
             plugin: plugin.to_owned(),
             run: run.to_owned(),
             state: state.clone(),
+            changed: false,
             view: None,
             logs: Vec::new(),
             error: None,
@@ -1041,7 +1050,19 @@ impl Registry {
             done.error = Some((format!("actions.{action}"), error));
             return done;
         }
+        done.changed = outcome.state != *state;
         done.state = outcome.state;
+        // The answers to a form a call waits on, given to it: one that
+        // does not fit, or comes once it is taken, is the action's error.
+        if let Some(answered) = crate::forms::answered(&outcome.value) {
+            let given = answered.and_then(|(call, reply)| {
+                crate::forms::answer(&self.forms(), plugin, run, &call, reply)
+                    .map_err(|error| format!("{error:#}"))
+            });
+            if let Err(error) = given {
+                done.error = Some((format!("actions.{action}"), error));
+            }
+        }
         let followed = match repo {
             Some(repo) => {
                 crate::chats::follow(

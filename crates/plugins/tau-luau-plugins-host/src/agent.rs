@@ -172,6 +172,8 @@ struct RunState {
 #[derive(Clone)]
 pub struct Dispatch {
     pub allows: crate::chats::Allows,
+    /// The forms its tools ask (`tau.ask`), waiting for the answers.
+    pub forms: crate::forms::Forms,
     pub registry: crate::registry::Registry,
     pub chats: Option<Arc<dyn tau_ui_plugin::Conversations>>,
 }
@@ -407,6 +409,23 @@ impl Inner {
         ctx: &PluginCtx,
         reach: Arc<dyn Reach>,
     ) -> Option<Outcome> {
+        self.run_hook_of(active, hook, input, state, ctx, reach, None)
+            .await
+    }
+
+    /// [`Self::run_hook`], for a tool's `call` the call's id as
+    /// `ctx.run.call`.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_hook_of(
+        &self,
+        active: &Active,
+        hook: &Hook,
+        input: Value,
+        state: &mut RunState,
+        ctx: &PluginCtx,
+        reach: Arc<dyn Reach>,
+        call: Option<&str>,
+    ) -> Option<Outcome> {
         let name = &active.loaded.declaration.name;
         if self.off(state, name)
             || !hook.declared_in(&active.loaded.declaration)
@@ -420,10 +439,16 @@ impl Inner {
         }
         let mut context = self.context(&ctx.run, state, active);
         context.store = self.store_of(active).await;
+        if let (Some(call), Some(run)) = (call, context.run.as_object_mut()) {
+            run.insert("call".into(), json!(call));
+        }
         // `run_end` runs however the run ended, stopped by the person
-        // too: what it lets go of goes, the run's cancel or not.
+        // too: what it lets go of goes, the run's cancel or not; an
+        // action called in the run carries out what the person did.
         let cancel = match hook {
-            Hook::RunEnd => tokio_util::sync::CancellationToken::new(),
+            Hook::RunEnd | Hook::Action(_) => {
+                tokio_util::sync::CancellationToken::new()
+            }
             _ => ctx.cancel.child_token(),
         };
         Some(
@@ -1427,6 +1452,16 @@ impl AgentTool for LuauTool {
         &self.spec.parameters
     }
 
+    /// A tool that waits for the person is the model's alone: a script's
+    /// call would end with the script, the person still answering.
+    fn exposure(&self) -> tau_agent::tool::Exposure {
+        if self.spec.model_only {
+            tau_agent::tool::Exposure::ModelOnly
+        } else {
+            tau_agent::tool::Exposure::default()
+        }
+    }
+
     async fn call(
         &self,
         args: Value,
@@ -1457,7 +1492,15 @@ impl AgentTool for LuauTool {
         };
         let failures = state.failures.get(&self.plugin).copied().unwrap_or(0);
         let outcome = inner
-            .run_hook(&active, &tool, args.clone(), &mut state, &plugin, reach)
+            .run_hook_of(
+                &active,
+                &tool,
+                args.clone(),
+                &mut state,
+                &plugin,
+                reach,
+                Some(ctx.call_id()),
+            )
             .await;
         let value = match outcome {
             // An error the tool raised is its answer, as a value is: the
@@ -1499,6 +1542,10 @@ impl AgentTool for LuauTool {
         if let Some(asked) = crate::chats::ask(&value) {
             drop(state);
             return self.ask_first(asked?, &ctx, &plugin).await;
+        }
+        if let Some(form) = crate::forms::asked(&value) {
+            drop(state);
+            return self.ask_form(form?, &ctx, &plugin).await;
         }
         let card = if self.spec.card {
             let input = json!({ "call": args, "result": value });
@@ -1553,7 +1600,7 @@ impl LuauTool {
             .ok_or("this run works in no repository")?
             .to_owned();
         let call = ctx.call_id().to_owned();
-        let waiting = dispatch.allows.wait(&ctx.run.0, &call);
+        let waiting = dispatch.allows.wait(&ctx.run.0, &call, ());
         plugin
             .publish(&Record::Asked {
                 plugin: self.plugin.clone(),
@@ -1618,6 +1665,94 @@ impl LuauTool {
         };
         Ok(ToolOutput {
             details: Some(json!({ "plugin": self.plugin, "value": value })),
+            ..ToolOutput::text(text)
+        })
+    }
+}
+
+impl LuauTool {
+    /// Asks the person the form the call asked (`tau.ask`), with no hook
+    /// going meanwhile: the plugin's view draws it, in the run and on
+    /// phones, and the first answers that fit, from one of its actions,
+    /// take it. Then its `action` is called in the run with them, and
+    /// the model reads what it answers; a run cancelled first ends the
+    /// call with an error.
+    async fn ask_form(
+        &self,
+        form: crate::forms::Form,
+        ctx: &ToolCtx,
+        plugin: &PluginCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let inner = &self.plugins.0;
+        let dispatch = inner
+            .dispatch
+            .as_ref()
+            .ok_or("this host asks the person nothing")?;
+        let call = ctx.call_id().to_owned();
+        let action = form.action.clone();
+        let waiting = dispatch.forms.wait(
+            &ctx.run.0,
+            &call,
+            crate::forms::Asked {
+                plugin: self.plugin.clone(),
+                form,
+            },
+        );
+        // A plugin's records reach the interface with the run's next
+        // event, and none comes while the call waits: this update is one,
+        // so the form shows now.
+        ctx.updates
+            .send(ToolOutput::text("Waiting for the person to answer."));
+        // A run that ended takes no answer, even one that came as it did.
+        let reply = tokio::select! {
+            biased;
+            () = ctx.cancel.cancelled() => None,
+            reply = waiting.answer() => reply,
+        }
+        .filter(|_| !ctx.cancel.is_cancelled());
+        let reply =
+            reply.ok_or("The run was cancelled before the person answered.")?;
+        let mut given = serde_json::to_value(&reply)?;
+        let value = match action {
+            Some(action) => {
+                given["call"] = json!(call);
+                let shared = inner.run_state(&ctx.run);
+                let mut state = shared.lock().await;
+                let Some(active) = inner.plugin(&self.plugin) else {
+                    return Err(format!(
+                        "{} is not active any more",
+                        self.plugin
+                    )
+                    .into());
+                };
+                inner
+                    .call(
+                        &active,
+                        Hook::Action(action),
+                        given.clone(),
+                        &mut state,
+                        plugin,
+                        Arc::new(NoReach),
+                    )
+                    .await
+                    .ok_or_else(|| {
+                        format!(
+                            "{} could not take the answers; its plugin's page \
+                             says why",
+                            self.spec.name
+                        )
+                    })?
+            }
+            None => given.clone(),
+        };
+        let text = match &value {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        let details = json!({ "plugin": self.plugin, "value": given });
+        Ok(ToolOutput {
+            details: Some(details),
+            structured: Some(given),
             ..ToolOutput::text(text)
         })
     }

@@ -106,6 +106,7 @@ impl HostHalf for LuauPluginsHost {
         // What their tools ask the person, carried out once allowed.
         let luau = luau.with_dispatch(crate::agent::Dispatch {
             allows: host.allows(),
+            forms: host.forms(),
             registry: host.clone(),
             chats: host.chats(),
         });

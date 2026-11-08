@@ -240,6 +240,7 @@ fn ask(answers: &[Answer], cancel: bool) -> Asked {
     .with_stores(registry.stores())
     .with_dispatch(Dispatch {
         allows: registry.allows(),
+        forms: registry.forms(),
         registry: registry.clone(),
         chats: Some(chats.clone()),
     });

@@ -202,6 +202,38 @@ function tau.allow(ask)
 	}
 end
 
+-- What a tool answers to ask the person a form and wait for the
+-- answers, from whichever device answers first: one to four
+-- `questions`, each `{ question, header?, options = { { label,
+-- description?, preview? } }, multi_select?, other? }`, `other` letting
+-- the person write their own answer. The plugin's view draws the form
+-- (`composer`); one of its actions gives the answers (`tau.answer`).
+-- Then `actions[action]` is called in the run with `{ call, answers }`
+-- or `{ call, declined = true }`, and the model reads what it answers.
+function tau.ask(form)
+	return {
+		tau_ask = {
+			questions = form.questions or array({}),
+			action = form.action and tostring(form.action) or json.null,
+		},
+	}
+end
+
+-- What an action answers to give the call `call`, waiting on
+-- `tau.ask`, the person's `answers` (each `{ picked = { labels },
+-- other?, note? }`, in the questions' order), or with `declined = true`
+-- that they would not answer. The first answer takes it; one that does
+-- not fit the form, or comes once it is taken, is the action's error.
+function tau.answer(answer)
+	return {
+		tau_answer = {
+			call = tostring(answer.call),
+			answers = answer.answers or json.null,
+			declined = answer.declined == true,
+		},
+	}
+end
+
 -- What `before_tool` answers.
 function tau.block(reason)
 	return { decision = "block", reason = tostring(reason) }
@@ -411,7 +443,9 @@ function ui.pill(text, of)
 end
 
 -- A header over rows; each row is a list of pieces or strings.
-function ui.table(head, rows)
+-- `opts.widths` are the columns' shares of the width, 1 each when not
+-- given.
+function ui.table(head, rows, opts)
 	local h = array({})
 	for _, cell in ipairs(head or {}) do
 		table.insert(h, tostring(cell))
@@ -420,7 +454,14 @@ function ui.table(head, rows)
 	for _, row in ipairs(rows or {}) do
 		table.insert(out, pieces(row))
 	end
-	return { piece = "table", head = h, rows = out }
+	local widths = nil
+	if opts and opts.widths then
+		widths = array({})
+		for _, width in ipairs(opts.widths) do
+			table.insert(widths, tonumber(width) or 1)
+		end
+	end
+	return { piece = "table", head = h, rows = out, widths = widths }
 end
 
 -- Pieces that scroll past `height` rems (24 when not given).
@@ -454,7 +495,45 @@ function ui.input(id, opts)
 		multiline = opts.multiline == true,
 		submit = opts.submit and tostring(opts.submit) or json.null,
 		keep = opts.keep == true,
+		-- A new number gives it the keys, once.
+		focus = opts.focus and math.floor(tonumber(opts.focus) or 0) or nil,
 	}
+end
+
+-- An area that takes the keys: while it has them, each of `keys`
+-- (`"up"`, `"enter"`, `"n"`, `"1"` ...) carries out `actions[action]` with
+-- `{ key, field = false }`; in a field inside it, the keys of
+-- `opts.through` still come, with `field = true`. A click outside its
+-- fields gives it the keys, and so does a new `opts.focus` number.
+function ui.keys(id, keys, action, children, opts)
+	opts = opts or {}
+	local names = array({})
+	for _, key in ipairs(keys or {}) do
+		table.insert(names, tostring(key))
+	end
+	local through = array({})
+	for _, key in ipairs(opts.through or {}) do
+		table.insert(through, tostring(key))
+	end
+	return {
+		piece = "keys",
+		id = tostring(id),
+		keys = names,
+		through = through,
+		action = tostring(action),
+		focus = opts.focus and math.floor(tonumber(opts.focus) or 0) or json.null,
+		children = pieces(children),
+	}
+end
+
+-- Pieces in a frame.
+function ui.card(children)
+	return { piece = "card", children = pieces(children) }
+end
+
+-- Room that pushes what follows in a row to its end.
+function ui.spacer()
+	return { piece = "spacer" }
 end
 
 -- A panel over the page, for a choice or a form: put it in the view only
@@ -632,6 +711,8 @@ function tau._describe(plugin)
 			card = tool.card ~= nil,
 			-- The boolean setting the tool is offered while it is on.
 			when = tool.when and tostring(tool.when) or nil,
+			-- Only the model calls it, never a script.
+			model_only = tool.model_only == true,
 		})
 	end
 	table.sort(tools, function(a, b)
@@ -1316,9 +1397,19 @@ function test.run(spec)
 	function run:action(name, args)
 		return call(need((plugin.actions or {})[name], "action " .. name), args or {})
 	end
-	function run:tool(name, args)
+	-- `call` is the call's id, `ctx.run.call`: "call_1" when not given.
+	function run:tool(name, args, call_id)
 		local tool = need((plugin.tools or {})[name], "tool " .. name)
-		return call(tool.call, args or {})
+		local data = run.data
+		run.data = table.clone(data)
+		run.data.run = table.clone(data.run)
+		run.data.run.call = call_id or "call_1"
+		local ok, answer = pcall(call, tool.call, args or {})
+		run.data = data
+		if not ok then
+			error(answer, 0)
+		end
+		return answer
 	end
 	-- Moves the run's clock to `iso`.
 	function run:at(iso)
