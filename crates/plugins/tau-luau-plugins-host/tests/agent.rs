@@ -1364,3 +1364,94 @@ fn a_stopped_run_still_ends_for_its_plugins() {
     let kept = block_on_io(kv.everything()).unwrap();
     assert_eq!(kept.get("ended"), Some(&json!("Cancelled")), "{kept:?}");
 }
+
+/// Keeps every run going, five times, as it declares; gives the model
+/// its own message; and adds up what each turn cost.
+const INSISTS: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "insists",
+  continues = 5,
+  start = function(plan, ctx)
+    return tau.start { input = "the real task" }
+  end,
+  before_stop = function(stop, ctx)
+    return tau.continue("insists: again")
+  end,
+  turn_end = function(turn, ctx)
+    ctx.state.cost = (ctx.state.cost or 0) + turn.cost
+  end,
+}
+"#;
+
+/// Keeps every run going as often as tau lets a plugin that declares
+/// nothing, and would give the model a message of its own too.
+const NAGS: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "nags",
+  start = function(plan, ctx)
+    return tau.start { input = "not this one: " .. plan.input }
+  end,
+  before_stop = function(stop, ctx)
+    return tau.continue("nags: again")
+  end,
+}
+"#;
+
+/// Gap F (ADR 0050): each plugin keeps a run going as often as it
+/// declares, or three times, apart from the others; the first plugin
+/// that gives the model a message of its own sets it, and the ones
+/// after see it; and `turn_end` hears what each turn cost.
+#[test]
+fn each_plugin_continues_as_often_as_it_declares() {
+    let mut llm = ScriptedModel::new();
+    // The first answer, then 5 continuations of insists' and 3 of nags'.
+    for _ in 0..9 {
+        llm = llm.turn(|t| t.text("done").cost(0.25));
+    }
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("insists", INSISTS), active("nags", NAGS)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    // As tau's host runs it: the plugins keep their own counts.
+    let agent = Agent::new(llm.clone())
+        .limits(tau_agent::limits::Limits::default().max_continuations(u32::MAX))
+        .plugin(plugins);
+    let outcome = block_on_io(agent.run("the person's task", &store)).unwrap();
+    llm.assert_exhausted();
+    let said = user_texts(&llm);
+    assert_eq!(said[0], "the real task");
+    let count = |text: &str| said.iter().filter(|said| *said == text).count();
+    assert_eq!((count("insists: again"), count("nags: again")), (5, 3));
+    let cost = records(&store, &outcome.run)
+        .iter()
+        .rev()
+        .find_map(|record| match record {
+            Record::State { plugin, state } if plugin == "insists" => {
+                state["cost"].as_f64()
+            }
+            _ => None,
+        });
+    assert_eq!(cost, Some(9.0 * 0.25));
+}
+
+/// A plugin may not declare more than 20 continuations, nor a part of
+/// one.
+#[test]
+fn continues_is_a_whole_number_up_to_20() {
+    for continues in ["21", "0", "2.5", "\"many\""] {
+        let source = format!(
+            "local tau = require(\"tau\")\nreturn tau.plugin {{ name = \"x\", continues = {continues} }}"
+        );
+        let files = Files {
+            source,
+            libs: BTreeMap::new(),
+            ..Files::default()
+        };
+        let error = block_on_io(load("x", files)).unwrap_err();
+        assert!(error.to_string().contains("`continues`"), "{error}");
+    }
+}

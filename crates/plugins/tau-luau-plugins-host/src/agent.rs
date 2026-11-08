@@ -67,8 +67,12 @@ use crate::{
 /// Failed hooks a plugin may have in a run before it is turned off.
 pub const MAX_FAILURES: u32 = 3;
 
-/// Times `before_stop` may keep a run going, all plugins together.
+/// Times `before_stop` may keep a run going, each plugin, unless it
+/// declares its own (`continues`).
 pub const MAX_CONTINUATIONS: u32 = 3;
+
+/// The most a plugin may declare `continues` to be.
+pub const MOST_CONTINUATIONS: u32 = 20;
 
 /// A plugin as a run gets it: loaded, with the person's settings.
 #[derive(Debug, Clone)]
@@ -125,7 +129,8 @@ struct RunState {
     failures: HashMap<String, u32>,
     /// The digest of each plugin's version the run last drew.
     drawn: HashMap<String, String>,
-    continued: u32,
+    /// Times each plugin's `before_stop` kept the run going.
+    continued: HashMap<String, u32>,
     turn: u32,
     /// The current turn's text and its calls, by id.
     text: String,
@@ -508,8 +513,14 @@ async fn publish(ctx: &PluginCtx, record: &Record, place: Option<&str>) {
 }
 
 /// Adds what a plugin's `start` answered to `plan`: its texts after the
-/// context's, its instructions after the run's.
-fn apply_start(plan: &mut RunPlan, answer: &Value) {
+/// context's, its instructions after the run's, and the message the
+/// model gets in place of the run's, unless a plugin before it
+/// (`replaced`) gave one.
+fn apply_start(plan: &mut RunPlan, answer: &Value, replaced: &mut bool) {
+    if !*replaced && let Some(input) = answer["input"].as_str() {
+        plan.input = input.to_owned();
+        *replaced = true;
+    }
     plan.context.extend(
         answer["context"]
             .as_array()
@@ -702,6 +713,7 @@ impl Plugin for LuauPlugins {
             }
             // What each plugin adds to what the run starts with; the
             // ones after it see it.
+            let mut replaced = false;
             for active in self.0.active().iter() {
                 // The prefix a change of effort resends uncached: what
                 // the run inherits, and its instructions.
@@ -739,7 +751,7 @@ impl Plugin for LuauPlugins {
                 else {
                     continue;
                 };
-                apply_start(plan, &answer);
+                apply_start(plan, &answer, &mut replaced);
             }
         }
         Ok(Box::new(LuauRun {
@@ -1008,9 +1020,6 @@ impl PluginRun for LuauRun {
     ) -> Result<StopDecision, PluginError> {
         let inner = &self.plugins.0;
         let mut state = self.state.lock().await;
-        if state.continued >= MAX_CONTINUATIONS {
-            return Ok(StopDecision::Stop);
-        }
         let text: String = message
             .content
             .iter()
@@ -1022,6 +1031,16 @@ impl PluginRun for LuauRun {
         let input =
             json!({ "text": text, "turn": state.turn, "reason": "stop" });
         for active in inner.active().iter() {
+            let name = &active.loaded.declaration.name;
+            let most = active
+                .loaded
+                .declaration
+                .continues
+                .unwrap_or(MAX_CONTINUATIONS)
+                .min(MOST_CONTINUATIONS);
+            if state.continued.get(name).copied().unwrap_or(0) >= most {
+                continue;
+            }
             let Some(answer) = inner
                 .call(
                     active,
@@ -1036,7 +1055,7 @@ impl PluginRun for LuauRun {
                 continue;
             };
             if answer["decision"] == "continue" {
-                state.continued += 1;
+                *state.continued.entry(name.clone()).or_default() += 1;
                 let message =
                     answer["message"].as_str().unwrap_or_default().to_owned();
                 return Ok(StopDecision::Continue(message));
@@ -1147,8 +1166,11 @@ impl PluginRun for LuauRun {
                 let name = state.names.remove(call_id).unwrap_or_default();
                 state.calls.push(json!({ "name": name, "ok": !is_error }));
             }
-            RunEvent::TurnEnd { turn, .. } => {
-                let input = json!({ "turn": turn, "text": state.text, "calls": state.calls });
+            RunEvent::TurnEnd { turn, usage, .. } => {
+                let input = json!({
+                    "turn": turn, "text": state.text, "calls": state.calls,
+                    "cost": usage.cost.total,
+                });
                 for active in inner.active().iter() {
                     inner
                         .call(

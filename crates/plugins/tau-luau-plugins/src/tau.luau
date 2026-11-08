@@ -84,6 +84,18 @@ function tau._commands(commands)
 	return list
 end
 
+-- How many times a plugin's `before_stop` may keep a run going, as it
+-- declares: a whole number from 1 to 20, or `json.null` for tau's own.
+function tau._continues(continues)
+	if continues == nil then
+		return json.null
+	end
+	if type(continues) ~= "number" or continues % 1 ~= 0 or continues < 1 or continues > 20 then
+		error("`continues` is a whole number from 1 to 20", 0)
+	end
+	return continues
+end
+
 -- The names of a table's functions, in order.
 function tau._names(functions)
 	local names = array({})
@@ -207,6 +219,7 @@ function tau.start(plan)
 		context = plan.context or array({}),
 		instructions = plan.instructions or json.null,
 		effort = plan.effort or json.null,
+		input = plan.input or json.null,
 	}
 end
 
@@ -669,6 +682,7 @@ function tau._describe(plugin)
 			jev = tostring(plugin.picker_auto.jev),
 			no_jev = tostring(plugin.picker_auto.no_jev),
 		} or json.null,
+		continues = tau._continues(plugin.continues),
 	}
 end
 

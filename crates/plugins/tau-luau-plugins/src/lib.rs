@@ -343,6 +343,10 @@ pub struct Declaration {
     /// without (`picker_auto`).
     #[serde(default)]
     pub picker_auto: Option<PickerAuto>,
+    /// Times its `before_stop` may keep a run going (`continues`), when
+    /// it says.
+    #[serde(default)]
+    pub continues: Option<u32>,
 }
 
 /// The words under the effort picker's Auto, as a plugin that picks the
@@ -702,6 +706,7 @@ mod tests {
             pages: Vec::new(),
             repo_nav: None,
             picker_auto: None,
+            continues: None,
         }
     }
 

@@ -74,6 +74,7 @@ return tau.plugin {
   rewritten = function(info, ctx) end,
   before_stop = function(stop, ctx) end,
   turn_end = function(turn, ctx) end,
+  continues = 10,            -- times before_stop may keep a run going
   events = { "tool_end" },   -- what `on_event` hears
   on_event = function(event, ctx) end,
   run_end = function(run, ctx) end,
@@ -102,14 +103,14 @@ one, its `card`.
 | ------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------- | ------ |
 | tool `call`         | the arguments, as `parameters` describes                                  | a JSON value, or `error(message)`                              | 60 s   |
 | tool `card`         | the call's arguments and the result                                       | a view piece, drawn on the call's card                         | 200 ms |
-| `start`             | `{ input, context, instructions, model, efforts, effort, prefix_tokens }` | `nil`, or `tau.start{ context, instructions, effort }`         | 2 s    |
+| `start`             | `{ input, context, instructions, model, efforts, effort, prefix_tokens }` | `nil`, or `tau.start{ context, instructions, effort, input }`  | 2 s    |
 | `before_tool`       | `{ id, name, args }`                                                      | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
 | `before_request`    | `{ model, effort, turn, messages, replies }`                              | `nil`, or `tau.effort(level)`                                  | 200 ms |
 | `after_tool_result` | `{ id, name, args, ok, text, truncated }`                                 | `nil`, or `tau.result(text)`                                   | 2 s    |
 | `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`                             | `nil`, or `tau.rewrite{ keep, insert, drops_conversation }`    | 10 s   |
 | `rewritten`         | `{ plugin, before, after, drops_conversation }`                           | nothing                                                        | 2 s    |
 | `before_stop`       | `{ text, turn, reason }`                                                  | `nil`, or `tau.continue(message)`                              | 10 s   |
-| `turn_end`          | `{ turn, text, calls = { { name, ok } } }`                                | nothing                                                        | 2 s    |
+| `turn_end`          | `{ turn, text, calls = { { name, ok } }, cost }`                          | nothing                                                        | 2 s    |
 | `on_event`          | `{ kind, turn, ... }`, for each of `events`                               | nothing                                                        | 200 ms |
 | `run_end`           | `{ stop, turns, cost, text }`, `text` its last reply                      | nothing                                                        | 10 s   |
 | `title`             | `{ task, model }`, outside any run                                        | a title, or `nil`                                              | 2 s    |
@@ -181,7 +182,11 @@ one, its `card`.
   effort (`"low"`, `"medium"`, `"high"`…), and the ones after it; the
   first plugin that picks one sets it. `messages` counts the transcript.
 - `tau.continue(message)` keeps the run going with `message` as the
-  next thing the model reads; a run continues at most three times.
+  next thing the model reads. A plugin keeps a run going at most three
+  times, or as many as it declares, up to 20 (`continues = 10`).
+- `tau.start{ input = text }` gives the model `text` in place of the
+  run's message; the first plugin that gives one sets it.
+- `turn_end`'s `cost` is what the turn cost, in US dollars.
 - A hook that errors or runs out of time counts as `nil`, and its error
   shows on the Plugins screen. After three failures in a run the plugin
   is off for the rest of it. Never rely on an error to block.
