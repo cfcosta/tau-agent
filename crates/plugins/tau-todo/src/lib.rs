@@ -21,4 +21,5 @@ pub const FILES: &[(&str, &str)] = &[
         include_str!("../luau/tests/issues.luau"),
     ),
     ("tests/beads.luau", include_str!("../luau/tests/beads.luau")),
+    ("tests/graph.luau", include_str!("../luau/tests/graph.luau")),
 ];

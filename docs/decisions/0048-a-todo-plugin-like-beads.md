@@ -277,9 +277,12 @@ enough to read in one sitting.
 
 ### 1. The issue graph: laws over pure functions
 
-`crates/plugins/tau-todo/tests/graph_laws.rs`, property tests over the
-plugin's pure Luau core (the graph module: no store, no clock), called
-through the Luau host from Rust, so hegel draws the inputs.
+`crates/plugins/tau-todo/luau/tests/graph.luau`, properties over the
+plugin's pure Luau core (the graph module: no store, no clock), written
+in Luau on hegel's engine (ADR 0049), with a Luau reference model of
+their own in the file. They began as Rust (`tests/graph_laws.rs`),
+calling the Luau through the host; they moved once Luau tests could
+draw.
 
 - **Ready.** For any graph, `ready()` equals the reference model's
   filter, in the same order (priority, then age, then id).
