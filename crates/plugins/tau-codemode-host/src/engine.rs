@@ -1560,7 +1560,8 @@ fn jev_function(
             match answer {
                 Ok((value, cost)) => {
                     guard.end(CallStatus::Ok, None, Some(cost), false);
-                    Ok(ok([to_lua(&lua, &value)?]))
+                    // The answer, and what it cost in US dollars.
+                    Ok(ok([to_lua(&lua, &value)?, LuaValue::Number(cost)]))
                 }
                 Err((error, cost)) => {
                     let text = error.to_string();

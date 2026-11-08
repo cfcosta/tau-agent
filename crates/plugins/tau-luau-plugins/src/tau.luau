@@ -200,11 +200,13 @@ function tau.change(args)
 end
 
 -- What `start` answers: `context`, texts the run's first message
--- starts with, and `instructions`, added to the run's own.
+-- starts with, `instructions`, added to the run's own, and `effort`, the
+-- reasoning effort the run starts at when it is on auto.
 function tau.start(plan)
 	return {
 		context = plan.context or array({}),
 		instructions = plan.instructions or json.null,
+		effort = plan.effort or json.null,
 	}
 end
 
@@ -662,6 +664,10 @@ function tau._describe(plugin)
 		nav = plugin.nav and {
 			label = tostring(plugin.nav.label or plugin.name),
 			icon = plugin.nav.icon or "",
+		} or json.null,
+		picker_auto = plugin.picker_auto and {
+			jev = tostring(plugin.picker_auto.jev),
+			no_jev = tostring(plugin.picker_auto.no_jev),
 		} or json.null,
 	}
 end

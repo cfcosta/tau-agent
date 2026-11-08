@@ -142,6 +142,7 @@ jev.score({ state = s, question = "...", levels = { "low", "mid", "high" } })
     --> { score = 2, confidence = 0.7, probabilities = { ... } }
 jev.ask({ state = s, questions = { a = { kind = "noul", question = "..." }, ... } })
     --> { a = { probability = ... }, ... }   -- one round trip
+-- Each also gives what it cost, in US dollars: local answer, cost = jev.noul(...)
 
 -- JSON shapes.
 json.null          -- JSON null inside a table

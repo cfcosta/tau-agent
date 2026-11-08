@@ -812,6 +812,22 @@ impl UiPlugin for LuauPluginsUi {
             .contribute(points::COMPOSER_BAND, |_: &AtRun, view| {
                 drawn(view.state?, "band")
             })
+            .contribute(points::PLAN_STEPS, |_: &AtRun, view| {
+                drawn(view.state?, "plan_steps")
+            })
+            .contribute(points::PLAN, |_: &AtRun, view| plan_field(view.state?))
+            .contribute(points::PICKER_AUTO, |_: &AtApp, view| {
+                let keyed = tau_jev::keyed(view);
+                view.data.plugins.iter().find_map(|entry| {
+                    let auto =
+                        entry.declaration.as_ref()?.picker_auto.as_ref()?;
+                    Some(if keyed {
+                        auto.jev.clone()
+                    } else {
+                        auto.no_jev.clone()
+                    })
+                })
+            })
             .contribute(points::RUN_ROW, |_: &AtRun, view| row(view.state?))
             .contribute(points::ASKS, |_: &AtRun, view| {
                 let asks: Vec<&str> = view
@@ -1244,6 +1260,23 @@ fn reaches(uses: &Uses) -> Vec<String> {
 
 /// What every plugin on in the run drew as `key` of its view, each in
 /// its own actions; one under the other when several did.
+/// The plan's field a plugin's view sets (`plan = { name, value }`):
+/// the first plugin's that sets one, as its own.
+fn plan_field(state: &State) -> Option<tau_ui_plugin::PlanField> {
+    state
+        .plugins
+        .iter()
+        .filter(|(_, plugin)| plugin.off.is_none())
+        .find_map(|(name, plugin)| {
+            let field = plugin.view.get("plan")?;
+            Some(tau_ui_plugin::PlanField {
+                name: field["name"].as_str()?.to_owned(),
+                value: field["value"].as_str()?.to_owned(),
+                set_by: Some(name.clone()),
+            })
+        })
+}
+
 fn drawn(state: &State, key: &str) -> Option<Node> {
     let mut trees: Vec<Node> = state
         .plugins
@@ -1931,6 +1964,37 @@ mod tests {
         assert_eq!(entries[0].label, "Deploys");
         assert_eq!(entries[0].icon, Icon::Plug);
         assert_eq!(entries[0].to, entry_link("deploys"));
+    }
+
+    /// A view's `plan` is a field of the run's plan, set by the plugin
+    /// whose view it is; a view without one sets none.
+    #[test]
+    fn a_views_plan_is_the_plans_field() {
+        let mut state = State::default();
+        let mut run = tau_ui_plugin::testing::FakeRun::default();
+        state.apply(
+            Record::View {
+                plugin: "quiet".into(),
+                view: json!({}),
+            },
+            &mut run,
+        );
+        assert_eq!(plan_field(&state), None);
+        state.apply(
+            Record::View {
+                plugin: "picks".into(),
+                view: json!({ "plan": { "name": "reasoning", "value": "high" } }),
+            },
+            &mut run,
+        );
+        assert_eq!(
+            plan_field(&state),
+            Some(tau_ui_plugin::PlanField {
+                name: "reasoning".into(),
+                value: "high".into(),
+                set_by: Some("picks".into()),
+            })
+        );
     }
 
     /// A keyed note is placed where the run is when its key first

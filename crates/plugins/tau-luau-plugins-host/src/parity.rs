@@ -85,6 +85,9 @@ pub fn point(name: &str) -> Option<Luau> {
         (RUN_ROW.name, "row"),
         (ASKS.name, "asks"),
         (SIDEBAR.name, "nav"),
+        (PLAN.name, "plan"),
+        (PLAN_STEPS.name, "plan_steps"),
+        (PICKER_AUTO.name, "picker_auto"),
     ];
     if let Some((_, hook)) = hooks.iter().find(|(point, _)| *point == name) {
         return Some(Luau::Hook(hook));
@@ -106,13 +109,8 @@ pub fn point(name: &str) -> Option<Luau> {
             KIND_ROW_LINE.name,
             "a repository kind's, which a Rust plugin keeps",
         ),
-        (PLAN.name, "a typed answer the kernel reads, not a tree"),
         (
             CONTEXT_TRIGGER.name,
-            "a typed answer the kernel reads, not a tree",
-        ),
-        (
-            PICKER_AUTO.name,
             "a typed answer the kernel reads, not a tree",
         ),
         (
@@ -132,7 +130,6 @@ pub fn point(name: &str) -> Option<Luau> {
         (CONTEXT.name, NOT_YET),
         (CHANGES.name, NOT_YET),
         (USER_MESSAGE.name, NOT_YET),
-        (PLAN_STEPS.name, NOT_YET),
         (PANE.name, NOT_YET),
     ];
     excluded

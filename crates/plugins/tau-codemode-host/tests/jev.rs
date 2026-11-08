@@ -55,6 +55,23 @@ async fn noul_returns_a_probability_and_charges_its_usage() {
     assert!(row.cost.unwrap() > 0.0);
 }
 
+/// A call also gives what it cost, as its second value: what its row
+/// says it cost.
+#[tokio::test]
+async fn a_call_gives_its_cost_too() {
+    let jev = FakeJev::nouls(|_| 0.75);
+    let host = Arc::new(FakeHost::with_jev(jev));
+    let outcome = script(
+        &host,
+        "local answer, cost = jev.noul({ state = 1, question = 'q?' })\n\
+         return cost",
+    )
+    .await;
+    let cost: f64 = texts(&outcome)[0].parse().unwrap();
+    assert!(cost > 0.0);
+    assert_eq!(Some(cost), outcome.calls[0].cost);
+}
+
 fn chooser() -> FakeJev {
     FakeJev::new(|request: &Request| {
         let answers = request

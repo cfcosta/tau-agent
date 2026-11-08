@@ -339,6 +339,20 @@ pub struct Declaration {
     /// Its entry under each repository in the sidebar.
     #[serde(default)]
     pub repo_nav: Option<RepoNav>,
+    /// What the effort picker's Auto says, with a Jev key saved and
+    /// without (`picker_auto`).
+    #[serde(default)]
+    pub picker_auto: Option<PickerAuto>,
+}
+
+/// The words under the effort picker's Auto, as a plugin that picks the
+/// effort says them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PickerAuto {
+    /// With a Jev key saved.
+    pub jev: String,
+    /// Without one.
+    pub no_jev: String,
 }
 
 impl Declaration {
@@ -687,6 +701,7 @@ mod tests {
             jobs: Vec::new(),
             pages: Vec::new(),
             repo_nav: None,
+            picker_auto: None,
         }
     }
 

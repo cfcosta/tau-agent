@@ -506,6 +506,14 @@ fn apply_start(plan: &mut RunPlan, answer: &Value) {
             None => added.to_owned(),
         });
     }
+    // The effort, before the session opens: on auto only, and the first
+    // plugin that sets one sets it.
+    if plan.reasoning.is_none()
+        && let Some(effort) =
+            answer["effort"].as_str().and_then(ReasoningEffort::parse)
+    {
+        plan.reasoning = Some(effort);
+    }
 }
 
 /// The most of a result's text `after_tool_result` is given, well inside
@@ -677,11 +685,23 @@ impl Plugin for LuauPlugins {
             // What each plugin adds to what the run starts with; the
             // ones after it see it.
             for active in self.0.active().iter() {
-                let input = json!({
+                // The prefix a change of effort resends uncached: what
+                // the run inherits, and its instructions.
+                let prefix = plan.inherited_tokens()
+                    + tau_agent::output::estimate_tokens(
+                        plan.instructions.as_deref().unwrap_or_default(),
+                    );
+                let mut input = json!({
                     "input": plan.input,
                     "context": plan.context,
                     "instructions": plan.instructions,
+                    "model": plan.model(),
+                    "prefix_tokens": prefix,
                 });
+                // Left out on auto, so it is `nil` in Luau, not `json.null`.
+                if let Some(effort) = plan.reasoning {
+                    input["effort"] = json!(effort.as_str());
+                }
                 let Some(answer) = self
                     .0
                     .call(

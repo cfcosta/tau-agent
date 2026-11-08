@@ -1056,6 +1056,60 @@ fn a_run_hook_reads_the_conversation_it_uses() {
     );
 }
 
+const PICKER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "picker",
+  start = function(input, ctx)
+    ctx.state.saw = { effort = input.effort or "auto", model = input.model, prefix = input.prefix_tokens > 0 }
+    return tau.start { effort = "high" }
+  end,
+}
+"#;
+
+/// `start` is given the run's effort (none on auto), its model and the
+/// prefix a change of effort resends, and sets the effort the run starts
+/// at on auto (ADR 0050, gap J); an effort someone chose stands.
+#[test]
+fn start_sets_the_effort_on_auto_only() {
+    use tau_ai::responses::request::ReasoningEffort;
+    for chosen in [None, Some(ReasoningEffort::Low)] {
+        let llm = ScriptedModel::new().turn(|t| t.text("done"));
+        let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+        let plugins = LuauPlugins::new(
+            vec![active("picker", PICKER)],
+            json!({ "kind": "main", "repo": "r", "model": "m" }),
+            None,
+        );
+        let mut agent = Agent::new(llm.clone())
+            .instructions("Be careful.")
+            .plugin(plugins);
+        if let Some(effort) = chosen {
+            agent = agent.reasoning(effort);
+        }
+        let outcome = block_on_io(agent.run("go", &store)).unwrap();
+        let efforts: Vec<_> = llm
+            .requests()
+            .iter()
+            .map(|r| r.settings.reasoning)
+            .collect();
+        assert_eq!(
+            efforts,
+            [chosen.or(Some(ReasoningEffort::High))],
+            "{chosen:?}"
+        );
+        let stored = records(&store, &outcome.run);
+        let saw = stored.iter().rev().find_map(|record| match record {
+            Record::State { state, .. } => Some(state["saw"].clone()),
+            _ => None,
+        });
+        assert_eq!(
+            saw.unwrap()["effort"],
+            json!(chosen.map_or("auto", ReasoningEffort::as_str))
+        );
+    }
+}
+
 const TALLY: &str = r#"
 local tau = require("tau")
 return tau.plugin {
