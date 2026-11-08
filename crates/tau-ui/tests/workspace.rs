@@ -505,23 +505,17 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         // The next run follows coder's new default until one is picked.
         assert_eq!(ws.next_model().model, "gpt-6-luna");
         ws.toggle_model_hidden("gpt-6-astra", cx);
-        // tau-reasoning's settings, from its pane on the Plugins screen,
+        // tau-memory's settings, from its pane on the Plugins screen,
         // through its handle: everywhere, then tau-agent's own copy.
         ws.navigate(Route::Plugins, cx);
-        ws.pick_plugin(tau_reasoning::NAME, None, cx);
-        let reasoning = ws.plugin_handle(tau_reasoning::NAME);
-        reasoning.save_settings(&tau_reasoning::ui::Settings {
-            redecide: true,
-            threshold: 0.9,
-        });
+        ws.pick_plugin(tau_memory::NAME, None, cx);
+        let memory = ws.plugin_handle(tau_memory::NAME);
+        memory.save_settings(&serde_json::json!({ "after_each_run": false }));
         ws.drain_plugin_requests(cx);
         ws.set_plugin_scope(Some("tau-agent".into()), cx);
-        reasoning.save_settings_in(
+        memory.save_settings_in(
             Some("tau-agent"),
-            &tau_reasoning::ui::Settings {
-                redecide: false,
-                threshold: 0.5,
-            },
+            &serde_json::json!({ "follow_chat": true }),
         );
         ws.drain_plugin_requests(cx);
     });
@@ -531,11 +525,11 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         let catalog = ws.catalog();
         assert_eq!(
             catalog
-                .settings_in(tau_reasoning::NAME, Some("tau-agent"))
+                .settings_in(tau_memory::NAME, Some("tau-agent"))
                 .map(|value| value.json().clone()),
-            Some(serde_json::json!({ "redecide": false, "threshold": 0.5 }))
+            Some(serde_json::json!({ "follow_chat": true }))
         );
-        assert!(catalog.has_own_settings("tau-agent", tau_reasoning::NAME));
+        assert!(catalog.has_own_settings("tau-agent", tau_memory::NAME));
     });
     let plugin_saved: Vec<(String, Option<String>, Option<serde_json::Value>)> =
         events
@@ -554,16 +548,14 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         plugin_saved,
         [
             (
-                tau_reasoning::NAME.to_owned(),
+                tau_memory::NAME.to_owned(),
                 None,
-                Some(serde_json::json!({ "redecide": true, "threshold": 0.9 }))
+                Some(serde_json::json!({ "after_each_run": false }))
             ),
             (
-                tau_reasoning::NAME.to_owned(),
+                tau_memory::NAME.to_owned(),
                 Some("tau-agent".to_owned()),
-                Some(
-                    serde_json::json!({ "redecide": false, "threshold": 0.5 })
-                )
+                Some(serde_json::json!({ "follow_chat": true }))
             ),
         ]
     );
@@ -578,9 +570,9 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
     }));
 }
 
-/// tau-reasoning draws itself: its note in the demo's transcript, its
-/// line and plan field, its step on the Plan screen, and its page,
-/// reached from its catalog entry.
+/// tau-reasoning draws itself, as a Luau plugin (ADR 0050): its note
+/// in the demo's transcript, its line and plan field, its step on the
+/// Plan screen, and its page, reached as its note's details are.
 #[gpui::test]
 fn reasoning_draws_its_own_ui(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open_demo(cx);
@@ -602,25 +594,22 @@ fn reasoning_draws_its_own_ui(cx: &mut TestAppContext) {
         assert!(
             statuses
                 .iter()
-                .any(|status| status.name == tau_reasoning::NAME
-                    && status.state == "chose high")
+                .any(|status| status.name == tau_luau_plugins::NAME
+                    && status.state.contains("tau-reasoning: chose high")),
+            "{statuses:?}"
         );
-        // Its catalog entry leads to its page, about the run in view.
-        let route = ws.plugin_route_named(tau_reasoning::NAME, &run).unwrap();
-        let Route::Plugin {
-            plugin,
-            page,
-            params,
-        } = &route
-        else {
-            panic!("{route:?}");
-        };
-        assert_eq!(
-            (plugin.as_str(), page.as_str()),
-            (tau_reasoning::NAME, "choices")
+        ws.navigate(
+            Route::Plugin {
+                plugin: tau_luau_plugins::NAME.into(),
+                page: tau_luau_plugins::ui::PAGE.into(),
+                params: [(
+                    tau_ui_plugin::ENTRY.to_owned(),
+                    tau_reasoning::NAME.to_owned(),
+                )]
+                .into(),
+            },
+            cx,
         );
-        assert_eq!(params.get("run").map(String::as_str), Some(&*run.0));
-        ws.navigate(route, cx);
     });
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {

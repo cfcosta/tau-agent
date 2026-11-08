@@ -10024,6 +10024,7 @@ dependencies = [
  "tau-jev",
  "tau-luau-plugins",
  "tau-plugins",
+ "tau-reasoning",
  "tau-skills",
  "tau-store",
  "tau-store-sqlite",
@@ -10252,7 +10253,6 @@ dependencies = [
  "tau-memory",
  "tau-notify",
  "tau-phones",
- "tau-reasoning",
  "tau-schedule",
  "tau-skills",
  "tau-sqlite",
@@ -10266,21 +10266,18 @@ dependencies = [
 name = "tau-reasoning"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
- "futures-util",
- "hegeltest",
- "serde",
  "serde_json",
  "tau-agent",
  "tau-ai",
+ "tau-codemode-host",
  "tau-jev",
+ "tau-luau-plugins-host",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
- "tau-ui-kit",
- "tau-ui-plugin",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

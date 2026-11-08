@@ -430,24 +430,34 @@ impl Inner {
         if state.states.get(&plugin) != Some(&outcome.state) {
             state.states.insert(plugin.clone(), outcome.state.clone());
             state.stored.insert(plugin.clone(), outcome.state.clone());
-            ctx.publish(&Record::State {
-                plugin: plugin.clone(),
-                state: outcome.state,
-            })
+            // What `start` left shows after the message the run started
+            // on, in history as live.
+            let place = matches!(hook, Hook::Start)
+                .then_some(tau_ui_plugin::PLACE_MESSAGE);
+            publish(
+                ctx,
+                &Record::State {
+                    plugin: plugin.clone(),
+                    state: outcome.state,
+                },
+                place,
+            )
             .await;
             if !matches!(hook, Hook::View) {
-                self.draw(active, state, ctx).await;
+                self.draw(active, state, ctx, place).await;
             }
         }
         Some(outcome.value)
     }
 
-    /// Draws `active`'s view from its state and publishes it.
+    /// Draws `active`'s view from its state and publishes it, at
+    /// `place` in history ([`tau_ui_plugin::PLACE`]).
     async fn draw(
         &self,
         active: &Active,
         state: &mut RunState,
         ctx: &PluginCtx,
+        place: Option<&str>,
     ) {
         let name = active.loaded.declaration.name.clone();
         state
@@ -479,13 +489,21 @@ impl Inner {
                 .await;
             }
             None => {
-                ctx.publish(&Record::View {
+                let view = Record::View {
                     plugin,
                     view: outcome.value,
-                })
-                .await;
+                };
+                publish(ctx, &view, place).await;
             }
         }
+    }
+}
+
+/// Publishes `record`, at `place` in history when it says.
+async fn publish(ctx: &PluginCtx, record: &Record, place: Option<&str>) {
+    match place {
+        Some(place) => ctx.publish(&tau_ui_plugin::placed(record, place)).await,
+        None => ctx.publish(record).await,
     }
 }
 
@@ -680,7 +698,7 @@ impl Plugin for LuauPlugins {
             let mut state = shared.lock().await;
             inherit(plan, &mut state);
             for active in self.0.active().iter() {
-                self.0.draw(active, &mut state, ctx).await;
+                self.0.draw(active, &mut state, ctx, None).await;
             }
             // What each plugin adds to what the run starts with; the
             // ones after it see it.
@@ -696,6 +714,11 @@ impl Plugin for LuauPlugins {
                     "context": plan.context,
                     "instructions": plan.instructions,
                     "model": plan.model(),
+                    // The efforts the run's model takes, lowest first.
+                    "efforts": tau_ai::model::efforts(plan.model())
+                        .into_iter()
+                        .map(ReasoningEffort::as_str)
+                        .collect::<Vec<_>>(),
                     "prefix_tokens": prefix,
                 });
                 // Left out on auto, so it is `nil` in Luau, not `json.null`.
@@ -1035,13 +1058,12 @@ impl PluginRun for LuauRun {
         for active in inner.active().iter() {
             let name = &active.loaded.declaration.name;
             if state.drawn.get(name) != Some(&active.loaded.digest) {
-                inner.draw(active, &mut state, ctx).await;
+                inner.draw(active, &mut state, ctx, None).await;
             }
         }
         // The first plugin that picks an effort sets it.
-        let input = json!({
+        let mut input = json!({
             "model": view.model,
-            "effort": view.effort,
             "turn": view.turn,
             "messages": view.transcript.len(),
             "replies": view
@@ -1050,6 +1072,10 @@ impl PluginRun for LuauRun {
                 .filter(|message| matches!(message, Message::Assistant(_)))
                 .count(),
         });
+        // Left out at the model's default, so it is `nil` in Luau.
+        if let Some(effort) = view.effort {
+            input["effort"] = json!(effort);
+        }
         for active in inner.active().iter() {
             let Some(answer) = inner
                 .call(

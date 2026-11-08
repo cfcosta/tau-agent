@@ -841,16 +841,20 @@ Token estimates and overflow detection, which the loop uses for
 
 ### `tau-reasoning`: reasoning effort per job
 
-Built: `crates/plugins/tau-reasoning`. Runs whose effort is "auto" get
-it in tau-ui when a TypeSafe key is saved; its choice (every level's
-probability, the confidence and the threshold) is reported and
-recorded, and shows as the run's reasoning note and plan. The Models
-screen's "Reasoning on auto" sets `redecide` ("Decide again between
-steps") and the threshold (0.5 to 0.9, 0.7 by default) for runs started
-after; they are saved with the model settings.
+Built: `crates/plugins/tau-reasoning`, a Luau plugin tau comes with
+(ADR 0050): `luau/plugin.luau`, the policy in `luau/lib/effort.luau`.
+It scores runs whose effort is "auto" when a TypeSafe key is saved
+(`uses.jev`); each choice (every level's probability, the confidence
+and the threshold) is kept in the run's state, and shows as the run's
+reasoning note, plan field and plan step. Its settings, in its pane
+under tau-luau-plugins, set `redecide` ("Decide again between steps")
+and the threshold (0.7 by default) for runs started after.
 
-- **Seams:** `start`, and `before_request` when `Reasoning::redecide`
-  is on. `finish` leaves the next message its context.
+- **Seams:** `start` (it sets the effort with `tau.start{ effort }`,
+  on auto only), and `before_request` when `redecide` is on (with
+  `tau.effort`, reading the run with `ctx.transcript()`). `rewritten`
+  ends a lease; `run_end` leaves the next message its context, a run
+  at an effort the person chose too.
 - **How, as a message comes in:**
   1. Put the task, clipped at both ends (600 characters from the
      start, 200 from the end), and the start of the instructions into
@@ -868,24 +872,23 @@ after; they are saved with the model settings.
   3. If the answer is confident, set `plan.reasoning` to that level,
      unless the conversation is long (below). Otherwise, or if the
      request fails, go on at the effort the conversation last ran at
-     (`last_effort`, from the plugin's records along the fork chain:
-     the last choice's, or the effort the last run's last request went
-     out at, which its `context` record keeps), if the model takes it,
+     (`last_ran`, in the plugin's state, which a fork inherits: the
+     last choice's, or the effort the last run's last request went
+     out at, which `run_end` keeps), if the model takes it,
      else at the model's default. The record says what the message runs
      at (`runs_at`); tau-ui shows a note only when that changes.
   4. **Sticky effort.** A run that goes on with a conversation or
      inherits one (a fork, whose records start with its parent's) keeps
      the effort it last ran at, even when Jev is sure of another, once
-     its prefix reaches `STICKY_TOKENS` (20k;
-     `Reasoning::sticky_after`): `RunPlan::inherited_tokens` plus the
-     instructions. Any change of effort makes OpenAI read nothing from
+     its prefix reaches `STICKY_TOKENS` (20k): `start`'s
+     `prefix_tokens`, what the conversation and the instructions hold. Any change of effort makes OpenAI read nothing from
      cache, so switching would resend all of it at full price. The
      choice records `kept_for_cache` (the prefix's tokens), and tau-ui
      notes it even though the effort did not change: "kept **medium**
      reasoning for this message", "… but this message stays at medium:
      switching to high would resend 48k tokens uncached." An effort the
-     person chose stands as always. `tau_reasoning::runs_at` is the
-     rule.
+     person chose stands as always, and a long conversation keeps it
+     too. `effort.runs_at` is the rule.
 - **How, between turns** (only with `redecide`, off by default): the
   first question
   also asks, as a `Choice`, how long the effort holds:
@@ -900,11 +903,10 @@ after; they are saved with the model settings.
   said, and the tool results it is about to read: how many, how many
   failed, and up to three excerpts, failed ones first. A confident
   answer sets the effort for that request on; an unsure or failed one
-  leaves it. Each choice is reported and recorded with its `turn` and
-  `lease`, and tau-ui shows it before the reply it chose for, with how
-  long the effort holds. A request Jev fails is reported and recorded
-  as well (`kind: "error"`, with its `turn` between turns), so a stored
-  run shows it too.
+  leaves it. Each choice is kept with its `turn` and `lease`, and
+  tau-ui shows it before the reply it chose for, with how long the
+  effort holds. A request Jev fails gets a note too (`kind = "failed"`,
+  with its turn between turns), so a stored run shows it.
 
 - **Cost:** one Jev round trip (about 180 ms median) before the session
   opens, and with `redecide` one per ended lease. The warm-up, if on,
@@ -922,13 +924,14 @@ after; they are saved with the model settings.
 
 #### Replaying stored runs
 
-`tau_reasoning::replay` walks a stored run's timeline request by request
-through the same policy: a user message after a final answer is scored
-as `start` would score it, sticky effort included, and a later request only when the simulated
+The `replay` example loads the plugin as tau does and walks a stored
+run's timeline request by request through its hooks: `start` as a user
+message after a final answer comes in, sticky effort included, and
+`before_request` before each request, which asks Jev only when the
 lease has ended. Each `Decision` says what the stored request went out
-at (from the run's records), what Jev answered, and what the policy
-would send. The example runs it on the latest runs of a store, each on
-its own model, with the real Jev:
+at (from the run's records, the Rust plugin's or the Luau one's state),
+what Jev answered, and what the plugin would send. It runs on the
+latest runs of a store, each on its own model, with the real Jev:
 
 ```sh
 cargo run -p tau-reasoning --example replay -- ~/.local/share/tau/runs.db 20

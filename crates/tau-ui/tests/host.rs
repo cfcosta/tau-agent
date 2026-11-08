@@ -429,63 +429,40 @@ fn goal_notes(view: &tau_ui_remote::view::RunView) -> Vec<String> {
         .collect()
 }
 
-/// tau-reasoning's state in `view`, as its fold leaves it.
-fn reasoning_of(
-    view: &tau_ui_remote::view::RunView,
-) -> tau_reasoning::ui::State {
-    view.plugin_states
-        .get(tau_reasoning::NAME)
-        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
-        .unwrap_or_default()
-}
-
 /// The Plugins screen lists every plugin that asks Jev, with a key or
-/// without one, which it says it needs; tau-reasoning opens the run's
-/// plan. Spend comes from what each plugin charged.
+/// without one, which it says it needs; with a key, it does not. Spend
+/// comes from what each plugin charged.
 #[test]
 fn every_jev_plugin_is_listed() {
     let jev_plugins = [
-        tau_reasoning::NAME,
         tau_fast_compaction::NAME,
         tau_constitution_host::NAME,
         tau_goal::NAME,
     ];
     let (host, _events) = host(ScriptedModel::new());
-    let catalog = host.block_on(host.catalog());
-    for name in jev_plugins {
+    let described = |catalog: &tau_ui_remote::catalog::Catalog, name: &str| {
         let plugin = catalog
             .plugins
             .iter()
             .find(|plugin| plugin.name == name)
             .unwrap_or_else(|| panic!("{name} is listed"));
-        assert!(
-            plugin.description.contains("needs a TypeSafe key"),
-            "{name}: {}",
-            plugin.description
-        );
         assert_eq!(plugin.spend, 0.0);
-    }
-    let reasoning = |catalog: &tau_ui_remote::catalog::Catalog| {
-        catalog
-            .plugins
-            .iter()
-            .find(|plugin| plugin.name == tau_reasoning::NAME)
-            .cloned()
-            .unwrap()
+        plugin.description.clone()
     };
-    assert_eq!(
-        reasoning(&catalog).page,
-        Some(tau_ui_plugin::Link::page("choices").param("run", ""))
-    );
+    let catalog = host.block_on(host.catalog());
+    for name in jev_plugins {
+        let description = described(&catalog, name);
+        assert!(
+            description.contains("needs a TypeSafe key"),
+            "{name}: {description}"
+        );
+    }
     let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(
         tau_jev::fake::FakeJev::nouls(|_| 0.5),
     )));
     let catalog = host.block_on(host.catalog());
-    assert!(
-        !reasoning(&catalog).description.contains("needs"),
-        "{:?}",
-        reasoning(&catalog)
-    );
+    let description = described(&catalog, tau_goal::NAME);
+    assert!(!description.contains("needs"), "{description}");
 }
 
 #[test]
@@ -2719,146 +2696,6 @@ fn host_credentials(host: &Host) -> tau_ui::accounts::Credentials {
 }
 
 #[test]
-fn auto_reasoning_takes_the_effort_jev_picks() {
-    let dir = tempfile::tempdir().unwrap();
-    let llm = ScriptedModel::new().turn(|t| t.text("done"));
-    let (host, mut events) = host_on(llm.clone(), dir.path());
-    // Jev is sure the task wants high.
-    let jev = tau_jev::fake::FakeJev::new(|request| {
-        let answers = request
-            .questions
-            .keys()
-            .map(|id| {
-                let probabilities = [0.01, 0.02, 0.09, 0.84, 0.04]
-                    .iter()
-                    .enumerate()
-                    .map(|(n, p)| (n.to_string(), *p))
-                    .collect();
-                (
-                    id.clone(),
-                    tau_jev::Answer::Score {
-                        score: 3.0,
-                        probabilities,
-                        confidence: 0.84,
-                    },
-                )
-            })
-            .collect();
-        Ok(tau_jev::fake::response(answers, request))
-    });
-    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev)));
-    let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
-    let mut view = host
-        .block_on(host.start("track down the race", &auto, REPO))
-        .unwrap();
-    for event in until_end(&mut events) {
-        view.apply(&event);
-    }
-    wait_until_done(&host, &view.id);
-    assert_eq!(
-        llm.requests()[0].settings.reasoning,
-        Some(tau_ai::responses::request::ReasoningEffort::High)
-    );
-    // The plan's reasoning, as tau-reasoning's state says it.
-    let chosen = |view: &tau_ui_remote::view::RunView| {
-        reasoning_of(view).plan.as_deref() == Some("high")
-    };
-    assert!(chosen(&view), "{:?}", view.plugin_states);
-    assert!(view.items.iter().any(|item| matches!(item,
-        Item::Anchor { plugin, .. } if plugin == tau_reasoning::NAME)));
-    // History shows it again, from the plugin's record.
-    assert!(chosen(&host.block_on(host.history()).unwrap()[0]));
-
-    // An effort someone chose is not scored: Jev is never asked, and
-    // the run asks the model at that effort and ends as it should.
-    let llm = ScriptedModel::new().turn(|t| t.text("ok"));
-    let (host, mut events) = host_on(llm.clone(), dir.path());
-    let jev = tau_jev::fake::FakeJev::nouls(|_| 0.5);
-    let host =
-        host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev.clone())));
-    let low = ModelChoice::new("gpt-5.5", Effort::Low);
-    let run = host
-        .block_on(host.start("rename a variable", &low, REPO))
-        .unwrap();
-    let stops: Vec<StopReason> = until_end(&mut events)
-        .into_iter()
-        .filter_map(|event| match event {
-            RunEvent::RunEnd { stop, .. } => Some(stop),
-            _ => None,
-        })
-        .collect();
-    wait_until_done(&host, &run.id);
-    assert_eq!(stops, [StopReason::Stop]);
-    assert!(jev.requests().is_empty(), "{:?}", jev.requests());
-    assert_eq!(
-        llm.requests()[0].settings.reasoning,
-        Some(tau_ai::responses::request::ReasoningEffort::Low)
-    );
-}
-
-/// The Models screen's reasoning settings reach tau-reasoning: asked to
-/// decide again between steps, it asks Jev how long the effort holds;
-/// asked for more confidence than Jev has, it keeps the default.
-#[test]
-fn reasoning_settings_reach_the_plugin() {
-    let dir = tempfile::tempdir().unwrap();
-    let llm = ScriptedModel::new().turn(|t| t.text("done"));
-    let (host, mut events) = host_on(llm.clone(), dir.path());
-    // 0.84 sure of high, and sure the effort holds for one call.
-    let jev = tau_jev::fake::FakeJev::new(|request| {
-        let answers = request
-            .questions
-            .keys()
-            .map(|id| {
-                let answer = if id == "lease" {
-                    tau_jev::Answer::Choice {
-                        choice: "one_call".into(),
-                        probabilities: [("one_call".to_owned(), 0.9)].into(),
-                        confidence: 0.9,
-                    }
-                } else {
-                    tau_jev::Answer::Score {
-                        score: 3.0,
-                        probabilities: [0.01, 0.02, 0.09, 0.84, 0.04]
-                            .iter()
-                            .enumerate()
-                            .map(|(n, p)| (n.to_string(), *p))
-                            .collect(),
-                        confidence: 0.84,
-                    }
-                };
-                (id.clone(), answer)
-            })
-            .collect();
-        Ok(tau_jev::fake::response(answers, request))
-    });
-    let host =
-        host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev.clone())));
-    let mut settings = tau_ui_remote::models::ModelSettings::default();
-    settings.plugins.insert(
-        tau_reasoning::NAME.into(),
-        serde_json::json!({ "redecide": true, "threshold": 0.9 }),
-    );
-    host.block_on(host.save_settings(settings)).unwrap();
-    let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
-    let view = host
-        .block_on(host.start("track down the race", &auto, REPO))
-        .unwrap();
-    until_end(&mut events);
-    wait_until_done(&host, &view.id);
-    let asked = jev.requests();
-    assert!(
-        asked[0].questions.contains_key("lease"),
-        "deciding again asks how long the effort holds"
-    );
-    assert_eq!(
-        llm.requests()[0].settings.reasoning,
-        None,
-        "0.84 is short of 0.9: the model's default"
-    );
-}
-
-#[test]
 fn a_goal_keeps_the_chat_going_until_it_holds() {
     let dir = tempfile::tempdir().unwrap();
     let llm = ScriptedModel::new()
@@ -2993,104 +2830,6 @@ fn an_effort_the_model_does_not_take_runs_at_auto() {
     assert_eq!(llm.requests()[0].settings.reasoning, None);
     let reasoning = run.plan.iter().find(|field| field.name == "reasoning");
     assert_eq!(reasoning.unwrap().value, "auto");
-}
-
-/// Each message of a chat on auto is scored on its own: an effort
-/// tau-reasoning picked does not carry over. History shows each choice
-/// after the message it was for.
-#[test]
-fn each_message_is_scored_again() {
-    let dir = tempfile::tempdir().unwrap();
-    let llm = ScriptedModel::new()
-        .turn(|t| t.text("fine, thanks"))
-        .turn(|t| t.text("a long answer"));
-    let (host, mut events) = host_on(llm.clone(), dir.path());
-    // gpt-5.5's levels: none, low, medium, high, xhigh. The first
-    // message wants none, the second xhigh.
-    let wants = std::sync::Arc::new(std::sync::Mutex::new(vec![4, 0]));
-    let jev = tau_jev::fake::FakeJev::new(move |request| {
-        let level = wants.lock().unwrap().pop().unwrap();
-        let answers = request
-            .questions
-            .keys()
-            .map(|id| {
-                let probabilities = (0..5)
-                    .map(|n| {
-                        (n.to_string(), if n == level { 0.96 } else { 0.01 })
-                    })
-                    .collect();
-                (
-                    id.clone(),
-                    tau_jev::Answer::Score {
-                        score: level as f64,
-                        probabilities,
-                        confidence: 0.96,
-                    },
-                )
-            })
-            .collect();
-        Ok(tau_jev::fake::response(answers, request))
-    });
-    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev)));
-    let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
-    let mut view = host
-        .block_on(host.start("how are you?", &auto, REPO))
-        .unwrap();
-    for event in until_end(&mut events) {
-        view.apply(&event);
-    }
-    wait_until_done(&host, &view.id);
-    // What the composer sends next: auto again, not the picked none.
-    let next = tau_ui_remote::Workspace::model_of(&view);
-    assert_eq!(next, auto);
-    host.block_on(host.resume(&view.id, "prove the Riemann hypothesis", &next))
-        .unwrap();
-    until_end(&mut events);
-    wait_until_done(&host, &view.id);
-    use tau_ai::responses::request::ReasoningEffort;
-    let asked: Vec<_> = llm
-        .requests()
-        .iter()
-        .map(|request| request.settings.reasoning)
-        .collect();
-    assert_eq!(
-        asked,
-        [Some(ReasoningEffort::None), Some(ReasoningEffort::Xhigh)]
-    );
-
-    // History: each choice right after its message.
-    let history = host.block_on(host.history()).unwrap();
-    let state = reasoning_of(&history[0]);
-    let order: Vec<String> = history[0]
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            Item::User(text) => Some(format!("user: {text}")),
-            Item::Anchor { plugin, key } if plugin == tau_reasoning::NAME => {
-                match state.notes.get(key)? {
-                    tau_reasoning::ui::Note::Choice { text, .. } => {
-                        Some(text.clone())
-                    }
-                    tau_reasoning::ui::Note::Failed { message, .. } => {
-                        Some(message.clone())
-                    }
-                }
-            }
-            Item::Text(text) => Some(format!("reply: {text}")),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        order,
-        [
-            "user: how are you?",
-            "picked **none** reasoning for this message",
-            "reply: fine, thanks",
-            "user: prove the Riemann hypothesis",
-            "reasoning **none** → **xhigh**",
-            "reply: a long answer",
-        ]
-    );
 }
 
 /// A run keeps a note in its repository's memory, the Memory screen

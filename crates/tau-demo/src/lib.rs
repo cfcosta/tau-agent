@@ -1640,9 +1640,30 @@ pub fn models() -> tau_ui_remote::models::Models {
     }
 }
 
+/// What tau-reasoning, a Luau plugin (ADR 0050), publishes of one of
+/// its fixtures: its state, then the view it draws from it, as
+/// tau-luau-plugins' records. The demo cannot run Luau; tau-reasoning's
+/// tests check the fixtures against the plugin.
+pub fn reasoning(fixture: &str) -> [Value; 2] {
+    let fixture: Value = serde_json::from_str(fixture)
+        .expect("tau-reasoning's fixtures are JSON");
+    let plugin = tau_reasoning::NAME.to_owned();
+    [
+        tau_luau_plugins::Record::State {
+            plugin: plugin.clone(),
+            state: fixture["state"].clone(),
+        },
+        tau_luau_plugins::Record::View {
+            plugin,
+            view: fixture["view"].clone(),
+        },
+    ]
+    .map(|record| serde_json::to_value(record).expect("plain JSON"))
+}
+
 fn plugins(states: [&str; 4]) -> Vec<PluginStatus> {
     let names = [
-        "tau-reasoning",
+        tau_luau_plugins::NAME,
         "tau-memory",
         "tau-constitution",
         tau_fast_compaction::NAME,
@@ -2584,20 +2605,9 @@ pub fn script() -> Vec<Step> {
     );
 
     // tau-reasoning and tau-memory run in `start`, before the session.
-    s.report(
-        "tau-reasoning",
-        json!({
-            "kind": "choice", "verdict": "chose", "effort": "high", "confidence": 0.84,
-            "threshold": 0.7, "cost": 0.00002,
-            "levels": [
-                { "effort": "none", "suits": "no thought", "p": 0.01 },
-                { "effort": "low", "suits": "small edits", "p": 0.02 },
-                { "effort": "medium", "suits": "routine code", "p": 0.09 },
-                { "effort": "high", "suits": "refactors", "p": 0.84 },
-                { "effort": "xhigh", "suits": "audits, proofs", "p": 0.04 },
-            ],
-        }),
-    );
+    for record in reasoning(tau_reasoning::DEMO_CHOSE) {
+        s.report(tau_luau_plugins::NAME, record);
+    }
     // tau-memory found notes for the task as the run started.
     s.report(
         tau_memory_host::NAME,
@@ -2638,7 +2648,7 @@ pub fn script() -> Vec<Step> {
     s.at(
         0,
         RunUpdate::Plugins(plugins([
-            "chose high",
+            "tau-reasoning: chose high",
             "3 notes",
             "watching edits",
             "idle · 2% of window",
@@ -2766,7 +2776,7 @@ pub fn script() -> Vec<Step> {
     s.at(
         0,
         RunUpdate::Plugins(plugins([
-            "chose high",
+            "tau-reasoning: chose high",
             "3 notes · 1 read",
             "1 blocked · 1 flagged",
             "idle · 38% of window",
@@ -2892,7 +2902,7 @@ pub fn script() -> Vec<Step> {
     s.at(
         0,
         RunUpdate::Plugins(plugins([
-            "chose high",
+            "tau-reasoning: chose high",
             "3 notes · 1 read",
             "1 blocked · 1 flagged",
             "1 rewrite · −91k",
@@ -3051,7 +3061,7 @@ pub fn script() -> Vec<Step> {
     s.at(
         0,
         RunUpdate::Plugins(plugins([
-            "chose high",
+            "tau-reasoning: chose high",
             "3 in · 2 proposed",
             "1 block · 1 flag · 1 hold",
             "1 rewrite · −91k",
@@ -3230,12 +3240,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(anchored, [tau_reasoning::NAME, tau_memory_host::NAME]);
-        let reasoning: tau_reasoning::ui::State = serde_json::from_value(
-            view.plugin_states[tau_reasoning::NAME].json().clone(),
-        )
-        .unwrap();
-        assert_eq!(reasoning.plan.as_deref(), Some("high"));
+        assert_eq!(anchored, [tau_luau_plugins::NAME, tau_memory_host::NAME]);
+        let luau = view.plugin_states[tau_luau_plugins::NAME].json();
+        let reasoning = &luau["plugins"][tau_reasoning::NAME]["state"];
+        assert_eq!(reasoning["plan"], "high");
         let memory: tau_memory::ui::State = serde_json::from_value(
             view.plugin_states[tau_memory_host::NAME].json().clone(),
         )

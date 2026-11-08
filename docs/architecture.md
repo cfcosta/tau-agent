@@ -51,7 +51,7 @@ tau-agent/
 │       ├── tau-memory/           # linked notes each repository's runs keep
 │       ├── tau-notify/           # desktop notices while tau is in the
 │       │                         # background, filling `tau.notify`
-│       ├── tau-reasoning/        # picks a run's reasoning effort
+│       ├── tau-reasoning/        # picks a run's reasoning effort on auto (Luau)
 │       ├── tau-schedule/         # a chat wakes itself later, once; the
 │       │                         # clock agents' schedules go by (ADR 0039)
 │       ├── tau-skills/           # instructions an agent loads when a task

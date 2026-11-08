@@ -291,6 +291,55 @@ What the port found besides:
   "on"/"off" note is gone with the Rust half. Records gave way to the
   run's state, stored with it as every Luau plugin's is.
 
+### Gap J, and tau-reasoning
+
+tau-reasoning needed what the inventory did not list: to know the
+run's effort and set it, and the plan's points. Closed here as gap J:
+
+- **`start` knows the effort.** Its input has the run's `model`, the
+  `efforts` it takes, `effort` (left out on auto) and `prefix_tokens`,
+  what the conversation and the instructions hold. `tau.start{ effort }`
+  sets it, on auto only; the first plugin that sets it wins.
+- **The plan's points**: a view's `plan = { name, value }` is a plan
+  field, set by the plugin, and its `plan_steps` the Plan screen's
+  step. A declaration's `picker_auto = { jev, no_jev }` is the model
+  picker's line for "auto", with a TypeSafe key or without.
+- **A Jev call says its cost**, as a second value, so a plugin keeps
+  what each choice cost.
+- `before_request`'s `effort` is left out at the model's default, as
+  `start`'s is: a JSON null would reach Luau as the truthy `json.null`.
+
+What the port found besides:
+
+- **A run at a chosen effort left the next message nothing.** The Rust
+  host gave the plugin only to runs on auto, so a long conversation
+  started at an effort the person chose switched to Jev's pick on its
+  next message, against the plugin's own docs; only its unit test,
+  which gave the plugin to every run, kept it. A drawn property of the
+  Luau tests found it. With Jev, the Luau plugin is in every run, and
+  a run at a chosen effort leaves its context.
+- **What `start` leaves shows after the message.** The Rust plugin
+  placed its choice after the message the run started on
+  (`PLACE_MESSAGE`); history put a Luau note before it. The host now
+  places the state and view a Luau plugin's `start` leaves there, for
+  every plugin.
+- **A model that takes one effort** is not scored: codemode's `Score`
+  needs two levels, where the Rust plugin asked with one.
+- **One tree for wide and compact.** On a phone the Rust note showed
+  the effort as a link to the chart, and the page drew each step
+  narrower; the Luau note draws the same tree on both, its chart in a
+  closed section. Its page is tau-luau-plugins' page for the plugin,
+  the newest run's, not one page per run; a note's section is opened
+  by its key (`tau-reasoning/note-n0`), which runs share.
+- **The catalog's row**: it is one of tau-luau-plugins' rows now, so
+  "needs a TypeSafe key" moved to the picker's line for "auto".
+- **The parity check** ran a run's start end to end through both, on
+  drawn efforts, scores and conversations; `runs_at` on drawn picks,
+  last efforts and prefixes; drawn choices folded by Rust's `State` and
+  by `effort.record_choice`; and drawn transcripts read by both for the
+  step and the lease: all equal. The `replay` example and its test run
+  on the Luau plugin.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

@@ -572,8 +572,8 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // Its chart is a section of the note, open in the UI state (ADR 0045).
     ("note-open", |ws, _, cx| {
         ws.toggle_note(&run_id(), 1, cx);
-        let open = format!("note-{}-n0.open", run_id().0);
-        ws.set_plugin_ui(tau_reasoning::NAME, open, Some(json!(true)), cx);
+        let open = format!("{}/note-n0.open", tau_reasoning::NAME);
+        ws.set_plugin_ui(tau_luau_plugins::NAME, open, Some(json!(true)), cx);
     }),
     // tau-reasoning keeping a long conversation's effort over Jev's
     // pick: its note, then its choices page.
@@ -584,9 +584,13 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("effort-kept-page", |ws, _, cx| {
         effort_kept(ws, cx);
         let page = Route::Plugin {
-            plugin: tau_reasoning::NAME.into(),
-            page: "choices".into(),
-            params: [("run".to_owned(), run_id().0.to_string())].into(),
+            plugin: tau_luau_plugins::NAME.into(),
+            page: tau_luau_plugins::ui::PAGE.into(),
+            params: [(
+                tau_ui_plugin::ENTRY.to_owned(),
+                tau_reasoning::NAME.to_owned(),
+            )]
+            .into(),
         };
         ws.navigate(page, cx)
     }),
@@ -1698,31 +1702,22 @@ fn rules_at(
     workspace.drain_plugin_requests(cx);
 }
 
-/// The demo run working on [`GOAL`], with the records tau-goal
-/// published by `state`.
 /// A message of the demo run that kept medium reasoning over Jev's pick
-/// of high, its conversation's prefix being 48k tokens.
+/// of high, its conversation's prefix being 48k tokens: tau-reasoning's
+/// state and view from its fixture (ADR 0050).
 fn effort_kept(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
-    let body = serde_json::json!({
-        "kind": "choice", "verdict": "chose", "effort": "high",
-        "confidence": 0.81, "threshold": 0.7, "cost": 0.00002,
-        "runs_at": "medium", "kept_for_cache": 48_213,
-        "levels": [
-            { "effort": "none", "suits": "no thought", "p": 0.01 },
-            { "effort": "low", "suits": "small edits", "p": 0.03 },
-            { "effort": "medium", "suits": "routine code", "p": 0.11 },
-            { "effort": "high", "suits": "refactors", "p": 0.81 },
-            { "effort": "xhigh", "suits": "audits, proofs", "p": 0.04 },
-        ],
-    });
-    let event = RunEvent::PluginReport {
-        run: run_id(),
-        plugin: tau_reasoning::NAME.into(),
-        body,
-    };
-    workspace.apply(HostUpdate::Event(event), cx);
+    for body in crate::reasoning(tau_reasoning::DEMO_KEPT) {
+        let event = RunEvent::PluginReport {
+            run: run_id(),
+            plugin: tau_luau_plugins::NAME.into(),
+            body,
+        };
+        workspace.apply(HostUpdate::Event(event), cx);
+    }
 }
 
+/// The demo run working on [`GOAL`], with the records tau-goal
+/// published by `state`.
 fn goal_at(
     workspace: &mut Workspace,
     state: &str,

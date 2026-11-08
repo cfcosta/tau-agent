@@ -726,10 +726,10 @@ impl UiPlugin for LuauPluginsUi {
     }
 
     fn declaration(&self) -> tau_ui_plugin::Declaration {
-        // The person's plugins come after the rules, the goal and the
-        // effort's pick, so theirs hold first.
+        // The person's plugins come after the rules and the goal, so
+        // theirs hold first.
         tau_ui_plugin::Declaration::new()
-            .after(&["tau-constitution", "tau-goal", "tau-reasoning"])
+            .after(&["tau-constitution", "tau-goal"])
             .seams(&[
                 tau_ui_plugin::Seam::Tools,
                 tau_ui_plugin::Seam::Start,

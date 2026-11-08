@@ -1,0 +1,883 @@
+{
+  "state": {
+    "active": "demo",
+    "choices": [
+      {
+        "confidence": 0.9,
+        "cost": 0.000040404,
+        "effort": "medium",
+        "levels": [
+          {
+            "effort": "none",
+            "p": 0.01,
+            "suits": "answers that need no thought: thanks, greetings, restating what was just said"
+          },
+          {
+            "effort": "low",
+            "p": 0.03,
+            "suits": "a small, clear edit in one place, or a tool step whose next move is obvious"
+          },
+          {
+            "effort": "medium",
+            "p": 0.9,
+            "suits": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+          },
+          {
+            "effort": "high",
+            "p": 0.05,
+            "suits": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+          },
+          {
+            "effort": "xhigh",
+            "p": 0.01,
+            "suits": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+          }
+        ],
+        "runs_at": "medium",
+        "step": "user_turn",
+        "threshold": 0.7,
+        "verdict": "chose"
+      },
+      {
+        "confidence": 0.81,
+        "cost": 0.000043218000000000005,
+        "effort": "high",
+        "kept_for_cache": 48213,
+        "levels": [
+          {
+            "effort": "none",
+            "p": 0.01,
+            "suits": "answers that need no thought: thanks, greetings, restating what was just said"
+          },
+          {
+            "effort": "low",
+            "p": 0.03,
+            "suits": "a small, clear edit in one place, or a tool step whose next move is obvious"
+          },
+          {
+            "effort": "medium",
+            "p": 0.11,
+            "suits": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+          },
+          {
+            "effort": "high",
+            "p": 0.81,
+            "suits": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+          },
+          {
+            "effort": "xhigh",
+            "p": 0.04,
+            "suits": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+          }
+        ],
+        "runs_at": "medium",
+        "step": "user_turn",
+        "threshold": 0.7,
+        "verdict": "chose"
+      }
+    ],
+    "context": {
+      "proposal": "Done.",
+      "runs_at": "medium",
+      "task": "Design the retry pool"
+    },
+    "effort_now": "medium",
+    "first": "demo",
+    "instructions": "You are a coding agent.",
+    "last_ran": {
+      "effort": "medium"
+    },
+    "levels": [
+      {
+        "effort": "none",
+        "suits": "answers that need no thought: thanks, greetings, restating what was just said"
+      },
+      {
+        "effort": "low",
+        "suits": "a small, clear edit in one place, or a tool step whose next move is obvious"
+      },
+      {
+        "effort": "medium",
+        "suits": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+      },
+      {
+        "effort": "high",
+        "suits": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+      },
+      {
+        "effort": "xhigh",
+        "suits": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+      }
+    ],
+    "notes": {
+      "n0": {
+        "choice": 1,
+        "kind": "choice",
+        "outcome": "so this message runs at medium.",
+        "text": "picked **medium** reasoning for this message"
+      },
+      "n1": {
+        "choice": 2,
+        "kind": "choice",
+        "outcome": "but this message stays at medium: switching to high would resend 48k tokens uncached.",
+        "text": "kept **medium** reasoning for this message"
+      }
+    },
+    "plan": "medium",
+    "ran_at": "medium",
+    "redecides": false,
+    "starting": "picks the effort as the run starts",
+    "status": "kept medium",
+    "task": "Fix the flaky retry test"
+  },
+  "view": {
+    "notes": {
+      "n0": {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "plug",
+                "piece": "icon",
+                "tone": "info"
+              },
+              {
+                "piece": "mono",
+                "text": "tau-reasoning"
+              },
+              {
+                "piece": "rich",
+                "text": "picked **medium** reasoning for this message"
+              },
+              {
+                "piece": "mono",
+                "text": "Jev · $0.0000"
+              },
+              {
+                "label": "Details",
+                "piece": "link",
+                "to": {
+                  "page": "luau-plugins",
+                  "params": {
+                    "entry": "tau-reasoning"
+                  },
+                  "plugin": "tau-luau-plugins"
+                }
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "head": ["Effort", "Probability", ""],
+                "piece": "table",
+                "rows": [
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "none"
+                    },
+                    {
+                      "label": "0.01",
+                      "piece": "progress",
+                      "share": 0.01
+                    },
+                    {
+                      "piece": "text",
+                      "text": ""
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "low"
+                    },
+                    {
+                      "label": "0.03",
+                      "piece": "progress",
+                      "share": 0.03
+                    },
+                    {
+                      "piece": "text",
+                      "text": ""
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "medium"
+                    },
+                    {
+                      "label": "0.90",
+                      "piece": "progress",
+                      "share": 0.9
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "most likely",
+                      "tone": "info"
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "high"
+                    },
+                    {
+                      "label": "0.05",
+                      "piece": "progress",
+                      "share": 0.05
+                    },
+                    {
+                      "piece": "text",
+                      "text": ""
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "xhigh"
+                    },
+                    {
+                      "label": "0.01",
+                      "piece": "progress",
+                      "share": 0.01
+                    },
+                    {
+                      "piece": "text",
+                      "text": ""
+                    }
+                  ]
+                ]
+              },
+              {
+                "piece": "text",
+                "text": "Confidence 0.90 is above 0.70, so this message runs at medium."
+              }
+            ],
+            "id": "note-n0",
+            "open": false,
+            "piece": "section",
+            "title": "Probability of each effort level"
+          }
+        ],
+        "piece": "stack"
+      },
+      "n1": {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "plug",
+                "piece": "icon",
+                "tone": "info"
+              },
+              {
+                "piece": "mono",
+                "text": "tau-reasoning"
+              },
+              {
+                "piece": "rich",
+                "text": "kept **medium** reasoning for this message"
+              },
+              {
+                "piece": "mono",
+                "text": "Jev · $0.0000"
+              },
+              {
+                "label": "Details",
+                "piece": "link",
+                "to": {
+                  "page": "luau-plugins",
+                  "params": {
+                    "entry": "tau-reasoning"
+                  },
+                  "plugin": "tau-luau-plugins"
+                }
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "head": ["Effort", "Probability", ""],
+                "piece": "table",
+                "rows": [
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "none"
+                    },
+                    {
+                      "label": "0.01",
+                      "piece": "progress",
+                      "share": 0.01
+                    },
+                    {
+                      "piece": "text",
+                      "text": ""
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "low"
+                    },
+                    {
+                      "label": "0.03",
+                      "piece": "progress",
+                      "share": 0.03
+                    },
+                    {
+                      "piece": "text",
+                      "text": ""
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "medium"
+                    },
+                    {
+                      "label": "0.11",
+                      "piece": "progress",
+                      "share": 0.11
+                    },
+                    {
+                      "piece": "text",
+                      "text": ""
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "high"
+                    },
+                    {
+                      "label": "0.81",
+                      "piece": "progress",
+                      "share": 0.81
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "most likely",
+                      "tone": "info"
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "xhigh"
+                    },
+                    {
+                      "label": "0.04",
+                      "piece": "progress",
+                      "share": 0.04
+                    },
+                    {
+                      "piece": "text",
+                      "text": ""
+                    }
+                  ]
+                ]
+              },
+              {
+                "piece": "text",
+                "text": "Confidence 0.81 is above 0.70, but this message stays at medium: switching to high would resend 48k tokens uncached."
+              }
+            ],
+            "id": "note-n1",
+            "open": false,
+            "piece": "section",
+            "title": "Probability of each effort level"
+          }
+        ],
+        "piece": "stack"
+      }
+    },
+    "page": {
+      "children": [
+        {
+          "piece": "heading",
+          "text": "Reasoning effort"
+        },
+        {
+          "piece": "text",
+          "text": "Each effort tau-reasoning picked for this run, with how sure Jev was."
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "tau-reasoning"
+                },
+                {
+                  "piece": "text",
+                  "text": "As the message came in: runs at medium"
+                },
+                {
+                  "piece": "mono",
+                  "text": "Jev · $0.0000"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "rows",
+                  "rows": [
+                    {
+                      "key": "Confidence",
+                      "value": "0.90"
+                    },
+                    {
+                      "key": "Threshold",
+                      "value": "0.70"
+                    }
+                  ]
+                },
+                {
+                  "piece": "text",
+                  "text": "So the choice is applied."
+                },
+                {
+                  "piece": "rule"
+                },
+                {
+                  "piece": "text",
+                  "text": "Probability of each effort level"
+                },
+                {
+                  "head": ["Effort", "Probability", "Suits", ""],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "none"
+                      },
+                      {
+                        "label": "0.01",
+                        "piece": "progress",
+                        "share": 0.01
+                      },
+                      {
+                        "piece": "text",
+                        "text": "answers that need no thought: thanks, greetings, restating what was just said"
+                      },
+                      {
+                        "piece": "text",
+                        "text": ""
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "low"
+                      },
+                      {
+                        "label": "0.03",
+                        "piece": "progress",
+                        "share": 0.03
+                      },
+                      {
+                        "piece": "text",
+                        "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
+                      },
+                      {
+                        "piece": "text",
+                        "text": ""
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "medium"
+                      },
+                      {
+                        "label": "0.90",
+                        "piece": "progress",
+                        "share": 0.9
+                      },
+                      {
+                        "piece": "text",
+                        "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+                      },
+                      {
+                        "piece": "badge",
+                        "text": "most likely",
+                        "tone": "info"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "high"
+                      },
+                      {
+                        "label": "0.05",
+                        "piece": "progress",
+                        "share": 0.05
+                      },
+                      {
+                        "piece": "text",
+                        "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+                      },
+                      {
+                        "piece": "text",
+                        "text": ""
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "xhigh"
+                      },
+                      {
+                        "label": "0.01",
+                        "piece": "progress",
+                        "share": 0.01
+                      },
+                      {
+                        "piece": "text",
+                        "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+                      },
+                      {
+                        "piece": "text",
+                        "text": ""
+                      }
+                    ]
+                  ]
+                }
+              ],
+              "piece": "stack"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "tau-reasoning"
+                },
+                {
+                  "piece": "text",
+                  "text": "As the message came in: runs at medium"
+                },
+                {
+                  "piece": "mono",
+                  "text": "Jev · $0.0000"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "rows",
+                  "rows": [
+                    {
+                      "key": "Confidence",
+                      "value": "0.81"
+                    },
+                    {
+                      "key": "Threshold",
+                      "value": "0.70"
+                    }
+                  ]
+                },
+                {
+                  "piece": "text",
+                  "text": "So the choice is held back: it would resend 48k tokens uncached."
+                },
+                {
+                  "piece": "rule"
+                },
+                {
+                  "piece": "text",
+                  "text": "Probability of each effort level"
+                },
+                {
+                  "head": ["Effort", "Probability", "Suits", ""],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "none"
+                      },
+                      {
+                        "label": "0.01",
+                        "piece": "progress",
+                        "share": 0.01
+                      },
+                      {
+                        "piece": "text",
+                        "text": "answers that need no thought: thanks, greetings, restating what was just said"
+                      },
+                      {
+                        "piece": "text",
+                        "text": ""
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "low"
+                      },
+                      {
+                        "label": "0.03",
+                        "piece": "progress",
+                        "share": 0.03
+                      },
+                      {
+                        "piece": "text",
+                        "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
+                      },
+                      {
+                        "piece": "text",
+                        "text": ""
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "medium"
+                      },
+                      {
+                        "label": "0.11",
+                        "piece": "progress",
+                        "share": 0.11
+                      },
+                      {
+                        "piece": "text",
+                        "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+                      },
+                      {
+                        "piece": "text",
+                        "text": ""
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "high"
+                      },
+                      {
+                        "label": "0.81",
+                        "piece": "progress",
+                        "share": 0.81
+                      },
+                      {
+                        "piece": "text",
+                        "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+                      },
+                      {
+                        "piece": "badge",
+                        "text": "most likely",
+                        "tone": "info"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "xhigh"
+                      },
+                      {
+                        "label": "0.04",
+                        "piece": "progress",
+                        "share": 0.04
+                      },
+                      {
+                        "piece": "text",
+                        "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+                      },
+                      {
+                        "piece": "text",
+                        "text": ""
+                      }
+                    ]
+                  ]
+                }
+              ],
+              "piece": "stack"
+            }
+          ],
+          "piece": "stack"
+        }
+      ],
+      "piece": "stack"
+    },
+    "plan": {
+      "name": "reasoning",
+      "value": "medium"
+    },
+    "plan_steps": {
+      "children": [
+        {
+          "children": [
+            {
+              "piece": "mono",
+              "text": "tau-reasoning"
+            },
+            {
+              "piece": "text",
+              "text": "As the message came in: runs at medium"
+            },
+            {
+              "piece": "mono",
+              "text": "Jev · $0.0000"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "children": [
+            {
+              "piece": "rows",
+              "rows": [
+                {
+                  "key": "Confidence",
+                  "value": "0.81"
+                },
+                {
+                  "key": "Threshold",
+                  "value": "0.70"
+                }
+              ]
+            },
+            {
+              "piece": "text",
+              "text": "So the choice is held back: it would resend 48k tokens uncached."
+            },
+            {
+              "piece": "rule"
+            },
+            {
+              "piece": "text",
+              "text": "Probability of each effort level"
+            },
+            {
+              "head": ["Effort", "Probability", "Suits", ""],
+              "piece": "table",
+              "rows": [
+                [
+                  {
+                    "piece": "mono",
+                    "text": "none"
+                  },
+                  {
+                    "label": "0.01",
+                    "piece": "progress",
+                    "share": 0.01
+                  },
+                  {
+                    "piece": "text",
+                    "text": "answers that need no thought: thanks, greetings, restating what was just said"
+                  },
+                  {
+                    "piece": "text",
+                    "text": ""
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "low"
+                  },
+                  {
+                    "label": "0.03",
+                    "piece": "progress",
+                    "share": 0.03
+                  },
+                  {
+                    "piece": "text",
+                    "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
+                  },
+                  {
+                    "piece": "text",
+                    "text": ""
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "medium"
+                  },
+                  {
+                    "label": "0.11",
+                    "piece": "progress",
+                    "share": 0.11
+                  },
+                  {
+                    "piece": "text",
+                    "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+                  },
+                  {
+                    "piece": "text",
+                    "text": ""
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "high"
+                  },
+                  {
+                    "label": "0.81",
+                    "piece": "progress",
+                    "share": 0.81
+                  },
+                  {
+                    "piece": "text",
+                    "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+                  },
+                  {
+                    "piece": "badge",
+                    "text": "most likely",
+                    "tone": "info"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "xhigh"
+                  },
+                  {
+                    "label": "0.04",
+                    "piece": "progress",
+                    "share": 0.04
+                  },
+                  {
+                    "piece": "text",
+                    "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+                  },
+                  {
+                    "piece": "text",
+                    "text": ""
+                  }
+                ]
+              ]
+            }
+          ],
+          "piece": "stack"
+        }
+      ],
+      "piece": "stack"
+    },
+    "status": {
+      "detail": null,
+      "piece": "status",
+      "text": "kept medium",
+      "tone": "neutral"
+    }
+  }
+}

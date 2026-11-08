@@ -32,7 +32,6 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_tools_host::ToolsHost)
         .host(tau_vcs_host::VcsHost)
         .host(tau_github_host::GitHubHost)
-        .host(tau_reasoning::ReasoningHost)
         .host(tau_fast_compaction::ui::FastCompactionHost)
         .host(tau_tree_compaction::ui::TreeCompactionHost)
         .host(tau_compaction::ui::CompactionHost)

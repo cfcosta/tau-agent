@@ -1,6 +1,6 @@
 [package]
 name = "tau-reasoning"
-description = "Picks a tau run's reasoning effort from its task with Jev, as a plugin."
+description = "Picks a tau run's reasoning effort on auto with Jev. A Luau plugin tau comes with (ADR 0050), its replay example, and its tests."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -8,22 +8,17 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-anyhow.workspace = true
+
+[dev-dependencies]
 async-trait.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
+tau-codemode-host.workspace = true
 tau-jev.workspace = true
-# Its UI (ADR 0017).
-tau-ui-kit.workspace = true
-tau-ui-plugin.workspace = true
-
-[dev-dependencies]
-tau-ui-plugin = { workspace = true, features = ["testing"] }
-tau-store-sqlite.workspace = true
-futures-util.workspace = true
-hegeltest.workspace = true
+tau-luau-plugins-host.workspace = true
 tau-store.workspace = true
+tau-store-sqlite.workspace = true
 tau-testing.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "time"] }
+tokio-util.workspace = true

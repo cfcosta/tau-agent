@@ -1080,8 +1080,9 @@ end
 
 -- A fake run: `spec` may give `now` (an ISO date), `id`, `kind`,
 -- `settings`, `state`, `store` (a table of keys, shared by the runs
--- given the same one), `tools` (a function or a value per tool name)
--- and `transcript` (the messages `ctx.transcript()` gives). Its hooks are methods; each keeps the state the last one left,
+-- given the same one), `tools` (a function or a value per tool name),
+-- `transcript` (the messages `ctx.transcript()` gives), `models` (what
+-- `ctx.models` lists) and `jev` (what `ctx.jev` is: functions as Jev's). Its hooks are methods; each keeps the state the last one left,
 -- and a hook that fails keeps none of what it wrote to the store.
 function test.run(spec)
 	spec = spec or {}
@@ -1149,6 +1150,9 @@ function test.run(spec)
 		local data = table.clone(run.data)
 		data.state = run.state
 		local ctx = tau._ctx(data, fakes)
+		if spec.jev then
+			ctx.jev = spec.jev
+		end
 		local before = deep_copy(kept)
 		local ok, answer = pcall(hook, ..., ctx)
 		if not ok then
