@@ -129,9 +129,13 @@ impl Todo {
         })
     }
 
-    /// The last call of `tool` the run `run` made: its id, and whether it
-    /// failed.
-    fn last_call(&mut self, run: &RunId, tool: &str) -> Option<(String, bool)> {
+    /// The last call of `tool` the run `run` made: its id, and why it
+    /// failed, if it did.
+    fn last_call(
+        &mut self,
+        run: &RunId,
+        tool: &str,
+    ) -> Option<(String, Option<String>)> {
         let view = self
             .net
             .computer
@@ -141,20 +145,26 @@ impl Todo {
         view.items.iter().rev().find_map(|item| match item {
             Item::Tool(card) if card.tool == tool => Some((
                 card.call_id.clone(),
-                matches!(card.state, ToolState::Failed(_)),
+                match &card.state {
+                    ToolState::Failed(why) => Some(why.clone()),
+                    _ => None,
+                },
             )),
             _ => None,
         })
     }
 
     /// The id of the `todo_dispatch` call of `run` that waits for the
-    /// person, once its Allow card shows.
+    /// person, once its Allow card shows: the run's state holds the ask.
+    /// The card runs before that, while the tool's hook does, and an
+    /// answer then finds nothing to take.
     fn asking(&mut self, run: &RunId) -> String {
         let deadline = std::time::Instant::now() + sync::SETTLE;
+        let mut states = String::new();
         loop {
             assert!(
                 std::time::Instant::now() < deadline,
-                "the card never asked"
+                "the card never asked: {states}"
             );
             self.net.computer.cx.run_until_parked();
             let view = self
@@ -163,11 +173,22 @@ impl Todo {
                 .runs()
                 .into_iter()
                 .find(|view| &view.id == run);
+            if let Some(view) = &view {
+                states = format!(
+                    "{:?}",
+                    view.plugin_states
+                        .iter()
+                        .map(|(name, state)| (name, state.json()))
+                        .collect::<Vec<_>>()
+                );
+            }
             let waiting = view.and_then(|view| {
+                let asks = &view.plugin_states.get(LUAU)?.json()["asks"];
                 view.items.iter().rev().find_map(|item| match item {
                     Item::Tool(card)
                         if card.tool == "todo_dispatch"
-                            && matches!(card.state, ToolState::Running) =>
+                            && matches!(card.state, ToolState::Running)
+                            && asks[&card.call_id]["outcome"] == "waiting" =>
                     {
                         Some(card.call_id.clone())
                     }
@@ -301,12 +322,20 @@ impl Todo {
         let (_, failed) = self.last_call(&chat.run, "todo_claim").unwrap();
         match self.claims.get(&id) {
             None => {
-                assert!(!failed, "{} could not claim {id}, free", chat.mark);
+                assert_eq!(
+                    failed, None,
+                    "{} could not claim {id}, free",
+                    chat.mark
+                );
                 self.claims.insert(id, chat.run.clone());
             }
-            Some(holder) if *holder == chat.run => assert!(!failed),
+            Some(holder) if *holder == chat.run => assert_eq!(failed, None),
             Some(_) => {
-                assert!(failed && !free, "{} claimed {id}, held", chat.mark)
+                assert!(
+                    failed.is_some() && !free,
+                    "{} claimed {id}, held",
+                    chat.mark
+                )
             }
         }
         self.check();
@@ -342,7 +371,7 @@ impl Todo {
         let mut won = Vec::new();
         for chat in &contenders {
             let (_, failed) = self.last_call(&chat.run, "todo_claim").unwrap();
-            if !failed {
+            if failed.is_none() {
                 won.push(chat.run.clone());
             }
         }

@@ -556,8 +556,13 @@ impl Net {
         let deadline = Instant::now() + SETTLE;
         let mut last = None;
         let mut still = 0;
+        // What kept it from settling, last seen: said if it never does.
+        let mut unsettled = String::new();
         while still < 2 {
-            assert!(Instant::now() < deadline, "the host never settled");
+            assert!(
+                Instant::now() < deadline,
+                "the host never settled: {unsettled}"
+            );
             self.computer.cx.run_until_parked();
             let synced = self.computer.synced();
             // Every live run, sub-agents included, waits for the model:
@@ -571,6 +576,12 @@ impl Net {
             let idle = sessions == live
                 && self.gate.waiting() == live
                 && !self.host.busy();
+            unsettled = format!(
+                "{live} runs live, {sessions} model sessions, {} waiting \
+                 for the model, host busy: {}",
+                self.gate.waiting(),
+                self.host.busy(),
+            );
             let now =
                 (synced, self.wire.borrow().feed.seq(), self.gate.waiting());
             // The host builds its catalog on its own, outside its
