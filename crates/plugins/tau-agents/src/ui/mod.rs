@@ -522,6 +522,7 @@ pub fn commands(overview: &Overview) -> Vec<ListedCommand> {
                 hint: format!("Tell {}", agent.name),
                 args: hint.unwrap_or_default().to_owned(),
                 icon: Icon::SubAgent,
+                popover: false,
             })
         })
         .collect()

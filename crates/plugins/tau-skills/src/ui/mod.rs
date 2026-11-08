@@ -101,6 +101,7 @@ pub fn commands(skills: &Skills, _: Option<&()>) -> Vec<ListedCommand> {
             hint: skill.description.clone(),
             args: "what to do".to_owned(),
             icon: Icon::Skill,
+            popover: false,
         })
         .collect()
 }

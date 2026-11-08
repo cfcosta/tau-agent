@@ -731,7 +731,7 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
                 hint: command.hint,
                 args: command.args,
                 icon: command.icon,
-                popover: false,
+                popover: command.popover,
             });
         }
         commands
@@ -764,8 +764,15 @@ impl<P: UiPlugin, H: HostHalf<Plugin = P>> ErasedPlugin for Typed<P, H> {
         args: &str,
         env: Env<'_>,
     ) -> Option<Node> {
-        let command = self.manifest.commands.iter().find(|c| c.name == name)?;
-        self.with_view(env, |view| command.draw_popover(args, view))
+        if let Some(command) =
+            self.manifest.commands.iter().find(|c| c.name == name)
+        {
+            return self
+                .with_view(env, |view| command.draw_popover(args, view))
+                .flatten();
+        }
+        let popover = self.manifest.listed.as_ref()?.popover.as_ref()?;
+        self.with_view(env, |view| popover(name, args, view))
             .flatten()
     }
 

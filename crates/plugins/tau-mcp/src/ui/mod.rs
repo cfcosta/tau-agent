@@ -229,6 +229,7 @@ impl Servers {
                     hint: prompt.hint(&server.name),
                     args: arguments_hint(&prompt.info()),
                     icon: Icon::Plug,
+                    popover: false,
                 })
             })
             .collect()

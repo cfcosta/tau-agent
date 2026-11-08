@@ -1418,7 +1418,9 @@ fn each_plugin_continues_as_often_as_it_declares() {
     );
     // As tau's host runs it: the plugins keep their own counts.
     let agent = Agent::new(llm.clone())
-        .limits(tau_agent::limits::Limits::default().max_continuations(u32::MAX))
+        .limits(
+            tau_agent::limits::Limits::default().max_continuations(u32::MAX),
+        )
         .plugin(plugins);
     let outcome = block_on_io(agent.run("the person's task", &store)).unwrap();
     llm.assert_exhausted();

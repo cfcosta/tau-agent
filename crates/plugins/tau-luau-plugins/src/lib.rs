@@ -227,6 +227,20 @@ pub struct CommandSpec {
     /// What follows the name, as the composer's menu shows it.
     #[serde(default)]
     pub args: String,
+    /// One of the interface's icons, by name; empty for the plugin mark.
+    #[serde(default)]
+    pub icon: String,
+    /// What the composer's popover shows while it is written.
+    #[serde(default)]
+    pub popover: Option<CommandPopover>,
+}
+
+/// A command's popover: its pieces with a Jev key saved and without.
+/// Their inputs' drafts reach the command's `run` as `ctx.drafts`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandPopover {
+    pub jev: Value,
+    pub no_jev: Value,
 }
 
 /// Its entry under each repository in the sidebar, which opens one of

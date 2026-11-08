@@ -22,6 +22,8 @@ function tau.plugin(spec)
 		end
 		spec.actions = spec.actions or {}
 		spec.actions["/" .. name] = function(args, ctx)
+			-- What the popover's inputs say, by id.
+			ctx.drafts = args.drafts or {}
 			return command.run(args.text or "", ctx)
 		end
 	end
@@ -76,6 +78,11 @@ function tau._commands(commands)
 			name = name,
 			description = command.description or "",
 			args = command.args or "",
+			icon = command.icon or "",
+			popover = command.popover and {
+				jev = command.popover.jev,
+				no_jev = command.popover.no_jev or command.popover.jev,
+			} or json.null,
 		})
 	end
 	table.sort(list, function(a, b)

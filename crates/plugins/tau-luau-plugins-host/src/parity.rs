@@ -88,6 +88,7 @@ pub fn point(name: &str) -> Option<Luau> {
         (PLAN.name, "plan"),
         (PLAN_STEPS.name, "plan_steps"),
         (PICKER_AUTO.name, "picker_auto"),
+        (USER_MESSAGE.name, "messages"),
     ];
     if let Some((_, hook)) = hooks.iter().find(|(point, _)| *point == name) {
         return Some(Luau::Hook(hook));
@@ -129,7 +130,6 @@ pub fn point(name: &str) -> Option<Luau> {
         (REWRITE.name, NOT_YET),
         (CONTEXT.name, NOT_YET),
         (CHANGES.name, NOT_YET),
-        (USER_MESSAGE.name, NOT_YET),
         (PANE.name, NOT_YET),
     ];
     excluded

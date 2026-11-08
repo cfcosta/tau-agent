@@ -136,6 +136,11 @@ type List<P> = Box<
 type RunListed<P> = Box<
     dyn for<'a> Fn(&str, &str, Option<&str>, &mut ViewCx<'a, P>) + Send + Sync,
 >;
+type ListedPopover<P> = Box<
+    dyn for<'a> Fn(&str, &str, &mut ViewCx<'a, P>) -> Option<Node>
+        + Send
+        + Sync,
+>;
 type Popover<P> =
     Box<dyn for<'a> Fn(&str, &mut ViewCx<'a, P>) -> Node + Send + Sync>;
 
@@ -224,12 +229,16 @@ pub struct ListedCommand {
     /// nothing, and then picking it runs it.
     pub args: String,
     pub icon: tau_ui_kit::assets::Icon,
+    /// Whether it has a popover while it is written
+    /// ([`Manifest::listed_popover`]).
+    pub popover: bool,
 }
 
 /// Commands listed from the plugin's data ([`Manifest::listed_commands`]).
 pub(crate) struct Listed<P: UiPlugin> {
     pub(crate) list: List<P>,
     pub(crate) run: RunListed<P>,
+    pub(crate) popover: Option<ListedPopover<P>>,
 }
 
 /// Where a plugin's key was pressed: the repository the person is in,
@@ -395,7 +404,25 @@ impl<P: UiPlugin> Manifest<P> {
         self.listed = Some(Listed {
             list: Box::new(list),
             run: Box::new(run),
+            popover: None,
         });
+        self
+    }
+
+    /// What the composer's popover shows while a listed command that
+    /// says it has one is written, given its name and what follows it.
+    /// It takes the place of [`Self::listed_commands`]'s, which comes
+    /// first.
+    pub fn listed_popover(
+        mut self,
+        popover: impl for<'a> Fn(&str, &str, &mut ViewCx<'a, P>) -> Option<Node>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        if let Some(listed) = &mut self.listed {
+            listed.popover = Some(Box::new(popover));
+        }
         self
     }
 }

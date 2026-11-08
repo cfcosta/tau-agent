@@ -744,14 +744,21 @@ return tau.plugin {
     ship = {
       description = "Marks the run shipped",
       args = "<version>",
-      run = function(text, ctx) ctx.state.shipped = text end,
+      icon = "rocket",
+      popover = { jev = tau.ui.input("channel", { submit = "tau.submit" }) },
+      run = function(text, ctx)
+        ctx.state.shipped = text
+        ctx.state.channel = ctx.drafts.channel
+      end,
     },
   },
 }
 "#;
 
-/// A plugin's command is declared with what it does and takes, and runs
-/// as its action `/name`, given the text after it.
+/// A plugin's command is declared with what it does and takes, its icon
+/// and its popover, the same without a Jev key when it gives no other;
+/// and it runs as its action `/name`, given the text after it and what
+/// the popover's inputs say.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_command_runs_as_its_action() {
     let ships = Files {
@@ -759,25 +766,32 @@ async fn a_command_runs_as_its_action() {
         ..Files::default()
     };
     let loaded = load("ships", ships).await.unwrap();
+    let [command] = loaded.declaration.commands.as_slice() else {
+        panic!("{:?}", loaded.declaration.commands);
+    };
     assert_eq!(
-        loaded.declaration.commands,
-        [tau_luau_plugins::CommandSpec {
-            name: "ship".into(),
-            description: "Marks the run shipped".into(),
-            args: "<version>".into(),
-        }]
+        (
+            command.name.as_str(),
+            command.description.as_str(),
+            command.args.as_str(),
+            command.icon.as_str(),
+        ),
+        ("ship", "Marks the run shipped", "<version>", "rocket")
     );
+    let popover = command.popover.clone().expect("its popover");
+    assert_eq!(popover.jev["piece"], "input");
+    assert_eq!(popover.no_jev, popover.jev);
     let out = loaded
         .call(
             &Hook::Action("/ship".into()),
-            json!({ "text": "1.2" }),
+            json!({ "text": "1.2", "drafts": { "channel": "beta" } }),
             &context("Monday"),
             no_reach(),
             CancellationToken::new(),
         )
         .await;
     assert_eq!(out.error, None);
-    assert_eq!(out.state, json!({ "shipped": "1.2" }));
+    assert_eq!(out.state, json!({ "shipped": "1.2", "channel": "beta" }));
 }
 
 /// A run hook of a plugin whose `uses` names the model or Jev has a

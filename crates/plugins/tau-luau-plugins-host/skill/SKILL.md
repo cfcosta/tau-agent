@@ -84,7 +84,7 @@ return tau.plugin {
   repo_nav = { label = "Todo", page = "board", icon = "list" },
   repo_data = function(ctx) end,   -- what its entry under a repository shows
   recover = function(input, ctx) end,  -- as tau starts: the runs cut off
-  commands = { name = { description, args, run = function(text, ctx) end } },
+  commands = { name = { description, args, icon, popover, run = function(text, ctx) end } },
   jobs = { name = { every = 3600, label = "...", run = function(ctx) end } },
   fills = { "tau.title" },  -- the slots it fills
   title = function(run, ctx) end,
@@ -347,8 +347,13 @@ read the state: it has no tools. What it returns goes in three places:
 - `banner`: pieces across the top of the run.
 - `inspector`: pieces in the run's inspector, beside the transcript.
 - `band`: pieces just above the composer.
-- `row`: `{ line, count?, tone? }`, the run's line under its title in
-  the sidebar; `tone` is `"good"`, `"warn"` or `"bad"`.
+- `row`: `{ line, count?, tone?, icon?, phone_line? }`, the run's line
+  under its title in the sidebar; `tone` is `"good"`, `"warn"` or
+  `"bad"`, `icon` one of the interface's icons, and `phone_line` the
+  line on a phone, when it differs.
+- `messages`: `{ [text] = pieces }`, how a person's message whose text
+  is exactly `text` draws, such as a command the plugin read, or a
+  message it sent with `tau.continue`; `ui.stack({})` draws nothing.
 - `asks`: what the run asks the person, in words: its row says so, and
   a notice shows it while tau's window is not in front.
 - `plan`: `{ name, value }`, a field of the run's plan, as
@@ -370,10 +375,19 @@ it answers `tau.interface("composer", { text = "..." })`, and once what
 it did to the state is kept, tau does that on the action's run.
 
 A plugin's `commands` are slash commands in the composer's menu, each
-with its `description` and what follows it (`args`, such as
-`"<version>"`). Typed in a chat, `/name text` runs `run(text, ctx)` on
-that chat's state, as an action does; in tests, `run:action("/name",
-{ text = "..." })`.
+with its `description`, what follows it (`args`, such as
+`"<version>"`) and an `icon`. Typed in a chat, `/name text` runs
+`run(text, ctx)` on that chat's state, as an action does; in tests,
+`run:action("/name", { text = "..." })`. A chat started with `/name
+text` takes its title from `text`, its leading `--flag value` pairs
+dropped.
+
+While a command is written, its `popover` shows above the composer:
+`popover = { jev = pieces, no_jev = pieces }`, the second without a
+Jev key (it defaults to the first). What its inputs say reaches `run`
+as `ctx.drafts`, by input id; an input whose `submit` is `"tau.submit"`
+sends the composer on Enter and keeps what it says. In tests,
+`run:action("/name", { text = "...", drafts = { id = "..." } })`.
 
 A plugin's `jobs` are work it does by itself while tau runs: each
 `run(ctx)` once `every` seconds passed since it last ran (at least 60),

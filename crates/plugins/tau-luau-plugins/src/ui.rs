@@ -30,8 +30,17 @@ use tau_ui_plugin::{
     SlashCommand,
     UiPlugin,
     ViewCx,
-    points::{self, AtAnchor, AtApp, AtCard, AtRepo, AtRun, CardView},
-    tree::{Kind, Node, Tab, Tone},
+    points::{
+        self,
+        AtAnchor,
+        AtApp,
+        AtCard,
+        AtMessage,
+        AtRepo,
+        AtRun,
+        CardView,
+    },
+    tree::{Kind, Node, Tab, Tone, draft_key},
 };
 
 use crate::{
@@ -394,15 +403,23 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             keep,
             secret,
             focus,
-        } => Node::Input {
-            id: own(id),
-            placeholder,
-            multiline,
-            submit: submit.map(act),
-            keep,
-            secret,
-            focus,
-        },
+        } => {
+            let id = own(id);
+            // Enter in it sends the composer, keeping what it says.
+            let submit = submit.map(|submit| match submit.as_str() {
+                SUBMIT => act(format!("{SUBMIT}/{id}")),
+                _ => act(submit),
+            });
+            Node::Input {
+                id,
+                placeholder,
+                multiline,
+                submit,
+                keep,
+                secret,
+                focus,
+            }
+        }
         Node::Keys {
             id,
             keys,
@@ -481,6 +498,9 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
 
 /// Carries out `plugin`'s own `action` with `args`, on its state in
 /// `run`; outside a run there is no state to act on.
+/// An input's `submit` that sends the composer, as Enter there would.
+const SUBMIT: &str = "tau.submit";
+
 /// What a Luau tree's action starting with `tau.` asks of the interface,
 /// on `run`, the run the tree is drawn in or its page shows: whether it
 /// was one.
@@ -507,6 +527,15 @@ fn kernel_action(
         "start" => handle.start(text("repo"), text("text")),
         "alert" => handle.alert(text("title"), text("message")),
         "details" => handle.run_details(),
+        // Enter in an input of a command's popover: what it says stays
+        // its draft, which Enter would clear, and the composer is sent.
+        submit if submit.starts_with("submit/") => {
+            let id = &submit["submit/".len()..];
+            let said = text("text");
+            handle
+                .set_ui(draft_key(id), (!said.is_empty()).then(|| said.into()));
+            handle.request(tau_ui_plugin::Request::Submit);
+        }
         other => {
             handle.note(format!("`tau.{other}` is not one of tau's actions"))
         }
@@ -615,6 +644,10 @@ impl UiPlugin for LuauPluginsUi {
 
     fn name(&self) -> &'static str {
         NAME
+    }
+
+    fn read_prompt(&self, prompt: &str) -> Option<String> {
+        read_command(prompt)
     }
 
     /// What an action left.
@@ -789,6 +822,7 @@ impl UiPlugin for LuauPluginsUi {
                 .icon(Icon::Plug),
             )
             .listed_commands(|overview, _| commands(overview), run_command)
+            .listed_popover(command_popover)
             .status(State::status)
             // The plugins repository, whose chats the sidebar lists under
             // Plugins (ADR 0027).
@@ -874,6 +908,9 @@ impl UiPlugin for LuauPluginsUi {
                     ],
                 })
             })
+            .contribute(points::USER_MESSAGE, |at: &AtMessage, view| {
+                user_message(view.state?, &at.text)
+            })
             .contribute(points::CARD_BADGE, |at: &AtCard, view| {
                 let state: &State = view.state?;
                 let (plugin, reason) =
@@ -923,33 +960,144 @@ fn commands(overview: &Overview) -> Vec<ListedCommand> {
                     command.description.clone()
                 },
                 args: command.args.clone(),
-                icon: Icon::Plug,
+                icon: Icon::named(&command.icon).unwrap_or(Icon::Plug),
+                popover: command.popover.is_some(),
             })
         })
         .collect()
 }
 
+/// What a prompt that is a plugin's command is about, for the run's
+/// title: `/name args` reads as its `args`, its leading `--flag value`
+/// pairs dropped, and one quoted string as what it says. Only its first
+/// line counts, and a name is a command's: lower case letters, digits,
+/// `-` and `_`, a letter first.
+pub fn read_command(prompt: &str) -> Option<String> {
+    let line = prompt.lines().next()?.trim();
+    let rest = line.strip_prefix('/')?;
+    let (name, mut rest) = rest.split_once(char::is_whitespace)?;
+    let named = name.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && name.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
+        });
+    if !named {
+        return None;
+    }
+    rest = rest.trim_start();
+    while rest.starts_with("--") {
+        let mut words = rest.splitn(3, char::is_whitespace);
+        words.next();
+        words.next();
+        rest = words.next().unwrap_or_default().trim_start();
+    }
+    let said = unquote(rest).unwrap_or_else(|| {
+        rest.split_whitespace().collect::<Vec<_>>().join(" ")
+    });
+    (!said.trim().is_empty()).then_some(said)
+}
+
+/// What a quoted string says, when `text` is exactly one: `"`, then
+/// characters with `\"`, `\\`, `\n` and `\r` escaped, then `"`.
+fn unquote(text: &str) -> Option<String> {
+    let mut chars = text.strip_prefix('"')?.chars();
+    let mut out = String::new();
+    loop {
+        match chars.next()? {
+            '"' => return chars.as_str().is_empty().then_some(out),
+            '\\' => out.push(match chars.next()? {
+                '"' => '"',
+                '\\' => '\\',
+                'n' => '\n',
+                'r' => '\r',
+                _ => return None,
+            }),
+            c => out.push(c),
+        }
+    }
+}
+
+/// The active plugin whose command `command` is, and the command.
+fn command_of<'a>(
+    overview: &'a Overview,
+    command: &str,
+) -> Option<(&'a str, &'a crate::CommandSpec)> {
+    overview
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .find_map(|entry| {
+            let spec = entry
+                .declaration
+                .iter()
+                .flat_map(|d| &d.commands)
+                .find(|c| c.name == command)?;
+            Some((entry.name.as_str(), spec))
+        })
+}
+
+/// The popover of `command` while it is written: its pieces, as there
+/// is a Jev key or not.
+fn command_popover(
+    command: &str,
+    _args: &str,
+    view: &mut ViewCx<'_, LuauPluginsUi>,
+) -> Option<Node> {
+    let keyed = tau_jev::keyed(view);
+    let (plugin, spec) = command_of(view.data, command)?;
+    let popover = spec.popover.as_ref()?;
+    let pieces = if keyed { &popover.jev } else { &popover.no_jev };
+    Some(embed(pieces, plugin))
+}
+
+/// The ids of the inputs among `pieces`, at any depth.
+fn input_ids(pieces: &Value, ids: &mut Vec<String>) {
+    match pieces {
+        Value::Object(piece) => {
+            if piece.get("piece").and_then(Value::as_str) == Some("input")
+                && let Some(id) = piece.get("id").and_then(Value::as_str)
+            {
+                ids.push(id.to_owned());
+            }
+            piece.values().for_each(|value| input_ids(value, ids));
+        }
+        Value::Array(pieces) => {
+            pieces.iter().for_each(|value| input_ids(value, ids));
+        }
+        _ => {}
+    }
+}
+
+/// What the inputs of `command`'s popover say, by id: their drafts, as
+/// the interface keeps them.
+fn drafts(
+    plugin: &str,
+    spec: &crate::CommandSpec,
+    view: &ViewCx<'_, LuauPluginsUi>,
+) -> serde_json::Map<String, Value> {
+    let mut ids = Vec::new();
+    if let Some(popover) = &spec.popover {
+        input_ids(&popover.jev, &mut ids);
+        input_ids(&popover.no_jev, &mut ids);
+    }
+    ids.into_iter()
+        .filter_map(|id| {
+            let draft = view.ui_value(&draft_key(&format!("{plugin}/{id}")))?;
+            Some((id, draft.as_str()?.into()))
+        })
+        .collect()
+}
+
 /// `/command args`: the plugin whose command it is carries it out on the
-/// run it was typed in, as its action `/command`.
+/// run it was typed in, as its action `/command`, with what its
+/// popover's inputs say.
 fn run_command(
     command: &str,
     args: &str,
     _repo: Option<&str>,
     view: &mut ViewCx<'_, LuauPluginsUi>,
 ) {
-    let Some(plugin) = view
-        .data
-        .plugins
-        .iter()
-        .filter(|entry| matches!(entry.standing, Standing::Active))
-        .find(|entry| {
-            entry
-                .declaration
-                .iter()
-                .flat_map(|d| &d.commands)
-                .any(|c| c.name == command)
-        })
-        .map(|entry| entry.name.clone())
+    let Some((plugin, drafts)) = command_of(view.data, command)
+        .map(|(plugin, spec)| (plugin.to_owned(), drafts(plugin, spec, view)))
     else {
         return;
     };
@@ -963,7 +1111,7 @@ fn run_command(
     luau_action(
         &plugin,
         &format!("/{command}"),
-        &json!({ "text": args }),
+        &json!({ "text": args, "drafts": drafts }),
         Some((run, view.run.map(|run| run.repo.clone()), state)),
         view,
     );
@@ -1295,8 +1443,22 @@ fn drawn(state: &State, key: &str) -> Option<Node> {
     }
 }
 
+/// How a person's message `text` draws, from the first plugin whose
+/// view has it among its `messages`: the piece it gave, which an empty
+/// stack makes nothing at all.
+fn user_message(state: &State, text: &str) -> Option<Node> {
+    state
+        .plugins
+        .iter()
+        .filter(|(_, plugin)| plugin.off.is_none())
+        .find_map(|(name, plugin)| {
+            let piece = plugin.view.get("messages")?.get(text)?;
+            (!piece.is_null()).then(|| embed(piece, name))
+        })
+}
+
 /// The run's row in the sidebar, from the first plugin whose view says
-/// `row = { line, count?, tone? }`.
+/// `row = { line, count?, tone?, icon?, phone_line? }`.
 fn row(state: &State) -> Option<RowNote> {
     state
         .plugins
@@ -1306,10 +1468,15 @@ fn row(state: &State) -> Option<RowNote> {
             let row = plugin.view.get("row")?;
             let line = row["line"].as_str()?.to_owned();
             Some(RowNote {
-                phone_line: Some(line.clone()),
+                phone_line: Some(
+                    row["phone_line"].as_str().unwrap_or(&line).to_owned(),
+                ),
                 line: Some(line),
                 count: row["count"].as_str().map(str::to_owned),
-                icon: Icon::Plug,
+                icon: row["icon"]
+                    .as_str()
+                    .and_then(Icon::named)
+                    .unwrap_or(Icon::Plug),
                 tone: match row["tone"].as_str() {
                     Some("good") => tau_ui_kit::theme::Tone::Good,
                     Some("warn") => tau_ui_kit::theme::Tone::Warn,
@@ -1907,6 +2074,7 @@ mod tests {
                     name: format!("{name}-go"),
                     description: String::new(),
                     args: "<what>".into(),
+                    ..Default::default()
                 }],
                 ..Declaration::named(name)
             }),
@@ -1995,6 +2163,80 @@ mod tests {
                 set_by: Some("picks".into()),
             })
         );
+    }
+
+    /// A person's message draws as the piece a view gives its exact
+    /// text, the first plugin's that has one; an off plugin's draws
+    /// nothing, and another message stays plain.
+    #[test]
+    fn a_views_messages_draw_the_persons_messages() {
+        let mut state = State::default();
+        let mut run = tau_ui_plugin::testing::FakeRun::default();
+        for (plugin, piece) in [("goal", "the goal"), ("echo", "an echo")] {
+            state.apply(
+                Record::View {
+                    plugin: plugin.into(),
+                    view: json!({ "messages": {
+                        "/goal pass": { "piece": "text", "text": piece },
+                    } }),
+                },
+                &mut run,
+            );
+        }
+        let drawn = user_message(&state, "/goal pass").unwrap();
+        assert!(format!("{drawn:?}").contains("an echo"), "{drawn:?}");
+        assert_eq!(user_message(&state, "hello"), None);
+        state.apply(
+            Record::Off {
+                plugin: "echo".into(),
+                why: "it failed".into(),
+            },
+            &mut run,
+        );
+        let drawn = user_message(&state, "/goal pass").unwrap();
+        assert!(format!("{drawn:?}").contains("the goal"), "{drawn:?}");
+    }
+
+    /// A command's prompt reads as what follows it, its flags dropped
+    /// and a quoted string unquoted; anything else is not one.
+    #[test]
+    fn a_command_prompt_reads_as_what_it_is_about() {
+        for (prompt, about) in [
+            ("/goal the tests pass", Some("the tests pass")),
+            (
+                "/goal --continuations 3 --budget 1.5 the   tests pass",
+                Some("the tests pass"),
+            ),
+            ("/goal \"clear\"", Some("clear")),
+            ("/goal \"two\\nlines\"", Some("two\nlines")),
+            (
+                "/goal the tests pass\n\nThis is your goal.",
+                Some("the tests pass"),
+            ),
+            ("/goal", None),
+            ("/goal --budget 2", None),
+            ("/etc/hosts is broken", None),
+            ("/Goal the tests pass", None),
+            ("fix the tests", None),
+        ] {
+            assert_eq!(read_command(prompt).as_deref(), about, "{prompt}");
+        }
+    }
+
+    /// A popover's drafts are read from each of its inputs, however
+    /// deep it sits.
+    #[test]
+    fn a_popovers_inputs_are_found_at_any_depth() {
+        let pieces = json!({ "piece": "stack", "children": [
+            { "piece": "input", "id": "a" },
+            { "piece": "row", "children": [
+                { "piece": "text", "text": "and" },
+                { "piece": "input", "id": "b", "submit": "tau.submit" },
+            ] },
+        ] });
+        let mut ids = Vec::new();
+        input_ids(&pieces, &mut ids);
+        assert_eq!(ids, ["a", "b"]);
     }
 
     /// A keyed note is placed where the run is when its key first
