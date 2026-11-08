@@ -1,6 +1,6 @@
 # 0050: tau's own plugins, in Luau
 
-- Status: proposed.
+- Status: accepted.
 - Date: 2026-11-08
 
 ## Context
@@ -222,11 +222,11 @@ load it, and the Rust crate deleted.
   A plugin that outgrows them is a finding about the interface, and
   this ADR's "As built" records it.
 
-## Open questions
+## Settled questions
 
-- Should a person's Luau plugin get the longer limit and model reach
-  in `before_request` at all, or only tau's built-in ones? A slow
-  plugin there slows every request.
-- tau-compaction and tau-tree-compaction ask the model many times at
-  once. Should `infer` take a list, run in parallel, or is `parallel`
-  in codemode enough?
+- **Who may call a model from `before_request`.** Any plugin whose
+  `uses` names `infer` or `jev`, a person's as well as tau's: the Allow
+  click for that reach is where the person agrees to the cost.
+- **Many model calls at once.** A plugin wraps its `infer` calls in
+  codemode's `parallel(...)`; nothing new is built for it. If the
+  compaction ports find that too little, "As built" says so.
