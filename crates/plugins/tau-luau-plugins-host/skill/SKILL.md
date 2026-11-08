@@ -449,6 +449,52 @@ end)
 Test what the plugin decides, on the days, commands and states where
 its answer changes, and its card and status line.
 
+### Properties
+
+A property says what holds for every input, and tau looks for one where
+it does not: hegel's engine draws the inputs, and a failure shrinks to
+its smallest case before it is reported. Use one where examples would
+miss cases: anything over lists, graphs, text or dates.
+
+```luau
+local t = require("tau").test
+local g = t.gen
+
+t.property("a checked list has one step in progress at most", function(draw)
+  local list = draw(g.lists(g.records {
+    text = g.text { min = 1, max = 20 },
+    status = g.sampled_from { "pending", "in_progress", "done" },
+  }, { max = 6 }))
+  local checked = steps.check(list)
+  t.assume(checked ~= nil)          -- drop the case: not a failure
+  t.note(#checked .. " steps")      -- a line in the report
+  local going = 0
+  for _, step in ipairs(checked) do
+    if step.status == "in_progress" then going += 1 end
+  end
+  t.equal(going <= 1, true, "in progress")
+end, { cases = 200 })
+```
+
+- Generators, in `t.gen`: `integers { min, max }`, `floats { min, max }`,
+  `booleans { p }`, `text { min, max, codec }` (`"ascii"`, `"latin-1"` or
+  Unicode), `from_regex(pattern)`, `just(v)`, `sampled_from(list)`,
+  `one_of(gens)`, `optional(gen)`, `lists(gen, { min, max, unique })`,
+  `dicts(keys, values, { min, max })`, `records { field = gen }`,
+  `composite(function(draw) ... end)` for one built from others, and
+  `gen:map(f)`, `gen:filter(keep)` on any of them.
+- A failure says what each `draw` gave, the notes, and a blob:
+  `{ reproduce = "..." }` as the property's options replays it.
+- `t.machine(name, { init, rules, invariant, steps })` tests something
+  with a lifecycle: `init(draw)` makes the model, each rule (a function
+  of the model and `draw`, or `{ weight, run }`) changes it, and
+  `invariant(model)` holds after every step. A failure shrinks to its
+  fewest steps. `t.assume` in a rule skips it.
+- A property runs 100 cases unless it says (1000 at most), for 30 s at
+  most, and gives the same result each time for the same files. Its
+  cases share one VM: keep what a case changes inside it, not in the
+  file's top-level values.
+
 ## Six plugins
 
 ### A rule: `before_tool`

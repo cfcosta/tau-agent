@@ -11,6 +11,7 @@
 pub mod agent;
 pub mod chats;
 mod half;
+pub mod hegel;
 pub mod jobs;
 
 /// The Luau plugins tau comes with (ADR 0048's tau-todo).

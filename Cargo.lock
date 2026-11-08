@@ -10014,6 +10014,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "hegeltest",
+ "hegeltest-c",
  "serde",
  "serde_json",
  "sha2 0.11.0",

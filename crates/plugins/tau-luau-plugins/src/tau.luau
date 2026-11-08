@@ -1294,6 +1294,345 @@ function test.agent(spec)
 	return fake
 end
 
+-- Property tests (ADR 0049): generators over hegel's engine. Every
+-- choice is the engine's, asked of the case it offered through the host's
+-- `hegel` tool; this only shapes what it gives.
+local gen = {}
+test.gen = gen
+
+-- Raised by `assume` and a filter that gave up: the case is dropped.
+local ASSUMED = setmetatable({}, {
+	__tostring = function()
+		return "assumed false"
+	end,
+})
+
+local function hegel(args)
+	if tools == nil or tools.hegel == nil then
+		error("a draw happens only inside a property", 3)
+	end
+	local value = tools.hegel(args)
+	if value == json.null then
+		return nil
+	end
+	return value
+end
+
+local Gen = {}
+Gen.__index = Gen
+
+local function new(label, produce)
+	return setmetatable({ label = label, produce = produce }, Gen)
+end
+
+-- `g`'s value, drawn in a span labelled with its kind: the engine
+-- shrinks it as one piece.
+local function draw(g)
+	if getmetatable(g) ~= Gen then
+		error("draw takes a generator, from t.gen", 2)
+	end
+	hegel({ op = "span_start", label = g.label })
+	local value = g.produce(draw)
+	hegel({ op = "span_stop" })
+	return value
+end
+
+-- Whole numbers from `min` to `max`, both kept; unbounded ends stay
+-- within what a Luau number holds exactly.
+function gen.integers(opts)
+	opts = opts or {}
+	return new("integers", function()
+		return hegel({ op = "integer", min = opts.min, max = opts.max })
+	end)
+end
+
+-- Numbers from `min` to `max`: never NaN nor infinite.
+function gen.floats(opts)
+	opts = opts or {}
+	return new("floats", function()
+		return hegel({ op = "float", min = opts.min, max = opts.max })
+	end)
+end
+
+-- `true` with probability `p` (one half).
+function gen.booleans(opts)
+	local p = opts and opts.p or 0.5
+	return new("booleans", function()
+		return hegel({ op = "boolean", p = p })
+	end)
+end
+
+-- Text of `min` to `max` characters, from `codec` ("ascii", "latin-1"
+-- or Unicode, the default).
+function gen.text(opts)
+	opts = opts or {}
+	return new("text", function()
+		return hegel({ op = "text", min = opts.min, max = opts.max, codec = opts.codec })
+	end)
+end
+
+-- Text the whole of which matches `pattern`, in Python's `re` syntax.
+function gen.from_regex(pattern)
+	return new("from_regex", function()
+		return hegel({ op = "regex", pattern = pattern })
+	end)
+end
+
+function gen.just(value)
+	return new("just", function()
+		return value
+	end)
+end
+
+-- One of `values`, the first ones first as it shrinks.
+function gen.sampled_from(values)
+	if #values == 0 then
+		error("sampled_from needs a value", 2)
+	end
+	return new("sampled_from", function()
+		return values[hegel({ op = "integer", min = 1, max = #values })]
+	end)
+end
+
+-- A value of one of `gens`.
+function gen.one_of(gens)
+	if #gens == 0 then
+		error("one_of needs a generator", 2)
+	end
+	return new("one_of", function(d)
+		return d(gens[hegel({ op = "integer", min = 1, max = #gens })])
+	end)
+end
+
+-- `g`'s value, or nil.
+function gen.optional(g)
+	return new("optional", function(d)
+		if hegel({ op = "boolean", p = 0.5 }) then
+			return d(g)
+		end
+		return nil
+	end)
+end
+
+-- A list of `element`s, `min` to `max` of them, none twice when
+-- `unique`. The engine says, one element at a time, whether there is
+-- another, so shrinking takes elements out.
+function gen.lists(element, opts)
+	opts = opts or {}
+	return new("lists", function(d)
+		local out, seen = array({}), {}
+		local list = hegel({ op = "collection", min = opts.min, max = opts.max })
+		while hegel({ op = "more", id = list }) do
+			local value = d(element)
+			local key = opts.unique and json.encode(value)
+			if key and seen[key] then
+				hegel({ op = "reject", id = list })
+			else
+				if key then
+					seen[key] = true
+				end
+				table.insert(out, value)
+			end
+		end
+		return out
+	end)
+end
+
+-- A table from keys of `keys` to values of `values`, `min` to `max`
+-- entries.
+function gen.dicts(keys, values, opts)
+	opts = opts or {}
+	return new("dicts", function(d)
+		local out = {}
+		local list = hegel({ op = "collection", min = opts.min, max = opts.max })
+		while hegel({ op = "more", id = list }) do
+			local key = d(keys)
+			if out[key] ~= nil then
+				hegel({ op = "reject", id = list })
+			else
+				out[key] = d(values)
+			end
+		end
+		return out
+	end)
+end
+
+-- A table with each field of `fields` drawn from its generator, in
+-- sorted order: the same draws give the same record.
+function gen.records(fields)
+	local names = {}
+	for name in pairs(fields) do
+		table.insert(names, name)
+	end
+	table.sort(names)
+	return new("records", function(d)
+		local out = {}
+		for _, name in ipairs(names) do
+			out[name] = d(fields[name])
+		end
+		return out
+	end)
+end
+
+-- A value `build(draw)` makes from other draws.
+function gen.composite(build)
+	return new("composite", build)
+end
+
+function Gen:map(f)
+	return new("map", function(d)
+		return f(d(self))
+	end)
+end
+
+-- `self`'s values that `keep` keeps: three tries, then the case is
+-- dropped.
+function Gen:filter(keep)
+	return new("filter", function(d)
+		for _ = 1, 3 do
+			local value = d(self)
+			if keep(value) then
+				return value
+			end
+		end
+		error(ASSUMED, 0)
+	end)
+end
+
+-- Drops the case unless `ok`: the engine looks elsewhere.
+function test.assume(ok)
+	if not ok then
+		error(ASSUMED, 0)
+	end
+end
+
+local notes = array({})
+
+-- A line for the failure's report, after what it drew.
+function test.note(text)
+	table.insert(notes, tostring(text))
+end
+
+local function noted(value)
+	if type(value) == "string" then
+		return string.format("%q", value)
+	end
+	return shown(value)
+end
+
+local properties = array({})
+
+-- A property: `check(draw)` holds for whatever it draws. `opts` may
+-- give `cases` (100 unless said) and `reproduce`, a failure's blob to
+-- replay.
+function test.property(name, check, opts)
+	table.insert(properties, { name = tostring(name), check = check, opts = opts or {} })
+end
+
+-- A state machine: `init(draw)` gives the model, each of `rules` (a
+-- function of the model and `draw`, or `{ weight, run }`) changes it,
+-- and `invariant(model)` holds after every step. `steps` is the most a
+-- case takes (50).
+function test.machine(name, spec, opts)
+	local names = array({})
+	for rule in pairs(spec.rules) do
+		table.insert(names, rule)
+	end
+	table.sort(names)
+	local weights = array({})
+	local runs = {}
+	for _, rule in ipairs(names) do
+		local entry = spec.rules[rule]
+		if type(entry) == "function" then
+			entry = { run = entry }
+		end
+		table.insert(weights, entry.weight or 1)
+		runs[rule] = entry.run
+	end
+	test.property(name, function(d)
+		local model = spec.init and spec.init(d) or {}
+		if spec.invariant then
+			spec.invariant(model)
+		end
+		local machine = hegel({ op = "machine", rules = names, weights = weights, steps = spec.steps or 50 })
+		local step = 0
+		while hegel({ op = "round", id = machine }) do
+			while true do
+				local at = hegel({ op = "rule", id = machine })
+				if at == nil then
+					break
+				end
+				step += 1
+				test.note("step " .. step .. ": " .. names[at])
+				local ok, why = pcall(runs[names[at]], model, d)
+				if not ok and why == ASSUMED then
+					table.remove(notes)
+					step -= 1
+					hegel({ op = "rejected", id = machine })
+				elseif not ok then
+					error(why, 0)
+				elseif spec.invariant then
+					spec.invariant(model)
+				end
+			end
+		end
+	end, opts)
+end
+
+-- The file's properties, for the host to run one at a time.
+function tau._properties()
+	local out = array({})
+	for _, p in ipairs(properties) do
+		table.insert(out, {
+			name = p.name,
+			cases = p.opts.cases or json.null,
+			reproduce = p.opts.reproduce or json.null,
+		})
+	end
+	return out
+end
+
+-- One case of the property `name`, on the case the host holds: how it
+-- ended, for the host to tell the engine.
+local function run_case(name)
+	local property
+	for _, p in ipairs(properties) do
+		if p.name == name then
+			property = p
+		end
+	end
+	if property == nil then
+		return { status = "interesting", error = "no property " .. name, notes = notes }
+	end
+	local at = 0
+	local function top(g)
+		local value = draw(g)
+		at += 1
+		table.insert(notes, "draw " .. at .. " = " .. noted(value))
+		return value
+	end
+	local ok, why = pcall(property.check, top)
+	if ok then
+		return { status = "valid" }
+	end
+	if why == ASSUMED then
+		return { status = "invalid" }
+	end
+	return { status = "interesting", error = tostring(why), notes = notes }
+end
+
+-- Every case the engine offers of the property `name`, one after
+-- another in this VM: what a case changes of the file's own values, the
+-- next one sees.
+function tau._run_cases(name)
+	while hegel({ op = "next" }) do
+		table.clear(notes)
+		local outcome = run_case(name)
+		hegel({ op = "end", status = outcome.status, error = outcome.error, notes = outcome.notes })
+	end
+	return { done = true }
+end
+
 -- Runs every case, each on its own: what passed, and why the rest
 -- failed.
 function tau._run_tests()

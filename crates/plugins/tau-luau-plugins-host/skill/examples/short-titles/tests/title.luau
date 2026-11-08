@@ -14,3 +14,13 @@ end)
 t.case("writes none for an empty task", function()
 	t.equal(t.run({}):title({ task = "   ", model = "m" }), nil)
 end)
+
+-- For any task: no title, or a short one with no end of a sentence in it.
+t.property("a title is short and one sentence", function(draw)
+	local task = draw(t.gen.text({ max = 80, codec = "ascii" }))
+	local title = t.run({}):title({ task = task, model = "m" })
+	if title ~= nil then
+		t.equal(#title <= 38, true, title)
+		t.equal(string.find(title, "[%.!?\n]") == nil, true, title)
+	end
+end)

@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# The engine Luau property tests run on (ADR 0049).
+hegeltest-c.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

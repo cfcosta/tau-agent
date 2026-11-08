@@ -766,6 +766,7 @@ pub async fn run_tests(
     let Root {
         module, subject, ..
     } = files.root;
+    let digest = files.digest();
     let mut results = Vec::new();
     for (file, source) in &files.tests {
         // The file runs as a function, from the script's first line, so
@@ -774,7 +775,8 @@ pub async fn run_tests(
             "local __test = function() {source}\nend\n\
              require(\"tau\").test.{subject} = require(\"{module}\")\n\
              __test()\n\
-             return require(\"tau\")._run_tests()\n"
+             return {{ cases = require(\"tau\")._run_tests(), \
+             properties = require(\"tau\")._properties() }}\n"
         );
         let (value, error) = run(
             modules.clone(),
@@ -795,7 +797,7 @@ pub async fn run_tests(
             });
             continue;
         }
-        let cases: Vec<TestResult> = value
+        let cases: Vec<TestResult> = value["cases"]
             .as_array()
             .into_iter()
             .flatten()
@@ -807,8 +809,115 @@ pub async fn run_tests(
             })
             .collect();
         results.extend(cases);
+        for property in value["properties"].as_array().into_iter().flatten() {
+            let property = Property {
+                name: property["name"].as_str().unwrap_or_default().to_owned(),
+                cases: property["cases"].as_u64(),
+                reproduce: property["reproduce"].as_str().map(str::to_owned),
+            };
+            let source = PropertySource {
+                name,
+                modules: &modules,
+                digest: &digest,
+                file,
+                script: property_script(source, module, subject),
+            };
+            results.push(run_property(&source, property, &cancel).await);
+        }
     }
     results
+}
+
+/// The cases a property runs, unless it asks for others, and the most
+/// it may ask for (ADR 0049).
+const CASES: u64 = 100;
+const MOST_CASES: u64 = 1000;
+
+/// How long a property may go on finding and shrinking its failures.
+const PROPERTY_LIMIT: Duration = Duration::from_secs(30);
+
+/// A property a test file registered: `t.property(name, check, opts)`.
+struct Property {
+    name: String,
+    cases: Option<u64>,
+    reproduce: Option<String>,
+}
+
+/// Where a property comes from: its plugin, the version's digest, and
+/// the script each of its cases runs.
+struct PropertySource<'a> {
+    name: &'a str,
+    modules: &'a Arc<Modules>,
+    digest: &'a str,
+    file: &'a str,
+    script: String,
+}
+
+/// The script a property runs: the file, registering its cases and
+/// properties, then every case of the property `__property` names.
+fn property_script(source: &str, module: &str, subject: &str) -> String {
+    format!(
+        "local __test = function() {source}\nend\n\
+         require(\"tau\").test.{subject} = require(\"{module}\")\n\
+         __test()\n\
+         return require(\"tau\")._run_cases(__property)\n"
+    )
+}
+
+/// The seed a property runs from: its version's, file's and name's, so
+/// a version gives the same result each time tau tries it.
+fn seed(digest: &str, file: &str, name: &str) -> u64 {
+    let hash = Sha256::new()
+        .chain_update(digest)
+        .chain_update([0])
+        .chain_update(file)
+        .chain_update([0])
+        .chain_update(name)
+        .finalize();
+    u64::from_le_bytes(hash[..8].try_into().expect("eight bytes"))
+}
+
+/// Runs one property on hegel's engine, every case it offers in one VM,
+/// and gives its one result: passed, or its failure shrunk, with what
+/// reproduces it.
+async fn run_property(
+    source: &PropertySource<'_>,
+    property: Property,
+    cancel: &CancellationToken,
+) -> TestResult {
+    use crate::hegel::{Driver, Run, Settings};
+    let result = |error: Option<String>| TestResult {
+        file: source.file.to_owned(),
+        name: property.name.clone(),
+        passed: error.is_none(),
+        error,
+    };
+    let settings = Settings {
+        cases: property.cases.unwrap_or(CASES).clamp(1, MOST_CASES),
+        seed: seed(source.digest, source.file, &property.name),
+    };
+    let run = match Run::start(&settings, property.reproduce.as_deref()) {
+        Ok(run) => run,
+        Err(error) => {
+            return result(Some(format!("hegel could not start: {error}")));
+        }
+    };
+    let driver =
+        Arc::new(std::sync::Mutex::new(Driver::new(run, PROPERTY_LIMIT)));
+    let mut reaches = Reaches::none(source.name);
+    reaches.hegel = Some(driver.clone());
+    let (_, failed) = self::run(
+        source.modules.clone(),
+        Arc::new(NoReach),
+        reaches,
+        source.script.clone(),
+        vec![("__property".to_owned(), property.name.clone())],
+        PROPERTY_LIMIT + TEST_LIMIT,
+        cancel.clone(),
+    )
+    .await;
+    let mut driver = driver.lock().expect("not poisoned");
+    result(driver.failure(failed.map(|failed| failed.why)))
 }
 
 /// `text` as a Luau long string, at a level `text` cannot close, nor
@@ -858,6 +967,9 @@ struct Reaches {
     jev: bool,
     network: Option<Network>,
     store: Option<SessionRef>,
+    /// The property case its draws come from, while a property runs
+    /// (ADR 0049).
+    hegel: Option<crate::hegel::Shared>,
 }
 
 /// The HTTP requests a plugin may send (`uses.network`): to these hosts,
@@ -886,6 +998,7 @@ impl Reaches {
                 store: secrets.map(tau_tools_host::secrets::SecretStore::new),
             }),
             store: None,
+            hegel: None,
         }
     }
 
@@ -897,6 +1010,7 @@ impl Reaches {
             jev: false,
             network: None,
             store: None,
+            hegel: None,
         }
     }
 }
@@ -940,6 +1054,7 @@ async fn run(
         jev: reaches.jev,
         network: reaches.network,
         store: reaches.store,
+        hegel: reaches.hegel,
     });
     let request = Request {
         call_id: format!("plugin:{}", reaches.name),
@@ -1000,6 +1115,8 @@ struct PluginHost {
     jev: bool,
     network: Option<Network>,
     store: Option<SessionRef>,
+    /// The case a property's draws come from, while one runs.
+    hegel: Option<crate::hegel::Shared>,
 }
 
 impl PluginHost {
@@ -1094,6 +1211,16 @@ impl Host for PluginHost {
                 });
             }
         }
+        if self.hegel.is_some() {
+            tools.push(ToolEntry {
+                name: "hegel".into(),
+                description: "A draw from the property case going on.".into(),
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                namespace: None,
+                sequential: true,
+            });
+        }
         if self.network.is_some() {
             tools.push(ToolEntry {
                 name: "http".into(),
@@ -1130,6 +1257,11 @@ impl Host for PluginHost {
         }
         if let (Some(network), "http") = (&self.network, call.name.as_str()) {
             return self.request(network, &call.args).await;
+        }
+        if let (Some(driver), "hegel") = (&self.hegel, call.name.as_str()) {
+            return crate::hegel::call(driver, &call.args)
+                .await
+                .map(ToolReply::success);
         }
         if !self.allowed(&call.name) {
             return Err(format!(

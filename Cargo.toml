@@ -33,6 +33,9 @@ globset = "0.4.20"
 grep-regex = "0.1.14"
 grep-searcher = "0.1.17"
 hegeltest = { version = "0.48.1", features = ["serde_json", "static-engine"] }
+# hegel's engine, which Luau plugins' property tests drive (ADR 0049):
+# the version hegeltest links.
+hegeltest-c = "=0.44.1"
 # The computer's addresses a phone could reach it at (tau-ui's Phones).
 if-addrs = "0.15.0"
 ignore = "0.4.33"
