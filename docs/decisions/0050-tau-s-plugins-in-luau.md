@@ -349,11 +349,11 @@ each plugin, no longer for all together; `turn_end` gets the turn's
 the run's, the first plugin's that gives one. tau-goal needed four
 things more:
 
-- **A view draws the person's messages it knows**: `messages = {
-  [text] = pieces }`, for the message whose text is exactly `text`,
-  and an empty stack draws nothing. A `/goal` draws as the goal it set,
-  typed or as the model reads it, and a continuation a check's note
-  says draws as nothing. The point (`tau.run.user_message`) left
+- **A view draws the person's messages it knows**, in its
+  `messages = { [text] = pieces }`: the message whose text is exactly
+  `text` draws as `pieces`, and an empty stack draws nothing. A
+  `/goal` draws as the goal it set, typed or as the model reads it,
+  and a continuation a check's note says draws as nothing. The point (`tau.run.user_message`) left
   `NOT_YET`.
 - **A command has an icon and a popover**: `popover = { jev, no_jev }`,
   whose inputs' drafts reach `run` as `ctx.drafts`; an input whose
