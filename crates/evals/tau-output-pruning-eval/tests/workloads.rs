@@ -1,13 +1,25 @@
 //! Workloads: the same for the same seed, and every needle where it is
 //! claimed, exactly once, over the gate.
 
+use std::sync::OnceLock;
+
 use hegel::{TestCase, generators as gs, generators::Generator as _};
-use tau_fast_compaction::{OutputPruning, output, state::estimate_tokens};
+use serde_json::Value;
 use tau_output_pruning_eval::{
-    runner::exec_result,
+    measure::{self, estimate_tokens},
+    runner::{self, exec_result},
     workload::{Kind, generate},
 };
+use tau_testing::block_on_io;
 use tau_tools_host::truncate::MAX_LINES;
+
+/// The plugin's settings `key`, by its default, as it declares them.
+fn default(key: &str) -> usize {
+    static DEFAULTS: OnceLock<Value> = OnceLock::new();
+    let defaults =
+        DEFAULTS.get_or_init(|| block_on_io(runner::defaults()).unwrap());
+    defaults[key].as_u64().unwrap() as usize
+}
 
 /// The same kind and seed make the same workload; another seed, another.
 #[hegel::test(test_cases = 20)]
@@ -38,10 +50,7 @@ fn needles_are_where_claimed_exactly_once(tc: TestCase) {
         );
     }
     assert_eq!(workload.needles.is_empty(), kind == Kind::AllNoise);
-    assert!(
-        estimate_tokens(&workload.output)
-            > OutputPruning::default().min_output_tokens
-    );
+    assert!(estimate_tokens(&workload.output) > default("output_min_tokens"));
 }
 
 /// The kinds that promise a place keep it: cut-middle's needle is
@@ -70,8 +79,8 @@ fn kinds_keep_their_promises(tc: TestCase) {
     // needle-error's error is in neither end chunk, which pruning keeps
     // whatever Jev says, so only Jev's answer can keep it.
     let error = generate(Kind::NeedleError, seed);
-    let lines = output::lines(&error.output).len();
-    let chunks = output::chunks(lines, OutputPruning::default().chunk_lines);
+    let lines = measure::lines(&error.output).len();
+    let chunks = measure::chunks(lines, default("output_chunk_lines"));
     let (first, last) = (&chunks[0], &chunks[chunks.len() - 1]);
     for needle in &error.needles {
         assert!(
@@ -88,6 +97,6 @@ fn kinds_keep_their_promises(tc: TestCase) {
     assert!(earlier.earlier[0].result.contains(name));
     assert!(
         estimate_tokens(&earlier.earlier[0].result)
-            > OutputPruning::default().max_state_tokens / 2
+            > default("output_max_state_tokens") / 2
     );
 }

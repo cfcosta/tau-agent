@@ -1041,6 +1041,8 @@ struct Reaches {
     store: Option<SessionRef>,
     /// The run's conversation (`uses.transcript`).
     transcript: bool,
+    /// Files of what it cuts (`uses.archive`).
+    archive: bool,
     /// The property case its draws come from, while a property runs
     /// (ADR 0049).
     hegel: Option<crate::hegel::Shared>,
@@ -1073,6 +1075,7 @@ impl Reaches {
             }),
             store: None,
             transcript: uses.transcript,
+            archive: uses.archive,
             hegel: None,
         }
     }
@@ -1086,6 +1089,7 @@ impl Reaches {
             network: None,
             store: None,
             transcript: false,
+            archive: false,
             hegel: None,
         }
     }
@@ -1131,6 +1135,7 @@ async fn run(
         network: reaches.network,
         store: reaches.store,
         transcript: reaches.transcript,
+        archive: reaches.archive,
         hegel: reaches.hegel,
     });
     let request = Request {
@@ -1194,6 +1199,8 @@ struct PluginHost {
     store: Option<SessionRef>,
     /// Whether it reads the run's conversation (`uses.transcript`).
     transcript: bool,
+    /// Whether it keeps files of what it cuts (`uses.archive`).
+    archive: bool,
     /// The case a property's draws come from, while one runs.
     hegel: Option<crate::hegel::Shared>,
 }
@@ -1255,6 +1262,9 @@ impl PluginHost {
         self.tools.iter().any(|tool| tool == name)
             || (self.infer && name == "infer")
             || (self.transcript && name == "transcript")
+            || (self.archive && matches!(name, "archive_path" | "archive_write"))
+            // Sizes only, where the hook holds the run's conversation.
+            || name == "measure"
     }
 }
 

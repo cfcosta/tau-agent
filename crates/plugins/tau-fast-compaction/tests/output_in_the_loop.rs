@@ -1,11 +1,16 @@
-//! Output pruning as a plugin of an `Agent`: a fake `exec_command` whose output
-//! the tests choose, `ScriptedModel`, and a `FakeJev` that keeps the
-//! chunks holding an error.
+//! tau-fast-compaction's output pruning inside the agent loop, its Luau
+//! run by tau-luau-plugins as tau runs it: a fake `exec_command` whose
+//! output the tests choose, `ScriptedModel`, and a `FakeJev` that keeps
+//! the chunks holding an error. Time is real.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-};
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+mod common;
+
+use std::path::Path;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -17,27 +22,12 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::{InputBlock, Message};
-use tau_fast_compaction::{
-    FastCompaction,
-    NAME,
-    OutputStats,
-    Settings,
-    output::HEADER,
-};
+use tau_fast_compaction::HEADER;
 use tau_jev::{Answer, JevError, fake::FakeJev};
-use tau_testing::{block_on, scripted::ScriptedModel};
+use tau_store::Store;
+use tau_testing::{block_on_io, scripted::ScriptedModel};
 
-/// A fresh directory for one test's files.
-fn scratch(name: &str) -> PathBuf {
-    static CASE: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "tau-fast-compaction-{name}-{}-{}",
-        std::process::id(),
-        CASE.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
+use crate::common::{fast, logs, scratch, state};
 
 /// How the fake `exec_command` answers.
 #[derive(Clone)]
@@ -154,26 +144,33 @@ fn one_build() -> ScriptedModel {
         .turn(|t| t.text("done"))
 }
 
-fn settings(archive_dir: &Path) -> Settings {
-    Settings {
-        archive_dir: archive_dir.to_owned(),
-        ..Settings::default()
-    }
+fn settings() -> Value {
+    json!({})
 }
 
 async fn run(
     model: &ScriptedModel,
     exec: Exec,
     jev: FakeJev,
-    settings: Settings,
-) -> (Vec<RunEvent>, Outcome) {
+    settings: Value,
+    archive: &Path,
+) -> (Vec<RunEvent>, Outcome, Store) {
     let store = tau_store_sqlite::memory().await.unwrap();
     let agent = Agent::new(model.clone())
         .tool(exec)
-        .plugin(FastCompaction::new(jev).settings(settings));
+        .plugin(fast(settings, &jev, archive));
     let mut run = agent.start("fix the build", &store);
     let events = run.events().collect().await;
-    (events, run.outcome().await.unwrap())
+    let outcome = run.outcome().await.unwrap();
+    (events, outcome, store)
+}
+
+/// What the plugin's state says of each output it asked Jev about.
+async fn outputs(store: &Store, outcome: &Outcome) -> Vec<Value> {
+    state(store, &outcome.run.0).await["outputs"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// The text of the result the model's second request ends with.
@@ -188,20 +185,6 @@ fn seen_result(model: &ScriptedModel) -> String {
     }
 }
 
-fn output_reports(events: &[RunEvent]) -> Vec<OutputStats> {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            RunEvent::PluginReport { plugin, body, .. }
-                if &**plugin == NAME && body["kind"] == "output" =>
-            {
-                Some(serde_json::from_value(body.clone()).unwrap())
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 /// The archive a pruned output names in its footer.
 fn footer_archive(text: &str) -> String {
     let (_, rest) = text.rsplit_once("[full output: ").unwrap();
@@ -214,19 +197,20 @@ fn footer_archive(text: &str) -> String {
 /// from its middle, markers for what went, and a footer naming an
 /// archive, readable only by its owner, that holds the output whole.
 /// Jev saw the command, the task and the chunks; its usage is charged,
-/// and a report says how it went.
+/// and the plugin's state says how it went, which the call's card shows.
 #[test]
 fn a_large_output_reaches_the_model_pruned() {
     let dir = scratch("whole");
     let log = build_log(3000);
     let model = one_build();
     let jev = keeps_errors();
-    block_on(async {
-        let (events, outcome) = run(
+    block_on_io(async {
+        let (events, outcome, store) = run(
             &model,
             Exec::new(log.clone(), Answering::Whole),
             jev.clone(),
-            settings(&dir),
+            settings(),
+            &dir,
         )
         .await;
         assert_eq!(outcome.text, "done");
@@ -255,61 +239,30 @@ fn a_large_output_reaches_the_model_pruned() {
         assert!(history.contains("fix the build"), "{history}");
         assert!(outcome.usage.cost.total > 0.0, "Jev's usage is charged");
 
-        let reports = output_reports(&events);
+        let reports = outputs(&store, &outcome).await;
         assert_eq!(reports.len(), 1);
-        assert!(reports[0].pruned);
-        assert_eq!(reports[0].archive.as_deref(), Some(archive.as_str()));
-        assert!(reports[0].tokens_after < reports[0].tokens_before);
-        assert!(reports[0].dropped_lines > 0);
-        assert_eq!(reports[0].lines, 3000);
-        // The report's cost is what the plugin charged for it.
-        let charged: f64 = events
-            .iter()
-            .filter_map(|event| match event {
-                RunEvent::PluginCharged { plugin, usage, .. }
-                    if &**plugin == NAME =>
-                {
-                    Some(usage.cost.total)
-                }
-                _ => None,
-            })
-            .sum();
+        let report = &reports[0];
+        assert_eq!(report["pruned"], true);
+        assert_eq!(report["archive"], json!(archive));
+        assert!(
+            report["tokens_after"].as_u64() < report["tokens_before"].as_u64()
+        );
+        assert!(report["dropped_lines"].as_u64().unwrap() > 0);
+        assert_eq!(report["lines"], 3000);
+        // Its cost is what the plugin charged for it.
+        let charged = crate::common::charged(&events);
         assert!(charged > 0.0);
-        assert_eq!(reports[0].cost, charged);
-    });
-    std::fs::remove_dir_all(&dir).unwrap();
-}
-
-/// The report is also stored with the run, for history to read back.
-#[test]
-fn the_report_is_recorded() {
-    let dir = scratch("recorded");
-    let model = one_build();
-    block_on(async {
-        let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone())
-            .tool(Exec::new(build_log(3000), Answering::Whole))
-            .plugin(
-                FastCompaction::new(keeps_errors()).settings(settings(&dir)),
-            );
-        let mut run = agent.start("fix the build", &store);
-        let id = run.id();
-        let events: Vec<RunEvent> = run.events().collect().await;
-        run.outcome().await.unwrap();
-        let reports = output_reports(&events);
-        let records: Vec<OutputStats> = store
-            .records(&id.0, NAME)
-            .await
-            .unwrap()
-            .iter()
-            .map(|body| {
-                let body: Value = serde_json::from_str(body).unwrap();
-                assert_eq!(body["kind"], "output");
-                serde_json::from_value(body).unwrap()
-            })
-            .collect();
-        assert_eq!(records, reports);
-        assert!(records[0].pruned);
+        assert_eq!(report["cost"].as_f64().unwrap(), charged);
+        // The call is not marked for the person's review.
+        assert!(
+            !crate::common::records(&store, &outcome.run.0)
+                .await
+                .iter()
+                .any(|record| matches!(
+                    record,
+                    tau_luau_plugins::Record::Flag { .. }
+                ))
+        );
     });
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -326,19 +279,20 @@ fn a_write_stdin_result_is_pruned_too() {
         })
         .turn(|t| t.text("done"));
     let jev = keeps_errors();
-    block_on(async {
-        let (events, _) = run(
+    block_on_io(async {
+        let (_, outcome, store) = run(
             &model,
             Exec::new(log, Answering::Whole).named("write_stdin"),
             jev.clone(),
-            settings(&dir),
+            settings(),
+            &dir,
         )
         .await;
         let seen = seen_result(&model);
         assert!(seen.starts_with(HEADER), "{seen}");
         assert!(seen.contains("error[E0425]"));
         assert_eq!(jev.requests()[0].state["command"], "write_stdin: y\n");
-        assert!(output_reports(&events)[0].pruned);
+        assert_eq!(outputs(&store, &outcome).await[0]["pruned"], true);
     });
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -358,17 +312,18 @@ fn small_or_failed_outputs_are_untouched() {
     ] {
         let model = one_build();
         let jev = keeps_errors();
-        block_on(async {
-            let (events, _) = run(
+        block_on_io(async {
+            let (_, outcome, store) = run(
                 &model,
                 Exec::new(log, answering),
                 jev.clone(),
-                settings(&dir),
+                settings(),
+                &dir,
             )
             .await;
             assert_eq!(seen_result(&model), expected);
             assert!(jev.requests().is_empty());
-            assert!(output_reports(&events).is_empty());
+            assert!(outputs(&store, &outcome).await.is_empty());
         });
     }
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
@@ -382,14 +337,13 @@ fn output_pruning_can_be_off() {
     let log = build_log(3000);
     let model = one_build();
     let jev = keeps_errors();
-    let mut settings = settings(&dir);
-    settings.output.enabled = false;
-    block_on(async {
+    block_on_io(async {
         run(
             &model,
             Exec::new(log.clone(), Answering::Whole),
             jev.clone(),
-            settings,
+            json!({ "output_enabled": false }),
+            &dir,
         )
         .await;
     });
@@ -398,59 +352,57 @@ fn output_pruning_can_be_off() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A Jev failure leaves the output as it was, reported as a plugin
-/// error, and writes no archive.
+/// A Jev failure leaves the output as it was, says so in the plugin's
+/// log, and writes no archive.
 #[test]
 fn a_jev_failure_leaves_the_output() {
     let dir = scratch("failure");
     let log = build_log(3000);
     let model = one_build();
-    block_on(async {
+    block_on_io(async {
         let jev = FakeJev::new(|_| Err(JevError::Status(503)));
-        let (events, outcome) = run(
+        let (_, outcome, store) = run(
             &model,
             Exec::new(log.clone(), Answering::Whole),
             jev,
-            settings(&dir),
+            settings(),
+            &dir,
         )
         .await;
         assert_eq!(outcome.text, "done");
         assert_eq!(seen_result(&model), log);
-        let errors: Vec<&str> = events
-            .iter()
-            .filter_map(|event| match event {
-                RunEvent::PluginError {
-                    plugin, message, ..
-                } if &**plugin == NAME => Some(message.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(errors, ["Jev answered with status 503"]);
+        let logged = logs(&store, &outcome.run.0).await;
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert!(
+            logged[0].contains("Jev answered with status 503"),
+            "{logged:?}"
+        );
     });
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// When Jev keeps everything, the output is untouched: nothing went, so
-/// nothing would be saved; the report says so.
+/// nothing would be saved; the state says so.
 #[test]
 fn keeping_everything_leaves_the_output() {
     let dir = scratch("kept");
     let log = build_log(3000);
     let model = one_build();
-    block_on(async {
-        let (events, _) = run(
+    block_on_io(async {
+        let (_, outcome, store) = run(
             &model,
             Exec::new(log.clone(), Answering::Whole),
             FakeJev::nouls(|_| 0.9),
-            settings(&dir),
+            settings(),
+            &dir,
         )
         .await;
         assert_eq!(seen_result(&model), log);
-        let reports = output_reports(&events);
+        let reports = outputs(&store, &outcome).await;
         assert_eq!(reports.len(), 1);
-        assert!(!reports[0].pruned);
-        assert_eq!(reports[0].dropped_lines, 0);
+        assert_eq!(reports[0]["pruned"], false);
+        assert_eq!(reports[0]["dropped_lines"], 0);
     });
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     std::fs::remove_dir_all(&dir).unwrap();

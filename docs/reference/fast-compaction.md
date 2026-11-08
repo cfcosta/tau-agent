@@ -1,8 +1,9 @@
 # Fast compaction
 
 `tau-fast-compaction` (`crates/plugins/tau-fast-compaction`) keeps a run's
-context lean with Jev, TypeSafe's System One model, in two stages. It
-never summarizes: what stays is verbatim, and what goes is archived or
+context lean with Jev, TypeSafe's System One model, in two stages. It is
+a Luau plugin tau comes with (ADR 0050): `luau/lib/` holds the rules,
+and `luau/plugin.luau` the hooks and what it draws. It never summarizes: what stays is verbatim, and what goes is archived or
 can be re-run. When pruning cannot free enough, summarizing compaction
 takes over.
 
@@ -23,25 +24,23 @@ three are MIT; the notices are in the crate's `THIRD_PARTY_NOTICES.md`.
 
 ## Using it
 
-```rust
-use tau_compaction::Compaction;
-use tau_fast_compaction::FastCompaction;
-use tau_jev::TypeSafe;
+tau-luau-plugins runs it first of the compactions, before the tree and
+tau-compaction, as tau comes with them. Context plugins are offered the
+context in order, and the first that rewrites wins: when pruning
+declines, the next one can take the turn. It needs a TypeSafe key: the
+run's Jev. Without one it does nothing, and its status line says so.
 
-let agent = Agent::new(llm) // an `OpenAi` on a ChatGPT sign-in
-    .plugin(FastCompaction::new(TypeSafe::from_env()?))
-    .plugin(Compaction::default()); // after: it takes what pruning declines
-```
-
-`TypeSafe::from_env` reads `TYPESAFE_API_KEY`. Context plugins are
-offered the context in the order they were added, so add fast
-compaction before summarizing compaction.
+An agent of its own adds it with `Active::built_in` in a
+`LuauPlugins`, with a Jev, before tau-compaction. `with_archive` names
+the archive directory; tau's is `archive` in the repository's data
+directory, and the default is the temporary directory.
 
 ## Output pruning
 
-The plugin's `after_tool_result` seam sees each tool result before the
-model does, with whether the call failed and the transcript the model
-had seen when it made the call ([plugins.md](plugins.md)).
+The plugin's `after_tool_result` hook sees each tool result before the
+model does, with whether the call failed, whether a tool made it, and
+the transcript the model had seen when it made the call
+([plugins.md](plugins.md)).
 
 ### Which outputs
 
@@ -52,24 +51,28 @@ had seen when it made the call ([plugins.md](plugins.md)).
   never to the model, and is left as it is.
 - The output is the result's text, which those tools already cut to
   the last 2,000 lines or 50 KB.
-- Only an output estimated over `min_output_tokens` (10,000) is touched.
+- Only an output estimated over `output_min_tokens` (10,000) is touched.
   Anything smaller passes untouched: no Jev call, no archive, no
   history read.
-- An output holding a NUL byte, or over 64 MB, is left as it is.
+- An output holding a NUL byte or an image is left as it is.
+- An output over 256 KiB is left as it is: the hook gets only its
+  first 256 KiB, marked cut, and pruning needs it whole. tau's
+  `exec_command` returns at most 50 KB, so this only stops a tool that
+  returns more.
 
 ### What it does
 
 1. **Chunks** the output: lines over 2,000 characters are split first,
-   then the lines go in runs of `chunk_lines` (20), merged so there
+   then the lines go in runs of `output_chunk_lines` (20), merged so there
    are at most 200 chunks. With two chunks or fewer, nothing could go,
    and the output is left as it is.
 2. **Builds the state** Jev sees: what the state is (its `context`), the
-   task (`Settings::goal`, or the user's last three prompts), the
+   task (the `goal` setting, or the user's last three prompts), the
    **complete history** so far (the user's and the assistant's text,
    every tool call with its input, and every tool result verbatim), the
    command, and the chunks.
-3. **Partitions the history** when it does not fit `max_state_tokens`
-   (25,000) with the rest of the state: it is split in order into
+3. **Partitions the history** when it does not fit
+   `output_max_state_tokens` (25,000) with the rest of the state: it is split in order into
    segments that fit, never truncated or left out. A field too large
    for a segment becomes continuations, each labeled with the field's
    name and the character offset it starts at. The history keeps at
@@ -85,36 +88,39 @@ had seen when it made the call ([plugins.md](plugins.md)).
    the task needs must not depend on the model looking there. The
    question itself stays short, so a request holds more of them.
    **Every chunk is asked about against every segment**, in states that
-   fit `max_state_tokens` and requests that fit `max_request_tokens`
-   (30,000), sent together, at most `max_output_requests` (12) per
-   output. The first and last chunks are never asked about, since they
+   fit `output_max_state_tokens` and requests that fit
+   `output_max_request_tokens` (30,000), sent together (four at a
+   time), at most `output_max_requests` (12) per output. The first and last chunks are never asked about, since they
    always stay, and neither is a chunk the allowance leaves short of a
    segment, since it stays too.
 5. **Decides** each chunk. A chunk is **kept** when it is the first or
-   the last; when any segment answered at or above `keep_threshold`
-   (0.5); or when it was not answered against every segment. It goes
+   the last; when any segment answered at or above
+   `output_keep_threshold` (0.5); or when it was not answered against every segment. It goes
    when every segment answered under the threshold.
 6. **Renders** a header line saying kept lines are verbatim and
    omissions are marked; the kept chunks, verbatim and in order; one
    `[N lines omitted]` for each run of dropped lines; and a footer
    naming the archive, `[full output: <path> (read or grep it if
 needed)]`. The archive is a new
-   file in `Settings::archive_dir` (the temporary directory) that only
-   its owner can read.
+   file in the run's archive directory (`ctx.archive`) that only its
+   owner can read.
 7. **Replaces** the result only when the rendered text is estimated at
-   least `min_reduction_ratio` (10%) smaller than the output.
-   Otherwise the result stays, and no archive is written.
+   least `output_min_reduction_ratio` (10%) smaller than the output.
+   Otherwise the result stays, and no archive is written. A replaced
+   result is not flagged as changed by a plugin: what it keeps is
+   verbatim.
 
-Whenever Jev was asked, a `PluginReport` with `kind: "output"` says how
-it went: the call, the output's lines, the chunks and how many stayed,
+Whenever Jev was asked, the plugin adds an entry to `outputs` in its
+state: the call, the output's lines, the chunks and how many stayed,
 the lines dropped, the segments, the requests, the estimated tokens
 before and after, whether the result was replaced, the archive, and
-what Jev cost (`cost`, also charged to the run). The same body is
-stored with the run as a record, so an interface can show it again when
-it reloads the run from history. tau-ui's `exec_command` card shows a pruned
-output as two tabs, the terminal and the text the model saw
-([terminal.md](terminal.md)), with the lines kept and the tokens before
-and after; the Ledger screen adds up what pruned outputs saved.
+what Jev cost (`cost`, also charged to the run). The state is stored
+with the run, so an interface shows it again when it reloads the run
+from history. The plugin's view puts a pruned output on its call's card
+(`calls[id].cut`): tau-ui shows it as two tabs, the terminal and the
+text the model saw ([terminal.md](terminal.md)), with the lines kept and
+the tokens before and after. The ledger page adds up what pruned
+outputs saved.
 
 ### Safeguards
 
@@ -132,11 +138,11 @@ decides, and the structure protects:
 A Jev error (after its client's retries), a missing or malformed
 answer, a task and command that leave no room for the history, an
 archive that cannot be written, or a cancel leaves the result untouched
-and is reported as a `PluginError` event. The run goes on.
+and is written to the plugin's log. The run goes on.
 
 ### Cost
 
-- Every Jev request is charged to the run (`PluginCtx::charge`),
+- Every Jev request is charged to the run, under tau-luau-plugins,
   including the answered ones of a pruning that then failed.
 - Pruning at `after_tool_result` changes only the result being added, so the
   next request is still a delta
@@ -148,7 +154,7 @@ and is reported as a `PluginError` event. The run goes on.
   estimated tokens, $0.0035 to $0.0076 each output. At those rates the
   allowance of 12 covers outputs of about 150,000 tokens, at most about
   $0.013; past it, the chunks left unasked stay, and the result is
-  replaced only if it still saves `min_reduction_ratio`.
+  replaced only if it still saves `output_min_reduction_ratio`.
 
 ### Evaluation
 
@@ -169,10 +175,13 @@ lines the task needs, each in the output exactly once.
 | `multi-needle`        | three failing tests far apart                                                                   |
 | `earlier-requirement` | a checksum only an earlier `read` of a large runbook asks for, so the history comes in segments |
 
-The runner drives the real plugin through the agent loop, as the app
-does: a scripted model makes the workload's calls, fake tools answer,
-and the fake `exec_command` cuts its output to the tail like tau's (or,
-with `--whole`, returns every output whole). Pruning sees only the text
+The runner drives the real plugin, its Luau loaded as tau loads it,
+through the agent loop, as the app does: a scripted model makes the
+workload's calls, fake tools answer, and the fake `exec_command` cuts
+its output to the tail like tau's (or, with `--whole`, returns every
+output whole; one over 256 KiB is then left whole, see "Which
+outputs"). It reads each output's stats from the plugin's state, and
+measures layout and tokens with its own copy of the rules. Pruning sees only the text
 the call returned, so a needle the cut removed is gone. Per trial it
 records:
 
@@ -245,7 +254,7 @@ floor, then the question's shared guidance moved into the `context`
 - **Nothing is asked that cannot change the outcome:** not the first
   and last chunks, and not the chunks the allowance leaves short of a
   segment.
-- **A replacement must save `min_reduction_ratio`** of the whole
+- **A replacement must save `output_min_reduction_ratio`** of the whole
   output, and must not outgrow what the model would otherwise see;
   jev-pruner has no such floor.
 - **No floor under the threshold.** jev-pruner also keeps any chunk
@@ -263,8 +272,8 @@ floor, then the question's shared guidance moved into the `context`
 
 - **Between turns,** when both hold:
   - the loop's token estimate has passed `compact_at_percent` (60%) of
-    the context window; the window is `Settings::context_window`, or the
-    model registry's;
+    the context window; the window is the `window` setting when it is
+    over 0, else the model registry's;
   - the context has grown by `cooldown_percent` (10%) of the window
     since the last pass that asked Jev.
 - **As a run starts on a transcript it inherited** (a fork, a
@@ -283,7 +292,7 @@ floor, then the question's shared guidance moved into the `context`
 1. **Pins** the first message and the last `preserve_recent` (6; at
    least 1). A call is pinned when its call or its result is. Pinned
    calls are always kept.
-2. **Builds the state** Jev sees: the goal (`Settings::goal`, or the
+2. **Builds the state** Jev sees: the goal (the `goal` setting, or the
    user's last three prompts), and the history, whole, with each tool
    call's name, input and a note of its result's size and status.
    **Never the result itself.**
@@ -294,7 +303,7 @@ floor, then the question's shared guidance moved into the `context`
    the calls it asks about.
 4. **Asks** two yes/no questions (Nouls) per unpinned call, against
    every segment, in batches that fit `max_request_tokens` (30,000) with
-   the state, sent together:
+   the state, sent together (four at a time):
    - does knowing the call was made, with its input, still matter;
    - does its full output still need to stay verbatim.
 5. **Decides** each call, at `keep_threshold` (0.5), on each answer's
@@ -309,20 +318,22 @@ floor, then the question's shared guidance moved into the `context`
    - neither: **drop the call** and its result.
 6. **Merges** the decisions into the run's ledger. A call's decision
    only escalates: keep, then drop the result, then drop the call.
-7. **Applies** the ledger to the transcript. An assistant message whose
-   calls were all dropped, leaving no text, goes too. Everything else
-   stays as it was, in order.
+7. **Applies** the ledger to the transcript: the calls it drops, and
+   the results it cuts. tau drops an assistant message whose calls all
+   went and which has no text left. Everything else stays as it was, in
+   order.
 8. **Rewrites** the context only if the pruned transcript is at least
-   `min_reduction_ratio` (25%) smaller, measured as JSON. Otherwise the
-   pass declines, the ledger stays as it was, no archive is written,
-   and the next context plugin gets the chance.
+   `min_reduction_ratio` (25%) smaller, measured as JSON
+   (`ctx.measure`). Otherwise the pass declines, the ledger stays as it
+   was, no archive is written, and the next context plugin gets the
+   chance.
 9. **Archives** each result it cuts, before the rewrite: the result's
-   text, whole, in a new file in `Settings::archive_dir` that only its
-   owner can read. The ledger keeps each archive's path.
+   text, whole, in a new file in the run's archive directory that only
+   its owner can read. The ledger keeps each archive's path.
 
 ### Cost
 
-- Every Jev request is charged to the run (`PluginCtx::charge`), at
+- Every Jev request is charged to the run, under tau-luau-plugins, at
   $0.042 per million input tokens, so it counts toward the run's limits
   and cost. A request that was answered is charged even when another
   failed.
@@ -335,29 +346,36 @@ floor, then the question's shared guidance moved into the `context`
 
 ### Failure
 
-Any failure ends the pass without a rewrite and is reported as a
-`PluginError` event: a Jev error (after its client's retries), an answer
+Any failure ends the pass without a rewrite and is written to the
+plugin's log: a Jev error (after its client's retries), an answer
 that is missing, of the wrong kind or out of range, a goal that leaves
 no room for the history, an archive that cannot be written, or a
-cancel. The run goes on with its transcript as it was; on an overflow,
-the next context plugin is offered it.
+cancel. The run goes on with its transcript as it was. On an overflow
+the failure is the hook's error, and the next context plugin is offered
+the context.
 
 ### Storage and forks
 
-A rewrite is stored as a `context` entry by `tau-fast-compaction`,
+A rewrite is stored as a `context` entry by `tau-luau-plugins`,
 pointing at the messages it kept and followed by the ones it cut
-([storage.md](storage.md)). The entry's body
-is the ledger, with the archive of each cut result, and the pass's
-stats: calls, pinned, kept, results and calls dropped, requests, the
-largest state's size and `state_stage` (`whole`, or `N segments`), the
-characters before and after, the reduction, and what Jev cost for the
-pass (`cost`). The same details go out as the `kind: "ledger"` report
-before the rewrite. A fork whose latest inherited rewrite is fast
-compaction's resumes its ledger from it, and tau-ui rebuilds a stored
-run's ledger, rewrite note and pruned cards from it, a dropped call
-included, so history shows what a live run showed. With a key, tau-ui
-marks where a pass steps in (`compact_at_percent`, 60%) on the context
-meter and the Ledger screen.
+([storage.md](storage.md)). The entry's details are the ledger, with
+the archive of each cut result, and the pass's stats: calls, pinned,
+kept, results and calls dropped, requests, the largest state's size and
+`state_stage` (`whole`, or `N segments`), the characters before and
+after, the reduction, and what Jev cost for the pass (`cost`).
+
+The ledger and each pass are also in the plugin's state, which is
+stored with the run and which a fork inherits, so a fork goes on from
+its parent's ledger. Its view draws from that state, live or reloaded
+from history:
+
+- the status line, such as `3 pruned · −53%`;
+- a note at each pass (`pass-N`), with what it saved and what Jev read;
+- each call it pruned, marked on its card: `result dropped` or `call
+dropped`, and the cut output's tabs;
+- the inspector's count of kept calls, with a link to the ledger page;
+- the ledger page: the context before and after the last pass, against
+  the window, and each call's decision with Jev's two answers.
 
 ### Where it differs from pi
 
@@ -381,8 +399,8 @@ meter and the Ledger screen.
   messages left out. tau partitions it, as jev-pruner does.
 - **A cut result names its archive,** where pi tells the model to
   re-run the tool, which can be slow or have side effects.
-- **No settings file, command or status line.** Settings are a Rust
-  value; events report each pass.
+- **No settings file or command.** Its settings are on the Plugins
+  screen; its status line and notes report each pass.
 
 ## Token estimate
 
@@ -391,7 +409,7 @@ calibrated there against the usage Jev reports for real transcripts,
 where it lands 2–18% above the true count: a word of ASCII letters is
 one token per six letters, rounded up; a digit half a token; any other
 character that is not a space nine tenths of a token, per UTF-16 unit.
-A state or a set of questions (`estimate_state_tokens`) counts another
+A state or a set of questions (`estimate.state_tokens`) counts another
 half token per digit. tau counts in exact tenths and rounds up once,
 where the original sums floats: ten punctuation characters are 9
 tokens here, 10 there. The output gate uses the plain estimate; every
@@ -399,17 +417,27 @@ budget a state or request must fit uses the state estimate.
 
 ## Settings
 
-`Settings` holds history pruning's settings (pi's defaults, above),
-`archive_dir` for both stages, and output pruning's, as `output`:
+Its settings are flat, history pruning's (pi's defaults, above) and
+output pruning's, the latter named `output_*`:
 
-| Setting                      | Default                 |                                                               |
-| ---------------------------- | ----------------------- | ------------------------------------------------------------- |
-| `archive_dir`                | the temporary directory | where archives go                                             |
-| `output.enabled`             | `true`                  |                                                               |
-| `output.min_output_tokens`   | 10,000                  | the gate                                                      |
-| `output.chunk_lines`         | 20                      | lines per chunk                                               |
-| `output.keep_threshold`      | 0.5                     | a Noul at or above keeps                                      |
-| `output.max_state_tokens`    | 25,000                  | per state                                                     |
-| `output.max_request_tokens`  | 30,000                  | per request                                                   |
-| `output.max_output_requests` | 12                      | per output                                                    |
-| `output.min_reduction_ratio` | 0.1                     | of the whole output; nor larger than what the model would see |
+| Setting                      | Default |                                                               |
+| ---------------------------- | ------- | ------------------------------------------------------------- |
+| `goal`                       | empty   | the task, else the user's last three prompts                  |
+| `keep_threshold`             | 0.5     | a Noul at or above keeps                                      |
+| `preserve_recent`            | 6       | the newest messages pinned                                    |
+| `max_state_tokens`           | 25,000  | per state                                                     |
+| `max_request_tokens`         | 30,000  | per request                                                   |
+| `head_chars`                 | 300     | what stays of a cut result                                    |
+| `compact_at_percent`         | 60      | where a pass runs between turns                               |
+| `min_reduction_ratio`        | 0.25    | of the transcript                                             |
+| `cooldown_percent`           | 10      | of the window, between passes that asked Jev                  |
+| `start_reserve_tokens`       | 16,384  | what a start keeps free                                       |
+| `window`                     | 0       | for a model the registry does not know; 0 is the model's      |
+| `output_enabled`             | `true`  |                                                               |
+| `output_min_tokens`          | 10,000  | the gate                                                      |
+| `output_chunk_lines`         | 20      | lines per chunk                                               |
+| `output_keep_threshold`      | 0.5     | a Noul at or above keeps                                      |
+| `output_max_state_tokens`    | 25,000  | per state                                                     |
+| `output_max_request_tokens`  | 30,000  | per request                                                   |
+| `output_max_requests`        | 12      | per output                                                    |
+| `output_min_reduction_ratio` | 0.1     | of the whole output; nor larger than what the model would see |

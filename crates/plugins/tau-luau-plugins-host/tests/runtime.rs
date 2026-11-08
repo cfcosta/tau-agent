@@ -135,6 +135,7 @@ async fn a_plugin_declares_what_it_is() {
             model: None,
             store: false,
             transcript: false,
+            archive: false,
         }
     );
     let tools: Vec<(&str, bool)> = declared

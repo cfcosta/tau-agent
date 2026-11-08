@@ -1,0 +1,132 @@
+{
+  "name": "tau-fast-compaction",
+  "description": "Prunes large command outputs as they arrive, and stale tool history, with Jev",
+  "uses": {
+    "tools": [],
+    "jev": true,
+    "infer": false,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": true,
+    "archive": true
+  },
+  "settings": {
+    "default": {
+      "compact_at_percent": 60,
+      "cooldown_percent": 10,
+      "goal": "",
+      "head_chars": 300,
+      "keep_threshold": 0.5,
+      "max_request_tokens": 30000,
+      "max_state_tokens": 25000,
+      "min_reduction_ratio": 0.25,
+      "output_chunk_lines": 20,
+      "output_enabled": true,
+      "output_keep_threshold": 0.5,
+      "output_max_request_tokens": 30000,
+      "output_max_requests": 12,
+      "output_max_state_tokens": 25000,
+      "output_min_reduction_ratio": 0.1,
+      "output_min_tokens": 10000,
+      "preserve_recent": 6,
+      "start_reserve_tokens": 16384,
+      "window": 0
+    },
+    "schema": {
+      "properties": {
+        "compact_at_percent": {
+          "type": "number"
+        },
+        "cooldown_percent": {
+          "type": "number"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "head_chars": {
+          "type": "number"
+        },
+        "keep_threshold": {
+          "type": "number"
+        },
+        "max_request_tokens": {
+          "type": "number"
+        },
+        "max_state_tokens": {
+          "type": "number"
+        },
+        "min_reduction_ratio": {
+          "type": "number"
+        },
+        "output_chunk_lines": {
+          "type": "number"
+        },
+        "output_enabled": {
+          "type": "boolean"
+        },
+        "output_keep_threshold": {
+          "type": "number"
+        },
+        "output_max_request_tokens": {
+          "type": "number"
+        },
+        "output_max_requests": {
+          "type": "number"
+        },
+        "output_max_state_tokens": {
+          "type": "number"
+        },
+        "output_min_reduction_ratio": {
+          "type": "number"
+        },
+        "output_min_tokens": {
+          "type": "number"
+        },
+        "preserve_recent": {
+          "type": "number"
+        },
+        "start_reserve_tokens": {
+          "type": "number"
+        },
+        "window": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "tools": [],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": true,
+    "rewrite_context": true,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": false,
+    "view": true,
+    "settings_view": true
+  },
+  "actions": [],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": null
+}

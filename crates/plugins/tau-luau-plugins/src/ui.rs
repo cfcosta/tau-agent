@@ -151,6 +151,27 @@ impl Fold for State {
                     .into_iter()
                     .flatten()
                 {
+                    // What a rewrite left of the call, and its result cut
+                    // as it arrived, as a Rust plugin's fold says them.
+                    match drawn.get("dropped").and_then(Value::as_str) {
+                        Some("result") => {
+                            run.dropped(
+                                call_id,
+                                tau_ui_plugin::Dropped::Result,
+                            );
+                        }
+                        Some("call") => {
+                            run.dropped(call_id, tau_ui_plugin::Dropped::Call);
+                        }
+                        _ => {}
+                    }
+                    if let Some(cut) = drawn
+                        .get("cut")
+                        .cloned()
+                        .and_then(|cut| serde_json::from_value(cut).ok())
+                    {
+                        run.cut(call_id, cut);
+                    }
                     let mark = match drawn.get("mark").and_then(Value::as_str) {
                         Some("blocked") => CardMark::Blocked {
                             reason: drawn["reason"]

@@ -615,6 +615,95 @@ What the port found besides:
   1,199 characters and the last of the shortest tries kept each failed
   it. It went with the Rust crate.
 
+### tau-fast-compaction
+
+The estimate, the history state and its partitions, the decisions, the
+ledger and output pruning moved to `luau/lib/`, and the plugin is
+`start`, `rewrite_context`, `after_tool_result` and its view. It runs
+first of the compactions, as `BUILT_IN` lists them. It needed these
+things more, each any plugin's:
+
+- **An archive.** With `uses.archive`, `ctx.archive.path(kind)` names a
+  new file in tau's archive of the repository, and
+  `ctx.archive.write(path, text)` writes it, once, readable by its
+  owner alone, in a directory only its owner can open. It writes only a
+  path it gave. Naming it is new reach: "files of what it cuts".
+  `LuauPlugins::with_archive` names the directory; the default is the
+  temporary directory.
+- **A rewrite that drops calls and replaces texts.** `tau.rewrite`
+  takes `drop_calls`, calls that go with their results, an answer left
+  with nothing going too, and `texts`, a person's message's or a
+  result's new text. `ctx.measure(rewrite)` gives the bytes of JSON
+  before and after it, to decide whether it saves enough.
+- **A result shortened without a flag.** `tau.result(text, { flag =
+false })` replaces a result without marking the call for review: what
+  pruning keeps is verbatim.
+- **`after_tool_result` sees more:** a result's `images`, whether a
+  tool made the call (`nested`), and, with `uses.transcript`, what the
+  model had read when it made it.
+- **An answer's parts** in the view: its text and thinking in order, so
+  the history keeps where the thinking sat.
+- **A Jev state in order.** `state_json`, JSON text, stands for a
+  request's `state` and keeps its keys in the order written: the Rust
+  state's field order, which Jev reads and the estimate counts.
+- **What a card shows of a rewrite.** A view's `calls[id].dropped` is
+  `"result"` or `"call"`, and `calls[id].cut` says an output reached the
+  model cut: the lines it kept, the archive and the tokens before and
+  after. tau-ui draws them as it drew the Rust plugin's.
+
+What the port found besides:
+
+- **The rewrite is tau-luau-plugins'.** Its `context` entry, its
+  `ContextRewritten` event and its Jev charges name tau-luau-plugins;
+  the entry's details hold the ledger and the stats. The ledger, each
+  pass and each pruned output are the plugin's state, which a fork
+  inherits, in place of `RunPlan::last_rewrite` and the `ledger` and
+  `output` reports. tau-luau-plugins' rewrites are not ones that keep
+  the transcript, so after a pass the context meter's parts count from
+  the pass, as after a summary.
+- **What it draws moved.** The note at each pass is the view's
+  `pass-N`, where the Rust plugin drew at the rewrite point, and the
+  context meter has no mark at 60%: a Luau plugin has no view there
+  yet. The ledger page has no turn column: the state does not know a
+  call's turn. The catalog's row is tau-luau-plugins', so no row says
+  it needs a key; its status line says so.
+- **Jev is asked four requests at a time**, as Codemode limits a
+  script, where the Rust plugin sent them all together.
+- **An output past 256 KiB is left whole**: the hook gets only its
+  first 256 KiB. tau's `exec_command` returns at most 50 KB, so only the
+  evaluation's `--whole` outputs reach it: `all-noise` at three of the
+  seeds 0 to 9. The evaluation drives the Luau plugin, reads its
+  stats from the plugin's state, and measures with its own copy of the
+  rules.
+- **A failure is a line in the plugin's log**, not a plugin error of
+  the run; on an overflow it is the hook's error, and the next plugin
+  is offered the context. Archives go to the repository's archive
+  directory, not the temporary one. The settings are flat (the output
+  ones `output_*`); the pane does not show them.
+- **Smaller differences.** The ledger keeps every message; tau's
+  rebuild drops an answer whose calls all went and which has no text
+  left, as the Rust ledger did.
+- **Tests moved.** tau-ui's test of a large output pruned into the
+  archive is in `tests/compaction.rs`; tau-ui-remote's tests of a pass
+  on the cards draw the Luau view. The demo's run is the plugin's
+  fixture, three steps of state and view, which `tests/luau.rs` draws
+  and checks.
+- **The parity check** ran the Rust rules, copied from before the port,
+  beside the Luau on drawn inputs: 300 texts estimated (letters,
+  digits, signs, ASCII and Unicode white space, characters of one and
+  two UTF-16 units, control characters); 300 histories, goals and
+  output histories, from tau-testing's transcripts with results long
+  enough to cut; 300 histories split, at drawn budgets and at budgets
+  just under where a prefix of records ends; 300 history-stage plans,
+  and 200 output plans, renders and gates, each at drawn budgets and at
+  the budget where the Rust plan changes and the one under it; and 300
+  ledgers applied through tau's rebuild and measured, with heads drawn
+  and heads that put a result at the cut's length. All equal. A vertical tab left out of the white space, an 8 for the 9
+  tenths a comma costs in the history's split, the output's plan or the
+  history stage's, a cut at `head + 119`, `line omitted` for `lines
+omitted` and DEL left unescaped each failed it. It went with the Rust
+  crate.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

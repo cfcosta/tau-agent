@@ -3,6 +3,8 @@
 //! with its results, the fake `exec_command` cutting its output to the
 //! tail as tau's does, and fast compaction, with only output pruning
 //! at work, prunes the command's output before the model's next request.
+//! The plugin is the Luau one tau comes with (ADR 0050), run by
+//! tau-luau-plugins as tau runs it.
 
 use std::{
     path::{Path, PathBuf},
@@ -17,23 +19,18 @@ use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
     error::ToolError,
-    event::RunEvent,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::{InputBlock, Message};
-use tau_fast_compaction::{
-    FastCompaction,
-    NAME,
-    OutputStats,
-    Settings,
-    output::{self, chunk_id},
-    state,
-};
+use tau_fast_compaction::NAME;
 use tau_jev::{Jev, JevError, Request, Response};
+use tau_luau_plugins::Record;
+use tau_luau_plugins_host::agent::{Active, LuauPlugins};
 use tau_testing::scripted::ScriptedModel;
 use tau_tools_host::truncate::{MAX_BYTES, MAX_LINES, truncate_tail};
 
 use crate::{
+    measure::{self, chunk_id, estimate_tokens},
     metrics::{Summary, Trial, summarize},
     workload::{Kind, Needle, Workload, generate},
 };
@@ -49,6 +46,8 @@ pub enum EvalError {
     Agent(#[from] tau_agent::agent::AgentError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("tau-fast-compaction does not load: {0}")]
+    Plugin(String),
     #[error("the model never saw the command's result")]
     NoResult,
 }
@@ -71,6 +70,12 @@ pub fn exec_result(output: &str) -> (String, bool) {
     }
 }
 
+/// The most of a result's text tau-luau-plugins gives a plugin's
+/// `after_tool_result` hook. The plugin leaves an output it could not
+/// read whole as it was, so with [`Exec::Whole`] an output larger than
+/// this is never pruned. tau's `exec_command` stays well under it.
+pub const HOOK_TEXT_BYTES: usize = 256 * 1024;
+
 /// How the fake `exec_command` returns an output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -79,7 +84,8 @@ pub enum Exec {
     /// ([`exec_result`]).
     #[default]
     Tau,
-    /// The whole output, as a shell without limits would.
+    /// The whole output, as a shell without limits would. One over
+    /// [`HOOK_TEXT_BYTES`] reaches the model unpruned.
     Whole,
 }
 
@@ -198,18 +204,55 @@ fn object_schema() -> Value {
     json!({"type": "object"})
 }
 
-/// Runs `workload` once, pruning with `jev` under `settings` (whose
-/// `archive_dir` is replaced by `work`), with files in `work`,
+/// What the plugin's state says of one output it asked Jev about; the
+/// fields the trial uses.
+#[derive(Debug, serde::Deserialize)]
+struct OutputStats {
+    lines: usize,
+    chunks: usize,
+    kept: usize,
+    dropped_lines: usize,
+    pruned: bool,
+    archive: Option<String>,
+}
+
+/// The plugin's default settings, as it declares them.
+pub async fn defaults() -> Result<Value, EvalError> {
+    Ok(Active::built_in(NAME)
+        .await
+        .map_err(EvalError::Plugin)?
+        .settings)
+}
+
+/// The lines per chunk `settings` (the plugin's, whole) give.
+pub fn chunk_lines(settings: &Value) -> usize {
+    settings["output_chunk_lines"].as_u64().unwrap_or(1) as usize
+}
+
+/// The plugin as tau loads it, `settings` (its flat keys, such as
+/// `output_chunk_lines`) over its defaults.
+async fn plugin(settings: &Value) -> Result<Active, EvalError> {
+    let mut active = Active::built_in(NAME).await.map_err(EvalError::Plugin)?;
+    if let Some(over) = settings.as_object() {
+        for (key, value) in over {
+            active.settings[key] = value.clone();
+        }
+    }
+    Ok(active)
+}
+
+/// Runs `workload` once, pruning with `jev` under `settings` (the
+/// plugin's keys over its defaults), archiving to `work`,
 /// `exec_command` returning the output as `exec` says.
 pub async fn run(
     workload: &Workload,
     jev: Arc<dyn Jev>,
-    mut settings: Settings,
+    settings: &Value,
     work: &Path,
     exec: Exec,
 ) -> Result<Trial, EvalError> {
-    settings.archive_dir = work.to_owned();
-    let chunk_lines = settings.output.chunk_lines;
+    let active = plugin(settings).await?;
+    let chunk_lines = chunk_lines(&active.settings);
     let (native, cut) = match exec {
         Exec::Tau => exec_result(&workload.output),
         Exec::Whole => (workload.output.clone(), false),
@@ -250,15 +293,19 @@ pub async fn run(
         agent = agent.tool(tool);
     }
     let agent = agent.plugin(
-        FastCompaction::shared(metered.clone() as Arc<dyn Jev>)
-            .settings(settings),
+        LuauPlugins::new(
+            vec![active],
+            json!({ "kind": "main", "repo": "eval", "model": "scripted" }),
+            Some(metered.clone() as Arc<dyn Jev>),
+        )
+        .with_archive(work.to_owned()),
     );
 
     let store = tau_store_sqlite::memory().await?;
     let started = Instant::now();
     let mut run = agent.start(workload.prompt.as_str(), &store);
-    let events: Vec<RunEvent> = run.events().collect().await;
-    run.outcome().await?;
+    run.events().for_each(|_| async {}).await;
+    let outcome = run.outcome().await?;
     let latency_ms = started.elapsed().as_millis() as u64;
 
     let seen = model
@@ -279,18 +326,31 @@ pub async fn run(
         })
         .ok_or(EvalError::NoResult)?;
 
+    // The plugin's last state holds what it made of the output, when it
+    // asked Jev; a failure is in its log.
     let mut stats: Option<OutputStats> = None;
     let mut error = None;
-    for event in &events {
-        match event {
-            RunEvent::PluginReport { plugin, body, .. }
-                if &**plugin == NAME && body["kind"] == "output" =>
-            {
-                stats = Some(serde_json::from_value(body.clone())?);
+    for body in store
+        .records(&outcome.run.0, tau_luau_plugins::NAME)
+        .await?
+    {
+        let Ok(record) = serde_json::from_str::<Record>(&body) else {
+            continue;
+        };
+        match record {
+            Record::State { plugin, state } if plugin == NAME => {
+                stats = state["outputs"]
+                    .as_array()
+                    .and_then(|outputs| outputs.last())
+                    .map(|last| serde_json::from_value(last.clone()))
+                    .transpose()?;
             }
-            RunEvent::PluginError {
-                plugin, message, ..
-            } if &**plugin == NAME => error = Some(message.clone()),
+            Record::Log { plugin, lines } if plugin == NAME => {
+                error = lines.last().cloned().or(error);
+            }
+            Record::Error {
+                plugin, error: why, ..
+            } if plugin == NAME => error = Some(why),
             _ => {}
         }
     }
@@ -314,8 +374,8 @@ pub async fn run(
     };
     let tally = metered.tally();
     let layout = layout(&native, &workload.needles, chunk_lines);
-    let tokens_before = state::estimate_tokens(&native);
-    let tokens_after = state::estimate_tokens(&seen);
+    let tokens_before = estimate_tokens(&native);
+    let tokens_after = estimate_tokens(&seen);
     Ok(Trial {
         workload: workload.kind,
         seed: workload.seed,
@@ -331,7 +391,7 @@ pub async fn run(
         chunks: stats.as_ref().map(|stats| stats.chunks),
         kept_chunks: stats.as_ref().map(|stats| stats.kept),
         cut,
-        tokens_full: state::estimate_tokens(&workload.output),
+        tokens_full: estimate_tokens(&workload.output),
         tokens_before,
         tokens_after,
         replaced: seen != native,
@@ -360,13 +420,13 @@ struct Layout {
 }
 
 fn layout(output: &str, needles: &[Needle], chunk_lines: usize) -> Layout {
-    let lines = output::lines(output);
-    let ranges = output::chunks(lines.len(), chunk_lines);
+    let lines = measure::lines(output);
+    let ranges = measure::chunks(lines.len(), chunk_lines);
     Layout {
         chunk_tokens: ranges
             .iter()
             .map(|range| {
-                state::estimate_tokens(&output::text_of(&lines, range.clone()))
+                estimate_tokens(&measure::text_of(&lines, range.clone()))
             })
             .collect(),
         needle_chunks: needles
@@ -387,7 +447,9 @@ pub struct Config {
     pub seeds: Vec<u64>,
     /// Stop once Jev spend passes this many dollars.
     pub budget_usd: Option<f64>,
-    pub settings: Settings,
+    /// The plugin's settings over its defaults, by its flat keys (such
+    /// as `output_chunk_lines`); empty for the defaults.
+    pub settings: Value,
     pub exec: Exec,
     /// Where each trial's files go, in a directory of its own.
     pub work: PathBuf,
@@ -399,7 +461,7 @@ impl Config {
             kinds: Kind::ALL.to_vec(),
             seeds: vec![0],
             budget_usd: None,
-            settings: Settings::default(),
+            settings: json!({}),
             exec: Exec::Tau,
             work,
         }
@@ -442,7 +504,7 @@ pub async fn evaluate(
             let trial = run(
                 &workload,
                 jev.clone(),
-                config.settings.clone(),
+                &config.settings,
                 &dir,
                 config.exec,
             )

@@ -28,6 +28,7 @@ tau-remote.workspace = true
 tau-constitution.workspace = true
 tau-compaction.workspace = true
 tau-tree-compaction.workspace = true
+tau-fast-compaction.workspace = true
 tau-github.workspace = true
 tau-mcp.workspace = true
 tau-memory.workspace = true
@@ -60,7 +61,6 @@ tau-jev.workspace = true
 tau-mcp-host.workspace = true
 tau-memory-host = { workspace = true, features = ["docbert"] }
 tau-reasoning.workspace = true
-tau-fast-compaction.workspace = true
 tau-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a
 # pseudo-terminal (docs/decisions/0010-terminal-rendering.md).

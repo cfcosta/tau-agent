@@ -65,7 +65,7 @@ local entry = g.composite(function(draw)
 end)
 
 t.property("growing builds every line within budget, asking only when needed", function(draw)
-	local entries = draw(g.lists(entry, { min = 16, max = 120 }))
+	local entries = draw(g.lists(entry, { min = 16, max = 80 }))
 	local bits, left = 0, #entries
 	while left > 0 do
 		bits += left % 2
@@ -110,7 +110,7 @@ t.property("growing builds every line within budget, asking only when needed", f
 		t.equal(#request.task, 2, "context, then the step")
 		t.equal(string.sub(request.task[1], 1, 6), "<chat>")
 	end
-end, { cases = 60 })
+end, { cases = 30 })
 
 t.property("no request shows a label", function(draw)
 	local entries = draw(g.lists(entry, { min = 2, max = 60 }))

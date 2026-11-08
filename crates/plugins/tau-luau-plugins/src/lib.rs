@@ -71,6 +71,10 @@ pub struct Uses {
     /// The run's conversation, read whole (`ctx.transcript()`).
     #[serde(default)]
     pub transcript: bool,
+    /// Files of what it cuts from the context, which only their owner
+    /// can read (`ctx.archive`), for the model to read back.
+    #[serde(default)]
+    pub archive: bool,
 }
 
 impl Uses {
@@ -83,6 +87,9 @@ impl Uses {
             .filter(|tool| !before.tools.contains(tool))
             .map(|tool| format!("the `{tool}` tool"))
             .collect();
+        if self.archive && !before.archive {
+            grown.push("files of what it cuts".into());
+        }
         if self.jev && !before.jev {
             grown.push("Jev".into());
         }
@@ -724,6 +731,7 @@ mod tests {
                 model: None,
                 store: false,
                 transcript: false,
+                archive: false,
             },
             settings: None,
             tools: Vec::new(),

@@ -9,6 +9,7 @@
 //! - `registry`: the repository's plugins, as the host keeps them.
 
 pub mod agent;
+pub mod archive;
 pub mod chats;
 mod half;
 pub mod hegel;
@@ -47,6 +48,10 @@ pub const BUILT_IN: &[registry::BuiltIn] = &[
     },
     // The compactions rewrite in this order, the first rewrite winning:
     // fast pruning, then the tree, then the summary.
+    registry::BuiltIn {
+        name: tau_fast_compaction::NAME,
+        files: tau_fast_compaction::FILES,
+    },
     registry::BuiltIn {
         name: tau_tree_compaction::NAME,
         files: tau_tree_compaction::FILES,

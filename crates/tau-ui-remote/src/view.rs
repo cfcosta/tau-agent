@@ -1944,7 +1944,6 @@ mod tests {
 
     use serde_json::json;
     use tau_ai::message::{Usage, UsageCost};
-    use tau_fast_compaction::ui::Decision;
 
     use super::*;
 
@@ -2000,15 +1999,14 @@ mod tests {
         assert_eq!(view.usage.plugin_cost, charged);
     }
 
-    /// fast-compaction's report on a pruned `bash` output, as it
-    /// reports and records it.
-    fn output_report(pruned: bool) -> Value {
-        json!({
-            "kind": "output", "call_id": "c1", "lines": 4810, "chunks": 200,
-            "kept": 9, "dropped_lines": 4598, "segments": 1, "requests": 2,
-            "tokens_before": 12000, "tokens_after": 900, "pruned": pruned,
-            "archive": pruned.then_some("/data/tau/repos/app/archive/tau-output-1.txt")
-        })
+    /// What fast-compaction's view says of a pruned `exec_command`
+    /// output: its card's cut.
+    fn output_cut() -> Value {
+        json!({ "calls": { "c1": { "cut": {
+            "kept": 212, "lines": 4810,
+            "archive": "/data/tau/repos/app/archive/tau-output-1.txt",
+            "tokens_before": 12000, "tokens_after": 900, "cost": 0.0
+        } } } })
     }
 
     /// What a Luau plugin, `rules`, reports drawing `drawn` (ADR 0050):
@@ -2025,14 +2023,8 @@ mod tests {
         }
     }
 
-    /// fast-compaction's state in `view`, as its fold leaves it.
-    fn pruning(view: &RunView) -> tau_fast_compaction::ui::State {
-        view.plugin_states
-            .get(tau_fast_compaction::NAME)
-            .map(|state| serde_json::from_value(state.json().clone()).unwrap())
-            .unwrap_or_default()
-    }
-
+    /// An output a plugin's view says it cut shows so on its card; one
+    /// it does not name stays as it was.
     #[test]
     fn a_pruned_output_shows_on_its_card() {
         let mut view = view();
@@ -2043,11 +2035,7 @@ mod tests {
             args: json!({"cmd": "cargo build"}),
             parent: None,
         });
-        view.apply(&RunEvent::PluginReport {
-            run: run(),
-            plugin: tau_fast_compaction::NAME.into(),
-            body: output_report(true),
-        });
+        view.apply(&luau_view(output_cut()));
         view.apply(&RunEvent::ToolEnd {
             run: run(),
             call_id: "c1".into(),
@@ -2061,8 +2049,6 @@ mod tests {
         let cut = card.cut.clone().unwrap();
         assert_eq!(cut.label(), "kept 212 of 4,810 lines · 12k → 900 tokens");
         assert_eq!(cut.archive, "/data/tau/repos/app/archive/tau-output-1.txt");
-        // Neither the ledger nor the card's context changed.
-        assert!(pruning(&view).ledger.is_empty());
         assert_eq!(card.dropped, None);
 
         // Jev looked, but the result stayed: nothing to say on the card.
@@ -2074,11 +2060,7 @@ mod tests {
             args: json!({"cmd": "cargo build"}),
             parent: None,
         });
-        view.apply(&RunEvent::PluginReport {
-            run: run(),
-            plugin: tau_fast_compaction::NAME.into(),
-            body: output_report(false),
-        });
+        view.apply(&luau_view(json!({ "calls": {} })));
         let Some(Item::Tool(card)) = view.items.last() else {
             panic!("a card")
         };
@@ -2113,8 +2095,14 @@ mod tests {
                     "role": "user", "content": "fix the build", "timestamp": 0
                 }))),
                 Stored::Record {
-                    plugin: tau_fast_compaction::NAME.into(),
-                    body: output_report(true),
+                    plugin: tau_luau_plugins::NAME.into(),
+                    body: serde_json::to_value(
+                        tau_luau_plugins::Record::View {
+                            plugin: "tau-fast-compaction".into(),
+                            view: output_cut(),
+                        },
+                    )
+                    .unwrap(),
                 },
                 Stored::Message(assistant(
                     json!([{"type": "toolCall", "id": "c1", "name": "exec_command",
@@ -2144,8 +2132,10 @@ mod tests {
         assert_eq!(cut.label(), "kept 212 of 4,810 lines · 12k → 900 tokens");
     }
 
+    /// What a pass left of each call marks its card: a dropped result
+    /// is out of the context, a kept call is not.
     #[test]
-    fn a_pruning_ledger_fills_the_ledger_and_marks_its_calls() {
+    fn a_pruning_pass_marks_its_calls() {
         let mut view = view();
         for (call, turn) in [("c1", 1), ("c2", 2)] {
             view.apply(&RunEvent::ToolStart {
@@ -2168,60 +2158,29 @@ mod tests {
                 usage: Usage::default(),
             });
         }
-        view.apply(&RunEvent::PluginReport {
-            run: run(),
-            plugin: tau_fast_compaction::NAME.into(),
-            body: json!({
-                "kind": "ledger",
-                "decisions": [{
-                    "call_id": "c1", "tool": "read", "action": "drop_result",
-                    "keep_call": 0.9, "keep_result": 0.1
-                }],
-                "stats": {
-                    "calls": 2, "pinned": 1, "kept": 0, "results_dropped": 1,
-                    "calls_dropped": 0, "requests": 1, "state_tokens": 900,
-                    "state_stage": "full", "chars_before": 8100,
-                    "chars_after": 4400, "reduction_ratio": 0.46
-                }
-            }),
-        });
+        view.apply(&luau_view(json!({
+            "calls": { "c1": { "dropped": "result" } }
+        })));
         view.apply(&RunEvent::ContextRewritten {
             run: run(),
-            plugin: tau_fast_compaction::NAME.into(),
+            plugin: tau_luau_plugins::NAME.into(),
             tokens_before: 2000,
             tokens_after: 1100,
             trigger: Trigger::TurnEnd,
         });
-        let state = pruning(&view);
-        assert_eq!(state.ledger.len(), 2);
-        let first = &state.ledger[0];
-        assert_eq!((first.turn, first.decision), (1, Decision::DropResult));
-        assert!(first.tokens > 900, "{}", first.tokens);
-        assert_eq!(first.matters, Some(0.9));
-        assert_eq!(state.ledger[1].decision, Decision::Pinned);
-        assert_eq!(state.ledger[1].turn, 2);
-        let cards: Vec<(Option<Dropped>, usize)> = view
+        let cards: Vec<Option<Dropped>> = view
             .items
             .iter()
             .filter_map(|item| match item {
-                Item::Tool(card) => Some((card.dropped, card.anchors.len())),
+                Item::Tool(card) => Some(card.dropped),
                 _ => None,
             })
             .collect();
-        // Both cards carry the pass's mark; the dropped one is out.
-        assert_eq!(cards, [(Some(Dropped::Result), 1), (None, 1)]);
-        let Some(Item::Rewrite {
-            key: Some(key),
-            tokens,
-            ..
-        }) = view.items.last()
-        else {
-            panic!("a rewrite, named")
+        assert_eq!(cards, [Some(Dropped::Result), None]);
+        let Some(Item::Rewrite { tokens, .. }) = view.items.last() else {
+            panic!("a rewrite")
         };
         assert_eq!(*tokens, Some((2000, 1100)));
-        let detail = &state.passes[key].detail;
-        assert!(detail.contains("1 result cut, 0 calls dropped"), "{detail}");
-        assert_eq!(state.status().as_deref(), Some("1 pruned · −46%"));
     }
 
     /// A Luau plugin's view marks the calls it decided on, and the mark
@@ -2510,7 +2469,7 @@ mod tests {
             use tau_ui_plugin::RunCx as _;
             let mut folding = Folding {
                 view: &mut view,
-                plugin: tau_fast_compaction::NAME,
+                plugin: tau_luau_plugins::NAME,
                 anchors: true,
             };
             assert!(!folding.dropped("c1/1", Dropped::Result));
@@ -2831,102 +2790,6 @@ mod tests {
             .collect();
         assert_eq!(markers, [1, 2]);
         assert_eq!(view.turn, 2);
-    }
-
-    /// A stored run that fast-compaction rewrote starts with its
-    /// ledger: the rewrite shows with what it saved and cost, and the
-    /// ledger lists each call, the dropped ones too, marking the cards
-    /// that are left.
-    #[test]
-    fn a_stored_rewrite_brings_its_ledger_back() {
-        let message = |value: Value| -> Message {
-            serde_json::from_value(value).unwrap()
-        };
-        let usage = json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0,
-                           "totalTokens": 0, "cost": {"input": 0, "output": 0,
-                           "cacheRead": 0, "cacheWrite": 0, "total": 0}});
-        let call = |id: &str| {
-            message(json!({
-                "role": "assistant",
-                "content": [{"type": "toolCall", "id": id, "name": "read",
-                             "arguments": {"path": "a.rs"}}],
-                "api": "responses", "provider": "openai", "model": "m",
-                "usage": usage, "stopReason": "toolUse", "timestamp": 0
-            }))
-        };
-        let result = |id: &str| {
-            message(json!({
-                "role": "toolResult", "toolCallId": id, "toolName": "read",
-                "content": [{"type": "text", "text": "cut"}],
-                "isError": false, "timestamp": 0
-            }))
-        };
-        let decision = |id: &str, action: &str| {
-            json!({"call_id": id, "tool": "read", "action": action,
-                   "keep_call": 0.6, "keep_result": 0.1})
-        };
-        let ledger = json!({
-            "decisions": [decision("t1", "drop_call"), decision("t2", "drop_result")],
-            "stats": {
-                "calls": 3, "pinned": 1, "kept": 0, "results_dropped": 1,
-                "calls_dropped": 1, "requests": 1, "state_tokens": 2_000,
-                "state_stage": "whole", "chars_before": 40_000,
-                "chars_after": 8_000, "reduction_ratio": 0.8, "cost": 0.0002,
-            },
-        });
-        let view = RunView::from_timeline(
-            run(),
-            "t",
-            "a",
-            "gpt-6-sol",
-            &[
-                Stored::Rewrite {
-                    plugin: tau_fast_compaction::NAME.into(),
-                    body: ledger,
-                    tokens: None,
-                    idle: false,
-                },
-                Stored::Message(call("t2")),
-                Stored::Message(result("t2")),
-                Stored::Message(call("t3")),
-                Stored::Message(result("t3")),
-            ],
-        );
-        let Some(Item::Rewrite {
-            plugin,
-            tokens: None,
-            key: Some(key),
-            ..
-        }) = view.items.first()
-        else {
-            panic!("the rewrite first, named: {:?}", view.items.first())
-        };
-        assert_eq!(plugin, tau_fast_compaction::NAME);
-        let state = pruning(&view);
-        let pass = &state.passes[key];
-        assert_eq!((pass.before, pass.after), (10_000, 2_000));
-        assert!(
-            pass.detail.ends_with(", whole · $0.0002"),
-            "{}",
-            pass.detail
-        );
-        let decisions: Vec<(&str, Decision)> = state
-            .ledger
-            .iter()
-            .map(|entry| (entry.call_id.as_str(), entry.decision))
-            .collect();
-        assert_eq!(
-            decisions,
-            [
-                ("t1", Decision::DropCall),
-                ("t2", Decision::DropResult),
-                ("t3", Decision::Pinned),
-            ]
-        );
-        assert_eq!(
-            view.tool("t2").and_then(|card| card.dropped),
-            Some(Dropped::Result)
-        );
     }
 
     #[test]

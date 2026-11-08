@@ -714,8 +714,7 @@ silent bug costs the most:
 - `tau-ai`: the delta rule, the lane state and the event processor;
 - `tau-agent`: the loop, plugins, runs (typed results, forks,
   sub-agents), coercion and the strict schema rewrite;
-- `tau-fast-compaction`: the state, the decisions, the ledger and the
-  plugin; `tau-jev`: answer checking;
+- `tau-jev`: answer checking;
 - `tau-store-sqlite`: the append and transcript queries;
 - `tau-tools-host`: `edit`, which rewrites files, and truncation.
 

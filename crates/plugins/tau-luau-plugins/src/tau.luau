@@ -247,14 +247,20 @@ function tau.rewrite(rewrite)
 			insert = rewrite.insert or array({}),
 			drops_conversation = rewrite.drops_conversation == true,
 			details = rewrite.details or json.null,
+			-- Calls dropped, by id, with their results; and messages
+			-- whose text is replaced, each `{ index, text }`.
+			drop_calls = rewrite.drop_calls or json.null,
+			texts = rewrite.texts or json.null,
 		},
 	}
 end
 
 -- What `after_tool_result` answers to have the model read `text` in
 -- place of the call's result.
-function tau.result(text)
-	return { text = tostring(text) }
+-- With `{ flag = false }` the call is not marked for the person's
+-- review.
+function tau.result(text, options)
+	return { text = tostring(text), flag = not (options and options.flag == false) }
 end
 
 -- What `before_request` answers to set the turn's reasoning effort:
@@ -650,6 +656,7 @@ function tau._describe(plugin)
 			model = uses.model or json.null,
 			store = uses.store == true,
 			transcript = uses.transcript == true,
+			archive = uses.archive == true,
 		},
 		-- What can be set; `view` draws the settings page, on the host.
 		settings = plugin.settings and {
@@ -1003,10 +1010,40 @@ function tau._ctx(data, with_tools)
 	function ctx.transcript()
 		local source = with_tools or tools
 		if source == nil or source.transcript == nil then
-			error("ctx.transcript() is for before_request and rewrite_context, with uses.transcript", 2)
+			error(
+				"ctx.transcript() is for before_request, after_tool_result and rewrite_context, with uses.transcript",
+				2
+			)
 		end
 		return source.transcript({})
 	end
+	-- In `rewrite_context`: how many bytes of JSON the transcript is,
+	-- and would be after `rewrite`, as `tau.rewrite` takes it.
+	function ctx.measure(rewrite)
+		local source = with_tools or tools
+		if source == nil or source.measure == nil then
+			error("ctx.measure() is for rewrite_context", 2)
+		end
+		return source.measure(tau.rewrite(rewrite).rewrite)
+	end
+	-- With uses.archive: a new file's path, under tau's archive of the
+	-- repository, and writing it, once, readable by its owner alone.
+	ctx.archive = {
+		path = function(kind)
+			local source = with_tools or tools
+			if source == nil or source.archive_path == nil then
+				error("ctx.archive needs uses.archive", 2)
+			end
+			return source.archive_path({ kind = tostring(kind or "file") })
+		end,
+		write = function(path, text)
+			local source = with_tools or tools
+			if source == nil or source.archive_write == nil then
+				error("ctx.archive needs uses.archive", 2)
+			end
+			source.archive_write({ path = tostring(path), text = tostring(text) })
+		end,
+	}
 	return ctx
 end
 

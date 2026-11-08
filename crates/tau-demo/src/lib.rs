@@ -92,11 +92,12 @@ pub fn retry_after() -> RunView {
         window: Some(272_000),
         before: None,
     };
-    // fast-compaction runs with it, and steps in at 60%.
-    view.fold(
-        tau_fast_compaction::NAME,
-        &json!({ "kind": "starting", "on": true }),
-    );
+    // fast-compaction runs with it, a Luau plugin (ADR 0050).
+    for record in
+        luau_step(tau_fast_compaction::NAME, tau_fast_compaction::DEMO_RUN, 0)
+    {
+        view.fold(tau_luau_plugins::NAME, &record);
+    }
     view.plugins = plugins(["waiting", "waiting", "watching edits", "idle"]);
     view
 }
@@ -1673,17 +1674,18 @@ fn luau_records(plugin: &str, fixture: &Value) -> [Value; 2] {
 }
 
 /// The run's plugin list: tau-luau-plugins' line holds its plugins',
-/// tau-reasoning's (the first state) and tau-constitution's (the third),
-/// as the app's does (ADR 0050).
+/// tau-reasoning's (the first state), tau-constitution's (the third) and
+/// tau-fast-compaction's (the fourth), as the app's does (ADR 0050).
 fn plugins(states: [&str; 4]) -> Vec<PluginStatus> {
     let [reasoning, memory, constitution, compaction] = states;
     let reasoning = reasoning.trim_start_matches("tau-reasoning: ");
-    let luau =
-        format!("tau-reasoning: {reasoning}; tau-constitution: {constitution}");
+    let luau = format!(
+        "tau-reasoning: {reasoning}; tau-constitution: {constitution}; \
+         tau-fast-compaction: {compaction}"
+    );
     [
         (tau_luau_plugins::NAME, luau.as_str()),
         ("tau-memory", memory),
-        (tau_fast_compaction::NAME, compaction),
     ]
     .into_iter()
     .map(|(name, state)| PluginStatus {
@@ -1798,6 +1800,19 @@ impl Script {
     fn constitution(&mut self, n: usize) {
         let records =
             luau_step(tau_constitution::NAME, tau_constitution::DEMO_RUN, n);
+        for body in records {
+            self.report(tau_luau_plugins::NAME, body);
+        }
+    }
+
+    /// What tau-fast-compaction, a Luau plugin (ADR 0050), left at its
+    /// `n`th step of the demo run: its state and view, from its fixture.
+    fn fast_compaction(&mut self, n: usize) {
+        let records = luau_step(
+            tau_fast_compaction::NAME,
+            tau_fast_compaction::DEMO_RUN,
+            n,
+        );
         for body in records {
             self.report(tau_luau_plugins::NAME, body);
         }
@@ -2797,15 +2812,7 @@ pub fn script() -> Vec<Step> {
     );
     let archive = "/home/you/.local/share/tau/repos/tau-agent-3f2a91c0/\
                    archive/tau-output-41822-1790716482-0.txt";
-    s.report(
-        tau_fast_compaction::NAME,
-        json!({
-            "kind": "output", "call_id": "c7", "lines": 4810,
-            "chunks": 200, "kept": 212, "dropped_lines": 4598,
-            "segments": 1, "requests": 2, "tokens_before": 14_200,
-            "tokens_after": 1_100, "pruned": true, "archive": archive,
-        }),
-    );
+    s.fast_compaction(1);
     s.end_tool(
         800,
         "c7",
@@ -2820,7 +2827,7 @@ pub fn script() -> Vec<Step> {
                  [2634 lines omitted]\n\
                  \x20    Summary [  88.514s] 4,391 tests run: 4,391 passed, 12 skipped\n\n\
                  [full output: {archive} (read or grep it if needed)]",
-                tau_fast_compaction::output::HEADER
+                tau_fast_compaction::HEADER
             )),
         ),
     );
@@ -2851,41 +2858,13 @@ pub fn script() -> Vec<Step> {
 
     // fast-compaction prunes at the turn boundary: its ledger, then the
     // rewrite, as a run reports them.
-    s.charged(tau_fast_compaction::NAME, 0.0011);
-    let decision =
-        |call_id: &str, tool: &str, action: &str, odds: (f64, f64)| {
-            json!({
-                "call_id": call_id, "tool": tool, "action": action,
-                "keep_call": odds.0, "keep_result": odds.1,
-            })
-        };
-    s.report(
-        tau_fast_compaction::NAME,
-        json!({
-            "kind": "ledger",
-            "decisions": [
-                decision("c2", "grep", "keep", (0.64, 0.22)),
-                decision("c3", "read", "drop_result", (0.71, 0.18)),
-                decision("c5", "edit", "keep", (0.94, 0.88)),
-                decision("c6", "exec_command", "keep", (0.18, 0.04)),
-                decision("c7", "exec_command", "keep", (0.62, 0.03)),
-                decision("c8", "read", "drop_result", (0.52, 0.09)),
-                decision("c9", "read", "drop_result", (0.58, 0.11)),
-            ],
-            "stats": {
-                "calls": 9, "pinned": 2, "kept": 4, "results_dropped": 3,
-                "calls_dropped": 0, "requests": 1, "state_tokens": 18_400,
-                "state_stage": "whole", "chars_before": 688_000,
-                "chars_after": 324_000, "reduction_ratio": 0.53,
-                "cost": 0.0011,
-            },
-        }),
-    );
+    s.charged(tau_luau_plugins::NAME, 0.0011);
+    s.fast_compaction(2);
     s.event(
         700,
         RunEvent::ContextRewritten {
             run: run.clone(),
-            plugin: Arc::from(tau_fast_compaction::NAME),
+            plugin: Arc::from(tau_luau_plugins::NAME),
             tokens_before: 172_000,
             tokens_after: 81_000,
             trigger: tau_agent::plugin::Trigger::TurnEnd,
@@ -3196,18 +3175,11 @@ mod tests {
             .iter()
             .filter(|item| matches!(item, Item::Tool(_)))
             .count();
-        let pruning: tau_fast_compaction::ui::State = serde_json::from_value(
-            view.plugin_states[tau_fast_compaction::NAME].json().clone(),
-        )
-        .unwrap();
-        assert_eq!(pruning.ledger.len(), calls);
-        let Item::Rewrite { key: Some(key), .. } = &view.items[rewrite] else {
-            panic!("the rewrite is named");
-        };
-        assert!(
-            pruning.passes[key].detail.contains("$0.0011"),
-            "the pass's cost"
-        );
+        let luau = view.plugin_states[tau_luau_plugins::NAME].json();
+        let pruning = &luau["plugins"][tau_fast_compaction::NAME]["state"];
+        assert_eq!(pruning["ledger"].as_array().unwrap().len(), calls);
+        let detail = pruning["passes"][0]["detail"].as_str().unwrap();
+        assert!(detail.contains("$0.0011"), "the pass's cost: {detail}");
         assert_eq!(
             view.tool("c8").and_then(|card| card.dropped),
             Some(tau_ui_remote::view::Dropped::Result)

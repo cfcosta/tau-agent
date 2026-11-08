@@ -1721,3 +1721,197 @@ fn a_request_of_its_own_carries_earlier_turns() {
         json!([{ "text": "look" }, { "image": true }])
     );
 }
+
+const PRUNER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "pruner",
+  rewrite_context = function(view, ctx)
+    if ctx.state.done or #view.messages < 4 then return nil end
+    ctx.state.done = true
+    -- The first call goes; the second's result is cut. The last
+    -- message, which the next request answers, stays as it is.
+    local keep, first, second = {}, nil, nil
+    for _, message in ipairs(view.messages) do
+      table.insert(keep, message.index)
+      if message.calls ~= nil and message.calls[1] ~= nil and first == nil then
+        first = message.calls[1].id
+      end
+      if message.role == "toolResult" and message.call ~= first and second == nil then
+        second = message.index
+      end
+    end
+    local rewrite = { keep = keep, drop_calls = { first }, texts = { { index = second, text = "cut" } } }
+    ctx.state.measured = ctx.measure(rewrite)
+    return tau.rewrite(rewrite)
+  end,
+}
+"#;
+
+/// A rewrite drops a call with its result and replaces a result's text
+/// (ADR 0050, for tau-fast-compaction), and `ctx.measure` says what that
+/// saves before it is made.
+#[test]
+fn a_rewrite_drops_calls_and_replaces_texts() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("exec_command", json!({ "cmd": "first" }))
+                .tool_call("exec_command", json!({ "cmd": "second" }))
+                .tool_call("exec_command", json!({ "cmd": "third" }))
+        })
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("pruner", PRUNER)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let (outcome, events) = block_on_io(async {
+        let mut run = agent.start("go", &store);
+        let events: Vec<RunEvent> = run.events().collect().await;
+        (run.outcome().await.unwrap(), events)
+    });
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, RunEvent::ContextRewritten { .. })),
+        "{events:?}"
+    );
+    assert_eq!(
+        tool_results(&llm),
+        [
+            ("cut".to_owned(), false),
+            ("ran \"third\"".to_owned(), false)
+        ]
+    );
+    let calls: Vec<String> = llm
+        .requests()
+        .last()
+        .unwrap()
+        .transcript
+        .iter()
+        .filter_map(|message| match message {
+            Message::Assistant(answer) => Some(
+                answer
+                    .tool_calls()
+                    .map(|call| call.arguments["cmd"].to_string())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(calls, ["\"second\"", "\"third\""]);
+    let measured = records(&store, &outcome.run)
+        .into_iter()
+        .rev()
+        .find_map(|record| match record {
+            Record::State { state, .. } => Some(state["measured"].clone()),
+            _ => None,
+        })
+        .unwrap();
+    let (before, after) = (
+        measured["before"].as_u64().unwrap(),
+        measured["after"].as_u64().unwrap(),
+    );
+    assert!(after < before, "{measured}");
+}
+
+const ARCHIVER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "reader",
+  uses = { transcript = true, archive = true },
+  after_tool_result = function(result, ctx)
+    local seen = ctx.transcript()
+    local path = ctx.archive.path("output")
+    ctx.archive.write(path, result.text)
+    ctx.state.saw = {
+      nested = result.nested, images = result.images, seen = #seen,
+      last = seen[#seen].role, path = path,
+      again = select(2, pcall(ctx.archive.write, path, "x")),
+      elsewhere = select(2, pcall(ctx.archive.write, "/tmp/tau-x.txt", "x")),
+    }
+    return tau.result("short", { flag = false })
+  end,
+}
+"#;
+
+/// `after_tool_result` reads what the model had read when it made the
+/// call, and whether a tool made it; it archives the whole result where
+/// tau names, once; and a result it shortens with `flag = false` is not
+/// marked for review (ADR 0050, for tau-fast-compaction).
+#[test]
+fn a_result_is_archived_and_shortened_unflagged() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "build" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("reader", ARCHIVER)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    )
+    .with_archive(dir.path().to_owned());
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let outcome = block_on_io(agent.run("go", &store)).unwrap();
+    assert_eq!(tool_results(&llm), [("short".to_owned(), false)]);
+    let records = records(&store, &outcome.run);
+    assert!(
+        !records
+            .iter()
+            .any(|record| matches!(record, Record::Flag { .. })),
+        "{records:?}"
+    );
+    let saw = records
+        .iter()
+        .rev()
+        .find_map(|record| match record {
+            Record::State { state, .. } => Some(state["saw"].clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(saw["nested"], Value::Null, "only a nested call says so");
+    assert_eq!(saw["images"], Value::Null, "nor an image");
+    // The prompt and the answer that made the call.
+    assert_eq!(saw["seen"], 2);
+    assert_eq!(saw["last"], "assistant");
+    let path = saw["path"].as_str().unwrap();
+    assert!(path.starts_with(dir.path().to_str().unwrap()), "{path}");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "ran \"build\"");
+    assert!(
+        saw["again"].as_str().unwrap().contains("cannot archive"),
+        "{saw}"
+    );
+    assert!(
+        saw["elsewhere"]
+            .as_str()
+            .unwrap()
+            .contains("ctx.archive.path"),
+        "{saw}"
+    );
+}
+
+/// A plugin that does not name `uses.archive` has no archive.
+#[test]
+fn an_archive_needs_its_use() {
+    let source = ARCHIVER.replace("archive = true", "archive = false");
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "build" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("reader", &source)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let outcome = block_on_io(agent.run("go", &store)).unwrap();
+    assert_eq!(tool_results(&llm), [("ran \"build\"".to_owned(), false)]);
+    let failed = records(&store, &outcome.run).into_iter().any(|record| {
+        matches!(record, Record::Error { error, .. } if error.contains("uses.archive"))
+    });
+    assert!(failed);
+}

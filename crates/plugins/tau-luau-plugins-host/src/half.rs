@@ -100,6 +100,9 @@ impl HostHalf for LuauPluginsHost {
         // Their HTTP requests name secrets kept for each in tau's
         // configuration directory.
         let luau = luau.with_stores(host.stores());
+        // What they cut from the context, archived in tau's directory
+        // for the repository, readable by the person alone.
+        let luau = luau.with_archive(run.repo.dir.join("archive"));
         // What their tools ask the person, carried out once allowed.
         let luau = luau.with_dispatch(crate::agent::Dispatch {
             allows: host.allows(),

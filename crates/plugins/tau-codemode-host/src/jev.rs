@@ -7,6 +7,9 @@
 //!   probabilities }`
 //! - `jev.ask({ state, questions = { id = { kind, question, ... } } })` →
 //!   `{ id = answer }`, in one request.
+//!
+//! `state_json`, JSON text, may stand for `state`: its keys keep their
+//! order.
 
 use std::collections::BTreeMap;
 
@@ -71,7 +74,19 @@ pub fn request(
     let Value::Object(map) = args else {
         return Err(format!("jev.{function} takes one table"));
     };
-    let state = map.get("state").cloned().unwrap_or(Value::Null);
+    // A state given as JSON text keeps its keys in the order written: a
+    // Luau table keeps none.
+    let state = match map.get("state_json") {
+        Some(Value::String(text)) => {
+            serde_json::from_str(text).map_err(|error| {
+                format!("jev.{function}: `state_json` is not JSON: {error}")
+            })?
+        }
+        Some(_) => {
+            return Err(format!("jev.{function}: `state_json` is a text"));
+        }
+        None => map.get("state").cloned().unwrap_or(Value::Null),
+    };
     if function == "ask" {
         let Some(Value::Object(questions)) = map.get("questions") else {
             return Err(

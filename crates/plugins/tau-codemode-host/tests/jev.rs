@@ -185,3 +185,32 @@ async fn at_most_four_requests_run_at_once() {
     assert_eq!(outcome.calls.len(), 8);
     assert_eq!(jev.peak.load(Ordering::SeqCst), 4);
 }
+
+/// `state_json`, JSON text, stands for `state`, its keys in the order it
+/// writes them, which a table cannot keep; one that is not JSON fails
+/// the call.
+#[tokio::test]
+async fn a_state_given_as_json_keeps_its_order() {
+    let jev = FakeJev::nouls(|_| 0.5);
+    let host = Arc::new(FakeHost::with_jev(jev.clone()));
+    let outcome = script(
+        &host,
+        r#"return jev.noul({ state_json = '{"z":1,"a":[2,{"y":3,"b":4}]}', question = 'q?' }).probability"#,
+    )
+    .await;
+    assert_eq!(texts(&outcome), ["0.5"]);
+    assert_eq!(
+        serde_json::to_string(&jev.requests()[0].state).unwrap(),
+        r#"{"z":1,"a":[2,{"y":3,"b":4}]}"#
+    );
+    let broken = script(
+        &host,
+        "return jev.noul({ state_json = '{', question = 'q?' })",
+    )
+    .await;
+    assert!(
+        error(&broken).contains("`state_json` is not JSON"),
+        "{}",
+        error(&broken)
+    );
+}

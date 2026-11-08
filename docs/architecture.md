@@ -41,7 +41,7 @@ tau-agent/
 │       ├── tau-constitution/     # a repository's rules, checked with Jev (Luau)
 │       ├── tau-direnv/           # agent commands in the repository's
 │       │                         # direnv environment (ADR 0025)
-│       ├── tau-fast-compaction/  # Jev-driven pruning of tool history
+│       ├── tau-fast-compaction/  # Jev-driven pruning of tool history (Luau)
 │       ├── tau-goal/             # keeps a chat going until its /goal holds (Luau)
 │       ├── tau-jev/              # TypeSafe's Jev client, and the plugin that
 │       │                         # keeps its key and gives it to plugins

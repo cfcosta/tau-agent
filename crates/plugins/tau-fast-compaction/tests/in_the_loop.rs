@@ -1,5 +1,15 @@
-//! Fast compaction as a plugin of an `Agent`, with `ScriptedModel`,
-//! `tau_store_sqlite::memory()` and a `FakeJev` whose answers the tests choose.
+//! tau-fast-compaction's history pruning inside the agent loop, its Luau
+//! run by tau-luau-plugins as tau runs it, with `ScriptedModel`,
+//! `tau_store_sqlite::memory()` and a `FakeJev` whose answers the tests
+//! choose. Time is real: a hook's limit is a timer, which paused time
+//! would let run out while the store works on a thread of its own.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+mod common;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -11,10 +21,11 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::{InputBlock, Message};
-use tau_fast_compaction::{Action, Details, FastCompaction, NAME, Settings};
 use tau_jev::{JevError, fake::FakeJev};
-use tau_store::{Entry, Store};
-use tau_testing::{block_on, scripted::ScriptedModel};
+use tau_store::Store;
+use tau_testing::{block_on_io, scripted::ScriptedModel};
+
+use crate::common::{fast, logs, rewrites, scratch, state};
 
 /// Returns `size` characters of output that name the file it "read".
 struct Read {
@@ -59,12 +70,17 @@ impl AgentTool for Read {
 }
 
 /// Settings for a 1,000-token window, pinning only the last message.
-fn settings() -> Settings {
-    Settings {
-        context_window: Some(1_000),
-        preserve_recent: 1,
-        ..Settings::default()
+fn settings() -> Value {
+    json!({ "window": 1_000, "preserve_recent": 1 })
+}
+
+/// The settings with `more` over them.
+fn with(more: Value) -> Value {
+    let mut out = settings();
+    for (key, value) in more.as_object().unwrap() {
+        out[key] = value.clone();
     }
+    out
 }
 
 /// Two reads, the second pushing the context past 60% of the window,
@@ -98,7 +114,7 @@ fn result_text(message: &Message) -> String {
     }
 }
 
-fn rewrites(events: &[RunEvent]) -> Vec<(String, u64, u64)> {
+fn rewritten(events: &[RunEvent]) -> Vec<(String, u64, u64)> {
     events
         .iter()
         .filter_map(|e| match e {
@@ -123,57 +139,33 @@ fn a_stale_result_is_cut() {
     let model = two_reads();
     let jev =
         FakeJev::nouls(|id| if id.starts_with("call_") { 0.9 } else { 0.1 });
-    block_on(async {
+    // Where the plugin archives by default: the system's temporary
+    // directory.
+    let archives = std::env::temp_dir();
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone())
-            .tool(Read::new())
-            .plugin(FastCompaction::new(jev.clone()).settings(settings()));
+        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(fast(
+            settings(),
+            &jev,
+            &archives,
+        ));
         let (events, outcome) = run(&agent, &store).await;
         assert_eq!(outcome.stop, StopReason::Stop);
         assert_eq!(outcome.text, "done");
 
-        let rewritten = rewrites(&events);
+        let rewritten = rewritten(&events);
         assert_eq!(rewritten.len(), 1, "{rewritten:?}");
-        assert_eq!(rewritten[0].0, NAME);
+        assert_eq!(rewritten[0].0, tau_luau_plugins::NAME);
         // The cut result's size is gone from the context, though the
         // last call's usage still counts it.
         assert!(rewritten[0].2 + 500 < rewritten[0].1, "{rewritten:?}");
 
-        // The ledger is reported, before the rewrite it explains.
-        let report = events
-            .iter()
-            .position(|event| {
-                matches!(event, RunEvent::PluginReport { body, .. }
-                if body["kind"] == "ledger")
-            })
-            .expect("a ledger report");
-        let rewrite = events
-            .iter()
-            .position(|event| {
-                matches!(event, RunEvent::ContextRewritten { .. })
-            })
-            .unwrap();
-        assert!(report < rewrite);
-        let RunEvent::PluginReport { body, .. } = &events[report] else {
-            unreachable!()
-        };
-        let reported: Details = serde_json::from_value(body.clone()).unwrap();
-        assert_eq!(reported.stats.results_dropped, 1);
-        // Its cost is what the pass charged, before the report.
-        let charged: f64 = events[..report]
-            .iter()
-            .filter_map(|event| match event {
-                RunEvent::PluginCharged { plugin, usage, .. }
-                    if &**plugin == NAME =>
-                {
-                    Some(usage.cost.total)
-                }
-                _ => None,
-            })
-            .sum();
+        // What Jev cost for the pass is what the run was charged.
+        let kept = state(&store, &outcome.run.0).await;
+        let stats = &kept["passes"][0];
+        assert_eq!(stats["results_dropped"], 1);
+        let charged = crate::common::charged(&events);
         assert!(charged > 0.0);
-        assert_eq!(reported.stats.cost, charged);
-
         let next = &model.requests()[2].transcript;
         let first = result_text(&next[2]);
         assert!(first.starts_with("CONTENTS OF a.rs: "), "{first}");
@@ -203,14 +195,13 @@ fn a_stale_result_is_cut() {
         assert!(!state.contains(&"x".repeat(100)), "the output reached Jev");
         assert!(state.contains("a.rs"));
 
-        let entries = store.transcript(&outcome.run.0).await.unwrap();
-        let Entry::Context { plugin, body, .. } = &entries[0] else {
-            panic!("{entries:?}");
-        };
-        assert_eq!(plugin, NAME);
-        let details: Details = serde_json::from_str(body).unwrap();
-        assert_eq!(details.stats.results_dropped, 1);
-        assert!(details.stats.reduction_ratio >= 0.25);
+        let stored = rewrites(&store, &outcome.run.0).await;
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].0, tau_fast_compaction::NAME);
+        let details = &stored[0].1;
+        assert_eq!(details["stats"]["results_dropped"], 1);
+        assert!(details["stats"]["reduction_ratio"].as_f64().unwrap() >= 0.25);
+        assert_eq!(details["stats"]["cost"].as_f64().unwrap(), charged);
         assert!(outcome.usage.cost.total > 0.0, "Jev's usage is charged");
     });
 }
@@ -221,11 +212,13 @@ fn a_stale_result_is_cut() {
 fn a_stale_call_is_dropped() {
     let model = two_reads();
     let jev = FakeJev::nouls(|_| 0.0);
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone())
-            .tool(Read::new())
-            .plugin(FastCompaction::new(jev).settings(settings()));
+        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(fast(
+            settings(),
+            &jev,
+            &scratch("stale-call"),
+        ));
         let (_, outcome) = run(&agent, &store).await;
         assert_eq!(outcome.text, "done");
         let next = &model.requests()[2].transcript;
@@ -259,18 +252,16 @@ fn the_cooldown_grows_with_the_window() {
         .turn(read("d.rs", 72_000))
         .turn(|t| t.text("done"));
     let jev = FakeJev::nouls(|_| 0.0);
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
-            FastCompaction::new(jev.clone()).settings(Settings {
-                context_window: Some(100_000),
-                min_reduction_ratio: 0.9,
-                ..settings()
-            }),
-        );
+        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(fast(
+            with(json!({ "window": 100_000, "min_reduction_ratio": 0.9 })),
+            &jev,
+            &scratch("cooldown"),
+        ));
         let (events, outcome) = run(&agent, &store).await;
         assert_eq!(outcome.text, "done");
-        assert!(rewrites(&events).is_empty(), "each pass saves too little");
+        assert!(rewritten(&events).is_empty(), "each pass saves too little");
         assert_eq!(jev.requests().len(), 2, "passes at 61k and 72k only");
     });
 }
@@ -285,47 +276,42 @@ fn an_overflow_prunes_and_retries() {
         .turn(|t| t.error("context_length_exceeded", "too long"))
         .turn(|t| t.text("done"));
     let jev = FakeJev::nouls(|_| 0.0);
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
-            FastCompaction::new(jev).settings(Settings {
-                context_window: Some(u64::MAX),
-                ..settings()
-            }),
-        );
+        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(fast(
+            with(json!({ "window": 1_000_000_000_000u64 })),
+            &jev,
+            &scratch("overflow"),
+        ));
         let (events, outcome) = run(&agent, &store).await;
         assert_eq!(outcome.text, "done");
         model.assert_exhausted();
-        assert_eq!(rewrites(&events).len(), 1);
+        assert_eq!(rewritten(&events).len(), 1);
         assert_eq!(model.requests()[3].transcript.len(), 3);
     });
 }
 
-/// A Jev failure is reported and leaves the run going, uncompacted.
+/// A Jev failure is in the plugin's log and leaves the run going,
+/// uncompacted.
 #[test]
 fn a_jev_failure_is_reported() {
     let model = two_reads();
     let jev = FakeJev::new(|_| Err(JevError::Status(503)));
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone())
-            .tool(Read::new())
-            .plugin(FastCompaction::new(jev).settings(settings()));
-        let (events, outcome) = run(&agent, &store).await;
+        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(fast(
+            settings(),
+            &jev,
+            &scratch("jev-failure"),
+        ));
+        let (_, outcome) = run(&agent, &store).await;
         assert_eq!(outcome.text, "done");
-        let errors: Vec<String> = events
-            .iter()
-            .filter_map(|e| match e {
-                RunEvent::PluginError {
-                    plugin, message, ..
-                } => {
-                    assert_eq!(&**plugin, NAME);
-                    Some(message.clone())
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(errors, ["Jev answered with status 503"]);
+        let logged = logs(&store, &outcome.run.0).await;
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert!(
+            logged[0].contains("Jev answered with status 503"),
+            "{logged:?}"
+        );
         assert_eq!(model.requests()[2].transcript.len(), 5);
     });
 }
@@ -364,15 +350,13 @@ fn a_fork_resumes_the_ledger() {
         .turn(read("d.rs", 10, 1300))
         .turn(|t| t.text("forked"));
     let archives = tempfile::tempdir().unwrap();
-    block_on(async {
+    block_on_io(async {
         let store = tau_store_sqlite::memory().await.unwrap();
-        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(
-            FastCompaction::new(jev).settings(Settings {
-                archive_dir: archives.path().to_owned(),
-                start_reserve_tokens: 0,
-                ..settings()
-            }),
-        );
+        let agent = Agent::new(model.clone()).tool(Read::new()).plugin(fast(
+            with(json!({ "start_reserve_tokens": 0 })),
+            &jev,
+            archives.path(),
+        ));
         let (_, base) = run(&agent, &store).await;
         forked.store(true, Ordering::SeqCst);
         let fork = agent
@@ -384,23 +368,28 @@ fn a_fork_resumes_the_ledger() {
         let seen = &model.requests()[3].transcript;
         assert!(result_text(&seen[2]).contains("[fast-compaction truncated"));
 
-        let entries = store.transcript(&fork.run.0).await.unwrap();
-        let Entry::Context { plugin, body, .. } = &entries[0] else {
-            panic!("{entries:?}");
-        };
-        assert_eq!(plugin, NAME);
-        let details: Details = serde_json::from_str(body).unwrap();
+        let stored = rewrites(&store, &fork.run.0).await;
+        let details = &stored.last().unwrap().1;
         let action = |call: &str| {
-            details
-                .decisions
+            details["decisions"]
+                .as_array()
+                .unwrap()
                 .iter()
-                .find(|decision| decision.call_id == call)
-                .map(|decision| decision.action)
+                .find(|decision| decision["call_id"] == call)
+                .map(|decision| decision["action"].as_str().unwrap().to_owned())
         };
         // Jev's questions name calls `t1`, `t2`… in order; the ledger
         // names them by their ids.
-        assert_eq!(action("call_2|fc_2"), Some(Action::DropResult), "c.rs");
-        assert_eq!(action("call_0|fc_0"), Some(Action::DropResult), "a.rs");
+        assert_eq!(
+            action("call_2|fc_2").as_deref(),
+            Some("drop_result"),
+            "c.rs"
+        );
+        assert_eq!(
+            action("call_0|fc_0").as_deref(),
+            Some("drop_result"),
+            "a.rs"
+        );
     });
 }
 
@@ -421,29 +410,23 @@ fn a_fork_prunes_at_start_only_when_it_must() {
             .turn(|t| t.text("done").usage(100, 10))
             .turn(|t| t.text("forked"))
     };
-    let at = |start_reserve_tokens| Settings {
-        context_window: Some(10_000),
-        preserve_recent: 1,
-        start_reserve_tokens,
-        ..Settings::default()
-    };
+    let at = |start_reserve_tokens: u64| json!({ "window": 10_000, "preserve_recent": 1, "start_reserve_tokens": start_reserve_tokens });
     for (reserve, asked) in [(1_000, 0), (5_000, 1)] {
         let model = read();
         let jev = FakeJev::nouls(|_| 0.1);
-        block_on(async {
+        block_on_io(async {
             let store = tau_store_sqlite::memory().await.unwrap();
             // The parent never prunes.
-            let parent = Agent::new(model.clone()).tool(Read::new()).plugin(
-                FastCompaction::new(jev.clone()).settings(Settings {
-                    compact_at_percent: 100.0,
-                    ..at(reserve)
-                }),
-            );
+            let mut never = at(reserve);
+            never["compact_at_percent"] = json!(100);
+            let parent = Agent::new(model.clone())
+                .tool(Read::new())
+                .plugin(fast(never, &jev, &scratch("fork-parent")));
             let (_, base) = run(&parent, &store).await;
             assert!(jev.requests().is_empty());
             let child = Agent::new(model.clone())
                 .tool(Read::new())
-                .plugin(FastCompaction::new(jev.clone()).settings(at(reserve)));
+                .plugin(fast(at(reserve), &jev, &scratch("fork-child")));
             let fork = child
                 .fork(&base.checkpoint())
                 .run("and now", &store)

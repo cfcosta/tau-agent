@@ -127,12 +127,17 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // A chat that woke on what it scheduled (ADR 0039), with more to
     // come in its inspector.
     ("scheduled", |ws, host, cx| scheduled(ws, host, cx)),
+    // tau-fast-compaction's ledger, its page among tau's Luau plugins
+    // (ADR 0050).
     ("ledger", |ws, _, cx| {
-        let run = run_id().0.to_string();
         let page = Route::Plugin {
-            plugin: tau_fast_compaction::NAME.into(),
-            page: "ledger".into(),
-            params: [("run".to_owned(), run)].into(),
+            plugin: tau_luau_plugins::NAME.into(),
+            page: tau_luau_plugins::ui::PAGE.into(),
+            params: [(
+                tau_ui_plugin::ENTRY.to_owned(),
+                tau_fast_compaction::NAME.to_owned(),
+            )]
+            .into(),
         };
         ws.navigate(page, cx)
     }),

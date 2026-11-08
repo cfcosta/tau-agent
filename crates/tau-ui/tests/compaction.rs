@@ -2,7 +2,8 @@
 //! tau-luau-plugins, so these tests install the app's plugins, the Luau
 //! half among them. An idle chat is compacted in its own conversation,
 //! from its connection's cache; a message stops it; and a long chat left
-//! idle compacts by itself before its cache lapses.
+//! idle compacts by itself before its cache lapses; and a large output
+//! is pruned into tau's archive for the repository.
 
 #![allow(
     clippy::disallowed_methods,
@@ -408,4 +409,100 @@ fn a_long_idle_chat_compacts_before_its_cache_lapses() {
     );
     let summary = &fake.received()[2];
     assert!(summary.cached_tokens > 0);
+}
+
+/// A large `exec_command` output reaches the model pruned, with the
+/// whole of it archived in tau's directory for the repository, readable
+/// only by the person; the call's card says what was kept, live and from
+/// history.
+#[test]
+fn a_large_output_is_pruned_into_tau_s_archive() {
+    use std::os::unix::fs::PermissionsExt as _;
+    install();
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    // Over output pruning's 10,000 estimated tokens.
+    let command = "for i in $(seq 1 1200); do \
+                   echo \"::::::::::::::::::::::::: line $i\"; done";
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("exec_command", serde_json::json!({ "cmd": command }))
+        })
+        .turn(|t| t.text("built"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(tau_store_sqlite::memory()).unwrap();
+    let config = HostConfig {
+        credentials: Credentials::new(data.path().join("config")),
+        model: Some("gpt-6-luna".into()),
+        store: data.path().join("runs.db"),
+        repos: data.path().join("repos"),
+        settings: data.path().join("models.json"),
+        repo_list: data.path().join("repos.json"),
+        home: None,
+        services: Default::default(),
+    };
+    let (host, mut events) =
+        Host::with_agent(runtime, Agent::new(llm).name("coder"), store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_plugin_settings(
+        tau_memory::NAME,
+        serde_json::json!({ "after_each_run": false }),
+    );
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(tau_vcs_host::JjRepository::new(
+            project_of(dir.path()),
+            Identity::default(),
+        )),
+    );
+    // Jev finds every chunk it is asked about disposable: the first and
+    // last stay anyway.
+    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(
+        tau_jev::fake::FakeJev::nouls(|_| 0.0),
+    )));
+    let mut view = host
+        .block_on(host.start("build it", &ModelChoice::default(), REPO))
+        .unwrap();
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+    let cut_of = |view: &tau_ui_remote::view::RunView| {
+        view.items.iter().find_map(|item| match item {
+            Item::Tool(card) if card.tool == "exec_command" => card.cut.clone(),
+            _ => None,
+        })
+    };
+    let cut = cut_of(&view).expect("the card says what was cut");
+    assert_eq!(cut.lines, 1200);
+    assert!(cut.kept < cut.lines / 10, "{cut:?}");
+    let archive = Path::new(&cut.archive);
+    assert!(
+        archive.starts_with(data.path().join("repos")),
+        "{} is not in tau's directory",
+        archive.display()
+    );
+    assert!(archive.parent().unwrap().ends_with("archive"));
+    let mode = |path: &Path| {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    };
+    assert_eq!(mode(archive), 0o600);
+    assert_eq!(mode(archive.parent().unwrap()), 0o700);
+    let whole = std::fs::read_to_string(archive).unwrap();
+    assert!(whole.contains(":: line 600\n"));
+    // With a key, pruning runs, and its status says so.
+    let luau: tau_luau_plugins::ui::State = serde_json::from_value(
+        view.plugin_states[tau_luau_plugins::NAME].json().clone(),
+    )
+    .unwrap();
+    let pruning = &luau.plugins[tau_fast_compaction::NAME];
+    assert_eq!(pruning.state["on"], true);
+    assert_eq!(pruning.state["outputs"].as_array().unwrap().len(), 1);
+
+    let history = host.block_on(host.history()).unwrap();
+    assert_eq!(cut_of(&history[0]), Some(cut));
 }

@@ -63,7 +63,8 @@ return tau.plugin {
   name = "...",              -- the folder's name
   description = "...",       -- one line, for the Plugins screen
   uses = { tools = { "exec_command" }, jev = false, infer = false,
-           network = { "ntfy.sh" }, secrets = { "ntfy" } },
+           network = { "ntfy.sh" }, secrets = { "ntfy" },
+           transcript = false, archive = false },
   settings = { schema = { ... }, default = { ... }, view = function(settings, ctx) end },
   tools = { name = { description, parameters, call, card } },
   start = function(plan, ctx) end,
@@ -107,8 +108,8 @@ boolean setting `on` is on.
 | `start`             | `{ input, context, instructions, model, efforts, effort, prefix_tokens }` | `nil`, `tau.start{ context, instructions, effort, input }` or `tau.fail(why)` | 2 s    |
 | `before_tool`       | `{ id, name, args }`                                                      | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)`                | 2 s    |
 | `before_request`    | `{ model, effort, turn, messages, replies }`                              | `nil`, or `tau.effort(level)`                                                 | 200 ms |
-| `after_tool_result` | `{ id, name, args, ok, text, truncated }`                                 | `nil`, or `tau.result(text)`                                                  | 2 s    |
-| `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`                             | `nil`, or `tau.rewrite{ keep, insert, drops_conversation }`                   | 10 s   |
+| `after_tool_result` | `{ id, name, args, ok, text, truncated, images, nested }`                 | `nil`, or `tau.result(text)`                                                  | 2 s    |
+| `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`                             | `nil`, or `tau.rewrite{ keep, insert, drop_calls, texts, ... }`               | 10 s   |
 | `rewritten`         | `{ plugin, before, after, drops_conversation }`                           | nothing                                                                       | 2 s    |
 | `before_stop`       | `{ text, turn, reason }`                                                  | `nil`, or `tau.continue(message)`                                             | 10 s   |
 | `turn_end`          | `{ turn, text, calls = { { name, ok } }, cost }`                          | nothing                                                                       | 2 s    |
@@ -139,7 +140,13 @@ boolean setting `on` is on.
   that sets one setting it.
 - `tau.result(text)` has the model read `text` in place of the call's
   result, marked for review; the plugins after it read it as changed.
-  `text` is the result's text, cut at 256 KiB (`truncated` says so).
+  `text` is the result's text, cut at 256 KiB (`truncated` says so);
+  `images` counts its images, and `nested` is true for a call a tool
+  made, such as a script's, whose result goes back to that tool, not
+  the model. `tau.result(text, { flag = false })` does not mark the call
+  for review: for a result the plugin cut but kept verbatim, as pruning
+  does. With `uses.transcript`, `ctx.transcript()` here is what the
+  model had read when it made the call.
   Having `after_tool_result` at all is new reach, which the person
   allows: it changes what the model reads.
 - `rewrite_context` is offered the run's context between turns, when a
@@ -155,7 +162,13 @@ order, json }`, `json` the arguments as the model wrote them; a
 
   `tau.rewrite{ keep = { 1, 4 }, insert = { { before = 4, text = "..." } }, drops_conversation = true }` keeps those messages and puts the texts
   before them as the person's; `details`, any JSON, is stored with the
-  rewrite. The last message always stays, and so
+  rewrite. `drop_calls = { "call-1" }` drops those calls with their
+  results, and an answer left with neither text nor a call goes too.
+  `texts = { { index = 3, text = "..." } }` replaces the text of a
+  person's message or a result, its images gone: an answer's text
+  cannot be replaced. `ctx.measure(rewrite)` gives `{ before, after }`,
+  the bytes of JSON the transcript is and would be after that rewrite,
+  to decide whether it saves enough. The last message always stays as it was, and so
   does every call with its results. The first plugin that rewrites
   wins; which plugins may rewrite at all is the person's pick on the
   Plugins screen. Having `rewrite_context` at all is new reach. One
@@ -185,7 +198,7 @@ order, json }`, `json` the arguments as the model wrote them; a
     `"running"`, `"passed"`, `"failed"` or `"none"`).
   - `tau.compaction`: which plugins' rewrites run. The Luau plugins'
     own always do; the `compaction` table's `rewriters` names the
-    others, such as `tau-fast-compaction`.
+    others, plugins of tau's own.
 - `rewritten` hears that a rewrite replaced the context, whoever made
   it: how many messages there were `before` and are `after`.
 - `tau.effort(level)` sends the turn's request with that reasoning
@@ -284,11 +297,22 @@ new reach.
 | `ctx.jev`          | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run; each call gives what it cost as its second value                                  |
 | `ctx.log`          | `ctx.log(text)`: a line on the plugin's page, never for the model                                                                                                                |
 | `ctx.store`        | with `uses.store`: the plugin's store in the repository the hook works in (below)                                                                                                |
-| `ctx.transcript()` | with `uses.transcript`, in `before_request` and `rewrite_context`: the run's conversation, whole (below)                                                                         |
+| `ctx.transcript()` | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below)                                                    |
+| `ctx.archive`      | with `uses.archive`: `ctx.archive.path(kind)` names a new file in tau's archive of the repository, and `ctx.archive.write(path, text)` writes it, once, for its owner alone      |
+| `ctx.measure`      | in `rewrite_context`: `ctx.measure(rewrite)`, the bytes of JSON before and after `rewrite` (above)                                                                               |
 | `ctx.models`       | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                              |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
 JSON has no empty array: use `array({})` for one that must stay a list.
+
+`ctx.archive` keeps what a plugin cuts from the context, whole, for the
+model to read back: tell the model the path. It writes only a path
+`ctx.archive.path` gave, and never writes one twice. `uses.archive` is
+new reach: the plugin writes files on the computer.
+
+A Jev request's `state_json`, JSON text, may stand for its `state`:
+its keys keep the order the text gives them, which a table cannot
+keep.
 
 `ctx.transcript()` is the run's conversation as the model will read it,
 each message `{ index, role, text }`: `role` is `"user"`, `"assistant"`
@@ -302,7 +326,7 @@ so far, to count steps without reading it.
 ### `tau`
 
 - `tau.plugin(table)`, `tau.block(why)`, `tau.flag(why)`,
-  `tau.start(plan)`, `tau.change(args)`, `tau.result(text)`,
+  `tau.start(plan)`, `tau.change(args)`, `tau.result(text, options)`,
   `tau.rewrite(rewrite)`, `tau.effort(level)`,
   `tau.continue(message)`.
 - `tau.start_chat`, `tau.steer_chat` and `tau.allow`: what an action
@@ -384,11 +408,16 @@ read the state: it has no tools. What it returns goes in three places:
   under its title in the sidebar; `tone` is `"good"`, `"warn"` or
   `"bad"`, `icon` one of the interface's icons, and `phone_line` the
   line on a phone, when it differs.
-- `calls`: `{ [call_id] = { badge?, body?, mark?, reason? } }`, pieces
-  on another tool's card: `badge` beside its title, `body` under it,
-  such as why a check flagged or blocked the call. `mark = "blocked"`
-  (with the `reason` the model got) or `"flagged"` marks the card so,
-  as the phone and the run's review list show it.
+- `calls`: `{ [call_id] = { badge?, body?, mark?, reason?, dropped?, cut? } }`,
+  pieces on another tool's card: `badge` beside its title, `body` under
+  it, such as why a check flagged or blocked the call. `mark =
+"blocked"` (with the `reason` the model got) or `"flagged"` marks the
+  card so, as the phone and the run's review list show it. `dropped =
+"result"` or `"call"` shows that a rewrite cut its result or dropped
+  it. `cut = { kept, lines, archive, tokens_before, tokens_after, cost }`
+  says an output reached the model cut: the lines it kept of how many,
+  where the whole output is, and the tokens before and after; its card
+  shows both.
 - `messages`: `{ [text] = pieces }`, how a person's message whose text
   is exactly `text` draws, such as a command the plugin read, or a
   message it sent with `tau.continue`; `ui.stack({})` draws nothing.

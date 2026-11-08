@@ -1,0 +1,731 @@
+[
+  {
+    "state": {
+      "on": true
+    },
+    "view": {
+      "calls": {},
+      "notes": {},
+      "page": [
+        {
+          "piece": "empty",
+          "text": "tau-fast-compaction has not pruned the context of this run yet."
+        }
+      ],
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "pruning large outputs · watching the window",
+        "tone": "neutral"
+      }
+    }
+  },
+  {
+    "state": {
+      "on": true,
+      "outputs": [
+        {
+          "call_id": "c7",
+          "lines": 4810,
+          "chunks": 241,
+          "kept": 11,
+          "dropped_lines": 4598,
+          "segments": 1,
+          "requests": 2,
+          "tokens_before": 14200,
+          "tokens_after": 1100,
+          "pruned": true,
+          "archive": "/home/you/.local/share/tau/repos/tau-agent-3f2a91c0/archive/tau-output-41822-1790716482-0.txt",
+          "cost": 0.0006
+        }
+      ]
+    },
+    "view": {
+      "calls": {
+        "c7": {
+          "cut": {
+            "archive": "/home/you/.local/share/tau/repos/tau-agent-3f2a91c0/archive/tau-output-41822-1790716482-0.txt",
+            "cost": 0.0006,
+            "kept": 212,
+            "lines": 4810,
+            "tokens_after": 1100,
+            "tokens_before": 14200
+          }
+        }
+      },
+      "notes": {},
+      "page": [
+        {
+          "piece": "empty",
+          "text": "tau-fast-compaction has not pruned the context of this run yet."
+        }
+      ],
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "pruning large outputs · watching the window",
+        "tone": "neutral"
+      }
+    }
+  },
+  {
+    "state": {
+      "on": true,
+      "outputs": [
+        {
+          "call_id": "c7",
+          "lines": 4810,
+          "chunks": 241,
+          "kept": 11,
+          "dropped_lines": 4598,
+          "segments": 1,
+          "requests": 2,
+          "tokens_before": 14200,
+          "tokens_after": 1100,
+          "pruned": true,
+          "archive": "/home/you/.local/share/tau/repos/tau-agent-3f2a91c0/archive/tau-output-41822-1790716482-0.txt",
+          "cost": 0.0006
+        }
+      ],
+      "decisions": [
+        {
+          "call_id": "c2",
+          "tool": "grep",
+          "action": "keep",
+          "keep_call": 0.64,
+          "keep_result": 0.22
+        },
+        {
+          "call_id": "c3",
+          "tool": "read",
+          "action": "drop_result",
+          "keep_call": 0.71,
+          "keep_result": 0.18
+        },
+        {
+          "call_id": "c5",
+          "tool": "edit",
+          "action": "keep",
+          "keep_call": 0.94,
+          "keep_result": 0.88
+        },
+        {
+          "call_id": "c6",
+          "tool": "exec_command",
+          "action": "keep",
+          "keep_call": 0.18,
+          "keep_result": 0.04
+        },
+        {
+          "call_id": "c7",
+          "tool": "exec_command",
+          "action": "keep",
+          "keep_call": 0.62,
+          "keep_result": 0.03
+        },
+        {
+          "call_id": "c8",
+          "tool": "read",
+          "action": "drop_result",
+          "keep_call": 0.52,
+          "keep_result": 0.09
+        },
+        {
+          "call_id": "c9",
+          "tool": "read",
+          "action": "drop_result",
+          "keep_call": 0.58,
+          "keep_result": 0.11
+        }
+      ],
+      "ledger": [
+        {
+          "call_id": "c1",
+          "tool": "memory_read",
+          "input": "{\"id\":\"n-0388\",\"title\":\"Retry policy honors server hints\"}",
+          "tokens": 40,
+          "matters": null,
+          "verbatim": null,
+          "decision": "pinned"
+        },
+        {
+          "call_id": "c1a",
+          "tool": "ls",
+          "input": "{\"path\":\"crates/tau-ai/src\"}",
+          "tokens": 90,
+          "matters": null,
+          "verbatim": null,
+          "decision": "pinned"
+        },
+        {
+          "call_id": "c2",
+          "tool": "grep",
+          "input": "{\"path\":\"crates/tau-ai/src\",\"pattern\":\"retry_after|RetryPolicy\"}",
+          "tokens": 120,
+          "matters": 0.64,
+          "verbatim": 0.22,
+          "decision": "keep"
+        },
+        {
+          "call_id": "c3",
+          "tool": "read",
+          "input": "{\"path\":\"crates/tau-ai/src/retry.rs\"}",
+          "tokens": 3100,
+          "matters": 0.71,
+          "verbatim": 0.18,
+          "decision": "drop_result"
+        },
+        {
+          "call_id": "c4",
+          "tool": "edit",
+          "input": "{\"edits\":[{\"newText\":\"retry_after\",\"oldText\":\"delay\"}],\"path\":\"crates/tau-ai/src/retry.rs\"}",
+          "tokens": 210,
+          "matters": null,
+          "verbatim": null,
+          "decision": "pinned"
+        },
+        {
+          "call_id": "c5",
+          "tool": "edit",
+          "input": "{\"edits\":[{\"newText\":\"server_hint\",\"oldText\":\"backoff\"}],\"path\":\"crates/tau-ai/src/retry.rs\"}",
+          "tokens": 640,
+          "matters": 0.94,
+          "verbatim": 0.88,
+          "decision": "keep"
+        },
+        {
+          "call_id": "c5t",
+          "tool": "exec_command",
+          "input": "{\"cmd\":\"cargo nextest run -p tau-ai\"}",
+          "tokens": 1900,
+          "matters": null,
+          "verbatim": null,
+          "decision": "pinned"
+        },
+        {
+          "call_id": "c6",
+          "tool": "exec_command",
+          "input": "{\"cmd\":\"rm -rf target/debug/incremental\"}",
+          "tokens": 20,
+          "matters": 0.18,
+          "verbatim": 0.04,
+          "decision": "keep"
+        },
+        {
+          "call_id": "c7",
+          "tool": "exec_command",
+          "input": "{\"cmd\":\"cargo nextest run --workspace\"}",
+          "tokens": 1100,
+          "matters": 0.62,
+          "verbatim": 0.03,
+          "decision": "keep"
+        },
+        {
+          "call_id": "c8",
+          "tool": "read",
+          "input": "{\"path\":\"crates/tau-ai/src/client.rs\"}",
+          "tokens": 7600,
+          "matters": 0.52,
+          "verbatim": 0.09,
+          "decision": "drop_result"
+        },
+        {
+          "call_id": "c9",
+          "tool": "read",
+          "input": "{\"path\":\"crates/tau-testing/src/fake_openai.rs\"}",
+          "tokens": 5000,
+          "matters": 0.58,
+          "verbatim": 0.11,
+          "decision": "drop_result"
+        }
+      ],
+      "last_pass": 172000,
+      "passes": [
+        {
+          "before": 172000,
+          "after": 81000,
+          "results_dropped": 3,
+          "calls_dropped": 0,
+          "reduction_ratio": 0.53,
+          "detail": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011",
+          "window": 272000
+        }
+      ]
+    },
+    "view": {
+      "calls": {
+        "c3": {
+          "badge": {
+            "piece": "badge",
+            "text": "result dropped",
+            "tone": "neutral"
+          },
+          "dropped": "result"
+        },
+        "c7": {
+          "cut": {
+            "archive": "/home/you/.local/share/tau/repos/tau-agent-3f2a91c0/archive/tau-output-41822-1790716482-0.txt",
+            "cost": 0.0006,
+            "kept": 212,
+            "lines": 4810,
+            "tokens_after": 1100,
+            "tokens_before": 14200
+          }
+        },
+        "c8": {
+          "badge": {
+            "piece": "badge",
+            "text": "result dropped",
+            "tone": "neutral"
+          },
+          "dropped": "result"
+        },
+        "c9": {
+          "badge": {
+            "piece": "badge",
+            "text": "result dropped",
+            "tone": "neutral"
+          },
+          "dropped": "result"
+        }
+      },
+      "inspector": {
+        "children": [
+          {
+            "piece": "text",
+            "text": "8 kept by tau-fast-compaction."
+          },
+          {
+            "label": "Ledger",
+            "piece": "link",
+            "to": {
+              "page": "luau-plugins",
+              "params": {
+                "entry": "tau-fast-compaction"
+              },
+              "plugin": "tau-luau-plugins"
+            }
+          }
+        ],
+        "piece": "row"
+      },
+      "notes": {
+        "pass-1": {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "plug",
+                  "piece": "icon",
+                  "tone": "info"
+                },
+                {
+                  "piece": "mono",
+                  "text": "tau-fast-compaction"
+                },
+                {
+                  "piece": "text",
+                  "text": "pruned 91k tokens: 172k to 81k"
+                },
+                {
+                  "label": "Ledger",
+                  "piece": "link",
+                  "to": {
+                    "page": "luau-plugins",
+                    "params": {
+                      "entry": "tau-fast-compaction"
+                    },
+                    "plugin": "tau-luau-plugins"
+                  }
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "mono",
+              "text": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011"
+            },
+            {
+              "piece": "text",
+              "text": "The next request resends the pruned transcript once, then turns are deltas again."
+            }
+          ],
+          "piece": "stack"
+        }
+      },
+      "page": [
+        {
+          "piece": "heading",
+          "text": "Pruned 91k tokens of this run's tool history"
+        },
+        {
+          "piece": "text",
+          "text": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011. Decisions only escalate: keep, then drop the result, then drop the call. Forks inherit this ledger."
+        },
+        {
+          "label": "Before · 172k",
+          "piece": "progress",
+          "share": 0.6323529411764706
+        },
+        {
+          "label": "After · 81k",
+          "piece": "progress",
+          "share": 0.2977941176470588
+        },
+        {
+          "piece": "text",
+          "text": "Window 272k. Pruning starts at 60%."
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "piece": "rows",
+          "rows": [
+            {
+              "key": "plugin",
+              "value": "tau-fast-compaction"
+            },
+            {
+              "key": "pinned",
+              "value": "4"
+            },
+            {
+              "key": "kept",
+              "value": "4"
+            },
+            {
+              "key": "result dropped",
+              "value": "3"
+            },
+            {
+              "key": "call dropped",
+              "value": "0"
+            },
+            {
+              "key": "next request",
+              "value": "1 full resend"
+            },
+            {
+              "key": "outputs pruned",
+              "value": "1 · −13k tokens"
+            }
+          ]
+        },
+        {
+          "piece": "heading",
+          "text": "Ledger"
+        },
+        {
+          "head": ["Tool", "Input", "Size", "Still matters", "Verbatim", "Decision"],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "piece": "mono",
+                "text": "memory_read"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"id\":\"n-0388\",\"title\":\"Retry policy honors server hints\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "40"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "badge",
+                "text": "pinned",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "ls"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/tau-ai/src\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "90"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "badge",
+                "text": "pinned",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "grep"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/tau-ai/src\",\"pattern\":\"retry_after|RetryPolicy\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "120"
+              },
+              {
+                "piece": "mono",
+                "text": "0.64"
+              },
+              {
+                "piece": "mono",
+                "text": "0.22"
+              },
+              {
+                "piece": "badge",
+                "text": "keep",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "read"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/tau-ai/src/retry.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "3k"
+              },
+              {
+                "piece": "mono",
+                "text": "0.71"
+              },
+              {
+                "piece": "mono",
+                "text": "0.18"
+              },
+              {
+                "piece": "badge",
+                "text": "drop result",
+                "tone": "info"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "edit"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"edits\":[{\"newText\":\"retry_after\",\"oldText\":\"delay\"}],\"path\":\"crates/tau-ai/src/retry.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "210"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "badge",
+                "text": "pinned",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "edit"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"edits\":[{\"newText\":\"server_hint\",\"oldText\":\"backoff\"}],\"path\":\"crates/tau-ai/src/retry.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "640"
+              },
+              {
+                "piece": "mono",
+                "text": "0.94"
+              },
+              {
+                "piece": "mono",
+                "text": "0.88"
+              },
+              {
+                "piece": "badge",
+                "text": "keep",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "exec_command"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"cmd\":\"cargo nextest run -p tau-ai\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "1k"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "badge",
+                "text": "pinned",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "exec_command"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"cmd\":\"rm -rf target/debug/incremental\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "20"
+              },
+              {
+                "piece": "mono",
+                "text": "0.18"
+              },
+              {
+                "piece": "mono",
+                "text": "0.04"
+              },
+              {
+                "piece": "badge",
+                "text": "keep",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "exec_command"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"cmd\":\"cargo nextest run --workspace\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "1k"
+              },
+              {
+                "piece": "mono",
+                "text": "0.62"
+              },
+              {
+                "piece": "mono",
+                "text": "0.03"
+              },
+              {
+                "piece": "badge",
+                "text": "keep",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "read"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/tau-ai/src/client.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "7k"
+              },
+              {
+                "piece": "mono",
+                "text": "0.52"
+              },
+              {
+                "piece": "mono",
+                "text": "0.09"
+              },
+              {
+                "piece": "badge",
+                "text": "drop result",
+                "tone": "info"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "read"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/tau-testing/src/fake_openai.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "5k"
+              },
+              {
+                "piece": "mono",
+                "text": "0.58"
+              },
+              {
+                "piece": "mono",
+                "text": "0.11"
+              },
+              {
+                "piece": "badge",
+                "text": "drop result",
+                "tone": "info"
+              }
+            ]
+          ]
+        }
+      ],
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "3 pruned · −53%",
+        "tone": "neutral"
+      }
+    }
+  }
+]

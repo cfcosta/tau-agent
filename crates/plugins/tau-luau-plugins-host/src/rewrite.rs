@@ -66,6 +66,22 @@ pub fn summary(transcript: &[Message]) -> Value {
                         .collect();
                     if !thinking.is_empty() {
                         out["thinking"] = json!(thinking.join("\n"));
+                        // Where the thinking sits among the text.
+                        out["parts"] = json!(
+                            assistant
+                                .content
+                                .iter()
+                                .filter_map(|block| match block {
+                                    AssistantBlock::Text(text) => {
+                                        Some(json!({ "text": text.text }))
+                                    }
+                                    AssistantBlock::Thinking(thinking) => Some(
+                                        json!({ "thinking": thinking.thinking }),
+                                    ),
+                                    AssistantBlock::ToolCall(_) => None,
+                                })
+                                .collect::<Vec<_>>()
+                        );
                     }
                     (out, 0)
                 }
@@ -129,8 +145,12 @@ fn images(blocks: &[InputBlock]) -> usize {
 }
 
 /// The rewrite `answer` asks of `transcript`: `{ keep, insert,
-/// drops_conversation, details }`, as `tau.rewrite` makes it. `None` when
-/// it keeps everything and adds nothing.
+/// drop_calls, texts, drops_conversation, details }`, as `tau.rewrite`
+/// makes it. `None` when it keeps everything and changes nothing.
+///
+/// `drop_calls` names calls that go with their results: an answer left
+/// with neither text nor a call goes too. `texts`, each `{ index, text }`,
+/// replaces the text of a person's message or a result, its images gone.
 pub fn rebuild(
     transcript: &[Message],
     answer: &Value,
@@ -141,6 +161,7 @@ pub fn rebuild(
     if count == 0 {
         return Ok(None);
     }
+    let (working, gone, changed) = changed(transcript, answer)?;
     let mut keep: BTreeSet<usize> = BTreeSet::new();
     for index in answer["keep"].as_array().into_iter().flatten() {
         match index.as_u64().map(|i| i as usize) {
@@ -152,7 +173,8 @@ pub fn rebuild(
     }
     // The message the next request answers stays.
     keep.insert(count - 1);
-    keep_pairs(transcript, &mut keep);
+    keep.retain(|at| !gone.contains(at));
+    keep_pairs(&working, &mut keep);
 
     let mut inserts: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     for insert in answer["insert"].as_array().into_iter().flatten() {
@@ -165,15 +187,15 @@ pub fn rebuild(
                 "an insert goes `before` a message, from 1 to {count}"
             ));
         };
-        let at = place(transcript, &keep, before - 1);
+        let at = place(&working, &keep, before - 1);
         inserts.entry(at).or_default().push(text.to_owned());
     }
 
-    if keep.len() == count && inserts.is_empty() {
+    if keep.len() == count && inserts.is_empty() && !changed {
         return Ok(None);
     }
     let mut messages = Vec::new();
-    for (at, message) in transcript.iter().enumerate() {
+    for (at, message) in working.into_iter().enumerate() {
         for text in inserts.remove(&at).into_iter().flatten() {
             messages.push(Message::User(UserMessage {
                 content: UserContent::Text(text),
@@ -181,7 +203,7 @@ pub fn rebuild(
             }));
         }
         if keep.contains(&at) {
-            messages.push(message.clone());
+            messages.push(message);
         }
     }
     Ok(Some(Rewrite {
@@ -191,6 +213,100 @@ pub fn rebuild(
             .unwrap_or(false),
         details: json!({ "plugin": plugin, "details": answer["details"] }),
     }))
+}
+
+/// `transcript` with what `answer` drops and replaces: the messages, the
+/// places of those that go, and whether any message changed.
+fn changed(
+    transcript: &[Message],
+    answer: &Value,
+) -> Result<(Vec<Message>, BTreeSet<usize>, bool), String> {
+    let mut working = transcript.to_vec();
+    let mut gone = BTreeSet::new();
+    let mut changed = false;
+    let dropped: BTreeSet<&str> = answer["drop_calls"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    for (at, message) in working.iter_mut().enumerate() {
+        match message {
+            Message::Assistant(answer) => {
+                let before = answer.content.len();
+                answer.content.retain(|block| {
+                    !matches!(block, AssistantBlock::ToolCall(call)
+                        if dropped.contains(call.id.as_str()))
+                });
+                if answer.content.len() == before {
+                    continue;
+                }
+                changed = true;
+                let left = answer.content.iter().any(|block| {
+                    matches!(
+                        block,
+                        AssistantBlock::Text(_) | AssistantBlock::ToolCall(_)
+                    )
+                });
+                if !left {
+                    gone.insert(at);
+                }
+            }
+            Message::ToolResult(result)
+                if dropped.contains(result.tool_call_id.as_str()) =>
+            {
+                gone.insert(at);
+            }
+            _ => {}
+        }
+    }
+    let count = transcript.len();
+    for change in answer["texts"].as_array().into_iter().flatten() {
+        let index = change["index"].as_u64().map(|i| i as usize);
+        let (Some(index), Some(text)) = (
+            index.filter(|i| (1..=count).contains(i)),
+            change["text"].as_str(),
+        ) else {
+            return Err(format!(
+                "each of `texts` is {{ index, text }}, the index from 1 to {count}"
+            ));
+        };
+        let block = InputBlock::Text(tau_ai::message::TextContent {
+            text: text.to_owned(),
+            text_signature: None,
+        });
+        match &mut working[index - 1] {
+            Message::ToolResult(result) => result.content = vec![block],
+            Message::User(user) => {
+                user.content = UserContent::Text(text.to_owned());
+            }
+            Message::Assistant(_) => {
+                return Err(format!(
+                    "message {index} is an answer: `texts` replaces a \
+                     person's message or a result"
+                ));
+            }
+        }
+        changed = true;
+    }
+    Ok((working, gone, changed))
+}
+
+/// How many bytes of JSON `transcript` is, and would be after the
+/// rewrite `answer` asks: `{ before, after }`, for `ctx.measure`.
+pub fn measure(
+    transcript: &[Message],
+    answer: &Value,
+) -> Result<Value, String> {
+    let size = |messages: &[Message]| {
+        serde_json::to_string(messages).map_or(0, |text| text.len())
+    };
+    let before = size(transcript);
+    let after = match rebuild(transcript, answer, "", 0)? {
+        Some(rewrite) => size(&rewrite.messages),
+        None => before,
+    };
+    Ok(json!({ "before": before, "after": after }))
 }
 
 /// Keeps every tool call's message with its result's: a kept call keeps

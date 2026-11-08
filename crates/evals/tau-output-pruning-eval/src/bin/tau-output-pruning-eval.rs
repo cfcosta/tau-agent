@@ -57,8 +57,9 @@ const USAGE: &str = "\
 tau-output-pruning-eval: how well fast compaction's output pruning keeps
 the lines a task needs. Each workload is a conversation ending in a long
 command output, generated from a seed, with needles (lines the task needs)
-among noise. The real plugin prunes it through the agent loop, asking the
-real Jev, which costs money (cents for a full run).
+among noise. The real plugin (the Luau one tau comes with) prunes it
+through the agent loop, asking the real Jev, which costs money (cents
+for a full run).
 
 Usage: tau-output-pruning-eval [options]
 
@@ -68,7 +69,8 @@ Usage: tau-output-pruning-eval [options]
   --json PATH       also write every trial and summary to PATH
   --whole           exec_command returns every output whole, as a shell
                     without limits would (default: tau's, which keeps
-                    the last 2,000 lines or 50 KB and drops the rest)
+                    the last 2,000 lines or 50 KB and drops the rest);
+                    an output over 256 KiB is then left unpruned
   --work DIR        where archives go (default: a new
                     directory in the temp dir, removed afterwards)
   --list            list the workloads, and exit

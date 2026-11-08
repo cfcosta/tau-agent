@@ -138,6 +138,9 @@ struct Inner {
     config: Option<std::path::PathBuf>,
     /// Each plugin's store in each repository (`uses.store`).
     stores: Option<Arc<crate::store::Stores>>,
+    /// Where `ctx.archive` keeps its files: tau's archive of the run's
+    /// repository, else the system's temporary directory.
+    archive: std::path::PathBuf,
     /// What carries out what a tool asked once the person allows it.
     dispatch: Option<Dispatch>,
     /// The state of each run going on, by run.
@@ -188,6 +191,7 @@ impl LuauPlugins {
             jev,
             config: None,
             stores: None,
+            archive: std::env::temp_dir(),
             dispatch: None,
             runs: Mutex::default(),
         }))
@@ -198,6 +202,14 @@ impl LuauPlugins {
         Arc::get_mut(&mut self.0)
             .expect("the stores are given before the plugins are shared")
             .stores = Some(stores);
+        self
+    }
+
+    /// The plugins, `ctx.archive` keeping its files in `dir`.
+    pub fn with_archive(mut self, dir: std::path::PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("the archive is given before the plugins are shared")
+            .archive = dir;
         self
     }
 
@@ -234,6 +246,7 @@ impl LuauPlugins {
             jev,
             config: None,
             stores: None,
+            archive: std::env::temp_dir(),
             dispatch: None,
             runs: Mutex::default(),
         }))
@@ -279,23 +292,30 @@ impl Inner {
         ctx: &PluginCtx,
         transcript: Option<&[Message]>,
     ) -> Arc<dyn Reach> {
-        self.reach_asking(active, ctx, transcript, None)
+        self.reach_asking(active, ctx, transcript, None, None)
     }
 
     /// [`Self::reach`], `infer` asking in the run's own conversation
-    /// through `conversation` too (`rewrite_context`, which holds it).
+    /// through `conversation` too, and `ctx.measure` sizing rewrites of
+    /// `rewriting` (`rewrite_context`, which holds them).
     fn reach_asking(
         &self,
         active: &Active,
         ctx: &PluginCtx,
         transcript: Option<&[Message]>,
         conversation: Option<Asks>,
+        rewriting: Option<&[Message]>,
     ) -> Arc<dyn Reach> {
         let uses = &active.loaded.declaration.uses;
         let transcript = transcript
             .filter(|_| uses.transcript)
             .map(|transcript| Arc::from(transcript.to_vec()));
-        if !uses.infer && !uses.jev && transcript.is_none() {
+        if !uses.infer
+            && !uses.jev
+            && !uses.archive
+            && transcript.is_none()
+            && rewriting.is_none()
+        {
             return Arc::new(NoReach);
         }
         Arc::new(RunReach {
@@ -305,6 +325,8 @@ impl Inner {
             run_model: self.run["model"].as_str().unwrap_or_default().into(),
             transcript,
             conversation: conversation.filter(|_| uses.infer),
+            rewriting: rewriting.map(|messages| Arc::from(messages.to_vec())),
+            archive: self.archive.clone(),
         })
     }
 
@@ -992,6 +1014,7 @@ impl PluginRun for LuauRun {
                 ctx,
                 Some(view.transcript),
                 Some(asks.clone()),
+                Some(view.transcript),
             );
             let run = inner.run_hook(
                 active,
@@ -1087,9 +1110,13 @@ impl PluginRun for LuauRun {
             return Ok(());
         }
         let mut state = self.state.lock().await;
+        // The conversation as the call found it: what came before its
+        // turn, and the message that made it.
+        let mut seen = view.transcript.to_vec();
+        seen.push(Message::Assistant(view.message.clone()));
         for active in inner.active().iter() {
             let (text, truncated) = result_text(output);
-            let input = json!({
+            let mut input = json!({
                 "id": view.call.id,
                 "name": view.call.name,
                 "args": view.call.args,
@@ -1097,6 +1124,19 @@ impl PluginRun for LuauRun {
                 "text": text,
                 "truncated": truncated,
             });
+            let images = output
+                .content
+                .iter()
+                .filter(|block| matches!(block, InputBlock::Image(_)))
+                .count();
+            if images > 0 {
+                input["images"] = json!(images);
+            }
+            // A call a tool made goes back to that tool, never to the
+            // model.
+            if view.call.parent.is_some() {
+                input["nested"] = json!(true);
+            }
             let Some(answer) = inner
                 .call(
                     active,
@@ -1104,7 +1144,7 @@ impl PluginRun for LuauRun {
                     input,
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx, None),
+                    inner.reach(active, ctx, Some(&seen)),
                 )
                 .await
             else {
@@ -1113,12 +1153,14 @@ impl PluginRun for LuauRun {
             // The plugins after it read the result as it left it.
             if let Some(text) = answer["text"].as_str() {
                 replace_text(output, text);
-                ctx.publish(&Record::Flag {
-                    plugin: active.loaded.declaration.name.clone(),
-                    call_id: view.call.id.clone(),
-                    reason: "changed what the model reads of it".into(),
-                })
-                .await;
+                if answer["flag"] != Value::Bool(false) {
+                    ctx.publish(&Record::Flag {
+                        plugin: active.loaded.declaration.name.clone(),
+                        call_id: view.call.id.clone(),
+                        reason: "changed what the model reads of it".into(),
+                    })
+                    .await;
+                }
             }
         }
         Ok(())
@@ -1644,6 +1686,11 @@ struct RunReach {
     /// Where `infer{ conversation }` asks, in the hook that holds the
     /// run's conversation.
     conversation: Option<Asks>,
+    /// The transcript `ctx.measure` sizes rewrites of, in
+    /// `rewrite_context`.
+    rewriting: Option<Arc<[Message]>>,
+    /// Where `ctx.archive` keeps its files.
+    archive: std::path::PathBuf,
 }
 
 #[async_trait]
@@ -1657,16 +1704,25 @@ impl Reach for RunReach {
             namespace: None,
             sequential: false,
         }];
+        let entry = |name: &str, description: &str| ToolEntry {
+            name: name.into(),
+            description: description.into(),
+            input_schema: json!({ "type": "object" }),
+            output_schema: None,
+            namespace: None,
+            sequential: false,
+        };
         if self.transcript.is_some() {
-            tools.push(ToolEntry {
-                name: "transcript".into(),
-                description: "The run's conversation, whole.".into(),
-                input_schema: json!({ "type": "object" }),
-                output_schema: None,
-                namespace: None,
-                sequential: false,
-            });
+            tools.push(entry("transcript", "The run's conversation, whole."));
         }
+        if self.rewriting.is_some() {
+            tools.push(entry(
+                "measure",
+                "The transcript's JSON bytes, and a rewrite's.",
+            ));
+        }
+        tools.push(entry("archive_path", "A new archive file's path."));
+        tools.push(entry("archive_write", "Writes an archive file."));
         tools
     }
 
@@ -1677,6 +1733,32 @@ impl Reach for RunReach {
             return Ok(ToolReply::success(crate::rewrite::transcript(
                 transcript,
             )));
+        }
+        if let ("measure", Some(transcript)) =
+            (call.name.as_str(), &self.rewriting)
+        {
+            return crate::rewrite::measure(transcript, &call.args)
+                .map(ToolReply::success);
+        }
+        match call.name.as_str() {
+            "archive_path" => {
+                let kind = call.args["kind"].as_str().unwrap_or("file");
+                return Ok(ToolReply::success(json!(
+                    crate::archive::new_path(&self.archive, kind)
+                        .display()
+                        .to_string()
+                )));
+            }
+            "archive_write" => {
+                let (Some(path), Some(text)) =
+                    (call.args["path"].as_str(), call.args["text"].as_str())
+                else {
+                    return Err("archive_write needs `path` and `text`".into());
+                };
+                crate::archive::write(&self.archive, path, text)?;
+                return Ok(ToolReply::success(Value::Null));
+            }
+            _ => {}
         }
         if call.name != "infer" {
             return Err(format!(

@@ -3,7 +3,8 @@
 The retention evaluation of fast compaction's output pruning. It checks
 whether `tau-fast-compaction` keeps the lines a task needs when it trims
 a long command output, how much smaller the output gets, and what Jev
-costs. It runs the real plugin against the real Jev.
+costs. It runs the real plugin, the Luau one tau comes with (ADR 0050),
+against the real Jev.
 
 ## What it measures
 
@@ -25,9 +26,16 @@ needles, are each in the output exactly once.
 
 The runner drives each workload through the agent loop as the app
 prunes: a scripted model makes the workload's calls, fake tools answer,
-and a fake `exec_command` cuts its output to the tail like tau's. Fast compaction, with
-only output pruning at work, prunes the output before the model's next
-request.
+and a fake `exec_command` cuts its output to the tail like tau's. Fast
+compaction, loaded by `tau-luau-plugins-host` as tau loads it, with only
+output pruning at work, prunes the output before the model's next
+request. What it made of the output comes from the plugin's state
+(`outputs`) in the run's records; a failure from its log.
+
+With `--whole`, an output over 256 KiB reaches the model unpruned:
+`tau-luau-plugins` gives a plugin's hook at most that much of a result,
+and the plugin leaves an output it could not read whole as it was. Of
+the workloads, only some seeds of `all-noise` are that large.
 
 Per trial (`metrics::Trial`) it records:
 
@@ -44,13 +52,22 @@ Per trial (`metrics::Trial`) it records:
 
 The library modules are `workload` (the `Kind`s and `generate`),
 `noise`, `rng` (a small deterministic generator), `runner` (`Config`,
-`evaluate`, `Report`) and `metrics` (`Trial`, `Summary`, `table`).
+`evaluate`, `Report`), `metrics` (`Trial`, `Summary`, `table`) and
+`measure`: the eval's own copy of how the plugin splits an output into
+lines and chunks, renders it and estimates tokens, ported from the Rust
+the plugin had before, so the layout and token counts do not depend on
+the plugin under test.
+
+`Config::settings` is the plugin's settings over its defaults, by its
+flat keys, such as `output_chunk_lines` or `output_keep_threshold`.
 
 ## How it fits
 
-It builds on `tau-fast-compaction` and `tau-jev` for the system under
-test. It runs them as the app does with `tau-agent`, `tau-ai`,
-`tau-testing` (the scripted model), `tau-store`, `tau-store-sqlite` and
+It builds on `tau-fast-compaction` (the plugin's Luau) and `tau-jev` for
+the system under test. It runs them as the app does with
+`tau-luau-plugins-host` (which loads and runs the Luau),
+`tau-luau-plugins` (its records), `tau-agent`, `tau-ai`, `tau-testing`
+(the scripted model), `tau-store`, `tau-store-sqlite` and
 `tau-tools-host`. No other crate depends on it.
 
 ## Usage
@@ -84,11 +101,13 @@ half a cent, so three seeds of all eight cost about $0.13.
 cargo nextest run --release -p tau-output-pruning-eval
 ```
 
-The tests use fake Jevs and need no key. `tests/workloads.rs` checks,
+The tests use fake Jevs and need no key, and run on real time: a Luau
+hook's limit is a timer that paused time lets run out. `tests/workloads.rs` checks,
 with Hegel properties, that generation is deterministic and that each
 needle is where it is claimed, exactly once. `tests/runner.rs` runs the
 real plugin with a ground-truth Jev, one that keeps nothing, and one
-that fails, and checks the budget stop. `tests/metrics.rs` checks the
+that fails, checks it against `measure`'s render, and checks the budget
+stop. `tests/metrics.rs` checks the
 summaries against a reference.
 
 ## Further reading

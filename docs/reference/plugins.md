@@ -326,8 +326,8 @@ pub struct Rewrite {
 - **On overflow,** plugins are asked in order, and the first rewrite
   wins, as between turns. The request is then retried once. Plugins are
   offered the context in the order they were added, so add cheap ones
-  (pruning) before compaction (in tau, `tau-fast-compaction` declares
-  it comes before the tree and the summary); one that cannot free enough should
+  (pruning) before compaction (in tau, `tau-fast-compaction` comes
+  before the tree and the summary among tau-luau-plugins' built-ins); one that cannot free enough should
   decline and leave the overflow to the summary. The loop does not re-estimate after a rewrite: the
   estimate anchors on the last reported usage, which a kept message can
   still carry, so "fits the window" would not be reliable.
@@ -347,7 +347,9 @@ pub struct Rewrite {
 - **Resuming.** A fork gets the details of the latest rewrite it
   inherits from `RunPlan::last_rewrite`, when its plugin made it. A
   Luau plugin keeps what it needs in its state instead, which a fork
-  inherits: compaction resumes its summary and file lists from there.
+  inherits: compaction resumes its summary and file lists from there,
+  and fast pruning its ledger. No plugin tau comes with reads
+  `last_rewrite` now.
 - **Events.** `ContextRewritten { run, plugin, tokens_before,
 tokens_after, trigger }` marks each rewrite.
 - **Idle compaction.** `Resumed::compact_idle(request, store, events,
@@ -1187,14 +1189,15 @@ Built: `crates/plugins/tau-constitution`, a Luau plugin tau comes with
 
 ### `tau-fast-compaction`: prune stale tool history
 
-Built: `crates/plugins/tau-fast-compaction`. Its reference is
-[fast-compaction.md](fast-compaction.md).
+Built: `crates/plugins/tau-fast-compaction`, a Luau plugin tau comes
+with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
 
 - **Seams:** `rewrite_context` (turn ends, starts and overflows; it
   leaves an idle run to tau-compaction, since pruning first would
-  change what that summary reads from cache), `start` to restore
-  its ledger, and `after_tool_result` to prune a large `exec_command` output
-  before the model first sees it.
+  change what that summary reads from cache), `start` (whether there is
+  a TypeSafe key), and `after_tool_result` to prune a large
+  `exec_command` output before the model first sees it. It uses Jev,
+  the run's conversation and `ctx.archive`.
 - **How** (after `joelhooks/pi-fast-jev-compaction`):
   1. Past a share of the window (default 60%), and outside a token
      cooldown, build a state of the history: tool names, inputs,
@@ -1204,19 +1207,21 @@ Built: `crates/plugins/tau-fast-compaction`. Its reference is
      Split the questions into batches under the request limit, and send
      the batches concurrently.
   3. Decide each call: `keep`, `drop_result` (keep the head of the
-     output and a note to re-run the tool) or `drop_call` (remove the
+     output and a note naming its archive) or `drop_call` (remove the
      call and its result).
   4. Decisions only escalate. They are kept as a ledger keyed by tool
      call id.
-- **Output:** a `Rewrite` with the pruned transcript and the ledger in
-  `details`. If the saving is under a minimum ratio, it returns `None`,
-  and the next plugin (summarizing compaction) can take the boundary.
+- **Output:** a rewrite with the calls it drops, the results it cuts,
+  and the ledger in its details. If the saving is under a minimum ratio
+  (`ctx.measure`), it returns nothing, and the next plugin can take the
+  boundary.
 - **Why it fits tau better than pi:** pi re-applies the ledger to a
   per-turn view. Here the rewrite is stored once, so the next request
   is one full resend and then deltas again. The cooldown keeps full
   resends rare.
-- **Forks** get the ledger back through `RunPlan::last_rewrite`: the
-  latest `context` entry, when fast compaction made it.
+- **State:** the ledger, each pass and each pruned output, in the run's
+  `ctx.state`, which forks inherit. Its view marks the pruned calls'
+  cards, writes a note at each pass, and draws the ledger page.
 
 ### `tau-compaction`: summarize what the window cannot hold
 

@@ -10,7 +10,8 @@
     "secrets": [],
     "model": null,
     "store": true,
-    "transcript": false
+    "transcript": false,
+    "archive": false
   },
   "settings": null,
   "tools": [],
