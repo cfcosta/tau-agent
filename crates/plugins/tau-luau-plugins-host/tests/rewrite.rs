@@ -206,8 +206,8 @@ fn a_message_that_is_not_there_is_refused() {
     assert!(error.contains("not a message"), "{error}");
 }
 
-/// The summary names each message by its place, cuts long text and
-/// says how long it was.
+/// The summary names each message by its place, gives its text whole
+/// and says how long it is (ADR 0050, gap B).
 #[test]
 fn the_summary_names_and_sizes_each_message() {
     let long = "x".repeat(5_000);
@@ -217,10 +217,7 @@ fn the_summary_names_and_sizes_each_message() {
     assert_eq!(summary[0]["index"], 1);
     assert_eq!(summary[0]["role"], "user");
     assert_eq!(summary[0]["size"], 5_000);
-    assert_eq!(
-        summary[0]["text"].as_str().map(str::len),
-        Some(tau_luau_plugins_host::rewrite::MESSAGE_TEXT)
-    );
+    assert_eq!(summary[0]["text"], long);
     assert_eq!(
         summary[1]["calls"],
         json!([{ "id": "a", "name": "exec_command" }])

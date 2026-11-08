@@ -691,24 +691,25 @@ impl Loaded {
                 wall: Duration::ZERO,
             };
         }
-        // The input and the context are globals, read as JSON: never
-        // source for the compiler, however large a transcript is.
+        // The input and the context are globals, given as values: never
+        // source for the compiler, nor a text `json.decode` would bound,
+        // however large a transcript is (ADR 0050, gap B).
         let script = format!(
             "local tau = require(\"tau\")\n\
              local p = require(\"plugin\")\n\
-             local input = json.decode(__input)\n\
-             local ctx = tau._ctx(json.decode(__context))\n\
+             local input = __input\n\
+             local ctx = tau._ctx(__context)\n\
              local value = {call}\n\
              if value == nil then value = json.null end\n\
              return {{ value = value, state = ctx.state, logs = ctx._logs }}\n",
             call = hook.expression(),
         );
         let inputs = vec![
-            ("__input".to_owned(), input.to_string()),
+            ("__input".to_owned(), input),
             ("__context".to_owned(), {
                 let mut context = json!(context);
                 context["models"] = plan_models();
-                context.to_string()
+                context
             }),
         ];
         let started = std::time::Instant::now();
@@ -971,7 +972,10 @@ async fn run_property(
         Arc::new(NoReach),
         reaches,
         source.script.clone(),
-        vec![("__property".to_owned(), property.name.clone())],
+        vec![(
+            "__property".to_owned(),
+            Value::String(property.name.clone()),
+        )],
         PROPERTY_LIMIT + TEST_LIMIT,
         cancel.clone(),
     )
@@ -1099,14 +1103,14 @@ struct Failed {
     raised: bool,
 }
 
-/// Runs `script`, with `inputs` as its string globals, and gives back
+/// Runs `script`, with `inputs` as its globals, and gives back
 /// the table it returned, or why it failed.
 async fn run(
     modules: Arc<Modules>,
     reach: Arc<dyn Reach>,
     reaches: Reaches,
     script: String,
-    inputs: Vec<(String, String)>,
+    inputs: Vec<(String, Value)>,
     limit: Duration,
     cancel: CancellationToken,
 ) -> (Value, Option<Failed>) {

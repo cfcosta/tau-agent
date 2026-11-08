@@ -254,6 +254,18 @@ impl Inner {
         ctx: &PluginCtx,
         transcript: Option<&[Message]>,
     ) -> Arc<dyn Reach> {
+        self.reach_asking(active, ctx, transcript, None)
+    }
+
+    /// [`Self::reach`], `infer` asking in the run's own conversation
+    /// through `conversation` too (`rewrite_context`, which holds it).
+    fn reach_asking(
+        &self,
+        active: &Active,
+        ctx: &PluginCtx,
+        transcript: Option<&[Message]>,
+        conversation: Option<Asks>,
+    ) -> Arc<dyn Reach> {
         let uses = &active.loaded.declaration.uses;
         let transcript = transcript
             .filter(|_| uses.transcript)
@@ -267,6 +279,7 @@ impl Inner {
             named: uses.model.clone(),
             run_model: self.run["model"].as_str().unwrap_or_default().into(),
             transcript,
+            conversation: conversation.filter(|_| uses.infer),
         })
     }
 
@@ -509,6 +522,46 @@ async fn publish(ctx: &PluginCtx, record: &Record, place: Option<&str>) {
     match place {
         Some(place) => ctx.publish(&tau_ui_plugin::placed(record, place)).await,
         None => ctx.publish(record).await,
+    }
+}
+
+/// What a hook asks in the run's own conversation: how many of its
+/// messages go first, the message after them, and where the answer goes.
+type Ask = (
+    usize,
+    Message,
+    tokio::sync::oneshot::Sender<Result<AssistantMessage, String>>,
+);
+
+/// Where a hook sends what it asks in the run's conversation.
+type Asks = tokio::sync::mpsc::Sender<Ask>;
+
+/// Runs `hook`, asking in `view`'s conversation what it asks there
+/// meanwhile, one at a time: the conversation is the run's, which only
+/// `rewrite_context` holds.
+async fn in_conversation<F: std::future::Future>(
+    hook: F,
+    asked: &mut tokio::sync::mpsc::Receiver<Ask>,
+    view: &ContextView<'_>,
+    ctx: &PluginCtx,
+) -> F::Output {
+    tokio::pin!(hook);
+    loop {
+        tokio::select! {
+            biased;
+            output = &mut hook => return output,
+            Some((first, message, reply)) = asked.recv() => {
+                let first = first.min(view.transcript.len());
+                let mut input = view.transcript[..first].to_vec();
+                input.push(message);
+                let answer = view
+                    .conversation
+                    .ask(&input, ctx)
+                    .await
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(answer);
+            }
+        }
     }
 }
 
@@ -897,18 +950,27 @@ impl PluginRun for LuauRun {
             "messages": crate::rewrite::summary(view.transcript),
         });
         let mut state = self.state.lock().await;
+        // What a hook asks in the run's conversation (`infer{
+        // conversation }`), asked here, which holds it.
+        let (asks, mut asked) = tokio::sync::mpsc::channel(8);
         // The first plugin that rewrites wins.
         for active in inner.active().iter() {
-            let Some(answer) = inner
-                .call(
-                    active,
-                    Hook::RewriteContext,
-                    input.clone(),
-                    &mut state,
-                    ctx,
-                    inner.reach(active, ctx, Some(view.transcript)),
-                )
-                .await
+            let reach = inner.reach_asking(
+                active,
+                ctx,
+                Some(view.transcript),
+                Some(asks.clone()),
+            );
+            let hook = inner.call(
+                active,
+                Hook::RewriteContext,
+                input.clone(),
+                &mut state,
+                ctx,
+                reach,
+            );
+            let Some(answer) =
+                in_conversation(hook, &mut asked, view, ctx).await
             else {
                 continue;
             };
@@ -1532,6 +1594,9 @@ struct RunReach {
     /// The run's conversation, when the hook has it and the plugin uses
     /// it.
     transcript: Option<Arc<[Message]>>,
+    /// Where `infer{ conversation }` asks, in the hook that holds the
+    /// run's conversation.
+    conversation: Option<Asks>,
 }
 
 #[async_trait]
@@ -1540,8 +1605,7 @@ impl Reach for RunReach {
         let mut tools = vec![ToolEntry {
             name: "infer".into(),
             description: "Asks the model one task.".into(),
-            input_schema:
-                tau_codemode_host::inference::InferRequest::parameters(),
+            input_schema: infer_parameters(),
             output_schema: None,
             namespace: None,
             sequential: false,
@@ -1573,10 +1637,17 @@ impl Reach for RunReach {
                 call.name
             ));
         }
-        // As `infer` answers in a tool: `{ ok, value }`, or `{ ok, error }`.
+        // As `infer` answers in a tool: `{ ok, value }`, or `{ ok, error }`
+        // with the `reason` an answer was refused for.
         let reply = match self.infer(call.args).await {
             Ok(value) => json!({ "ok": true, "value": value }),
-            Err(error) => json!({ "ok": false, "error": error }),
+            Err(Refused { error, reason }) => {
+                let mut reply = json!({ "ok": false, "error": error });
+                if let Some(reason) = reason {
+                    reply["reason"] = json!(reason);
+                }
+                reply
+            }
         };
         Ok(ToolReply::success(reply))
     }
@@ -1590,11 +1661,93 @@ impl Reach for RunReach {
     }
 }
 
+/// `infer`'s arguments in a run hook: codemode's, and `conversation`.
+fn infer_parameters() -> Value {
+    let mut parameters =
+        tau_codemode_host::inference::InferRequest::parameters();
+    parameters["properties"]["conversation"] = json!({
+        "description": "In rewrite_context: true sends the run's conversation \
+                        before the task, or a number its first messages."
+    });
+    parameters
+}
+
+/// Why `infer` gave no answer, and, for an answer it refused, the
+/// `reason`: `"error"`, `"length"` or `"tool_call"`.
+struct Refused {
+    error: String,
+    reason: Option<&'static str>,
+}
+
+impl From<String> for Refused {
+    fn from(error: String) -> Self {
+        Self {
+            error,
+            reason: None,
+        }
+    }
+}
+
+impl From<&str> for Refused {
+    fn from(error: &str) -> Self {
+        error.to_owned().into()
+    }
+}
+
+/// The text of `answer`, unless it stopped with an error, was cut off
+/// at the model's output limit, or called a tool: an answer a plugin
+/// must not take as whole.
+fn answer_text(answer: &AssistantMessage) -> Result<String, Refused> {
+    use tau_ai::message::StopReason;
+    let refused = |error: &str, reason| Refused {
+        error: error.to_owned(),
+        reason: Some(reason),
+    };
+    if answer.stop_reason == StopReason::Error {
+        let error = answer.error_message.as_deref().unwrap_or("Unknown error");
+        return Err(refused(error, "error"));
+    }
+    if answer.stop_reason == StopReason::Length {
+        return Err(refused(
+            "the answer hit the model's output limit and is incomplete",
+            "length",
+        ));
+    }
+    if answer.tool_calls().next().is_some() {
+        return Err(refused("the model called a tool", "tool_call"));
+    }
+    Ok(answer.text())
+}
+
+/// How many of the run's messages `infer{ conversation }` sends first:
+/// all of them for `true`; `None` when it names none.
+fn conversation_of(value: Option<Value>) -> Result<Option<usize>, Refused> {
+    match value {
+        None | Some(Value::Null | Value::Bool(false)) => Ok(None),
+        Some(Value::Bool(true)) => Ok(Some(usize::MAX)),
+        Some(count) => count
+            .as_u64()
+            .map(|count| Some(count as usize))
+            .ok_or_else(|| {
+                "conversation is true, or how many of the run's messages \
+                 go first"
+                    .into()
+            }),
+    }
+}
+
 impl RunReach {
-    async fn infer(&self, args: Value) -> Result<Value, String> {
+    async fn infer(&self, mut args: Value) -> Result<Value, Refused> {
         use tau_ai::message::{UserContent, UserMessage};
         use tau_codemode_host::inference::{INSTRUCTIONS, InferRequest};
+        let conversation = conversation_of(
+            args.as_object_mut()
+                .and_then(|fields| fields.remove("conversation")),
+        )?;
         let request = InferRequest::parse(args)?;
+        if let Some(first) = conversation {
+            return self.infer_in_conversation(request, first).await;
+        }
         let named = request.model.as_deref().or(self.named.as_deref());
         let model = crate::slots::model_named(named, Some(&self.run_model))
             .unwrap_or_default();
@@ -1615,9 +1768,54 @@ impl RunReach {
             .await
             .map_err(|error| error.to_string())?;
         if let Some(error) = &answer.error_message {
-            return Err(error.clone());
+            return Err(Refused {
+                error: error.clone(),
+                reason: Some("error"),
+            });
         }
-        request.decode_answer(&answer.text())
+        Ok(request.decode_answer(&answer_text(&answer)?)?)
+    }
+
+    /// `request` asked in the run's own conversation (ADR 0050, gap B):
+    /// its `first` messages, then the task as written, then the context
+    /// unless it is null, on the run's connection with its
+    /// instructions, tools and effort, so the part the conversation
+    /// starts with reads the provider's cache.
+    async fn infer_in_conversation(
+        &self,
+        request: tau_codemode_host::inference::InferRequest,
+        first: usize,
+    ) -> Result<Value, Refused> {
+        use tau_ai::message::{UserContent, UserMessage};
+        let asks = self.conversation.as_ref().ok_or(
+            "`conversation` is for rewrite_context, which holds the run's \
+             conversation",
+        )?;
+        if request.schema.is_some()
+            || request.effort.is_some()
+            || request.model.is_some()
+        {
+            return Err("in the run's conversation, `infer` asks with the \
+                        run's own settings: no schema, effort or model"
+                .into());
+        }
+        let mut text = request.task.clone();
+        if !request.context.is_null() {
+            text.push_str("\n\n");
+            text.push_str(&request.context.to_string());
+        }
+        let message = Message::User(UserMessage {
+            content: UserContent::Text(text),
+            timestamp: self.plugin.now(),
+        });
+        let (reply, answer) = tokio::sync::oneshot::channel();
+        asks.send((first, message, reply))
+            .await
+            .map_err(|_| "the run's conversation is gone")?;
+        let answer = answer
+            .await
+            .map_err(|_| "the run's conversation is gone")??;
+        Ok(request.decode_answer(&answer_text(&answer)?)?)
     }
 }
 

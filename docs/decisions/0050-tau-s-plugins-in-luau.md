@@ -455,6 +455,28 @@ What the port found besides:
   block mark, and one white space left out of the trim each failed it.
   It went with the Rust crates.
 
+### Gap B
+
+- **`rewrite_context` reads each message whole**, its `size` still its
+  bytes. A message of 100 000 characters reaches the hook as it was
+  sent.
+- **A hook's input is a value, not a text.** It reached the VM as JSON
+  that `json.decode` read, which takes a megabyte at most: a long run's
+  transcript failed the hook. Codemode's `inputs` are values now, set
+  as Luau tables after the sandbox, so the VM's memory is the bound.
+- **`infer{ conversation = true }` asks in the run's conversation**, in
+  `rewrite_context`, which holds it: the run's messages, then the task
+  as written and the context unless it is null, on the run's connection
+  with its own instructions, tools and effort. A number sends that many
+  of the first messages, as an idle compaction summarizes only what it
+  drops. It takes no schema, effort or model, which would change what
+  the cache holds. The hook sends what it asks to `rewrite_context`,
+  which asks the loop's conversation one at a time while the hook runs.
+- **`infer` refuses an answer a plugin must not take as whole**: one
+  that stopped with an error, was cut off at the model's limit, or
+  called a tool, which an answer in the run's conversation can, as the
+  run's tools go with it. The answer says why in `reason`.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

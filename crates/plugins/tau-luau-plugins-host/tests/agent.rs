@@ -1488,3 +1488,144 @@ return tau.plugin {
     );
     assert!(llm.requests().is_empty());
 }
+
+const MEASURER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "measurer",
+  rewrite_context = function(view, ctx)
+    local first = view.messages[1]
+    ctx.state.saw = {
+      result = view.messages[3].size,
+      bytes = #first.text,
+      chars = utf8.len(first.text),
+      size = first.size,
+      tail = string.sub(first.text, -3),
+    }
+  end,
+}
+"#;
+
+/// `rewrite_context` reads every message whole (ADR 0050, gap B): a
+/// message of 100 000 characters reaches it as it was sent, in a
+/// transcript past the megabyte a JSON text may hold in a script.
+#[test]
+fn a_long_message_reaches_rewrite_context_whole() {
+    let long = "aé".repeat(50_000);
+    let wide = "x".repeat(1_200_000);
+    let llm = ScriptedModel::new()
+        .turn(move |t| t.tool_call("exec_command", json!({ "cmd": wide })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("measurer", MEASURER)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm).tool(ExecCommand).plugin(plugins);
+    let outcome = block_on_io(agent.run(&long, &store)).unwrap();
+    let saw = records(&store, &outcome.run)
+        .into_iter()
+        .rev()
+        .find_map(|record| match record {
+            Record::State { state, .. } => Some(state["saw"].clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        saw,
+        json!({
+            "result": 1_200_006,
+            "bytes": 150_000,
+            "chars": 100_000,
+            "size": 150_000,
+            "tail": "aé",
+        })
+    );
+}
+
+const SUMMER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "summer",
+  uses = { infer = true },
+  rewrite_context = function(view, ctx)
+    if ctx.state.whole ~= nil then return nil end
+    ctx.state.whole = ctx.tools.infer({ task = "Sum it up.", context = json.null, conversation = true })
+    ctx.state.first = ctx.tools.infer({ task = "Which file?", context = { at = 1 }, conversation = 1 })
+  end,
+}
+"#;
+
+/// `infer{ conversation = true }` asks in the run's own conversation
+/// (ADR 0050, gap B): the run's transcript goes first in the request,
+/// then the task, with the run's own instructions; a number sends that
+/// many of its messages first. An answer that calls a tool is refused,
+/// with why.
+#[test]
+fn infer_asks_in_the_runs_conversation() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "ls" })))
+        .turn(|t| t.text("summed"))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "cat a" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("summer", SUMMER)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone())
+        .instructions("Be brief.")
+        .tool(ExecCommand)
+        .plugin(plugins);
+    let outcome = block_on_io(agent.run("look", &store)).unwrap();
+    assert_eq!(outcome.text, "done");
+    let requests = llm.requests();
+    let roles = |at: usize| -> Vec<&str> {
+        requests[at]
+            .transcript
+            .iter()
+            .map(|message| message.role())
+            .collect()
+    };
+    assert_eq!(roles(1), ["user", "assistant", "toolResult", "user"]);
+    assert_eq!(
+        requests[1].transcript[..3],
+        requests[3].transcript[..3],
+        "the run's transcript first, as the run sends it"
+    );
+    assert_eq!(user_text(requests[1].transcript.last()), "Sum it up.");
+    assert_eq!(roles(2), ["user", "user"]);
+    assert_eq!(
+        user_text(requests[2].transcript.last()),
+        "Which file?\n\n{\"at\":1}"
+    );
+    for at in [1, 2] {
+        assert_eq!(
+            requests[at].settings.instructions,
+            requests[0].settings.instructions,
+            "the run's own instructions"
+        );
+    }
+    let state = records(&store, &outcome.run)
+        .into_iter()
+        .rev()
+        .find_map(|record| match record {
+            Record::State { state, .. } => Some(state),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(state["whole"], json!({ "ok": true, "value": "summed" }));
+    assert_eq!(
+        state["first"],
+        json!({ "ok": false, "error": "the model called a tool", "reason": "tool_call" })
+    );
+}
+
+fn user_text(message: Option<&Message>) -> String {
+    match message {
+        Some(Message::User(user)) => user.content.text(),
+        other => panic!("not a user message: {other:?}"),
+    }
+}

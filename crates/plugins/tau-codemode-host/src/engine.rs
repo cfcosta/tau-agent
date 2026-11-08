@@ -144,9 +144,10 @@ pub struct Request {
     /// The store as the run's records fold it.
     pub store: Snapshot,
     pub cancel: CancellationToken,
-    /// Strings the script reads as globals, by name: what a caller hands
-    /// it without the compiler reading it as source.
-    pub inputs: Vec<(String, String)>,
+    /// Values the script reads as globals, by name, as Luau values: what
+    /// a caller hands it without the compiler reading it as source, nor
+    /// `json.decode`'s bound on a text, only the VM's memory.
+    pub inputs: Vec<(String, Value)>,
 }
 
 /// Runs `request` against `host` to its end.
@@ -182,16 +183,19 @@ pub async fn run(host: Arc<dyn Host>, request: Request) -> Outcome {
 async fn drive(
     state: &Arc<State>,
     code: &str,
-    inputs: &[(String, String)],
+    inputs: &[(String, Value)],
 ) -> Result<Vec<Item>, Failure> {
     let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())
         .map_err(|error| Failure::Sandbox(error.to_string()))?;
     let setup = (|| -> mlua::Result<Thread> {
         install(&lua, state)?;
-        for (name, text) in inputs {
-            lua.globals().set(name.as_str(), lua.create_string(text)?)?;
-        }
         lua.sandbox(true)?;
+        // After the sandbox, which freezes the tables it finds among the
+        // globals: an input is the script's to change.
+        for (name, value) in inputs {
+            lua.globals()
+                .set(name.as_str(), crate::value::to_lua(&lua, value)?)?;
+        }
         lua.set_memory_limit(MEMORY_LIMIT)?;
         set_interrupt(&lua, state);
         let function = lua

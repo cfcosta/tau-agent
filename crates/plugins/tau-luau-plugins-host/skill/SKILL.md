@@ -144,8 +144,8 @@ one, its `card`.
 - `rewrite_context` is offered the run's context between turns, when a
   request overflowed, and while the run is idle: `messages` holds each
   message's `index` (from 1), `role` (`user`, `assistant`,
-  `toolResult`), `text` (its first 2,000 characters) and `size`; an
-  answer's `calls` (`id`, `name`); a result's `call`, `name` and `ok`.
+  `toolResult`), `text` (whole) and `size`, its bytes; an answer's
+  `calls` (`id`, `name`); a result's `call`, `name` and `ok`.
 
   `tau.rewrite{ keep = { 1, 4 }, insert = { { before = 4, text = "..." } }, drops_conversation = true }` keeps those messages and puts the texts
   before them as the person's. The last message always stays, and so
@@ -222,6 +222,18 @@ to `schema`; `effort` is `"low"`, `"medium"` and so on, else the
 model's own, and a model that does not take it is asked with its own.
 `model`, a model or a family, asks that one in place of `uses.model`'s:
 a model the person picks in the plugin's settings.
+An answer that stopped with an error, was cut off at the model's output
+limit or called a tool is refused: `{ ok = false, error, reason }`,
+`reason` being `"error"`, `"length"` or `"tool_call"`.
+
+In `rewrite_context`, `conversation = true` asks in the run's own
+conversation: its messages go first, then `task` as written, then
+`context` as JSON unless it is `json.null`, on the run's connection with
+its instructions, tools and effort. The provider then reads the part the
+conversation starts with from its cache, which a request of its own
+would send again in full. `conversation = 3` sends only the first three
+messages. It takes no `schema`, `effort` or `model`: the run's settings
+are what the cache holds.
 `uses.model` names a model, or a family (`"luna"`): the plan's newest
 of it, else the model the hook would ask without one. In a run, from
 any run hook, it asks that model, else the run's, booked to the run. In

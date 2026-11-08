@@ -16,12 +16,10 @@ use tau_ai::message::{
     UserMessage,
 };
 
-/// The most of one message's text a summary gives.
-pub const MESSAGE_TEXT: usize = 2_000;
-
 /// `transcript` as `rewrite_context` reads it: each message by its place
-/// (from 1), its role, its text cut at [`MESSAGE_TEXT`], its full size,
-/// and the tool calls it makes or answers.
+/// (from 1), its role, its whole text and its size, and the tool calls
+/// it makes or answers (ADR 0050, gap B: a transcript too large for the
+/// VM is one no plugin can rewrite).
 pub fn summary(transcript: &[Message]) -> Value {
     let messages: Vec<Value> = transcript
         .iter()
@@ -43,11 +41,10 @@ pub fn summary(transcript: &[Message]) -> Value {
                     "ok": !result.is_error,
                 }),
             };
-            let text = summary["text"].as_str().unwrap_or_default().to_owned();
+            let size = summary["text"].as_str().map_or(0, str::len);
             summary["index"] = json!(at + 1);
             summary["role"] = json!(message.role());
-            summary["size"] = json!(text.len());
-            summary["text"] = json!(cut(&text, MESSAGE_TEXT));
+            summary["size"] = json!(size);
             summary
         })
         .collect();
@@ -95,14 +92,6 @@ pub fn transcript(transcript: &[Message]) -> Value {
 
 fn blocks_text(blocks: &[InputBlock]) -> String {
     blocks.iter().filter_map(InputBlock::as_text).collect()
-}
-
-fn cut(text: &str, most: usize) -> &str {
-    let mut end = most.min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
 }
 
 /// The rewrite `answer` asks of `transcript`: `{ keep, insert,
