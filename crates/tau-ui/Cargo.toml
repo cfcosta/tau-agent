@@ -36,6 +36,9 @@ tau-vcs.workspace = true
 # tau-todo's store, which its model reads.
 tau-luau-plugins-host.workspace = true
 tau-todo.workspace = true
+tau-ask.workspace = true
+tau-goal.workspace = true
+tau-reasoning.workspace = true
 
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }
@@ -45,7 +48,6 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
-tau-ask.workspace = true
 tau-canvas.workspace = true
 tau-skills.workspace = true
 tau-direnv.workspace = true
@@ -54,13 +56,11 @@ tau-phones.workspace = true
 tau-sqlite.workspace = true
 tau-chatgpt.workspace = true
 tau-schedule.workspace = true
-tau-goal.workspace = true
 tau-agents.workspace = true
 tau-luau-plugins.workspace = true
 tau-jev.workspace = true
 tau-mcp-host.workspace = true
 tau-memory-host = { workspace = true, features = ["docbert"] }
-tau-reasoning.workspace = true
 tau-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a
 # pseudo-terminal (docs/decisions/0010-terminal-rendering.md).
