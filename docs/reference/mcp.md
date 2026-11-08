@@ -541,7 +541,10 @@ An agent's `mcp` trigger (ADR 0037) watches one resource:
   when the server connects again or says what it offers changed.
 - **Through a restart:** an HTTP server that restarted under a live
   connection gets every watched resource subscribed again ("Connections",
-  "A server that restarted"); its watches go on.
+  "A server that restarted"); its watches go on, and each says `changed()`
+  once it is, since a change before it reached no one. A watcher that
+  compares what it reads, as an agent's trigger does, fires only if the
+  resource really changed.
 - **Tied to the session:** a session that ends ends its watches
   (`changed()` is `false`). Watching again connects again and
   subscribes on the new session; the watcher reads the resource again,

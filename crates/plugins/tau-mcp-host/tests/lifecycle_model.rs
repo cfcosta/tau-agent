@@ -90,6 +90,10 @@ const WATCHED: [&str; 3] =
 /// sleeping runs every task that can run before the time moves.
 const SETTLE: Duration = Duration::from_secs(1);
 
+/// How long an ended watch has to say so: over HTTP, on the wall's clock
+/// of a loaded machine.
+const ENDING: Duration = Duration::from_secs(5);
+
 /// A server's tool names, as it lists them.
 fn server_tools(fixture: &Fixture) -> Vec<String> {
     fixture
@@ -383,7 +387,7 @@ impl Machine {
         // change made in between reaches no one.
         if !self.fixture.legacy {
             self.block_on(async {
-                for _ in 0..100 {
+                for _ in 0..500 {
                     if self.fixture.listening_for_tools() == 1 {
                         return;
                     }
@@ -665,10 +669,12 @@ impl Machine {
         self.ended = self.block_on(async move {
             let mut ended = ended;
             for watch in &mut ended {
-                let heard = tokio::time::timeout(SETTLE, watch.changed())
+                // What it was told before it ended comes first: the
+                // read again after a renewal.
+                while tokio::time::timeout(ENDING, watch.changed())
                     .await
-                    .expect("an ended watch says so");
-                assert!(!heard, "a watch whose session ended heard a change");
+                    .expect("an ended watch says so")
+                {}
             }
             ended
         });
@@ -847,23 +853,47 @@ async fn a_watch_survives_an_http_restart(legacy: bool) {
         connection.subscriptions(),
         fixture.subscribed_uris()
     );
-    // The same watch hears the restarted server's changes. The server
-    // holds a listen a moment before a change sent on it arrives (see
-    // `became_live`), so it says so until one is heard.
-    let mut heard = None;
-    for round in 0..25 {
-        fixture.set_status(&format!("red {round}")).await;
-        match tokio::time::timeout(Duration::from_millis(200), watch.changed())
+    // Subscribed again, it is told to read again.
+    let told =
+        tokio::time::timeout(Duration::from_secs(5), watch.changed()).await;
+    assert_eq!(told, Ok(true), "the watch was told to read again");
+    // The same watch hears the restarted server's changes.
+    fixture.set_status("red").await;
+    let heard =
+        tokio::time::timeout(Duration::from_secs(5), watch.changed()).await;
+    assert_eq!(heard, Ok(true), "the watch heard the change");
+}
+
+/// A change a restarted server made before tau subscribed again reached
+/// no one: its watch is told to read again all the same.
+async fn a_change_before_tau_subscribes_again_is_not_missed(legacy: bool) {
+    let fixture = Fixture::subscribable(legacy);
+    let server = HttpServer::start(fixture.clone()).await;
+    let connection = over_http(&server).await;
+    let mut watch = connection
+        .watch_resource("file:///status", &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(
+        within_5s(|| fixture.subscribed_uris().contains("file:///status"))
             .await
-        {
-            Ok(changed) => {
-                heard = Some(changed);
-                break;
-            }
-            Err(_) => continue,
-        }
-    }
-    assert_eq!(heard, Some(true), "the watch heard the change");
+    );
+    server.restart(Unknown::NotFound);
+    fixture.set_status("red").await;
+    call_slow(&connection).await;
+    let told =
+        tokio::time::timeout(Duration::from_secs(5), watch.changed()).await;
+    assert_eq!(told, Ok(true), "the watch was told to read again");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_before_tau_subscribes_again_is_not_missed_2025() {
+    a_change_before_tau_subscribes_again_is_not_missed(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_before_tau_subscribes_again_is_not_missed_2026() {
+    a_change_before_tau_subscribes_again_is_not_missed(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

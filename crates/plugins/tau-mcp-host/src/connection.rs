@@ -1233,7 +1233,7 @@ impl Connection {
     /// server restarts (`docs/reference/mcp.md`, "Lost HTTP sessions"):
     /// lists what it offers again, listens for list changes again, and
     /// subscribes every watched resource again, so their watches go on
-    /// as they were.
+    /// and read it again.
     async fn renew(&self, session: &Arc<Session>) {
         session.idle().await;
         if !self.is_current(session) {
@@ -1309,6 +1309,11 @@ impl Connection {
                 Ok(subscription) => {
                     std::mem::replace(&mut entry.subscription, subscription)
                         .forget();
+                    // What changed before this subscription reached no
+                    // one: its watchers read it again.
+                    entry
+                        .watchers
+                        .retain(|_, watcher| watcher.send(()).is_ok());
                 }
                 Err(error) => {
                     tracing::warn!(
