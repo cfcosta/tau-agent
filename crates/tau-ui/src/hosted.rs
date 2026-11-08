@@ -48,11 +48,9 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_skills::SkillsHost)
         .host(tau_notify::NotifyHost)
         .host(tau_phones::PhonesHost)
-        .host(tau_titles::TitlesHost)
         .host(tau_jev::JevHost)
         .host(tau_sqlite::SqliteHost)
         .host(tau_chatgpt::ChatGptHost)
-        .host(tau_compaction_chain::ChainHost)
 }
 
 /// What the app gives its plugins beside the host's own services

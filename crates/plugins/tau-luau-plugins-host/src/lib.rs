@@ -14,11 +14,21 @@ mod half;
 pub mod hegel;
 pub mod jobs;
 
-/// The Luau plugins tau comes with (ADR 0048's tau-todo).
-pub const BUILT_IN: &[registry::BuiltIn] = &[registry::BuiltIn {
-    name: tau_todo::NAME,
-    files: tau_todo::FILES,
-}];
+/// The Luau plugins tau comes with (ADR 0048, 0050).
+pub const BUILT_IN: &[registry::BuiltIn] = &[
+    registry::BuiltIn {
+        name: tau_todo::NAME,
+        files: tau_todo::FILES,
+    },
+    registry::BuiltIn {
+        name: tau_titles::NAME,
+        files: tau_titles::FILES,
+    },
+    registry::BuiltIn {
+        name: tau_compaction_chain::NAME,
+        files: tau_compaction_chain::FILES,
+    },
+];
 
 pub mod parity;
 pub mod registry;

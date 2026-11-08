@@ -1,6 +1,6 @@
 [package]
 name = "tau-compaction-chain"
-description = "Fast pruning, the tree and the summary in turn, as the plugin that fills tau.compaction."
+description = "Fast pruning, the tree and the summary in turn (ADR 0045, 0050): a Luau plugin tau comes with, filling tau.compaction, and its tests."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -8,9 +8,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-tau-agent.workspace = true
-tau-compaction.workspace = true
-tau-fast-compaction.workspace = true
-tau-tree-compaction.workspace = true
-tau-ui-plugin.workspace = true
+
+[dev-dependencies]
+tau-luau-plugins-host.workspace = true
+tau-testing.workspace = true
+tokio-util.workspace = true

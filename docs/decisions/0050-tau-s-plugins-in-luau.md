@@ -189,6 +189,48 @@ load it, and the Rust crate deleted.
 - **Each port**: the three checks above. `tests/parity.rs` keeps the
   table honest: a `NOT_YET` that a port needed is gone.
 
+## As built
+
+### Gap A
+
+- Every run hook but `on_event` gets the model and Jev when the
+  plugin's `uses` names them, through a `RunReach` that asks with
+  `PluginCtx::ask`, so the run is charged and its cancel cancels the
+  ask. Those hooks then have a tool's 60 s (`Hook::limit_for`).
+- `infer` takes an `effort`, in a run hook, outside runs and in
+  codemode's own `infer`, which share their instructions.
+
+### tau-compaction-chain and tau-titles
+
+- Both are Luau carriers now, like tau-todo: `luau/` and a `FILES`
+  list, loaded as built-ins. Their Rust (both halves of tau-titles) is
+  gone, and tau-plugins and tau-ui name them no more.
+- **A Luau plugin's slot is tau-luau-plugins'.** The kernel's slots
+  are filled by Rust plugins: tau-luau-plugins fills `tau.title` and
+  `tau.compaction` for whichever active Luau plugin fills them, and is
+  the slots' first pick. The Plugins screen shows tau-luau-plugins as
+  the filler, and the compaction rewriters gain `tau-luau-plugins`
+  first (its plugins' own rewrites), before the chain's three.
+- **What a Luau plugin asks outside a run is booked to it**, by its
+  own name, not to tau-luau-plugins: tau-titles' requests still show
+  as tau-titles'.
+- **`uses.model` may name a family.** `"luna"` is the plan's newest
+  Luna, else the model the hook would ask without one, as tau-titles'
+  Rust picked; an effort the chosen model does not take is dropped.
+- **The reply's schema goes as `infer_answer`**, not `run_title`; the
+  test outside checks the schema itself.
+- **Fake runs give `ctx.tools`, not the global `tools`.** The skill
+  said to call `tools.infer`, which a test cannot fake; it now says
+  `ctx.tools.infer`, which is the same table in a real hook.
+- **The parity check** ran Rust's `request` and `parse` beside the
+  Luau `request` and `clean` on 400 drawn tasks of one- to four-byte
+  characters, Unicode white space and quotes: all equal. A one-byte
+  change to the Luau budget failed it. It went with the Rust crate.
+- tau-titles' settings pane is the form tau draws from its schema; its
+  catalog line no longer changes when titles are off.
+- tau-ui does not link Luau, so its tests that need these slots
+  install `tau::plugins()`, which does.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

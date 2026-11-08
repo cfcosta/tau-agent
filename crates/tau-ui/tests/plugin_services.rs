@@ -127,13 +127,14 @@ impl HostHalf for ResumerHost {
     }
 }
 
-/// The app's plugins and the one above: a process has one registry.
+/// The app's plugins, the Luau ones among them (tau-titles and the
+/// compaction chain are Luau, ADR 0050), and the one above: a process
+/// has one registry.
 fn install() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         tau_ui_remote::plugins::install(
-            tau_ui::hosted::halves(tau_plugins::plugins().with(Resumer))
-                .host(ResumerHost),
+            tau::plugins().with(Resumer).host(ResumerHost),
         )
     });
 }
@@ -326,7 +327,8 @@ fn a_host_half_asks_the_model_and_the_plugin_pays() {
 
 /// What fills `tau.title` writes a run's title with the person's model,
 /// holding the reply to its schema and cleaning it up, and books the
-/// request to tau-titles.
+/// request to tau-titles: Luau now (ADR 0050), filled through
+/// tau-luau-plugins.
 #[test]
 fn titles_are_written_with_the_persons_model_and_booked_to_tau_titles() {
     use tau_ai::{client::OpenAi, ws::proto::pool::Limits};
@@ -360,7 +362,9 @@ fn titles_are_written_with_the_persons_model_and_booked_to_tau_titles() {
     assert_eq!(title.as_deref(), Some("Fix the retry loop"));
     let received = fake.received();
     assert_eq!(received.len(), 1);
-    assert_eq!(received[0].body["text"]["format"]["name"], "run_title");
+    let schema = &received[0].body["text"]["format"]["schema"];
+    assert_eq!(schema["required"], serde_json::json!(["title"]));
+    assert_eq!(schema["properties"]["title"]["maxLength"], 36);
 
     let booked = host
         .block_on(store.query("SELECT plugin FROM plugin_usage", 10))
@@ -391,7 +395,8 @@ fn the_store_is_opened_by_what_fills_its_slot() {
 
 /// `tau.compaction` is the chain's unless the person picks the summary
 /// alone: fast pruning, the tree and the summary rewrite, in that turn,
-/// or only the summary.
+/// or only the summary. The chain is Luau (ADR 0050): tau-luau-plugins
+/// fills the slot, its own plugins' rewrites first.
 #[test]
 fn the_chain_compacts_unless_the_summary_is_picked() {
     use tau_ui_plugin::compaction::COMPACTION;
@@ -407,7 +412,15 @@ fn the_chain_compacts_unless_the_summary_is_picked() {
             .expect("something fills tau.compaction")
             .rewriters()
     };
-    assert_eq!(rewriters(), tau_compaction_chain::CHAIN);
+    assert_eq!(
+        rewriters(),
+        [
+            tau_luau_plugins::NAME,
+            tau_fast_compaction::NAME,
+            tau_tree_compaction::NAME,
+            tau_compaction::NAME,
+        ]
+    );
     host.slots()
         .lock()
         .unwrap()

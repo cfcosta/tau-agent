@@ -202,14 +202,16 @@ one, its `card`.
 ### The model
 
 A plugin with `uses.infer` asks the person's model one task:
-`tools.infer({ task, context, schema?, effort? })` answers
+`ctx.tools.infer({ task, context, schema?, effort? })` answers
 `{ ok, value, error? }`, `value` the answer's text, or JSON that holds
 to `schema`; `effort` is `"low"`, `"medium"` and so on, else the
-model's own. In a run, from any run hook, it asks the model
-`uses.model` names, else the run's, booked to the run. In a hook outside any run
-(`title`, `notify`, the forge's) it asks the model `uses.model` names,
-or for `title` the run's own when it names none, booked to the
-Plugins screen's tau-luau-plugins.
+model's own, and a model that does not take it is asked with its own.
+`uses.model` names a model, or a family (`"luna"`): the plan's newest
+of it, else the model the hook would ask without one. In a run, from
+any run hook, it asks that model, else the run's, booked to the run. In
+a hook outside any run (`title`, `notify`, the forge's) it asks the
+model `uses.model` names, or for `title` the run's own when it names
+none, booked to the plugin.
 
 ### HTTP
 
@@ -226,16 +228,16 @@ new reach.
 
 ### `ctx`
 
-| Field          | What it is                                                                                        |
-| -------------- | ------------------------------------------------------------------------------------------------- |
-| `ctx.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`                               |
-| `ctx.now`      | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on                                       |
-| `ctx.settings` | what the person set, over `settings.default`; per repository when one keeps its own copy          |
-| `ctx.state`    | the plugin's table for this run; what a hook leaves in it is kept                                 |
-| `ctx.tools`    | in a tool's `call` only: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })` |
-| `ctx.jev`      | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run     |
-| `ctx.log`      | `ctx.log(text)`: a line on the plugin's page, never for the model                                 |
-| `ctx.store`    | with `uses.store`: the plugin's store in the repository the hook works in (below)                 |
+| Field          | What it is                                                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctx.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`                                                                                                              |
+| `ctx.now`      | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on                                                                                                                      |
+| `ctx.settings` | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                         |
+| `ctx.state`    | the plugin's table for this run; what a hook leaves in it is kept                                                                                                                |
+| `ctx.tools`    | in a tool's `call`: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })`; in every hook, `infer` when `uses.infer`, which a fake run's `tools` stands in for |
+| `ctx.jev`      | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run                                                                                    |
+| `ctx.log`      | `ctx.log(text)`: a line on the plugin's page, never for the model                                                                                                                |
+| `ctx.store`    | with `uses.store`: the plugin's store in the repository the hook works in (below)                                                                                                |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
 JSON has no empty array: use `array({})` for one that must stay a list.

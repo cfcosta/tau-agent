@@ -15,7 +15,6 @@ pub fn plugins() -> Registry {
         .with(tau_chatgpt::ChatGptUi)
         .with(tau_codemode::CodemodeUi)
         .with(tau_compaction::ui::CompactionUi)
-        .with(tau_compaction_chain::ChainUi)
         .with(tau_constitution::ui::ConstitutionUi)
         .with(tau_direnv::DirenvUi)
         .with(tau_fast_compaction::ui::FastCompactionUi)
@@ -31,7 +30,6 @@ pub fn plugins() -> Registry {
         .with(tau_schedule::ScheduleUi)
         .with(tau_skills::SkillsUi)
         .with(tau_sqlite::SqliteUi)
-        .with(tau_titles::TitlesUi)
         .with(tau_tools::ui::ToolsUi)
         .with(tau_tree_compaction::ui::TreeCompactionUi)
         .with(tau_vcs::ui::VcsUi)
@@ -41,10 +39,12 @@ pub fn plugins() -> Registry {
         .slot_order(&tau_ui_plugin::vcs::VCS, &[tau_vcs::ui::NAME])
         .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_github::NAME])
         .slot_order(&tau_ui_plugin::provider::PROVIDER, &[tau_chatgpt::NAME])
-        .slot_order(&tau_ui_plugin::title::TITLE, &[tau_titles::NAME])
+        // tau-titles and tau-compaction-chain are Luau (ADR 0050): the
+        // slots are tau-luau-plugins', which fills them for them.
+        .slot_order(&tau_ui_plugin::title::TITLE, &[tau_luau_plugins::NAME])
         .slot_order(&tau_ui_plugin::notify::NOTIFY, &[tau_notify::NAME])
         .slot_order(
             &tau_ui_plugin::compaction::COMPACTION,
-            &[tau_compaction_chain::NAME, tau_compaction::NAME],
+            &[tau_luau_plugins::NAME, tau_compaction::NAME],
         )
 }

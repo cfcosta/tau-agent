@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dev-dependencies]
+tau-titles.workspace = true
 # The demo's session, which tests drive the interface with.
 tau-demo.workspace = true
 image = { workspace = true, features = ["png"] }
@@ -48,10 +49,8 @@ tau-skills.workspace = true
 tau-direnv.workspace = true
 tau-notify.workspace = true
 tau-phones.workspace = true
-tau-titles.workspace = true
 tau-sqlite.workspace = true
 tau-chatgpt.workspace = true
-tau-compaction-chain.workspace = true
 tau-schedule.workspace = true
 tau-goal.workspace = true
 tau-agents.workspace = true

@@ -23,6 +23,8 @@ tau-jev.workspace = true
 sqlx.workspace = true
 # The Luau plugins tau comes with.
 tau-todo.workspace = true
+tau-titles.workspace = true
+tau-compaction-chain.workspace = true
 tau-tools-host.workspace = true
 tau-luau-plugins.workspace = true
 # Where the skill tau ships is installed.

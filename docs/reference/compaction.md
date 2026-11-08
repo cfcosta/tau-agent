@@ -13,9 +13,11 @@ so cheaper rewrites get the first chance. The token estimate it
 compacts by is the loop's, in `tau_agent::context`.
 
 In tau, which compactions rewrite is the `tau.compaction` slot's (ADR
-0045): by default tau-compaction-chain, which lets fast pruning, the tree
-and the summary rewrite in that turn; on the Plugins screen the person
-can pick tau-compaction instead, and then only the summary rewrites.
+0045): by default tau-compaction-chain, a Luau plugin tau comes with
+(ADR 0050), which lets fast pruning, the tree and the summary rewrite in
+that turn. tau-luau-plugins fills the slot for it, so its own plugins'
+rewrites come first. On the Plugins screen the person can pick
+tau-compaction instead, and then only the summary rewrites.
 
 ## When it triggers
 

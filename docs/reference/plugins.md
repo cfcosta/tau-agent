@@ -535,7 +535,9 @@ change (tau-jev gives `tau.jev` only while a key is saved);
 (tau-notify), `tau.title` (tau-titles), `tau.store` (tau-sqlite) and
 `tau.provider` (tau-chatgpt) and `tau.compaction` (tau-compaction-chain,
 or tau-compaction for the summary alone; the gate turns off the
-rewrites of a plugin it does not name). A plugin's setup step may come first
+rewrites of a plugin it does not name). tau-titles and
+tau-compaction-chain are Luau (ADR 0050): tau-luau-plugins fills their
+slots for them. A plugin's setup step may come first
 (`SetupAt::Model`), be `required`, and say how its link to a service
 stands (`SetupView::link`), which the handshake above it draws.
 

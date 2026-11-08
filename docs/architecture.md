@@ -37,7 +37,7 @@ tau-agent/
 │       ├── tau-codemode/         # Luau scripts that call tools and Jev
 │       ├── tau-compaction/       # summarizing compaction
 │       ├── tau-compaction-chain/ # pruning, the tree and the summary in
-│       │                         # turn, filling `tau.compaction`
+│       │                         # turn, filling `tau.compaction` (Luau)
 │       ├── tau-constitution/     # a repository's rules, checked with Jev
 │       ├── tau-direnv/           # agent commands in the repository's
 │       │                         # direnv environment (ADR 0025)
@@ -58,7 +58,7 @@ tau-agent/
 │       │                         # calls for them
 │       ├── tau-sqlite/           # the store in SQLite, filling `tau.store`
 │       ├── tau-titles/           # a run's title from the person's model,
-│       │                         # filling `tau.title`
+│       │                         # filling `tau.title` (Luau)
 │       ├── tau-tools/            # read, exec_command, write_stdin, edit, ...
 │       ├── tau-tree-compaction/  # compaction into a tree of summaries the
 │       │                         # agent zooms into, after OptChat

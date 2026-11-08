@@ -9793,12 +9793,9 @@ dependencies = [
 name = "tau-compaction-chain"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "tau-agent",
- "tau-compaction",
- "tau-fast-compaction",
- "tau-tree-compaction",
- "tau-ui-plugin",
+ "tau-luau-plugins-host",
+ "tau-testing",
+ "tokio-util",
 ]
 
 [[package]]
@@ -10023,6 +10020,7 @@ dependencies = [
  "tau-ai",
  "tau-codemode",
  "tau-codemode-host",
+ "tau-compaction-chain",
  "tau-jev",
  "tau-luau-plugins",
  "tau-plugins",
@@ -10030,6 +10028,7 @@ dependencies = [
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
+ "tau-titles",
  "tau-todo",
  "tau-tools-host",
  "tau-ui-kit",
@@ -10241,7 +10240,6 @@ dependencies = [
  "tau-chatgpt",
  "tau-codemode",
  "tau-compaction",
- "tau-compaction-chain",
  "tau-constitution",
  "tau-direnv",
  "tau-fast-compaction",
@@ -10257,7 +10255,6 @@ dependencies = [
  "tau-schedule",
  "tau-skills",
  "tau-sqlite",
- "tau-titles",
  "tau-tools",
  "tau-tree-compaction",
  "tau-ui-plugin",
@@ -10438,13 +10435,8 @@ dependencies = [
 name = "tau-titles"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "hegeltest",
- "serde",
- "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-ui-plugin",
+ "tau-luau-plugins-host",
+ "tau-testing",
  "tokio-util",
 ]
 
@@ -10561,7 +10553,6 @@ dependencies = [
  "tau-canvas",
  "tau-chatgpt",
  "tau-compaction",
- "tau-compaction-chain",
  "tau-constitution",
  "tau-constitution-host",
  "tau-demo",
