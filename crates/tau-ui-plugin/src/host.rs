@@ -68,6 +68,13 @@ pub struct RepoCtx {
     pub workspaces: PathBuf,
 }
 
+/// The plugins a run's repository leaves out, by name, as its kind
+/// says (`KindHost::without`): the host leaves its own out, and a plugin
+/// that runs others, as tau-luau-plugins runs the Luau ones tau comes
+/// with, leaves those out. The host puts it in [`RunCtx::services`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LeftOut(pub &'static [&'static str]);
+
 /// The directory a run (or sub-agent) works in: its workspace. The
 /// host puts it in [`RunCtx::services`].
 #[derive(Debug, Clone, PartialEq, Eq)]

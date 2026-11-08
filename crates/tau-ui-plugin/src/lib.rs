@@ -69,6 +69,7 @@ pub use host::{
     HostCx,
     HostRecord,
     Interrupted,
+    LeftOut,
     ModelPick,
     OutsideResources,
     OutsideTools,

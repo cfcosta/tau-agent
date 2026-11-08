@@ -2089,6 +2089,27 @@ mod tests {
         );
     }
 
+    /// The composer's place is one plugin's: the first by name whose
+    /// view draws there and that is not off.
+    #[test]
+    fn only_one_plugin_fills_the_composers_place() {
+        let part = |view: Value, off: bool| PluginState {
+            view,
+            off: off.then(|| "failed".to_owned()),
+            ..PluginState::default()
+        };
+        let form = |text: &str| json!({ "composer": { "piece": "text", "text": text } });
+        let mut state = State::default();
+        assert_eq!(first_drawn(&state, "composer"), None);
+        state.plugins.insert("a".into(), part(json!({}), false));
+        state.plugins.insert("b".into(), part(form("off"), true));
+        state.plugins.insert("c".into(), part(form("first"), false));
+        state
+            .plugins
+            .insert("d".into(), part(form("second"), false));
+        assert_eq!(first_drawn(&state, "composer"), Some(Node::text("first")));
+    }
+
     /// A tree's `tau.` actions ask the interface, on the run the tree is
     /// drawn in; the plugin's own are not, and an unknown one says so.
     #[test]

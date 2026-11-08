@@ -558,7 +558,7 @@ tau-luau-plugins the plugins repository.
   (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools), tau-memory
   (candle). The plugin's crate keeps its records, their fold, its
   views and the shapes they read (`details` modules, tau-mcp's
-  `info`). tau-ask, tau-direnv and
+  `info`). tau-direnv and
   tau-skills keep theirs behind a default `host` feature; the rest,
   which are light, beside their `UiPlugin`. `tau-ui-remote` depends on
   no plugin crate at all, so neither it nor a phone links one.
@@ -1264,6 +1264,21 @@ with (ADR 0050), off by default. Its reference is
   summarizes.
 - **State:** the history and the view, in the run's `ctx.state`, which
   forks inherit.
+
+### `tau-ask`: the agent asks the person
+
+Built: `crates/plugins/tau-ask`, a Luau plugin tau comes with (ADR
+0050). Its reference is [ask.md](ask.md).
+
+- **Seams:** `tools` (`ask`, the model's alone, which answers
+  `tau.ask` and waits for the person), `start` and `run_end` (they close
+  the calls that wait), and the view's `composer` (the panel), `calls`
+  (each call's card), `asks` and `status`.
+- **State:** the run's `ctx.state.calls`: each call's questions, the
+  person's draft and focus, and the reply. Each key and click of the
+  panel is one of its actions; Send gives the call the answers with
+  `tau.answer`, and its `answered` action takes them in the run.
+- **Left out** of an agent's runs, whose kind names it (ADR 0037).
 
 ### `tau-goal`: keep going until a goal holds
 

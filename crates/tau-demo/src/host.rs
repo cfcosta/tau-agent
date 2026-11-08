@@ -339,6 +339,7 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
                 tau_constitution::DEMO_DECLARATION,
             ),
             built_in(tau_goal::NAME, tau_goal::DEMO_DECLARATION),
+            built_in(tau_ask::NAME, tau_ask::DEMO_DECLARATION),
             built_in(
                 tau_fast_compaction::NAME,
                 tau_fast_compaction::DEMO_DECLARATION,

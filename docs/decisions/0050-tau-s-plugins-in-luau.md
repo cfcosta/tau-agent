@@ -704,6 +704,101 @@ What the port found besides:
 omitted` and DEL left unescaped each failed it. It went with the Rust
   crate.
 
+### Gap C, and tau-ask
+
+Gap C closed as written, on the wait `tau.allow` has: a tool answers
+`tau.ask{ questions, action }`, one to four questions, each with its
+choices and, with `other = true`, the person's own answer, and its call
+waits. The plugin's view draws the form, and one of its actions answers
+`tau.answer{ call, answers }` or `tau.answer{ call, declined = true }`:
+the first answers that fit, from whichever device, take it; the host
+checks them against what was asked, then calls `actions[action]` in the
+run with them, and the model reads what it answers. A run cancelled
+first ends the call with an error. Of gap E, `composer` is a tree: the
+first plugin by name whose view has one draws it, while the run goes
+on. tau-ask needed these things more, each any plugin's:
+
+- **`ctx.run.call`**, a tool call's id, so the state can say which
+  call waits.
+- **A tool the model's alone**: `model_only = true` is
+  `Exposure::ModelOnly`, as a call that waits ends with a script.
+- **Keys and focus in a view**: `ui.keys(id, keys, action, children, {
+through, focus })`, an input's `focus`, and `ui.card`, `ui.spacer`
+  and a table's `widths`, the pieces the panel is drawn with.
+- **`tau.cancel`**, a button that stops the run.
+- **An action that leaves the state as it was records nothing.** The
+  interface recorded every action's state and view, and the run read
+  the last state recorded. Send leaves the state as it was, so the
+  answers the run took in it are not taken back by the state the
+  interface sent, which came later.
+- **A kind's runs leave out a built-in Luau plugin it names**, as they
+  left out the Rust one: `LeftOut`, a run's service, names them, and
+  tau-luau-plugins does not run them there. An agent's runs have no
+  `ask`, as before.
+- **The test harness** gives `run:tool(name, args, call)` its call's
+  id.
+
+What the port found besides:
+
+- **Records gave way to the run's state.** `asked`, `answered` and
+  `closed` are gone: the state's `calls` hold each call's questions,
+  draft, focus and reply, and `start` and `run_end` close what waits.
+  So a call whose run ended shows no Answer card; a run cut off, as when
+  tau quit, still says its question waits until it goes on, though its
+  panel shows only while the run does. A call whose future was dropped
+  is closed by the run that goes on, not by a record of its own.
+- **The draft is the run's**, not each window's: every key and click is
+  an action on the run's state, so a phone sees and goes on with what
+  the computer started. A button cannot read an input's draft, so the
+  person's own answer and a note count once Enter is pressed in their
+  field, where the Rust panel counted what they held; opening a note
+  does not write it back into its field, which keeps what was typed.
+- **No "Sending your answers…" and no refusal in the panel.** Send
+  leaves the state be, so the panel goes when the call has the answers;
+  answers the host refuses, as when another device answered first, are
+  the action's error. What the panel sends always fits what was asked,
+  as a property checks; only the host checks it in a run.
+- **Two devices can still cross.** The interface records what a key or
+  click left, and the run takes the last state recorded. A key from one
+  device whose record arrives after another device's answers took the
+  call puts back a state without the reply: the model has already read
+  the answers, but the call's card and state say otherwise, until
+  `run_end` closes it as unanswered. Any action on a live run's state
+  has this race; nothing here closes it.
+- **The card** is drawn from the state, on the call's card body: what
+  was asked and each answer with its note. Its title is the tool's, not
+  `ask · Waiting · Surfaces`, with no "2 answered" label or edge, and a
+  call refused for its questions has no body. The status says how many
+  questions wait while one does, never "not answered".
+- **One tree for wide and compact**: the tabs' mode and the keys' hints
+  show on a phone too, where the Rust panel left them out.
+- **Smaller differences.** A call's shape that does not read is the
+  Luau's own message (`questions[0]: \`header\` is not a string`), not
+serde's. A header that is too long is quoted as Rust's `{:?}`quotes
+it, from a table of the characters it escapes, read off Rust itself.
+The result's`structured`is`{ call, answers }`or`{ call, declined
+  }`. The catalog's row is one of tau-luau-plugins'.
+- **The parity check** ran the Rust plugin beside the Luau on drawn
+  inputs: 3 000 calls' arguments, with Unicode white space, quotes,
+  escapes, combining and unprinted characters, "Other" in its cases,
+  labels and questions repeated with white space around them, missing
+  fields and fields of the wrong type, read and checked; 3 000 replies
+  to questions that check out, too many or too few, stray, repeated and
+  unordered picks, blank and padded answers of the person's own and
+  notes, checked and read back, and their cards; and 400 runs of up to
+  30 keys and clicks on the panel, in a field and not, with rows and
+  tabs past the end, negative and fractional, comparing the draft, the
+  focus, the answers sent and the panel's tree after each. All equal.
+  Each of these failed it: a white space left out of the trim, `>=`
+  for `>` at the header's limit, "Other" matched with its case, a
+  note's lines indented by seven, Down past the last row, a checklist's
+  picks unsorted, Enter in the field going on from a checklist, picks
+  out of order taken, the person's own answer read untrimmed, U+2028
+  left unescaped, the card's decline worded otherwise, Enter in the
+  field keeping the keys there, and keys in a field taken as the
+  panel's. A ninth row without its key did not, as no question has
+  more than five rows. It went with the Rust crate.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

@@ -1,0 +1,407 @@
+{
+  "state": {
+    "calls": [
+      {
+        "ask": {
+          "questions": [
+            {
+              "header": "Waiting",
+              "multi_select": false,
+              "options": [
+                {
+                  "description": "The tool blocks on a channel; your answer comes back as its result and the turn goes on.",
+                  "label": "Hold the call open (Recommended)",
+                  "preview": "let (tx, rx) = oneshot::channel();\nself.pending.insert(ctx.call_id, tx);\nselect! {\n    a = rx => Ok(a?),\n    _ = ctx.cancel => Err(Cancelled),\n}"
+                },
+                {
+                  "description": "Like vcs_land: the run stops, and your answer arrives as the next message.",
+                  "label": "End the turn",
+                  "preview": "ctx.publish(&asked)?;\nOk(ToolOutput::text(\"Asked; waiting.\"))"
+                },
+                {
+                  "description": "Block for a while; if nobody answers, stop the run and keep the panel open.",
+                  "label": "Hold, then time out",
+                  "preview": "select! {\n    a = rx => Ok(a?),\n    _ = sleep(timeout) => stop(),\n}"
+                }
+              ],
+              "question": "How should the ask tool wait for your answer?"
+            },
+            {
+              "header": "Surfaces",
+              "multi_select": true,
+              "options": [
+                {
+                  "description": "An amber dot on the run in the sidebar until you answer.",
+                  "label": "Run list badge"
+                },
+                {
+                  "description": "Only when the window is not focused.",
+                  "label": "Desktop notification"
+                },
+                {
+                  "description": "A child run's question surfaces on the run that spawned it.",
+                  "label": "Parent run"
+                }
+              ],
+              "question": "Where else should a pending question show up?"
+            },
+            {
+              "header": "Timeout",
+              "multi_select": false,
+              "options": [
+                {
+                  "description": "Short; the run stops soon and resumes when you answer.",
+                  "label": "5 minutes"
+                },
+                {
+                  "description": "Hold until you answer or cancel the run.",
+                  "label": "Never"
+                }
+              ],
+              "question": "How long should a question hold the run?"
+            }
+          ]
+        },
+        "call": "call_ask",
+        "draft": {
+          "cursor": [0, 2, 0],
+          "note_open": true,
+          "notes": ["", "Only when the run has waited a while.", ""],
+          "other": ["", "", ""],
+          "other_on": [false, false, false],
+          "picked": [[0], [0, 2], []],
+          "tab": 1
+        },
+        "focus": {
+          "note": 2,
+          "other": 0,
+          "panel": 2
+        }
+      }
+    ]
+  },
+  "view": {
+    "asks": "How should the ask tool wait for your answer?",
+    "calls": {
+      "call_ask": {
+        "body": {
+          "children": [
+            {
+              "head": [],
+              "piece": "table",
+              "rows": [
+                [
+                  {
+                    "mono": false,
+                    "piece": "toned",
+                    "text": "Waiting",
+                    "tone": "neutral"
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "How should the ask tool wait for your answer?",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
+                  }
+                ],
+                [
+                  {
+                    "mono": false,
+                    "piece": "toned",
+                    "text": "Surfaces",
+                    "tone": "neutral"
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "Where else should a pending question show up?",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
+                  }
+                ],
+                [
+                  {
+                    "mono": false,
+                    "piece": "toned",
+                    "text": "Timeout",
+                    "tone": "neutral"
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "How long should a question hold the run?",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
+                  }
+                ]
+              ],
+              "widths": [1, 4]
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "Answer in the panel below.",
+              "tone": "info"
+            }
+          ],
+          "piece": "stack"
+        }
+      }
+    },
+    "composer": {
+      "action": "key",
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "action": "go",
+                  "args": {
+                    "to": 0
+                  },
+                  "kind": "secondary",
+                  "label": "✓ Waiting",
+                  "piece": "button"
+                },
+                {
+                  "action": "go",
+                  "args": {
+                    "to": 1
+                  },
+                  "kind": "primary",
+                  "label": "✓ Surfaces ✎",
+                  "piece": "button"
+                },
+                {
+                  "action": "go",
+                  "args": {
+                    "to": 2
+                  },
+                  "kind": "secondary",
+                  "label": "Timeout",
+                  "piece": "button"
+                },
+                {
+                  "piece": "mono",
+                  "text": "›"
+                },
+                {
+                  "action": "go",
+                  "args": {
+                    "to": 3
+                  },
+                  "kind": "secondary",
+                  "label": "Submit",
+                  "piece": "button"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "pick any · 2 chosen",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "rich",
+                  "text": "**Where else should a pending question show up?**"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "mono",
+                      "text": "  1"
+                    },
+                    {
+                      "action": "choose",
+                      "args": {
+                        "row": 0
+                      },
+                      "kind": "primary",
+                      "label": "Run list badge",
+                      "piece": "button"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "An amber dot on the run in the sidebar until you answer.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "mono",
+                      "text": "  2"
+                    },
+                    {
+                      "action": "choose",
+                      "args": {
+                        "row": 1
+                      },
+                      "kind": "secondary",
+                      "label": "Desktop notification",
+                      "piece": "button"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "Only when the window is not focused.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "mono",
+                      "text": "› 3"
+                    },
+                    {
+                      "action": "choose",
+                      "args": {
+                        "row": 2
+                      },
+                      "kind": "primary",
+                      "label": "Parent run",
+                      "piece": "button"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "A child run's question surfaces on the run that spawned it.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "mono",
+                      "text": "  4"
+                    },
+                    {
+                      "id": "ask-other-retry-after-call_ask-1",
+                      "keep": true,
+                      "multiline": false,
+                      "piece": "input",
+                      "placeholder": "Your own answer…",
+                      "submit": "other-done"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "focus": 2,
+                  "id": "ask-note-retry-after-call_ask-1",
+                  "keep": true,
+                  "multiline": true,
+                  "piece": "input",
+                  "placeholder": "Anything the agent should know about this answer…",
+                  "submit": "note-done"
+                }
+              ],
+              "piece": "stack"
+            },
+            {
+              "children": [
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "↑↓ move · Space toggle · n note · ←→ questions",
+                  "tone": "neutral"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "action": "tau.cancel",
+                  "args": {},
+                  "kind": "danger",
+                  "label": "Cancel run",
+                  "piece": "button"
+                },
+                {
+                  "action": "decline",
+                  "args": {},
+                  "kind": "secondary",
+                  "label": "Decline to answer",
+                  "piece": "button"
+                },
+                {
+                  "action": "note-open",
+                  "args": {},
+                  "kind": "secondary",
+                  "label": "Edit note",
+                  "piece": "button"
+                },
+                {
+                  "action": "next",
+                  "args": {},
+                  "kind": "primary",
+                  "label": "Next",
+                  "piece": "button"
+                }
+              ],
+              "piece": "row"
+            }
+          ],
+          "piece": "card"
+        }
+      ],
+      "focus": 2,
+      "id": "ask-panel",
+      "keys": [
+        "up",
+        "down",
+        "left",
+        "right",
+        "enter",
+        "space",
+        "n",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "escape"
+      ],
+      "piece": "keys",
+      "through": ["escape"]
+    },
+    "status": {
+      "detail": null,
+      "piece": "status",
+      "text": "3 questions waiting",
+      "tone": "warn"
+    }
+  }
+}

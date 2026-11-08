@@ -24,6 +24,8 @@ struct RunVersions {
     registry: crate::registry::Registry,
     settings: LuauSettings,
     workspace: Option<std::path::PathBuf>,
+    /// The plugins the run's repository leaves out, by name.
+    left_out: &'static [&'static str],
 }
 
 #[async_trait::async_trait]
@@ -35,6 +37,11 @@ impl crate::agent::Versions for RunVersions {
         };
         active
             .into_iter()
+            .filter(|active| {
+                !self
+                    .left_out
+                    .contains(&active.loaded.declaration.name.as_str())
+            })
             .map(|mut active| {
                 let name = &active.loaded.declaration.name;
                 active.settings = crate::settings::effective(
@@ -90,6 +97,12 @@ impl HostHalf for LuauPluginsHost {
             registry: host.clone(),
             settings: settings.clone(),
             workspace,
+            // An agent's runs ask through tau-agents' own `ask`, not
+            // tau-ask's (ADR 0037).
+            left_out: run
+                .services
+                .get::<tau_ui_plugin::LeftOut>()
+                .map_or(&[][..], |left_out| left_out.0),
         };
         let luau = crate::agent::LuauPlugins::live(
             std::sync::Arc::new(versions),

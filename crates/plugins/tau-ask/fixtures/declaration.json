@@ -1,0 +1,126 @@
+{
+  "name": "tau-ask",
+  "description": "Lets the agent ask you questions and waits for your answers",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": false,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": false,
+    "archive": false
+  },
+  "settings": null,
+  "tools": [
+    {
+      "name": "ask",
+      "description": "Ask the person one to four questions and wait for their answers. Use it when you need a decision only they can make: a preference, a trade-off, which of several plans to follow, or something the request leaves open that you cannot settle from the code or a sensible default. Do not use it to ask whether to go on or whether a plan is ready.\n\nEach question has a short header (at most 12 characters, shown as a tab) and two to four choices, each a short label and a description. The person can always write their own answer instead, so never offer an \"Other\". If you recommend a choice, put it first and end its label with \"(Recommended)\". Set multi_select when several choices can hold at once. A choice may carry a preview (Markdown, shown in a monospace box) when the person should compare concrete things, such as code or layouts; previews are only for questions where one choice is picked.\n\nThe result gives each question's answer and any note the person added to it, or says they declined.",
+      "parameters": {
+        "description": "What the agent asks.",
+        "properties": {
+          "questions": {
+            "description": "One to four questions, asked together.",
+            "items": {
+              "description": "One question.",
+              "properties": {
+                "header": {
+                  "description": "A word or two for its tab, at most 12 characters: \"Auth method\".",
+                  "maxLength": 12,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "multi_select": {
+                  "default": false,
+                  "description": "Whether several choices can be picked.",
+                  "type": "boolean"
+                },
+                "options": {
+                  "description": "Two to four choices. The person can always write their own answer instead, so do not offer an \"Other\". Put a recommended choice first and end its label with \"(Recommended)\".",
+                  "items": {
+                    "description": "One choice.",
+                    "properties": {
+                      "description": {
+                        "description": "What picking it means, or what follows from it.",
+                        "type": "string"
+                      },
+                      "label": {
+                        "description": "One to five words.",
+                        "type": "string"
+                      },
+                      "preview": {
+                        "description": "Something to look at while the choice is in focus: a code snippet, a mockup, a diagram. Markdown, shown in a monospace box. Only for questions where one choice is picked.",
+                        "type": "string"
+                      }
+                    },
+                    "required": ["label", "description"],
+                    "type": "object"
+                  },
+                  "maxItems": 4,
+                  "minItems": 2,
+                  "type": "array"
+                },
+                "question": {
+                  "description": "The whole question, ending in a question mark.",
+                  "type": "string"
+                }
+              },
+              "required": ["question", "header", "options"],
+              "type": "object"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": ["questions"],
+        "type": "object"
+      },
+      "card": false,
+      "model_only": true
+    }
+  ],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": false,
+    "rewrite_context": false,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": true,
+    "view": true,
+    "settings_view": false
+  },
+  "actions": [
+    "answered",
+    "choose",
+    "decline",
+    "go",
+    "key",
+    "next",
+    "note-done",
+    "note-open",
+    "other-done",
+    "send"
+  ],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": null
+}

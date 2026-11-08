@@ -109,17 +109,16 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
     });
 
     let question = "Delete the 3 workspaces with no run, or keep them?";
-    let ask: tau_ask::Ask = serde_json::from_value(serde_json::json!({
-        "questions": [{
-            "question": question,
-            "header": "Workspaces",
-            "options": [
-                { "label": "Delete", "description": "They have no run." },
-                { "label": "Keep", "description": "Look at them first." }
-            ]
-        }]
-    }))
-    .unwrap();
+    // tau-ask is Luau (ADR 0050): what its view says the run asks.
+    let asks = |asks: serde_json::Value| HostUpdate::PluginFold {
+        run: id("asks"),
+        plugin: tau_luau_plugins::NAME.into(),
+        body: serde_json::to_value(tau_luau_plugins::Record::View {
+            plugin: tau_ask::NAME.into(),
+            view: asks,
+        })
+        .unwrap(),
+    };
     let forecast =
         |run: &str, changes, conflicts: &[&str]| HostUpdate::Forecast {
             run: id(run),
@@ -132,18 +131,7 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
             }),
         };
     workspace.update(&mut cx, |ws, cx| {
-        ws.apply(
-            HostUpdate::PluginFold {
-                run: id("asks"),
-                plugin: tau_ask::NAME.into(),
-                body: tau_ask::Record::Asked {
-                    call: "call_1".into(),
-                    ask,
-                }
-                .to_value(),
-            },
-            cx,
-        );
+        ws.apply(asks(serde_json::json!({ "asks": question })), cx);
         ws.apply(forecast("ready", 2, &[]), cx);
         ws.apply(forecast("conflict", 1, &["a.rs", "b.rs"]), cx);
     });
@@ -194,17 +182,7 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
     // says so, and no longer needs the person; dropped, the one that
     // would conflict says that. Both stay listed where they were.
     workspace.update(&mut cx, |ws, cx| {
-        ws.apply(
-            HostUpdate::PluginFold {
-                run: id("asks"),
-                plugin: tau_ask::NAME.into(),
-                body: tau_ask::Record::Closed {
-                    call: "call_1".into(),
-                }
-                .to_value(),
-            },
-            cx,
-        );
+        ws.apply(asks(serde_json::json!({})), cx);
         let view = ws.run(&id("asks")).unwrap().clone();
         assert_eq!(ws.attention(&view), Attention::Working { turn: 7 });
         let landing = tau_vcs::Landing {

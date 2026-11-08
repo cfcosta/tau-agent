@@ -1,69 +1,36 @@
-//! tau-ask: the agent asks the person questions and waits for the
-//! answers.
-//!
-//! The `ask` tool takes one to four questions, each with two to four
-//! choices, one or several to pick, and a preview per choice. The person
-//! can always write their own answer instead, and add a note to any
-//! answer. The call stays open until the answers come, the person
-//! declines, or the run is cancelled; the answers are the call's result.
-//!
-//! - [`ask`]: the questions, the answers, how they are checked, and what
-//!   the model reads back.
-//! - [`Record`]: what the plugin publishes, folded by its UI.
-//! - [`ui`]: the panel that takes the composer's place while a question
-//!   waits, and the card of an `ask` call.
-//! - `host` (feature `host`): the tool and the agent plugin.
+//! tau-ask (docs/reference/ask.md, ADR 0019, ADR 0050): the agent asks
+//! the person one to four questions and waits for the answers. It is a
+//! Luau plugin tau comes with: its code is the Luau under `luau/`, which
+//! tau-luau-plugins loads as always active; this crate carries the files,
+//! what the demo shows of it, and the tests that check them.
 
-pub mod ask;
-#[cfg(feature = "host")]
-mod half;
-#[cfg(feature = "host")]
-pub mod host;
-pub mod ui;
-
-pub use ask::{Answer, Ask, Choice, Question, Reply};
-#[cfg(feature = "host")]
-pub use half::AskHost;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-pub use ui::AskUi;
-
-/// The plugin's name, for both its halves.
+/// The plugin's name, and its folder's.
 pub const NAME: &str = "tau-ask";
 
-/// The tool's name, as the model calls it.
-pub const TOOL: &str = "ask";
+/// Its files, by their paths in its folder.
+pub const FILES: &[(&str, &str)] = &[
+    ("plugin.luau", include_str!("../luau/plugin.luau")),
+    ("lib/ask.luau", include_str!("../luau/lib/ask.luau")),
+    ("lib/panel.luau", include_str!("../luau/lib/panel.luau")),
+    ("lib/escaped.luau", include_str!("../luau/lib/escaped.luau")),
+    ("tests/ask.luau", include_str!("../luau/tests/ask.luau")),
+    (
+        "tests/plugin.luau",
+        include_str!("../luau/tests/plugin.luau"),
+    ),
+];
 
-/// Everything tau-ask publishes about a call, as stored and reported.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Record {
-    /// The call waits for the person to answer `ask`.
-    Asked { call: String, ask: Ask },
-    /// The person answered, or declined.
-    Answered { call: String, reply: Reply },
-    /// It stopped waiting without an answer: the run was cancelled, or
-    /// it ended while the call waited.
-    Closed { call: String },
-}
+/// What the demo shows of tau-ask: a run's state and the view the plugin
+/// draws from it, as JSON (`{ state, view }`). The demo's run waiting on
+/// three questions, untouched, with a checklist's note being written,
+/// and on the review; and another chat waiting on one question. The
+/// demo cannot run Luau; `tests/luau.rs` checks each is what the plugin
+/// leaves and draws.
+pub const DEMO_ASK: &str = include_str!("../fixtures/ask.json");
+pub const DEMO_NOTE: &str = include_str!("../fixtures/note.json");
+pub const DEMO_REVIEW: &str = include_str!("../fixtures/review.json");
+pub const DEMO_SWEEP: &str = include_str!("../fixtures/sweep.json");
 
-/// Whether an undecodable record was logged already: once is enough.
-impl Record {
-    /// The record `body` holds, or none, said the first time.
-    pub fn parse(body: &Value) -> Option<Self> {
-        tau_agent::plugin::read_record(NAME, body)
-    }
-
-    pub fn to_value(&self) -> Value {
-        serde_json::to_value(self).expect("a record serializes")
-    }
-
-    /// The call it is about.
-    pub fn call(&self) -> &str {
-        match self {
-            Self::Asked { call, .. }
-            | Self::Answered { call, .. }
-            | Self::Closed { call } => call,
-        }
-    }
-}
+/// What the plugin declares, as the demo lists it among tau's Luau
+/// plugins.
+pub const DEMO_DECLARATION: &str = include_str!("../fixtures/declaration.json");

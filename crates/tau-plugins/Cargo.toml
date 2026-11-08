@@ -14,7 +14,6 @@ publish.workspace = true
 [dependencies]
 tau-ui-plugin.workspace = true
 tau-codemode.workspace = true
-tau-ask = { path = "../plugins/tau-ask", default-features = false }
 tau-canvas = { path = "../plugins/tau-canvas", default-features = false }
 tau-direnv = { path = "../plugins/tau-direnv", default-features = false }
 tau-notify = { path = "../plugins/tau-notify", default-features = false }

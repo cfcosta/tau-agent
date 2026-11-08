@@ -29,7 +29,7 @@ tau-agent/
 │       │                         # host half: `tau-<plugin>-host` when heavy
 │       │                         # (ADR 0030)
 │       ├── tau-ask/              # the agent asks the person; the panel in the
-│       │                         # composer's place (ADR 0019)
+│       │                         # composer's place (ADR 0019; Luau)
 │       ├── tau-canvas/           # images and documents the agent shows the
 │       │                         # person, in a pane beside the run (ADR 0040)
 │       ├── tau-chatgpt/          # the person's ChatGPT plan, filling

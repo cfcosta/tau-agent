@@ -356,7 +356,10 @@ impl Host {
         Registered {
             hosted: Arc::new(hosted),
             repo: self.repo_ctx(repo),
-            provided: self.provided(Services::default()),
+            // A plugin that runs others leaves out those the kind names.
+            provided: self
+                .provided(Services::default())
+                .with(tau_ui_plugin::LeftOut(without)),
             repo_launcher,
         }
     }

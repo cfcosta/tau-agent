@@ -44,7 +44,7 @@ jobs:
       - name: Clippy without the plugins' host halves
         run: |
           nix develop -c cargo clippy -p tau-ui-remote --all-targets -- -D warnings
-          for plugin in tau-ask tau-codemode tau-mcp tau-tools tau-vcs; do
+          for plugin in tau-codemode tau-mcp tau-tools tau-vcs; do
             nix develop -c cargo clippy -p "$plugin" --no-default-features --lib -- -D warnings
           done
 

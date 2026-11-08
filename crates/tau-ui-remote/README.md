@@ -35,8 +35,8 @@ It re-exports `tau-ui-kit`'s `assets`, `input`, `markdown` and `theme`.
 It builds on `tau-agent` (with `serde`), `tau-ai`, `tau-store`,
 `tau-remote`, `tau-terminal`, `tau-ui-kit`, `tau-ui-plugin`, and the UI
 half of every plugin. It depends on no plugin's host half: those live in
-`tau-*-host` crates, or behind the `host` feature for tau-ask, tau-direnv
-and tau-skills, which it turns off. So a phone builds it without the tools,
+`tau-*-host` crates, or behind the `host` feature for tau-direnv and
+tau-skills, which it turns off. So a phone builds it without the tools,
 Luau, jj-lib or an MCP client.
 
 `tau-ui` drives it on the computer, `tau-phone` on Android, and the `tau`

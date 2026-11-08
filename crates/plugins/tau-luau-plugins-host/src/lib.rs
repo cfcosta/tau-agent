@@ -47,6 +47,10 @@ pub const BUILT_IN: &[registry::BuiltIn] = &[
         name: tau_constitution::NAME,
         files: tau_constitution::FILES,
     },
+    registry::BuiltIn {
+        name: tau_ask::NAME,
+        files: tau_ask::FILES,
+    },
     // The compactions rewrite in this order, the first rewrite winning:
     // fast pruning, then the tree, then the summary.
     registry::BuiltIn {

@@ -34,7 +34,6 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_github_host::GitHubHost)
         .host(tau_memory_host::MemoryHost)
         .host(tau_schedule::ScheduleHost)
-        .host(tau_ask::AskHost)
         .host(tau_canvas::CanvasHost)
         .host(tau_direnv::DirenvHost)
         .host(tau_mcp_host::McpHost)

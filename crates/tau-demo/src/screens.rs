@@ -1843,96 +1843,26 @@ fn uploads(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
 }
 
 /// The live demo run waiting on tau-ask's questions, its panel in the
-/// state `open` names.
+/// state `open` names. tau-ask is Luau (ADR 0050): its state and view
+/// come from its fixtures, which its tests check against the plugin.
 fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
-    use tau_ask::{Ask, Record, ui::Key};
     let run = run_id();
-    let ask: Ask = serde_json::from_value(serde_json::json!({ "questions": [
-        {
-            "question": "How should the ask tool wait for your answer?",
-            "header": "Waiting",
-            "options": [
-                {
-                    "label": "Hold the call open (Recommended)",
-                    "description": "The tool blocks on a channel; your answer comes back as its result and the turn goes on.",
-                    "preview": "let (tx, rx) = oneshot::channel();\nself.pending.insert(ctx.call_id, tx);\nselect! {\n    a = rx => Ok(a?),\n    _ = ctx.cancel => Err(Cancelled),\n}"
-                },
-                {
-                    "label": "End the turn",
-                    "description": "Like vcs_land: the run stops, and your answer arrives as the next message.",
-                    "preview": "ctx.publish(&asked)?;\nOk(ToolOutput::text(\"Asked; waiting.\"))"
-                },
-                {
-                    "label": "Hold, then time out",
-                    "description": "Block for a while; if nobody answers, stop the run and keep the panel open.",
-                    "preview": "select! {\n    a = rx => Ok(a?),\n    _ = sleep(timeout) => stop(),\n}"
-                }
-            ]
-        },
-        {
-            "question": "Where else should a pending question show up?",
-            "header": "Surfaces",
-            "multi_select": true,
-            "options": [
-                { "label": "Run list badge", "description": "An amber dot on the run in the sidebar until you answer." },
-                { "label": "Desktop notification", "description": "Only when the window is not focused." },
-                { "label": "Parent run", "description": "A child run's question surfaces on the run that spawned it." }
-            ]
-        },
-        {
-            "question": "How long should a question hold the run?",
-            "header": "Timeout",
-            "options": [
-                { "label": "5 minutes", "description": "Short; the run stops soon and resumes when you answer." },
-                { "label": "Never", "description": "Hold until you answer or cancel the run." }
-            ]
-        }
-    ]}))
-    .expect("the demo's questions read");
     workspace.navigate(Route::Run(run.clone()), cx);
-    workspace.apply(
-        HostUpdate::PluginFold {
-            run: run.clone(),
-            plugin: tau_ask::NAME.into(),
-            body: Record::Asked {
-                call: "call_ask".into(),
-                ask: ask.clone(),
-            }
-            .to_value(),
-        },
-        cx,
-    );
-    // The answers written so far are tau-ask's UI state (ADR 0045).
-    if open == "ask" {
-        return;
-    }
-    let key = (run.0.to_string(), "call_ask".to_owned());
-    let mut draft = tau_ask::ui::Draft::new("call_ask", &ask);
-    draft.key(&ask, Key::Digit(1));
-    draft.key(&ask, Key::Digit(1));
-    draft.key(&ask, Key::Digit(3));
-    draft.notes[1] = "Only when the run has waited a while.".into();
-    if open == "ask-note" {
-        draft.note_open = true;
-        // Its field shows the note.
-        workspace.set_plugin_ui(
-            tau_ask::NAME,
-            tau_ui_plugin::tree::draft_key(&tau_ask::ui::panel::note_input(
-                &key, 1,
-            )),
-            Some(json!(draft.notes[1])),
+    let fixture = match open {
+        "ask-note" => tau_ask::DEMO_NOTE,
+        "ask-review" => tau_ask::DEMO_REVIEW,
+        _ => tau_ask::DEMO_ASK,
+    };
+    for body in crate::luau(tau_ask::NAME, fixture) {
+        workspace.apply(
+            HostUpdate::PluginFold {
+                run: run.clone(),
+                plugin: tau_luau_plugins::NAME.into(),
+                body,
+            },
             cx,
         );
-    } else {
-        draft.key(&ask, Key::Right);
-        draft.key(&ask, Key::Digit(2));
     }
-    workspace.set_plugin_ui(
-        tau_ask::NAME,
-        tau_ask::ui::draft_key(&key),
-        serde_json::to_value(&draft).ok(),
-        cx,
-    );
 }
 
 /// The demo run with a note from the watcher under its last step, as
@@ -2270,29 +2200,16 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         ),
         cx,
     );
-    let ask: tau_ask::Ask = serde_json::from_value(serde_json::json!({
-        "questions": [{
-            "question": "Delete the 3 workspaces with no run, or keep them?",
-            "header": "Workspaces",
-            "options": [
-                { "label": "Delete them", "description": "No run uses them." },
-                { "label": "Keep them", "description": "Look at them first." }
-            ]
-        }]
-    }))
-    .expect("the demo's question reads");
-    workspace.apply(
-        HostUpdate::PluginFold {
-            run: RunId("sweep-workspaces".into()),
-            plugin: tau_ask::NAME.into(),
-            body: tau_ask::Record::Asked {
-                call: "call_sweep".into(),
-                ask,
-            }
-            .to_value(),
-        },
-        cx,
-    );
+    for body in crate::luau(tau_ask::NAME, tau_ask::DEMO_SWEEP) {
+        workspace.apply(
+            HostUpdate::PluginFold {
+                run: RunId("sweep-workspaces".into()),
+                plugin: tau_luau_plugins::NAME.into(),
+                body,
+            },
+            cx,
+        );
+    }
     // One landed: its chat closed, and main has its card.
     workspace.apply(
         HostUpdate::Landed {

@@ -9641,22 +9641,10 @@ dependencies = [
 name = "tau-ask"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
- "futures-util",
- "hegeltest",
- "schemars",
- "serde",
  "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-store",
- "tau-store-sqlite",
+ "tau-luau-plugins-host",
  "tau-testing",
- "tau-ui-kit",
- "tau-ui-plugin",
- "tokio",
- "tracing",
+ "tokio-util",
 ]
 
 [[package]]
@@ -9975,6 +9963,7 @@ dependencies = [
  "sqlx",
  "tau-agent",
  "tau-ai",
+ "tau-ask",
  "tau-codemode",
  "tau-codemode-host",
  "tau-compaction",
@@ -10201,7 +10190,6 @@ name = "tau-plugins"
 version = "0.1.0"
 dependencies = [
  "tau-agents",
- "tau-ask",
  "tau-canvas",
  "tau-chatgpt",
  "tau-codemode",

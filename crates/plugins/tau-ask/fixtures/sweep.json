@@ -1,0 +1,277 @@
+{
+  "state": {
+    "calls": [
+      {
+        "ask": {
+          "questions": [
+            {
+              "header": "Workspaces",
+              "multi_select": false,
+              "options": [
+                {
+                  "description": "No run uses them.",
+                  "label": "Delete them"
+                },
+                {
+                  "description": "Look at them first.",
+                  "label": "Keep them"
+                }
+              ],
+              "question": "Delete the 3 workspaces with no run, or keep them?"
+            }
+          ]
+        },
+        "call": "call_sweep",
+        "draft": {
+          "cursor": [0],
+          "note_open": false,
+          "notes": [""],
+          "other": [""],
+          "other_on": [false],
+          "picked": [[]],
+          "tab": 0
+        },
+        "focus": {
+          "note": 0,
+          "other": 0,
+          "panel": 1
+        }
+      }
+    ]
+  },
+  "view": {
+    "asks": "Delete the 3 workspaces with no run, or keep them?",
+    "calls": {
+      "call_sweep": {
+        "body": {
+          "children": [
+            {
+              "head": [],
+              "piece": "table",
+              "rows": [
+                [
+                  {
+                    "mono": false,
+                    "piece": "toned",
+                    "text": "Workspaces",
+                    "tone": "neutral"
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "Delete the 3 workspaces with no run, or keep them?",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
+                  }
+                ]
+              ],
+              "widths": [1, 4]
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "Answer in the panel below.",
+              "tone": "info"
+            }
+          ],
+          "piece": "stack"
+        }
+      }
+    },
+    "composer": {
+      "action": "key",
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "action": "go",
+                  "args": {
+                    "to": 0
+                  },
+                  "kind": "primary",
+                  "label": "Workspaces",
+                  "piece": "button"
+                },
+                {
+                  "piece": "mono",
+                  "text": "›"
+                },
+                {
+                  "action": "go",
+                  "args": {
+                    "to": 1
+                  },
+                  "kind": "secondary",
+                  "label": "Submit",
+                  "piece": "button"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "pick one",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "rich",
+                  "text": "**Delete the 3 workspaces with no run, or keep them?**"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "mono",
+                      "text": "› 1"
+                    },
+                    {
+                      "action": "choose",
+                      "args": {
+                        "row": 0
+                      },
+                      "kind": "secondary",
+                      "label": "Delete them",
+                      "piece": "button"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "No run uses them.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "mono",
+                      "text": "  2"
+                    },
+                    {
+                      "action": "choose",
+                      "args": {
+                        "row": 1
+                      },
+                      "kind": "secondary",
+                      "label": "Keep them",
+                      "piece": "button"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "Look at them first.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "mono",
+                      "text": "  3"
+                    },
+                    {
+                      "id": "ask-other-sweep-workspaces-call_sweep-0",
+                      "keep": true,
+                      "multiline": false,
+                      "piece": "input",
+                      "placeholder": "Your own answer…",
+                      "submit": "other-done"
+                    }
+                  ],
+                  "piece": "row"
+                }
+              ],
+              "piece": "stack"
+            },
+            {
+              "children": [
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "↑↓ move · Enter choose · n note · ←→ questions",
+                  "tone": "neutral"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "action": "tau.cancel",
+                  "args": {},
+                  "kind": "danger",
+                  "label": "Cancel run",
+                  "piece": "button"
+                },
+                {
+                  "action": "decline",
+                  "args": {},
+                  "kind": "secondary",
+                  "label": "Decline to answer",
+                  "piece": "button"
+                },
+                {
+                  "action": "note-open",
+                  "args": {},
+                  "kind": "secondary",
+                  "label": "Add note",
+                  "piece": "button"
+                },
+                {
+                  "action": "next",
+                  "args": {},
+                  "kind": "primary",
+                  "label": "Next",
+                  "piece": "button"
+                }
+              ],
+              "piece": "row"
+            }
+          ],
+          "piece": "card"
+        }
+      ],
+      "focus": 1,
+      "id": "ask-panel",
+      "keys": [
+        "up",
+        "down",
+        "left",
+        "right",
+        "enter",
+        "space",
+        "n",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "escape"
+      ],
+      "piece": "keys",
+      "through": ["escape"]
+    },
+    "status": {
+      "detail": null,
+      "piece": "status",
+      "text": "1 question waiting",
+      "tone": "warn"
+    }
+  }
+}
