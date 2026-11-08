@@ -155,6 +155,7 @@ fn an_action_starts_a_chat_then_records_it() {
         "dispatch",
         json!({ "issue": "td-1" }),
         Some(&chats),
+        None,
     ))
     .unwrap();
     assert_eq!(said, json!("started r-new in home"));
@@ -174,6 +175,7 @@ fn an_action_starts_a_chat_then_records_it() {
         "dispatch",
         json!({ "issue": "td-2" }),
         Some(&refusing),
+        None,
     ))
     .unwrap();
     assert_eq!(said, json!("not started: the code is conflicted"));
@@ -186,6 +188,7 @@ fn an_action_starts_a_chat_then_records_it() {
         "nudge",
         json!({ "issue": "td-1", "run": "r-new" }),
         Some(&chats),
+        None,
     ))
     .unwrap();
     assert_eq!(said, json!({ "run": "r-new" }));
@@ -200,6 +203,7 @@ fn an_action_starts_a_chat_then_records_it() {
         "home",
         "dispatch",
         json!({ "issue": "td-3" }),
+        None,
         None,
     ));
     assert!(

@@ -930,17 +930,21 @@ impl UiPlugin for LuauPluginsUi {
             })
             .contribute(points::CARD_BADGE, |at: &AtCard, view| {
                 let state: &State = view.state?;
-                let (plugin, reason) =
-                    state.plugins.iter().find_map(|(name, plugin)| {
-                        plugin
-                            .flags
-                            .get(&at.call_id)
-                            .map(|reason| (name.clone(), reason.clone()))
-                    })?;
-                Some(Node::Badge {
-                    text: format!("flagged by {plugin}: {reason}"),
-                    tone: Tone::Warn,
-                })
+                let flag = state.plugins.iter().find_map(|(name, plugin)| {
+                    let reason = plugin.flags.get(&at.call_id)?;
+                    Some(Node::Badge {
+                        text: format!("flagged by {name}: {reason}"),
+                        tone: Tone::Warn,
+                    })
+                });
+                let drawn = on_card(state, &at.call_id, "badge");
+                match (flag, drawn) {
+                    (Some(flag), Some(drawn)) => Some(Node::row([flag, drawn])),
+                    (flag, drawn) => flag.or(drawn),
+                }
+            })
+            .contribute(points::CARD_BODY, |at: &AtCard, view| {
+                on_card(view.state?, &at.call_id, "body")
             });
         // The plugins that ask for one, in the sidebar: the first few.
         let manifest = (0..NAV_ENTRIES).fold(manifest, |manifest, at| {
@@ -1450,6 +1454,26 @@ fn drawn(state: &State, key: &str) -> Option<Node> {
             let piece =
                 plugin.view.get(key).filter(|piece| !piece.is_null())?;
             Some(embed(piece, name))
+        })
+        .collect();
+    match trees.len() {
+        0 => None,
+        1 => trees.pop(),
+        _ => Some(Node::stack(trees)),
+    }
+}
+
+/// What the plugins' views draw on another tool's card, the call
+/// `call_id`: `place` (`badge`, beside its title, or `body`, under it) of
+/// each view's `calls[call_id]`, together.
+fn on_card(state: &State, call_id: &str, place: &str) -> Option<Node> {
+    let mut trees: Vec<Node> = state
+        .plugins
+        .iter()
+        .filter(|(_, plugin)| plugin.off.is_none())
+        .filter_map(|(name, plugin)| {
+            let piece = plugin.view.get("calls")?.get(call_id)?.get(place)?;
+            (!piece.is_null()).then(|| embed(piece, name))
         })
         .collect();
     match trees.len() {
@@ -2237,6 +2261,34 @@ mod tests {
         ] {
             assert_eq!(read_command(prompt).as_deref(), about, "{prompt}");
         }
+    }
+
+    /// A view's `calls` draw on that call's card, beside its title and
+    /// under it, every plugin's together; another call's card has none.
+    #[test]
+    fn a_views_calls_draw_on_their_cards() {
+        let mut state = State::default();
+        let mut run = tau_ui_plugin::testing::FakeRun::default();
+        for (plugin, text) in [("rules", "R1 0.82"), ("audit", "seen")] {
+            state.apply(
+                Record::View {
+                    plugin: plugin.into(),
+                    view: json!({ "calls": { "c1": {
+                        "badge": { "piece": "mono", "text": text },
+                        "body": { "piece": "text", "text": format!("{plugin} says") },
+                    } } }),
+                },
+                &mut run,
+            );
+        }
+        let badge = format!("{:?}", on_card(&state, "c1", "badge").unwrap());
+        assert!(
+            badge.contains("R1 0.82") && badge.contains("seen"),
+            "{badge}"
+        );
+        let body = format!("{:?}", on_card(&state, "c1", "body").unwrap());
+        assert!(body.contains("rules says"), "{body}");
+        assert_eq!(on_card(&state, "c2", "badge"), None);
     }
 
     /// A popover's drafts are read from each of its inputs, however

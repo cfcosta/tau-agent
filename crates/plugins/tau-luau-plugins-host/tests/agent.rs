@@ -1457,3 +1457,34 @@ fn continues_is_a_whole_number_up_to_20() {
         assert!(error.to_string().contains("`continues`"), "{error}");
     }
 }
+
+/// A plugin whose own setup is broken ends the run at start with
+/// `tau.fail`, saying why; the model is never asked.
+#[test]
+fn a_plugin_may_end_the_run_at_start() {
+    const BROKEN: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "broken",
+  start = function(plan, ctx)
+    return tau.fail("its rules cannot be read")
+  end,
+}
+"#;
+    let llm = ScriptedModel::new();
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("broken", BROKEN)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).plugin(plugins);
+    let error = block_on_io(agent.run("anything", &store)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("broken: its rules cannot be read"),
+        "{error}"
+    );
+    assert!(llm.requests().is_empty());
+}

@@ -100,7 +100,7 @@ struct State {
 /// One of a plugin's actions to carry out ([`Registry::action`]): on the
 /// `state` the plugin has in `run`, which works in `repo`, under the
 /// person's `settings` for it.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ActionCall<'a> {
     pub plugin: &'a str,
     pub action: &'a str,
@@ -111,10 +111,12 @@ pub struct ActionCall<'a> {
     pub settings: Option<&'a serde_json::Value>,
     /// What it asks of the chats goes to.
     pub chats: Option<&'a dyn tau_ui_plugin::Conversations>,
+    /// The host's Jev, for a plugin that uses it.
+    pub jev: Option<Arc<dyn tau_jev::Jev>>,
     /// Whether the run is going on, and a Jev key saved, as the
     /// interface that asked sees them: `ctx.run.live` and `ctx.run.jev`.
     pub live: bool,
-    pub jev: bool,
+    pub keyed: bool,
 }
 
 /// A Luau plugin tau comes with: its name, and its files by their paths
@@ -554,18 +556,19 @@ impl Registry {
         action: &str,
         args: serde_json::Value,
         chats: Option<&dyn tau_ui_plugin::Conversations>,
+        jev: Option<Arc<dyn tau_jev::Jev>>,
     ) -> anyhow::Result<serde_json::Value> {
-        let value = self.repo_hook(plugin, repo, action, args).await?;
-        crate::chats::follow(
-            value,
-            chats,
-            Some(repo),
-            |next, args| async move {
-                self.repo_hook(plugin, repo, &next, args)
+        let value = self
+            .repo_hook(plugin, repo, action, args, jev.clone())
+            .await?;
+        crate::chats::follow(value, chats, Some(repo), |next, args| {
+            let jev = jev.clone();
+            async move {
+                self.repo_hook(plugin, repo, &next, args, jev)
                     .await
                     .map_err(|error| format!("{error:#}"))
-            },
-        )
+            }
+        })
         .await
         .map_err(|error| anyhow::anyhow!("{plugin}'s {action}: {error}"))
     }
@@ -578,6 +581,7 @@ impl Registry {
         repo: &str,
         action: &str,
         args: serde_json::Value,
+        jev: Option<Arc<dyn tau_jev::Jev>>,
     ) -> anyhow::Result<serde_json::Value> {
         let active = self
             .plugin(plugin)
@@ -590,7 +594,7 @@ impl Registry {
                 &crate::runtime::Hook::Action(action.to_owned()),
                 args,
                 &context,
-                Arc::new(crate::runtime::NoReach),
+                Arc::new(crate::runtime::ActionReach(jev)),
                 CancellationToken::new(),
             )
             .await;
@@ -971,8 +975,9 @@ impl Registry {
             state,
             settings,
             chats,
-            live,
             jev,
+            live,
+            keyed,
         } = call;
 
         let hook = Hook::Action(action.to_owned());
@@ -1008,7 +1013,7 @@ impl Registry {
             return done;
         }
         let mut context = Context {
-            run: serde_json::json!({ "id": run, "live": live, "jev": jev }),
+            run: serde_json::json!({ "id": run, "live": live, "jev": keyed }),
             now: crate::agent::now(),
             settings: tau_luau_plugins::settings::effective(
                 &loaded.declaration,
@@ -1024,7 +1029,7 @@ impl Registry {
                 &hook,
                 args.clone(),
                 &context,
-                Arc::new(NoReach),
+                Arc::new(crate::runtime::ActionReach(jev.clone())),
                 CancellationToken::new(),
             )
             .await;
@@ -1040,10 +1045,13 @@ impl Registry {
                     outcome.value,
                     chats,
                     Some(repo),
-                    |next, args| async move {
-                        self.repo_hook(plugin, repo, &next, args)
-                            .await
-                            .map_err(|error| format!("{error:#}"))
+                    |next, args| {
+                        let jev = jev.clone();
+                        async move {
+                            self.repo_hook(plugin, repo, &next, args, jev)
+                                .await
+                                .map_err(|error| format!("{error:#}"))
+                        }
                     },
                 )
                 .await

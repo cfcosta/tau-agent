@@ -751,6 +751,11 @@ impl Plugin for LuauPlugins {
                 else {
                     continue;
                 };
+                // A plugin that cannot check the run ends it.
+                if let Some(why) = answer["fail"].as_str() {
+                    let name = &active.loaded.declaration.name;
+                    return Err(PluginError::Message(format!("{name}: {why}")));
+                }
                 apply_start(plan, &answer, &mut replaced);
             }
         }
@@ -1449,6 +1454,9 @@ impl LuauTool {
                 &ask.action,
                 ask.args,
                 dispatch.chats.as_deref(),
+                // What a call the person allowed does is the tool's,
+                // with no Jev of its own.
+                None,
             )
             .await
             .map_err(|error| format!("{error:#}"))?;

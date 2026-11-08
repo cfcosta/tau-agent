@@ -824,3 +824,47 @@ fn a_hook_that_may_call_the_model_has_the_time_for_it() {
         Duration::from_millis(200)
     );
 }
+
+/// An action of a plugin that uses Jev asks the host's, through what an
+/// action reaches; one that does not use it has none.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_action_asks_jev_when_its_plugin_uses_it() {
+    const TRIES: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "tries",
+  uses = { jev = USES },
+  actions = {
+    try = function(args, ctx)
+      if ctx.jev == nil then return "no jev" end
+      local answer = ctx.jev.noul({ state = { x = 1 }, question = "Is it?" })
+      return answer.probability
+    end,
+  },
+}
+"#;
+    let jev: std::sync::Arc<dyn tau_jev::Jev> =
+        std::sync::Arc::new(tau_jev::fake::FakeJev::nouls(|_| 0.25));
+    for (uses, want) in [("true", json!(0.25)), ("false", json!("no jev"))] {
+        let files = Files {
+            source: TRIES.replace("USES", uses),
+            ..Files::default()
+        };
+        let loaded = load("tries", files).await.unwrap();
+        let out = loaded
+            .call(
+                &Hook::Action("try".into()),
+                json!({}),
+                &context("Monday"),
+                std::sync::Arc::new(
+                    tau_luau_plugins_host::runtime::ActionReach(Some(
+                        jev.clone(),
+                    )),
+                ),
+                CancellationToken::new(),
+            )
+            .await;
+        assert_eq!(out.error, None);
+        assert_eq!(out.value, want, "uses.jev = {uses}");
+    }
+}

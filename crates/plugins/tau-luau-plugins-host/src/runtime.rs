@@ -337,6 +337,10 @@ impl Hook {
     /// whose `uses` names `infer` or `jev` may call them, and has a
     /// tool's time for it (ADR 0050); `on_event` never does.
     pub fn limit_for(&self, declaration: &Declaration) -> Duration {
+        // An action may ask Jev too, through the host's.
+        if matches!(self, Self::Action(_)) && declaration.uses.jev {
+            return Self::Tool(String::new()).limit();
+        }
         let run_hook = matches!(
             self,
             Self::Start
@@ -492,6 +496,16 @@ pub trait Reach: Send + Sync {
 pub struct NoReach;
 
 impl Reach for NoReach {}
+
+/// What an action reaches outside a run (ADR 0050): the host's Jev, for
+/// a plugin whose `uses` names it.
+pub struct ActionReach(pub Option<Arc<dyn Jev>>);
+
+impl Reach for ActionReach {
+    fn jev(&self) -> Option<Arc<dyn Jev>> {
+        self.0.clone()
+    }
+}
 
 /// What a hook did.
 #[derive(Debug, Clone, PartialEq)]

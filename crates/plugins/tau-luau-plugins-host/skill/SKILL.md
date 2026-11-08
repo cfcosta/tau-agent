@@ -99,24 +99,24 @@ one, its `card`.
 
 ### Hooks
 
-| Hook                | Given                                                                     | Returns                                                        | Time   |
-| ------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------- | ------ |
-| tool `call`         | the arguments, as `parameters` describes                                  | a JSON value, or `error(message)`                              | 60 s   |
-| tool `card`         | the call's arguments and the result                                       | a view piece, drawn on the call's card                         | 200 ms |
-| `start`             | `{ input, context, instructions, model, efforts, effort, prefix_tokens }` | `nil`, or `tau.start{ context, instructions, effort, input }`  | 2 s    |
-| `before_tool`       | `{ id, name, args }`                                                      | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
-| `before_request`    | `{ model, effort, turn, messages, replies }`                              | `nil`, or `tau.effort(level)`                                  | 200 ms |
-| `after_tool_result` | `{ id, name, args, ok, text, truncated }`                                 | `nil`, or `tau.result(text)`                                   | 2 s    |
-| `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`                             | `nil`, or `tau.rewrite{ keep, insert, drops_conversation }`    | 10 s   |
-| `rewritten`         | `{ plugin, before, after, drops_conversation }`                           | nothing                                                        | 2 s    |
-| `before_stop`       | `{ text, turn, reason }`                                                  | `nil`, or `tau.continue(message)`                              | 10 s   |
-| `turn_end`          | `{ turn, text, calls = { { name, ok } }, cost }`                          | nothing                                                        | 2 s    |
-| `on_event`          | `{ kind, turn, ... }`, for each of `events`                               | nothing                                                        | 200 ms |
-| `run_end`           | `{ stop, turns, cost, text }`, `text` its last reply                      | nothing                                                        | 10 s   |
-| `title`             | `{ task, model }`, outside any run                                        | a title, or `nil`                                              | 2 s    |
-| `notify`            | `{ title, body }`, outside any run                                        | nothing                                                        | 10 s   |
-| `view`              | the run's state                                                           | `{ status?, note?, page? }`, or `{}`                           | 200 ms |
-| `actions[x]`        | a button's or an input's arguments                                        | nothing; what it does to `ctx.state` stays                     | 2 s    |
+| Hook                | Given                                                                     | Returns                                                                       | Time   |
+| ------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------ |
+| tool `call`         | the arguments, as `parameters` describes                                  | a JSON value, or `error(message)`                                             | 60 s   |
+| tool `card`         | the call's arguments and the result                                       | a view piece, drawn on the call's card                                        | 200 ms |
+| `start`             | `{ input, context, instructions, model, efforts, effort, prefix_tokens }` | `nil`, `tau.start{ context, instructions, effort, input }` or `tau.fail(why)` | 2 s    |
+| `before_tool`       | `{ id, name, args }`                                                      | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)`                | 2 s    |
+| `before_request`    | `{ model, effort, turn, messages, replies }`                              | `nil`, or `tau.effort(level)`                                                 | 200 ms |
+| `after_tool_result` | `{ id, name, args, ok, text, truncated }`                                 | `nil`, or `tau.result(text)`                                                  | 2 s    |
+| `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`                             | `nil`, or `tau.rewrite{ keep, insert, drops_conversation }`                   | 10 s   |
+| `rewritten`         | `{ plugin, before, after, drops_conversation }`                           | nothing                                                                       | 2 s    |
+| `before_stop`       | `{ text, turn, reason }`                                                  | `nil`, or `tau.continue(message)`                                             | 10 s   |
+| `turn_end`          | `{ turn, text, calls = { { name, ok } }, cost }`                          | nothing                                                                       | 2 s    |
+| `on_event`          | `{ kind, turn, ... }`, for each of `events`                               | nothing                                                                       | 200 ms |
+| `run_end`           | `{ stop, turns, cost, text }`, `text` its last reply                      | nothing                                                                       | 10 s   |
+| `title`             | `{ task, model }`, outside any run                                        | a title, or `nil`                                                             | 2 s    |
+| `notify`            | `{ title, body }`, outside any run                                        | nothing                                                                       | 10 s   |
+| `view`              | the run's state                                                           | `{ status?, note?, page? }`, or `{}`                                          | 200 ms |
+| `actions[x]`        | a button's or an input's arguments                                        | nothing; what it does to `ctx.state` stays                                    | 2 s    |
 
 - `tau.block(why)` keeps the call from running; the model reads why.
   `tau.flag(why)` lets it run and marks it for the person's review.
@@ -186,6 +186,9 @@ one, its `card`.
   times, or as many as it declares, up to 20 (`continues = 10`).
 - `tau.start{ input = text }` gives the model `text` in place of the
   run's message; the first plugin that gives one sets it.
+- `tau.fail(why)`, from `start`, ends the run at once with `why` as its
+  error: for a plugin whose own setup is broken, so the run does not go
+  on unchecked.
 - `turn_end`'s `cost` is what the turn cost, in US dollars.
 - A hook that errors or runs out of time counts as `nil`, and its error
   shows on the Plugins screen. After three failures in a run the plugin
@@ -351,6 +354,9 @@ read the state: it has no tools. What it returns goes in three places:
   under its title in the sidebar; `tone` is `"good"`, `"warn"` or
   `"bad"`, `icon` one of the interface's icons, and `phone_line` the
   line on a phone, when it differs.
+- `calls`: `{ [call_id] = { badge?, body? } }`, pieces on another
+  tool's card: `badge` beside its title, `body` under it, such as why a
+  check flagged or blocked the call.
 - `messages`: `{ [text] = pieces }`, how a person's message whose text
   is exactly `text` draws, such as a command the plugin read, or a
   message it sent with `tau.continue`; `ui.stack({})` draws nothing.
@@ -391,6 +397,9 @@ Jev key (it defaults to the first). What its inputs say reaches `run`
 as `ctx.drafts`, by input id; an input whose `submit` is `"tau.submit"`
 sends the composer on Enter and keeps what it says. In tests,
 `run:action("/name", { text = "...", drafts = { id = "..." } })`.
+
+An action of a plugin with `uses.jev`, a button's or a page's, has
+`ctx.jev` too, the host's, and a tool's time for it.
 
 A plugin's `jobs` are work it does by itself while tau runs: each
 `run(ctx)` once `every` seconds passed since it last ran (at least 60),

@@ -89,6 +89,7 @@ pub fn point(name: &str) -> Option<Luau> {
         (PLAN_STEPS.name, "plan_steps"),
         (PICKER_AUTO.name, "picker_auto"),
         (USER_MESSAGE.name, "messages"),
+        (CARD_BODY.name, "calls"),
     ];
     if let Some((_, hook)) = hooks.iter().find(|(point, _)| *point == name) {
         return Some(Luau::Hook(hook));
@@ -96,7 +97,6 @@ pub fn point(name: &str) -> Option<Luau> {
     let outside = "drawn outside any run, where a Luau plugin has no view; \
                    its place there is its sidebar entry (`nav`)";
     let excluded = [
-        (CARD_BODY.name, "a tool's `card` draws its whole card"),
         (CARD_STAT.name, "a tool's `card` draws its whole card"),
         (
             REPO_KIND.name,

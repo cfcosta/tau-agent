@@ -254,6 +254,12 @@ impl HostHalf for LuauPluginsHost {
         let action: Act = serde_json::from_value(action)?;
         let chats = cx.conversations();
         let chats = chats.as_deref();
+        // The host's Jev, for an action of a plugin that uses it.
+        let host_jev = || {
+            cx.services
+                .get::<std::sync::Arc<dyn tau_jev::Jev>>()
+                .cloned()
+        };
         match action {
             Act::Allow { plugin } => host.allow(&plugin).await?,
             Act::Page {
@@ -267,8 +273,15 @@ impl HostHalf for LuauPluginsHost {
                 action,
                 args,
             } => {
-                host.repo_action(&plugin, &repo, &action, args, chats)
-                    .await?;
+                host.repo_action(
+                    &plugin,
+                    &repo,
+                    &action,
+                    args,
+                    chats,
+                    host_jev(),
+                )
+                .await?;
             }
             Act::Answer {
                 run,
@@ -321,8 +334,9 @@ impl HostHalf for LuauPluginsHost {
                         state: &state,
                         settings: settings.as_ref(),
                         chats,
+                        jev: host_jev(),
                         live,
-                        jev,
+                        keyed: jev,
                     })
                     .await;
                 return Ok(Some(serde_json::to_value(done)?));

@@ -230,6 +230,13 @@ function tau.start(plan)
 	}
 end
 
+-- What `start` answers to end the run at once, with `why` as its error:
+-- what the plugin needs to check the run is broken, and it says so
+-- rather than let the run go on unchecked.
+function tau.fail(why)
+	return { fail = tostring(why) }
+end
+
 -- What `rewrite_context` answers to rewrite the context: `keep`, the
 -- messages to keep by their `index`; `insert`, texts to put `before` a
 -- message; `drops_conversation`, whether it drops what was said.
