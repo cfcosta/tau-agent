@@ -243,11 +243,11 @@ impl Registry {
         }))
     }
 
-    /// The person's model as the Luau plugins ask it outside any run,
-    /// booked to tau-luau-plugins.
-    pub fn model(&self) -> Option<tau_ui_plugin::PluginModel> {
+    /// The person's model as the Luau plugin `plugin` asks it outside
+    /// any run, booked to it.
+    pub fn model_of(&self, plugin: &str) -> Option<tau_ui_plugin::PluginModel> {
         let model = self.0.model.as_ref()?;
-        model.signed_in().then(|| model.of(crate::NAME))
+        model.signed_in().then(|| model.of(plugin))
     }
 
     /// The registry, calling hooks asked from outside the host's runtime

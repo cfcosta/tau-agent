@@ -47,10 +47,10 @@ impl ModelReach {
         active: &crate::agent::Active,
         fallback: Option<&str>,
     ) -> std::sync::Arc<Self> {
-        let named = active.loaded.declaration.uses.model.clone();
+        let declaration = &active.loaded.declaration;
         std::sync::Arc::new(Self {
-            model: registry.model(),
-            name: named.or_else(|| fallback.map(str::to_owned)),
+            model: registry.model_of(&declaration.name),
+            name: model_named(declaration.uses.model.as_deref(), fallback),
         })
     }
 }
@@ -103,8 +103,8 @@ impl ModelReach {
             .name
             .clone()
             .ok_or("name the model `infer` asks in `uses.model`")?;
-        let mut settings =
-            tau_ui_plugin::AskSettings::new(name, request.effort);
+        let effort = effort_for(&name, request.effort);
+        let mut settings = tau_ui_plugin::AskSettings::new(name, effort);
         if let Some(format) = request.text_format() {
             settings = settings.text_format(format);
         }
@@ -120,6 +120,47 @@ impl ModelReach {
             return Err(error.clone());
         }
         request.decode_answer(&answer.text())
+    }
+}
+
+/// The model `uses.model` names: a model by its id; a family by its name
+/// (`"luna"`), the plan's newest of it, else `fallback`; any other name
+/// as written. With no name, `fallback`.
+pub(crate) fn model_named(
+    named: Option<&str>,
+    fallback: Option<&str>,
+) -> Option<String> {
+    use tau_ai::model::{family_version, find, models, plan_models};
+    let Some(named) = named else {
+        return fallback.map(str::to_owned);
+    };
+    if find(named).is_some() {
+        return Some(named.to_owned());
+    }
+    let of_family = |id: &str| {
+        family_version(id).is_some_and(|(family, _)| family == named)
+    };
+    if let Some(newest) =
+        plan_models().into_iter().find(|model| of_family(&model.id))
+    {
+        return Some(newest.id.clone());
+    }
+    if models().iter().any(|model| of_family(&model.id)) {
+        return fallback.map(str::to_owned);
+    }
+    Some(named.to_owned())
+}
+
+/// `effort`, when `model` takes it: a model the table knows to take
+/// none of it is asked with its own.
+pub(crate) fn effort_for(
+    model: &str,
+    effort: Option<tau_ai::responses::request::ReasoningEffort>,
+) -> Option<tau_ai::responses::request::ReasoningEffort> {
+    let effort = effort?;
+    match tau_ai::model::find(model) {
+        Some(known) if !known.efforts.contains(&effort) => None,
+        _ => Some(effort),
     }
 }
 

@@ -245,9 +245,10 @@ impl Inner {
         if !uses.infer && !uses.jev {
             return Arc::new(NoReach);
         }
-        let model = uses.model.clone().unwrap_or_else(|| {
-            self.run["model"].as_str().unwrap_or_default().to_owned()
-        });
+        let run_model = self.run["model"].as_str().unwrap_or_default();
+        let model =
+            crate::slots::model_named(uses.model.as_deref(), Some(run_model))
+                .unwrap_or_default();
         Arc::new(RunReach {
             plugin: ctx.clone(),
             jev: self.jev.clone(),
@@ -1483,7 +1484,7 @@ impl RunReach {
         let settings = tau_ai::responses::request::Settings {
             model: self.model.clone(),
             instructions: Some(INSTRUCTIONS.into()),
-            reasoning: request.effort,
+            reasoning: crate::slots::effort_for(&self.model, request.effort),
             text_format: request.text_format(),
             ..Default::default()
         };
